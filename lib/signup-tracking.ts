@@ -12,6 +12,19 @@ const SIGNUP_AUTH_METHOD_KEY = "signup_auth_method_v1";
 const SIGNUP_OAUTH_PROVIDER_KEY = "signup_oauth_provider_v1";
 const SIGNUP_AUTH_NAME_KEY = "signup_auth_name_v1";
 const SIGNUP_AUTH_EMAIL_KEY = "signup_auth_email_v1";
+const SIGNUP_ONBOARDING_VARIANT_KEY = "signup_onboarding_variant_v1";
+
+export type SignupOnboardingVariant = "ghana" | "global";
+
+const normalizeSignupOnboardingVariant = (
+  value?: string | null
+): SignupOnboardingVariant | null => {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (normalized === "ghana" || normalized === "global") {
+    return normalized;
+  }
+  return null;
+};
 
 type SignupEventPayload = {
   signup_session_id: string;
@@ -134,7 +147,22 @@ export const clearSignupSession = async () => {
     SIGNUP_OAUTH_PROVIDER_KEY,
     SIGNUP_AUTH_NAME_KEY,
     SIGNUP_AUTH_EMAIL_KEY,
+    SIGNUP_ONBOARDING_VARIANT_KEY,
   ]);
+};
+
+export const setSignupOnboardingVariant = async (variant?: string | null) => {
+  const normalized = normalizeSignupOnboardingVariant(variant);
+  if (!normalized) {
+    await AsyncStorage.removeItem(SIGNUP_ONBOARDING_VARIANT_KEY);
+    return;
+  }
+  await AsyncStorage.setItem(SIGNUP_ONBOARDING_VARIANT_KEY, normalized);
+};
+
+export const getSignupOnboardingVariant = async (): Promise<SignupOnboardingVariant | null> => {
+  const stored = await AsyncStorage.getItem(SIGNUP_ONBOARDING_VARIANT_KEY);
+  return normalizeSignupOnboardingVariant(stored);
 };
 
 export const captureSignupContext = async () => {

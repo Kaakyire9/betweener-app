@@ -1,3 +1,5 @@
+import { getCircleLocationAffinity } from '@/lib/location/location-intelligence';
+
 export type CircleDiscoveryScope = 'near_me' | 'my_country' | 'diaspora' | 'global';
 
 export type CircleLocaleProfile = {
@@ -9,10 +11,6 @@ export type CircleLocaleProfile = {
   country?: string | null;
   city?: string | null;
   region?: string | null;
-  diaspora_status?: string | null;
-  diasporaStatus?: string | null;
-  willing_long_distance?: boolean | null;
-  willingLongDistance?: boolean | null;
   faith_tags?: string[] | null;
   interest_tags?: string[] | null;
   culture_tags?: string[] | null;
@@ -58,15 +56,12 @@ export const getUserCircleLocale = (profile?: CircleLocaleProfile | null) => {
   const countryName = profile?.current_country ?? profile?.currentCountry ?? profile?.country ?? null;
   const city = profile?.city ?? null;
   const region = profile?.region ?? null;
-  const diasporaStatus = profile?.diaspora_status ?? profile?.diasporaStatus ?? null;
 
   return {
     countryCode,
     countryName,
     city,
     region,
-    diasporaStatus,
-    willingLongDistance: profile?.willing_long_distance ?? profile?.willingLongDistance ?? false,
   };
 };
 
@@ -98,10 +93,6 @@ export const scoreCircleRelevance = (
 ) => {
   const locale = getUserCircleLocale(profile);
   const circleCountry = normalizeCode(circle.country_code);
-  const circleCity = normalize(circle.city);
-  const circleRegion = normalize(circle.region);
-  const userCity = normalize(locale.city);
-  const userRegion = normalize(locale.region);
   const visibilityScope = normalize(circle.visibility_scope);
 
   if (circle.archived_at || circle.status === 'archived' || (circle.status && circle.status !== 'approved')) {
@@ -115,12 +106,9 @@ export const scoreCircleRelevance = (
   score += Math.min(18, Math.max(0, circle.active_this_week_count ?? 0));
   score += Math.min(12, Math.floor(Math.max(0, circle.member_count ?? 0) / 10));
 
-  if (circleCountry && locale.countryCode && circleCountry === locale.countryCode) score += 35;
-  if (circleCity && userCity && circleCity === userCity) score += 30;
-  if (circleRegion && userRegion && circleRegion === userRegion) score += 16;
+  score += getCircleLocationAffinity(circle, profile, scope)?.strength ?? 0;
 
   if (scope === 'near_me') {
-    if (circleCity && userCity && circleCity === userCity) score += 30;
     if (visibilityScope === 'local') score += 15;
     if (circleCountry && locale.countryCode && circleCountry !== locale.countryCode) score -= 80;
   }
@@ -128,13 +116,6 @@ export const scoreCircleRelevance = (
   if (scope === 'my_country') {
     if (visibilityScope === 'country') score += 12;
     if (circleCountry && locale.countryCode && circleCountry !== locale.countryCode) score -= 60;
-  }
-
-  if (scope === 'diaspora') {
-    if (visibilityScope === 'diaspora') score += 35;
-    if (intersects(circle.diaspora_tags, [locale.countryCode, locale.countryName ?? '', locale.diasporaStatus ?? ''])) {
-      score += 28;
-    }
   }
 
   if (scope === 'global') {

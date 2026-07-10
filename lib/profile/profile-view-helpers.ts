@@ -1,5 +1,6 @@
 import { buildLocationDisplay } from '@/lib/location/location-display';
 import { parseDistanceKmFromLabel } from '@/lib/profile/distance';
+import { normalizeProfileVideoUri } from '@/lib/profile/media';
 import { getViewedProfilePremiumCopy } from '@/lib/viewed-profile-premium';
 import { getAuthoritativePresenceDisplay } from '@/lib/presence';
 import { isGuessPrompt } from '@/lib/prompts/guess-prompts';
@@ -104,6 +105,7 @@ export function hasMeaningfulText(profile: UserProfile) {
 
 export function shouldGateProfile(profile: UserProfile) {
   const hasAnyPhoto =
+    !!profile.heroImageUrl ||
     (Array.isArray(profile.photos) && profile.photos.some(Boolean)) ||
     !!profile.profilePicture;
   const hasBio = (profile.bio || '').trim().length >= BIO_MIN_PUBLIC_CHARS;
@@ -126,7 +128,16 @@ export function parseFallbackProfile(rawParam?: string | string[]): UserProfile 
   for (const cand of candidates) {
     try {
       const parsed = JSON.parse(cand || '{}');
-      const photos = Array.isArray(parsed.photos) ? parsed.photos : parsed.avatar_url ? [parsed.avatar_url] : [];
+      const rawHeroImageUrl =
+        (typeof parsed.heroImageUrl === 'string' ? parsed.heroImageUrl : '') ||
+        (typeof parsed.hero_image_url === 'string' ? parsed.hero_image_url : '');
+      const photos = Array.isArray(parsed.photos)
+        ? parsed.photos
+        : rawHeroImageUrl
+          ? [rawHeroImageUrl]
+          : parsed.avatar_url
+            ? [parsed.avatar_url]
+            : [];
       const fallbackPresence = getAuthoritativePresenceDisplay(
         parsed.online,
         parsed.last_active || parsed.lastActive,
@@ -141,9 +152,18 @@ export function parseFallbackProfile(rawParam?: string | string[]): UserProfile 
         region: parsed.region,
         latitude: typeof parsed.latitude === 'number' ? parsed.latitude : undefined,
         longitude: typeof parsed.longitude === 'number' ? parsed.longitude : undefined,
+        heroImageUrl:
+          (typeof parsed.heroImageUrl === 'string' ? parsed.heroImageUrl : '') ||
+          (typeof parsed.hero_image_url === 'string' ? parsed.hero_image_url : '') ||
+          parsed.avatar_url ||
+          photos[0] ||
+          '',
         profilePicture: parsed.avatar_url || photos[0] || '',
         photos,
-        profileVideo: typeof parsed.profileVideo === 'string' ? parsed.profileVideo : undefined,
+        profileVideo:
+          typeof parsed.profileVideo === 'string'
+            ? normalizeProfileVideoUri(parsed.profileVideo)
+            : undefined,
         profileVideoPath: typeof parsed.profile_video === 'string' ? parsed.profile_video : undefined,
         occupation: parsed.occupation || '',
         education: parsed.education || '',
@@ -210,6 +230,7 @@ export function pickTaggedImages(profile: UserProfile): PremiumImage[] {
   const tags: ProfileImageTag[] = ['intro', 'lifestyle', 'prompts', 'values'];
   const uris = Array.isArray(profile.photos) ? profile.photos.filter(Boolean) : [];
   const orderedUris = [
+    profile.heroImageUrl,
     profile.profilePicture,
     ...uris,
   ]

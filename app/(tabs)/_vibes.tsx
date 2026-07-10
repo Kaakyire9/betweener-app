@@ -71,7 +71,16 @@ import { ExploreStackSkeleton } from "@/components/ui/Skeleton";
 import { findCountryByCode, getPrioritizedCountries, type CountryOption } from "@/lib/location/countries";
 import { toFlagEmoji } from "@/lib/location/location-display";
 import { isLikelyNetworkError } from "@/lib/network";
+import { requestOpenProfileEdit } from "@/lib/profile/edit-handoff";
 import { logger } from "@/lib/telemetry/logger";
+import {
+  formatAgePresetLabel,
+  formatAgeRangeValue,
+  getAgePresetSupportCopy,
+  getAgeRangeForPreset,
+  resolveAgePresetMode,
+  type AgePresetMode,
+} from "@/lib/vibes/age-range-presets";
 import type { MomentRelationshipContext } from "@/types/moment-context";
 import { getMomentsInboxActivityItems } from "@/lib/inbox/badge-groups";
 
@@ -113,6 +122,8 @@ export default function ExploreScreen() {
   const isDark = (colorScheme ?? 'light') === 'dark';
   const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
   const layoutMetrics = useVibesResponsiveMetrics();
+  const vibesActionRailGap = layoutMetrics.device.compactHeight ? 18 : 24;
+  const vibesStackVisualReserve = layoutMetrics.device.compactHeight ? 18 : 22;
   const momentsCapsuleMetrics = useMomentsCapsuleMetrics();
   const { profile, user, refreshProfile, authRecoveryPending, usingPersistedSessionFallback } = useAuth();
   const showingRecoveredSnapshot = authRecoveryPending || usingPersistedSessionFallback;
@@ -152,6 +163,20 @@ export default function ExploreScreen() {
   const [activeWindowMinutes, _setActiveWindowMinutes] = useState(15);
   const [distanceUnit, setDistanceUnit] = useState<DistanceUnit>('auto');
   const [viewerInterests, setViewerInterests] = useState<string[]>([]);
+  const savedMinAgePreference = useMemo(() => {
+    const raw = Number((profile as any)?.min_age_interest);
+    if (!Number.isFinite(raw)) return 18;
+    return Math.max(18, Math.min(99, Math.round(raw)));
+  }, [profile]);
+  const savedMaxAgePreference = useMemo(() => {
+    const raw = Number((profile as any)?.max_age_interest);
+    if (!Number.isFinite(raw)) return 35;
+    return Math.max(savedMinAgePreference, Math.min(99, Math.round(raw)));
+  }, [profile, savedMinAgePreference]);
+  const savedAgeRangeLabel = formatAgeRangeValue({
+    min: savedMinAgePreference,
+    max: savedMaxAgePreference,
+  });
   const vibesSegment = activeTab === 'nearby' ? 'nearby' : activeTab === 'active' ? 'activeNow' : 'forYou';
   const {
     profiles: matchList,
@@ -180,6 +205,10 @@ export default function ExploreScreen() {
     viewerGender: (profile as any)?.gender ?? null,
     viewerProfile: profile,
     relationshipCompass,
+    initialFilters: {
+      minAge: savedMinAgePreference,
+      maxAge: savedMaxAgePreference,
+    },
   });
 
   const [celebrationMatch, setCelebrationMatch] = useState<any | null>(null);
@@ -344,8 +373,8 @@ export default function ExploreScreen() {
   const [hasVideoOnly, setHasVideoOnly] = useState(false);
   const [activeOnly, setActiveOnly] = useState(false);
   const [distanceFilterKm, setDistanceFilterKm] = useState<number | null>(null);
-  const [minAge, setMinAge] = useState<number>(18);
-  const [maxAge, setMaxAge] = useState<number>(60);
+  const [minAge, setMinAge] = useState<number>(savedMinAgePreference);
+  const [maxAge, setMaxAge] = useState<number>(savedMaxAgePreference);
   const [religionFilter, setReligionFilter] = useState<string | null>(null);
   const [minVibeScore, setMinVibeScore] = useState<number | null>(null);
   const [minSharedInterests, setMinSharedInterests] = useState<number>(0);
@@ -364,6 +393,89 @@ export default function ExploreScreen() {
   const relationshipCompassFilters = useMemo(
     () => (relationshipCompass ? mapToDiscoveryFilters(relationshipCompass) : {}),
     [relationshipCompass],
+  );
+  const baseDiscoveryFilters = useMemo<VibesFilters>(
+    () => ({
+      verifiedOnly: false,
+      hasVideoOnly: false,
+      activeOnly: false,
+      distanceFilterKm: null,
+      minAge: savedMinAgePreference,
+      maxAge: savedMaxAgePreference,
+      religionFilter: null,
+      minVibeScore: null,
+      minSharedInterests: 0,
+      locationQuery: '',
+    }),
+    [savedMaxAgePreference, savedMinAgePreference],
+  );
+  const ageFilterBaseline = useMemo(
+    () => ({
+      minAge: baseDiscoveryFilters.minAge,
+      maxAge: baseDiscoveryFilters.maxAge,
+    }),
+    [baseDiscoveryFilters.maxAge, baseDiscoveryFilters.minAge],
+  );
+  const agePresetModes = useMemo<Exclude<AgePresetMode, 'custom'>[]>(
+    () => ['focused', 'balanced', 'open'],
+    [],
+  );
+  const previousBaseAgeRef = useRef<{ minAge: number; maxAge: number }>({
+    minAge: baseDiscoveryFilters.minAge,
+    maxAge: baseDiscoveryFilters.maxAge,
+  });
+  const buildPersistedFiltersPayload = useCallback(
+    (next: VibesFilters) => ({
+      ...next,
+      __baseMinAge: baseDiscoveryFilters.minAge,
+      __baseMaxAge: baseDiscoveryFilters.maxAge,
+    }),
+    [baseDiscoveryFilters.maxAge, baseDiscoveryFilters.minAge],
+  );
+  const normalizePersistedFilters = useCallback(
+    (parsed: any): VibesFilters => {
+      const rawMinAge =
+        typeof parsed?.minAge === 'number' ? parsed.minAge : baseDiscoveryFilters.minAge;
+      const rawMaxAge =
+        typeof parsed?.maxAge === 'number' ? parsed.maxAge : baseDiscoveryFilters.maxAge;
+      const persistedBaseMinAge =
+        typeof parsed?.__baseMinAge === 'number' ? parsed.__baseMinAge : null;
+      const persistedBaseMaxAge =
+        typeof parsed?.__baseMaxAge === 'number' ? parsed.__baseMaxAge : null;
+      const matchesPersistedBase =
+        persistedBaseMinAge != null &&
+        persistedBaseMaxAge != null &&
+        rawMinAge === persistedBaseMinAge &&
+        rawMaxAge === persistedBaseMaxAge;
+      const looksLikeLegacyDefault =
+        persistedBaseMinAge == null &&
+        persistedBaseMaxAge == null &&
+        rawMinAge === 18 &&
+        rawMaxAge === 60 &&
+        (baseDiscoveryFilters.minAge !== 18 || baseDiscoveryFilters.maxAge !== 60);
+      const shouldRebaseAge =
+        (matchesPersistedBase &&
+          (persistedBaseMinAge !== baseDiscoveryFilters.minAge ||
+            persistedBaseMaxAge !== baseDiscoveryFilters.maxAge)) ||
+        looksLikeLegacyDefault;
+
+      return {
+        ...baseDiscoveryFilters,
+        verifiedOnly: Boolean(parsed?.verifiedOnly),
+        hasVideoOnly: Boolean(parsed?.hasVideoOnly),
+        activeOnly: Boolean(parsed?.activeOnly),
+        distanceFilterKm:
+          typeof parsed?.distanceFilterKm === 'number' ? parsed.distanceFilterKm : null,
+        minAge: shouldRebaseAge ? baseDiscoveryFilters.minAge : rawMinAge,
+        maxAge: shouldRebaseAge ? baseDiscoveryFilters.maxAge : rawMaxAge,
+        religionFilter: typeof parsed?.religionFilter === 'string' ? parsed.religionFilter : null,
+        minVibeScore: typeof parsed?.minVibeScore === 'number' ? parsed.minVibeScore : null,
+        minSharedInterests:
+          typeof parsed?.minSharedInterests === 'number' ? parsed.minSharedInterests : 0,
+        locationQuery: typeof parsed?.locationQuery === 'string' ? parsed.locationQuery : '',
+      };
+    },
+    [baseDiscoveryFilters],
   );
   const filtersLoadedKeyRef = useRef<string | null>(null);
   const introStorageKey = useMemo(
@@ -575,28 +687,24 @@ export default function ExploreScreen() {
         const raw = await AsyncStorage.getItem(filtersStorageKey);
         if (cancelled) return;
         if (!raw) {
-          if (Object.keys(relationshipCompassFilters).length === 0) return;
-          const compassDrivenFilters = {
-            verifiedOnly: Boolean(relationshipCompassFilters.verifiedOnly),
-            hasVideoOnly: false,
-            activeOnly: false,
-            distanceFilterKm:
-              typeof relationshipCompassFilters.distanceFilterKm === 'number'
-                ? relationshipCompassFilters.distanceFilterKm
-                : null,
-            minAge: 18,
-            maxAge: 60,
-            religionFilter: null,
-            minVibeScore: null,
-            minSharedInterests:
-              typeof relationshipCompassFilters.minSharedInterests === 'number'
-                ? relationshipCompassFilters.minSharedInterests
-                : 0,
-            locationQuery:
-              typeof relationshipCompassFilters.locationQuery === 'string'
-                ? relationshipCompassFilters.locationQuery
-                : '',
-          };
+          const compassDrivenFilters = Object.keys(relationshipCompassFilters).length === 0
+            ? baseDiscoveryFilters
+            : {
+                ...baseDiscoveryFilters,
+                verifiedOnly: Boolean(relationshipCompassFilters.verifiedOnly),
+                distanceFilterKm:
+                  typeof relationshipCompassFilters.distanceFilterKm === 'number'
+                    ? relationshipCompassFilters.distanceFilterKm
+                    : null,
+                minSharedInterests:
+                  typeof relationshipCompassFilters.minSharedInterests === 'number'
+                    ? relationshipCompassFilters.minSharedInterests
+                    : 0,
+                locationQuery:
+                  typeof relationshipCompassFilters.locationQuery === 'string'
+                    ? relationshipCompassFilters.locationQuery
+                    : '',
+              };
           setVerifiedOnly(compassDrivenFilters.verifiedOnly);
           setHasVideoOnly(compassDrivenFilters.hasVideoOnly);
           setActiveOnly(compassDrivenFilters.activeOnly);
@@ -612,31 +720,21 @@ export default function ExploreScreen() {
         }
         const parsed = JSON.parse(raw);
         if (!parsed || typeof parsed !== 'object') return;
+        const normalizedFilters = normalizePersistedFilters(parsed);
 
         // Keep it best-effort; any missing fields just fall back to defaults.
-        setVerifiedOnly(Boolean(parsed.verifiedOnly));
-        setHasVideoOnly(Boolean(parsed.hasVideoOnly));
-        setActiveOnly(Boolean(parsed.activeOnly));
-        setDistanceFilterKm(typeof parsed.distanceFilterKm === 'number' ? parsed.distanceFilterKm : null);
-        setMinAge(typeof parsed.minAge === 'number' ? parsed.minAge : 18);
-        setMaxAge(typeof parsed.maxAge === 'number' ? parsed.maxAge : 60);
-        setReligionFilter(typeof parsed.religionFilter === 'string' ? parsed.religionFilter : null);
-        setMinVibeScore(typeof parsed.minVibeScore === 'number' ? parsed.minVibeScore : null);
-        setMinSharedInterests(typeof parsed.minSharedInterests === 'number' ? parsed.minSharedInterests : 0);
-        setLocationQuery(typeof parsed.locationQuery === 'string' ? parsed.locationQuery : '');
+        setVerifiedOnly(normalizedFilters.verifiedOnly);
+        setHasVideoOnly(normalizedFilters.hasVideoOnly);
+        setActiveOnly(normalizedFilters.activeOnly);
+        setDistanceFilterKm(normalizedFilters.distanceFilterKm);
+        setMinAge(normalizedFilters.minAge);
+        setMaxAge(normalizedFilters.maxAge);
+        setReligionFilter(normalizedFilters.religionFilter);
+        setMinVibeScore(normalizedFilters.minVibeScore);
+        setMinSharedInterests(normalizedFilters.minSharedInterests);
+        setLocationQuery(normalizedFilters.locationQuery);
 
-        applyFilters({
-          verifiedOnly: Boolean(parsed.verifiedOnly),
-          hasVideoOnly: Boolean(parsed.hasVideoOnly),
-          activeOnly: Boolean(parsed.activeOnly),
-          distanceFilterKm: typeof parsed.distanceFilterKm === 'number' ? parsed.distanceFilterKm : null,
-          minAge: typeof parsed.minAge === 'number' ? parsed.minAge : 18,
-          maxAge: typeof parsed.maxAge === 'number' ? parsed.maxAge : 60,
-          religionFilter: typeof parsed.religionFilter === 'string' ? parsed.religionFilter : null,
-          minVibeScore: typeof parsed.minVibeScore === 'number' ? parsed.minVibeScore : null,
-          minSharedInterests: typeof parsed.minSharedInterests === 'number' ? parsed.minSharedInterests : 0,
-          locationQuery: typeof parsed.locationQuery === 'string' ? parsed.locationQuery : '',
-        });
+        applyFilters(normalizedFilters);
       } catch {
         // ignore
       }
@@ -645,7 +743,72 @@ export default function ExploreScreen() {
     return () => {
       cancelled = true;
     };
-  }, [applyFilters, filtersStorageKey, relationshipCompassFilters]);
+  }, [applyFilters, baseDiscoveryFilters, filtersStorageKey, normalizePersistedFilters, relationshipCompassFilters]);
+
+  useEffect(() => {
+    if (!filtersStorageKey) return;
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(filtersStorageKey);
+        if (cancelled || raw) return;
+        setMinAge(baseDiscoveryFilters.minAge);
+        setMaxAge(baseDiscoveryFilters.maxAge);
+        applyFilters(baseDiscoveryFilters);
+      } catch {
+        // ignore
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [applyFilters, baseDiscoveryFilters, filtersStorageKey]);
+
+  useEffect(() => {
+    const previousBaseAge = previousBaseAgeRef.current;
+    if (
+      previousBaseAge.minAge === baseDiscoveryFilters.minAge &&
+      previousBaseAge.maxAge === baseDiscoveryFilters.maxAge
+    ) {
+      return;
+    }
+
+    previousBaseAgeRef.current = {
+      minAge: baseDiscoveryFilters.minAge,
+      maxAge: baseDiscoveryFilters.maxAge,
+    };
+
+    if (!appliedFilters) return;
+
+    const wasUsingPreviousBaseAge =
+      appliedFilters.minAge === previousBaseAge.minAge &&
+      appliedFilters.maxAge === previousBaseAge.maxAge;
+
+    if (!wasUsingPreviousBaseAge) return;
+
+    const nextFilters: VibesFilters = {
+      ...appliedFilters,
+      minAge: baseDiscoveryFilters.minAge,
+      maxAge: baseDiscoveryFilters.maxAge,
+    };
+
+    setMinAge(nextFilters.minAge);
+    setMaxAge(nextFilters.maxAge);
+    applyFilters(nextFilters);
+
+    if (filtersStorageKey) {
+      AsyncStorage.setItem(filtersStorageKey, JSON.stringify(buildPersistedFiltersPayload(nextFilters))).catch(() => {});
+    }
+  }, [
+    appliedFilters,
+    applyFilters,
+    baseDiscoveryFilters.maxAge,
+    baseDiscoveryFilters.minAge,
+    buildPersistedFiltersPayload,
+    filtersStorageKey,
+  ]);
 
   const queueRefreshMatches = useCallback(() => {
     if (refreshDebounceRef.current) {
@@ -920,6 +1083,7 @@ export default function ExploreScreen() {
   const hasOtherActiveMoments = prioritizedMomentUsers.length + otherMomentUsers.length > 0;
   const showMomentsEmptyState = !hasOtherActiveMoments && !hasMyActiveMoment;
   const momentUsersWithContent = useMemo(() => momentUsers.filter((u) => u.moments.length > 0), [momentUsers]);
+  const hasMomentsHeaderOnly = Boolean(user?.id) && momentUsersWithContent.length === 0;
   const hasCompactMomentRail = momentUsersWithContent.length > 0 && momentUsersWithContent.length <= 3;
   const shouldShowFloatingMoments = Boolean(user?.id && !showPracticeWalkthrough && momentUsersWithContent.length > 0);
 
@@ -1585,7 +1749,7 @@ export default function ExploreScreen() {
 
     // Persist for a "premium" feel (your preferences stick).
     if (filtersStorageKey) {
-      AsyncStorage.setItem(filtersStorageKey, JSON.stringify(next)).catch(() => {});
+      AsyncStorage.setItem(filtersStorageKey, JSON.stringify(buildPersistedFiltersPayload(next))).catch(() => {});
     }
   };
 
@@ -1609,30 +1773,19 @@ export default function ExploreScreen() {
   }, [appliedFilters, applyFilters, filtersStorageKey, hasAdvancedFilters]);
 
   const syncFilterDraftFromApplied = useCallback(() => {
-    const base = appliedFilters ?? {
-      verifiedOnly: false,
-      hasVideoOnly: false,
-      activeOnly: false,
-      distanceFilterKm: null,
-      minAge: 18,
-      maxAge: 60,
-      religionFilter: null,
-      minVibeScore: null,
-      minSharedInterests: 0,
-      locationQuery: '',
-    };
+    const base = appliedFilters ?? baseDiscoveryFilters;
 
     setVerifiedOnly(Boolean(base.verifiedOnly));
     setHasVideoOnly(Boolean(base.hasVideoOnly));
     setActiveOnly(Boolean(base.activeOnly));
     setDistanceFilterKm(base.distanceFilterKm ?? null);
-    setMinAge(typeof base.minAge === 'number' ? base.minAge : 18);
-    setMaxAge(typeof base.maxAge === 'number' ? base.maxAge : 60);
+    setMinAge(typeof base.minAge === 'number' ? base.minAge : baseDiscoveryFilters.minAge);
+    setMaxAge(typeof base.maxAge === 'number' ? base.maxAge : baseDiscoveryFilters.maxAge);
     setReligionFilter(typeof base.religionFilter === 'string' ? base.religionFilter : null);
     setMinVibeScore(typeof base.minVibeScore === 'number' ? base.minVibeScore : null);
     setMinSharedInterests(typeof base.minSharedInterests === 'number' ? base.minSharedInterests : 0);
     setLocationQuery(typeof base.locationQuery === 'string' ? base.locationQuery : '');
-  }, [appliedFilters]);
+  }, [appliedFilters, baseDiscoveryFilters]);
 
   useEffect(() => {
     if (filtersVisible) {
@@ -1670,30 +1823,19 @@ export default function ExploreScreen() {
     setHasVideoOnly(false);
     setActiveOnly(false);
     setDistanceFilterKm(null);
-    setMinAge(18);
-    setMaxAge(60);
+    setMinAge(baseDiscoveryFilters.minAge);
+    setMaxAge(baseDiscoveryFilters.maxAge);
     setReligionFilter(null);
     setMinVibeScore(null);
     setMinSharedInterests(0);
     setLocationQuery('');
 
-    applyFilters({
-      verifiedOnly: false,
-      hasVideoOnly: false,
-      activeOnly: false,
-      distanceFilterKm: null,
-      minAge: 18,
-      maxAge: 60,
-      religionFilter: null,
-      minVibeScore: null,
-      minSharedInterests: 0,
-      locationQuery: '',
-    });
+    applyFilters(baseDiscoveryFilters);
 
     if (filtersStorageKey) {
       AsyncStorage.removeItem(filtersStorageKey).catch(() => {});
     }
-  }, [applyFilters, filtersStorageKey]);
+  }, [applyFilters, baseDiscoveryFilters, filtersStorageKey]);
 
   const formatDistanceLabel = useCallback(
     (km: number) => {
@@ -1714,12 +1856,23 @@ export default function ExploreScreen() {
     if (minVibeScore != null) chips.push({ key: 'vibe', label: `Vibe ${minVibeScore}%+`, onClear: () => setMinVibeScore(null) });
     if (minSharedInterests > 0) chips.push({ key: 'shared', label: `${minSharedInterests}+ shared`, onClear: () => setMinSharedInterests(0) });
     if (distanceFilterKm != null) chips.push({ key: 'distance', label: `<= ${formatDistanceLabel(distanceFilterKm)}`, onClear: () => setDistanceFilterKm(null) });
-    if (minAge !== 18 || maxAge !== 60) chips.push({ key: 'age', label: `${minAge}-${maxAge}`, onClear: () => { setMinAge(18); setMaxAge(60); } });
+    if (minAge !== baseDiscoveryFilters.minAge || maxAge !== baseDiscoveryFilters.maxAge) {
+      chips.push({
+        key: 'age',
+        label: `${minAge}-${maxAge}`,
+        onClear: () => {
+          setMinAge(baseDiscoveryFilters.minAge);
+          setMaxAge(baseDiscoveryFilters.maxAge);
+        },
+      });
+    }
     if (religionFilter) chips.push({ key: 'religion', label: formatReligionLabel(religionFilter), onClear: () => setReligionFilter(null) });
     if (locationQuery.trim()) chips.push({ key: 'loc', label: `City: ${locationQuery.trim()}`, onClear: () => setLocationQuery('') });
     return chips;
   }, [
     activeOnly,
+    baseDiscoveryFilters.maxAge,
+    baseDiscoveryFilters.minAge,
     distanceFilterKm,
     formatDistanceLabel,
     hasVideoOnly,
@@ -1840,13 +1993,55 @@ export default function ExploreScreen() {
     }
   }, [draftFiltersForPreview, filtersVisible, momentBoostIds, previewBaseProfiles, profile, relationshipCompass, vibesSegment, viewerInterests]);
 
-  const roomSummary = useMemo(() => deriveRoomSummary(draftFiltersForPreview), [draftFiltersForPreview]);
+  const roomSummary = useMemo(
+    () => deriveRoomSummary(draftFiltersForPreview, ageFilterBaseline),
+    [ageFilterBaseline, draftFiltersForPreview],
+  );
   const compatibilityHint = useMemo(() => deriveCompatibilityHint(draftFiltersForPreview), [draftFiltersForPreview]);
   const previewTone = useMemo(
-    () => derivePreviewTone(draftPreviewCount, draftFiltersForPreview, previewBaseProfiles.length),
-    [draftFiltersForPreview, draftPreviewCount, previewBaseProfiles.length],
+    () => derivePreviewTone(draftPreviewCount, draftFiltersForPreview, previewBaseProfiles.length, ageFilterBaseline),
+    [ageFilterBaseline, draftFiltersForPreview, draftPreviewCount, previewBaseProfiles.length],
   );
+  const currentAgeRange = useMemo(
+    () => ({ min: minAge, max: maxAge }),
+    [maxAge, minAge],
+  );
+  const savedAgeRange = useMemo(
+    () => ({
+      min: baseDiscoveryFilters.minAge,
+      max: baseDiscoveryFilters.maxAge,
+    }),
+    [baseDiscoveryFilters.maxAge, baseDiscoveryFilters.minAge],
+  );
+  const agePresetMode = useMemo(
+    () =>
+      resolveAgePresetMode({
+        value: currentAgeRange,
+        userAge: typeof (profile as any)?.age === 'number' ? (profile as any).age : null,
+        savedRange: savedAgeRange,
+        absoluteMin: savedAgeRange.min,
+        absoluteMax: savedAgeRange.max,
+      }),
+    [currentAgeRange, profile, savedAgeRange],
+  );
+  const ageSupportCopy = useMemo(() => getAgePresetSupportCopy(agePresetMode), [agePresetMode]);
   const activePresetKey = useMemo(() => deriveActivePresetKey(draftFiltersForPreview), [draftFiltersForPreview]);
+
+  const handleAgePresetPress = useCallback(
+    (mode: Exclude<AgePresetMode, 'custom'>) => {
+      const nextRange = getAgeRangeForPreset({
+        mode,
+        userAge: typeof (profile as any)?.age === 'number' ? (profile as any).age : null,
+        savedRange: savedAgeRange,
+        absoluteMin: savedAgeRange.min,
+        absoluteMax: savedAgeRange.max,
+      });
+      setMinAge(nextRange.min);
+      setMaxAge(nextRange.max);
+      void Haptics.selectionAsync().catch(() => undefined);
+    },
+    [profile, savedAgeRange],
+  );
 
   const applyPreset = useCallback((presetKey: string) => {
     withAdvancedFilterGuard(() => {
@@ -1901,11 +2096,11 @@ export default function ExploreScreen() {
     if (appliedFilters.minVibeScore != null) n += 1;
     if ((appliedFilters.minSharedInterests || 0) > 0) n += 1;
     if (appliedFilters.distanceFilterKm != null) n += 1;
-    if (appliedFilters.minAge !== 18 || appliedFilters.maxAge !== 60) n += 1;
+    if (appliedFilters.minAge !== baseDiscoveryFilters.minAge || appliedFilters.maxAge !== baseDiscoveryFilters.maxAge) n += 1;
     if (appliedFilters.religionFilter) n += 1;
     if (appliedFilters.locationQuery && appliedFilters.locationQuery.trim()) n += 1;
     return n;
-  }, [appliedFilters]);
+  }, [appliedFilters, baseDiscoveryFilters.maxAge, baseDiscoveryFilters.minAge]);
 
   // Reset only when the tab changes. For ordinary feed refreshes, preserve the
   // user's position and only clamp when the list shrinks past the current card.
@@ -2424,7 +2619,11 @@ export default function ExploreScreen() {
                 layoutMetrics.isCompactWidth ? styles.momentsCapsuleFlowCompact : null,
                 {
                   marginTop: momentsCapsuleMetrics.capsuleMarginTop,
-                  marginBottom: hasCompactMomentRail ? 8 : momentsCapsuleMetrics.capsuleMarginBottom,
+                  marginBottom: hasCompactMomentRail
+                    ? Platform.OS === 'android' && (layoutMetrics.device.compactHeight || layoutMetrics.device.compactWidth)
+                      ? 24
+                      : 10
+                    : momentsCapsuleMetrics.capsuleMarginBottom,
                   opacity: floatingMomentsOpacity,
                   transform: [
                     { translateY: floatingMomentsTranslateY },
@@ -2467,16 +2666,18 @@ export default function ExploreScreen() {
               styles.stackWrapper,
               {
                 width: layoutMetrics.cardWidth,
-                height: layoutMetrics.cardHeight + layoutMetrics.stackBottomReserve,
+                height: layoutMetrics.cardHeight + vibesStackVisualReserve,
                 paddingHorizontal: 0,
-                paddingBottom: layoutMetrics.stackBottomReserve,
+                paddingBottom: vibesStackVisualReserve,
                 marginTop:
                   !showPracticeWalkthrough && renderFloatingMoments && user?.id
                     ? hasCompactMomentRail
                       ? 0
                       : -momentsCapsuleMetrics.capsuleOverlapAmount
-                    : layoutMetrics.device.compactHeight
-                      ? -12
+                    : hasMomentsHeaderOnly && Platform.OS === 'android' && (layoutMetrics.device.compactHeight || layoutMetrics.device.compactWidth)
+                      ? 14
+                      : layoutMetrics.device.compactHeight
+                        ? -12
                       : layoutMetrics.device.tallHeight
                         ? 4
                         : -6,
@@ -2563,7 +2764,7 @@ export default function ExploreScreen() {
             style={[
               styles.actionButtons,
               {
-                bottom: layoutMetrics.dockBottom,
+                bottom: Math.max(layoutMetrics.dockBottom, layoutMetrics.bottomNavReserve + vibesActionRailGap),
               },
             ]}
             pointerEvents="box-none"
@@ -3027,16 +3228,17 @@ export default function ExploreScreen() {
 
                   <View style={[styles.filterSectionCard, styles.filterSectionCardMixed]}>
                     <View style={styles.filterSectionHeader}>
-                      <Text style={styles.filterSectionEyebrow}>Reach</Text>
+                      <Text style={styles.filterSectionEyebrow}>Discovery range</Text>
                       <View style={styles.filterSectionTitleRow}>
-                        <Text style={styles.filterSectionTitle}>Distance and age</Text>
+                        <Text style={styles.filterSectionTitle}>Set reach, then shape compatibility</Text>
                         <View style={[styles.filterTierPill, styles.filterTierPillMixed]}>
-                          <Text style={[styles.filterTierPillText, styles.filterTierPillTextMixed]}>Mixed</Text>
+                          <Text style={[styles.filterTierPillText, styles.filterTierPillTextMixed]}>Flexible</Text>
                         </View>
                       </View>
-                      <Text style={styles.filterSectionBody}>Distance is Silver+. Age range stays free.</Text>
+                      <Text style={styles.filterSectionBody}>Distance stays practical. Age range stays personal.</Text>
                     </View>
                     <View style={styles.filterFieldGroup}>
+                    <Text style={styles.filterSubsectionEyebrow}>Reach</Text>
                     <Text style={styles.filterLabel}>Distance</Text>
                     <Text style={styles.filterHint}>{activeTab === 'nearby' ? 'Nearby tab only' : 'Switch to Nearby to use distance'}</Text>
                     <View style={styles.filterChipsRowWrap}>
@@ -3069,27 +3271,38 @@ export default function ExploreScreen() {
                       </TouchableOpacity>
                     </View>
                     </View>
-                    <View style={styles.filterFieldGroup}>
-                    <Text style={styles.filterLabel}>Age range</Text>
-                    <View style={styles.ageTopRow}>
-                      <View style={styles.ageRangePill}>
-                        <Text style={styles.ageRangeText}>{minAge} - {maxAge}</Text>
-                      </View>
+                    <View style={styles.filterSubsectionDivider} />
+                    <View style={[styles.filterFieldGroup, styles.ageFieldGroup]}>
+                    <Text style={styles.filterSubsectionEyebrow}>Compatibility</Text>
+                    <View style={styles.ageTitleRow}>
+                      <Text style={styles.ageSectionTitle}>Age range</Text>
                       <TouchableOpacity
-                        style={[styles.filterChip, styles.ageAnyChip]}
+                        style={styles.ageEditAction}
                         onPress={() => {
-                          setMinAge(18);
-                          setMaxAge(60);
+                          setFiltersVisible(false);
+                          setFiltersPanel('main');
+                          requestOpenProfileEdit();
+                          router.navigate({
+                            pathname: '/(tabs)/profile',
+                            params: { openEdit: String(Date.now()) },
+                          });
                         }}
                         activeOpacity={0.85}
+                        accessibilityRole="button"
+                        accessibilityLabel="Edit saved age preference"
                       >
-                        <Text style={styles.filterChipText}>Any</Text>
+                        <Text style={styles.ageEditActionText}>Edit</Text>
+                        <MaterialCommunityIcons name="chevron-right" size={15} color={theme.tint} />
                       </TouchableOpacity>
+                    </View>
+                    <View style={styles.ageHeroPanel}>
+                      <Text style={styles.ageHeroValue}>{formatAgeRangeValue(currentAgeRange)}</Text>
+                      <Text style={styles.ageHeroSupport}>{ageSupportCopy}</Text>
                     </View>
 
                     <PremiumRangeSlider
-                      min={18}
-                      max={99}
+                      min={baseDiscoveryFilters.minAge}
+                      max={baseDiscoveryFilters.maxAge}
                       step={1}
                       valueMin={minAge}
                       valueMax={maxAge}
@@ -3099,30 +3312,34 @@ export default function ExploreScreen() {
                       }}
                       theme={theme}
                       isDark={isDark}
+                      minLabel={String(minAge)}
+                      maxLabel={String(maxAge)}
                     />
-                    <View style={styles.filterChipsRowWrap}>
-                      {[
-                        { label: '18-25', min: 18, max: 25 },
-                        { label: '26-35', min: 26, max: 35 },
-                        { label: '36-45', min: 36, max: 45 },
-                        { label: '46+', min: 46, max: 99 },
-                      ].map((p) => {
-                        const active = minAge === p.min && maxAge === p.max;
+                    <View style={styles.agePresetRow}>
+                      {agePresetModes.map((mode) => {
+                        const active = agePresetMode === mode;
                         return (
                           <TouchableOpacity
-                            key={p.label}
-                            style={[styles.filterChip, active && styles.filterChipActive]}
-                            onPress={() => {
-                              setMinAge(p.min);
-                              setMaxAge(p.max);
-                            }}
+                            key={mode}
+                            style={[styles.agePresetChip, active && styles.agePresetChipActive]}
+                            onPress={() => handleAgePresetPress(mode)}
                             activeOpacity={0.85}
+                            accessibilityRole="button"
+                            accessibilityState={{ selected: active }}
+                            accessibilityLabel={`${formatAgePresetLabel(mode)} age range${active ? ', selected' : ''}`}
                           >
-                            <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>{p.label}</Text>
+                            <Text style={[styles.agePresetChipText, active && styles.agePresetChipTextActive]}>
+                              {formatAgePresetLabel(mode)}
+                            </Text>
                           </TouchableOpacity>
                         );
                       })}
                     </View>
+                    {agePresetMode === 'custom' ? (
+                      <Text style={styles.agePresetMeta}>Custom range inside your saved preference {savedAgeRangeLabel}.</Text>
+                    ) : (
+                      <Text style={styles.agePresetMeta}>Saved preference {savedAgeRangeLabel}.</Text>
+                    )}
                     </View>
                   </View>
 
@@ -3543,6 +3760,8 @@ function PremiumRangeSlider({
   step = 1,
   valueMin,
   valueMax,
+  minLabel,
+  maxLabel,
   onChange,
   theme,
   isDark,
@@ -3552,17 +3771,22 @@ function PremiumRangeSlider({
   step?: number;
   valueMin: number;
   valueMax: number;
+  minLabel?: string;
+  maxLabel?: string;
   onChange: (nextMin: number, nextMax: number) => void;
   theme: typeof Colors.light;
   isDark: boolean;
 }) {
   const [trackWidth, setTrackWidth] = useState(0);
+  const [activeThumb, setActiveThumb] = useState<'min' | 'max' | null>(null);
   const trackWidthRef = useRef(0);
   const boundsRef = useRef({ min, max });
   const stepRef = useRef(step);
   const valuesRef = useRef({ valueMin, valueMax });
   const startRef = useRef({ valueMin, valueMax });
   const onChangeRef = useRef(onChange);
+  const bubbleAnim = useRef(new Animated.Value(0)).current;
+  const lastHapticRef = useRef({ min: valueMin, max: valueMax });
 
   useEffect(() => {
     trackWidthRef.current = trackWidth;
@@ -3581,6 +3805,10 @@ function PremiumRangeSlider({
   }, [valueMin, valueMax]);
 
   useEffect(() => {
+    lastHapticRef.current = { min: valueMin, max: valueMax };
+  }, [valueMax, valueMin]);
+
+  useEffect(() => {
     onChangeRef.current = onChange;
   }, [onChange]);
 
@@ -3595,12 +3823,40 @@ function PremiumRangeSlider({
 
   const snapClamp = (v: number, lo: number, hi: number) => clamp(snap(v), lo, hi);
 
+  const showBubble = useCallback((thumb: 'min' | 'max') => {
+    setActiveThumb(thumb);
+    Animated.timing(bubbleAnim, {
+      toValue: 1,
+      duration: 160,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [bubbleAnim]);
+
+  const hideBubble = useCallback(() => {
+    Animated.timing(bubbleAnim, {
+      toValue: 0,
+      duration: 140,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) setActiveThumb(null);
+    });
+  }, [bubbleAnim]);
+
+  const emitSelectionHaptic = useCallback((thumb: 'min' | 'max', nextValue: number) => {
+    if (lastHapticRef.current[thumb] === nextValue) return;
+    lastHapticRef.current[thumb] = nextValue;
+    void Haptics.selectionAsync().catch(() => undefined);
+  }, []);
+
   const minPan = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
       onPanResponderGrant: () => {
         startRef.current = { ...valuesRef.current };
+        showBubble('min');
       },
       onPanResponderMove: (_evt, gesture) => {
         const w = trackWidthRef.current;
@@ -3610,8 +3866,12 @@ function PremiumRangeSlider({
         const delta = gesture.dx / pxPerValue;
         const nextMin = startRef.current.valueMin + delta;
         const maxAllowed = valuesRef.current.valueMax;
-        onChangeRef.current(snapClamp(nextMin, bMin, maxAllowed), maxAllowed);
+        const snappedMin = snapClamp(nextMin, bMin, maxAllowed);
+        emitSelectionHaptic('min', snappedMin);
+        onChangeRef.current(snappedMin, maxAllowed);
       },
+      onPanResponderRelease: hideBubble,
+      onPanResponderTerminate: hideBubble,
     }),
   ).current;
 
@@ -3621,6 +3881,7 @@ function PremiumRangeSlider({
       onMoveShouldSetPanResponder: () => true,
       onPanResponderGrant: () => {
         startRef.current = { ...valuesRef.current };
+        showBubble('max');
       },
       onPanResponderMove: (_evt, gesture) => {
         const w = trackWidthRef.current;
@@ -3630,8 +3891,12 @@ function PremiumRangeSlider({
         const delta = gesture.dx / pxPerValue;
         const nextMax = startRef.current.valueMax + delta;
         const minAllowed = valuesRef.current.valueMin;
-        onChangeRef.current(minAllowed, snapClamp(nextMax, minAllowed, bMax));
+        const snappedMax = snapClamp(nextMax, minAllowed, bMax);
+        emitSelectionHaptic('max', snappedMax);
+        onChangeRef.current(minAllowed, snappedMax);
       },
+      onPanResponderRelease: hideBubble,
+      onPanResponderTerminate: hideBubble,
     }),
   ).current;
 
@@ -3641,23 +3906,61 @@ function PremiumRangeSlider({
   const clampedMinPos = clamp(minPos, 0, trackWidth);
   const clampedMaxPos = clamp(maxPos, 0, trackWidth);
 
-  const thumbSize = 28;
-  const trackH = 6;
-  const trackBg = isDark ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.10)';
+  const thumbSize = 32;
+  const trackH = 4;
+  const trackBg = isDark ? 'rgba(244,235,221,0.10)' : 'rgba(7,30,34,0.10)';
   const activeBg = theme.tint;
-  const thumbBg = isDark ? '#0b1220' : '#fff';
-  const thumbBorder = isDark ? 'rgba(255,255,255,0.16)' : 'rgba(15,23,42,0.10)';
+  const thumbBg = isDark ? '#0c1d22' : '#fffaf6';
+  const thumbBorder = isDark ? 'rgba(127,228,220,0.24)' : 'rgba(19,168,168,0.24)';
+  const bubbleX = activeThumb === 'min' ? clampedMinPos : clampedMaxPos;
+  const bubbleValue = activeThumb === 'min' ? valueMin : valueMax;
+  const bubbleTranslateY = bubbleAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [8, 0],
+  });
+  const bubbleScale = bubbleAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.94, 1],
+  });
 
   return (
-    <View style={{ marginTop: 10 }}>
+    <View style={{ marginTop: 6 }}>
       <View
-        style={{ paddingHorizontal: thumbSize / 2, paddingVertical: 8 }}
+        style={{ paddingHorizontal: thumbSize / 2, paddingVertical: 6 }}
         onLayout={(e) => {
           const w = e.nativeEvent.layout.width - thumbSize; // remove padding on both sides
           setTrackWidth(Math.max(0, Math.round(w)));
         }}
       >
         <View style={{ height: Math.max(thumbSize, 34), justifyContent: 'center' }}>
+          {activeThumb ? (
+            <Animated.View
+              pointerEvents="none"
+              style={{
+                position: 'absolute',
+                left: thumbSize / 2 + bubbleX - 24,
+                top: -38,
+                minWidth: 48,
+                paddingHorizontal: 11,
+                paddingVertical: 6,
+                borderRadius: 13,
+                backgroundColor: isDark ? 'rgba(19,168,168,0.92)' : '#0d6f72',
+                borderWidth: 1,
+                borderColor: isDark ? 'rgba(244,235,221,0.12)' : 'rgba(255,255,255,0.22)',
+                shadowColor: theme.tint,
+                shadowOpacity: 0.18,
+                shadowRadius: 8,
+                shadowOffset: { width: 0, height: 5 },
+                elevation: 3,
+                opacity: bubbleAnim,
+                transform: [{ translateY: bubbleTranslateY }, { scale: bubbleScale }],
+              }}
+            >
+              <Text style={{ color: '#F4EBDD', fontSize: 13, fontWeight: '800', textAlign: 'center' }}>
+                {bubbleValue}
+              </Text>
+            </Animated.View>
+          ) : null}
           <View
             style={{
               height: trackH,
@@ -3675,6 +3978,10 @@ function PremiumRangeSlider({
               height: trackH,
               borderRadius: 999,
               backgroundColor: activeBg,
+              shadowColor: theme.tint,
+              shadowOpacity: isDark ? 0.18 : 0.12,
+              shadowRadius: 8,
+              shadowOffset: { width: 0, height: 2 },
             }}
           />
 
@@ -3691,14 +3998,19 @@ function PremiumRangeSlider({
               borderColor: thumbBorder,
               alignItems: 'center',
               justifyContent: 'center',
-              shadowColor: '#000',
-              shadowOpacity: isDark ? 0.25 : 0.12,
-              shadowRadius: 10,
-              shadowOffset: { width: 0, height: 6 },
-              elevation: 6,
+              shadowColor: theme.tint,
+              shadowOpacity: activeThumb === 'min' ? (isDark ? 0.18 : 0.12) : (isDark ? 0.06 : 0.04),
+              shadowRadius: activeThumb === 'min' ? 12 : 8,
+              shadowOffset: { width: 0, height: activeThumb === 'min' ? 7 : 4 },
+              elevation: activeThumb === 'min' ? 7 : 4,
             }}
+            accessible
+            accessibilityRole="adjustable"
+            accessibilityLabel={`Minimum age, ${valueMin}`}
+            accessibilityValue={{ min, max, now: valueMin }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
-            <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: activeBg, opacity: 0.9 }} />
+            <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: activeBg, opacity: 0.96 }} />
           </View>
 
           <View
@@ -3714,20 +4026,25 @@ function PremiumRangeSlider({
               borderColor: thumbBorder,
               alignItems: 'center',
               justifyContent: 'center',
-              shadowColor: '#000',
-              shadowOpacity: isDark ? 0.25 : 0.12,
-              shadowRadius: 10,
-              shadowOffset: { width: 0, height: 6 },
-              elevation: 6,
+              shadowColor: theme.tint,
+              shadowOpacity: activeThumb === 'max' ? (isDark ? 0.18 : 0.12) : (isDark ? 0.06 : 0.04),
+              shadowRadius: activeThumb === 'max' ? 12 : 8,
+              shadowOffset: { width: 0, height: activeThumb === 'max' ? 7 : 4 },
+              elevation: activeThumb === 'max' ? 7 : 4,
             }}
+            accessible
+            accessibilityRole="adjustable"
+            accessibilityLabel={`Maximum age, ${valueMax}`}
+            accessibilityValue={{ min, max, now: valueMax }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
-            <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: activeBg, opacity: 0.9 }} />
+            <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: activeBg, opacity: 0.96 }} />
           </View>
         </View>
 
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 }}>
-          <Text style={{ fontSize: 12, fontWeight: '700', color: theme.textMuted }}>{min}</Text>
-          <Text style={{ fontSize: 12, fontWeight: '700', color: theme.textMuted }}>{max}+</Text>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 }}>
+          <Text style={{ fontSize: 11.5, fontWeight: '700', color: theme.textMuted, opacity: 0.92 }}>{minLabel ?? valueMin}</Text>
+          <Text style={{ fontSize: 11.5, fontWeight: '700', color: theme.textMuted, opacity: 0.92 }}>{maxLabel ?? valueMax}</Text>
         </View>
       </View>
     </View>
@@ -4588,25 +4905,25 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
     filterSection: { marginTop: 12, marginBottom: 10 },
     filterSectionCard: {
       borderRadius: 20,
-      paddingHorizontal: 14,
-      paddingVertical: 14,
+      paddingHorizontal: 15,
+      paddingVertical: 15,
       borderWidth: 1,
       borderColor: cardBorder,
-      backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.72)',
-      gap: 12,
+      backgroundColor: isDark ? 'rgba(255,255,255,0.045)' : 'rgba(255,255,255,0.72)',
+      gap: 10,
       shadowColor,
-      shadowOpacity: isDark ? 0.1 : 0.05,
-      shadowRadius: 12,
-      shadowOffset: { width: 0, height: 8 },
-      elevation: 3,
+      shadowOpacity: isDark ? 0.08 : 0.05,
+      shadowRadius: 10,
+      shadowOffset: { width: 0, height: 7 },
+      elevation: 2,
     },
     filterSectionCardPremium: {
       borderColor: isDark ? 'rgba(17,197,198,0.15)' : 'rgba(214,178,132,0.22)',
       backgroundColor: isDark ? 'rgba(18,36,43,0.40)' : 'rgba(255,250,245,0.76)',
     },
     filterSectionCardMixed: {
-      borderColor: isDark ? 'rgba(243,199,132,0.16)' : 'rgba(229,190,138,0.26)',
-      backgroundColor: isDark ? 'rgba(52,44,28,0.36)' : 'rgba(255,250,242,0.76)',
+      borderColor: isDark ? 'rgba(214,184,120,0.14)' : 'rgba(229,190,138,0.20)',
+      backgroundColor: isDark ? 'rgba(34,30,23,0.28)' : 'rgba(255,251,245,0.70)',
     },
     filterSectionCardFree: {
       borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.05)',
@@ -4618,8 +4935,8 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
     filterSectionTitle: { fontSize: 17, lineHeight: 21, fontWeight: '800', color: theme.text },
     filterSectionBody: { fontSize: 12.5, lineHeight: 18, color: theme.textMuted },
     filterTierPill: {
-      paddingHorizontal: 10,
-      paddingVertical: 4,
+      paddingHorizontal: 9,
+      paddingVertical: 3,
       borderRadius: 999,
       borderWidth: 1,
       alignSelf: 'flex-start',
@@ -4633,31 +4950,45 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       borderColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(15,23,42,0.06)',
     },
     filterTierPillMixed: {
-      backgroundColor: isDark ? 'rgba(246,196,83,0.14)' : 'rgba(255,250,241,0.88)',
-      borderColor: isDark ? 'rgba(246,196,83,0.24)' : 'rgba(229,190,138,0.28)',
+      backgroundColor: isDark ? 'rgba(246,196,83,0.10)' : 'rgba(255,249,238,0.88)',
+      borderColor: isDark ? 'rgba(246,196,83,0.18)' : 'rgba(214,184,120,0.22)',
     },
-    filterTierPillText: { fontSize: 10.5, fontWeight: '800', letterSpacing: 0.4 },
+    filterTierPillText: { fontSize: 10, fontWeight: '800', letterSpacing: 0.45 },
     filterTierPillTextPremium: { color: isDark ? '#7fe4dc' : '#0b6b69' },
     filterTierPillTextFree: { color: theme.text },
-    filterTierPillTextMixed: { color: isDark ? '#f3c784' : '#8a5a09' },
+    filterTierPillTextMixed: { color: isDark ? '#e6c28a' : '#8a5a09' },
     filterFieldGroup: { gap: 6 },
+    filterSubsectionEyebrow: {
+      fontSize: 11,
+      fontWeight: '800',
+      letterSpacing: 1.15,
+      color: theme.tint,
+      textTransform: 'uppercase',
+      marginBottom: 2,
+    },
+    filterSubsectionDivider: {
+      height: 1,
+      backgroundColor: isDark ? 'rgba(244,235,221,0.06)' : 'rgba(7,30,34,0.07)',
+      marginVertical: 6,
+    },
     filterLabel: { fontSize: 14, fontWeight: '700', color: theme.text },
+    filterHelperText: { fontSize: 12, color: theme.textMuted, marginTop: 2 },
     filterHint: { fontSize: 12, color: theme.textMuted, marginTop: 2 },
     filterChipsRow: { flexDirection: 'row', marginTop: 8 },
     filterChipsRowWrap: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 6, gap: 8 },
     filterPresetRail: { paddingTop: 6, paddingBottom: 2, paddingRight: 8, gap: 10 },
     filterChip: {
-      paddingHorizontal: 13,
-      paddingVertical: 9,
-      borderRadius: 14,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 13,
       borderWidth: 1,
       borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(15,23,42,0.08)',
       marginRight: 0,
       backgroundColor: chipBg,
       shadowColor: shadowColor,
-      shadowOpacity: isDark ? 0.05 : 0.04,
-      shadowRadius: 8,
-      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: isDark ? 0.04 : 0.03,
+      shadowRadius: 6,
+      shadowOffset: { width: 0, height: 3 },
       elevation: 1,
     },
     filterPresetChip: { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#fff' },
@@ -4672,10 +5003,10 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       backgroundColor: theme.tint,
       borderColor: theme.tint,
       shadowColor: theme.tint,
-      shadowOpacity: isDark ? 0.18 : 0.14,
-      shadowRadius: 10,
-      shadowOffset: { width: 0, height: 6 },
-      elevation: 3,
+      shadowOpacity: isDark ? 0.14 : 0.10,
+      shadowRadius: 8,
+      shadowOffset: { width: 0, height: 4 },
+      elevation: 2,
     },
     filterChipDisabled: { opacity: 0.5 },
     filterChipText: { fontWeight: '700', color: theme.text },
@@ -4748,17 +5079,95 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
     filterInputsRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8 },
     filterInputWrapper: { flex: 1 },
     filterInput: { borderWidth: 1, borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(214,178,132,0.20)', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontWeight: '700', color: theme.text, backgroundColor: isDark ? 'rgba(8,18,28,0.68)' : 'rgba(255,255,255,0.74)', marginTop: 4 },
-    ageTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 },
-    ageRangePill: {
-      paddingHorizontal: 12,
-      paddingVertical: 8,
-      borderRadius: 999,
-      borderWidth: 1,
-      borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(214,178,132,0.18)',
-      backgroundColor: isDark ? pillBg : '#fff8f1',
+    ageFieldGroup: {
+      gap: 9,
+      paddingTop: 4,
     },
-    ageRangeText: { fontSize: 13, fontWeight: '800', color: theme.text },
-    ageAnyChip: { marginRight: 0 },
+    ageTitleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    ageSectionTitle: {
+      fontSize: 18,
+      lineHeight: 22,
+      fontWeight: '800',
+      color: theme.text,
+    },
+    ageEditAction: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 1,
+      minHeight: 34,
+      paddingHorizontal: 0,
+      alignSelf: 'flex-start',
+    },
+    ageEditActionText: {
+      fontSize: 13,
+      fontWeight: '700',
+      color: theme.tint,
+    },
+    ageHeroPanel: {
+      paddingHorizontal: 14,
+      paddingVertical: 13,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(244,235,221,0.06)' : 'rgba(7,30,34,0.07)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.028)' : 'rgba(255,255,255,0.48)',
+      gap: 4,
+    },
+    ageHeroValue: {
+      fontSize: 30,
+      lineHeight: 36,
+      fontWeight: '800',
+      letterSpacing: -0.8,
+      color: theme.text,
+    },
+    ageHeroSupport: {
+      fontSize: 12.5,
+      lineHeight: 17,
+      color: theme.textMuted,
+    },
+    agePresetRow: {
+      flexDirection: 'row',
+      gap: 6,
+      marginTop: 4,
+    },
+    agePresetChip: {
+      flex: 1,
+      minHeight: 40,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(244,235,221,0.10)' : 'rgba(7,30,34,0.10)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.028)' : 'rgba(255,255,255,0.56)',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 8,
+    },
+    agePresetChipActive: {
+      backgroundColor: isDark ? 'rgba(19,168,168,0.10)' : 'rgba(19,168,168,0.08)',
+      borderColor: isDark ? 'rgba(19,168,168,0.24)' : 'rgba(19,168,168,0.20)',
+      shadowColor: theme.tint,
+      shadowOpacity: isDark ? 0.08 : 0.06,
+      shadowRadius: 8,
+      shadowOffset: { width: 0, height: 3 },
+      elevation: 1,
+    },
+    agePresetChipText: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: theme.textMuted,
+    },
+    agePresetChipTextActive: {
+      color: theme.tint,
+    },
+    agePresetMeta: {
+      fontSize: 11,
+      lineHeight: 15,
+      color: theme.textMuted,
+      marginTop: 1,
+    },
     modalApplyButton: {
       minHeight: 48,
       alignItems: 'center',

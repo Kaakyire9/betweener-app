@@ -47,7 +47,13 @@ import {
   subscribeToOfflineMutationEvents,
 } from "@/lib/offline/mutation-queue";
 import { isLikelyNetworkError } from "@/lib/network";
-import { isLocalMediaUri, normalizeGalleryPhotoList, normalizeProfilePhotoUri } from "@/lib/profile/media";
+import { consumeOpenProfileEditRequest, requestOpenProfileEdit } from "@/lib/profile/edit-handoff";
+import {
+  isLocalMediaUri,
+  normalizeGalleryPhotoList,
+  normalizeProfilePhotoUri,
+} from "@/lib/profile/media";
+import { resolveProfileMediaDraft } from "@/lib/profile/media-studio";
 import { getPresenceDisplay } from "@/lib/presence";
 import {
   DISTANCE_UNIT_OPTIONS,
@@ -95,7 +101,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as AppleAuthentication from "expo-apple-authentication";
 import { makeRedirectUri } from "expo-auth-session";
-import { router, useLocalSearchParams } from "expo-router";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
@@ -170,6 +176,7 @@ export default function ProfileScreen() {
   WebBrowser.maybeCompleteAuthSession();
   const { signOut, user, profile, refreshProfile } = useAuth();
   const colorScheme = useColorScheme();
+  const [isScreenFocused, setIsScreenFocused] = useState(true);
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = colorScheme === 'dark';
   const params = useLocalSearchParams();
@@ -269,6 +276,7 @@ export default function ProfileScreen() {
   const [loadingInterests, setLoadingInterests] = useState(false);
   const [userPhotos, setUserPhotos] = useState<string[]>([]);
   const [displayAvatarUrl, setDisplayAvatarUrl] = useState<string | null>(null);
+  const [displayHeroImageUrl, setDisplayHeroImageUrl] = useState<string | null>(null);
   const [displayProfileVideo, setDisplayProfileVideo] = useState<string | null>(null);
   const scrollViewRef = useRef<ScrollView | null>(null);
   const promptEditorYRef = useRef(0);
@@ -712,16 +720,20 @@ export default function ProfileScreen() {
         setUserInterests((prev) => (prev.length === 0 ? (cached.interests as string[]) : prev));
       }
       const cachedAvatarUrl = normalizeProfilePhotoUri(cached.avatarUrl);
+      const cachedHeroImageUrl = normalizeProfilePhotoUri(cached.heroImageUrl);
       if (Array.isArray(cached.photos) && cached.photos.length > 0) {
         setUserPhotos((prev) =>
           prev.length === 0 ? normalizeGalleryPhotoList(cached.photos, cachedAvatarUrl) : prev,
         );
       }
       setDisplayAvatarUrl(cachedAvatarUrl || null);
-      const liveProfileVideo = String((profile as any)?.profile_video || (profile as any)?.profileVideo || '').trim();
-      if (cached.profileVideo && (isLocalMediaUri(cached.profileVideo) || liveProfileVideo)) {
+      setDisplayHeroImageUrl(cachedHeroImageUrl || null);
+      const liveProfileVideoSource = String(
+        (profile as any)?.profile_video || (profile as any)?.profileVideo || '',
+      ).trim();
+      if (cached.profileVideo && (isLocalMediaUri(cached.profileVideo) || liveProfileVideoSource)) {
         setDisplayProfileVideo(String(cached.profileVideo));
-      } else if (!liveProfileVideo) {
+      } else if (!liveProfileVideoSource) {
         setDisplayProfileVideo(null);
       }
       if (cached.stats) {
@@ -822,17 +834,17 @@ export default function ProfileScreen() {
     if (!cacheProfileId) return;
     const stableAvatarUrl = normalizeProfilePhotoUri(profile?.avatar_url);
     const stablePhotos = normalizeGalleryPhotoList((profile as any)?.photos || [], stableAvatarUrl);
-    const stableProfileVideo = String(
-      (profile as any)?.profile_video || (profile as any)?.profileVideo || ''
+    const stableProfileVideoSource = String(
+      (profile as any)?.profile_video || (profile as any)?.profileVideo || '',
     ).trim();
-    if (!stableAvatarUrl && stablePhotos.length === 0 && !stableProfileVideo) return;
+    if (!stableAvatarUrl && stablePhotos.length === 0 && !stableProfileVideoSource) return;
     let cancelled = false;
     void (async () => {
       const pendingMedia = user?.id ? await getPendingProfileMediaSyncMutation(user.id) : null;
       if (cancelled) return;
       setDisplayAvatarUrl((current) => (current && isLocalMediaUri(current) ? current : stableAvatarUrl || null));
       setDisplayProfileVideo((current) =>
-        current && isLocalMediaUri(current) ? current : stableProfileVideo || null,
+        current && isLocalMediaUri(current) ? current : stableProfileVideoSource || null,
       );
       writeMeSnapshot({
         avatarUrl:
@@ -846,7 +858,7 @@ export default function ProfileScreen() {
         profileVideo:
           pendingMedia?.payload.video?.localUri
             ? pendingMedia.payload.video.localUri
-            : (stableProfileVideo || null),
+            : (stableProfileVideoSource || null),
       });
     })();
     return () => {
@@ -937,25 +949,30 @@ export default function ProfileScreen() {
     try {
       const pendingMedia = await getPendingProfileMediaSyncMutation(user.id);
       const pendingAvatarUrl = pendingMedia?.payload.avatar?.localUri ?? profile?.avatar_url ?? null;
+      const pendingHeroImageUrl =
+        normalizeProfilePhotoUri(pendingMedia?.payload.heroImageUrl) ||
+        normalizeProfilePhotoUri((profile as any)?.hero_image_url) ||
+        null;
       const pendingPhotos = normalizeGalleryPhotoList(pendingMedia?.payload.photos || [], pendingAvatarUrl);
+      setDisplayHeroImageUrl(pendingHeroImageUrl);
 
       // First check if photos exist in profile.photos field
       const profilePhotos = normalizeGalleryPhotoList((profile as any)?.photos || [], profile?.avatar_url);
       if (profilePhotos.length > 0) {
         const nextPhotos = mergeUniqueMediaUris(profilePhotos, pendingPhotos);
         setUserPhotos(nextPhotos);
-        writeMeSnapshot({ photos: nextPhotos });
+        writeMeSnapshot({ photos: nextPhotos, heroImageUrl: pendingHeroImageUrl });
         return;
       }
 
       if (pendingPhotos.length > 0) {
         setUserPhotos(pendingPhotos);
-        writeMeSnapshot({ photos: pendingPhotos });
+        writeMeSnapshot({ photos: pendingPhotos, heroImageUrl: pendingHeroImageUrl });
         return;
       }
 
       setUserPhotos([]);
-      writeMeSnapshot({ photos: [] });
+      writeMeSnapshot({ photos: [], heroImageUrl: pendingHeroImageUrl });
     } catch (error) {
       console.error('Error loading photos:', error);
     }
@@ -1294,6 +1311,22 @@ export default function ProfileScreen() {
       router.replace('/(tabs)/profile');
     }
   }, [params.openVerification]);
+
+  useEffect(() => {
+    if (typeof params.openEdit === 'string' && params.openEdit.length > 0) {
+      requestOpenProfileEdit();
+      setShowEditModal(true);
+      router.replace('/(tabs)/profile');
+    }
+  }, [params.openEdit]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (consumeOpenProfileEditRequest()) {
+        setShowEditModal(true);
+      }
+    }, []),
+  );
 
   const loadDistanceUnit = useCallback(async () => {
     try {
@@ -2524,21 +2557,26 @@ export default function ProfileScreen() {
 
   const normalizedProfileAvatar = normalizeProfilePhotoUri(profile?.avatar_url);
   const normalizedDisplayAvatar = normalizeProfilePhotoUri(displayAvatarUrl);
-  const heroImageUri =
-    userPhotos[0]
-    || normalizedDisplayAvatar
-    || normalizedProfileAvatar
-    || '';
-  const avatarImageUri =
-    normalizedDisplayAvatar
-    || normalizedProfileAvatar
-    || userPhotos[0]
-    || '';
+  const normalizedDisplayHeroImage = normalizeProfilePhotoUri(displayHeroImageUrl);
+  const normalizedProfileHeroImage = normalizeProfilePhotoUri((profile as any)?.hero_image_url);
+  const rawPersistedProfileVideoSource = String(
+    (profile as any)?.profile_video || (profile as any)?.profileVideo || '',
+  ).trim();
+  const displayProfileVideoSource = String(displayProfileVideo || '').trim();
+  const profileVideoPresenceSource =
+    displayProfileVideoSource || rawPersistedProfileVideoSource || '';
+  const resolvedMediaDraft = resolveProfileMediaDraft({
+    avatarUrl: normalizedDisplayAvatar || normalizedProfileAvatar || '',
+    heroImageUrl: normalizedDisplayHeroImage || normalizedProfileHeroImage || '',
+    photos: userPhotos,
+    profileVideoUrl: profileVideoPresenceSource,
+  });
+  const heroImageUri = resolvedMediaDraft.heroImageUrl || '';
+  const avatarImageUri = resolvedMediaDraft.avatarUrl || resolvedMediaDraft.heroImageUrl || '';
   const heroVideoSource =
-    displayProfileVideo
-    || (profile as any)?.profile_video
-    || (profile as any)?.profileVideo
-    || '';
+    (displayProfileVideoSource && isLocalMediaUri(displayProfileVideoSource))
+      ? displayProfileVideoSource
+      : rawPersistedProfileVideoSource || displayProfileVideoSource || '';
   const heroVideoThumbnail =
     (profile as any)?.profile_video_thumbnail
     || (profile as any)?.profileVideoThumbnail
@@ -2681,6 +2719,15 @@ export default function ProfileScreen() {
   const [heroVideoUrl, setHeroVideoUrl] = useState<string | null>(null);
   const [introVideoOpen, setIntroVideoOpen] = useState(false);
 
+  useFocusEffect(
+    useCallback(() => {
+      setIsScreenFocused(true);
+      return () => {
+        setIsScreenFocused(false);
+      };
+    }, []),
+  );
+
   const timeStringToDate = useCallback((value: string) => {
     const [hour = '0', minute = '0'] = value.split(':');
     const date = new Date();
@@ -2739,37 +2786,28 @@ export default function ProfileScreen() {
         if (mounted) setHeroVideoUrl(source);
         return;
       }
-      const cachedLocal = await getOfflineVideoUri(source);
-      if (cachedLocal && mounted) {
-        setHeroVideoUrl(cachedLocal);
-      }
       if (source.startsWith('http')) {
-        if (!cachedLocal && mounted) {
+        if (mounted) {
           setHeroVideoUrl(source);
         }
-        const downloaded = await cacheOfflineVideo(source, source);
-        if (mounted && downloaded) {
-          setHeroVideoUrl(downloaded);
-        }
+        void cacheOfflineVideo(source, source);
         return;
       }
+      const cachedLocal = await getOfflineVideoUri(source);
       const { data, error } = await supabase.storage
         .from('profile-videos')
         .createSignedUrl(source, 3600);
       if (!mounted) return;
       if (error || !data?.signedUrl) {
-        if (!cachedLocal) {
+        if (cachedLocal) {
+          setHeroVideoUrl(cachedLocal);
+        } else {
           setHeroVideoUrl(null);
         }
         return;
       }
-      if (!cachedLocal) {
-        setHeroVideoUrl(data.signedUrl);
-      }
-      const downloaded = await cacheOfflineVideo(source, data.signedUrl);
-      if (mounted && downloaded) {
-        setHeroVideoUrl(downloaded);
-      }
+      setHeroVideoUrl(data.signedUrl);
+      void cacheOfflineVideo(source, data.signedUrl);
     };
     void resolveHeroVideo();
     return () => {
@@ -3402,11 +3440,14 @@ export default function ProfileScreen() {
         {/* Profile Header Section */}
         <View style={[styles.profileHeader, { backgroundColor: theme.background }]}>
           <MeProfileHero
-            theme={theme}
-            isDark={isDark}
-            heroVideoUrl={heroVideoUrl}
-            heroImageUri={heroImageUri}
-            hasHeroImage={hasHeroImage}
+              theme={theme}
+              isDark={isDark}
+              hasIntroVideo={Boolean(heroVideoSource)}
+              shouldPlayIntroVideo={isScreenFocused}
+              heroVideoUrl={heroVideoUrl}
+              heroVideoThumbnailUrl={heroVideoThumbnail}
+              heroImageUri={heroImageUri}
+              hasHeroImage={hasHeroImage}
             avatarImageUri={avatarImageUri}
             hasAvatarImage={hasAvatarImage}
             placeholderPalette={placeholderPalette}
@@ -3584,8 +3625,8 @@ export default function ProfileScreen() {
             <PhotoGallery
               photos={userPhotos}
               introVideoUrl={heroVideoUrl}
-              introVideoThumbnail={heroVideoThumbnail || avatarImageUri}
-              onOpenVideo={() => setIntroVideoOpen(true)}
+              introVideoThumbnail={heroVideoSource ? (heroVideoThumbnail || avatarImageUri) : null}
+              onOpenVideo={heroVideoUrl ? () => setIntroVideoOpen(true) : undefined}
               canEdit
               onAddPhoto={() => setShowEditModal(true)}
               onRemovePhoto={removePhoto}
@@ -4198,6 +4239,11 @@ export default function ProfileScreen() {
                 ? normalizeProfilePhotoUri(updatedProfile.__displayAvatarUrl)
                 : null,
             );
+            setDisplayHeroImageUrl(
+              updatedProfile?.__displayHeroImageUrl
+                ? normalizeProfilePhotoUri(updatedProfile.__displayHeroImageUrl)
+                : null,
+            );
             setDisplayProfileVideo(
               updatedProfile?.__displayProfileVideo
                 ? String(updatedProfile.__displayProfileVideo)
@@ -4212,6 +4258,7 @@ export default function ProfileScreen() {
               );
               writeMeSnapshot({
                 avatarUrl: updatedProfile.__displayAvatarUrl ?? null,
+                heroImageUrl: updatedProfile.__displayHeroImageUrl ?? null,
                 photos: normalizeGalleryPhotoList(
                   updatedProfile.__displayPhotos,
                   updatedProfile.__displayAvatarUrl ?? null,

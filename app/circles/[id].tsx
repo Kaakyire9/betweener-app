@@ -13,6 +13,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useResolvedProfileId } from '@/hooks/useResolvedProfileId';
 import { useAuth } from '@/lib/auth-context';
 import { getCircleScopeLabel } from '@/lib/circles/circle-display';
+import { getCircleLocationAffinity } from '@/lib/location/location-intelligence';
 import { endCircleLoveSeat, fetchCirclePulseDiscussionReadStates } from '@/lib/circles/pulse/circle-pulse-service';
 import { respondToCircleInvitation } from '@/lib/circles/circle-invitations';
 import { uploadImage } from '@/lib/image-upload';
@@ -95,6 +96,8 @@ type Circle = {
   host_note?: string | null;
   host_note_updated_at?: string | null;
   host_note_updated_by_profile_id?: string | null;
+  location_insight?: string | null;
+  location_insight_hydrated?: boolean | null;
 };
 
 type MemberRow = {
@@ -698,8 +701,33 @@ export default function CircleDetailScreen() {
       return query.eq('user_id', user!.id).maybeSingle();
     })();
 
-    const [{ data: circleRow }, { data: myMembership }] = await Promise.all([circlePromise, membershipPromise]);
-    const nextCircle = (circleRow as Circle) || null;
+    const circleLocationPromise = currentProfileId
+      ? db.rpc('get_circle_location_affinity' as any, {
+          p_profile_id: currentProfileId,
+          p_circle_id: circleId,
+          p_scope: 'my_country',
+        })
+      : Promise.resolve({ data: null, error: null });
+
+    const [{ data: circleRow }, { data: myMembership }, { data: circleLocationRows, error: circleLocationError }] = await Promise.all([
+      circlePromise,
+      membershipPromise,
+      circleLocationPromise,
+    ]);
+    const circleLocationRow = Array.isArray(circleLocationRows) ? circleLocationRows[0] : null;
+    const nextCircle = circleRow
+      ? ({
+          ...(circleRow as Circle),
+          location_insight:
+            typeof circleLocationRow?.short_text === 'string'
+              ? circleLocationRow.short_text
+              : ((circleRow as Circle).location_insight ?? null),
+          location_insight_hydrated:
+            currentProfileId != null && !circleLocationError
+              ? true
+              : ((circleRow as Circle).location_insight_hydrated ?? false),
+        } as Circle)
+      : null;
     const nextMembership = (myMembership as MemberRow) || null;
     setCircle(nextCircle);
     setMembership(nextMembership);
@@ -1532,6 +1560,13 @@ export default function CircleDetailScreen() {
       ? 'Request to join'
       : 'Join Circle';
   const memberCount = circle?.member_count ?? members.length;
+  const circleLocationInsight = useMemo(
+    () =>
+      circle?.location_insight_hydrated
+        ? circle.location_insight ?? null
+        : circle?.location_insight ?? getCircleLocationAffinity(circle, profile as any, 'my_country')?.shortText ?? null,
+    [circle, profile],
+  );
   const mastheadTitle = (() => {
     const shortDescription = normalizeCopy(circle?.short_description);
     if (!shortDescription || isSameCopy(shortDescription, circle?.name)) {
@@ -3834,6 +3869,9 @@ export default function CircleDetailScreen() {
             <View style={styles.trustCopy}>
               <Text style={styles.heroTitle}>{mastheadTitle}</Text>
               <Text style={styles.heroSubcopy}>{mastheadBody}</Text>
+              {circleLocationInsight ? (
+                <Text style={styles.heroLocationInsight}>{circleLocationInsight}</Text>
+              ) : null}
             </View>
           </View>
           <View style={styles.statsRow}>
@@ -5135,6 +5173,13 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     heroTitle: { color: theme.text, fontSize: 25, lineHeight: 31, fontFamily: 'PlayfairDisplay_700Bold' },
     heroSubcopy: { color: theme.textMuted, fontSize: 13, lineHeight: 21 },
+    heroLocationInsight: {
+      marginTop: 6,
+      color: theme.tint,
+      fontSize: 12,
+      lineHeight: 18,
+      fontWeight: '700',
+    },
     trustActionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
     inviteButton: {
       minHeight: 42,

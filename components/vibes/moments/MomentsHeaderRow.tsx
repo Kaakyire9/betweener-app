@@ -90,6 +90,12 @@ function MomentsHeaderRow({
         isEmpty ? styles.rowEmpty : null,
         compactEmptyState ? styles.rowEmptyCompact : null,
         {
+          marginBottom:
+            isEmpty && compactEmptyState
+              ? metrics.platform === "android"
+                ? 14
+                : 8
+              : 0,
           minHeight: isEmpty
             ? Math.max(40, metrics.headerHeight - (compactEmptyState ? 14 : 10))
             : metrics.headerHeight,

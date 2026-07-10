@@ -9,6 +9,10 @@ import {
 import { readMeProfileSnapshot } from '@/lib/offline/me-store';
 import { reconcileMomentRowsWithOfflineMutations } from '@/lib/offline/moment-mutation-reconciler';
 import { subscribeToOfflineMutationEvents } from '@/lib/offline/mutation-queue';
+import {
+  getLocationAffinityStrength,
+  getLocationConnectionInsight,
+} from '@/lib/location/location-intelligence';
 import { normalizeProfilePhotoUri } from '@/lib/profile/media';
 import { supabase } from '@/lib/supabase';
 import type { MomentMetadata } from '@/lib/moment-text-style';
@@ -36,6 +40,20 @@ export type MomentProfile = {
   full_name: string | null;
   avatar_url: string | null;
   photos?: string[] | null;
+  city?: string | null;
+  region?: string | null;
+  current_country?: string | null;
+  current_country_code?: string | null;
+  locality_geoname_id?: number | null;
+  locality_district?: string | null;
+  roots_visibility?: string | null;
+  roots_region?: string | null;
+  roots_locality?: string | null;
+  roots_locality_geoname_id?: number | null;
+  location_affinity_reason_code?: string | null;
+  location_affinity_strength?: number | null;
+  location_affinity_short_text?: string | null;
+  location_affinity_long_text?: string | null;
 };
 
 export type MomentUser = {
@@ -46,6 +64,8 @@ export type MomentUser = {
   moments: Moment[];
   latestMoment?: Moment;
   isOwn: boolean;
+  locationInsight?: string | null;
+  locationAffinityScore?: number;
 };
 
 type UseMomentsParams = {
@@ -55,7 +75,25 @@ type UseMomentsParams = {
     full_name?: string | null;
     avatar_url?: string | null;
     photos?: string[] | null;
+    city?: string | null;
+    region?: string | null;
+    current_country?: string | null;
+    current_country_code?: string | null;
+    locality_geoname_id?: number | null;
+    locality_district?: string | null;
+    roots_visibility?: string | null;
+    roots_region?: string | null;
+    roots_locality?: string | null;
+    roots_locality_geoname_id?: number | null;
   } | null;
+};
+
+const getMomentFreshnessScore = (moment?: Moment) => {
+  if (!moment?.created_at) return 0;
+  const createdAtMs = new Date(moment.created_at).getTime();
+  if (!Number.isFinite(createdAtMs)) return 0;
+  const hoursAgo = Math.max(0, (Date.now() - createdAtMs) / (1000 * 60 * 60));
+  return Math.max(0, 24 - hoursAgo) / 4;
 };
 
 const resolveMomentAvatarUrl = (profile?: {
@@ -71,6 +109,18 @@ const resolveMomentAvatarUrl = (profile?: {
 
 const hasUsableMomentProfileSnapshot = (profile?: MomentProfile | null) =>
   Boolean(profile?.full_name || resolveMomentAvatarUrl(profile));
+
+const hasMomentLocationSnapshot = (profile?: MomentProfile | null) =>
+  Boolean(
+    profile?.city ||
+      profile?.region ||
+      profile?.current_country ||
+      profile?.current_country_code ||
+      profile?.locality_geoname_id != null ||
+      profile?.roots_region ||
+      profile?.roots_locality ||
+      profile?.roots_locality_geoname_id != null,
+  );
 
 async function primeInteractedMomentSnapshots(params: {
   currentUserId: string;
@@ -161,7 +211,7 @@ async function primeInteractedMomentSnapshots(params: {
   if (missingProfileUserIds.length > 0) {
     const { data: interactionProfiles } = await supabase
       .from('profiles')
-      .select('id,user_id,full_name,avatar_url,photos')
+      .select('id,user_id,full_name,avatar_url,photos,city,region,current_country,current_country_code,locality_geoname_id,locality_district,roots_visibility,roots_region,roots_locality,roots_locality_geoname_id')
       .in('user_id', missingProfileUserIds);
     (interactionProfiles || []).forEach((profile: any) => {
       if (!profile?.user_id) return;
@@ -274,8 +324,33 @@ export function useMoments({ currentUserId, currentUserProfile }: UseMomentsPara
       full_name: currentUserProfileName,
       avatar_url: currentUserProfileAvatarUrl,
       photos: currentUserProfilePhotos,
+      city: currentUserProfile?.city ?? null,
+      region: currentUserProfile?.region ?? null,
+      current_country: currentUserProfile?.current_country ?? null,
+      current_country_code: currentUserProfile?.current_country_code ?? null,
+      locality_geoname_id: currentUserProfile?.locality_geoname_id ?? null,
+      locality_district: currentUserProfile?.locality_district ?? null,
+      roots_visibility: currentUserProfile?.roots_visibility ?? null,
+      roots_region: currentUserProfile?.roots_region ?? null,
+      roots_locality: currentUserProfile?.roots_locality ?? null,
+      roots_locality_geoname_id: currentUserProfile?.roots_locality_geoname_id ?? null,
     }),
-    [currentUserProfileAvatarUrl, currentUserProfileId, currentUserProfileName, currentUserProfilePhotosSignature],
+    [
+      currentUserProfile?.city,
+      currentUserProfile?.current_country,
+      currentUserProfile?.current_country_code,
+      currentUserProfile?.locality_district,
+      currentUserProfile?.locality_geoname_id,
+      currentUserProfile?.region,
+      currentUserProfile?.roots_locality,
+      currentUserProfile?.roots_locality_geoname_id,
+      currentUserProfile?.roots_region,
+      currentUserProfile?.roots_visibility,
+      currentUserProfileAvatarUrl,
+      currentUserProfileId,
+      currentUserProfileName,
+      currentUserProfilePhotosSignature,
+    ],
   );
 
   useEffect(() => {
@@ -347,17 +422,30 @@ export function useMoments({ currentUserId, currentUserProfile }: UseMomentsPara
       }
 
       const existingProfiles = profilesByIdRef.current;
-      const missingUserIds = userIds.filter((id) => !hasUsableMomentProfileSnapshot(existingProfiles[id]));
+      const missingUserIds = userIds.filter((id) => {
+        const profile = existingProfiles[id];
+        return !hasUsableMomentProfileSnapshot(profile) || !hasMomentLocationSnapshot(profile);
+      });
       const nextProfiles: Record<string, MomentProfile> = {};
       userIds.forEach((userId) => {
         const existing = existingProfiles[userId];
         if (hasUsableMomentProfileSnapshot(existing)) nextProfiles[userId] = existing;
       });
 
+      const affinityMap: Record<
+        string,
+        {
+          reason_code?: string | null;
+          strength?: number | null;
+          short_text?: string | null;
+          long_text?: string | null;
+        }
+      > = {};
+
       if (missingUserIds.length > 0) {
         const { data: profiles, error: profilesErr } = await supabase
           .from('profiles')
-          .select('id, user_id, full_name, avatar_url, photos')
+          .select('id, user_id, full_name, avatar_url, photos, city, region, current_country, current_country_code, locality_geoname_id, locality_district, roots_visibility, roots_region, roots_locality, roots_locality_geoname_id')
           .in('user_id', missingUserIds);
 
         if (profilesErr) {
@@ -372,9 +460,65 @@ export function useMoments({ currentUserId, currentUserProfile }: UseMomentsPara
             full_name: p.full_name ?? null,
             avatar_url: resolveMomentAvatarUrl(p),
             photos: Array.isArray(p.photos) ? p.photos : null,
+            city: p.city ?? null,
+            region: p.region ?? null,
+            current_country: p.current_country ?? null,
+            current_country_code: p.current_country_code ?? null,
+            locality_geoname_id: p.locality_geoname_id ?? null,
+            locality_district: p.locality_district ?? null,
+            roots_visibility: p.roots_visibility ?? null,
+            roots_region: p.roots_region ?? null,
+            roots_locality: p.roots_locality ?? null,
+            roots_locality_geoname_id: p.roots_locality_geoname_id ?? null,
           };
         });
       }
+
+      if (currentUserProfileId && userIds.length > 0) {
+        const { data: affinityRows, error: affinityErr } = await supabase.rpc(
+          'compute_location_affinities' as any,
+          {
+            p_viewer_profile_id: currentUserProfileId,
+            p_candidate_profile_ids: userIds,
+          } as any,
+        );
+
+        if (affinityErr) {
+          console.log('[useMoments] location affinity fetch error', affinityErr);
+        } else if (Array.isArray(affinityRows)) {
+          (affinityRows as any[]).forEach((row) => {
+            if (!row?.profile_id) return;
+            affinityMap[String(row.profile_id)] = {
+              reason_code: row.reason_code ?? null,
+              strength:
+                typeof row.strength === 'number'
+                  ? row.strength
+                  : typeof row.strength === 'string'
+                    ? Number(row.strength)
+                    : null,
+              short_text: row.short_text ?? null,
+              long_text: row.long_text ?? null,
+            };
+          });
+        }
+      }
+
+      userIds.forEach((userId) => {
+        const profile = nextProfiles[userId];
+        if (!profile) return;
+        const affinity = affinityMap[userId];
+        nextProfiles[userId] = {
+          ...profile,
+          location_affinity_reason_code:
+            affinity?.reason_code ?? profile.location_affinity_reason_code ?? null,
+          location_affinity_strength:
+            affinity?.strength ?? profile.location_affinity_strength ?? null,
+          location_affinity_short_text:
+            affinity?.short_text ?? profile.location_affinity_short_text ?? null,
+          location_affinity_long_text:
+            affinity?.long_text ?? profile.location_affinity_long_text ?? null,
+        };
+      });
 
       profilesByIdRef.current = nextProfiles;
       setProfilesById(nextProfiles);
@@ -500,9 +644,20 @@ export function useMoments({ currentUserId, currentUserProfile }: UseMomentsPara
           moments: userMoments,
           latestMoment: userMoments[0],
           isOwn: false,
+          locationInsight: currentUserProfileSnapshot
+            ? getLocationConnectionInsight(currentUserProfileSnapshot, profile, 'moment')
+            : null,
+          locationAffinityScore: currentUserProfileSnapshot
+            ? getLocationAffinityStrength(currentUserProfileSnapshot, profile)
+            : 0,
         };
       })
       .sort((a, b) => {
+        const aFeedScore = getMomentFreshnessScore(a.latestMoment) + (a.locationAffinityScore ?? 0);
+        const bFeedScore = getMomentFreshnessScore(b.latestMoment) + (b.locationAffinityScore ?? 0);
+        if (Math.abs(bFeedScore - aFeedScore) > 0.15) {
+          return bFeedScore - aFeedScore;
+        }
         const aTime = a.latestMoment ? new Date(a.latestMoment.created_at).getTime() : 0;
         const bTime = b.latestMoment ? new Date(b.latestMoment.created_at).getTime() : 0;
         return bTime - aTime;

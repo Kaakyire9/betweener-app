@@ -1,5 +1,6 @@
 import {
   logSignupEvent,
+  setSignupOnboardingVariant,
   setPendingAuthMethod,
   setSignupIdentityHints,
   setSignupPhoneNumber,
@@ -9,8 +10,8 @@ import { supabase } from "@/lib/supabase";
 import * as AppleAuthentication from "expo-apple-authentication";
 import { makeRedirectUri } from "expo-auth-session";
 import * as WebBrowser from "expo-web-browser";
-import { useRouter } from "expo-router";
-import { useState } from "react";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { useEffect, useState } from "react";
 import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
@@ -48,7 +49,18 @@ const formatAppleFullName = (
 export default function SignupOptionsScreen() {
   WebBrowser.maybeCompleteAuthSession();
   const router = useRouter();
+  const params = useLocalSearchParams();
   const [loadingProvider, setLoadingProvider] = useState<string | null>(null);
+  const variantParam = (() => {
+    const raw = params?.variant;
+    if (typeof raw === "string") return raw;
+    if (Array.isArray(raw)) return raw[0];
+    return null;
+  })();
+
+  useEffect(() => {
+    void setSignupOnboardingVariant(variantParam);
+  }, [variantParam]);
 
   const getRedirectUrl = () =>
     makeRedirectUri({
@@ -143,7 +155,13 @@ export default function SignupOptionsScreen() {
   const handleEmailLink = async () => {
     await setPendingAuthMethod("otp");
     await logSignupEvent({ auth_method: "otp" });
-    router.push({ pathname: "/(auth)/magic-link", params: { mode: "signup" } });
+    router.push({
+      pathname: "/(auth)/magic-link",
+      params: {
+        mode: "signup",
+        ...(variantParam ? { variant: variantParam } : {}),
+      },
+    });
   };
 
   const theme = Colors.light;
@@ -213,13 +231,28 @@ export default function SignupOptionsScreen() {
       </Pressable>
 
       <Pressable
-        onPress={() => router.push("/(auth)/signup")}
+        onPress={() =>
+          router.push(
+            variantParam
+              ? { pathname: "/(auth)/signup", params: { variant: variantParam } }
+              : "/(auth)/signup"
+          )
+        }
         style={styles.secondaryLink}
       >
         <Text style={styles.secondaryText}>Prefer password? Use email and password</Text>
       </Pressable>
 
-        <Pressable onPress={() => router.replace("/(auth)/login")} style={styles.loginLink}>
+        <Pressable
+          onPress={() =>
+            router.replace(
+              variantParam
+                ? { pathname: "/(auth)/login", params: { variant: variantParam } }
+                : "/(auth)/login"
+            )
+          }
+          style={styles.loginLink}
+        >
           <Text style={styles.loginText}>Already have an account? Log in</Text>
         </Pressable>
 

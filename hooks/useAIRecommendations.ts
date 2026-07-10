@@ -995,6 +995,17 @@ export default function useAIRecommendations(
             .filter((row) => !Array.isArray(row?.interests) || row.interests.length === 0)
             .map((row) => row?.id)
             .filter(Boolean);
+          const idsNeedingLocationAffinity = rows
+            .filter(
+              (row) =>
+                row?.id &&
+                row?.location_affinity_reason_code == null &&
+                row?.location_affinity_strength == null &&
+                row?.location_affinity_short_text == null &&
+                row?.location_affinity_long_text == null,
+            )
+            .map((row) => row?.id)
+            .filter(Boolean);
 
           const profileMetaMap: Record<
             string,
@@ -1006,37 +1017,68 @@ export default function useAIRecommendations(
               current_country?: string | null;
               current_country_code?: string | null;
               location_precision?: string | null;
+              locality_geoname_id?: number | null;
+              locality_district?: string | null;
+              roots?: string[] | null;
+              roots_note?: string | null;
+              roots_visibility?: string | null;
+              roots_region?: string | null;
+              roots_locality?: string | null;
+              roots_locality_geoname_id?: number | null;
+              origin_country?: string | null;
+              origin_country_code?: string | null;
+            }
+          > = {};
+          const locationAffinityMap: Record<
+            string,
+            {
+              reason_code?: string | null;
+              strength?: number | null;
+              short_text?: string | null;
+              long_text?: string | null;
             }
           > = {};
           try {
             const interestsMap: Record<string, string[]> = {};
+            const interestsPromise =
+              idsNeedingInterests.length > 0
+                ? supabase
+                    .from('profile_interests')
+                    .select('profile_id, interests!inner(name)')
+                    .in('profile_id', idsNeedingInterests)
+                : Promise.resolve({ data: null, error: null } as any);
+            const profilePromise = supabase
+              .from('profiles')
+              .select('id, gender, city, location, region, current_country, current_country_code, location_precision, locality_geoname_id, locality_district, roots, roots_note, roots_visibility, roots_region, roots_locality, roots_locality_geoname_id, origin_country, origin_country_code')
+              .in('id', ids);
+            const affinityPromise =
+              userId && idsNeedingLocationAffinity.length > 0
+                ? supabase.rpc('compute_location_affinities' as any, {
+                    p_viewer_profile_id: userId,
+                    p_candidate_profile_ids: idsNeedingLocationAffinity,
+                  } as any)
+                : Promise.resolve({ data: null, error: null } as any);
 
-            if (idsNeedingInterests.length > 0) {
-              const { data: piData, error: piErr } = await supabase
-                .from('profile_interests')
-                .select('profile_id, interests!inner(name)')
-                .in('profile_id', idsNeedingInterests);
+            const [
+              { data: piData, error: piErr },
+              { data: profileRows, error: profileErr },
+              { data: affinityRows, error: affinityErr },
+            ] = await Promise.all([interestsPromise, profilePromise, affinityPromise]);
 
-              if (!piErr && Array.isArray(piData)) {
-                for (const row of piData as any[]) {
-                  const pid = row.profile_id;
-                  let arr: string[] = [];
-                  if (Array.isArray(row.interests)) {
-                    arr = row.interests.map((i: any) => i?.name).filter(Boolean);
-                  } else if (row.interests?.name) {
-                    arr = [row.interests.name];
-                  }
-                  if (!pid) continue;
-                  if (!interestsMap[pid]) interestsMap[pid] = [];
-                  interestsMap[pid] = [...interestsMap[pid], ...arr];
+            if (!piErr && Array.isArray(piData)) {
+              for (const row of piData as any[]) {
+                const pid = row.profile_id;
+                let arr: string[] = [];
+                if (Array.isArray(row.interests)) {
+                  arr = row.interests.map((i: any) => i?.name).filter(Boolean);
+                } else if (row.interests?.name) {
+                  arr = [row.interests.name];
                 }
+                if (!pid) continue;
+                if (!interestsMap[pid]) interestsMap[pid] = [];
+                interestsMap[pid] = [...interestsMap[pid], ...arr];
               }
             }
-
-            const { data: profileRows, error: profileErr } = await supabase
-              .from('profiles')
-              .select('id, gender, city, location, region, current_country, current_country_code, location_precision')
-              .in('id', ids);
 
             if (!profileErr && Array.isArray(profileRows)) {
               for (const row of profileRows as any[]) {
@@ -1049,6 +1091,33 @@ export default function useAIRecommendations(
                   current_country: row.current_country ?? null,
                   current_country_code: row.current_country_code ?? null,
                   location_precision: row.location_precision ?? null,
+                  locality_geoname_id: row.locality_geoname_id ?? null,
+                  locality_district: row.locality_district ?? null,
+                  roots: row.roots ?? null,
+                  roots_note: row.roots_note ?? null,
+                  roots_visibility: row.roots_visibility ?? null,
+                  roots_region: row.roots_region ?? null,
+                  roots_locality: row.roots_locality ?? null,
+                  roots_locality_geoname_id: row.roots_locality_geoname_id ?? null,
+                  origin_country: row.origin_country ?? null,
+                  origin_country_code: row.origin_country_code ?? null,
+                };
+              }
+            }
+
+            if (!affinityErr && Array.isArray(affinityRows)) {
+              for (const row of affinityRows as any[]) {
+                if (!row?.profile_id) continue;
+                locationAffinityMap[String(row.profile_id)] = {
+                  reason_code: row.reason_code ?? null,
+                  strength:
+                    typeof row.strength === 'number'
+                      ? row.strength
+                      : typeof row.strength === 'string'
+                        ? Number(row.strength)
+                        : null,
+                  short_text: row.short_text ?? null,
+                  long_text: row.long_text ?? null,
                 };
               }
             }
@@ -1066,6 +1135,36 @@ export default function useAIRecommendations(
               current_country: row?.current_country ?? profileMetaMap[String(row?.id)]?.current_country ?? null,
               current_country_code: row?.current_country_code ?? profileMetaMap[String(row?.id)]?.current_country_code ?? null,
               location_precision: row?.location_precision ?? profileMetaMap[String(row?.id)]?.location_precision ?? null,
+              locality_geoname_id: row?.locality_geoname_id ?? profileMetaMap[String(row?.id)]?.locality_geoname_id ?? null,
+              locality_district: row?.locality_district ?? profileMetaMap[String(row?.id)]?.locality_district ?? null,
+              roots: row?.roots ?? profileMetaMap[String(row?.id)]?.roots ?? null,
+              roots_note: row?.roots_note ?? profileMetaMap[String(row?.id)]?.roots_note ?? null,
+              roots_visibility: row?.roots_visibility ?? profileMetaMap[String(row?.id)]?.roots_visibility ?? null,
+              roots_region: row?.roots_region ?? profileMetaMap[String(row?.id)]?.roots_region ?? null,
+              roots_locality: row?.roots_locality ?? profileMetaMap[String(row?.id)]?.roots_locality ?? null,
+              roots_locality_geoname_id:
+                row?.roots_locality_geoname_id ??
+                profileMetaMap[String(row?.id)]?.roots_locality_geoname_id ??
+                null,
+              origin_country: row?.origin_country ?? profileMetaMap[String(row?.id)]?.origin_country ?? null,
+              origin_country_code:
+                row?.origin_country_code ?? profileMetaMap[String(row?.id)]?.origin_country_code ?? null,
+              location_affinity_reason_code:
+                row?.location_affinity_reason_code ??
+                locationAffinityMap[String(row?.id)]?.reason_code ??
+                null,
+              location_affinity_strength:
+                row?.location_affinity_strength ??
+                locationAffinityMap[String(row?.id)]?.strength ??
+                null,
+              location_affinity_short_text:
+                row?.location_affinity_short_text ??
+                locationAffinityMap[String(row?.id)]?.short_text ??
+                null,
+              location_affinity_long_text:
+                row?.location_affinity_long_text ??
+                locationAffinityMap[String(row?.id)]?.long_text ??
+                null,
             }));
           } catch {
             return rows;
@@ -1136,6 +1235,29 @@ export default function useAIRecommendations(
             current_country: (p as any).current_country,
             current_country_code: (p as any).current_country_code,
             location_precision: (p as any).location_precision,
+            locationAffinityReasonCode:
+              (p as any).locationAffinityReasonCode ??
+              (p as any).location_affinity_reason_code ??
+              null,
+            locationAffinityStrength:
+              toNum((p as any).locationAffinityStrength) ??
+              toNum((p as any).location_affinity_strength) ??
+              null,
+            locationInsight:
+              (p as any).locationInsight ??
+              (typeof (p as any).location_affinity_short_text === 'string'
+                ? (p as any).location_affinity_short_text
+                : null),
+            locality_geoname_id: (p as any).locality_geoname_id ?? null,
+            locality_district: (p as any).locality_district ?? null,
+            roots: (p as any).roots ?? null,
+            roots_note: (p as any).roots_note ?? null,
+            roots_visibility: (p as any).roots_visibility ?? null,
+            roots_region: (p as any).roots_region ?? null,
+            roots_locality: (p as any).roots_locality ?? null,
+            roots_locality_geoname_id: (p as any).roots_locality_geoname_id ?? null,
+            origin_country: (p as any).origin_country ?? null,
+            origin_country_code: (p as any).origin_country_code ?? null,
             recommendationReasons: p?.recommendation_reasons ?? undefined,
             premiumPlan:
               p?.recommendation_reasons?.premium_plan === 'GOLD' || p?.recommendation_reasons?.premium_plan === 'SILVER'
@@ -1434,9 +1556,9 @@ export default function useAIRecommendations(
         // due to missing columns (Postgres error 42703), retry with a
         // minimal safe column list to avoid falling back to mocks.
         const extendedSelect =
-          'id, user_id, full_name, age, bio, avatar_url, city, location, latitude, longitude, region, tribe, religion, gender, personality_type, looking_for, love_language, wants_children, smoking, online, is_active, last_active, verification_level, profile_video, current_country, current_country_code, location_precision, matchmaking_mode, discoverable_in_vibes, profile_completed, created_at';
+          'id, user_id, full_name, age, bio, avatar_url, city, location, latitude, longitude, region, tribe, religion, gender, personality_type, looking_for, love_language, wants_children, smoking, online, is_active, last_active, verification_level, profile_video, current_country, current_country_code, location_precision, locality_geoname_id, locality_district, roots, roots_note, roots_visibility, roots_region, roots_locality, roots_locality_geoname_id, origin_country, origin_country_code, matchmaking_mode, discoverable_in_vibes, profile_completed, created_at';
         const minimalSelect =
-          'id, user_id, full_name, age, bio, avatar_url, city, location, latitude, longitude, region, tribe, religion, gender, personality_type, looking_for, love_language, wants_children, smoking, online, is_active, last_active, verification_level, profile_video, current_country, current_country_code, location_precision, matchmaking_mode, discoverable_in_vibes, profile_completed, created_at';
+          'id, user_id, full_name, age, bio, avatar_url, city, location, latitude, longitude, region, tribe, religion, gender, personality_type, looking_for, love_language, wants_children, smoking, online, is_active, last_active, verification_level, profile_video, current_country, current_country_code, location_precision, locality_geoname_id, locality_district, roots, roots_note, roots_visibility, roots_region, roots_locality, roots_locality_geoname_id, origin_country, origin_country_code, matchmaking_mode, discoverable_in_vibes, profile_completed, created_at';
 
         let data: any[] | null = null;
         let error: any = null;
@@ -1590,6 +1712,16 @@ export default function useAIRecommendations(
               current_country: p.current_country,
               current_country_code: (p as any).current_country_code,
               location_precision: p.location_precision,
+              locality_geoname_id: (p as any).locality_geoname_id ?? null,
+              locality_district: (p as any).locality_district ?? null,
+              roots: (p as any).roots ?? null,
+              roots_note: (p as any).roots_note ?? null,
+              roots_visibility: (p as any).roots_visibility ?? null,
+              roots_region: (p as any).roots_region ?? null,
+              roots_locality: (p as any).roots_locality ?? null,
+              roots_locality_geoname_id: (p as any).roots_locality_geoname_id ?? null,
+              origin_country: (p as any).origin_country ?? null,
+              origin_country_code: (p as any).origin_country_code ?? null,
               matchmaking_mode: (p as any).matchmaking_mode ?? false,
               discoverable_in_vibes: (p as any).discoverable_in_vibes ?? true,
               profile_completed: (p as any).profile_completed,
@@ -1678,7 +1810,7 @@ export default function useAIRecommendations(
       // fetch optional profile fields
       const { data: profileData } = await supabase
         .from('profiles')
-              .select('id, city, location, avatar_url, photos, profile_video, latitude, longitude, region, tribe, religion, current_country, current_country_code, location_precision, personality_type, online, is_active, last_active, verification_level')
+              .select('id, city, location, avatar_url, photos, profile_video, latitude, longitude, region, tribe, religion, current_country, current_country_code, location_precision, locality_geoname_id, locality_district, roots, roots_note, roots_visibility, roots_region, roots_locality, roots_locality_geoname_id, origin_country, origin_country_code, personality_type, online, is_active, last_active, verification_level')
         .eq('id', profileId)
         .limit(1)
         .single();
@@ -1759,6 +1891,17 @@ export default function useAIRecommendations(
               ? (profileData?.current_country_code || undefined)
               : profileData?.current_country_code ?? (m as any).current_country_code,
             location_precision: profileData?.location_precision ?? (m as any).location_precision,
+            locality_geoname_id: profileData?.locality_geoname_id ?? (m as any).locality_geoname_id ?? null,
+            locality_district: profileData?.locality_district ?? (m as any).locality_district ?? null,
+            roots: profileData?.roots ?? (m as any).roots ?? null,
+            roots_note: profileData?.roots_note ?? (m as any).roots_note ?? null,
+            roots_visibility: profileData?.roots_visibility ?? (m as any).roots_visibility ?? null,
+            roots_region: profileData?.roots_region ?? (m as any).roots_region ?? null,
+            roots_locality: profileData?.roots_locality ?? (m as any).roots_locality ?? null,
+            roots_locality_geoname_id:
+              profileData?.roots_locality_geoname_id ?? (m as any).roots_locality_geoname_id ?? null,
+            origin_country: profileData?.origin_country ?? (m as any).origin_country ?? null,
+            origin_country_code: profileData?.origin_country_code ?? (m as any).origin_country_code ?? null,
           } as Match;
           if (areMatchObjectsEquivalent(m, merged)) {
             return m;

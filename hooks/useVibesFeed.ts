@@ -4,6 +4,7 @@ import { getSupabaseNetEvents, supabase } from '@/lib/supabase';
 import { getProfileCardContext } from '@/lib/profile-interest';
 import { captureMessage } from '@/lib/telemetry/sentry';
 import { applyInboundInterestLift, buildLocationSearchText, isRecentlyActive, parseDistanceKm, rerankVibesSegment, type VibesSegment } from '@/lib/vibes/discovery-logic';
+import { getLocationConnectionInsight } from '@/lib/location/location-intelligence';
 import { readVibesSnapshot, writeVibesSnapshot } from '@/lib/offline/vibes-store';
 import type { RelationshipCompass } from '@/lib/relationship-compass';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -711,6 +712,9 @@ export default function useVibesFeed({
       return {
         ...match,
         commonInterests: computeSharedInterests(viewerInterests, (match as any).interests),
+        locationInsight:
+          (match as any).locationInsight ??
+          getLocationConnectionInsight(viewerProfile, match, 'discovery'),
         premiumPlan: context?.premiumPlan ?? (match as any).premiumPlan ?? 'FREE',
         isNewHere: context?.isNewHere ?? (match as any).isNewHere ?? false,
         interestRelevanceScore:

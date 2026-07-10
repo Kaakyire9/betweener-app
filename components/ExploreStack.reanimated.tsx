@@ -136,9 +136,9 @@ const StackedCardView = memo(function StackedCardView({
   const stackedStyle = useAnimatedStyle(() => {
     const diff = index - currentIndex;
     if (diff <= 0) return { transform: [{ translateY: 0 }, { scale: 1 }], opacity: 1 } as any;
-    const ty = diff * 12;
-    const s = 1 - Math.min(diff * 0.04, 0.12);
-    const op = 1 - Math.min(diff * 0.08, 0.6);
+    const ty = diff === 1 ? 18 : 34;
+    const s = diff === 1 ? 0.972 : 0.944;
+    const op = diff === 1 ? 0.26 : 0.12;
     return {
       transform: [{ translateY: withTiming(ty, { duration: 300 }) }, { scale: withTiming(s, { duration: 300 }) }],
       opacity: withTiming(op, { duration: 300 }),
@@ -481,6 +481,7 @@ const ExploreStackReanimated = forwardRef<ExploreStackHandle, Props>(
       <View style={{ flex: 1, alignSelf: "stretch" }}>
         {list.map((m, i) => {
           if (i < currentIndex) return null;
+          if (i - currentIndex > 2) return null;
           const isActive = i === currentIndex;
           const zIndex = list.length - i;
 

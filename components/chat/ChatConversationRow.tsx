@@ -247,6 +247,8 @@ export function ChatConversationRow({
                   isLeftBetweener && styles.leftConversationName,
                   isUnread && styles.unreadName,
                 ]}
+                numberOfLines={1}
+                ellipsizeMode="tail"
               >
                 {item.matchedUser.name}
               </Text>
@@ -262,6 +264,9 @@ export function ChatConversationRow({
                   />
                 ) : null}
               </View>
+              <Text style={[styles.conversationTime, isUnread && styles.unreadTime]}>
+                {formattedTime}
+              </Text>
             </View>
 
             <View style={styles.conversationPreview}>
@@ -289,7 +294,6 @@ export function ChatConversationRow({
               </View>
 
               <View style={styles.conversationMeta}>
-                <Text style={styles.conversationTime}>{formattedTime}</Text>
                 {item.unreadCount > 0 ? (
                   <View style={styles.unreadBadge}>
                     <Text style={styles.unreadCount}>{item.unreadCount > 9 ? '9+' : item.unreadCount}</Text>

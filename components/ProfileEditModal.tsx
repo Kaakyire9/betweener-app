@@ -9,26 +9,52 @@ import {
   getPrioritizedCountries,
   type CountryOption,
 } from '@/lib/location/countries';
-import { isKnownGhanaRegionLabel, normalizeLocationValue } from '@/lib/location/location-display';
+import {
+  isAdministrativeLocationLabel,
+  isKnownGhanaRegionLabel,
+  normalizeLocationValue,
+} from '@/lib/location/location-display';
+import { normalizeGhanaCityTownValue, type GhanaCityTownSuggestion } from '@/lib/location/ghana-locality-shared';
+import {
+  getRegionSearchExamples,
+  getSuggestedLocalities,
+  readRecentGhanaLocalities,
+  saveRecentGhanaLocality,
+} from '@/lib/location/location-intelligence';
+import { searchGhanaLocalities } from '@/lib/location/search-ghana-localities';
 import { isLikelyNetworkError } from '@/lib/network';
 import {
+  drainOfflineMutationQueue,
   enqueueProfileInterestsUpdateMutation,
   enqueueProfileMediaSyncMutation,
 } from '@/lib/offline/mutation-queue';
 import { readMeProfileSnapshot, writeMeProfileSnapshot } from '@/lib/offline/me-store';
 import { cacheOfflineVideo, getOfflineVideoUri } from '@/lib/offline/video-store';
 import { showOpenSettingsPrompt } from '@/lib/permission-prompts';
-import { isLocalMediaUri, normalizeGalleryPhotoList, normalizeProfilePhotoUri } from '@/lib/profile/media';
+import {
+  isLocalMediaUri,
+  normalizeLocalMediaUri,
+  normalizeGalleryPhotoList,
+  normalizeProfilePhotoUri,
+} from '@/lib/profile/media';
+import {
+  appendGalleryMedia,
+  MAX_PROFILE_GALLERY_ITEMS,
+  moveGalleryMedia,
+  promoteGalleryMediaToHero,
+  removeGalleryMediaAt,
+  resolveProfileMediaDraft,
+} from '@/lib/profile/media-studio';
 import { RELIGION_LABELS, formatReligionLabel, isReligionEnumError, normalizeReligionForProfile } from '@/lib/profile/religion';
-import { getProfileInitials, hasProfileImage } from '@/lib/profile-placeholders';
+import { getProfileInitials } from '@/lib/profile-placeholders';
 import { type ResponsiveMetrics, useResponsiveMetrics } from '@/lib/responsive';
 import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { fetch as fetchNetInfo } from '@react-native-community/netinfo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
+import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import * as FileSystem from 'expo-file-system/legacy';
-import { VideoView, useVideoPlayer } from 'expo-video';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Video as VideoCompressor, getRealPath } from 'react-native-compressor';
 import {
@@ -36,6 +62,7 @@ import {
     Alert,
     DeviceEventEmitter,
     FlatList,
+    Image,
     Modal,
     Platform,
     ScrollView,
@@ -46,13 +73,19 @@ import {
     View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { VerificationBadge } from './VerificationBadge';
-import OfflineImage from './media/OfflineImage';
+import ProfileMediaFrameSheet from './profile/ProfileMediaFrameSheet';
+import ProfileMediaStudioSection from './profile/ProfileMediaStudioSection';
+import TrustVerificationCompactCard from './profile/TrustVerificationCompactCard';
 
 const DISTANCE_UNIT_KEY = 'distance_unit';
 const DISTANCE_UNIT_EVENT = 'distance_unit_changed';
 
 type DistanceUnit = 'auto' | 'km' | 'mi';
+type GhanaLocalityPickerRow =
+  | { type: 'section'; id: string; title: string }
+  | { type: 'action'; id: string; label: string; body: string }
+  | { type: 'empty'; id: string; title: string; body: string }
+  | { type: 'locality'; id: string; item: GhanaCityTownSuggestion };
 
 const MAX_PROFILE_VIDEO_DURATION_MS = 30_000;
 // Keep this aligned with the Supabase Storage bucket max object size for `profile-videos`.
@@ -292,6 +325,8 @@ const toFlagEmoji = (countryCode?: string | null) => {
 };
 
 const PROFILE_MEDIA_STAGING_FOLDER = 'betweener-profile-media';
+const HERO_CROP_ASPECT_RATIO = 16 / 9;
+const AVATAR_CROP_ASPECT_RATIO = 1;
 
 const inferMediaUploadMeta = (
   uri: string,
@@ -330,21 +365,90 @@ const persistProfileMediaUri = async (
   fallbackPrefix: string,
   fallbackContentType: string,
 ) => {
-  if (!isLocalMediaUri(uri)) return uri;
-  if (uri.includes(`/${PROFILE_MEDIA_STAGING_FOLDER}/`)) return uri;
+  const normalizedUri = normalizeLocalMediaUri(uri);
+  if (!isLocalMediaUri(normalizedUri)) return normalizedUri;
+  if (normalizedUri.includes(`/${PROFILE_MEDIA_STAGING_FOLDER}/`)) return normalizedUri;
 
   const directory = getProfileMediaStagingDirectory();
-  if (!directory) return uri;
+  if (!directory) return normalizedUri;
 
   try {
     await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
-    const meta = inferMediaUploadMeta(uri, fallbackPrefix, fallbackContentType);
+    const meta = inferMediaUploadMeta(normalizedUri, fallbackPrefix, fallbackContentType);
     const targetUri = `${directory}${Date.now()}-${meta.fileName}`;
-    await FileSystem.copyAsync({ from: uri, to: targetUri });
+    await FileSystem.copyAsync({ from: normalizedUri, to: targetUri });
     return targetUri;
   } catch {
-    return uri;
+    return normalizedUri;
   }
+};
+
+const prepareReadableProfileMediaUri = async (
+  uri: string,
+  fallbackPrefix: string,
+  fallbackContentType: string,
+) => {
+  if (isLocalMediaUri(uri)) return uri;
+
+  const directory = getProfileMediaStagingDirectory();
+  if (!directory) {
+    throw new Error('Profile media staging directory is unavailable');
+  }
+
+  await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
+  const meta = inferMediaUploadMeta(uri, fallbackPrefix, fallbackContentType);
+  const targetUri = `${directory}readable-${Date.now()}-${meta.fileName}`;
+  const result = await FileSystem.downloadAsync(uri, targetUri);
+
+  if (!result?.uri) {
+    throw new Error('Failed to prepare readable profile media');
+  }
+
+  return result.uri;
+};
+
+const getImageDimensions = (uri: string) =>
+  new Promise<{ width: number; height: number }>((resolve, reject) => {
+    Image.getSize(
+      uri,
+      (width, height) => resolve({ width, height }),
+      reject,
+    );
+  });
+
+const buildAspectCropRect = (
+  width: number,
+  height: number,
+  aspectRatio: number,
+  focusX: number,
+  focusY: number,
+) => {
+  if (width <= 0 || height <= 0) {
+    return { originX: 0, originY: 0, width: 1, height: 1 };
+  }
+
+  const currentRatio = width / height;
+  if (currentRatio > aspectRatio) {
+    const cropWidth = Math.max(1, Math.round(height * aspectRatio));
+    const availableX = Math.max(0, width - cropWidth);
+    const originX = Math.max(0, Math.min(availableX, Math.round(availableX * focusX)));
+    return {
+      originX,
+      originY: 0,
+      width: cropWidth,
+      height,
+    };
+  }
+
+  const cropHeight = Math.max(1, Math.round(width / aspectRatio));
+  const availableY = Math.max(0, height - cropHeight);
+  const originY = Math.max(0, Math.min(availableY, Math.round(availableY * focusY)));
+  return {
+    originX: 0,
+    originY,
+    width,
+    height: cropHeight,
+  };
 };
 
 interface ProfileEditModalProps {
@@ -353,27 +457,6 @@ interface ProfileEditModalProps {
   onSave: (updatedProfile: any) => void;
   onOpenVerification?: () => void;
 }
-
-const InlineVideoPreview = ({ uri, shouldPlay, styles }: { uri: string; shouldPlay: boolean; styles: ReturnType<typeof createStyles>; }) => {
-  const player = useVideoPlayer(uri, (p) => {
-    p.loop = true;
-    p.muted = true;
-    p.keepScreenOnWhilePlaying = false;
-    if (shouldPlay) {
-      try { p.play(); } catch {}
-    }
-  });
-
-  useEffect(() => {
-    if (shouldPlay) {
-      try { player.play(); } catch {}
-    } else {
-      try { player.pause(); } catch {}
-    }
-  }, [player, shouldPlay]);
-
-  return <VideoView style={styles.videoPreview} player={player} contentFit="cover" nativeControls={false} />;
-};
 
 type FieldPickerProps = {
   title: string;
@@ -464,9 +547,14 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [videoUploading, setVideoUploading] = useState(false);
+  const [mediaStudioBusy, setMediaStudioBusy] = useState(false);
+  const [mediaFrameRequest, setMediaFrameRequest] = useState<{
+    slot: 'avatar' | 'hero';
+    index: number;
+    sourceUri: string;
+  } | null>(null);
   const [videoUploadStage, setVideoUploadStage] = useState<string | null>(null);
   const [videoUploadProgress, setVideoUploadProgress] = useState<number | null>(null);
-  const [videoPreviewUrl, setVideoPreviewUrl] = useState<string | null>(null);
   const [visibilitySaving, setVisibilitySaving] = useState(false);
   
   // Original dropdown states
@@ -488,9 +576,16 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
   const [showLivingSituationPicker, setShowLivingSituationPicker] = useState(false);
   const [showPetsPicker, setShowPetsPicker] = useState(false);
   const [showLanguagesPicker, setShowLanguagesPicker] = useState(false);
+  const [showGhanaCityTownPicker, setShowGhanaCityTownPicker] = useState(false);
   const [countryModalVisible, setCountryModalVisible] = useState(false);
   const [countryPickerTarget, setCountryPickerTarget] = useState<'current' | 'origin'>('current');
   const [countrySearch, setCountrySearch] = useState('');
+  const [ghanaCityTownSearch, setGhanaCityTownSearch] = useState('');
+  const [ghanaCityTownSuggestions, setGhanaCityTownSuggestions] = useState<GhanaCityTownSuggestion[]>([]);
+  const [ghanaCityTownDefaults, setGhanaCityTownDefaults] = useState<GhanaCityTownSuggestion[]>([]);
+  const [ghanaCityTownRecent, setGhanaCityTownRecent] = useState<GhanaCityTownSuggestion[]>([]);
+  const [ghanaCityTownLoading, setGhanaCityTownLoading] = useState(false);
+  const [ghanaCityTownInitializing, setGhanaCityTownInitializing] = useState(false);
   
   // Original custom input states
   const [customHeight, setCustomHeight] = useState('');
@@ -539,9 +634,11 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     setShowLivingSituationPicker(false);
     setShowPetsPicker(false);
     setShowLanguagesPicker(false);
+    setShowGhanaCityTownPicker(false);
     setShowInterestsPicker(false);
     setCountryModalVisible(false);
     setCountrySearch('');
+    setGhanaCityTownSearch('');
   }, []);
 
   const closeProfileEditor = useCallback(() => {
@@ -555,6 +652,11 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       bio: '',
       gender: '',
       age: '',
+      min_age_interest: '18',
+      max_age_interest: '35',
+      city: '',
+      locality_geoname_id: null as number | null,
+      locality_district: '',
       region: '',
       tribe: '',
       roots: [] as string[],
@@ -570,6 +672,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     height: '',
     looking_for: '',
       avatar_url: '',
+      hero_image_url: '',
       photos: [] as string[],
       profile_video: '',
       matchmaking_mode: false,
@@ -614,6 +717,172 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     if (effectiveRegion && GHANA_REGIONS_OPTIONS.includes(effectiveRegion)) return true;
     return false;
   }, [effectiveCountryCode, effectiveCountryLabel, effectiveRegion]);
+  const ghanaCityTownPlaceholder = useMemo(() => {
+    const examples = getRegionSearchExamples(formData.region);
+    return examples.length > 0
+      ? `Search ${examples.join(', ')}...`
+      : 'Search city or town';
+  }, [formData.region]);
+  const ghanaCityTownSuggested = useMemo(
+    () =>
+      getSuggestedLocalities({
+        region: formData.region,
+        recent: ghanaCityTownRecent,
+        defaults: ghanaCityTownDefaults,
+        limit: 6,
+      }),
+    [formData.region, ghanaCityTownDefaults, ghanaCityTownRecent],
+  );
+  const ghanaCityTownPreview = useMemo(
+    () => ghanaCityTownDefaults.slice(0, 20),
+    [ghanaCityTownDefaults],
+  );
+
+  useEffect(() => {
+    if (!showGhanaCityTownPicker || !formIsGhanaProfile || !formData.region) {
+      setGhanaCityTownDefaults([]);
+      setGhanaCityTownRecent([]);
+      setGhanaCityTownInitializing(false);
+      return;
+    }
+
+    const startedAt = Date.now();
+    let active = true;
+    setGhanaCityTownInitializing(true);
+
+    void Promise.all([
+      readRecentGhanaLocalities(formData.region),
+      searchGhanaLocalities({
+        region: formData.region,
+        limit: 24,
+      }),
+    ])
+      .then(([nextRecent, nextDefaults]) => {
+        if (!active) return;
+        setGhanaCityTownRecent(nextRecent);
+        setGhanaCityTownDefaults(nextDefaults);
+      })
+      .finally(() => {
+        if (!active) return;
+        const remainingMs = Math.max(0, 120 - (Date.now() - startedAt));
+        setTimeout(() => {
+          if (active) setGhanaCityTownInitializing(false);
+        }, remainingMs);
+      });
+
+    return () => {
+      active = false;
+      setGhanaCityTownInitializing(false);
+    };
+  }, [formData.region, formIsGhanaProfile, showGhanaCityTownPicker]);
+
+  useEffect(() => {
+    if (!showGhanaCityTownPicker || !formIsGhanaProfile || !formData.region) {
+      setGhanaCityTownSuggestions([]);
+      setGhanaCityTownLoading(false);
+      return;
+    }
+
+    if (ghanaCityTownSearch.trim().length > 0 && ghanaCityTownSearch.trim().length < 2) {
+      setGhanaCityTownSuggestions([]);
+      setGhanaCityTownLoading(false);
+      return;
+    }
+
+    let active = true;
+    const timeout = setTimeout(async () => {
+      setGhanaCityTownLoading(true);
+      const nextSuggestions = await searchGhanaLocalities({
+        region: formData.region,
+        query: ghanaCityTownSearch,
+        limit: 24,
+      });
+      if (!active) return;
+      setGhanaCityTownSuggestions(nextSuggestions);
+      setGhanaCityTownLoading(false);
+    }, 220);
+
+    return () => {
+      active = false;
+      clearTimeout(timeout);
+    };
+  }, [formData.region, formIsGhanaProfile, ghanaCityTownSearch, showGhanaCityTownPicker]);
+  const ghanaCityTownRows = useMemo<GhanaLocalityPickerRow[]>(() => {
+    if (!showGhanaCityTownPicker) return [];
+
+    const query = ghanaCityTownSearch.trim();
+    const hasQuery = query.length >= 2;
+    const rows: GhanaLocalityPickerRow[] = [];
+    const seen = new Set<string>();
+    const pushLocality = (item: GhanaCityTownSuggestion) => {
+      const id =
+        item.geonameId != null
+          ? `locality:${item.geonameId}`
+          : `locality:${item.region}:${item.name}:${item.district || 'none'}`;
+      if (seen.has(id)) return;
+      seen.add(id);
+      rows.push({ type: 'locality', id, item });
+    };
+
+    if (!hasQuery) {
+      if (ghanaCityTownRecent.length > 0) {
+        rows.push({ type: 'section', id: 'section:recent', title: 'Recent' });
+        ghanaCityTownRecent.forEach(pushLocality);
+      }
+
+      if (ghanaCityTownSuggested.length > 0) {
+        rows.push({
+          type: 'section',
+          id: 'section:suggested',
+          title: `Suggested in ${formData.region}`,
+        });
+        ghanaCityTownSuggested.forEach(pushLocality);
+      }
+
+      if (ghanaCityTownPreview.length > 0) {
+        rows.push({ type: 'section', id: 'section:preview', title: 'All places' });
+        ghanaCityTownPreview.forEach(pushLocality);
+      }
+
+      if (rows.length === 0 && !ghanaCityTownInitializing) {
+        rows.push({
+          type: 'empty',
+          id: 'empty:initial',
+          title: 'Places are taking a moment to load',
+          body: 'You can keep the region only, or try a search in a second.',
+        });
+      }
+    } else if (ghanaCityTownSuggestions.length > 0) {
+      rows.push({ type: 'section', id: 'section:results', title: 'Search results' });
+      ghanaCityTownSuggestions.forEach(pushLocality);
+    } else if (!ghanaCityTownLoading) {
+      rows.push({
+        type: 'empty',
+        id: 'empty:results',
+        title: 'No town matched that search',
+        body: 'Try a broader spelling, or continue with the region only.',
+      });
+    }
+
+    rows.push({
+      type: 'action',
+      id: 'action:region-only',
+      label: `Continue with ${formData.region} only`,
+      body: 'City stays optional.',
+    });
+
+    return rows;
+  }, [
+    formData.region,
+    ghanaCityTownInitializing,
+    ghanaCityTownLoading,
+    ghanaCityTownPreview,
+    ghanaCityTownRecent,
+    ghanaCityTownSearch,
+    ghanaCityTownSuggested,
+    ghanaCityTownSuggestions,
+    showGhanaCityTownPicker,
+  ]);
   const languagesOptions = formIsGhanaProfile
     ? GHANA_LANGUAGES_OPTIONS
     : GLOBAL_LANGUAGES_OPTIONS;
@@ -628,7 +897,17 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     () => getProfileInitials(formData.full_name || profile?.full_name || user?.email || null),
     [formData.full_name, profile?.full_name, user?.email],
   );
-  const hasAvatarImage = hasProfileImage(formData.avatar_url);
+  const mediaDraft = useMemo(
+    () =>
+      resolveProfileMediaDraft({
+        avatarUrl: formData.avatar_url,
+        heroImageUrl: formData.hero_image_url,
+        photos: formData.photos,
+        profileVideoUrl: formData.profile_video,
+      }),
+    [formData.avatar_url, formData.hero_image_url, formData.photos, formData.profile_video],
+  );
+  const [previewVideoUrl, setPreviewVideoUrl] = useState<string | null>(null);
   const verificationLevel =
     (profile as any)?.verification_level
     ?? (profile as any)?.verificationLevel
@@ -646,7 +925,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     if (verificationStatus.hasPendingRequest) {
       return {
         title: 'In review',
-        subtitle: 'Your latest verification is under review. Track it here or add another method later.',
+        subtitle: 'Your latest verification is under review.',
         action: 'Status',
         icon: 'progress-clock' as const,
       };
@@ -656,8 +935,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       return {
         title: 'Fresh check requested',
         subtitle: verificationStatus.freshReviewReason
-          ? `${verificationStatus.freshReviewReason} Your current badge stays in place.`
-          : 'Betweener asked for a quick private trust refresh. Your current badge stays in place.',
+          ? `${verificationStatus.freshReviewReason} Your badge stays in place.`
+          : 'A quick trust refresh was requested. Your badge stays in place.',
         action: 'Refresh',
         icon: 'shield-refresh-outline' as const,
       };
@@ -667,8 +946,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       return {
         title: verificationLevel >= 2 ? 'Trust confirmed' : 'Verified profile',
         subtitle: verificationLevel >= 2
-          ? 'Your profile carries Betweener verification. Review methods, history, or add another signal.'
-          : 'Your profile already has a trust signal. Strengthen it with another method.',
+          ? 'Your profile is verified.'
+          : 'Your profile has a trust signal.',
         action: verificationLevel >= 2 ? 'Details' : 'Add more',
         icon: 'shield-check-outline' as const,
       };
@@ -679,7 +958,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         title: 'Needs another try',
         subtitle: verificationStatus.rejectionReason
           ? verificationStatus.rejectionReason
-          : 'One of your submissions was rejected. Resubmit with a stronger document or selfie check.',
+          : 'One of your submissions was rejected.',
         action: 'Resubmit',
         icon: 'alert-circle-outline' as const,
       };
@@ -687,7 +966,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
 
     return {
       title: 'Build trust on Betweener',
-      subtitle: 'Add a trust signal with a document, social proof, or selfie liveness.',
+      subtitle: 'Add a trust signal.',
       action: 'Start',
       icon: 'shield-plus-outline' as const,
     };
@@ -722,11 +1001,20 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       );
       const normalizedAvatarUrl = normalizeProfilePhotoUri(profile.avatar_url);
       const normalizedPhotos = normalizeGalleryPhotoList((profile as any).photos, normalizedAvatarUrl);
+      const normalizedHeroImageUrl = normalizeProfilePhotoUri((profile as any).hero_image_url);
+      const normalizedProfileVideoUrl = normalizeLocalMediaUri(
+        (profile as any).profile_video || (profile as any).profileVideo || '',
+      );
       setFormData({
         full_name: profile.full_name || '',
         bio: profile.bio || '',
         gender: ((profile as any).gender || '').toString().trim().toUpperCase(),
         age: profile.age?.toString() || '',
+        min_age_interest: String((profile as any).min_age_interest ?? 18),
+        max_age_interest: String((profile as any).max_age_interest ?? 35),
+        city: profile.city || '',
+        locality_geoname_id: (profile as any).locality_geoname_id ?? null,
+        locality_district: (profile as any).locality_district || '',
         region: profile.region || '',
         tribe: (profile as any).tribe || '',
         roots: normalizedRoots,
@@ -742,8 +1030,9 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         height: (profile as any).height || '',
           looking_for: (profile as any).looking_for || '',
           avatar_url: normalizedAvatarUrl,
+          hero_image_url: normalizedHeroImageUrl,
           photos: normalizedPhotos,
-          profile_video: (profile as any).profile_video || '',
+          profile_video: normalizedProfileVideoUrl,
           matchmaking_mode: Boolean((profile as any).matchmaking_mode),
           discoverable_in_vibes: (profile as any).discoverable_in_vibes ?? true,
           // HIGH PRIORITY fields
@@ -776,20 +1065,67 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       const snapshot = await readMeProfileSnapshot(profileId);
       if (cancelled || !snapshot) return;
       const cachedAvatarUrl = normalizeProfilePhotoUri(snapshot.avatarUrl);
+      const cachedHeroImageUrl = normalizeProfilePhotoUri(snapshot.heroImageUrl);
       const cachedPhotos = normalizeGalleryPhotoList(snapshot.photos, cachedAvatarUrl);
+      const cachedProfileVideo = normalizeLocalMediaUri(snapshot.profileVideo);
       setFormData((prev) => ({
         ...prev,
         photos: prev.photos.length > 0 ? normalizeGalleryPhotoList(prev.photos, prev.avatar_url) : cachedPhotos,
         avatar_url: prev.avatar_url || cachedAvatarUrl || '',
+        hero_image_url: prev.hero_image_url || cachedHeroImageUrl || '',
         profile_video:
           prev.profile_video ||
-          (snapshot.profileVideo && isLocalMediaUri(snapshot.profileVideo) ? snapshot.profileVideo : ''),
+          cachedProfileVideo,
       }));
     })();
     return () => {
       cancelled = true;
     };
   }, [profile, user?.id, visible]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const resolvePreviewVideo = async () => {
+      const source = normalizeLocalMediaUri(formData.profile_video);
+      if (!source) {
+        if (mounted) setPreviewVideoUrl(null);
+        return;
+      }
+
+      if (isLocalMediaUri(source)) {
+        if (mounted) setPreviewVideoUrl(source);
+        return;
+      }
+
+      if (source.startsWith('http')) {
+        if (mounted) setPreviewVideoUrl(source);
+        void cacheOfflineVideo(source, source);
+        return;
+      }
+
+      const cachedLocal = await getOfflineVideoUri(source);
+
+      const { data, error } = await supabase.storage
+        .from('profile-videos')
+        .createSignedUrl(source, 3600);
+
+      if (!mounted) return;
+      if (error || !data?.signedUrl) {
+        setPreviewVideoUrl(cachedLocal || null);
+        return;
+      }
+
+      setPreviewVideoUrl(data.signedUrl);
+      void cacheOfflineVideo(source, data.signedUrl);
+    };
+
+    void resolvePreviewVideo();
+
+    return () => {
+      mounted = false;
+    };
+  }, [formData.profile_video]);
 
   // One-time side loads per open (avoid clobbering edits if profile refreshes while modal is open).
   useEffect(() => {
@@ -811,55 +1147,10 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     void loadDistanceUnit();
   }, [visible]);
 
-  useEffect(() => {
-    let mounted = true;
-    const resolvePreview = async () => {
-      if (!visible) {
-        if (mounted) setVideoPreviewUrl(null);
-        return;
-      }
-      const path = formData.profile_video;
-      if (!path) {
-        if (mounted) setVideoPreviewUrl(null);
-        return;
-      }
-      const cachedLocalUri = await getOfflineVideoUri(path);
-      if (cachedLocalUri && mounted) {
-        setVideoPreviewUrl(cachedLocalUri);
-      }
-      if (isLocalMediaUri(path)) {
-        if (mounted) setVideoPreviewUrl(path);
-        return;
-      }
-      if (path.startsWith('http')) {
-        if (mounted) setVideoPreviewUrl(cachedLocalUri || path);
-        const warmed = await cacheOfflineVideo(path, path);
-        if (mounted && warmed) {
-          setVideoPreviewUrl(warmed);
-        }
-        return;
-      }
-      const { data, error } = await supabase.storage.from('profile-videos').createSignedUrl(path, 3600);
-      if (!mounted) return;
-      if (error || !data?.signedUrl) {
-        setVideoPreviewUrl(cachedLocalUri || null);
-        return;
-      }
-      if (!cachedLocalUri) {
-        setVideoPreviewUrl(data.signedUrl);
-      }
-      const warmed = await cacheOfflineVideo(path, data.signedUrl);
-      if (mounted && warmed) {
-        setVideoPreviewUrl(warmed);
-      }
-    };
-    void resolvePreview();
-    return () => {
-      mounted = false;
-    };
-  }, [formData.profile_video, visible]);
-
-  const handleInputChange = (field: string, value: string | string[]) => {
+  const handleInputChange = (
+    field: string,
+    value: string | string[] | number | null | boolean,
+  ) => {
     setFormData(prev => ({
       ...prev,
       [field]: value
@@ -910,6 +1201,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
   const getSnapshotProfileId = () => (profile as any)?.id || user?.id || null;
   const persistMeMediaSnapshot = (patch: {
     avatarUrl?: string | null;
+    heroImageUrl?: string | null;
     photos?: string[];
     profileVideo?: string | null;
   }) => {
@@ -918,39 +1210,215 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     void writeMeProfileSnapshot(snapshotProfileId, patch);
   };
 
+  const persistDraftSnapshot = (nextMedia: {
+    avatar_url?: string | null;
+    hero_image_url?: string | null;
+    photos?: string[];
+    profile_video?: string | null;
+  }) => {
+    const nextDraft = resolveProfileMediaDraft({
+      avatarUrl: nextMedia.avatar_url,
+      heroImageUrl: nextMedia.hero_image_url,
+      photos: nextMedia.photos,
+      profileVideoUrl: nextMedia.profile_video,
+    });
+    persistMeMediaSnapshot({
+      avatarUrl: nextDraft.avatarUrl || null,
+      heroImageUrl: nextDraft.heroImageUrl || null,
+      photos: nextDraft.gallery,
+      profileVideo: nextDraft.profileVideoUrl || null,
+    });
+  };
+
   const stageImageOffline = async (uri: string, isAvatar: boolean) => {
     const stableUri = await persistProfileMediaUri(uri, isAvatar ? 'profile-avatar' : 'profile-photo', 'image/jpeg');
     if (isAvatar) {
       setFormData(prev => {
         const nextPhotos = normalizeGalleryPhotoList(prev.photos, stableUri);
-        persistMeMediaSnapshot({ avatarUrl: stableUri, photos: nextPhotos });
-        return {
+        const nextState = {
           ...prev,
           avatar_url: stableUri,
           photos: nextPhotos,
         };
+        persistDraftSnapshot(nextState);
+        return nextState;
       });
     } else {
       setFormData(prev => {
         const nextPhotos = normalizeGalleryPhotoList([...prev.photos, stableUri], prev.avatar_url);
-        persistMeMediaSnapshot({ photos: nextPhotos });
-        return {
+        const nextState = {
           ...prev,
           photos: nextPhotos,
         };
+        persistDraftSnapshot(nextState);
+        return nextState;
       });
     }
-    Alert.alert('Saved offline', 'Photo added here. Tap Save and Betweener will upload it when your connection returns.');
+    Alert.alert('Photo staged', 'Photo added here. Tap Save to apply it to your profile.');
+  };
+
+  const stageGalleryBatch = async (uris: string[]) => {
+    const stagedUris = (
+      await Promise.all(
+        uris.map((uri) => persistProfileMediaUri(uri, 'profile-photo', 'image/jpeg')),
+      )
+    ).filter(Boolean);
+    if (stagedUris.length === 0) return;
+
+    let promotedToAvatar = false;
+    setFormData((prev) => {
+      const shouldSeedAvatar = !prev.avatar_url && stagedUris.length > 0;
+      const nextAvatar = shouldSeedAvatar ? stagedUris[0] : prev.avatar_url;
+      const nextPhotos = appendGalleryMedia(
+        prev.photos,
+        shouldSeedAvatar ? stagedUris.slice(1) : stagedUris,
+        nextAvatar,
+      );
+      promotedToAvatar = shouldSeedAvatar;
+      const nextState = {
+        ...prev,
+        avatar_url: nextAvatar,
+        photos: nextPhotos,
+      };
+      persistDraftSnapshot(nextState);
+      return nextState;
+    });
+    Alert.alert(
+      'Media staged',
+      promotedToAvatar
+        ? `We used the first imported photo as your avatar and staged the rest in your gallery. You can reshuffle everything below before saving.`
+        : `${stagedUris.length} photo${stagedUris.length === 1 ? '' : 's'} added to your gallery studio. Tap Save when the story feels right.`,
+    );
+  };
+
+  const createDerivedSlotMedia = async (
+    uri: string,
+    slot: 'avatar' | 'hero',
+    focus?: { x: number; y: number },
+  ) => {
+    const readableUri = await prepareReadableProfileMediaUri(
+      uri,
+      slot === 'avatar' ? 'profile-avatar-source' : 'profile-hero-source',
+      'image/jpeg',
+    );
+    const { width, height } = await getImageDimensions(readableUri);
+    const defaultFocus =
+      slot === 'avatar'
+        ? { x: 0.5, y: 0.5 }
+        : { x: 0.5, y: height > width ? 0.24 : 0.38 };
+    const cropRect =
+      slot === 'avatar'
+        ? buildAspectCropRect(width, height, AVATAR_CROP_ASPECT_RATIO, focus?.x ?? defaultFocus.x, focus?.y ?? defaultFocus.y)
+        : buildAspectCropRect(width, height, HERO_CROP_ASPECT_RATIO, focus?.x ?? defaultFocus.x, focus?.y ?? defaultFocus.y);
+    const result = await manipulateAsync(
+      readableUri,
+      [{ crop: cropRect }],
+      {
+        compress: 0.92,
+        format: SaveFormat.JPEG,
+      },
+    );
+    return persistProfileMediaUri(
+      result.uri,
+      slot === 'avatar' ? 'profile-avatar-derived' : 'profile-hero-derived',
+      'image/jpeg',
+    );
+  };
+
+  const stageAvatarFromFocus = async (
+    index: number,
+    focus?: { x: number; y: number },
+  ) => {
+    const sourceUri = normalizeProfilePhotoUri(formData.photos[index]);
+    if (!sourceUri) return;
+    try {
+      setMediaStudioBusy(true);
+      const derivedAvatarUrl = await createDerivedSlotMedia(sourceUri, 'avatar', focus);
+      setFormData((prev) => {
+        const nextState = {
+          ...prev,
+          avatar_url: derivedAvatarUrl,
+        };
+        persistDraftSnapshot(nextState);
+        return nextState;
+      });
+      Alert.alert('Avatar refined', 'A square avatar crop is staged. Save when it feels right.');
+    } catch (error) {
+      console.error('Error refining avatar media:', error);
+      Alert.alert('Refine failed', 'We could not prepare that avatar crop right now.');
+    } finally {
+      setMediaStudioBusy(false);
+    }
+  };
+
+  const stageHeroFromFocus = async (
+    index: number,
+    focus?: { x: number; y: number },
+  ) => {
+    const sourceUri = normalizeProfilePhotoUri(formData.photos[index]);
+    if (!sourceUri) return;
+    try {
+      setMediaStudioBusy(true);
+      const derivedHeroUrl = await createDerivedSlotMedia(sourceUri, 'hero', focus);
+      setFormData((prev) => {
+        const nextPhotos = promoteGalleryMediaToHero(prev.photos, index);
+        const nextState = {
+          ...prev,
+          hero_image_url: derivedHeroUrl,
+          photos: nextPhotos,
+        };
+        persistDraftSnapshot(nextState);
+        return nextState;
+      });
+      Alert.alert('Hero refined', 'A wider hero crop is staged and the source scene is moved to the front.');
+    } catch (error) {
+      console.error('Error refining hero media:', error);
+      Alert.alert('Refine failed', 'We could not prepare that hero crop right now.');
+    } finally {
+      setMediaStudioBusy(false);
+    }
+  };
+
+  const openMediaFrame = (slot: 'avatar' | 'hero', index: number) => {
+    const sourceUri = normalizeProfilePhotoUri(formData.photos[index]);
+    if (!sourceUri) return;
+    setMediaFrameRequest({ slot, index, sourceUri });
+  };
+
+  const handleFrameConfirm = async (focus: { x: number; y: number }) => {
+    if (!mediaFrameRequest) return;
+    const current = mediaFrameRequest;
+    setMediaFrameRequest(null);
+    if (current.slot === 'avatar') {
+      await stageAvatarFromFocus(current.index, focus);
+      return;
+    }
+    await stageHeroFromFocus(current.index, focus);
+  };
+
+  const moveGalleryPhoto = (fromIndex: number, toIndex: number) => {
+    setFormData((prev) => {
+      const nextPhotos = moveGalleryMedia(prev.photos, fromIndex, toIndex);
+      const nextState = {
+        ...prev,
+        photos: nextPhotos,
+      };
+      persistDraftSnapshot(nextState);
+      return nextState;
+    });
   };
 
   const stageVideoOffline = async (uri: string) => {
     const stableUri = await persistProfileMediaUri(uri, 'profile-video', 'video/mp4');
-    setFormData(prev => ({
-      ...prev,
-      profile_video: stableUri,
-    }));
-    persistMeMediaSnapshot({ profileVideo: stableUri });
-    Alert.alert('Saved offline', 'Video added here. Tap Save and Betweener will upload it when your connection returns.');
+    setFormData(prev => {
+      const nextState = {
+        ...prev,
+        profile_video: stableUri,
+      };
+      persistDraftSnapshot(nextState);
+      return nextState;
+    });
+    Alert.alert('Video staged', 'Video added here. Tap Save to apply it to your profile.');
   };
 
   const resolveProfileId = async (): Promise<string | null> => {
@@ -1172,11 +1640,13 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       // Show action sheet for camera or gallery
       Alert.alert(
         'Select Photo',
-        'Choose how you want to select a photo',
+        isAvatar
+          ? 'Choose how you want to set your profile photo.'
+          : 'Choose how you want to build your gallery. Library import can bring in multiple photos at once.',
         [
           { text: 'Cancel', style: 'cancel' },
           { text: 'Camera', onPress: () => openCamera(isAvatar) },
-          { text: 'Gallery', onPress: () => openGallery(isAvatar) },
+          { text: isAvatar ? 'Gallery' : 'Gallery (multi-select)', onPress: () => openGallery(isAvatar) },
         ]
       );
     } catch (error) {
@@ -1216,13 +1686,21 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: 'images',
-        allowsEditing: true,
+        allowsEditing: isAvatar,
+        allowsMultipleSelection: !isAvatar,
+        selectionLimit: isAvatar
+          ? 1
+          : Math.max(1, MAX_PROFILE_GALLERY_ITEMS - formData.photos.length),
         aspect: isAvatar ? [1, 1] : [3, 4],
         quality: 0.8,
       });
 
-      if (!result.canceled && result.assets[0]) {
-        await handleImageUpload(result.assets[0].uri, isAvatar);
+      if (!result.canceled && result.assets.length > 0) {
+        if (isAvatar) {
+          await handleImageUpload(result.assets[0].uri, true);
+        } else {
+          await stageGalleryBatch(result.assets.map((asset) => asset.uri).filter(Boolean));
+        }
       }
     } catch (error) {
       console.error('Error opening gallery:', error);
@@ -1233,74 +1711,9 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
   const handleImageUpload = async (uri: string, isAvatar: boolean) => {
     try {
       setUploading(true);
-
-      if (!user?.id) {
-        Alert.alert('Error', 'User not authenticated');
-        return;
-      }
-
-      if (await isOfflineNow()) {
-        await stageImageOffline(uri, isAvatar);
-        return;
-      }
-
-      // Get file extension and create file name
-      const fileExtension = uri.split('.').pop()?.toLowerCase() || 'jpg';
-      const timestamp = Date.now();
-      const fileName = `${timestamp}.${fileExtension}`;
-      const filePath = `${user.id}/${fileName}`;
-
-      // For React Native, we need to read the file properly
-      const response = await fetch(uri);
-      const blob = await response.arrayBuffer();
-      const uint8Array = new Uint8Array(blob);
-
-      // Upload using the Uint8Array which Supabase accepts
-      const { error } = await supabase.storage
-        .from('profile-photos')
-        .upload(filePath, uint8Array, {
-          contentType: `image/${fileExtension}`,
-          upsert: false,
-        });
-
-      if (error) {
-        console.error('Upload error details:', error);
-        throw error;
-      }
-
-      // Get public URL
-      const { data: { publicUrl } } = supabase.storage
-        .from('profile-photos')
-        .getPublicUrl(filePath);
-
-      if (isAvatar) {
-        setFormData(prev => {
-          const nextPhotos = normalizeGalleryPhotoList(prev.photos, publicUrl);
-          persistMeMediaSnapshot({ avatarUrl: publicUrl, photos: nextPhotos });
-          return {
-            ...prev,
-            avatar_url: publicUrl,
-            photos: nextPhotos,
-          };
-        });
-      } else {
-        setFormData(prev => {
-          const nextPhotos = normalizeGalleryPhotoList([...prev.photos, publicUrl], prev.avatar_url);
-          persistMeMediaSnapshot({ photos: nextPhotos });
-          return {
-            ...prev,
-            photos: nextPhotos
-          };
-        });
-      }
-
-      Alert.alert('Success', 'Photo uploaded successfully!');
+      await stageImageOffline(uri, isAvatar);
     } catch (error) {
       console.error('Error uploading image:', error);
-      if (isLikelyNetworkError(error)) {
-        await stageImageOffline(uri, isAvatar);
-        return;
-      }
       const errorMessage = error instanceof Error ? error.message : 'Failed to upload image';
       Alert.alert('Error', `Upload failed: ${errorMessage}`);
     } finally {
@@ -1370,73 +1783,6 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     } catch (error) {
       console.error('Error picking video:', error);
       Alert.alert('Error', 'Failed to pick video');
-    }
-  };
-
-  const encodeStoragePath = (path: string) =>
-    path
-      .split('/')
-      .map((segment) => encodeURIComponent(segment))
-      .join('/');
-
-  const uploadToSupabaseStorageWithProgress = async (params: {
-    bucket: string;
-    filePath: string;
-    fileUri: string;
-    contentType: string;
-    onProgress: (value: number | null) => void;
-  }) => {
-    const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
-    const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
-    if (!supabaseUrl || !supabaseAnonKey) {
-      throw new Error('Supabase env vars missing (EXPO_PUBLIC_SUPABASE_URL / EXPO_PUBLIC_SUPABASE_ANON_KEY)');
-    }
-
-    const { data: sessionData } = await supabase.auth.getSession();
-    const accessToken = sessionData.session?.access_token;
-    if (!accessToken) {
-      throw new Error('Not authenticated');
-    }
-
-    const url = `${supabaseUrl}/storage/v1/object/${params.bucket}/${encodeStoragePath(params.filePath)}?upsert=false`;
-
-    const task = FileSystem.createUploadTask(
-      url,
-      params.fileUri,
-      {
-        httpMethod: 'POST',
-        uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
-        headers: {
-          'Content-Type': params.contentType,
-          Authorization: `Bearer ${accessToken}`,
-          apikey: supabaseAnonKey,
-          'x-upsert': 'false',
-        },
-      },
-      (progress) => {
-        const expected = progress.totalBytesExpectedToSend;
-        const sent = progress.totalBytesSent;
-        if (typeof expected === 'number' && expected > 0) {
-          params.onProgress(Math.max(0, Math.min(1, sent / expected)));
-        } else {
-          params.onProgress(null);
-        }
-      }
-    );
-
-    const result = await task.uploadAsync();
-    if (!result) {
-      throw new Error('Upload failed (no response)');
-    }
-
-    if (result.status < 200 || result.status >= 300) {
-      // Supabase Storage errors are usually JSON: { message, ... }
-      let message = result.body || `Upload failed (HTTP ${result.status})`;
-      try {
-        const parsed = JSON.parse(result.body || '{}');
-        if (parsed?.message) message = String(parsed.message);
-      } catch {}
-      throw new Error(message);
     }
   };
 
@@ -1556,53 +1902,12 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         }
       } catch {}
 
-      const nameHint = asset.fileName || uri.split('/').pop() || '';
-      const extMatch = nameHint.match(/\.([a-z0-9]+)$/i);
-      const fileExtension =
-        (uploadUri.toLowerCase().includes('.mp4') && 'mp4') ||
-        (uploadUri.toLowerCase().includes('.mov') && 'mov') ||
-        (extMatch?.[1] || '').toLowerCase() ||
-        (asset.mimeType?.includes('quicktime') ? 'mov' : 'mp4');
-      const timestamp = Date.now();
-      const fileName = `profile-video-${timestamp}.${fileExtension}`;
-      const filePath = `${user.id}/${fileName}`;
-      const contentType =
-        fileExtension === 'mov'
-          ? 'video/quicktime'
-          : 'video/mp4';
-
-      setVideoUploadStage('Uploading video...');
-      setVideoUploadProgress(0);
-      await uploadToSupabaseStorageWithProgress({
-        bucket: 'profile-videos',
-        filePath,
-        fileUri: uploadUri,
-        contentType,
-        onProgress: setVideoUploadProgress,
-      });
-
-      const previousPath = formData.profile_video;
-      setFormData(prev => ({
-        ...prev,
-        profile_video: filePath,
-      }));
-      persistMeMediaSnapshot({ profileVideo: filePath });
-
-      if (previousPath && !previousPath.startsWith('http') && previousPath !== filePath) {
-        try {
-          await supabase.storage.from('profile-videos').remove([previousPath]);
-        } catch (removeError) {
-          console.log('Failed to delete previous profile video', removeError);
-        }
-      }
-
-      Alert.alert('Success', 'Profile video uploaded. Tap Save to apply.');
+      setVideoUploadStage('Staging video...');
+      setVideoUploadProgress(1);
+      await stageVideoOffline(uploadUri);
+      Alert.alert('Video ready', 'Your intro video is staged. Tap Save to apply it everywhere.');
     } catch (error) {
       console.error('Error uploading video:', error);
-      if (isLikelyNetworkError(error)) {
-        await stageVideoOffline(asset.uri);
-        return;
-      }
       const errorMessage = error instanceof Error ? error.message : 'Failed to upload video';
       Alert.alert('Error', `Upload failed: ${errorMessage}`);
     } finally {
@@ -1622,11 +1927,14 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           text: 'Remove',
           style: 'destructive',
           onPress: () => {
-            setFormData(prev => ({
-              ...prev,
-              profile_video: '',
-            }));
-            persistMeMediaSnapshot({ profileVideo: null });
+            setFormData(prev => {
+              const nextState = {
+                ...prev,
+                profile_video: '',
+              };
+              persistDraftSnapshot(nextState);
+              return nextState;
+            });
           },
         },
       ],
@@ -1645,14 +1953,19 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           onPress: () => {
             setFormData(prev => {
               const nextPhotos = normalizeGalleryPhotoList(
-                prev.photos.filter((_, i) => i !== index),
+                removeGalleryMediaAt(prev.photos, index),
                 prev.avatar_url,
               );
-              persistMeMediaSnapshot({ photos: nextPhotos });
-              return {
+              const nextState = {
                 ...prev,
+                hero_image_url:
+                  normalizeProfilePhotoUri(prev.hero_image_url) === normalizeProfilePhotoUri(prev.photos[index])
+                    ? normalizeProfilePhotoUri(nextPhotos[0]) || normalizeProfilePhotoUri(prev.avatar_url) || ''
+                    : prev.hero_image_url,
                 photos: nextPhotos
               };
+              persistDraftSnapshot(nextState);
+              return nextState;
             });
           }
         }
@@ -1675,21 +1988,51 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         return;
       }
 
+      const minAgeInterest = Number.parseInt(String(formData.min_age_interest || '').trim(), 10);
+      const maxAgeInterest = Number.parseInt(String(formData.max_age_interest || '').trim(), 10);
+      if (
+        Number.isNaN(minAgeInterest) ||
+        Number.isNaN(maxAgeInterest) ||
+        minAgeInterest < 18 ||
+        maxAgeInterest < 18 ||
+        minAgeInterest > 99 ||
+        maxAgeInterest > 99
+      ) {
+        Alert.alert('Error', 'Preferred age range must stay between 18 and 99.');
+        return;
+      }
+      if (minAgeInterest > maxAgeInterest) {
+        Alert.alert('Error', 'Preferred max age must be greater than or equal to preferred min age.');
+        return;
+      }
+
       // Prepare update data (preserve required fields to avoid NOT NULL constraint violations)
       const normalizedRoots = normalizeRoots(formData.roots);
       const rootsNote = formData.roots_note ? formData.roots_note.trim() : '';
       const sanitizedPhotos = normalizeGalleryPhotoList(formData.photos, formData.avatar_url);
+      const resolvedHeroImageUrl =
+        resolveProfileMediaDraft({
+          avatarUrl: formData.avatar_url,
+          heroImageUrl: formData.hero_image_url,
+          photos: sanitizedPhotos,
+          profileVideoUrl: formData.profile_video,
+        }).heroImageUrl || null;
       const hasLocalAvatar = isLocalMediaUri(formData.avatar_url);
+      const hasLocalHeroImage = isLocalMediaUri(resolvedHeroImageUrl);
       const localPhotos = sanitizedPhotos.filter((photo) => isLocalMediaUri(photo));
       const hasLocalVideo = isLocalMediaUri(formData.profile_video);
       const remotePhotos = sanitizedPhotos.filter((photo) => !isLocalMediaUri(photo));
       const mediaSyncPayload =
-        user?.id && (hasLocalAvatar || localPhotos.length > 0 || hasLocalVideo)
+        user?.id && (hasLocalAvatar || hasLocalHeroImage || localPhotos.length > 0 || hasLocalVideo)
           ? {
               userId: user.id,
               avatar: hasLocalAvatar
                 ? inferMediaUploadMeta(formData.avatar_url, 'profile-avatar', 'image/jpeg')
                 : null,
+              hero: hasLocalHeroImage
+                ? inferMediaUploadMeta(resolvedHeroImageUrl || '', 'profile-hero', 'image/jpeg')
+                : null,
+              heroImageUrl: resolvedHeroImageUrl,
               photos: localPhotos.length > 0 ? sanitizedPhotos : null,
               photoItems: localPhotos.map((photo, index) =>
                 inferMediaUploadMeta(photo, `profile-photo-${index + 1}`, 'image/jpeg'),
@@ -1708,6 +2051,9 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         full_name: formData.full_name.trim(),
         bio: formData.bio.trim(),
         avatar_url: hasLocalAvatar ? ((profile as any)?.avatar_url ?? null) : formData.avatar_url,
+        hero_image_url: hasLocalHeroImage
+          ? ((profile as any)?.hero_image_url ?? null)
+          : resolvedHeroImageUrl,
         photos: remotePhotos,
         profile_video: hasLocalVideo
           ? ((profile as any)?.profile_video ?? null)
@@ -1723,8 +2069,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         roots_note: rootsNote || null,
         roots_visibility: String(formData.roots_visibility || 'VISIBLE').toUpperCase(),
         religion: normalizeReligionForProfile(formData.religion || (profile as any)?.religion || 'OTHER'),
-        min_age_interest: profile?.min_age_interest || 18,
-        max_age_interest: profile?.max_age_interest || 35,
+        min_age_interest: minAgeInterest,
+        max_age_interest: maxAgeInterest,
       };
 
       // Only include optional fields if they have values
@@ -1736,6 +2082,13 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       const selectedCurrentCountryOption =
         findCountryByCode(formData.current_country_code) ?? findCountryByLabel(formData.current_country);
       const regionValue = formData.region ? formData.region.trim() : '';
+      const cityValue = formData.city ? formData.city.trim() : '';
+      const localityDistrictValue =
+        typeof formData.locality_district === 'string' ? formData.locality_district.trim() : '';
+      const localityGeonameIdValue =
+        typeof formData.locality_geoname_id === 'number' && Number.isFinite(formData.locality_geoname_id)
+          ? formData.locality_geoname_id
+          : null;
       const resolvedCurrentCountry =
         isGhanaCountryLocked
           ? 'Ghana'
@@ -1761,23 +2114,76 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         setCountryModalVisible(true);
         return;
       }
+      if (isGhanaProfile && cityValue && !regionValue) {
+        Alert.alert(
+          'Region required',
+          'Select your region before saving your city or town.',
+        );
+        setShowRegionPicker(true);
+        return;
+      }
       updateData.current_country = resolvedCurrentCountry || null;
       updateData.current_country_code = resolvedCurrentCountryCode || null;
       if (regionValue) {
-        const regionOnlyLocation = isKnownGhanaRegionLabel(regionValue);
-        updateData.region = regionValue;
-        updateData.city = regionOnlyLocation ? null : regionValue;
-        updateData.location = regionOnlyLocation ? (resolvedCurrentCountry || regionValue) : regionValue;
+        const locationParts = regionValue
+          .split(',')
+          .map((part) => part.trim())
+          .filter(Boolean);
+        const primaryLocationPart = locationParts[0] || regionValue;
+        const secondaryLocationPart = locationParts.slice(1).join(', ');
+        const regionOnlyLocation =
+          isKnownGhanaRegionLabel(primaryLocationPart) ||
+          isAdministrativeLocationLabel(primaryLocationPart);
+        const nextLocationPrecision =
+          isGhanaProfile || regionOnlyLocation
+            ? (cityValue ? 'CITY' : 'REGION')
+            : 'CITY';
+
+        if (isGhanaProfile || regionOnlyLocation) {
+          updateData.region = primaryLocationPart;
+          updateData.city = cityValue || null;
+          updateData.locality_geoname_id = cityValue ? localityGeonameIdValue : null;
+          updateData.locality_district = cityValue ? localityDistrictValue || null : null;
+          updateData.location = cityValue || primaryLocationPart || resolvedCurrentCountry;
+        } else {
+          updateData.city = primaryLocationPart;
+          updateData.region = secondaryLocationPart || null;
+          updateData.locality_geoname_id = null;
+          updateData.locality_district = null;
+          updateData.location = regionValue;
+        }
         const previousRegion = profile?.region ? profile.region.trim() : '';
+        const previousCity = profile?.city ? profile.city.trim() : '';
         const previousCountryCode = normalizeLocationValue((profile as any)?.current_country_code).toUpperCase();
-        if (regionValue !== previousRegion || resolvedCurrentCountryCode !== previousCountryCode) {
-          updateData.location_precision = 'CITY';
+        if (
+          regionValue !== previousRegion ||
+          cityValue !== previousCity ||
+          resolvedCurrentCountryCode !== previousCountryCode
+        ) {
+          updateData.location_precision = nextLocationPrecision;
           updateData.latitude = null;
           updateData.longitude = null;
           updateData.location_updated_at = new Date().toISOString();
         }
       } else if (resolvedCurrentCountry) {
+        const previousRegion = profile?.region ? profile.region.trim() : '';
+        const previousCity = profile?.city ? profile.city.trim() : '';
+        const previousCountryCode = normalizeLocationValue((profile as any)?.current_country_code).toUpperCase();
+        updateData.city = null;
+        updateData.region = null;
+        updateData.locality_geoname_id = null;
+        updateData.locality_district = null;
         updateData.location = resolvedCurrentCountry;
+        if (
+          previousRegion ||
+          previousCity ||
+          resolvedCurrentCountryCode !== previousCountryCode
+        ) {
+          updateData.location_precision = 'COUNTRY';
+          updateData.latitude = null;
+          updateData.longitude = null;
+          updateData.location_updated_at = new Date().toISOString();
+        }
       }
       const selectedOriginCountryOption =
         findCountryByCode(formData.origin_country_code) ?? findCountryByLabel(formData.origin_country);
@@ -1864,7 +2270,9 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         !sameString(updateData.full_name, profile?.full_name) ||
         !sameString(updateData.bio, profile?.bio) ||
         !sameString(updateData.gender, (profile as any)?.gender) ||
+        !sameString(updateData.hero_image_url, (profile as any)?.hero_image_url) ||
         !sameNumber(updateData.age, profile?.age) ||
+        !sameString(updateData.city, profile?.city) ||
         !sameString(updateData.region, profile?.region) ||
         !sameString(updateData.tribe, (profile as any)?.tribe) ||
         !sameStringArray(updateData.roots, (profile as any)?.roots) ||
@@ -1949,29 +2357,42 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
 
       // Save interests separately through profile_interests table
       const interestsResult = await saveUserInterests(selectedInterests);
+      let mediaSyncPending = false;
       if (mediaSyncPayload) {
         await enqueueProfileMediaSyncMutation(mediaSyncPayload);
+        if (!(await isOfflineNow())) {
+          try {
+            await drainOfflineMutationQueue();
+            await refreshProfile();
+          } catch {
+            mediaSyncPending = true;
+          }
+        } else {
+          mediaSyncPending = true;
+        }
       }
 
-      const queued = saveResult.queued === true || interestsResult.queued === true || Boolean(mediaSyncPayload);
+      const queued = saveResult.queued === true || interestsResult.queued === true || mediaSyncPending;
       initialSelectedInterestsRef.current = selectedInterests;
       const snapshotProfileId = getSnapshotProfileId();
       if (snapshotProfileId) {
         void writeMeProfileSnapshot(snapshotProfileId, {
           avatarUrl: formData.avatar_url || null,
+          heroImageUrl: resolvedHeroImageUrl,
           photos: sanitizedPhotos,
           profileVideo: formData.profile_video || null,
         });
       }
       Alert.alert(
-        queued ? 'Saved offline' : 'Success',
+        queued ? 'Saved' : 'Success',
         queued
-          ? 'Your profile is updated here and will sync automatically when your connection returns.'
+          ? 'Your profile is updated here. Some media may still finish syncing in the background.'
           : 'Profile updated successfully!',
       );
       onSave({
         ...updateData,
         __displayAvatarUrl: formData.avatar_url || null,
+        __displayHeroImageUrl: resolvedHeroImageUrl,
         __displayPhotos: sanitizedPhotos,
         __displayProfileVideo: formData.profile_video || null,
         __interests: selectedInterests,
@@ -2035,92 +2456,31 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           )}
 
           <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-          {/* Avatar Section */}
-          <View style={styles.section}>
-            <View style={styles.sectionTitleRow}>
-              <View style={styles.sectionIconWrap}>
-                <MaterialCommunityIcons
-                  name="account-circle-outline"
-                  size={18}
-                  color={theme.accent}
-                  style={styles.sectionIcon}
-                />
-              </View>
-              <Text style={styles.sectionTitle}>Profile Photo</Text>
-            </View>
-            <View style={styles.avatarContainer}>
-              {hasAvatarImage ? (
-                <OfflineImage
-                  uri={normalizeProfilePhotoUri(formData.avatar_url)}
-                  style={styles.avatar}
-                  contentFit="cover"
-                  fallback={
-                    <View style={styles.avatarPlaceholder}>
-                      <Text style={styles.avatarPlaceholderInitials}>{avatarInitials}</Text>
-                      <Text style={styles.avatarPlaceholderCaption}>Add a clear photo to build trust faster</Text>
-                    </View>
-                  }
-                />
-              ) : (
-                <View style={styles.avatarPlaceholder}>
-                  <Text style={styles.avatarPlaceholderInitials}>{avatarInitials}</Text>
-                  <Text style={styles.avatarPlaceholderCaption}>Add a clear photo to build trust faster</Text>
-                </View>
-              )}
-              <TouchableOpacity
-                style={styles.editAvatarButton}
-                onPress={() => pickImage(true)}
-                disabled={uploading}
-              >
-                {uploading ? (
-                  <ActivityIndicator size="small" color={theme.background} />
-                ) : (
-                  <MaterialCommunityIcons name="camera" size={16} color={theme.background} />
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
+          <ProfileMediaStudioSection
+            theme={theme}
+            isDark={isDark}
+            draft={mediaDraft}
+            previewVideoUrl={previewVideoUrl}
+            profileInitials={avatarInitials}
+            uploading={uploading || mediaStudioBusy}
+            videoUploading={videoUploading || mediaStudioBusy}
+            onPickAvatar={() => void pickImage(true)}
+            onPickGallery={() => void pickImage(false)}
+            onPickVideo={() => void pickProfileVideo()}
+            onRemoveVideo={removeProfileVideo}
+            onRefineHero={(index) => openMediaFrame('hero', index)}
+            onRefineAvatar={(index) => openMediaFrame('avatar', index)}
+            onMoveLeft={(index) => moveGalleryPhoto(index, index - 1)}
+            onMoveRight={(index) => moveGalleryPhoto(index, index + 1)}
+            onRemovePhoto={removePhoto}
+          />
 
-          <TouchableOpacity
-            activeOpacity={0.92}
-            style={styles.verificationCard}
+          <TrustVerificationCompactCard
+            theme={theme}
+            verificationLevel={verificationLevel}
+            verificationCallout={verificationCallout}
             onPress={onOpenVerification}
-            disabled={!onOpenVerification}
-          >
-            <View style={styles.sectionTitleRow}>
-              <View style={[styles.sectionIconWrap, styles.verificationSectionIconWrap]}>
-                <MaterialCommunityIcons
-                  name="shield-check-outline"
-                  size={18}
-                  color={theme.tint}
-                  style={styles.sectionIcon}
-                />
-              </View>
-              <Text style={styles.sectionTitle}>Trust & Verification</Text>
-            </View>
-
-            <View style={styles.verificationCardRow}>
-              <View style={styles.verificationBadgeWrap}>
-                {verificationLevel > 0 ? (
-                  <VerificationBadge level={verificationLevel} size="medium" variant="betweener" />
-                ) : (
-                  <View style={styles.verificationBadgePlaceholder}>
-                    <MaterialCommunityIcons name="shield-plus-outline" size={18} color={theme.tint} />
-                  </View>
-                )}
-              </View>
-
-              <View style={styles.verificationCardCopy}>
-                <Text style={styles.verificationCardTitle}>{verificationCallout.title}</Text>
-                <Text style={styles.verificationCardSubtitle}>{verificationCallout.subtitle}</Text>
-              </View>
-
-              <View style={styles.verificationCardAction}>
-                <Text style={styles.verificationCardActionText}>{verificationCallout.action}</Text>
-                <MaterialCommunityIcons name="chevron-right" size={16} color={theme.tint} />
-              </View>
-            </View>
-          </TouchableOpacity>
+          />
 
           {/* Basic Info */}
           <View style={styles.section}>
@@ -2362,11 +2722,80 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                   style={styles.textInput}
                   value={formData.region}
                   onChangeText={(text) => handleInputChange('region', text)}
-                  placeholder="City, Country"
+                  placeholder="City or region"
                   maxLength={100}
                 />
               )}
             </View>
+
+            {formIsGhanaProfile ? (
+              <View style={styles.inputContainer}>
+                <Text style={styles.inputLabel}>City or Town (Optional)</Text>
+                <TouchableOpacity
+                  style={[
+                    styles.selectButton,
+                    formData.city && styles.selectButtonSelected,
+                    !formData.region && styles.disabledSelectButton,
+                  ]}
+                  disabled={!formData.region}
+                  onPress={() => {
+                    if (!formData.region) return;
+                    setGhanaCityTownSearch('');
+                    setGhanaCityTownInitializing(true);
+                    setShowGhanaCityTownPicker(true);
+                  }}
+                >
+                  <View style={styles.citySelectValueWrap}>
+                    <Text
+                      style={[
+                        formData.city
+                          ? styles.selectButtonText
+                          : styles.selectButtonPlaceholder,
+                      ]}
+                    >
+                      {formData.city || 'Choose a Ghana city or town'}
+                    </Text>
+                    {formData.city && formData.locality_district ? (
+                      <Text style={styles.citySelectMetaText} numberOfLines={1}>
+                        {formData.locality_district}
+                      </Text>
+                    ) : null}
+                  </View>
+                  <View style={styles.citySelectActions}>
+                    {formData.city ? (
+                      <TouchableOpacity
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        onPress={(event) => {
+                          event.stopPropagation();
+                          handleInputChange('city', '');
+                          handleInputChange('locality_geoname_id', null);
+                          handleInputChange('locality_district', '');
+                        }}
+                      >
+                        <MaterialCommunityIcons
+                          name="close-circle-outline"
+                          size={18}
+                          color={theme.textMuted}
+                        />
+                      </TouchableOpacity>
+                    ) : null}
+                    <MaterialCommunityIcons
+                      name="chevron-right"
+                      size={20}
+                      color={formData.city ? theme.tint : theme.textMuted}
+                    />
+                  </View>
+                </TouchableOpacity>
+                <Text style={styles.fieldHelperText}>
+                  {formData.region
+                    ? 'Helps your profile feel more locally relevant.'
+                    : 'Select your region first, then optionally add your city or town.'}
+                </Text>
+                {!formData.city && formData.region ? (
+                  <Text style={styles.subtleFieldNote}>You can leave this blank and keep the region only.</Text>
+                ) : null}
+              </View>
+            ) : null}
 
             <View style={styles.inputContainer}>
               <Text style={styles.inputLabel}>Religion</Text>
@@ -2565,6 +2994,38 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                   }}
                 />
               )}
+            </View>
+
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>Preferred Age Range</Text>
+              <Text style={styles.fieldHelperText}>
+                This is your real discovery preference. Vibes starts from this saved range.
+              </Text>
+              <View style={styles.row}>
+                <View style={[styles.inputContainer, { flex: 1, marginRight: 8 }]}>
+                  <Text style={styles.ageMetaLabel}>Min age</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    value={formData.min_age_interest}
+                    onChangeText={(text) => handleInputChange('min_age_interest', text.replace(/[^0-9]/g, ''))}
+                    placeholder="18"
+                    keyboardType="numeric"
+                    maxLength={2}
+                  />
+                </View>
+
+                <View style={[styles.inputContainer, { flex: 1, marginLeft: 8 }]}>
+                  <Text style={styles.ageMetaLabel}>Max age</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    value={formData.max_age_interest}
+                    onChangeText={(text) => handleInputChange('max_age_interest', text.replace(/[^0-9]/g, ''))}
+                    placeholder="35"
+                    keyboardType="numeric"
+                    maxLength={2}
+                  />
+                </View>
+              </View>
             </View>
           </View>
 
@@ -3113,162 +3574,20 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
             </View>
           </View>
 
-          {/* Diaspora section removed for cleaner edit experience */
-
-/* Profile Video Section */}
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <View style={styles.sectionTitleRow}>
-                <View style={styles.sectionIconWrap}>
-                  <MaterialCommunityIcons
-                    name="play-circle-outline"
-                    size={18}
-                    color={theme.accent}
-                    style={styles.sectionIcon}
-                  />
-                </View>
-                <Text style={styles.sectionTitle}>Profile Video</Text>
-              </View>
-              <TouchableOpacity
-                style={styles.addPhotoButton}
-                onPress={pickProfileVideo}
-                disabled={videoUploading}
-              >
-                <MaterialCommunityIcons
-                  name="video-plus"
-                  size={16}
-                  color={videoUploading ? theme.textMuted : theme.tint}
-                />
-                <Text style={[
-                  styles.addPhotoText,
-                  { color: videoUploading ? theme.textMuted : theme.tint }
-                ]}>
-                  Upload Video
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            <Text style={styles.photoHint}>
-              Add up to 30 seconds. We optimize the clip before upload instead of relying on a platform cropper.
-            </Text>
-            <View style={styles.videoGuidanceCard}>
-              <MaterialCommunityIcons name="creation-outline" size={16} color={theme.tint} />
-              <Text style={styles.videoGuidanceText}>
-                Best result: record in-app, or choose a library video and let Betweener prepare it privately.
-              </Text>
-            </View>
-
-            {formData.profile_video ? (
-              <View style={styles.videoRow}>
-                <View style={styles.videoThumb}>
-                  {videoPreviewUrl ? (
-                    <InlineVideoPreview uri={videoPreviewUrl} shouldPlay={visible && !videoUploading} styles={styles} />
-                  ) : (
-                    <MaterialCommunityIcons name="play-circle" size={26} color={withAlpha(theme.text, isDark ? 0.5 : 0.3)} />
-                  )}
-                </View>
-                <View style={styles.videoMeta}>
-                  <Text style={styles.videoTitle}>Profile video ready</Text>
-                  <Text style={styles.videoSub}>Tap Save to apply</Text>
-                </View>
-                <TouchableOpacity style={styles.videoRemove} onPress={removeProfileVideo}>
-                  <MaterialCommunityIcons name="trash-can-outline" size={18} color={theme.tint} />
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <View style={styles.videoEmpty}>
-                <MaterialCommunityIcons name="video-outline" size={20} color={theme.textMuted} />
-                <Text style={styles.videoEmptyText}>No profile video yet</Text>
-              </View>
-            )}
-          </View>
-
-          {/* Photos Section */}
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <View style={styles.sectionTitleRow}>
-                <View style={styles.sectionIconWrap}>
-                  <MaterialCommunityIcons
-                    name="image-multiple-outline"
-                    size={18}
-                    color={theme.accent}
-                    style={styles.sectionIcon}
-                  />
-                </View>
-                <Text style={styles.sectionTitle}>Additional Photos</Text>
-              </View>
-              <TouchableOpacity
-                style={styles.addPhotoButton}
-                onPress={() => pickImage(false)}
-                disabled={uploading || formData.photos.length >= 6}
-              >
-                <MaterialCommunityIcons 
-                  name="plus" 
-                  size={16} 
-                  color={formData.photos.length >= 6 ? theme.textMuted : theme.tint} 
-                />
-                <Text style={[
-                  styles.addPhotoText,
-                  { color: formData.photos.length >= 6 ? theme.textMuted : theme.tint }
-                ]}>
-                  Add Photo
-                </Text>
-              </TouchableOpacity>
-            </View>
-            
-            <Text style={styles.photoHint}>
-              Add up to 6 photos to showcase your personality (current: {formData.photos.length}/6)
-            </Text>
-
-            <View style={styles.photosGrid}>
-              {formData.photos.map((photo, index) => {
-                const photoUri = normalizeProfilePhotoUri(photo);
-                return (
-                  <View key={`${photoUri}-${index}`} style={styles.photoContainer}>
-                    <OfflineImage
-                      uri={photoUri}
-                      style={styles.photo}
-                      contentFit="cover"
-                      fallback={
-                        <View style={styles.photoFallback}>
-                          <MaterialCommunityIcons name="image-off-outline" size={22} color={theme.textMuted} />
-                        </View>
-                      }
-                    />
-                    <TouchableOpacity
-                      style={styles.removePhotoButton}
-                      onPress={() => removePhoto(index)}
-                    >
-                      <MaterialCommunityIcons name="close" size={14} color={theme.text} />
-                    </TouchableOpacity>
-                  </View>
-                );
-              })}
-              
-              {/* Empty slots */}
-              {Array.from({ length: 6 - formData.photos.length }).map((_, index) => (
-                <TouchableOpacity
-                  key={`empty-${index}`}
-                  style={styles.emptyPhotoSlot}
-                  onPress={() => pickImage(false)}
-                  disabled={uploading}
-                >
-                  <MaterialCommunityIcons name="camera-plus" size={24} color={theme.textMuted} />
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
+          {/* Diaspora section removed for cleaner edit experience */}
 
             <View style={{ height: 50 }} />
           </ScrollView>
 
           {/* Upload Progress */}
-          {(uploading || videoUploading) && (
+          {(uploading || videoUploading || mediaStudioBusy) && (
             <View style={styles.uploadingOverlay}>
               <View style={styles.uploadingContainer}>
                 <ActivityIndicator size="large" color={theme.tint} />
                 <Text style={styles.uploadingText}>
-                  {videoUploading
+                  {mediaStudioBusy
+                    ? 'Preparing your premium media framing...'
+                    : videoUploading
                     ? `${videoUploadStage || 'Uploading video...'}${
                         typeof videoUploadProgress === 'number'
                           ? ` ${Math.round(videoUploadProgress * 100)}%`
@@ -3281,6 +3600,16 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           )}
         </BlurViewSafe>
       </SafeAreaView>
+
+      <ProfileMediaFrameSheet
+        visible={Boolean(mediaFrameRequest)}
+        theme={theme}
+        isDark={isDark}
+        sourceUri={mediaFrameRequest?.sourceUri ?? null}
+        slot={mediaFrameRequest?.slot ?? null}
+        onClose={() => setMediaFrameRequest(null)}
+        onConfirm={(focus) => void handleFrameConfirm(focus)}
+      />
 
       {/* Height Picker */}
       <FieldPicker
@@ -3372,6 +3701,164 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         </SafeAreaView>
       </Modal>
 
+      <Modal
+        visible={showGhanaCityTownPicker}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setShowGhanaCityTownPicker(false)}
+      >
+        <SafeAreaView style={[styles.pickerContainer, { backgroundColor: theme.background }]}>
+          <View style={styles.pickerHeader}>
+            <TouchableOpacity onPress={() => setShowGhanaCityTownPicker(false)}>
+              <Text style={styles.pickerCancel}>Close</Text>
+            </TouchableOpacity>
+            <Text style={styles.pickerTitle}>City or Town</Text>
+            <View style={{ minWidth: 52 }} />
+          </View>
+
+          <View style={styles.locationPickerIntro}>
+            <Text style={styles.locationPickerLead}>
+              {`Where are you based in ${formData.region}?`}
+            </Text>
+            <Text style={styles.locationPickerSupport}>City stays optional.</Text>
+          </View>
+
+          <View style={styles.countrySearchWrap}>
+            <MaterialCommunityIcons
+              name="magnify"
+              size={20}
+              color={theme.textMuted}
+            />
+            <TextInput
+              style={styles.countrySearchInput}
+              value={ghanaCityTownSearch}
+              onChangeText={setGhanaCityTownSearch}
+              placeholder={ghanaCityTownPlaceholder}
+              placeholderTextColor={theme.textMuted}
+              autoCapitalize="words"
+              autoCorrect={false}
+              autoFocus
+            />
+            {ghanaCityTownLoading ? (
+              <ActivityIndicator size="small" color={theme.tint} />
+            ) : null}
+          </View>
+
+          <FlatList
+            data={ghanaCityTownRows}
+            keyExtractor={(item) => item.id}
+            keyboardShouldPersistTaps="handled"
+            style={styles.pickerList}
+            contentContainerStyle={styles.locationPickerListContent}
+            ListEmptyComponent={
+              ghanaCityTownInitializing ? (
+                <View style={styles.emptyStateWrap}>
+                  <ActivityIndicator size="small" color={theme.tint} />
+                  <Text style={styles.emptyStateTitle}>Loading places...</Text>
+                  <Text style={styles.emptyStateSubtitle}>
+                    Pulling localities for {formData.region}.
+                  </Text>
+                </View>
+              ) : null
+            }
+            renderItem={({ item }) => {
+              if (item.type === 'section') {
+                return (
+                  <Text style={styles.locationPickerSectionTitle}>{item.title}</Text>
+                );
+              }
+
+              if (item.type === 'empty') {
+                return (
+                  <View style={styles.emptyStateWrap}>
+                    <Text style={styles.emptyStateTitle}>{item.title}</Text>
+                    <Text style={styles.emptyStateSubtitle}>{item.body}</Text>
+                  </View>
+                );
+              }
+
+              if (item.type === 'action') {
+                return (
+                  <TouchableOpacity
+                    style={styles.locationPickerQuietAction}
+                    onPress={() => {
+                      handleInputChange('city', '');
+                      handleInputChange('locality_geoname_id', null);
+                      handleInputChange('locality_district', '');
+                      setGhanaCityTownSearch('');
+                      setShowGhanaCityTownPicker(false);
+                    }}
+                  >
+                    <View style={styles.countryPickerCopy}>
+                      <Text style={styles.locationPickerQuietActionText}>{item.label}</Text>
+                      <Text style={styles.countryPickerMeta}>{item.body}</Text>
+                    </View>
+                    {!formData.city ? (
+                      <MaterialCommunityIcons name="check" size={20} color={theme.tint} />
+                    ) : (
+                      <MaterialCommunityIcons
+                        name="chevron-right"
+                        size={20}
+                        color={theme.textMuted}
+                      />
+                    )}
+                  </TouchableOpacity>
+                );
+              }
+
+              const normalizedSelected = normalizeGhanaCityTownValue(formData.city).toLowerCase();
+              const isSelected =
+                (formData.locality_geoname_id != null &&
+                  item.item.geonameId != null &&
+                  formData.locality_geoname_id === item.item.geonameId) ||
+                (!formData.locality_geoname_id &&
+                  normalizedSelected === item.item.name.toLowerCase());
+              return (
+                <TouchableOpacity
+                  style={[
+                    styles.pickerItem,
+                    isSelected && styles.pickerItemSelected,
+                  ]}
+                  onPress={async () => {
+                    handleInputChange('city', normalizeGhanaCityTownValue(item.item.name));
+                    handleInputChange('locality_geoname_id', item.item.geonameId ?? null);
+                    handleInputChange('locality_district', item.item.district ?? '');
+                    await saveRecentGhanaLocality(item.item);
+                    const nextRecent = await readRecentGhanaLocalities(formData.region);
+                    setGhanaCityTownRecent(nextRecent);
+                    setGhanaCityTownSearch('');
+                    setShowGhanaCityTownPicker(false);
+                  }}
+                >
+                  <View style={styles.countryPickerCopy}>
+                    <Text
+                      style={[
+                        styles.pickerItemText,
+                        isSelected && styles.pickerItemTextSelected,
+                      ]}
+                    >
+                      {item.item.name}
+                    </Text>
+                    <Text style={styles.countryPickerMeta}>
+                      {item.item.district || item.item.region}
+                    </Text>
+                  </View>
+                  {isSelected ? (
+                    <MaterialCommunityIcons name="check" size={20} color={theme.tint} />
+                  ) : (
+                    <MaterialCommunityIcons
+                      name="chevron-right"
+                      size={20}
+                      color={theme.textMuted}
+                    />
+                  )}
+                </TouchableOpacity>
+              );
+            }}
+          />
+        </SafeAreaView>
+      </Modal>
+
       {/* Ghana Region Picker */}
       {formIsGhanaProfile && (
         <FieldPicker
@@ -3382,6 +3869,11 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           onSelect={(value) => {
             if (value === 'Other') {
               setCustomRegion('');
+            }
+            if (formData.region !== value && formData.city) {
+              handleInputChange('city', '');
+              handleInputChange('locality_geoname_id', null);
+              handleInputChange('locality_district', '');
             }
             handleInputChange('region', value);
           }}
@@ -3798,21 +4290,6 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
       shadowRadius: 14,
       elevation: 3,
     },
-    verificationCard: {
-      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.76 : 0.88),
-      paddingHorizontal: sectionPadding,
-      paddingVertical: sectionPadding,
-      marginBottom: responsive.space(12, { min: 10, max: 14 }),
-      marginHorizontal: sectionMargin,
-      borderWidth: 1,
-      borderRadius: 18,
-      borderColor: withAlpha(theme.tint, isDark ? 0.22 : 0.16),
-      shadowColor: theme.tint,
-      shadowOffset: { width: 0, height: 8 },
-      shadowOpacity: isDark ? 0.16 : 0.08,
-      shadowRadius: 16,
-      elevation: 3,
-    },
     sectionHeader: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -3844,69 +4321,12 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
       shadowRadius: 10,
       elevation: 6,
     },
-    verificationSectionIconWrap: {
-      backgroundColor: withAlpha(theme.tint, isDark ? 0.16 : 0.1),
-      borderColor: withAlpha(theme.tint, isDark ? 0.36 : 0.22),
-      shadowColor: theme.tint,
-    },
     sectionTitle: {
       fontSize: responsive.font(16, { min: 15, max: 18 }),
       fontWeight: '700',
       letterSpacing: 0.2,
       color: theme.text,
       lineHeight: 20,
-    },
-    verificationCardRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: responsive.space(12, { min: 10, max: 14 }),
-    },
-    verificationBadgeWrap: {
-      width: 42,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    verificationBadgePlaceholder: {
-      width: 34,
-      height: 34,
-      borderRadius: 17,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: withAlpha(theme.tint, isDark ? 0.18 : 0.12),
-      borderWidth: 1,
-      borderColor: withAlpha(theme.tint, isDark ? 0.4 : 0.22),
-    },
-    verificationCardCopy: {
-      flex: 1,
-      gap: 4,
-    },
-    verificationCardTitle: {
-      fontSize: responsive.font(15, { min: 14, max: 16 }),
-      fontWeight: '700',
-      color: theme.text,
-      letterSpacing: 0.2,
-    },
-    verificationCardSubtitle: {
-      fontSize: responsive.font(12, { min: 12, max: 13 }),
-      lineHeight: 17,
-      color: theme.textMuted,
-    },
-    verificationCardAction: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 4,
-      paddingHorizontal: responsive.space(10, { min: 9, max: 12 }),
-      paddingVertical: responsive.space(8, { min: 7, max: 9 }),
-      borderRadius: 999,
-      backgroundColor: withAlpha(theme.background, isDark ? 0.82 : 0.95),
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.1),
-    },
-    verificationCardActionText: {
-      fontSize: responsive.font(12, { min: 12, max: 13 }),
-      fontWeight: '700',
-      color: theme.tint,
-      letterSpacing: 0.2,
     },
     avatarContainer: {
       alignItems: 'center',
@@ -4300,6 +4720,13 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
       minHeight: responsive.minTapTarget + 8,
       backgroundColor: withAlpha(theme.background, isDark ? 0.7 : 0.95),
     },
+    selectButtonSelected: {
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.12 : 0.08),
+      borderColor: withAlpha(theme.tint, isDark ? 0.28 : 0.22),
+    },
+    disabledSelectButton: {
+      opacity: 0.56,
+    },
     selectButtonText: {
       fontSize: responsive.font(16, { min: 15, max: 17 }),
       color: theme.text,
@@ -4313,6 +4740,13 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
       fontSize: 12,
       lineHeight: 16,
       color: theme.textMuted,
+    },
+    ageMetaLabel: {
+      marginBottom: 8,
+      fontSize: 12,
+      lineHeight: 16,
+      color: theme.textMuted,
+      fontWeight: '600',
     },
     countrySelectValue: {
       flexDirection: 'row',
@@ -4337,6 +4771,26 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
       fontSize: 12,
       color: theme.textMuted,
     },
+    citySelectValueWrap: {
+      flex: 1,
+      marginRight: 12,
+    },
+    citySelectMetaText: {
+      marginTop: 2,
+      fontSize: 12,
+      color: theme.textMuted,
+    },
+    citySelectActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    subtleFieldNote: {
+      marginTop: 6,
+      fontSize: 12,
+      lineHeight: 16,
+      color: theme.textMuted,
+    },
     countrySearchWrap: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -4357,6 +4811,53 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
       color: theme.text,
       backgroundColor: withAlpha(theme.background, isDark ? 0.7 : 0.95),
     },
+    locationPickerIntro: {
+      paddingHorizontal: pageGutter,
+      paddingTop: responsive.space(12, { min: 10, max: 14 }),
+      paddingBottom: responsive.space(8, { min: 6, max: 10 }),
+    },
+    locationPickerLead: {
+      fontSize: responsive.font(24, { min: 22, max: 26 }),
+      lineHeight: responsive.font(30, { min: 28, max: 32 }),
+      fontFamily: 'PPEditorialNew_Italic',
+      color: theme.text,
+    },
+    locationPickerSupport: {
+      marginTop: 4,
+      fontSize: responsive.font(14, { min: 13, max: 15 }),
+      color: theme.textMuted,
+    },
+    locationPickerListContent: {
+      paddingBottom: responsive.space(24, { min: 20, max: 28 }),
+    },
+    locationPickerSectionTitle: {
+      paddingHorizontal: pageGutter,
+      paddingTop: responsive.space(18, { min: 16, max: 22 }),
+      paddingBottom: responsive.space(8, { min: 6, max: 10 }),
+      fontSize: 12,
+      fontWeight: '700',
+      letterSpacing: 1.6,
+      textTransform: 'uppercase',
+      color: theme.textMuted,
+    },
+    locationPickerQuietAction: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginHorizontal: pageGutter,
+      marginTop: responsive.space(14, { min: 12, max: 16 }),
+      paddingHorizontal: 16,
+      paddingVertical: 14,
+      borderRadius: 18,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.12),
+      backgroundColor: withAlpha(theme.background, isDark ? 0.75 : 0.96),
+    },
+    locationPickerQuietActionText: {
+      fontSize: responsive.font(15, { min: 14, max: 16 }),
+      color: theme.text,
+      fontWeight: '600',
+    },
     countryPickerRow: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -4372,14 +4873,33 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
     countryPickerCopy: {
       flex: 1,
     },
-    countryPickerMeta: {
-      marginTop: 2,
-      fontSize: 12,
-      color: theme.textMuted,
-    },
-    
-    // Interests styles
-    interestsPreview: {
+      countryPickerMeta: {
+        marginTop: 2,
+        fontSize: 12,
+        color: theme.textMuted,
+      },
+      emptyStateWrap: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: pageGutter,
+        paddingVertical: responsive.space(28, { min: 24, max: 34 }),
+      },
+      emptyStateTitle: {
+        fontSize: responsive.font(16, { min: 15, max: 17 }),
+        fontFamily: 'Manrope_700Bold',
+        color: theme.text,
+        textAlign: 'center',
+      },
+      emptyStateSubtitle: {
+        marginTop: 6,
+        fontSize: responsive.font(13, { min: 12, max: 14 }),
+        lineHeight: responsive.font(18, { min: 16, max: 19 }),
+        color: theme.textMuted,
+        textAlign: 'center',
+      },
+      
+      // Interests styles
+      interestsPreview: {
       flexDirection: 'row',
       flexWrap: 'wrap',
       gap: responsive.space(8, { min: 6, max: 10 }),

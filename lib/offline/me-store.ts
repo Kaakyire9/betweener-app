@@ -1,7 +1,8 @@
 import { peekOfflineData, readOfflineData, updateOfflineEnvelope } from '@/lib/offline/core';
 import { removeCache } from '@/lib/persisted-cache';
 
-const ME_SNAPSHOT_VERSION = 1;
+const ME_SNAPSHOT_VERSION = 2;
+const LEGACY_ME_SNAPSHOT_VERSION = 1;
 
 export type MeProfileStatsSnapshot = {
   likesCount: number;
@@ -28,6 +29,7 @@ export type MeAccountDraftsSnapshot = {
 
 export type MeProfileSnapshot = {
   avatarUrl?: string | null;
+  heroImageUrl?: string | null;
   promptAnswers?: unknown[];
   interests?: string[];
   photos?: string[];
@@ -38,8 +40,10 @@ export type MeProfileSnapshot = {
   accountDrafts?: MeAccountDraftsSnapshot;
 };
 
-const buildMeProfileSnapshotStoreKey = (profileId: string) =>
-  `offline:me:profile:v${ME_SNAPSHOT_VERSION}:${profileId}`;
+const buildMeProfileSnapshotStoreKey = (
+  profileId: string,
+  version: number = ME_SNAPSHOT_VERSION,
+) => `offline:me:profile:v${version}:${profileId}`;
 
 const buildLegacyPromptsCacheKey = (profileId: string) => `cache:profile_prompts:v2:${profileId}`;
 const buildLegacyInterestsCacheKey = (profileId: string) => `cache:profile_interests:v1:${profileId}`;
@@ -52,6 +56,7 @@ const hasUsefulSnapshotData = (snapshot: MeProfileSnapshot | null) =>
         (Array.isArray(snapshot.interests) && snapshot.interests.length > 0) ||
         (Array.isArray(snapshot.photos) && snapshot.photos.length > 0) ||
         snapshot.avatarUrl ||
+        snapshot.heroImageUrl ||
         snapshot.profileVideo ||
         snapshot.stats ||
         snapshot.notificationPrefs ||
@@ -60,7 +65,11 @@ const hasUsefulSnapshotData = (snapshot: MeProfileSnapshot | null) =>
   );
 
 export async function readMeProfileSnapshot(profileId: string): Promise<MeProfileSnapshot | null> {
-  return readOfflineData<MeProfileSnapshot>(buildMeProfileSnapshotStoreKey(profileId));
+  const current = await readOfflineData<MeProfileSnapshot>(buildMeProfileSnapshotStoreKey(profileId));
+  if (current) return current;
+  return readOfflineData<MeProfileSnapshot>(
+    buildMeProfileSnapshotStoreKey(profileId, LEGACY_ME_SNAPSHOT_VERSION),
+  );
 }
 
 export async function writeMeProfileSnapshot(

@@ -1,4 +1,5 @@
 import type { Match } from '../../types/match.ts';
+import { getLocationAffinityStrength } from '../location/location-intelligence.ts';
 import { getRelationshipCompassMatchScore, type RelationshipCompass } from '../relationship-compass.ts';
 
 export type VibesSegment = 'forYou' | 'nearby' | 'activeNow';
@@ -114,6 +115,11 @@ const getNearnessScore = (match: Match) => {
   return -1.1;
 };
 
+const getLocalityContextScore = (viewerProfile: any, match: Match) => {
+  if (!viewerProfile) return 0;
+  return getLocationAffinityStrength(viewerProfile, match);
+};
+
 const getArchetypeKey = (match: Match, viewerInterests?: string[]) => {
   if (getSharedInterestCount(match, viewerInterests) > 0) return 'shared';
   if ((match as any).profileVideo) return 'video';
@@ -123,7 +129,14 @@ const getArchetypeKey = (match: Match, viewerInterests?: string[]) => {
 };
 
 const getLocaleKey = (match: Match) =>
-  String((match as any).city || (match as any).location || match.region || (match as any).current_country || '')
+  String(
+    (match as any).locality_geoname_id ||
+      (match as any).city ||
+      (match as any).location ||
+      match.region ||
+      (match as any).current_country ||
+      '',
+  )
     .trim()
     .toLowerCase();
 
@@ -144,6 +157,7 @@ export const rerankVibesSegment = (
     const freshness = getFreshnessScore(match);
     const distanceKm = getDistanceKm(match);
     const nearness = getNearnessScore(match);
+    const localityContext = getLocalityContextScore(viewerProfile, match);
     const momentBoost = momentUserIds?.has(String(match.id)) ? 2.4 : 0;
     const subscriptionVisibility = getSubscriptionVisibilityScore(match, segment);
     const compassBoost = getRelationshipCompassMatchScore(match, relationshipCompass, {
@@ -158,7 +172,7 @@ export const rerankVibesSegment = (
         sharedInterests * 2.1 +
         richness * 1.15 +
         freshness * 0.9 +
-        nearness * 0.45 +
+        localityContext * 0.95 +
         momentBoost +
         subscriptionVisibility +
         compassBoost;
@@ -175,7 +189,8 @@ export const rerankVibesSegment = (
       const urgency = (match as any).isActiveNow ? 4.8 : isRecentlyActive((match as any).lastActive) ? 2.4 : 0;
       baseScore =
         urgency +
-        nearness * 1.6 +
+        nearness * 1.15 +
+        localityContext * 0.75 +
         compatibility * 0.55 +
         sharedInterests * 1.35 +
         richness * 0.45 +

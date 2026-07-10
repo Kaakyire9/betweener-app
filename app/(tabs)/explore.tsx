@@ -17,6 +17,7 @@ import {
   type CircleDiscoveryScope,
   sortCirclesByRelevance,
 } from '@/lib/circles/circle-localization';
+import { getCircleLocationAffinity } from '@/lib/location/location-intelligence';
 import {
   buildCirclesHubSnapshotStoreKey,
   type CirclesHubSnapshot,
@@ -94,6 +95,8 @@ type CircleV2 = {
   archived_at?: string | null;
   rejected_reason?: string | null;
   created_at?: string | null;
+  location_insight?: string | null;
+  location_insight_hydrated?: boolean | null;
 };
 
 type CircleMembership = {
@@ -738,14 +741,11 @@ export default function CirclesScreen() {
         .select('id,circle_id,role,status,circles(id,name,slug,description,short_description,visibility,category,created_by_profile_id,cover_image_url,icon_url,image_path,image_updated_at,circle_type,status,visibility_scope,country_code,country_name,region,city,diaspora_tags,culture_tags,faith_tags,interest_tags,audience_tags,is_official,is_partner,is_featured,requires_join_approval,member_count,active_this_week_count,gathering_count,archived_at)')
         .eq('profile_id', currentProfileId);
 
-      const circlesPromise = db
-        .from('circles')
-        .select('id,name,slug,description,short_description,visibility,category,created_by_profile_id,cover_image_url,icon_url,image_path,image_updated_at,circle_type,status,visibility_scope,country_code,country_name,region,city,diaspora_tags,culture_tags,faith_tags,interest_tags,audience_tags,is_official,is_partner,is_featured,requires_join_approval,member_count,active_this_week_count,gathering_count,archived_at')
-        .eq('status', 'approved')
-        .is('archived_at', null)
-        .order('is_featured', { ascending: false })
-        .order('member_count', { ascending: false })
-        .limit(48);
+      const circlesPromise = db.rpc('get_ranked_circles_for_profile' as any, {
+        p_profile_id: currentProfileId,
+        p_scope: scope,
+        p_limit: 48,
+      });
 
       const creatorCirclesPromise = db
         .from('circles')
@@ -814,31 +814,112 @@ export default function CirclesScreen() {
       ]);
 
       if (membershipError) throw membershipError;
-      if (circlesError) throw circlesError;
+
+      let discoverCircleRows = (circleRows ?? []) as CircleV2[];
+      if (circlesError) {
+        logger.warn('[circles] ranked_discover_rpc_failed', {
+          scope,
+          message: circlesError.message,
+        });
+        const { data: fallbackCircleRows, error: fallbackCirclesError } = await db
+          .from('circles')
+          .select('id,name,slug,description,short_description,visibility,category,created_by_profile_id,cover_image_url,icon_url,image_path,image_updated_at,circle_type,status,visibility_scope,country_code,country_name,region,city,diaspora_tags,culture_tags,faith_tags,interest_tags,audience_tags,is_official,is_partner,is_featured,requires_join_approval,member_count,active_this_week_count,gathering_count,archived_at')
+          .eq('status', 'approved')
+          .is('archived_at', null)
+          .order('is_featured', { ascending: false })
+          .order('member_count', { ascending: false })
+          .limit(48);
+        if (fallbackCirclesError) throw fallbackCirclesError;
+        discoverCircleRows = (fallbackCircleRows ?? []) as CircleV2[];
+      }
+
+      const affinityCircleIds = new Set<string>();
+      for (const row of membershipRows ?? []) {
+        const membershipCircle = normalizeCircle((row as any)?.circles);
+        if (membershipCircle?.id) affinityCircleIds.add(String(membershipCircle.id));
+      }
+      for (const circle of (creatorCircleRows ?? []) as CircleV2[]) {
+        if (circle?.id) affinityCircleIds.add(String(circle.id));
+      }
+      if (circlesError) {
+        for (const circle of discoverCircleRows) {
+          if (circle?.id) affinityCircleIds.add(String(circle.id));
+        }
+      }
+
+      const circleAffinityMap: Record<string, string | null> = {};
+      let circleAffinityHydrated = false;
+      if (currentProfileId && affinityCircleIds.size > 0) {
+        const { data: circleAffinityRows, error: circleAffinityError } = await db.rpc(
+          'get_circle_location_affinities' as any,
+          {
+            p_profile_id: currentProfileId,
+            p_circle_ids: Array.from(affinityCircleIds),
+            p_scope: scope,
+          },
+        );
+        if (circleAffinityError) {
+          logger.warn('[circles] circle_affinity_bulk_rpc_failed', {
+            scope,
+            message: circleAffinityError.message,
+          });
+        } else if (Array.isArray(circleAffinityRows)) {
+          circleAffinityHydrated = true;
+          for (const row of circleAffinityRows as any[]) {
+            const circleId = String(row.circle_id ?? '').trim();
+            if (!circleId) continue;
+            circleAffinityMap[circleId] =
+              typeof row.short_text === 'string' ? row.short_text : null;
+          }
+        }
+      }
+
+      const decorateCircleWithLocationInsight = (
+        circle: CircleV2,
+        options?: { allowClientFallback?: boolean },
+      ): CircleV2 => ({
+        ...circle,
+        location_insight_hydrated:
+          circle.location_insight_hydrated ?? (circle.location_insight != null || circleAffinityHydrated),
+        location_insight:
+          circle.location_insight
+          ?? circleAffinityMap[String(circle.id)] ?? (
+            options?.allowClientFallback === false
+              ? null
+              : getCircleLocationAffinity(circle, profile as any, scope)?.shortText ?? null
+          ),
+      });
 
       const memberships: CircleMembership[] = (membershipRows ?? []).map((row: any) => ({
         id: String(row.id),
         circle_id: String(row.circle_id),
         role: String(row.role),
         status: String(row.status),
-        circles: normalizeCircle(row.circles),
+        circles: row.circles
+          ? decorateCircleWithLocationInsight(normalizeCircle(row.circles), {
+              allowClientFallback: !circleAffinityHydrated,
+            })
+          : null,
       }));
       const joinedIds = new Set(memberships.map((membership) => membership.circle_id));
-      const visibleCircles = ((circleRows ?? []) as CircleV2[]).filter((circle) => !joinedIds.has(String(circle.id)));
-      const sortedDiscover = sortCirclesByRelevance<CircleV2>(
-        visibleCircles,
-        profile as any,
-        scope,
-      ).filter((circle) => {
-        if (scope === 'global') return true;
-        if (scope === 'diaspora') return circle.visibility_scope === 'diaspora' || (circle.diaspora_tags?.length ?? 0) > 0;
-        const userCountry = String((profile as any)?.current_country_code ?? '').toUpperCase();
-        const matchesCountry = !circle.country_code || !userCountry || String(circle.country_code).toUpperCase() === userCountry;
-        if (!matchesCountry && circle.visibility_scope !== 'global') return false;
-        if (scope !== 'near_me' || circle.visibility_scope === 'global') return true;
-        const userCity = String((profile as any)?.city ?? '').trim().toLowerCase();
-        return !circle.city || !userCity || String(circle.city).trim().toLowerCase() === userCity;
-      });
+      const visibleCircles = discoverCircleRows.filter((circle) => !joinedIds.has(String(circle.id)));
+      const sortedDiscover = circlesError
+        ? sortCirclesByRelevance<CircleV2>(
+          visibleCircles,
+          profile as any,
+          scope,
+        ).filter((circle) => {
+          if (scope === 'global') return true;
+          if (scope === 'diaspora') return circle.visibility_scope === 'diaspora' || (circle.diaspora_tags?.length ?? 0) > 0;
+          const userCountry = String((profile as any)?.current_country_code ?? '').toUpperCase();
+          const matchesCountry = !circle.country_code || !userCountry || String(circle.country_code).toUpperCase() === userCountry;
+          if (!matchesCountry && circle.visibility_scope !== 'global') return false;
+          if (scope !== 'near_me' || circle.visibility_scope === 'global') return true;
+          const userCity = String((profile as any)?.city ?? '').trim().toLowerCase();
+          return !circle.city || !userCity || String(circle.city).trim().toLowerCase() === userCity;
+        }).map((circle) => decorateCircleWithLocationInsight(circle))
+        : visibleCircles.map((circle) =>
+          decorateCircleWithLocationInsight(circle, { allowClientFallback: false }));
 
       const allCircles = [
         ...memberships.map((membership) => membership.circles).filter(Boolean) as CircleV2[],
@@ -852,7 +933,12 @@ export default function CirclesScreen() {
 
       setMyCircles(memberships);
       setDiscoverCircles(sortedDiscover);
-      setCreatorCircles((creatorCircleRows ?? []) as CircleV2[]);
+      setCreatorCircles(
+        ((creatorCircleRows ?? []) as CircleV2[]).map((circle) =>
+          decorateCircleWithLocationInsight(circle, {
+            allowClientFallback: !circleAffinityHydrated,
+          })),
+      );
       setCreatorGatherings((creatorGatheringRows ?? []) as Gathering[]);
       setPrompts((promptRows ?? []) as CirclePrompt[]);
       setGatherings((gatheringRows ?? []) as Gathering[]);
@@ -871,7 +957,10 @@ export default function CirclesScreen() {
       void writeCirclesHubSnapshot(currentProfileId, scope, {
         myCircles: memberships,
         discoverCircles: sortedDiscover,
-        creatorCircles: (creatorCircleRows ?? []) as CircleV2[],
+        creatorCircles: ((creatorCircleRows ?? []) as CircleV2[]).map((circle) =>
+          decorateCircleWithLocationInsight(circle, {
+            allowClientFallback: !circleAffinityHydrated,
+          })),
         creatorGatherings: (creatorGatheringRows ?? []) as Gathering[],
         prompts: (promptRows ?? []) as CirclePrompt[],
         gatherings: (gatheringRows ?? []) as Gathering[],

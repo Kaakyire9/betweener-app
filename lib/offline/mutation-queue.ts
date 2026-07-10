@@ -21,6 +21,7 @@ import {
   deleteMomentStrict,
 } from '@/lib/moments';
 import { isLikelyNetworkError } from '@/lib/network';
+import { normalizeProfilePhotoUri } from '@/lib/profile/media';
 import {
   readCirclePulseCommentsSnapshotState,
   removeCirclePulseCommentSnapshot,
@@ -150,6 +151,8 @@ type LocalProfileMediaUpload = {
 type ProfileMediaSyncPayload = {
   userId: string;
   avatar?: LocalProfileMediaUpload | null;
+  hero?: LocalProfileMediaUpload | null;
+  heroImageUrl?: string | null;
   photos?: string[] | null;
   photoItems?: LocalProfileMediaUpload[];
   video?: (LocalProfileMediaUpload & { previousPath?: string | null }) | null;
@@ -1864,20 +1867,34 @@ async function uploadQueuedProfileVideo(userId: string, item: LocalProfileMediaU
 
 async function processProfileMediaSync(payload: ProfileMediaSyncPayload) {
   const updates: Record<string, unknown> = {};
+  const replacementByLocalUri: Record<string, string> = {};
 
   if (payload.avatar?.localUri) {
-    updates.avatar_url = await uploadQueuedProfilePhoto(payload.userId, payload.avatar);
+    const uploadedAvatarUrl = await uploadQueuedProfilePhoto(payload.userId, payload.avatar);
+    replacementByLocalUri[payload.avatar.localUri] = uploadedAvatarUrl;
+    updates.avatar_url = uploadedAvatarUrl;
+  }
+
+  if (payload.hero?.localUri) {
+    const uploadedHeroUrl = await uploadQueuedProfilePhoto(payload.userId, payload.hero);
+    replacementByLocalUri[payload.hero.localUri] = uploadedHeroUrl;
   }
 
   const photoItems = payload.photoItems ?? [];
   if (payload.photos && photoItems.length > 0) {
-    const replacementByLocalUri: Record<string, string> = {};
     for (const item of photoItems) {
       replacementByLocalUri[item.localUri] = await uploadQueuedProfilePhoto(payload.userId, item);
     }
     updates.photos = payload.photos
       .map((photo) => replacementByLocalUri[photo] ?? photo)
       .filter((photo) => typeof photo === 'string' && photo.length > 0);
+  }
+
+  if ('heroImageUrl' in payload) {
+    const normalizedHeroImageUrl = normalizeProfilePhotoUri(payload.heroImageUrl);
+    updates.hero_image_url = normalizedHeroImageUrl
+      ? replacementByLocalUri[normalizedHeroImageUrl] ?? normalizedHeroImageUrl
+      : null;
   }
 
   if (payload.video?.localUri) {

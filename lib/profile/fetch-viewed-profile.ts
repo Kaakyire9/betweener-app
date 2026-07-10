@@ -1,4 +1,5 @@
 import { isDistanceLabel, parseDistanceKmFromLabel } from '@/lib/profile/distance';
+import { normalizeProfileVideoUri } from '@/lib/profile/media';
 import { getAuthoritativePresenceDisplay } from '@/lib/presence';
 import { getInterestEmoji } from '@/lib/profile/interest-emoji';
 import { getProfileCardContext } from '@/lib/profile-interest';
@@ -21,7 +22,7 @@ export async function fetchViewedProfile(options: FetchViewedProfileOptions): Pr
   const { viewedProfileId, viewerProfileId, fallbackDistanceLabel, fallbackDistanceKm } = options;
 
   const selectFull =
-    'id, user_id, full_name, age, region, city, location, avatar_url, photos, profile_video, occupation, education, bio, tribe, roots, roots_note, roots_visibility, religion, personality_type, height, looking_for, love_language, languages_spoken, current_country, current_country_code, origin_country, origin_country_code, exercise_frequency, smoking, drinking, has_children, wants_children, location_precision, is_active, online, last_active, verification_level, created_at';
+    'id, user_id, full_name, age, region, city, location, avatar_url, hero_image_url, photos, profile_video, occupation, education, bio, tribe, roots, roots_note, roots_visibility, religion, personality_type, height, looking_for, love_language, languages_spoken, current_country, current_country_code, origin_country, origin_country_code, exercise_frequency, smoking, drinking, has_children, wants_children, location_precision, is_active, online, last_active, verification_level, created_at';
   const selectMinimal =
     'id, user_id, full_name, age, region, city, location, avatar_url, bio, tribe, roots, roots_note, roots_visibility, religion, personality_type, love_language, is_active, online, last_active, verification_level, current_country_code, origin_country, origin_country_code, created_at';
 
@@ -53,6 +54,14 @@ export async function fetchViewedProfile(options: FetchViewedProfileOptions): Pr
 
   let interestsArr: Interest[] = [];
   let promptAnswers: ProfilePromptAnswer[] = [];
+  let locationAffinity:
+    | {
+        reason_code?: string | null;
+        strength?: number | null;
+        short_text?: string | null;
+        long_text?: string | null;
+      }
+    | null = null;
   try {
     const { data: piRows } = await supabase
       .from('profile_interests')
@@ -108,6 +117,32 @@ export async function fetchViewedProfile(options: FetchViewedProfileOptions): Pr
     // non-fatal
   }
 
+  if (viewerProfileId) {
+    try {
+      const { data: affinityRows } = await supabase.rpc('compute_location_affinity' as any, {
+        p_viewer_profile_id: viewerProfileId,
+        p_candidate_profile_id: viewedProfileId,
+      } as any);
+
+      const row = Array.isArray(affinityRows) ? affinityRows[0] : null;
+      if (row) {
+        locationAffinity = {
+          reason_code: row.reason_code ?? null,
+          strength:
+            typeof row.strength === 'number'
+              ? row.strength
+              : typeof row.strength === 'string'
+                ? Number(row.strength)
+                : null,
+          short_text: row.short_text ?? null,
+          long_text: row.long_text ?? null,
+        };
+      }
+    } catch {
+      // non-fatal
+    }
+  }
+
   const photos = Array.isArray((profileWithPresence as any).photos)
     ? (profileWithPresence as any).photos
     : profileWithPresence.avatar_url
@@ -153,8 +188,10 @@ export async function fetchViewedProfile(options: FetchViewedProfileOptions): Pr
     region: profileWithPresence.region || undefined,
     latitude: typeof (profileWithPresence as any).latitude === 'number' ? (profileWithPresence as any).latitude : undefined,
     longitude: typeof (profileWithPresence as any).longitude === 'number' ? (profileWithPresence as any).longitude : undefined,
+    heroImageUrl: (profileWithPresence as any).hero_image_url || photos[0] || profileWithPresence.avatar_url || '',
     profilePicture: profileWithPresence.avatar_url || photos[0] || '',
     photos,
+    profileVideo: normalizeProfileVideoUri((profileWithPresence as any).profile_video) || undefined,
     profileVideoPath: (profileWithPresence as any).profile_video || undefined,
     occupation: (profileWithPresence as any).occupation || '',
     education: (profileWithPresence as any).education || '',
@@ -176,6 +213,11 @@ export async function fetchViewedProfile(options: FetchViewedProfileOptions): Pr
     currentCountryCode: (profileWithPresence as any).current_country_code || undefined,
     originCountry: (profileWithPresence as any).origin_country || undefined,
     originCountryCode: (profileWithPresence as any).origin_country_code || undefined,
+    locationAffinityReasonCode: locationAffinity?.reason_code ?? null,
+    locationAffinityStrength: locationAffinity?.strength ?? null,
+    locationAffinityShortText: locationAffinity?.short_text ?? null,
+    locationAffinityLongText: locationAffinity?.long_text ?? null,
+    locationInsight: locationAffinity?.short_text ?? null,
     exerciseFrequency: (profileWithPresence as any).exercise_frequency || undefined,
     smoking: (profileWithPresence as any).smoking || undefined,
     drinking: (profileWithPresence as any).drinking || undefined,
@@ -199,8 +241,11 @@ export async function fetchViewedProfile(options: FetchViewedProfileOptions): Pr
     isNewHere,
   };
 
-  if ((!mapped.photos || mapped.photos.length === 0) && mapped.profilePicture) {
-    mapped.photos = [mapped.profilePicture];
+  if (!mapped.photos || mapped.photos.length === 0) {
+    const fallbackHeroImage = mapped.heroImageUrl || mapped.profilePicture;
+    if (fallbackHeroImage) {
+      mapped.photos = [fallbackHeroImage];
+    }
   }
 
   return mapped;

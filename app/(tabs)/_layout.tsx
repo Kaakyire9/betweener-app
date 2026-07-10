@@ -1,7 +1,6 @@
 import { AuthGuard } from '@/components/auth-guard';
-import { HapticTab } from '@/components/haptic-tab';
 import IntentMark from '@/components/icons/IntentMark';
-// import { IconSymbol } from '@/components/ui/icon-symbol';
+import PremiumBottomTabBar from '@/components/navigation/PremiumBottomTabBar';
 import { Colors } from '@/constants/theme';
 import { useInbox } from '@/hooks/useInbox';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -15,19 +14,19 @@ import {
   getMeInboxActivityItems,
   getMomentsInboxActivityItems,
 } from '@/lib/inbox/badge-groups';
-import { type ResponsiveMetrics, useResponsiveMetrics } from '@/lib/responsive';
-import { Tabs } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
-import { MessageCircle, Sparkles, User, Users } from 'lucide-react-native';
-import { useEffect, useMemo, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { useResponsiveMetrics } from '@/lib/responsive';
 import { setAppIconBadgeCount } from '@/lib/notifications/app-badge';
+import { Tabs } from 'expo-router';
+import { MessageCircle, Sparkles, User, Users } from 'lucide-react-native';
+import { useEffect, useState } from 'react';
+
+const withAlpha = (hex: string | undefined | null, alpha: string) => `${hex ?? '#000000'}${alpha}`;
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const responsive = useResponsiveMetrics();
-  const styles = useMemo(() => createStyles(responsive), [responsive]);
+  const isDark = (colorScheme ?? 'light') === 'dark';
   const { user, profile } = useAuth();
   const { profileId } = useResolvedProfileId(user?.id ?? null, profile?.id ?? null);
   const { badgeCount, freshness: intentFreshness } = useIntentRequests(profileId, {
@@ -37,9 +36,10 @@ export default function TabLayout() {
   const { count: circleInvitationCount } = useCircleInvitationCount(profileId);
 
   const [unreadChats, setUnreadChats] = useState(0);
-  const insightsInboxActivityItems = useMemo(() => getInsightsInboxActivityItems(inboxItems), [inboxItems]);
-  const momentsInboxActivityItems = useMemo(() => getMomentsInboxActivityItems(inboxItems), [inboxItems]);
-  const meInboxActivityItems = useMemo(() => getMeInboxActivityItems(inboxItems), [inboxItems]);
+
+  const insightsInboxActivityItems = getInsightsInboxActivityItems(inboxItems);
+  const momentsInboxActivityItems = getMomentsInboxActivityItems(inboxItems);
+  const meInboxActivityItems = getMeInboxActivityItems(inboxItems);
   const trustedIntentBadgeCount = intentFreshness.hasFreshServerData ? badgeCount : 0;
   const trustedInsightsBadgeCount = inboxFreshness.hasFreshServerData ? insightsInboxActivityItems.length : 0;
   const trustedMomentsBadgeCount = inboxFreshness.hasFreshServerData ? momentsInboxActivityItems.length : 0;
@@ -93,55 +93,56 @@ export default function TabLayout() {
   }, [
     circleInvitationCount,
     trustedInsightsBadgeCount,
-    trustedMeBadgeCount,
-    trustedMomentsBadgeCount,
     trustedIntentBadgeCount,
+    trustedMomentsBadgeCount,
+    trustedMeBadgeCount,
     unreadChats,
   ]);
 
-  // Badge component for tab notifications
-  const TabBadge = ({ count }: { count: number }) => {
-    if (count === 0) return null;
-    
-    return (
-      <View style={[styles.badge, { backgroundColor: theme.tint, borderColor: theme.background }]}>
-        <Text style={styles.badgeText}>
-          {count > 99 ? '99+' : count.toString()}
-        </Text>
-      </View>
-    );
-  };
+  const activeTint = theme.tint;
+  const inactiveTint = isDark ? withAlpha(theme.textMuted, 'C8') : '#6E7774';
 
   return (
     <AuthGuard>
       <Tabs
         initialRouteName="vibes"
         screenOptions={{
-          tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
-          tabBarInactiveTintColor: Colors[colorScheme ?? 'light'].textMuted,
-          tabBarStyle: {
-            backgroundColor: Colors[colorScheme ?? 'light'].background,
-            borderTopColor: Colors[colorScheme ?? 'light'].outline,
-            height: responsive.bottomNavReserve,
-            paddingTop: responsive.compactHeight ? 4 : 6,
-            paddingBottom: Math.max(responsive.insets.bottom, responsive.compactHeight ? 6 : 8),
-          },
-          tabBarLabelStyle: {
-            fontSize: responsive.font(11, { min: 10, max: 12 }),
-            fontFamily: 'Manrope_600SemiBold',
-          },
           headerShown: false,
-          tabBarButton: HapticTab,
-        }}>
+          tabBarActiveTintColor: activeTint,
+          tabBarInactiveTintColor: inactiveTint,
+          tabBarStyle: {
+            position: 'absolute',
+            backgroundColor: 'transparent',
+            borderTopWidth: 0,
+            elevation: 0,
+          },
+        }}
+        tabBar={(props) => (
+          <PremiumBottomTabBar
+            {...props}
+            badgeCounts={{
+              vibes: trustedMomentsBadgeCount,
+              circles: circleInvitationCount,
+              intent: badgeCount,
+              chat: unreadChats,
+              profile: trustedMeBadgeCount,
+            }}
+            isDark={isDark}
+            responsive={responsive}
+            theme={theme}
+          />
+        )}
+      >
         <Tabs.Screen
           name="vibes"
           options={{
             title: 'Vibes',
-            tabBarIcon: ({ color }) => (
-              <View style={{ position: 'relative' }}>
-                <Sparkles size={responsive.compactWidth ? 24 : 26} color={color} />
-                <TabBadge count={trustedMomentsBadgeCount} />
-              </View>
+            tabBarIcon: ({ color, size, focused }) => (
+              <Sparkles
+                size={focused ? Math.max(size, responsive.compactWidth ? 25 : 27) : size}
+                color={color}
+                strokeWidth={focused ? 2.2 : 2}
+              />
             ),
           }}
         />
@@ -155,12 +156,12 @@ export default function TabLayout() {
           name="circles"
           options={{
             title: 'Circles',
-            tabBarIcon: ({ color }) => (
-              <View style={{ position: 'relative' }}>
-                <Users size={responsive.compactWidth ? 24 : 26} color={color} />
-                {/* <IconSymbol size={28} name="magnifyingglass" color={color} /> */}
-                <TabBadge count={circleInvitationCount} />
-              </View>
+            tabBarIcon: ({ color, size, focused }) => (
+              <Users
+                size={focused ? Math.max(size, responsive.compactWidth ? 25 : 27) : size}
+                color={color}
+                strokeWidth={focused ? 2.1 : 1.95}
+              />
             ),
           }}
         />
@@ -180,41 +181,25 @@ export default function TabLayout() {
           name="intent"
           options={{
             title: 'Intent',
-            tabBarIcon: ({ color, focused }) => {
-              const intentIconColor = colorScheme === 'light' ? theme.background : theme.text;
-              return (
-                <View style={styles.intentTabIconWrap}>
-                  {focused ? (
-                    <LinearGradient
-                      colors={[theme.accent, theme.tint]}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 1 }}
-                      style={styles.intentGlow}
-                    >
-                      <IntentMark size={responsive.compactWidth ? 30 : 32} color={intentIconColor} strokeWidth={2.45} />
-                    </LinearGradient>
-                  ) : (
-                    <View style={styles.intentInactiveIcon}>
-                      <IntentMark size={responsive.compactWidth ? 28 : 30} color={color} strokeWidth={2.25} />
-                    </View>
-                  )}
-                  {/* <IconSymbol size={28} name="bell.fill" color={color} /> */}
-                  <TabBadge count={badgeCount} />
-                </View>
-              );
-            },
+            tabBarIcon: ({ color, focused }) => (
+              <IntentMark
+                size={focused ? (responsive.compactWidth ? 28 : 30) : responsive.compactWidth ? 26 : 28}
+                color={color}
+                strokeWidth={focused ? 2.3 : 2.1}
+              />
+            ),
           }}
         />
         <Tabs.Screen
           name="chat"
           options={{
             title: 'Chat',
-            tabBarIcon: ({ color }) => (
-              <View style={{ position: 'relative' }}>
-                <MessageCircle size={responsive.compactWidth ? 24 : 26} color={color} />
-                {/* <IconSymbol size={28} name="message.fill" color={color} /> */}
-                <TabBadge count={unreadChats} />
-              </View>
+            tabBarIcon: ({ color, size, focused }) => (
+              <MessageCircle
+                size={focused ? Math.max(size, responsive.compactWidth ? 25 : 27) : size}
+                color={color}
+                strokeWidth={focused ? 2.1 : 1.95}
+              />
             ),
           }}
         />
@@ -228,11 +213,12 @@ export default function TabLayout() {
           name="profile"
           options={{
             title: 'Me',
-            tabBarIcon: ({ color }) => (
-              <View style={{ position: 'relative' }}>
-                <User size={responsive.compactWidth ? 24 : 26} color={color} />
-                <TabBadge count={trustedMeBadgeCount} />
-              </View>
+            tabBarIcon: ({ color, size, focused }) => (
+              <User
+                size={focused ? Math.max(size, responsive.compactWidth ? 25 : 27) : size}
+                color={color}
+                strokeWidth={focused ? 2.1 : 1.95}
+              />
             ),
           }}
         />
@@ -240,51 +226,3 @@ export default function TabLayout() {
     </AuthGuard>
   );
 }
-
-const createStyles = (responsive: ResponsiveMetrics) => StyleSheet.create({
-  badge: {
-    position: 'absolute',
-    top: -6,
-    right: -6,
-    backgroundColor: '#ff4757',
-    borderRadius: 10,
-    minWidth: 20,
-    height: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#fff',
-  },
-  badgeText: {
-    color: '#fff',
-    fontSize: responsive.font(12, { min: 10, max: 12 }),
-    fontWeight: 'bold',
-    textAlign: 'center',
-  },
-  intentTabIconWrap: {
-    position: 'relative',
-    minWidth: responsive.compactWidth ? 34 : 38,
-    minHeight: responsive.compactWidth ? 34 : 38,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  intentInactiveIcon: {
-    width: responsive.compactWidth ? 34 : 36,
-    height: responsive.compactWidth ? 34 : 36,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  intentGlow: {
-    width: responsive.compactWidth ? 34 : 36,
-    height: responsive.compactWidth ? 34 : 36,
-    borderRadius: responsive.compactWidth ? 13 : 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 2,
-    shadowColor: Colors.light.accent,
-    shadowOpacity: 0.35,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 8,
-  },
-});

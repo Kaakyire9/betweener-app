@@ -1,11 +1,11 @@
 import OfflineImage from "@/components/media/OfflineImage";
+import ProfileInlineVideoSurface from "@/components/profile/ProfileInlineVideoSurface";
 import { PremiumPlanBadge } from "@/components/PremiumPlanBadge";
 import { VerificationBadge } from "@/components/VerificationBadge";
 import { Colors } from "@/constants/theme";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
-import { VideoView, useVideoPlayer } from "expo-video";
-import React, { useEffect, useMemo } from "react";
+import React, { useMemo } from "react";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
 type Theme = typeof Colors.light;
@@ -15,41 +15,13 @@ type PlaceholderPalette = {
   end: string;
 };
 
-const HeroVideo = ({ uri }: { uri: string }) => {
-  const player = useVideoPlayer(uri, (p) => {
-    p.loop = true;
-    p.muted = true;
-    p.keepScreenOnWhilePlaying = false;
-    try {
-      p.play();
-    } catch {}
-  });
-
-  useEffect(() => {
-    try {
-      player.play();
-    } catch {}
-    return () => {
-      try {
-        player.pause();
-      } catch {}
-    };
-  }, [player]);
-
-  return (
-    <VideoView
-      style={StyleSheet.absoluteFillObject}
-      player={player}
-      contentFit="cover"
-      nativeControls={false}
-    />
-  );
-};
-
 type Props = {
   theme: Theme;
   isDark: boolean;
-  heroVideoUrl: string | null;
+  hasIntroVideo: boolean;
+  shouldPlayIntroVideo?: boolean;
+  heroVideoUrl?: string | null;
+  heroVideoThumbnailUrl?: string | null;
   heroImageUri: string;
   hasHeroImage: boolean;
   avatarImageUri: string;
@@ -69,7 +41,10 @@ type Props = {
 export default function MeProfileHero({
   theme,
   isDark,
+  hasIntroVideo,
+  shouldPlayIntroVideo = true,
   heroVideoUrl,
+  heroVideoThumbnailUrl,
   heroImageUri,
   hasHeroImage,
   avatarImageUri,
@@ -86,6 +61,8 @@ export default function MeProfileHero({
   onEditPress,
 }: Props) {
   const styles = useMemo(() => createStyles(theme), [theme]);
+  const showVideoPoster = hasIntroVideo;
+  const videoPosterUri = heroVideoThumbnailUrl || heroImageUri || avatarImageUri || null;
 
   return (
     <>
@@ -95,9 +72,20 @@ export default function MeProfileHero({
           { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
         ]}
       >
-        {heroVideoUrl ? (
+        {showVideoPoster ? (
           <View style={styles.heroImage}>
-            <HeroVideo uri={heroVideoUrl} />
+            <LinearGradient
+              colors={[placeholderPalette.start, placeholderPalette.end]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={StyleSheet.absoluteFillObject}
+            />
+            <ProfileInlineVideoSurface
+              videoUrl={heroVideoUrl}
+              posterUri={videoPosterUri}
+              shouldPlay={showVideoPoster && shouldPlayIntroVideo}
+              muted
+            />
             <View style={styles.heroTint} />
             <LinearGradient
               colors={["rgba(0,0,0,0.35)", "transparent"]}
@@ -129,8 +117,8 @@ export default function MeProfileHero({
           <View style={styles.heroImage}>
             <OfflineImage
               uri={heroImageUri}
-              style={styles.heroImage}
-              containerStyle={styles.heroImage}
+              style={StyleSheet.absoluteFillObject}
+              containerStyle={StyleSheet.absoluteFillObject}
               cachePolicy="memory-disk"
             />
             <View style={styles.heroTint} />
@@ -356,11 +344,13 @@ function createStyles(_theme: Theme) {
       textAlign: "center",
     },
     heroTopRow: {
+      position: "absolute",
+      top: 14,
+      right: 16,
+      zIndex: 3,
       flexDirection: "row",
       alignItems: "center",
       justifyContent: "flex-end",
-      paddingHorizontal: 16,
-      paddingTop: 14,
     },
     heroEditButton: {
       width: 34,

@@ -541,6 +541,12 @@ function ExploreCard({
             </View>
           ) : null}
 
+          {(match as any).locationInsight ? (
+            <Text style={styles.locationInsight} numberOfLines={2} maxFontSizeMultiplier={1.1}>
+              {(match as any).locationInsight}
+            </Text>
+          ) : null}
+
           {alignmentChips.length > 0 || hasIntroVideo ? (
             <View style={styles.contextRow}>
               {alignmentChips.length > 0 ? (
@@ -732,6 +738,13 @@ const createStyles = (
     },
     location: { color: "rgba(255,255,255,0.92)", marginLeft: 6, fontFamily: 'Manrope_600SemiBold', flexShrink: 1, fontSize: metrics.device.compactHeight ? 13 : 14, letterSpacing: 0.1 },
     locationFlag: { marginLeft: 6, fontSize: 15 },
+    locationInsight: {
+      color: "rgba(233,247,244,0.88)",
+      marginBottom: metrics.device.compactHeight ? 7 : 9,
+      fontSize: metrics.device.compactHeight ? 11.5 : 12.5,
+      lineHeight: metrics.device.compactHeight ? 16 : 18,
+      fontFamily: 'Manrope_600SemiBold',
+    },
     membershipBadgeInline: {
       marginLeft: 2,
     },

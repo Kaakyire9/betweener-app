@@ -146,6 +146,11 @@ export default function VibesAllMomentsModal({
           />
           <View style={styles.rowInfo}>
             <Text style={styles.rowName}>{item.isOwn ? 'Your Moment' : item.name}</Text>
+            {!item.isOwn && item.locationInsight ? (
+              <Text style={styles.rowInsight} numberOfLines={2}>
+                {item.locationInsight}
+              </Text>
+            ) : null}
             <Text style={styles.rowMeta}>{`${item.moments.length} moments • ${formatTimeAgo(lastAt)}`}</Text>
           </View>
           <MaterialCommunityIcons name="chevron-right" size={20} color={theme.textMuted} />
@@ -302,6 +307,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
     avatarFallbackText: { fontWeight: '700', color: theme.text },
     rowInfo: { flex: 1 },
     rowName: { fontSize: 14, fontWeight: '700', color: theme.text },
+    rowInsight: { fontSize: 11, color: theme.tint, marginTop: 4, fontWeight: '700', lineHeight: 15 },
     rowMeta: { fontSize: 12, color: theme.textMuted, marginTop: 4 },
   });
 };

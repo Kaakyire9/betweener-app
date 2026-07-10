@@ -107,6 +107,11 @@ export default function MomentsRow({ users, isLoading, onPressUser, onPressCreat
               <Text style={styles.label} numberOfLines={1}>
                 {isLoading ? 'Loading...' : label}
               </Text>
+              {!isLoading && !isOwn && user.locationInsight ? (
+                <Text style={styles.subLabel} numberOfLines={2}>
+                  {user.locationInsight}
+                </Text>
+              ) : null}
             </TouchableOpacity>
           );
         })}
@@ -190,4 +195,12 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) => StyleSheet
     alignItems: 'center',
   },
   label: { color: theme.text, fontSize: 12, fontFamily: 'Manrope_600SemiBold', marginTop: 6 },
+  subLabel: {
+    color: theme.textMuted,
+    fontSize: 10,
+    fontFamily: 'Manrope_500Medium',
+    marginTop: 2,
+    textAlign: 'center',
+    lineHeight: 12,
+  },
 });

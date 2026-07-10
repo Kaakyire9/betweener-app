@@ -3834,6 +3834,8 @@ export type Database = {
           last_ghana_visit: string | null
           last_successful_auth_provider: string | null
           latitude: number | null
+          locality_district: string | null
+          locality_geoname_id: number | null
           living_situation: string | null
           location: string | null
           location_precision: Database["public"]["Enums"]["location_precision"]
@@ -3868,7 +3870,10 @@ export type Database = {
           relationship_compass: Json
           religion: Database["public"]["Enums"]["religion"] | null
           roots: string[] | null
+          roots_locality: string | null
+          roots_locality_geoname_id: number | null
           roots_note: string | null
+          roots_region: string | null
           roots_visibility: string
           search_name: string | null
           smoking: string | null
@@ -3928,6 +3933,8 @@ export type Database = {
           last_ghana_visit?: string | null
           last_successful_auth_provider?: string | null
           latitude?: number | null
+          locality_district?: string | null
+          locality_geoname_id?: number | null
           living_situation?: string | null
           location?: string | null
           location_precision?: Database["public"]["Enums"]["location_precision"]
@@ -3962,7 +3969,10 @@ export type Database = {
           relationship_compass?: Json
           religion?: Database["public"]["Enums"]["religion"] | null
           roots?: string[] | null
+          roots_locality?: string | null
+          roots_locality_geoname_id?: number | null
           roots_note?: string | null
+          roots_region?: string | null
           roots_visibility?: string
           search_name?: string | null
           smoking?: string | null
@@ -4022,6 +4032,8 @@ export type Database = {
           last_ghana_visit?: string | null
           last_successful_auth_provider?: string | null
           latitude?: number | null
+          locality_district?: string | null
+          locality_geoname_id?: number | null
           living_situation?: string | null
           location?: string | null
           location_precision?: Database["public"]["Enums"]["location_precision"]
@@ -4056,7 +4068,10 @@ export type Database = {
           relationship_compass?: Json
           religion?: Database["public"]["Enums"]["religion"] | null
           roots?: string[] | null
+          roots_locality?: string | null
+          roots_locality_geoname_id?: number | null
           roots_note?: string | null
+          roots_region?: string | null
           roots_visibility?: string
           search_name?: string | null
           smoking?: string | null
@@ -5697,6 +5712,9 @@ export type Database = {
           is_active: boolean
           last_active: string
           latitude: number
+          location_affinity_reason_code: string | null
+          location_affinity_short_text: string | null
+          location_affinity_strength: number | null
           location: string
           longitude: number
           online: boolean
@@ -5723,6 +5741,9 @@ export type Database = {
           is_active: boolean
           last_active: string
           latitude: number
+          location_affinity_reason_code: string | null
+          location_affinity_short_text: string | null
+          location_affinity_strength: number | null
           location: string
           longitude: number
           online: boolean
@@ -5775,6 +5796,9 @@ export type Database = {
           is_active: boolean
           last_active: string
           latitude: number
+          location_affinity_reason_code: string | null
+          location_affinity_short_text: string | null
+          location_affinity_strength: number | null
           location: string
           longitude: number
           online: boolean
@@ -5786,6 +5810,81 @@ export type Database = {
           user_id: string
           verification_level: number
           verified: boolean
+        }[]
+      }
+      compute_location_affinity: {
+        Args: { p_candidate_profile_id: string; p_viewer_profile_id: string }
+        Returns: {
+          long_text: string | null
+          reason_code: string | null
+          short_text: string | null
+          strength: number | null
+        }[]
+      }
+      compute_location_affinities: {
+        Args: { p_candidate_profile_ids: string[]; p_viewer_profile_id: string }
+        Returns: {
+          long_text: string | null
+          profile_id: string
+          reason_code: string | null
+          short_text: string | null
+          strength: number | null
+        }[]
+      }
+      get_ranked_circles_for_profile: {
+        Args: { p_limit?: number; p_profile_id: string; p_scope?: string }
+        Returns: {
+          active_this_week_count: number | null
+          archived_at: string | null
+          audience_tags: string[] | null
+          category: string | null
+          city: string | null
+          country_code: string | null
+          country_name: string | null
+          cover_image_url: string | null
+          created_by_profile_id: string | null
+          culture_tags: string[] | null
+          description: string | null
+          diaspora_tags: string[] | null
+          faith_tags: string[] | null
+          gathering_count: number | null
+          icon_url: string | null
+          id: string
+          image_path: string | null
+          image_updated_at: string | null
+          interest_tags: string[] | null
+          is_featured: boolean | null
+          is_official: boolean | null
+          is_partner: boolean | null
+          location_insight: string | null
+          member_count: number | null
+          name: string
+          region: string | null
+          relevance_score: number | null
+          requires_join_approval: boolean | null
+          short_description: string | null
+          slug: string | null
+          status: string | null
+          visibility: string | null
+          visibility_scope: string | null
+          circle_type: string | null
+        }[]
+      }
+      get_circle_location_affinity: {
+        Args: { p_circle_id: string; p_profile_id: string; p_scope?: string }
+        Returns: {
+          reason_code: string | null
+          short_text: string | null
+          strength: number | null
+        }[]
+      }
+      get_circle_location_affinities: {
+        Args: { p_circle_ids: string[]; p_profile_id: string; p_scope?: string }
+        Returns: {
+          circle_id: string
+          reason_code: string | null
+          short_text: string | null
+          strength: number | null
         }[]
       }
       get_vibes_recommendations_v2: {
@@ -9332,7 +9431,7 @@ export type Database = {
     }
     Enums: {
       gender: "MALE" | "FEMALE" | "NON_BINARY" | "OTHER"
-      location_precision: "EXACT" | "CITY"
+      location_precision: "EXACT" | "CITY" | "REGION" | "COUNTRY"
       match_status: "PENDING" | "ACCEPTED" | "REJECTED"
       religion:
         | "CHRISTIAN"
@@ -9482,7 +9581,7 @@ export const Constants = {
   public: {
     Enums: {
       gender: ["MALE", "FEMALE", "NON_BINARY", "OTHER"],
-      location_precision: ["EXACT", "CITY"],
+      location_precision: ["EXACT", "CITY", "REGION", "COUNTRY"],
       match_status: ["PENDING", "ACCEPTED", "REJECTED"],
       religion: [
         "CHRISTIAN",

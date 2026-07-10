@@ -44,6 +44,7 @@ import { hasFeatureAccess } from '@/lib/premium-access';
 import { useResponsiveMetrics } from '@/lib/responsive';
 import { isLikelyNetworkError } from '@/lib/network';
 import { buildLocationDisplay } from '@/lib/location/location-display';
+import { getLocationConnectionInsight } from '@/lib/location/location-intelligence';
 import { getAuthoritativePresenceDisplay } from '@/lib/presence';
 import { parseDistanceKmFromLabel } from '@/lib/profile/distance';
 import { fetchUserPresence } from '@/lib/user-presence';
@@ -262,6 +263,7 @@ function hasMeaningfulText(profile: UserProfile) {
 
 function shouldGateProfile(profile: UserProfile) {
   const hasAnyPhoto =
+    !!profile.heroImageUrl ||
     (Array.isArray(profile.photos) && profile.photos.some(Boolean)) ||
     !!profile.profilePicture;
   const hasBio = (profile.bio || '').trim().length >= BIO_MIN_PUBLIC_CHARS;
@@ -284,7 +286,16 @@ function parseFallbackProfile(rawParam?: string | string[]): UserProfile | null 
   for (const cand of candidates) {
     try {
       const parsed = JSON.parse(cand || '{}');
-      const photos = Array.isArray(parsed.photos) ? parsed.photos : parsed.avatar_url ? [parsed.avatar_url] : [];
+      const rawHeroImageUrl =
+        (typeof parsed.heroImageUrl === 'string' ? parsed.heroImageUrl : '') ||
+        (typeof parsed.hero_image_url === 'string' ? parsed.hero_image_url : '');
+      const photos = Array.isArray(parsed.photos)
+        ? parsed.photos
+        : rawHeroImageUrl
+          ? [rawHeroImageUrl]
+          : parsed.avatar_url
+            ? [parsed.avatar_url]
+            : [];
       const fallbackPresence = getAuthoritativePresenceDisplay(
         parsed.online,
         parsed.last_active || parsed.lastActive,
@@ -299,6 +310,12 @@ function parseFallbackProfile(rawParam?: string | string[]): UserProfile | null 
         region: parsed.region,
         latitude: typeof parsed.latitude === 'number' ? parsed.latitude : undefined,
         longitude: typeof parsed.longitude === 'number' ? parsed.longitude : undefined,
+        heroImageUrl:
+          (typeof parsed.heroImageUrl === 'string' ? parsed.heroImageUrl : '') ||
+          (typeof parsed.hero_image_url === 'string' ? parsed.hero_image_url : '') ||
+          parsed.avatar_url ||
+          photos[0] ||
+          '',
         profilePicture: parsed.avatar_url || photos[0] || '',
         photos,
         profileVideo: typeof parsed.profileVideo === 'string' ? parsed.profileVideo : undefined,
@@ -368,6 +385,7 @@ function pickTaggedImages(profile: UserProfile): PremiumImage[] {
   const tags: ProfileImageTag[] = ['intro', 'lifestyle', 'prompts', 'values'];
   const uris = Array.isArray(profile.photos) ? profile.photos.filter(Boolean) : [];
   const orderedUris = [
+    profile.heroImageUrl,
     profile.profilePicture,
     ...uris,
   ]
@@ -928,8 +946,14 @@ export default function ProfileViewPremiumV2Screen() {
       .filter((name) => mine.has(String(name).trim().toLowerCase()));
   }, [myInterests, resolvedProfile.interests]);
   const profileContextLine = useMemo(() => {
+    const locationInsight =
+      !isOwnProfile && currentProfile
+        ? getLocationConnectionInsight(currentProfile, resolvedProfile, 'profile')
+        : null;
+
     if (sharedInterestNames.length > 1) return `${sharedInterestNames.length} shared interests`;
     if (sharedInterestNames[0]) return `Shared: ${sharedInterestNames[0]}`;
+    if (locationInsight) return locationInsight;
     if (isOnlineNow) return 'Online now for a real-time intro';
     if (isActiveNow) return 'Active now and open to connection';
     if (resolvedProfile.lookingFor) return `Intent: ${resolvedProfile.lookingFor}`;
@@ -939,9 +963,12 @@ export default function ProfileViewPremiumV2Screen() {
   }, [
     isActiveNow,
     isOnlineNow,
+    currentProfile,
+    isOwnProfile,
     resolvedProfile.lookingFor,
     resolvedProfile.loveLanguage,
     resolvedProfile.personalityType,
+    resolvedProfile,
     sharedInterestNames,
   ]);
   const profilePremiumPlan = isOwnProfile
@@ -1450,14 +1477,20 @@ export default function ProfileViewPremiumV2Screen() {
     }
 
     const photos = Array.isArray(resolvedProfile.photos) ? resolvedProfile.photos.filter(Boolean) : [];
-    const uris = photos.length ? photos : resolvedProfile.profilePicture ? [resolvedProfile.profilePicture] : [];
+    const uris = photos.length
+      ? photos
+      : resolvedProfile.heroImageUrl
+        ? [resolvedProfile.heroImageUrl]
+        : resolvedProfile.profilePicture
+          ? [resolvedProfile.profilePicture]
+          : [];
     return uris.map((uri) => ({ uri }));
-  }, [profile.images, profile.sections, resolvedProfile.photos, resolvedProfile.profilePicture]);
+  }, [profile.images, profile.sections, resolvedProfile.heroImageUrl, resolvedProfile.photos, resolvedProfile.profilePicture]);
   const heroImageUri = useMemo(() => {
     if (heroOverrideType === 'image' && heroOverrideUri) return heroOverrideUri;
     const photos = Array.isArray(resolvedProfile.photos) ? resolvedProfile.photos : [];
-    return photos.find(Boolean) || resolvedProfile.profilePicture || '';
-  }, [heroOverrideType, heroOverrideUri, resolvedProfile.photos, resolvedProfile.profilePicture]);
+    return resolvedProfile.heroImageUrl || photos.find(Boolean) || resolvedProfile.profilePicture || '';
+  }, [heroOverrideType, heroOverrideUri, resolvedProfile.heroImageUrl, resolvedProfile.photos, resolvedProfile.profilePicture]);
   const hasHeroVideo = Boolean(resolvedProfile.profileVideoPath || resolvedProfile.profileVideo || heroVideoUrl);
   const showHeroVideo =
     heroOverrideType === 'video'

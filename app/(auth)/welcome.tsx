@@ -2,8 +2,9 @@ import BlurViewSafe from "@/components/NativeWrappers/BlurViewSafe";
 import SignalIcon from "@/components/icons/SignalIcon";
 import { haptics } from "@/lib/haptics";
 import { type ResponsiveMetrics, useResponsiveMetrics } from "@/lib/responsive";
+import { setSignupOnboardingVariant } from "@/lib/signup-tracking";
 import { TRUST_LINKS, openExternalUrl } from "@/lib/trust-links";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useMemo } from "react";
 import { LinearGradient } from "expo-linear-gradient";
 import { Image, Platform, Pressable, StyleSheet, Text, View } from "react-native";
@@ -48,8 +49,15 @@ const getWelcomeMetrics = (responsive: ResponsiveMetrics) => {
 
 export default function WelcomeScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams();
   const responsive = useResponsiveMetrics();
   const metrics = useMemo(() => getWelcomeMetrics(responsive), [responsive]);
+  const variantParam = (() => {
+    const raw = params?.variant;
+    if (typeof raw === "string") return raw;
+    if (Array.isArray(raw)) return raw[0];
+    return null;
+  })();
   const gradientColors = useMemo(
     () => ["#061719", "#0B2A2D", "#165E63", "#7C5C9F", "#F0D9C7"] as const,
     []
@@ -68,6 +76,10 @@ export default function WelcomeScreen() {
       false
     );
   }, [ambient, entrance]);
+
+  useEffect(() => {
+    void setSignupOnboardingVariant(variantParam);
+  }, [variantParam]);
 
   const topGlowStyle = useAnimatedStyle(() => ({
     opacity: 0.62 + ambient.value * 0.14,
@@ -110,12 +122,20 @@ export default function WelcomeScreen() {
 
   const handleCreateAccount = async () => {
     await haptics.light();
-    router.replace("/(auth)/signup-options");
+    router.replace(
+      variantParam
+        ? { pathname: "/(auth)/signup-options", params: { variant: variantParam } }
+        : "/(auth)/signup-options"
+    );
   };
 
   const handleSignIn = async () => {
     await haptics.light();
-    router.replace("/(auth)/login");
+    router.replace(
+      variantParam
+        ? { pathname: "/(auth)/login", params: { variant: variantParam } }
+        : "/(auth)/login"
+    );
   };
 
   return (

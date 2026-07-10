@@ -1,0 +1,162 @@
+import {
+  findCountryByLabel,
+  getCountryCodeByName,
+  inferCountryFromPhoneNumber,
+  type CountryOption,
+} from "../location/countries.ts";
+import { normalizeGhanaCityTownValue } from "../location/ghana-locality-shared.ts";
+import { normalizeOtherText, replaceOtherInList, resolveOtherValue } from "../profile/other-option.ts";
+import { isReligionEnumError, normalizeReligionForProfile } from "../profile/religion.ts";
+
+import type {
+  PremiumOnboardingFormState,
+  PremiumOnboardingVariant,
+} from "./premium-onboarding.types.ts";
+
+type BuildPremiumOnboardingProfileArgs = {
+  variant: PremiumOnboardingVariant;
+  form: PremiumOnboardingFormState;
+  customOccupation: string;
+  customTribe: string;
+  imageUrl: string | null;
+  phoneNumber: string | null;
+};
+
+export function getPremiumOnboardingLocationPrecision(input: {
+  city?: string | null;
+  region?: string | null;
+  country?: string | null;
+}) {
+  if (input.city?.trim()) return "CITY" as const;
+  if (input.region?.trim()) return "REGION" as const;
+  if (input.country?.trim()) return "COUNTRY" as const;
+  return null;
+}
+
+export function buildPremiumOnboardingLocationLabel(input: {
+  city?: string | null;
+  region?: string | null;
+  country?: string | null;
+}) {
+  if (input.city?.trim()) return input.city.trim();
+  if (input.region?.trim()) return input.region.trim();
+  if (input.country?.trim()) return input.country.trim();
+  return null;
+}
+
+export function isRootsVisibilityConstraintError(error: unknown) {
+  const code = String((error as any)?.code || "");
+  const message = String((error as any)?.message || "").toLowerCase();
+  return code === "23514" && message.includes("profiles_roots_visibility_check");
+}
+
+export function buildPremiumOnboardingProfileData({
+  variant,
+  form,
+  customOccupation,
+  customTribe,
+  imageUrl,
+  phoneNumber,
+}: BuildPremiumOnboardingProfileArgs) {
+  const resolvedOccupation = resolveOtherValue(form.occupation, customOccupation);
+  const normalizedRoots = variant === "ghana" ? replaceOtherInList(form.roots, form.rootsNote) : [];
+  const resolvedTribe =
+    variant === "ghana"
+      ? normalizedRoots[0] ?? null
+      : resolveOtherValue(form.tribe, customTribe);
+  const currentCountryName = variant === "ghana" ? "Ghana" : form.currentCountry.trim();
+  const currentCountryOption: CountryOption | { label: string; code: string } | null =
+    variant === "ghana"
+      ? { label: "Ghana", code: "GH" }
+      : findCountryByLabel(form.currentCountry) ?? inferCountryFromPhoneNumber(phoneNumber);
+  const currentCountryCode =
+    variant === "ghana"
+      ? "GH"
+      : currentCountryOption?.code ?? getCountryCodeByName(form.currentCountry);
+  const originCountryName =
+    variant === "ghana"
+      ? "Ghana"
+      : form.originCountry || (currentCountryName === "Ghana" ? "Ghana" : null);
+  const originCountryCode =
+    variant === "ghana"
+      ? "GH"
+      : form.originCountry
+        ? getCountryCodeByName(form.originCountry)
+        : currentCountryName === "Ghana"
+          ? "GH"
+          : null;
+  const region = form.region.trim();
+  const city = variant === "ghana" ? normalizeGhanaCityTownValue(form.city) : "";
+
+  if (!currentCountryName || !currentCountryCode) {
+    throw new Error("Please choose where you live now before continuing.");
+  }
+
+  const location = buildPremiumOnboardingLocationLabel({
+    city: city || null,
+    region: region || null,
+    country: currentCountryName,
+  });
+  const locationPrecision = getPremiumOnboardingLocationPrecision({
+    city: city || null,
+    region: region || null,
+    country: currentCountryName,
+  });
+
+  return {
+    full_name: form.fullName.trim(),
+    age: Number(form.age),
+    gender: form.gender as any,
+    bio: form.bio.trim(),
+    occupation: resolvedOccupation,
+    region: region || null,
+    tribe: resolvedTribe,
+    roots: variant === "ghana" && normalizedRoots.length > 0 ? normalizedRoots : null,
+    roots_note: variant === "ghana" ? normalizeOtherText(form.rootsNote) || null : null,
+    roots_visibility: variant === "ghana" ? form.rootsVisibility : "VISIBLE",
+    religion: normalizeReligionForProfile(form.religion) as any,
+    looking_for: form.lookingFor,
+    avatar_url: imageUrl,
+    phone_number: phoneNumber,
+    phone_verified: true,
+    min_age_interest: Number(form.minAgeInterest),
+    max_age_interest: Number(form.maxAgeInterest),
+    city: city || null,
+    locality_geoname_id: variant === "ghana" ? form.cityLocalityGeonameId ?? null : null,
+    locality_district: variant === "ghana" ? normalizeGhanaCityTownValue(form.cityDistrict) || null : null,
+    location,
+    location_precision: locationPrecision as any,
+    current_country: currentCountryName,
+    current_country_code: currentCountryCode,
+    origin_country: originCountryName,
+    origin_country_code: originCountryCode,
+    origin_country_source:
+      form.originCountry || variant === "ghana"
+        ? "explicit"
+        : currentCountryName === "Ghana"
+          ? "residence_backfill"
+          : "unknown",
+    years_in_diaspora: 0,
+    profile_completed: true,
+    identity_status: "active",
+    onboarding_completed_at: new Date().toISOString(),
+    identity_finalized_at: new Date().toISOString(),
+  };
+}
+
+export async function updateProfileWithFallbacks(
+  updateProfile: (payload: any) => Promise<{ error?: { message?: string } | null } | any>,
+  profileData: Record<string, unknown>,
+) {
+  let { error: updateError } = await updateProfile(profileData as any);
+
+  if (updateError && profileData.roots_visibility === "MATCHES_ONLY" && isRootsVisibilityConstraintError(updateError)) {
+    ({ error: updateError } = await updateProfile({ ...profileData, roots_visibility: "HIDDEN" } as any));
+  }
+
+  if (updateError && profileData.religion !== "OTHER" && isReligionEnumError(updateError)) {
+    ({ error: updateError } = await updateProfile({ ...profileData, religion: "OTHER" as any } as any));
+  }
+
+  return updateError ?? null;
+}

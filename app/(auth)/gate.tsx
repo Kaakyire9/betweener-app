@@ -35,6 +35,8 @@ const withTimeout = async <T,>(promise: Promise<T>, fallback: T, timeoutMs: numb
   }
 };
 
+const getPendingOnboardingRoute = () => "/(auth)/onboarding";
+
 export default function AuthGateScreen() {
   const router = useRouter();
   const authContext = useAuth();
@@ -460,13 +462,14 @@ export default function AuthGateScreen() {
         }
 
         if (!bestVerified && !canResumeKnownGoodAppSurface) {
+          const nextOnboardingRoute = await getPendingOnboardingRoute();
           if (typeof __DEV__ !== "undefined" && __DEV__) {
             console.log("[auth-gate] hard fallback route", "/(auth)/verify-phone");
           }
           router.replace({
             pathname: "/(auth)/verify-phone",
             params: {
-              next: encodeURIComponent("/(auth)/onboarding"),
+              next: encodeURIComponent(nextOnboardingRoute),
               reason: "required_for_access",
             },
           });
@@ -651,16 +654,20 @@ export default function AuthGateScreen() {
               const verified = bootstrapData.verified === true;
               const profileCompleted = bootstrapData.profile_completed === true;
               if (!verified) {
+                const nextOnboardingRoute = await getPendingOnboardingRoute();
                 guardRoute({
                   pathname: "/(auth)/verify-phone",
                   params: {
-                    next: encodeURIComponent("/(auth)/onboarding"),
+                    next: encodeURIComponent(nextOnboardingRoute),
                     reason: "required_for_access",
                   },
                 });
                 return;
               }
-              guardRoute(profileCompleted ? "/(tabs)/vibes" : "/(auth)/onboarding", true);
+              guardRoute(
+                profileCompleted ? "/(tabs)/vibes" : await getPendingOnboardingRoute(),
+                true
+              );
               // Refresh context in background
               void refreshProfile();
               void refreshPhoneState();
@@ -769,11 +776,12 @@ export default function AuthGateScreen() {
         }
 
         if (!verified && !hadStableAppAccess) {
+          const nextOnboardingRoute = await getPendingOnboardingRoute();
           clearPendingAuthProviderWithoutBlocking();
           guardRoute({
             pathname: "/(auth)/verify-phone",
             params: {
-              next: encodeURIComponent("/(auth)/onboarding"),
+              next: encodeURIComponent(nextOnboardingRoute),
               reason: "required_for_access",
             },
           });
@@ -797,7 +805,7 @@ export default function AuthGateScreen() {
 
         if (!profileCompleted && !hadStableAppAccess) {
           clearPendingAuthProviderWithoutBlocking();
-          guardRoute("/(auth)/onboarding", true);
+          guardRoute(await getPendingOnboardingRoute(), true);
           return;
         }
 

@@ -2,7 +2,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+import { getAgeRangeForPreset, resolveAgePresetMode } from '../lib/vibes/age-range-presets.ts';
 import { applyInboundInterestLift, buildLocationSearchText, rerankVibesSegment } from '../lib/vibes/discovery-logic.ts';
+import { derivePreviewTone, deriveRoomSummary, hasAnyDraftFilters } from '../lib/vibes/vibes-filter-preview.ts';
 
 const createMatch = (overrides: Record<string, any>) => ({
   id: overrides.id ?? 'm1',
@@ -131,4 +133,103 @@ test('Verification still outranks a plain premium badge when fit is equal', () =
   const ranked = rerankVibesSegment([goldUnverified, freeVerified] as any, 'forYou');
 
   assert.equal(ranked[0].id, 'free-verified');
+});
+
+test('saved age preference baseline does not count as an active room filter', () => {
+  const filters = {
+    verifiedOnly: false,
+    distanceFilterKm: null,
+    minAge: 45,
+    maxAge: 50,
+    religionFilter: null,
+    locationQuery: '',
+    hasVideoOnly: false,
+    activeOnly: false,
+    minVibeScore: null,
+    minSharedInterests: 0,
+  };
+  const baseline = { minAge: 45, maxAge: 50 };
+
+  assert.equal(hasAnyDraftFilters(filters as any, baseline), false);
+
+  const roomSummary = deriveRoomSummary(filters as any, baseline);
+  assert.equal(roomSummary.title, 'Open room - discover freely');
+
+  const previewTone = derivePreviewTone(11, filters as any, 0, baseline);
+  assert.equal(previewTone.eyebrow, 'Open discovery');
+});
+
+test('narrowing inside a saved age baseline still counts as an active room filter', () => {
+  const filters = {
+    verifiedOnly: false,
+    distanceFilterKm: null,
+    minAge: 46,
+    maxAge: 48,
+    religionFilter: null,
+    locationQuery: '',
+    hasVideoOnly: false,
+    activeOnly: false,
+    minVibeScore: null,
+    minSharedInterests: 0,
+  };
+  const baseline = { minAge: 45, maxAge: 50 };
+
+  assert.equal(hasAnyDraftFilters(filters as any, baseline), true);
+});
+
+test('age presets stay deterministic inside the saved discovery range', () => {
+  const savedRange = { min: 20, max: 36 };
+
+  const focused = getAgeRangeForPreset({
+    mode: 'focused',
+    userAge: 28,
+    savedRange,
+    absoluteMin: savedRange.min,
+    absoluteMax: savedRange.max,
+  });
+  const balanced = getAgeRangeForPreset({
+    mode: 'balanced',
+    userAge: 28,
+    savedRange,
+    absoluteMin: savedRange.min,
+    absoluteMax: savedRange.max,
+  });
+  const open = getAgeRangeForPreset({
+    mode: 'open',
+    userAge: 28,
+    savedRange,
+    absoluteMin: savedRange.min,
+    absoluteMax: savedRange.max,
+  });
+
+  assert.deepEqual(open, savedRange);
+  assert.ok(focused.min >= savedRange.min && focused.max <= savedRange.max);
+  assert.ok(balanced.min >= savedRange.min && balanced.max <= savedRange.max);
+  assert.ok((focused.max - focused.min) <= (balanced.max - balanced.min));
+});
+
+test('saved baseline resolves to open mode and manual tightening resolves to custom when needed', () => {
+  const savedRange = { min: 20, max: 36 };
+
+  assert.equal(
+    resolveAgePresetMode({
+      value: savedRange,
+      userAge: 28,
+      savedRange,
+      absoluteMin: savedRange.min,
+      absoluteMax: savedRange.max,
+    }),
+    'open',
+  );
+
+  assert.equal(
+    resolveAgePresetMode({
+      value: { min: 21, max: 31 },
+      userAge: 28,
+      savedRange,
+      absoluteMin: savedRange.min,
+      absoluteMax: savedRange.max,
+    }),
+    'custom',
+  );
 });

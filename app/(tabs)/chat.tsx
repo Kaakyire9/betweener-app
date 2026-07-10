@@ -52,7 +52,7 @@ import {
   StyleSheet,
   TouchableOpacity,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import Notice from "@/components/ui/Notice";
 import { ChatListSkeleton } from "@/components/ui/Skeleton";
 import { ChatConversationRow } from "@/components/chat/ChatConversationRow";
@@ -563,10 +563,12 @@ const withAlpha = (hex: string, alpha: number) => {
 export default function ChatScreen() {
   const { user, profile } = useAuth();
   const { profileId: currentProfileId } = useResolvedProfileId(user?.id ?? null, profile?.id ?? null);
+  const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = (colorScheme ?? 'light') === 'dark';
-  const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
+  const fabBottom = Math.max(insets.bottom + 108, 128);
+  const styles = useMemo(() => createStyles(theme, isDark, fabBottom), [fabBottom, theme, isDark]);
   const internalToolsEnabled = canAccessInternalTools();
   
   const [conversations, setConversations] = useState<ConversationType[]>([]);
@@ -1401,7 +1403,7 @@ export default function ChatScreen() {
   );
 }
 
-const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
+const createStyles = (theme: typeof Colors.light, isDark: boolean, fabBottom: number) =>
   StyleSheet.create({
     container: {
       flex: 1,
@@ -1412,7 +1414,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     header: {
       backgroundColor: theme.background,
       paddingHorizontal: 20,
-      paddingBottom: 12,
+      paddingBottom: 10,
       borderBottomWidth: 1,
       borderBottomColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
     },
@@ -1441,6 +1443,33 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       alignItems: 'center',
       borderWidth: 1,
       borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.12),
+    },
+    searchShortcut: {
+      minHeight: 44,
+      borderRadius: 22,
+      marginBottom: 12,
+      paddingHorizontal: 14,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      backgroundColor: isDark ? 'rgba(244, 235, 221, 0.075)' : 'rgba(7, 30, 34, 0.055)',
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.13 : 0.08),
+    },
+    searchShortcutText: {
+      flex: 1,
+      minWidth: 0,
+      fontSize: 14.5,
+      fontFamily: 'Manrope_500Medium',
+      color: theme.textMuted,
+    },
+    searchShortcutKeyline: {
+      width: 24,
+      height: 24,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.13 : 0.1),
     },
 
     // New matches strip
@@ -1526,7 +1555,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       flexDirection: 'row',
       gap: 3,
       padding: 4,
-      borderRadius: 14,
+      borderRadius: 16,
       backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.7 : 0.9),
       borderWidth: 1,
       borderColor: withAlpha(theme.text, isDark ? 0.12 : 0.07),
@@ -1559,8 +1588,8 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
 
     // Conversations List
     conversationsList: {
-      paddingTop: 4,
-      paddingBottom: 92,
+      paddingTop: 2,
+      paddingBottom: 136,
     },
     swipeActionRail: {
       justifyContent: 'center',
@@ -1600,7 +1629,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     conversationItem: {
       marginHorizontal: 16,
       paddingHorizontal: 4,
-      paddingVertical: 15,
+      paddingVertical: 13,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.07),
     },
@@ -1744,19 +1773,20 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       justifyContent: 'flex-start',
       alignItems: 'center',
       gap: 8,
-      marginBottom: 4,
+      marginBottom: 5,
     },
     conversationHeaderIcons: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 6,
-      marginLeft: 8,
+      maxWidth: 128,
     },
     conversationName: {
       fontSize: 16,
       fontFamily: 'Archivo_600SemiBold',
       color: theme.text,
       flex: 1,
+      minWidth: 0,
     },
     leftConversationName: {
       color: theme.text,
@@ -1786,6 +1816,11 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       fontSize: 11.5,
       fontFamily: 'Manrope_500Medium',
       color: theme.textMuted,
+      marginLeft: 'auto',
+    },
+    unreadTime: {
+      color: theme.tint,
+      fontFamily: 'Manrope_700Bold',
     },
     lastSeenText: {
       fontSize: 12,
@@ -1800,9 +1835,9 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     conversationMeta: {
       alignItems: 'flex-end',
-      gap: 5,
-      minWidth: 44,
-      marginLeft: 10,
+      justifyContent: 'center',
+      minWidth: 28,
+      marginLeft: 8,
     },
     lastMessageRow: {
       flexDirection: 'row',
@@ -1834,12 +1869,17 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     unreadBadge: {
       backgroundColor: theme.tint,
-      borderRadius: 10,
-      minWidth: 20,
-      height: 20,
+      borderRadius: 11,
+      minWidth: 22,
+      height: 22,
       justifyContent: 'center',
       alignItems: 'center',
       paddingHorizontal: 6,
+      shadowColor: theme.tint,
+      shadowOpacity: isDark ? 0.3 : 0.18,
+      shadowRadius: 8,
+      shadowOffset: { width: 0, height: 3 },
+      elevation: 3,
     },
     unreadCount: {
       fontSize: 11,
@@ -2008,18 +2048,18 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     // FAB
     fab: {
       position: 'absolute',
-      bottom: 24,
-      right: 24,
-      width: 56,
-      height: 56,
-      borderRadius: 28,
+      bottom: fabBottom,
+      right: 22,
+      width: 54,
+      height: 54,
+      borderRadius: 27,
       backgroundColor: theme.tint,
       justifyContent: 'center',
       alignItems: 'center',
       shadowColor: theme.tint,
-      shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: 0.3,
-      shadowRadius: 12,
-      elevation: 8,
+      shadowOffset: { width: 0, height: 5 },
+      shadowOpacity: isDark ? 0.26 : 0.18,
+      shadowRadius: 14,
+      elevation: 7,
     },
   });

@@ -22,6 +22,7 @@ import IntentResponseReminder from "@/components/IntentResponseReminder";
 import NetworkStatusBanner from "@/components/NetworkStatusBanner";
 import OfflineSyncHistoryHydrator from "@/components/OfflineSyncHistoryHydrator";
 import OfflineSyncStatusPill from "@/components/OfflineSyncStatusPill";
+import AppVersionGateHost from "@/components/updates/AppVersionGateHost";
 import BetweenerAlertHost from "@/components/ui/BetweenerAlertHost";
 import ScreenAwakeSafetyGuard from "@/components/system/ScreenAwakeSafetyGuard";
 import ChatRealtimeHydrator from "@/components/ChatRealtimeHydrator";
@@ -792,6 +793,7 @@ function RootLayout() {
           <OfflineSyncStatusPill />
           <AccountRecoveryNotice />
           <RecoveryMergeSuggestionNotice />
+          <AppVersionGateHost />
 
           {!SUPABASE_IS_CONFIGURED && (
             <View style={styles.envBanner} pointerEvents="none">

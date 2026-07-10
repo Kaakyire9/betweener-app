@@ -188,7 +188,7 @@ function VibesActionDock({
 
   return (
     <RNAnimated.View style={[styles.wrap, entranceStyle]}>
-      <GlowOrb color="rgba(19,168,168,0.13)" size={metrics.dockWidth * 0.86} opacity={0.18} bottom={-24} left={metrics.dockWidth * 0.07} />
+      <GlowOrb color="rgba(19,168,168,0.10)" size={metrics.dockWidth * 0.72} opacity={0.12} bottom={-16} left={metrics.dockWidth * 0.14} />
       <GlassSurface
         radius={metrics.dockHeight / 2}
         intensity={20}
@@ -218,15 +218,15 @@ function VibesActionDock({
         <LinearGradientSafe
           pointerEvents="none"
           colors={isDark
-            ? ["rgba(255,255,255,0.20)", "rgba(255,255,255,0.04)", "rgba(255,255,255,0)"]
-            : ["rgba(255,255,255,0.54)", "rgba(255,255,255,0.18)", "rgba(255,255,255,0)"]}
+            ? ["rgba(255,255,255,0.14)", "rgba(255,255,255,0.03)", "rgba(255,255,255,0)"]
+            : ["rgba(255,255,255,0.42)", "rgba(255,255,255,0.12)", "rgba(255,255,255,0)"]}
           start={[0, 0]}
           end={[1, 0]}
           style={styles.dockReflection}
         />
         <LinearGradientSafe
           pointerEvents="none"
-          colors={["rgba(19,168,168,0)", isDark ? "rgba(19,168,168,0.30)" : "rgba(0,128,128,0.22)", "rgba(19,168,168,0)"]}
+          colors={["rgba(19,168,168,0)", isDark ? "rgba(19,168,168,0.22)" : "rgba(0,128,128,0.14)", "rgba(19,168,168,0)"]}
           start={[0, 0]}
           end={[1, 0]}
           style={styles.dockUnderscore}
@@ -295,7 +295,7 @@ const styles = StyleSheet.create({
     top: 5,
     height: 12,
     borderRadius: 999,
-    opacity: 0.55,
+    opacity: 0.38,
   },
   dockUnderscore: {
     position: "absolute",
@@ -304,7 +304,7 @@ const styles = StyleSheet.create({
     bottom: 3,
     height: 2,
     borderRadius: 999,
-    opacity: 0.72,
+    opacity: 0.44,
   },
   actionButton: {
     alignItems: "center",
@@ -319,10 +319,10 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(5,36,40,0.72)",
     borderColor: "rgba(19,168,168,0.24)",
     shadowColor: VIBES_DEPTH_COLORS.teal,
-    shadowOpacity: 0.18,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 9,
+    shadowOpacity: 0.11,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
   },
   primaryButtonLight: {
     backgroundColor: "rgba(232,249,246,0.74)",
@@ -333,7 +333,7 @@ const styles = StyleSheet.create({
     borderColor: "rgba(139,92,255,0.34)",
   },
   purpleButtonLight: {
-    backgroundColor: "rgba(124,92,255,0.74)",
+    backgroundColor: "rgba(124,92,255,0.66)",
   },
   creamButton: {
     backgroundColor: "rgba(34,28,22,0.7)",

@@ -2,7 +2,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import React from 'react';
 import { Animated, type GestureResponderEvent, Image, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View, type StyleProp, type ViewStyle } from 'react-native';
-import { getCircleScopeLabel } from '@/lib/circles/circle-display';
+import { getCircleScopePresentation } from '@/lib/circles/circle-display';
 import { useCirclePulsePalette, type CirclePulsePalette } from '@/lib/circles/pulse/circle-pulse-theme';
 import { normalizeProfilePhotoUri } from '@/lib/profile/media';
 
@@ -25,6 +25,7 @@ type CircleCardData = {
   member_count?: number | null;
   active_this_week_count?: number | null;
   gathering_count?: number | null;
+  location_insight?: string | null;
 };
 
 type CirclePickData = {
@@ -101,9 +102,11 @@ const getCircleBadges = (circle: CircleCardData) => {
 const getCircleActivityLabel = (circle: CircleCardData) => {
   if ((circle.gathering_count ?? 0) > 0) return `${circle.gathering_count} Gathering soon`;
   if ((circle.active_this_week_count ?? 0) > 0) return `${circle.active_this_week_count} active this week`;
-  if ((circle.member_count ?? 0) > 0) return `${circle.member_count} members`;
   return 'Trusted space';
 };
+
+const getCircleMemberLineLabel = (circle: CircleCardData) =>
+  (circle.member_count ?? 0) > 0 ? `${circle.member_count} members` : 'Trusted space';
 
 const toReasonChips = (reason: string | null | undefined) =>
   String(reason ?? '')
@@ -536,6 +539,8 @@ export function CircleHeroCard({
   onJoin?: () => void;
 }) {
   const { palette, styles } = useCircleHomeStyles();
+  const scopePresentation = getCircleScopePresentation(circle);
+  const memberLineLabel = getCircleMemberLineLabel(circle);
   return (
     <Pressable style={styles.circleCard} onPress={onOpen}>
       <View style={styles.circleHero}>
@@ -568,10 +573,16 @@ export function CircleHeroCard({
         </View>
         <View style={styles.circleHeroBottom}>
           <Text style={styles.cardTitle} numberOfLines={1}>{circle.name}</Text>
-          <Text style={styles.cardMeta} numberOfLines={1}>
-            {[circle.member_count ? `${circle.member_count} members` : null, getCircleScopeLabel(circle)].filter(Boolean).join(' - ')}
-          </Text>
-          <Text style={styles.softBadge}>{getCircleActivityLabel(circle)}</Text>
+          <View style={styles.softBadgeRow}>
+            <Text style={styles.softBadge}>{memberLineLabel}</Text>
+            {scopePresentation ? (
+              <MaterialCommunityIcons
+                name={scopePresentation.icon as any}
+                size={10}
+                color={palette.teal}
+              />
+            ) : null}
+          </View>
         </View>
       </View>
       <View style={styles.circleCardBody}>
@@ -627,8 +638,9 @@ export function CircleCompactCard({
 }) {
   const { palette, styles } = useCircleHomeStyles();
   const badges = getCircleBadges(circle);
-  const locationLabel = circle.city?.trim() || circle.region?.trim() || circle.country_name?.trim() || getCircleScopeLabel(circle);
+  const scopePresentation = getCircleScopePresentation(circle);
   const activityLabel = getCircleActivityLabel(circle);
+  const memberLineLabel = getCircleMemberLineLabel(circle);
 
   return (
     <Pressable style={[styles.compactCircleCard, style]} onPress={onOpen}>
@@ -644,9 +656,16 @@ export function CircleCompactCard({
         <View style={styles.compactCircleTopRow}>
           <View style={styles.compactCircleCopy}>
             <Text style={styles.compactCircleTitle} numberOfLines={1}>{circle.name}</Text>
-            <Text style={styles.compactCircleMeta} numberOfLines={1}>
-              {[locationLabel, circle.member_count ? `${circle.member_count} inside` : null].filter(Boolean).join(' Â· ')}
-            </Text>
+            <View style={styles.scopeMetaRowCompact}>
+              <Text style={styles.compactCircleMeta} numberOfLines={1}>{memberLineLabel}</Text>
+              {scopePresentation ? (
+                <MaterialCommunityIcons
+                  name={scopePresentation.icon as any}
+                  size={10}
+                  color={palette.teal}
+                />
+              ) : null}
+            </View>
           </View>
           {badges.length ? (
             <View style={styles.compactBadgeShell}>
@@ -1078,9 +1097,9 @@ const createStyles = (palette: CirclePulsePalette) => StyleSheet.create({
   },
   circleCardBody: { padding: 12, gap: 10 },
   cardTitle: { flex: 1, color: palette.overlayText, fontSize: 15, fontWeight: '800' },
-  cardMeta: { color: palette.dark ? 'rgba(244,232,208,0.6)' : 'rgba(255,255,255,0.82)', fontSize: 11 },
   cardBody: { color: palette.textSoft, fontSize: 12, lineHeight: 17 },
   cardActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  softBadgeRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   softBadge: { color: palette.teal, fontSize: 11, fontWeight: '800' },
   avatarStack: { flexDirection: 'row', alignItems: 'center', paddingLeft: 2 },
   avatarStackImage: { width: 24, height: 24, borderRadius: 12, borderWidth: 2, borderColor: palette.surfaceStrong },
@@ -1145,7 +1164,8 @@ const createStyles = (palette: CirclePulsePalette) => StyleSheet.create({
   compactCircleTopRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
   compactCircleCopy: { flex: 1, gap: 3, minWidth: 0 },
   compactCircleTitle: { color: palette.text, fontSize: 14, fontWeight: '800' },
-  compactCircleMeta: { color: palette.textMuted, fontSize: 11, fontWeight: '600' },
+  compactCircleMeta: { color: palette.teal, fontSize: 11, fontWeight: '800' },
+  scopeMetaRowCompact: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   compactBadgeShell: {
     paddingHorizontal: 8,
     paddingVertical: 5,

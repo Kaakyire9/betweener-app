@@ -63,6 +63,22 @@ export function ChatListHeader({
         </View>
       </View>
 
+      {!showSearch ? (
+        <TouchableOpacity
+          activeOpacity={0.78}
+          style={styles.searchShortcut}
+          onPress={onToggleSearch}
+        >
+          <MaterialCommunityIcons name="magnify" size={19} color={theme.textMuted} />
+          <Text style={styles.searchShortcutText} numberOfLines={1}>
+            {searchQuery.trim() ? searchQuery.trim() : 'Search messages'}
+          </Text>
+          <View style={styles.searchShortcutKeyline}>
+            <MaterialCommunityIcons name="star-four-points" size={13} color={theme.tint} />
+          </View>
+        </TouchableOpacity>
+      ) : null}
+
       <Animated.View
         style={[
           styles.searchContainer,

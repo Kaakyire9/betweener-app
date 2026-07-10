@@ -1180,6 +1180,9 @@ export default function MomentViewer({
               <Text style={styles.userName}>{currentUser.name}</Text>
               <Text style={styles.timeLeft}>{formatTimeLeft(currentMoment.expires_at)}</Text>
               {relationshipCue ? <Text style={styles.relationshipCue}>{relationshipCue}</Text> : null}
+              {!relationshipCue && currentUser.locationInsight ? (
+                <Text style={styles.locationCue}>{currentUser.locationInsight}</Text>
+              ) : null}
             </View>
           </View>
           <Pressable onPress={onClose} style={styles.closeButton}>
@@ -1418,6 +1421,12 @@ const styles = StyleSheet.create({
   relationshipCue: {
     color: '#8ed7d2',
     fontFamily: 'Manrope_600SemiBold',
+    fontSize: 10.5,
+    marginTop: 2,
+  },
+  locationCue: {
+    color: 'rgba(232,240,237,0.78)',
+    fontFamily: 'Manrope_500Medium',
     fontSize: 10.5,
     marginTop: 2,
   },

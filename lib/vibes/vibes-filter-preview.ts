@@ -5,6 +5,11 @@ export type RoomSummary = {
   body: string;
 };
 
+export type VibesAgeFilterBaseline = {
+  minAge: number;
+  maxAge: number;
+};
+
 export type PreviewTone = {
   eyebrow: string;
   title: string;
@@ -31,17 +36,29 @@ export const resolveAutoUnit = (): 'km' | 'mi' => {
   }
 };
 
-export const hasAnyDraftFilters = (filters: VibesFilters) =>
+const resolveAgeBaseline = (baseline?: VibesAgeFilterBaseline): VibesAgeFilterBaseline => ({
+  minAge: baseline?.minAge ?? 18,
+  maxAge: baseline?.maxAge ?? 60,
+});
+
+export const hasAnyDraftFilters = (
+  filters: VibesFilters,
+  baseline?: VibesAgeFilterBaseline,
+) => {
+  const ageBaseline = resolveAgeBaseline(baseline);
+  return (
   Boolean(filters.verifiedOnly) ||
   Boolean(filters.hasVideoOnly) ||
   Boolean(filters.activeOnly) ||
   filters.distanceFilterKm != null ||
   filters.minVibeScore != null ||
   (filters.minSharedInterests || 0) > 0 ||
-  filters.minAge !== 18 ||
-  filters.maxAge !== 60 ||
+  filters.minAge !== ageBaseline.minAge ||
+  filters.maxAge !== ageBaseline.maxAge ||
   Boolean(filters.religionFilter) ||
-  Boolean(filters.locationQuery?.trim());
+  Boolean(filters.locationQuery?.trim())
+  );
+};
 
 export const deriveActivePresetKey = (filters: VibesFilters): string | null => {
   if (filters.verifiedOnly && filters.minVibeScore === 60 && (filters.minSharedInterests || 0) >= 2) return 'real-intent';
@@ -52,9 +69,12 @@ export const deriveActivePresetKey = (filters: VibesFilters): string | null => {
   return null;
 };
 
-export const deriveRoomSummary = (filters: VibesFilters): RoomSummary => {
+export const deriveRoomSummary = (
+  filters: VibesFilters,
+  baseline?: VibesAgeFilterBaseline,
+): RoomSummary => {
   const preset = deriveActivePresetKey(filters);
-  if (!hasAnyDraftFilters(filters)) {
+  if (!hasAnyDraftFilters(filters, baseline)) {
     return {
       title: 'Open room - discover freely',
       body: 'Keep the room open and let chemistry surprise you.',
@@ -119,6 +139,7 @@ export const derivePreviewTone = (
   previewCount: number | null,
   filters: VibesFilters,
   loadedCount: number,
+  baseline?: VibesAgeFilterBaseline,
 ): PreviewTone => {
   if (previewCount == null) {
     return {
@@ -136,7 +157,7 @@ export const derivePreviewTone = (
       cta: 'Apply my room',
     };
   }
-  if (!hasAnyDraftFilters(filters)) {
+  if (!hasAnyDraftFilters(filters, baseline)) {
     return {
       eyebrow: 'Open discovery',
       title: `Preview: ${previewCount} ${previewCount === 1 ? 'person matches this room' : 'people match this room'}`,

@@ -8,9 +8,15 @@ export type Match = {
   location?: string | null;
   region?: string | null;
   city?: string | null;
+  locality_geoname_id?: number | null;
+  locality_district?: string | null;
   current_country?: string | null;
   current_country_code?: string | null;
+  origin_country?: string | null;
+  origin_country_code?: string | null;
   location_precision?: string | null;
+  locationAffinityReasonCode?: string | null;
+  locationAffinityStrength?: number | null;
   avatar_url?: string | null;
   verified?: boolean | null;
   verification_level?: number | null;
@@ -19,6 +25,7 @@ export type Match = {
   isActiveNow?: boolean | null;
   interests?: string[] | null;
   commonInterests?: string[] | null;
+  locationInsight?: string | null;
   compatibility?: number | null;
   profileVideo?: string | null;
   premiumPlan?: 'FREE' | 'SILVER' | 'GOLD';
@@ -27,6 +34,12 @@ export type Match = {
   hasActiveBoost?: boolean | null;
   boostEndsAt?: string | null;
   subscriptionVisibilityScore?: number | null;
+  roots?: string[] | null;
+  roots_note?: string | null;
+  roots_visibility?: string | null;
+  roots_region?: string | null;
+  roots_locality?: string | null;
+  roots_locality_geoname_id?: number | null;
   created_at?: string | null;
   [key: string]: unknown;
 };

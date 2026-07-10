@@ -30,6 +30,7 @@ export type UserProfile = {
   latitude?: number;
   longitude?: number;
   profilePicture: string;
+  heroImageUrl?: string;
   photos: string[];
   profileVideo?: string;
   profileVideoPath?: string;
@@ -57,6 +58,11 @@ export type UserProfile = {
   currentCountryCode?: string;
   originCountry?: string;
   originCountryCode?: string;
+  locationAffinityReasonCode?: string | null;
+  locationAffinityStrength?: number | null;
+  locationAffinityShortText?: string | null;
+  locationAffinityLongText?: string | null;
+  locationInsight?: string | null;
   exerciseFrequency?: string;
   smoking?: string;
   drinking?: string;

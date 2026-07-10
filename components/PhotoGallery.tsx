@@ -37,8 +37,11 @@ export default function PhotoGallery({
   const responsive = useResponsiveMetrics();
   const insets = responsive.insets;
   const safePhotos = photos.map((photo) => getSafeRemoteImageUri(photo)).filter(Boolean) as string[];
-  const hasIntroVideoMedia = Boolean(introVideoUrl || introVideoThumbnail);
-  const safeIntroVideoThumbnail = getSafeRemoteImageUri(introVideoThumbnail) || safePhotos[0] || null;
+  const safeIntroVideoUrl = introVideoUrl ? getSafeRemoteImageUri(introVideoUrl) : null;
+  const hasIntroVideoMedia = Boolean(safeIntroVideoUrl);
+  const safeIntroVideoThumbnail = hasIntroVideoMedia
+    ? (getSafeRemoteImageUri(introVideoThumbnail) || safePhotos[0] || null)
+    : null;
 
   const handlePhotoPress = (index: number) => {
     setSelectedIndex(index);
@@ -81,7 +84,7 @@ export default function PhotoGallery({
   return (
     <View style={styles.container}>
       <View style={[styles.grid, { gap: gridGap, paddingHorizontal: gridPadding }]}>
-          {hasIntroVideoMedia && safeIntroVideoThumbnail ? (
+        {hasIntroVideoMedia && safeIntroVideoThumbnail ? (
           <TouchableOpacity
             style={[styles.photoContainer, { width: itemWidth, height: itemHeight }]}
             onPress={onOpenVideo}
