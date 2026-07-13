@@ -3,6 +3,7 @@ import { AnimatedBioExpression } from "@/components/onboarding/AnimatedBioExpres
 import { AnimatedIdentityCard } from "@/components/onboarding/AnimatedIdentityCard";
 import { AnimatedOccupationOrbit } from "@/components/onboarding/AnimatedOccupationOrbit";
 import { AnimatedPhotoPortrait } from "@/components/onboarding/AnimatedPhotoPortrait";
+import { PremiumOccupationSelector } from "@/components/onboarding/steps/PremiumOccupationSelector";
 import { type PremiumOnboardingFormState } from "@/lib/onboarding/premium-onboarding.types";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { type ReactNode } from "react";
@@ -50,7 +51,7 @@ export function PremiumOnboardingIdentityStep({
       return (
         <View style={styles.fieldBlock}>
           <View style={styles.identityIllustrationWrap}>
-            <AnimatedIdentityCard size={responsiveCompact ? 166 : 196} decorative />
+            <AnimatedIdentityCard size={responsiveCompact ? 148 : 196} decorative personalized={form.fullName.trim().length >= 2} />
           </View>
           <TextInput
             value={form.fullName}
@@ -66,7 +67,7 @@ export function PremiumOnboardingIdentityStep({
       return (
         <View style={styles.fieldBlock}>
           <View style={styles.aboutIllustrationWrap}>
-            <AnimatedAboutIdentity size={responsiveCompact ? 158 : 186} decorative />
+            <AnimatedAboutIdentity size={responsiveCompact ? 142 : 186} decorative selected={!!form.age && !!form.gender} />
           </View>
           <Text style={styles.fieldLabel}>Age</Text>
           <TextInput
@@ -91,25 +92,23 @@ export function PremiumOnboardingIdentityStep({
       return (
         <View style={styles.fieldBlock}>
           <View style={styles.occupationIllustrationWrap}>
-            <AnimatedOccupationOrbit size={responsiveCompact ? 180 : 214} decorative />
+            <AnimatedOccupationOrbit size={responsiveCompact ? 158 : 214} decorative selected={!!form.occupation} />
           </View>
-          <View style={styles.chipWrap}>
-            {occupations.map((occupation) =>
-              renderChoice(occupation, form.occupation === occupation, () => {
-                setOption("occupation", occupation);
-                if (occupation !== "Other") setCustomOccupation("");
-              }),
-            )}
-          </View>
-          {form.occupation === "Other" ? (
-            <TextInput
-              value={customOccupation}
-              onChangeText={setCustomOccupation}
-              placeholder="Add your work"
-              placeholderTextColor={styles.tokens.muted.color}
-              style={[styles.input, styles.inlineInput, errors.occupation && styles.inputError]}
-            />
-          ) : null}
+          <PremiumOccupationSelector
+            occupations={occupations}
+            selectedOccupation={form.occupation}
+            customOccupation={customOccupation}
+            error={errors.occupation}
+            styles={styles}
+            onSelect={(occupation) => {
+              setOption("occupation", occupation);
+              setCustomOccupation("");
+            }}
+            onSelectCustom={(occupation) => {
+              setCustomOccupation(occupation);
+              setOption("occupation", "Other");
+            }}
+          />
           {renderError("occupation")}
         </View>
       );
@@ -117,7 +116,7 @@ export function PremiumOnboardingIdentityStep({
       return (
         <View style={styles.fieldBlock}>
           <View style={styles.bioIllustrationWrap}>
-            <AnimatedBioExpression size={responsiveCompact ? 164 : 194} decorative />
+            <AnimatedBioExpression size={responsiveCompact ? 146 : 194} decorative progress={form.bio.length / 300} />
           </View>
           <TextInput
             value={form.bio}
@@ -137,7 +136,7 @@ export function PremiumOnboardingIdentityStep({
         <View style={styles.photoBlock}>
           <View style={styles.photoIllustrationWrap}>
             <AnimatedPhotoPortrait
-              size={responsiveCompact ? (image ? 178 : 194) : image ? 208 : 228}
+              size={responsiveCompact ? (image ? 178 : 192) : image ? 238 : 258}
               decorative
               settled={!!image}
             />

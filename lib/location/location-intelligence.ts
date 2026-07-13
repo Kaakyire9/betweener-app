@@ -1,7 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-import { getCuratedRegionSearchExamples } from "@/lib/location/ghana-locality-metadata";
-import { type GhanaCityTownSuggestion } from "@/lib/location/ghana-locality-shared";
+import { getCuratedRegionSearchExamples } from "./ghana-locality-metadata.ts";
+import { type GhanaCityTownSuggestion } from "./ghana-locality-shared.ts";
 
 export type LocationContext = {
   countryCode: string | null;

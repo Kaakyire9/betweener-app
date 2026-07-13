@@ -59,9 +59,11 @@ export function buildPremiumOnboardingProfileData({
   phoneNumber,
 }: BuildPremiumOnboardingProfileArgs) {
   const resolvedOccupation = resolveOtherValue(form.occupation, customOccupation);
-  const normalizedRoots = variant === "ghana" ? replaceOtherInList(form.roots, form.rootsNote) : [];
+  const currentCountryIsGhana = variant === "ghana" || form.currentCountry.trim().toLowerCase() === "ghana";
+  const originCountryIsGhana = variant === "ghana" || form.originCountry.trim().toLowerCase() === "ghana";
+  const normalizedRoots = originCountryIsGhana ? replaceOtherInList(form.roots, form.rootsNote) : [];
   const resolvedTribe =
-    variant === "ghana"
+    originCountryIsGhana
       ? normalizedRoots[0] ?? null
       : resolveOtherValue(form.tribe, customTribe);
   const currentCountryName = variant === "ghana" ? "Ghana" : form.currentCountry.trim();
@@ -86,7 +88,7 @@ export function buildPremiumOnboardingProfileData({
           ? "GH"
           : null;
   const region = form.region.trim();
-  const city = variant === "ghana" ? normalizeGhanaCityTownValue(form.city) : "";
+  const city = currentCountryIsGhana ? normalizeGhanaCityTownValue(form.city) : form.city.trim();
 
   if (!currentCountryName || !currentCountryCode) {
     throw new Error("Please choose where you live now before continuing.");
@@ -111,9 +113,9 @@ export function buildPremiumOnboardingProfileData({
     occupation: resolvedOccupation,
     region: region || null,
     tribe: resolvedTribe,
-    roots: variant === "ghana" && normalizedRoots.length > 0 ? normalizedRoots : null,
-    roots_note: variant === "ghana" ? normalizeOtherText(form.rootsNote) || null : null,
-    roots_visibility: variant === "ghana" ? form.rootsVisibility : "VISIBLE",
+    roots: originCountryIsGhana && normalizedRoots.length > 0 ? normalizedRoots : null,
+    roots_note: originCountryIsGhana ? normalizeOtherText(form.rootsNote) || null : null,
+    roots_visibility: originCountryIsGhana ? form.rootsVisibility : "VISIBLE",
     religion: normalizeReligionForProfile(form.religion) as any,
     looking_for: form.lookingFor,
     avatar_url: imageUrl,
@@ -122,8 +124,12 @@ export function buildPremiumOnboardingProfileData({
     min_age_interest: Number(form.minAgeInterest),
     max_age_interest: Number(form.maxAgeInterest),
     city: city || null,
-    locality_geoname_id: variant === "ghana" ? form.cityLocalityGeonameId ?? null : null,
-    locality_district: variant === "ghana" ? normalizeGhanaCityTownValue(form.cityDistrict) || null : null,
+    locality_geoname_id: form.cityLocalityGeonameId ?? null,
+    locality_district: currentCountryIsGhana ? normalizeGhanaCityTownValue(form.cityDistrict) || null : form.cityDistrict.trim() || null,
+    locality_admin1_code: form.cityAdmin1Code || null,
+    locality_provider: form.cityLocalityGeonameId ? "geonames" : null,
+    latitude: form.cityLatitude,
+    longitude: form.cityLongitude,
     location,
     location_precision: locationPrecision as any,
     current_country: currentCountryName,

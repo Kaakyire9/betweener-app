@@ -89,6 +89,9 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
     city: "",
     cityDistrict: "",
     cityLocalityGeonameId: null,
+    cityAdmin1Code: "",
+    cityLatitude: null,
+    cityLongitude: null,
     tribe: "",
     roots: [],
     rootsNote: "",
@@ -113,6 +116,7 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
   const [signingOut, setSigningOut] = useState(false);
   const [signOutMenuVisible, setSignOutMenuVisible] = useState(false);
   const progressAnim = useRef(new Animated.Value(0)).current;
+  const transitionDirectionRef = useRef<"forward" | "back">("forward");
   const submitAttemptRef = useRef(0);
   const currentCountrySearchTrackedRef = useRef(false);
   const currentLocationTelemetryRef = useRef({
@@ -132,6 +136,9 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
 
   useEffect(() => {
     void setSignupOnboardingVariant(variant);
+    if (variant === "ghana") {
+      logger.info("[onboarding] ghana_onboarding_welcome_viewed", { variant });
+    }
   }, [variant]);
 
   useEffect(() => {
@@ -346,7 +353,10 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
   };
 
   const next = () => {
+    transitionDirectionRef.current = "forward";
     if (currentStep.key === "welcome") {
+      if (variant === "ghana") logger.info("[onboarding] ghana_onboarding_started", { variant });
+      void haptics.light();
       setStepIndex((value) => Math.min(value + 1, steps.length - 1));
       return;
     }
@@ -362,6 +372,7 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
   };
 
   const back = () => {
+    transitionDirectionRef.current = "back";
     if (currentStep.key === "current_location") {
       currentLocationTelemetryRef.current.exitReason = "back";
     }
@@ -371,6 +382,15 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
 
   const selectCountry = (country: CountryOption) => {
     if (countryPickerTarget === "current") {
+      if (form.currentCountry !== country.label) {
+        updateForm("region", "");
+        updateForm("city", "");
+        updateForm("cityDistrict", "");
+        updateForm("cityLocalityGeonameId", null);
+        updateForm("cityAdmin1Code", "");
+        updateForm("cityLatitude", null);
+        updateForm("cityLongitude", null);
+      }
       updateForm("currentCountry", country.label);
       if (currentStep.key === "current_location") {
         handleCurrentLocationAnalyticsEvent("country_selected", {
@@ -379,6 +399,12 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
         });
       }
     } else {
+      if (form.originCountry !== country.label) {
+        updateForm("roots", []);
+        updateForm("rootsNote", "");
+        updateForm("tribe", "");
+        setCustomTribe("");
+      }
       updateForm("originCountry", country.label);
     }
     currentCountrySearchTrackedRef.current = false;
@@ -387,12 +413,16 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
   };
 
   const toggleInterest = (interest: string) => {
-    setForm((prev) => ({
-      ...prev,
-      interests: prev.interests.includes(interest)
-        ? prev.interests.filter((item) => item !== interest)
-        : [...prev.interests, interest],
-    }));
+    setForm((prev) => {
+      const selected = prev.interests.includes(interest);
+      if (!selected && prev.interests.length >= 5) return prev;
+      return {
+        ...prev,
+        interests: selected
+          ? prev.interests.filter((item) => item !== interest)
+          : [...prev.interests, interest],
+      };
+    });
     setErrors((prev) => ({ ...prev, interests: "" }));
   };
 
@@ -409,6 +439,7 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
     setSignOutMenuVisible(false);
     setSigningOut(true);
     try {
+      if (variant === "ghana") logger.info("[onboarding] ghana_onboarding_sign_out_selected", { variant });
       await haptics.light();
       await clearSignupSession();
       await signOut();
@@ -527,6 +558,53 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
       );
       if (updateError) throw new Error(`Profile creation failed: ${updateError.message}`);
 
+      if (variant === "ghana" && form.interests.length > 0) {
+        let onboardingProfileId = profile?.id ?? null;
+        if (!onboardingProfileId) {
+          const { data: profileRow, error: profileLookupError } = await withTimeout(
+            "profile_interest_profile_lookup",
+            supabase.from("profiles").select("id").eq("user_id", user.id).single(),
+            8000,
+          );
+          if (profileLookupError) throw new Error(`Interest profile lookup failed: ${profileLookupError.message}`);
+          onboardingProfileId = profileRow?.id ?? null;
+        }
+        if (!onboardingProfileId) throw new Error("Unable to attach interests to your profile.");
+
+        const { data: interestRows, error: interestLookupError } = await withTimeout(
+          "profile_interest_lookup",
+          supabase.from("interests").select("id,name").in("name", form.interests),
+          8000,
+        );
+        if (interestLookupError) throw new Error(`Interest lookup failed: ${interestLookupError.message}`);
+        const selectedInterestRows = interestRows ?? [];
+        if (selectedInterestRows.length !== form.interests.length) {
+          const found = new Set(selectedInterestRows.map((item) => item.name));
+          const missing = form.interests.filter((name) => !found.has(name));
+          logger.error("[onboarding] interest_catalog_out_of_sync", { variant, missing });
+          throw new Error("Some selected interests are not available yet. Please try again after updating the app.");
+        }
+
+        const { error: interestDeleteError } = await withTimeout(
+          "profile_interest_clear",
+          supabase.from("profile_interests").delete().eq("profile_id", onboardingProfileId),
+          8000,
+        );
+        if (interestDeleteError) throw new Error(`Interest update failed: ${interestDeleteError.message}`);
+
+        const { error: interestInsertError } = await withTimeout(
+          "profile_interest_insert",
+          supabase.from("profile_interests").insert(
+            selectedInterestRows.map((interest) => ({
+              profile_id: onboardingProfileId as string,
+              interest_id: interest.id,
+            })),
+          ),
+          8000,
+        );
+        if (interestInsertError) throw new Error(`Interest update failed: ${interestInsertError.message}`);
+      }
+
       await withTimeout("finalize_signup_verification", finalizeSignupPhoneVerification(), 6000);
       await withTimeout("clear_signup_session", clearSignupSession(), 4000);
       setProfileCreated(true);
@@ -538,7 +616,7 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
             await Promise.race([refreshProfile(), new Promise<void>((resolve) => setTimeout(resolve, 2500))]);
           } finally {
             router.dismissAll();
-            router.replace("/(tabs)/vibes");
+            router.replace({ pathname: "/(tabs)/vibes", params: { onboardingCelebration: "1" } });
           }
         })();
       }, 550);
@@ -576,7 +654,7 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
   const renderStepBody = () => {
     switch (currentStep.key) {
       case "welcome":
-        return <PremiumOnboardingWelcomeStep asset={meta.asset} dark={meta.dark} styles={styles} />;
+        return <PremiumOnboardingWelcomeStep asset={meta.asset} dark={meta.dark} variant={variant} styles={styles} />;
       case "name":
       case "about":
       case "occupation":
@@ -613,6 +691,7 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
             variant={variant}
             dark={meta.dark}
             form={form}
+            currentCountryCode={currentCountry?.code ?? ""}
             customTribe={customTribe}
             errors={errors}
             styles={styles}
@@ -686,20 +765,25 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
       style={styles.background}
     >
       <SafeAreaView style={styles.safeArea}>
-        <KeyboardAvoidingView style={styles.keyboard} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-          <PremiumOnboardingProgressBar
-            styles={styles}
-            progress={progressAnim.interpolate({
-              inputRange: [0, 1],
-              outputRange: ["0%", "100%"],
-            })}
-          />
+        <KeyboardAvoidingView
+          style={styles.keyboard}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          keyboardVerticalOffset={0}
+        >
+          {!isWelcomeStep ? (
+            <PremiumOnboardingProgressBar
+              styles={styles}
+              progress={progressAnim.interpolate({
+                inputRange: [0, 1],
+                outputRange: ["0%", "100%"],
+              })}
+            />
+          ) : null}
 
           <PremiumOnboardingTopBar
             styles={styles}
             stepIndex={stepIndex}
             stepsLength={steps.length}
-            isGhanaWelcomeStep={isGhanaWelcomeStep}
             signingOut={signingOut}
             onBack={back}
             onMorePress={() => {
@@ -724,6 +808,7 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
             dark={meta.dark}
             body={renderStepBody()}
             onPrimaryPress={next}
+            transitionDirection={transitionDirectionRef.current}
           />
           <PremiumOnboardingCountryPickerModal
             visible={countryModalVisible}

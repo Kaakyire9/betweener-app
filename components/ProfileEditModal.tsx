@@ -24,6 +24,12 @@ import {
 import { searchGhanaLocalities } from '@/lib/location/search-ghana-localities';
 import { isLikelyNetworkError } from '@/lib/network';
 import {
+  PREMIUM_ONBOARDING_GHANA_REGIONS,
+  PREMIUM_ONBOARDING_INTERESTS,
+  PREMIUM_ONBOARDING_INTENTS,
+  PREMIUM_ONBOARDING_OCCUPATIONS,
+} from '@/lib/onboarding/premium-onboarding.config';
+import {
   drainOfflineMutationQueue,
   enqueueProfileInterestsUpdateMutation,
   enqueueProfileMediaSyncMutation,
@@ -45,6 +51,11 @@ import {
   removeGalleryMediaAt,
   resolveProfileMediaDraft,
 } from '@/lib/profile/media-studio';
+import {
+  GHANA_ROOT_OPTIONS,
+  GLOBAL_ROOT_OPTIONS,
+  ROOTS_VISIBILITY_OPTIONS,
+} from '@/lib/profile/roots-options';
 import { RELIGION_LABELS, formatReligionLabel, isReligionEnumError, normalizeReligionForProfile } from '@/lib/profile/religion';
 import { getProfileInitials } from '@/lib/profile-placeholders';
 import { type ResponsiveMetrics, useResponsiveMetrics } from '@/lib/responsive';
@@ -75,6 +86,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import ProfileMediaFrameSheet from './profile/ProfileMediaFrameSheet';
 import ProfileMediaStudioSection from './profile/ProfileMediaStudioSection';
+import GhanaOnboardingProfileSections from './profile/GhanaOnboardingProfileSections';
 import TrustVerificationCompactCard from './profile/TrustVerificationCompactCard';
 
 const DISTANCE_UNIT_KEY = 'distance_unit';
@@ -107,12 +119,7 @@ const HEIGHT_OPTIONS = [
   "6'2\"", "6'3\"", "6'4\"", "6'5\"", "6'6\"", "Other"
 ];
 
-const OCCUPATION_OPTIONS = [
-  "Student", "Software Engineer", "Teacher", "Doctor", "Lawyer", "Nurse", 
-  "Business Owner", "Marketing", "Sales", "Designer", "Accountant", "Engineer",
-  "Consultant", "Manager", "Artist", "Writer", "Photographer", "Chef",
-  "Fitness Trainer", "Real Estate", "Healthcare", "Finance", "Other"
-];
+const ONBOARDING_OCCUPATION_OPTIONS = [...PREMIUM_ONBOARDING_OCCUPATIONS, 'Other'];
 
 const EDUCATION_OPTIONS = [
   "High School", "Some College", "Bachelor's Degree", "Master's Degree", 
@@ -120,11 +127,16 @@ const EDUCATION_OPTIONS = [
   "Ashesi University", "Central University", "Valley View University", "Other"
 ];
 
-const LOOKING_FOR_OPTIONS = [
-  "Long-term relationship", "Short-term dating", "Friendship", "Networking",
-  "Marriage", "Casual dating", "Something serious", "Let's see what happens",
-  "Life partner", "Other"
+const LEGACY_LOOKING_FOR_OPTIONS = [
+  'Long-term relationship', 'Short-term dating', 'Friendship', 'Networking',
+  'Marriage', 'Casual dating', "Let's see what happens", 'Life partner', 'Other',
 ];
+const LOOKING_FOR_OPTIONS = Array.from(new Set([
+  ...PREMIUM_ONBOARDING_INTENTS.map((intent) => intent.value),
+  ...LEGACY_LOOKING_FOR_OPTIONS,
+]));
+const formatRelationshipIntent = (value: string) =>
+  PREMIUM_ONBOARDING_INTENTS.find((intent) => intent.value === value)?.label ?? value;
 
 const GENDER_OPTIONS = [
   { label: 'Male', value: 'MALE' },
@@ -173,59 +185,9 @@ const PETS_OPTIONS = [
 ];
 
 // Ghana-specific regions and tribes
-const GHANA_REGIONS_OPTIONS = [
-  "Ahafo",
-  "Ashanti",
-  "Bono",
-  "Bono East",
-  "Central",
-  "Eastern",
-  "Greater Accra",
-  "North East",
-  "Northern",
-  "Oti",
-  "Savannah",
-  "Upper East",
-  "Upper West",
-  "Volta",
-  "Western",
-  "Western North",
-  "Other",
-];
+const GHANA_REGIONS_OPTIONS = [...PREMIUM_ONBOARDING_GHANA_REGIONS, 'Other'];
 
-const GHANA_TRIBES_OPTIONS = [
-  "Asante",
-  "Fante",
-  "Akuapem",
-  "Akyem",
-  "Brong (Bono)",
-  "Kwahu",
-  "Wassa",
-  "Sefwi",
-  "Nzema",
-  "Ga",
-  "Ewe",
-  "Mole-Dagbon",
-  "Other",
-];
-
-const GLOBAL_TRIBES_OPTIONS = [
-  "African",
-  "Caribbean",
-  "European",
-  "Latin American",
-  "Middle Eastern",
-  "Asian",
-  "Mixed",
-  "Other",
-];
 const RELIGION_OPTIONS = RELIGION_LABELS;
-
-const ROOTS_VISIBILITY_OPTIONS = [
-  { value: 'VISIBLE', label: 'Visible on profile', subtitle: 'Show your roots in full profile view.' },
-  { value: 'MATCHES_ONLY', label: 'Matches only', subtitle: 'Reveal your roots only after a mutual match.' },
-  { value: 'HIDDEN', label: 'Hidden', subtitle: 'Keep your roots private.' },
-];
 const LEGACY_ROOTS_VISIBILITY_FALLBACK = 'HIDDEN';
 
 const isRootsVisibilityConstraintError = (error: unknown) => {
@@ -467,6 +429,7 @@ type FieldPickerProps = {
   currentValue: string;
   styles: ReturnType<typeof createStyles>;
   tintColor: string;
+  formatOption?: (value: string) => string;
 };
 
 const FieldPicker = ({
@@ -478,6 +441,7 @@ const FieldPicker = ({
   currentValue,
   styles,
   tintColor,
+  formatOption = (value) => value,
 }: FieldPickerProps) => (
   <Modal
     visible={visible}
@@ -515,7 +479,7 @@ const FieldPicker = ({
                 currentValue === item && styles.pickerItemTextSelected,
               ]}
             >
-              {item}
+              {formatOption(item)}
             </Text>
             {currentValue === item ? (
               <MaterialCommunityIcons name="check" size={20} color={tintColor} />
@@ -717,6 +681,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     if (effectiveRegion && GHANA_REGIONS_OPTIONS.includes(effectiveRegion)) return true;
     return false;
   }, [effectiveCountryCode, effectiveCountryLabel, effectiveRegion]);
+  const showLegacyCoreFields = false;
   const ghanaCityTownPlaceholder = useMemo(() => {
     const examples = getRegionSearchExamples(formData.region);
     return examples.length > 0
@@ -1010,8 +975,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         bio: profile.bio || '',
         gender: ((profile as any).gender || '').toString().trim().toUpperCase(),
         age: profile.age?.toString() || '',
-        min_age_interest: String((profile as any).min_age_interest ?? 18),
-        max_age_interest: String((profile as any).max_age_interest ?? 35),
+        min_age_interest: String((profile as any).min_age_interest ?? (isGhanaProfile ? 24 : 18)),
+        max_age_interest: String((profile as any).max_age_interest ?? (isGhanaProfile ? 34 : 35)),
         city: profile.city || '',
         locality_geoname_id: (profile as any).locality_geoname_id ?? null,
         locality_district: (profile as any).locality_district || '',
@@ -1164,11 +1129,15 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
             ...prev,
             origin_country: country.label,
             origin_country_code: country.code,
+            ...(prev.origin_country !== country.label ? { roots: [], roots_note: '', tribe: '' } : {}),
           }
         : {
             ...prev,
             current_country: country.label,
             current_country_code: country.code,
+            ...(prev.current_country !== country.label
+              ? { region: '', city: '', locality_geoname_id: null, locality_district: '', locality_admin1_code: '', locality_provider: null, latitude: null, longitude: null, location_precision: 'COUNTRY' }
+              : {}),
           },
     );
     setCountrySearch('');
@@ -1551,35 +1520,34 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     }
     
     try {
-      // First, delete existing interests for this user
-      await supabase
-        .from('profile_interests')
-        .delete()
-        .eq('profile_id', pid);
-      
-      // Then insert new interests
+      let profileInterests: { profile_id: string; interest_id: string }[] = [];
       if (interests.length > 0) {
-        // Get interest IDs
         const { data: interestData, error: interestError } = await supabase
           .from('interests')
           .select('id, name')
           .in('name', interests);
-        
         if (interestError) throw interestError;
-        
-        // Insert profile_interests relationships
-        const profileInterests = interestData?.map(interest => ({
-          profile_id: pid,
-          interest_id: interest.id
-        })) || [];
-        
-        if (profileInterests.length > 0) {
-          const { error: insertError } = await supabase
-            .from('profile_interests')
-            .insert(profileInterests);
-          
-          if (insertError) throw insertError;
+
+        if ((interestData?.length ?? 0) !== interests.length) {
+          throw new Error('The interest catalog is still syncing. Please try again shortly.');
         }
+        profileInterests = interestData?.map(interest => ({
+          profile_id: pid,
+          interest_id: interest.id,
+        })) || [];
+      }
+
+      const { error: deleteError } = await supabase
+        .from('profile_interests')
+        .delete()
+        .eq('profile_id', pid);
+      if (deleteError) throw deleteError;
+
+      if (profileInterests.length > 0) {
+        const { error: insertError } = await supabase
+          .from('profile_interests')
+          .insert(profileInterests);
+        if (insertError) throw insertError;
       }
       return { queued: false };
     } catch (error) {
@@ -1610,16 +1578,11 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       if (error) throw error;
       
       const interestNames = data?.map(item => item.name) || [];
-      setAvailableInterests(interestNames);
+      setAvailableInterests(Array.from(new Set([...PREMIUM_ONBOARDING_INTERESTS, ...interestNames])));
     } catch (error) {
       console.error('Error fetching interests:', error);
       // Fallback to default interests
-      setAvailableInterests([
-        'Music', 'Travel', 'Food', 'Dancing', 'Movies', 'Art',
-        'Reading', 'Sports', 'Gaming', 'Cooking', 'Photography', 'Fitness',
-        'Nature', 'Technology', 'Fashion', 'Writing', 'Singing', 'Comedy',
-        'Business', 'Volunteering', 'Learning', 'Socializing', 'Adventure', 'Relaxing'
-      ]);
+      setAvailableInterests([...PREMIUM_ONBOARDING_INTERESTS]);
     } finally {
       setLoadingInterests(false);
     }
@@ -1988,6 +1951,13 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         return;
       }
 
+      const interestsChanged = JSON.stringify(normalizeLanguages(selectedInterests).sort()) !==
+        JSON.stringify(normalizeLanguages(initialSelectedInterestsRef.current).sort());
+      if (interestsChanged && (selectedInterests.length < 3 || selectedInterests.length > 5)) {
+        Alert.alert('Choose 3–5 interests', 'Keep the same focused interest mix used during onboarding.');
+        return;
+      }
+
       const minAgeInterest = Number.parseInt(String(formData.min_age_interest || '').trim(), 10);
       const maxAgeInterest = Number.parseInt(String(formData.max_age_interest || '').trim(), 10);
       if (
@@ -2089,6 +2059,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         typeof formData.locality_geoname_id === 'number' && Number.isFinite(formData.locality_geoname_id)
           ? formData.locality_geoname_id
           : null;
+      const hasCanonicalLocality = Boolean(cityValue && localityGeonameIdValue);
       const resolvedCurrentCountry =
         isGhanaCountryLocked
           ? 'Ghana'
@@ -2139,7 +2110,15 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
             ? (cityValue ? 'CITY' : 'REGION')
             : 'CITY';
 
-        if (isGhanaProfile || regionOnlyLocation) {
+        if (hasCanonicalLocality) {
+          updateData.region = regionValue;
+          updateData.city = cityValue;
+          updateData.locality_geoname_id = localityGeonameIdValue;
+          updateData.locality_district = localityDistrictValue || null;
+          updateData.locality_admin1_code = normalizedString((formData as any).locality_admin1_code) || null;
+          updateData.locality_provider = normalizedString((formData as any).locality_provider) || 'geonames';
+          updateData.location = [cityValue, resolvedCurrentCountry].filter(Boolean).join(', ');
+        } else if (isGhanaProfile || regionOnlyLocation) {
           updateData.region = primaryLocationPart;
           updateData.city = cityValue || null;
           updateData.locality_geoname_id = cityValue ? localityGeonameIdValue : null;
@@ -2161,8 +2140,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           resolvedCurrentCountryCode !== previousCountryCode
         ) {
           updateData.location_precision = nextLocationPrecision;
-          updateData.latitude = null;
-          updateData.longitude = null;
+          updateData.latitude = hasCanonicalLocality && Number.isFinite(Number((formData as any).latitude)) ? Number((formData as any).latitude) : null;
+          updateData.longitude = hasCanonicalLocality && Number.isFinite(Number((formData as any).longitude)) ? Number((formData as any).longitude) : null;
           updateData.location_updated_at = new Date().toISOString();
         }
       } else if (resolvedCurrentCountry) {
@@ -2173,6 +2152,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         updateData.region = null;
         updateData.locality_geoname_id = null;
         updateData.locality_district = null;
+        updateData.locality_admin1_code = null;
+        updateData.locality_provider = null;
         updateData.location = resolvedCurrentCountry;
         if (
           previousRegion ||
@@ -2507,7 +2488,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
               />
             </View>
 
-            <View style={styles.inputContainer}>
+            {showLegacyCoreFields ? <View style={styles.inputContainer}>
               <Text style={styles.inputLabel}>Bio *</Text>
               <TextInput
                 style={[styles.textInput, styles.textArea]}
@@ -2520,7 +2501,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                 maxLength={500}
               />
               <Text style={styles.characterCount}>{formData.bio.length}/500</Text>
-            </View>
+            </View> : null}
 
             <View style={styles.inputContainer}>
               <Text style={styles.inputLabel}>Gender</Text>
@@ -2595,6 +2576,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
               </View>
             </View>
 
+            {showLegacyCoreFields ? <>
             <View style={styles.inputContainer}>
               <Text style={styles.inputLabel}>Current Country</Text>
               <TouchableOpacity
@@ -2824,11 +2806,11 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
               <Text style={styles.inputLabel}>Roots</Text>
               <Text style={styles.toggleHelper}>
                 {isGhanaProfile
-                  ? 'Pick one or more roots that matter to you culturally.'
+                  ? 'Choose the communities, cultures, or identities that feel part of your story.'
                   : 'Pick one or more roots or identities that matter to you culturally.'}
               </Text>
               <View style={[styles.optionChipRow, { marginTop: 10 }]}>
-                {(isGhanaProfile ? GHANA_TRIBES_OPTIONS : GLOBAL_TRIBES_OPTIONS).map((option) => {
+                {(isGhanaProfile ? GHANA_ROOT_OPTIONS : GLOBAL_ROOT_OPTIONS).map((option) => {
                   const selected = formData.roots.includes(option);
                   return (
                     <TouchableOpacity
@@ -2848,9 +2830,14 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                 style={[styles.textInput, { marginTop: 12 }]}
                 value={formData.roots_note}
                 onChangeText={(text) => handleInputChange('roots_note', text)}
-                placeholder={isGhanaProfile ? 'Optional: Half Ewe, half Ashanti' : 'Optional: describe how you identify'}
+                placeholder={isGhanaProfile ? "Tell us more, if you'd like" : 'Optional: describe how you identify'}
                 maxLength={120}
               />
+              {isGhanaProfile ? (
+                <Text style={[styles.toggleHelper, { marginTop: 8 }]}>
+                  You can add a specific group, family story, or cultural connection.
+                </Text>
+              ) : null}
               <View style={{ marginTop: 12, gap: 10 }}>
                 {ROOTS_VISIBILITY_OPTIONS.map((option) => {
                   const active = formData.roots_visibility === option.value;
@@ -2875,6 +2862,50 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                 })}
               </View>
             </View>
+            </> : null}
+          </View>
+
+          <GhanaOnboardingProfileSections
+              formData={formData}
+              styles={styles}
+              theme={theme}
+              isGhana={isGhanaCountryLocked}
+              dark={isDark}
+              selectedInterests={selectedInterests}
+              loadingInterests={loadingInterests}
+              customOccupation={customOccupation}
+              setCustomOccupation={setCustomOccupation}
+              handleInputChange={handleInputChange}
+              handleRootToggle={handleRootToggle}
+              setShowOccupationPicker={setShowOccupationPicker}
+              setShowRegionPicker={setShowRegionPicker}
+              openCurrentCountryPicker={() => {
+                setCountryPickerTarget('current');
+                setCountryModalVisible(true);
+              }}
+              openOriginCountryPicker={() => {
+                setCountryPickerTarget('origin');
+                setCountryModalVisible(true);
+              }}
+              openCityPicker={() => {
+                if (!formData.region) return;
+                setGhanaCityTownSearch('');
+                setGhanaCityTownInitializing(true);
+                setShowGhanaCityTownPicker(true);
+              }}
+              clearCity={() => {
+                handleInputChange('city', '');
+                handleInputChange('locality_geoname_id', null);
+                handleInputChange('locality_district', '');
+              }}
+              setShowReligionPicker={setShowReligionPicker}
+              setShowInterestsPicker={setShowInterestsPicker}
+          />
+
+          <View style={styles.ghanaAdditionalIntro}>
+              <Text style={styles.ghanaCoreIntroEyebrow}>MORE ABOUT YOU</Text>
+              <Text style={styles.ghanaAdditionalTitle}>Optional details for deeper compatibility</Text>
+              <Text style={styles.ghanaCoreIntroBody}>Add only what feels useful. Your core profile story is already above.</Text>
           </View>
 
           {/* Professional Info */}
@@ -2888,10 +2919,10 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                   style={styles.sectionIcon}
                 />
               </View>
-              <Text style={styles.sectionTitle}>Professional</Text>
+              <Text style={styles.sectionTitle}>{formIsGhanaProfile ? 'Education' : 'Professional'}</Text>
             </View>
             
-            <View style={styles.inputContainer}>
+            {showLegacyCoreFields ? <View style={styles.inputContainer}>
               <Text style={styles.inputLabel}>Occupation</Text>
               <TouchableOpacity
                 style={styles.selectButton}
@@ -2919,7 +2950,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                   }}
                 />
               )}
-            </View>
+            </View> : null}
 
             <View style={styles.inputContainer}>
               <Text style={styles.inputLabel}>Education</Text>
@@ -2953,7 +2984,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           </View>
 
           {/* Dating Preferences */}
-          <View style={styles.section}>
+          {showLegacyCoreFields ? <View style={styles.section}>
             <View style={styles.sectionTitleRow}>
               <View style={styles.sectionIconWrap}>
                 <MaterialCommunityIcons
@@ -2975,7 +3006,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                 <Text style={[
                   formData.looking_for ? styles.selectButtonText : styles.selectButtonPlaceholder
                 ]}>
-                  {formData.looking_for || 'What are you looking for?'}
+                  {formData.looking_for ? formatRelationshipIntent(formData.looking_for) : 'What are you looking for?'}
                 </Text>
                 <MaterialCommunityIcons name="chevron-down" size={20} color={theme.textMuted} />
               </TouchableOpacity>
@@ -3027,7 +3058,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                 </View>
               </View>
             </View>
-          </View>
+          </View> : null}
 
           {/* Matchmaking & Visibility */}
           <View style={styles.section}>
@@ -3482,7 +3513,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           </View>
 
           {/* Interests Section */}
-          <View style={styles.section}>
+          {showLegacyCoreFields ? <View style={styles.section}>
             <View style={styles.sectionTitleRow}>
               <View style={styles.sectionIconWrap}>
                 <MaterialCommunityIcons
@@ -3497,6 +3528,9 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
             
             <View style={styles.inputContainer}>
               <Text style={styles.inputLabel}>Select Your Interests</Text>
+              {formIsGhanaProfile ? (
+                <Text style={styles.fieldHelperText}>Choose 3–5 interests, matching your onboarding profile.</Text>
+              ) : null}
               <TouchableOpacity
                 style={styles.selectButton}
                 onPress={() => setShowInterestsPicker(true)}
@@ -3510,7 +3544,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                     : selectedInterests.length > 0 
                       ? selectedInterests.length === 1 
                         ? selectedInterests[0]
-                        : `${selectedInterests.length} interests selected`
+                        : `${selectedInterests.length}${formIsGhanaProfile ? ' / 5' : ''} interests selected`
                       : 'Choose your interests'
                   }
                 </Text>
@@ -3537,7 +3571,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                 ))}
               </View>
             )}
-          </View>
+          </View> : null}
 
           {/* Distance Unit Section */}
           <View style={styles.section}>
@@ -3898,7 +3932,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       {/* Occupation Picker */}
       <FieldPicker
         title="Select Occupation"
-        options={OCCUPATION_OPTIONS}
+        options={ONBOARDING_OCCUPATION_OPTIONS}
         visible={showOccupationPicker}
         onClose={() => setShowOccupationPicker(false)}
         onSelect={(value) => {
@@ -3942,6 +3976,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           handleInputChange('looking_for', value);
         }}
         currentValue={formData.looking_for}
+        formatOption={formatRelationshipIntent}
         styles={styles}
         tintColor={theme.tint}
       />
@@ -4202,6 +4237,10 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                       if (isSelected) {
                         setSelectedInterests(prev => prev.filter(interest => interest !== item));
                       } else {
+                        if (selectedInterests.length >= 5) {
+                          Alert.alert('Interest mix full', 'Remove one interest before choosing another.');
+                          return;
+                        }
                         setSelectedInterests(prev => [...prev, item]);
                       }
                     }}
@@ -4275,6 +4314,100 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
       flex: 1,
       paddingTop: 6,
     },
+    tokens: {
+      ink: { color: theme.text },
+      muted: { color: theme.textMuted },
+      accent: { color: theme.tint },
+    } as any,
+    ghanaCoreShell: { marginHorizontal: sectionMargin, marginBottom: 8 },
+    ghanaCoreIntro: {
+      paddingHorizontal: 6,
+      paddingVertical: 18,
+    },
+    ghanaCoreIntroEyebrow: { color: theme.tint, fontSize: 10, letterSpacing: 1.7, fontFamily: 'Manrope_700Bold', marginBottom: 8 },
+    ghanaCoreIntroTitle: { color: theme.text, fontSize: responsive.font(25, { min: 22, max: 28 }), lineHeight: 31, fontFamily: 'PlayfairDisplay_700Bold', maxWidth: 360 },
+    ghanaCoreIntroBody: { color: theme.textMuted, fontSize: 12, lineHeight: 18, fontFamily: 'Manrope_500Medium', marginTop: 8, maxWidth: 380 },
+    ghanaAdditionalIntro: { marginHorizontal: sectionMargin, paddingHorizontal: 6, paddingTop: 20, paddingBottom: 14 },
+    ghanaAdditionalTitle: { color: theme.text, fontSize: 20, lineHeight: 25, fontFamily: 'PlayfairDisplay_700Bold' },
+    ghanaCoreSection: {
+      backgroundColor: isDark ? 'rgba(22,27,31,0.88)' : 'rgba(255,251,246,0.92)',
+      borderRadius: 24,
+      padding: sectionPadding,
+      marginBottom: 12,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(82,56,43,0.08)',
+      shadowColor: isDark ? '#000000' : '#8B5CFF',
+      shadowOpacity: isDark ? 0.18 : 0.07,
+      shadowRadius: 18,
+      shadowOffset: { width: 0, height: 10 },
+      elevation: 3,
+    },
+    ghanaCoreSectionExpanded: {
+      borderColor: withAlpha(theme.tint, isDark ? 0.3 : 0.16),
+      shadowOpacity: isDark ? 0.22 : 0.1,
+      shadowRadius: 22,
+    },
+    ghanaChapterHeader: { flexDirection: 'row', alignItems: 'center', gap: 11, minHeight: 54 },
+    ghanaChapterEyebrowRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 2 },
+    ghanaChapterStatus: { paddingHorizontal: 7, paddingVertical: 3, borderRadius: 999, backgroundColor: withAlpha(theme.text, 0.05) },
+    ghanaChapterStatusComplete: { backgroundColor: withAlpha(theme.tint, isDark ? 0.18 : 0.08) },
+    ghanaChapterStatusText: { color: theme.textMuted, fontSize: 8, fontFamily: 'Manrope_600SemiBold' },
+    ghanaChapterStatusTextComplete: { color: theme.tint },
+    ghanaChapterSummary: { color: theme.textMuted, fontSize: 10, lineHeight: 14, fontFamily: 'Manrope_500Medium', marginTop: 3 },
+    ghanaChapterContent: { marginTop: 14, paddingTop: 14, borderTopWidth: 1, borderTopColor: withAlpha(theme.text, isDark ? 0.12 : 0.06) },
+    ghanaCoreHeading: { flexDirection: 'row', alignItems: 'flex-start', gap: 11, marginBottom: 15 },
+    ghanaCoreIcon: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: withAlpha(theme.tint, isDark ? 0.2 : 0.09), borderWidth: 1, borderColor: withAlpha(theme.tint, 0.16) },
+    ghanaCoreHeadingCopy: { flex: 1 },
+    ghanaCoreEyebrow: { color: theme.tint, fontSize: 9, letterSpacing: 1.35, fontFamily: 'Manrope_700Bold', marginBottom: 2 },
+    ghanaCoreTitle: { color: theme.text, fontSize: 18, lineHeight: 23, fontFamily: 'PlayfairDisplay_700Bold' },
+    ghanaCoreBody: { color: theme.textMuted, fontSize: 11, lineHeight: 16, fontFamily: 'Manrope_500Medium', marginBottom: 12 },
+    ghanaPremiumSelect: { minHeight: 54, borderRadius: 17, borderWidth: 1, borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.09), backgroundColor: withAlpha(theme.background, isDark ? 0.5 : 0.72), paddingHorizontal: 15, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+    ghanaPremiumSelectText: { flex: 1, color: theme.text, fontSize: 14, fontFamily: 'Manrope_600SemiBold' },
+    ghanaPremiumTextArea: { minHeight: 116, borderRadius: 18 },
+    ghanaLocationCountryCard: { minHeight: 58, borderRadius: 18, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 11, backgroundColor: withAlpha(theme.tint, isDark ? 0.13 : 0.06), borderWidth: 1, borderColor: withAlpha(theme.tint, 0.12), marginBottom: 10 },
+    ghanaCountryFlag: { fontSize: 23 },
+    ghanaLocationLabel: { color: theme.text, fontSize: 14, fontFamily: 'Manrope_700Bold' },
+    ghanaLocationMeta: { color: theme.textMuted, fontSize: 10, lineHeight: 14, fontFamily: 'Manrope_500Medium', marginTop: 1 },
+    ghanaVisibilityRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginTop: 12 },
+    ghanaVisibilityChip: { paddingHorizontal: 10, paddingVertical: 8, borderRadius: 999, borderWidth: 1, borderColor: withAlpha(theme.text, 0.1), backgroundColor: withAlpha(theme.background, 0.6) },
+    ghanaVisibilityChipSelected: { backgroundColor: theme.tint, borderColor: theme.tint },
+    ghanaVisibilityText: { color: theme.textMuted, fontSize: 10, fontFamily: 'Manrope_600SemiBold' },
+    ghanaVisibilityTextSelected: { color: '#FFFFFF' },
+    ghanaSelectedInterests: { flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginTop: 10 },
+    ghanaInterestChip: { paddingHorizontal: 10, paddingVertical: 7, borderRadius: 999, backgroundColor: withAlpha(theme.tint, isDark ? 0.18 : 0.08), borderWidth: 1, borderColor: withAlpha(theme.tint, 0.14) },
+    ghanaInterestText: { color: theme.text, fontSize: 10, fontFamily: 'Manrope_600SemiBold' },
+    ghanaIntentCard: { minHeight: 72, borderRadius: 18, borderWidth: 1, borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08), backgroundColor: withAlpha(theme.background, isDark ? 0.5 : 0.72), padding: 12, flexDirection: 'row', alignItems: 'center', gap: 11 },
+    ghanaIntentCardSelected: { backgroundColor: theme.tint, borderColor: theme.tint },
+    ghanaIntentIcon: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: withAlpha(theme.tint, 0.1) },
+    ghanaIntentIconSelected: { backgroundColor: 'rgba(255,255,255,0.16)' },
+    ghanaIntentTitle: { color: theme.text, fontSize: 13, fontFamily: 'Manrope_700Bold', marginBottom: 2 },
+    ghanaIntentTitleSelected: { color: '#FFFFFF' },
+    ghanaIntentBody: { color: theme.textMuted, fontSize: 10, lineHeight: 14, fontFamily: 'Manrope_500Medium' },
+    ghanaIntentBodySelected: { color: 'rgba(255,255,255,0.78)' },
+    ageRangeHero: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12, borderRadius: 17, backgroundColor: withAlpha(theme.tint, isDark ? 0.15 : 0.07), marginBottom: 11 },
+    ageRangeHeroIcon: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: withAlpha(theme.tint, 0.12) },
+    ageRangeHeroCopy: { flex: 1 },
+    ageRangeEyebrow: { color: theme.tint, fontSize: 8, letterSpacing: 1.1, fontFamily: 'Manrope_700Bold' },
+    ageRangeHeroValue: { color: theme.text, fontSize: 21, fontFamily: 'PlayfairDisplay_700Bold' },
+    ageRangeYearsPill: { paddingHorizontal: 8, paddingVertical: 5, borderRadius: 999, backgroundColor: withAlpha(theme.background, 0.7) },
+    ageRangeYearsText: { color: theme.textMuted, fontSize: 9, fontFamily: 'Manrope_600SemiBold' },
+    ageSliderCard: { borderRadius: 18, borderWidth: 1, borderColor: withAlpha(theme.text, 0.08), backgroundColor: withAlpha(theme.background, 0.7), paddingVertical: 16 },
+    ageSliderLayout: { width: '100%' },
+    ageSliderTrackArea: { height: 54, position: 'relative', justifyContent: 'center' },
+    ageSliderTrack: { position: 'absolute', height: 4, borderRadius: 2, backgroundColor: withAlpha(theme.text, 0.12) },
+    ageSliderFill: { position: 'absolute', height: 4, borderRadius: 2, backgroundColor: theme.tint },
+    ageSliderBubble: { position: 'absolute', top: -8, width: 48, alignItems: 'center', paddingVertical: 4, borderRadius: 9, backgroundColor: theme.text },
+    ageSliderBubbleText: { color: theme.background, fontSize: 10, fontFamily: 'Manrope_700Bold' },
+    ageSliderThumb: { position: 'absolute', top: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.background, borderWidth: 2, borderColor: theme.tint, shadowColor: theme.tint, shadowOpacity: 0.2, shadowRadius: 7, elevation: 3 },
+    ageSliderThumbActive: { transform: [{ scale: 1.08 }] },
+    ageSliderThumbCore: { width: 8, height: 8, borderRadius: 4, backgroundColor: theme.tint },
+    ageSliderLabels: { flexDirection: 'row', justifyContent: 'space-between' },
+    ageSliderLabel: { color: theme.textMuted, fontSize: 9, fontFamily: 'Manrope_600SemiBold' },
+    ageRangeQuickRow: { flexDirection: 'row', gap: 7, marginTop: 9 },
+    ageRangeQuickButton: { flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: 12, backgroundColor: withAlpha(theme.tint, isDark ? 0.12 : 0.06) },
+    ageRangeQuickText: { color: theme.tint, fontSize: 9, fontFamily: 'Manrope_700Bold' },
+    ageRangeReassurance: { flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 11 },
+    ageRangeReassuranceText: { flex: 1, color: theme.textMuted, fontSize: 10, lineHeight: 14, fontFamily: 'Manrope_500Medium' },
     section: {
       backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.72 : 0.84),
       paddingHorizontal: sectionPadding,

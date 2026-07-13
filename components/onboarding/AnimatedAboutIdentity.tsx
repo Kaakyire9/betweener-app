@@ -7,6 +7,7 @@ import Animated, {
   withDelay,
   withRepeat,
   withTiming,
+  useReducedMotion,
 } from "react-native-reanimated";
 
 const COMPOSITION = {
@@ -46,7 +47,7 @@ type LayerConfig = {
 const LAYERS: LayerConfig[] = [
   {
     key: "soft-glow",
-    source: require("../../assets/images/onboarding/about-layers/soft-glow.png"),
+    source: require("../../assets/images/onboarding/about-layers/soft-glow.optimized.png"),
     x: 214,
     y: 146,
     width: 825,
@@ -61,7 +62,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "gold-orbit-line",
-    source: require("../../assets/images/onboarding/about-layers/gold-orbit-line.png"),
+    source: require("../../assets/images/onboarding/about-layers/gold-orbit-line.optimized.png"),
     x: 61,
     y: 589,
     width: 1143,
@@ -75,7 +76,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "left-teal-profile",
-    source: require("../../assets/images/onboarding/about-layers/left-teal-profile.png"),
+    source: require("../../assets/images/onboarding/about-layers/left-teal-profile.optimized.png"),
     x: 252,
     y: 218,
     width: 397,
@@ -90,7 +91,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "back-gold-profile",
-    source: require("../../assets/images/onboarding/about-layers/back-gold-profile.png"),
+    source: require("../../assets/images/onboarding/about-layers/back-gold-profile.optimized.png"),
     x: 281,
     y: 135,
     width: 691,
@@ -105,7 +106,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "right-purple-profile",
-    source: require("../../assets/images/onboarding/about-layers/right-purple-profile.png"),
+    source: require("../../assets/images/onboarding/about-layers/right-purple-profile.optimized.png"),
     x: 531,
     y: 225,
     width: 389,
@@ -120,7 +121,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "center-person",
-    source: require("../../assets/images/onboarding/about-layers/center-person.png"),
+    source: require("../../assets/images/onboarding/about-layers/center-person.optimized.png"),
     x: 312,
     y: 153,
     width: 613,
@@ -134,7 +135,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "segmented-arc",
-    source: require("../../assets/images/onboarding/about-layers/segmented-arc.png"),
+    source: require("../../assets/images/onboarding/about-layers/segmented-arc.optimized.png"),
     x: 119,
     y: 112,
     width: 980,
@@ -148,7 +149,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "sparkles",
-    source: require("../../assets/images/onboarding/about-layers/sparkles.png"),
+    source: require("../../assets/images/onboarding/about-layers/sparkles.optimized.png"),
     x: 166,
     y: 195,
     width: 898,
@@ -170,6 +171,7 @@ type AnimatedAboutIdentityProps = {
   accessibilityLabel?: string;
   style?: StyleProp<ViewStyle>;
   imageStyle?: StyleProp<ImageStyle>;
+  selected?: boolean;
 };
 
 type AboutLayerProps = {
@@ -247,14 +249,17 @@ export function AnimatedAboutIdentity({
   accessibilityLabel = "Profile details illustration",
   style,
   imageStyle,
+  selected = false,
 }: AnimatedAboutIdentityProps) {
+  const reduceMotion = useReducedMotion();
+  const shouldAnimate = animated && !reduceMotion;
   const scale = size / COMPOSITION.width;
   const height = COMPOSITION.height * scale;
-  const aura = useSharedValue(animated ? 0 : 1);
-  const pulse = useSharedValue(animated ? 0 : 1);
+  const aura = useSharedValue(shouldAnimate ? 0 : 1);
+  const pulse = useSharedValue(shouldAnimate ? 0 : 1);
 
   useEffect(() => {
-    if (!animated) {
+    if (!shouldAnimate) {
       aura.value = 1;
       pulse.value = 0;
       return;
@@ -283,7 +288,7 @@ export function AnimatedAboutIdentity({
         false,
       ),
     );
-  }, [animated, aura, pulse]);
+  }, [aura, pulse, shouldAnimate]);
 
   const auraStyle = useAnimatedStyle(() => ({
     opacity: 0.08 + aura.value * 0.08,
@@ -300,7 +305,7 @@ export function AnimatedAboutIdentity({
       pointerEvents="none"
       accessible={!decorative}
       accessibilityLabel={decorative ? undefined : accessibilityLabel}
-      style={[styles.root, { width: size, height }, style]}
+      style={[styles.root, { width: size, height, transform: [{ scale: selected ? 1.025 : 1 }] }, style]}
     >
       <Animated.View
         style={[
@@ -325,7 +330,7 @@ export function AnimatedAboutIdentity({
         ]}
       />
       {LAYERS.map((layer) => (
-        <AboutLayer key={layer.key} layer={layer} scale={scale} animated={animated} imageStyle={imageStyle} />
+        <AboutLayer key={layer.key} layer={layer} scale={scale} animated={shouldAnimate} imageStyle={imageStyle} />
       ))}
     </View>
   );

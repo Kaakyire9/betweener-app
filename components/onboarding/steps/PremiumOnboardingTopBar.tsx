@@ -5,7 +5,6 @@ type Props = {
   styles: any;
   stepIndex: number;
   stepsLength: number;
-  isGhanaWelcomeStep: boolean;
   signingOut: boolean;
   onBack: () => void;
   onMorePress: () => void;
@@ -16,7 +15,6 @@ export function PremiumOnboardingTopBar({
   styles,
   stepIndex,
   stepsLength,
-  isGhanaWelcomeStep,
   signingOut,
   onBack,
   onMorePress,
@@ -31,12 +29,20 @@ export function PremiumOnboardingTopBar({
       ) : (
         <View style={styles.backButtonPlaceholder} />
       )}
-      {isGhanaWelcomeStep ? (
-        <View style={styles.stepMetaPlaceholder} />
+      {stepIndex === 0 ? (
+        <View
+          accessible
+          accessibilityRole="text"
+          accessibilityLabel={`Step 1 of ${stepsLength}`}
+          style={styles.welcomeJourneyPill}
+        >
+          <View style={styles.welcomeJourneyDot} />
+          <Text style={styles.welcomeJourneyText}>01 / {String(stepsLength).padStart(2, "0")}</Text>
+        </View>
       ) : (
         <Text style={styles.stepMeta}>STEP {stepIndex + 1} OF {stepsLength}</Text>
       )}
-      {isGhanaWelcomeStep ? (
+      {stepIndex === 0 ? (
         <Pressable
           style={styles.moreButton}
           accessibilityRole="button"

@@ -16,6 +16,7 @@
     "test:rn": "node --no-deprecation ./node_modules/jest/bin/jest.js --runInBand --config jest.config.js",
     "test:chat-logic": "node --no-warnings=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test __tests__/chat-thread-behavior.regression.test.ts __tests__/chat-message-state.regression.test.ts __tests__/chat-message-actions.regression.test.ts __tests__/chat-message-list-reconciliation.regression.test.ts __tests__/chat-list-message-merge.regression.test.ts __tests__/chat-presence.regression.test.ts",
     "test:vibes-logic": "node --no-warnings=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test __tests__/location-display.regression.test.ts __tests__/vibes-discovery.regression.test.ts",
+    "assets:optimize:onboarding": "node ./scripts/optimize-onboarding-assets.cjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "supabase:types": "python ./scripts/supabase_gen_types.py",
     "supabase:types:check": "python ./scripts/supabase_gen_types.py --check"
@@ -107,6 +108,7 @@
     "jest-expo": "^54.0.17",
     "react-refresh": "^0.14.2",
     "react-test-renderer": "^19.1.0",
+    "sharp": "^0.35.3",
     "typescript": "~5.9.2"
   },
   "expo": {

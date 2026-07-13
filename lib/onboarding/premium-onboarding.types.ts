@@ -33,6 +33,9 @@ export type PremiumOnboardingFormState = {
   city: string;
   cityDistrict: string;
   cityLocalityGeonameId: number | null;
+  cityAdmin1Code: string;
+  cityLatitude: number | null;
+  cityLongitude: number | null;
   tribe: string;
   roots: string[];
   rootsNote: string;

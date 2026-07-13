@@ -7,6 +7,7 @@ import Animated, {
   withDelay,
   withRepeat,
   withTiming,
+  useReducedMotion,
 } from "react-native-reanimated";
 
 const COMPOSITION = {
@@ -46,7 +47,7 @@ type LayerConfig = {
 const LAYERS: LayerConfig[] = [
   {
     key: "ambient-glow",
-    source: require("../../assets/images/onboarding/identity-layers/ambient-glow.png"),
+    source: require("../../assets/images/onboarding/identity-layers/ambient-glow.optimized.png"),
     x: 168,
     y: 296,
     width: 967,
@@ -60,7 +61,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "gold-orbit-line",
-    source: require("../../assets/images/onboarding/identity-layers/gold-orbit-line.png"),
+    source: require("../../assets/images/onboarding/identity-layers/gold-orbit-line.optimized.png"),
     x: 69,
     y: 173,
     width: 1100,
@@ -74,7 +75,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "teal-ribbon",
-    source: require("../../assets/images/onboarding/identity-layers/teal-ribbon.png"),
+    source: require("../../assets/images/onboarding/identity-layers/teal-ribbon.optimized.png"),
     x: 92,
     y: 330,
     width: 420,
@@ -88,7 +89,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "purple-accent",
-    source: require("../../assets/images/onboarding/identity-layers/purple-accent.png"),
+    source: require("../../assets/images/onboarding/identity-layers/purple-accent.optimized.png"),
     x: 615,
     y: 315,
     width: 560,
@@ -102,7 +103,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "profile-card",
-    source: require("../../assets/images/onboarding/identity-layers/profile-card.png"),
+    source: require("../../assets/images/onboarding/identity-layers/profile-card.optimized.png"),
     x: 99,
     y: 225,
     width: 1045,
@@ -116,7 +117,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "avatar-emboss",
-    source: require("../../assets/images/onboarding/identity-layers/avatar-emboss.png"),
+    source: require("../../assets/images/onboarding/identity-layers/avatar-emboss.optimized.png"),
     x: 288,
     y: 347,
     width: 350,
@@ -130,7 +131,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "signature-stroke",
-    source: require("../../assets/images/onboarding/identity-layers/signature-stroke.png"),
+    source: require("../../assets/images/onboarding/identity-layers/signature-stroke.optimized.png"),
     x: 393,
     y: 585,
     width: 688,
@@ -145,7 +146,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "gold-beads",
-    source: require("../../assets/images/onboarding/identity-layers/gold-beads.png"),
+    source: require("../../assets/images/onboarding/identity-layers/gold-beads.optimized.png"),
     x: 507,
     y: 159,
     width: 334,
@@ -159,7 +160,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "sparkles",
-    source: require("../../assets/images/onboarding/identity-layers/sparkles.png"),
+    source: require("../../assets/images/onboarding/identity-layers/sparkles.optimized.png"),
     x: 167,
     y: 256,
     width: 921,
@@ -180,6 +181,7 @@ type AnimatedIdentityCardProps = {
   accessibilityLabel?: string;
   style?: StyleProp<ViewStyle>;
   imageStyle?: StyleProp<ImageStyle>;
+  personalized?: boolean;
 };
 
 type IdentityLayerProps = {
@@ -283,7 +285,10 @@ export function AnimatedIdentityCard({
   accessibilityLabel = "Profile identity card illustration",
   style,
   imageStyle,
+  personalized = false,
 }: AnimatedIdentityCardProps) {
+  const reduceMotion = useReducedMotion();
+  const shouldAnimate = animated && !reduceMotion;
   const scale = size / COMPOSITION.width;
   const height = COMPOSITION.height * scale;
 
@@ -292,10 +297,10 @@ export function AnimatedIdentityCard({
       pointerEvents="none"
       accessible={!decorative}
       accessibilityLabel={decorative ? undefined : accessibilityLabel}
-      style={[styles.root, { width: size, height }, style]}
+      style={[styles.root, { width: size, height, transform: [{ scale: personalized ? 1.025 : 1 }] }, style]}
     >
       {LAYERS.map((layer) => (
-        <IdentityLayer key={layer.key} layer={layer} scale={scale} animated={animated} imageStyle={imageStyle} />
+        <IdentityLayer key={layer.key} layer={layer} scale={scale} animated={shouldAnimate} imageStyle={imageStyle} />
       ))}
     </View>
   );

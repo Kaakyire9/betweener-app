@@ -34,7 +34,7 @@ type LayerConfig = {
 const LAYERS: LayerConfig[] = [
   {
     key: "orbit-lines",
-    source: require("../../assets/images/onboarding/lifestyle-layers/orbit-lines.png"),
+    source: require("../../assets/images/onboarding/lifestyle-layers/orbit-lines.optimized.png"),
     x: 360,
     y: 264,
     width: 704,
@@ -48,7 +48,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "sparkles",
-    source: require("../../assets/images/onboarding/lifestyle-layers/sparkles.png"),
+    source: require("../../assets/images/onboarding/lifestyle-layers/sparkles.optimized.png"),
     x: 188,
     y: 327,
     width: 900,
@@ -62,7 +62,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "music-note",
-    source: require("../../assets/images/onboarding/lifestyle-layers/music-note.png"),
+    source: require("../../assets/images/onboarding/lifestyle-layers/music-note.optimized.png"),
     x: 206,
     y: 332,
     width: 217,
@@ -76,7 +76,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "dumbbell",
-    source: require("../../assets/images/onboarding/lifestyle-layers/dumbbell.png"),
+    source: require("../../assets/images/onboarding/lifestyle-layers/dumbbell.optimized.png"),
     x: 183,
     y: 546,
     width: 294,
@@ -90,7 +90,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "camera",
-    source: require("../../assets/images/onboarding/lifestyle-layers/camera.png"),
+    source: require("../../assets/images/onboarding/lifestyle-layers/camera.optimized.png"),
     x: 513,
     y: 211,
     width: 287,
@@ -104,7 +104,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "plane",
-    source: require("../../assets/images/onboarding/lifestyle-layers/plane.png"),
+    source: require("../../assets/images/onboarding/lifestyle-layers/plane.optimized.png"),
     x: 819,
     y: 393,
     width: 255,
@@ -118,7 +118,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "book",
-    source: require("../../assets/images/onboarding/lifestyle-layers/book.png"),
+    source: require("../../assets/images/onboarding/lifestyle-layers/book.optimized.png"),
     x: 760,
     y: 576,
     width: 320,
@@ -132,7 +132,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "food-bowl",
-    source: require("../../assets/images/onboarding/lifestyle-layers/food-bowl.png"),
+    source: require("../../assets/images/onboarding/lifestyle-layers/food-bowl.optimized.png"),
     x: 456,
     y: 790,
     width: 354,
@@ -146,7 +146,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "heart",
-    source: require("../../assets/images/onboarding/lifestyle-layers/heart.png"),
+    source: require("../../assets/images/onboarding/lifestyle-layers/heart.optimized.png"),
     x: 513,
     y: 538,
     width: 230,
@@ -167,6 +167,7 @@ type AnimatedLifestyleOrbitProps = {
   accessibilityLabel?: string;
   style?: StyleProp<ViewStyle>;
   imageStyle?: StyleProp<ImageStyle>;
+  selectedCount?: number;
 };
 
 type OrbitLayerProps = {
@@ -243,9 +244,11 @@ export function AnimatedLifestyleOrbit({
   accessibilityLabel = "Lifestyle interests illustration",
   style,
   imageStyle,
+  selectedCount = 0,
 }: AnimatedLifestyleOrbitProps) {
   const scale = size / COMPOSITION.width;
   const height = COMPOSITION.height * scale;
+  const selectionIntensity = Math.min(selectedCount, 5) / 5;
   const glow = useSharedValue(animated ? 0 : 1);
   const ring = useSharedValue(animated ? 0 : 1);
 
@@ -282,8 +285,8 @@ export function AnimatedLifestyleOrbit({
   }, [animated, glow, ring]);
 
   const glowAnimatedStyle = useAnimatedStyle(() => ({
-    opacity: 0.08 + glow.value * 0.08,
-    transform: [{ scale: 0.9 + glow.value * 0.08 }],
+    opacity: 0.08 + glow.value * 0.08 + selectionIntensity * 0.1,
+    transform: [{ scale: 0.9 + glow.value * 0.08 + selectionIntensity * 0.04 }],
   }));
 
   const ringAnimatedStyle = useAnimatedStyle(() => ({
@@ -296,7 +299,7 @@ export function AnimatedLifestyleOrbit({
       pointerEvents="none"
       accessible={!decorative}
       accessibilityLabel={decorative ? undefined : accessibilityLabel}
-      style={[styles.root, { width: size, height }, style]}
+      style={[styles.root, { width: size, height, transform: [{ scale: 1 + selectionIntensity * 0.025 }] }, style]}
     >
       <Animated.View
         style={[

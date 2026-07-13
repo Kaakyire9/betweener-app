@@ -7,6 +7,7 @@ import Animated, {
   withDelay,
   withRepeat,
   withTiming,
+  useReducedMotion,
 } from "react-native-reanimated";
 
 const COMPOSITION = {
@@ -46,7 +47,7 @@ type LayerConfig = {
 const LAYERS: LayerConfig[] = [
   {
     key: "ambient-soft-glow",
-    source: require("../../assets/images/onboarding/bio-layers/ambient-soft-glow.png"),
+    source: require("../../assets/images/onboarding/bio-layers/ambient-soft-glow.optimized.png"),
     x: 179,
     y: 347,
     width: 954,
@@ -61,7 +62,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "bust-base",
-    source: require("../../assets/images/onboarding/bio-layers/bust-base.png"),
+    source: require("../../assets/images/onboarding/bio-layers/bust-base.optimized.png"),
     x: 63,
     y: 90,
     width: 496,
@@ -75,7 +76,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "inner-gold-glow",
-    source: require("../../assets/images/onboarding/bio-layers/inner-gold-glow.png"),
+    source: require("../../assets/images/onboarding/bio-layers/inner-gold-glow.optimized.png"),
     x: 199,
     y: 515,
     width: 354,
@@ -90,7 +91,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "teal-ribbon",
-    source: require("../../assets/images/onboarding/bio-layers/teal-ribbon.png"),
+    source: require("../../assets/images/onboarding/bio-layers/teal-ribbon.optimized.png"),
     x: 337,
     y: 176,
     width: 844,
@@ -105,7 +106,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "gold-orbit-lines",
-    source: require("../../assets/images/onboarding/bio-layers/gold-orbit-lines.png"),
+    source: require("../../assets/images/onboarding/bio-layers/gold-orbit-lines.optimized.png"),
     x: 60,
     y: 158,
     width: 1145,
@@ -119,7 +120,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "gold-particles",
-    source: require("../../assets/images/onboarding/bio-layers/gold-particles.png"),
+    source: require("../../assets/images/onboarding/bio-layers/gold-particles.optimized.png"),
     x: 168,
     y: 64,
     width: 1063,
@@ -134,7 +135,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "purple-leaves",
-    source: require("../../assets/images/onboarding/bio-layers/purple-leaves.png"),
+    source: require("../../assets/images/onboarding/bio-layers/purple-leaves.optimized.png"),
     x: 380,
     y: 254,
     width: 620,
@@ -148,7 +149,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "foreground-sparkles",
-    source: require("../../assets/images/onboarding/bio-layers/foreground-sparkles.png"),
+    source: require("../../assets/images/onboarding/bio-layers/foreground-sparkles.optimized.png"),
     x: 162,
     y: 56,
     width: 891,
@@ -170,6 +171,7 @@ type AnimatedBioExpressionProps = {
   accessibilityLabel?: string;
   style?: StyleProp<ViewStyle>;
   imageStyle?: StyleProp<ImageStyle>;
+  progress?: number;
 };
 
 type BioLayerProps = {
@@ -247,14 +249,18 @@ export function AnimatedBioExpression({
   accessibilityLabel = "Bio illustration",
   style,
   imageStyle,
+  progress = 0,
 }: AnimatedBioExpressionProps) {
+  const reduceMotion = useReducedMotion();
+  const shouldAnimate = animated && !reduceMotion;
+  const normalizedProgress = Math.max(0, Math.min(progress, 1));
   const scale = size / COMPOSITION.width;
   const height = COMPOSITION.height * scale;
-  const aura = useSharedValue(animated ? 0 : 1);
-  const pulse = useSharedValue(animated ? 0 : 1);
+  const aura = useSharedValue(shouldAnimate ? 0 : 1);
+  const pulse = useSharedValue(shouldAnimate ? 0 : 1);
 
   useEffect(() => {
-    if (!animated) {
+    if (!shouldAnimate) {
       aura.value = 1;
       pulse.value = 0;
       return;
@@ -283,7 +289,7 @@ export function AnimatedBioExpression({
         false,
       ),
     );
-  }, [animated, aura, pulse]);
+  }, [aura, pulse, shouldAnimate]);
 
   const auraStyle = useAnimatedStyle(() => ({
     opacity: 0.06 + aura.value * 0.09,
@@ -300,7 +306,7 @@ export function AnimatedBioExpression({
       pointerEvents="none"
       accessible={!decorative}
       accessibilityLabel={decorative ? undefined : accessibilityLabel}
-      style={[styles.root, { width: size, height }, style]}
+      style={[styles.root, { width: size, height, transform: [{ scale: 1 + normalizedProgress * 0.025 }] }, style]}
     >
       <Animated.View
         style={[
@@ -325,7 +331,7 @@ export function AnimatedBioExpression({
         ]}
       />
       {LAYERS.map((layer) => (
-        <BioLayer key={layer.key} layer={layer} scale={scale} animated={animated} imageStyle={imageStyle} />
+        <BioLayer key={layer.key} layer={layer} scale={scale} animated={shouldAnimate} imageStyle={imageStyle} />
       ))}
     </View>
   );

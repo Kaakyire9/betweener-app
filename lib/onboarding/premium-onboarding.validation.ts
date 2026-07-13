@@ -1,5 +1,5 @@
 import { isValidGhanaCityTownValue } from "../location/ghana-locality-shared.ts";
-import { normalizeOtherText, replaceOtherInList, resolveOtherValue } from "../profile/other-option.ts";
+import { resolveOtherValue } from "../profile/other-option.ts";
 
 import type {
   PremiumOnboardingFormState,
@@ -27,9 +27,10 @@ export function validatePremiumOnboardingStep({
   const nextErrors: Record<string, string> = {};
   const occupation = resolveOtherValue(form.occupation, customOccupation);
   const tribe = resolveOtherValue(form.tribe, customTribe);
-  const roots = replaceOtherInList(form.roots, form.rootsNote);
   const minAge = Number(form.minAgeInterest);
   const maxAge = Number(form.maxAgeInterest);
+  const currentCountryIsGhana = variant === "ghana" || form.currentCountry.trim().toLowerCase() === "ghana";
+  const originCountryIsGhana = variant === "ghana" || form.originCountry.trim().toLowerCase() === "ghana";
 
   if (step === "name" && !form.fullName.trim()) {
     nextErrors.fullName = "Add the name you'd like people to know you by.";
@@ -56,23 +57,17 @@ export function validatePremiumOnboardingStep({
     if (variant === "global" && !form.currentCountry) {
       nextErrors.currentCountry = "Choose where you live now.";
     }
-    if (!form.region) {
-      nextErrors.region = variant === "ghana" ? "Choose a Ghana region." : "Choose the closest region.";
+    if (currentCountryIsGhana && !form.region) {
+      nextErrors.region = "Choose a Ghana region.";
     }
-    if (variant === "ghana" && form.city.trim() && !isValidGhanaCityTownValue(form.city)) {
+    if (currentCountryIsGhana && form.city.trim() && !isValidGhanaCityTownValue(form.city)) {
       nextErrors.city = "Add a city or town name, or leave it blank.";
     }
   }
 
   if (step === "roots") {
-    if (variant === "global" && !tribe) {
+    if (variant === "global" && !originCountryIsGhana && !tribe) {
       nextErrors.tribe = "Choose a cultural identity, or add your own.";
-    }
-    if (variant === "ghana") {
-      if (roots.length === 0) nextErrors.roots = "Pick at least one root that matters to you.";
-      if (form.roots.includes("Other") && !normalizeOtherText(form.rootsNote)) {
-        nextErrors.rootsNote = "Tell us how you identify if you choose Other.";
-      }
     }
   }
 
@@ -80,8 +75,11 @@ export function validatePremiumOnboardingStep({
     nextErrors.religion = "Choose what feels accurate for you.";
   }
 
-  if (step === "interests" && form.interests.length === 0) {
-    nextErrors.interests = "Choose at least one interest.";
+  if (step === "interests" && form.interests.length < 3) {
+    nextErrors.interests = "Choose at least 3 interests to shape your mix.";
+  }
+  if (step === "interests" && form.interests.length > 5) {
+    nextErrors.interests = "Keep your mix to 5 interests.";
   }
 
   if (step === "relationship_intent" && !form.lookingFor) {

@@ -193,6 +193,10 @@ serve(async (req) => {
         current_country_code: safeCountryCode,
         country_lock_policy: nextCountryLockPolicy,
         location_precision: 'EXACT',
+        locality_geoname_id: null,
+        locality_district: null,
+        locality_admin1_code: null,
+        locality_provider: null,
         location_updated_at: new Date().toISOString(),
       })
       .eq('user_id', user.id)

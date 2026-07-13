@@ -1,4 +1,5 @@
 import ExploreHeader from "@/components/ExploreHeader";
+import { OnboardingArrivalCelebration } from "@/components/onboarding/OnboardingArrivalCelebration";
 import type { ExploreStackHandle } from "@/components/ExploreStack.reanimated";
 import ExploreStack from "@/components/ExploreStack.reanimated";
 import MatchModal from '@/components/MatchModal';
@@ -52,7 +53,7 @@ import BlurViewSafe from "@/components/NativeWrappers/BlurViewSafe";
 import LinearGradientSafe from "@/components/NativeWrappers/LinearGradientSafe";
 import IntentRequestSheet from "@/components/IntentRequestSheet";
 import SendSignalSheet from "@/components/signal/SendSignalSheet";
-import { router, useFocusEffect } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Gem } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Animated, DeviceEventEmitter, Easing, KeyboardAvoidingView, Modal, PanResponder, Platform, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
@@ -116,6 +117,8 @@ type VibesActionHistoryEntry =
   | { kind: 'signal'; id: string; signalId: string; index: number };
 
 export default function ExploreScreen() {
+  const { onboardingCelebration } = useLocalSearchParams<{ onboardingCelebration?: string }>();
+  const [showOnboardingCelebration, setShowOnboardingCelebration] = useState(false);
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
@@ -123,6 +126,12 @@ export default function ExploreScreen() {
   const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
   const layoutMetrics = useVibesResponsiveMetrics();
   const vibesActionRailGap = layoutMetrics.device.compactHeight ? 18 : 24;
+
+  useEffect(() => {
+    if (onboardingCelebration !== "1") return;
+    setShowOnboardingCelebration(true);
+    router.setParams({ onboardingCelebration: undefined });
+  }, [onboardingCelebration]);
   const vibesStackVisualReserve = layoutMetrics.device.compactHeight ? 18 : 22;
   const momentsCapsuleMetrics = useMomentsCapsuleMetrics();
   const { profile, user, refreshProfile, authRecoveryPending, usingPersistedSessionFallback } = useAuth();
@@ -3747,6 +3756,10 @@ export default function ExploreScreen() {
             setVideoModalSubtitle(null);
             setPreviewingId(null);
           }}
+        />
+        <OnboardingArrivalCelebration
+          visible={showOnboardingCelebration}
+          onDismiss={() => setShowOnboardingCelebration(false)}
         />
       </SafeAreaView>
       </DepthBackground>

@@ -176,15 +176,7 @@ function buildRootsSection(profile: UserProfile, isOwnProfile: boolean): Premium
 
   if (roots.length === 0) return null;
   if (rootsVisibility === 'HIDDEN' && !isOwnProfile) return null;
-
-  if (rootsVisibility === 'MATCHES_ONLY' && !isOwnProfile) {
-    return {
-      id: 'sec-roots',
-      tag: 'values',
-      title: 'Roots & Heritage',
-      body: 'Shared after a mutual match.',
-    };
-  }
+  if (rootsVisibility === 'MATCHES_ONLY' && !isOwnProfile) return null;
 
   return {
     id: 'sec-roots',

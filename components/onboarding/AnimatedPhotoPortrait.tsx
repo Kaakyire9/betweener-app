@@ -7,6 +7,7 @@ import Animated, {
   withDelay,
   withRepeat,
   withTiming,
+  useReducedMotion,
 } from "react-native-reanimated";
 
 const COMPOSITION = {
@@ -35,7 +36,7 @@ type LayerConfig = {
 const LAYERS: LayerConfig[] = [
   {
     key: "ambient-soft-glow",
-    source: require("../../assets/images/onboarding/photo-layers/ambient-soft-glow.png"),
+    source: require("../../assets/images/onboarding/photo-layers/ambient-soft-glow.optimized.png"),
     x: 176,
     y: 280,
     width: 922,
@@ -49,7 +50,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "mirror-glow",
-    source: require("../../assets/images/onboarding/photo-layers/mirror-glow.png"),
+    source: require("../../assets/images/onboarding/photo-layers/mirror-glow.optimized.png"),
     x: 312,
     y: 102,
     width: 600,
@@ -63,7 +64,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "gold-orbit-lines",
-    source: require("../../assets/images/onboarding/photo-layers/gold-orbit-lines.png"),
+    source: require("../../assets/images/onboarding/photo-layers/gold-orbit-lines.optimized.png"),
     x: 120,
     y: 198,
     width: 1038,
@@ -77,7 +78,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "teal-ribbon",
-    source: require("../../assets/images/onboarding/photo-layers/teal-ribbon.png"),
+    source: require("../../assets/images/onboarding/photo-layers/teal-ribbon.optimized.png"),
     x: 356,
     y: 232,
     width: 716,
@@ -91,7 +92,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "mirror-bust",
-    source: require("../../assets/images/onboarding/photo-layers/mirror-bust.png"),
+    source: require("../../assets/images/onboarding/photo-layers/mirror-bust.optimized.png"),
     x: 276,
     y: 142,
     width: 658,
@@ -105,7 +106,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "gold-particles",
-    source: require("../../assets/images/onboarding/photo-layers/gold-particles.png"),
+    source: require("../../assets/images/onboarding/photo-layers/gold-particles.optimized.png"),
     x: 214,
     y: 104,
     width: 876,
@@ -120,7 +121,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "foreground-sparkles",
-    source: require("../../assets/images/onboarding/photo-layers/foreground-sparkles.png"),
+    source: require("../../assets/images/onboarding/photo-layers/foreground-sparkles.optimized.png"),
     x: 198,
     y: 84,
     width: 908,
@@ -227,14 +228,16 @@ export function AnimatedPhotoPortrait({
   style,
   imageStyle,
 }: AnimatedPhotoPortraitProps) {
+  const reduceMotion = useReducedMotion();
+  const shouldAnimate = animated && !reduceMotion;
   const scale = size / COMPOSITION.width;
   const height = COMPOSITION.height * scale;
-  const reveal = useSharedValue(animated ? 0 : 1);
-  const glow = useSharedValue(animated ? 0 : 1);
-  const ring = useSharedValue(animated ? 0 : 1);
+  const reveal = useSharedValue(shouldAnimate ? 0 : 1);
+  const glow = useSharedValue(shouldAnimate ? 0 : 1);
+  const ring = useSharedValue(shouldAnimate ? 0 : 1);
 
   useEffect(() => {
-    if (!animated) {
+    if (!shouldAnimate) {
       reveal.value = 1;
       glow.value = 1;
       ring.value = 0;
@@ -269,7 +272,7 @@ export function AnimatedPhotoPortrait({
         false,
       ),
     );
-  }, [animated, glow, reveal, ring, settled]);
+  }, [glow, reveal, ring, settled, shouldAnimate]);
 
   const revealAnimatedStyle = useAnimatedStyle(() => ({
     opacity: reveal.value,
@@ -325,7 +328,7 @@ export function AnimatedPhotoPortrait({
           key={layer.key}
           layer={layer}
           scale={scale}
-          animated={animated}
+          animated={shouldAnimate}
           settled={settled}
           imageStyle={imageStyle}
         />

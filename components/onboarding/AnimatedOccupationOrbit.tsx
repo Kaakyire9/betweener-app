@@ -7,6 +7,7 @@ import Animated, {
   withDelay,
   withRepeat,
   withTiming,
+  useReducedMotion,
 } from "react-native-reanimated";
 
 const COMPOSITION = {
@@ -46,7 +47,7 @@ type LayerConfig = {
 const LAYERS: LayerConfig[] = [
   {
     key: "soft-glow",
-    source: require("../../assets/images/onboarding/occupation-layers/soft-glow.png"),
+    source: require("../../assets/images/onboarding/occupation-layers/soft-glow.optimized.png"),
     x: 58,
     y: 76,
     width: 1128,
@@ -61,7 +62,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "gold-orbit-line",
-    source: require("../../assets/images/onboarding/occupation-layers/gold-orbit-line.png"),
+    source: require("../../assets/images/onboarding/occupation-layers/gold-orbit-line.optimized.png"),
     x: 46,
     y: 178,
     width: 1168,
@@ -75,7 +76,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "gold-beads",
-    source: require("../../assets/images/onboarding/occupation-layers/gold-beads.png"),
+    source: require("../../assets/images/onboarding/occupation-layers/gold-beads.optimized.png"),
     x: 150,
     y: 92,
     width: 1024,
@@ -90,7 +91,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "quill-pen",
-    source: require("../../assets/images/onboarding/occupation-layers/quill-pen.png"),
+    source: require("../../assets/images/onboarding/occupation-layers/quill-pen.optimized.png"),
     x: 214,
     y: 54,
     width: 318,
@@ -104,7 +105,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "camera-lens",
-    source: require("../../assets/images/onboarding/occupation-layers/camera-lens.png"),
+    source: require("../../assets/images/onboarding/occupation-layers/camera-lens.optimized.png"),
     x: 812,
     y: 170,
     width: 338,
@@ -118,7 +119,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "laptop",
-    source: require("../../assets/images/onboarding/occupation-layers/laptop.png"),
+    source: require("../../assets/images/onboarding/occupation-layers/laptop.optimized.png"),
     x: 892,
     y: 520,
     width: 330,
@@ -132,7 +133,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "compass",
-    source: require("../../assets/images/onboarding/occupation-layers/compass.png"),
+    source: require("../../assets/images/onboarding/occupation-layers/compass.optimized.png"),
     x: 102,
     y: 540,
     width: 250,
@@ -146,7 +147,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "plant",
-    source: require("../../assets/images/onboarding/occupation-layers/plant.png"),
+    source: require("../../assets/images/onboarding/occupation-layers/plant.optimized.png"),
     x: 492,
     y: 850,
     width: 288,
@@ -160,7 +161,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "central-sculpture",
-    source: require("../../assets/images/onboarding/occupation-layers/central-sculpture.png"),
+    source: require("../../assets/images/onboarding/occupation-layers/central-sculpture.optimized.png"),
     x: 326,
     y: 292,
     width: 620,
@@ -174,7 +175,7 @@ const LAYERS: LayerConfig[] = [
   },
   {
     key: "sparkles",
-    source: require("../../assets/images/onboarding/occupation-layers/sparkles.png"),
+    source: require("../../assets/images/onboarding/occupation-layers/sparkles.optimized.png"),
     x: 82,
     y: 112,
     width: 1088,
@@ -196,6 +197,7 @@ type AnimatedOccupationOrbitProps = {
   accessibilityLabel?: string;
   style?: StyleProp<ViewStyle>;
   imageStyle?: StyleProp<ImageStyle>;
+  selected?: boolean;
 };
 
 type OccupationLayerProps = {
@@ -273,14 +275,17 @@ export function AnimatedOccupationOrbit({
   accessibilityLabel = "Occupation illustration",
   style,
   imageStyle,
+  selected = false,
 }: AnimatedOccupationOrbitProps) {
+  const reduceMotion = useReducedMotion();
+  const shouldAnimate = animated && !reduceMotion;
   const scale = size / COMPOSITION.width;
   const height = COMPOSITION.height * scale;
-  const aura = useSharedValue(animated ? 0 : 1);
-  const pulse = useSharedValue(animated ? 0 : 1);
+  const aura = useSharedValue(shouldAnimate ? 0 : 1);
+  const pulse = useSharedValue(shouldAnimate ? 0 : 1);
 
   useEffect(() => {
-    if (!animated) {
+    if (!shouldAnimate) {
       aura.value = 1;
       pulse.value = 0;
       return;
@@ -309,7 +314,7 @@ export function AnimatedOccupationOrbit({
         false,
       ),
     );
-  }, [animated, aura, pulse]);
+  }, [aura, pulse, shouldAnimate]);
 
   const auraStyle = useAnimatedStyle(() => ({
     opacity: 0.08 + aura.value * 0.1,
@@ -326,7 +331,7 @@ export function AnimatedOccupationOrbit({
       pointerEvents="none"
       accessible={!decorative}
       accessibilityLabel={decorative ? undefined : accessibilityLabel}
-      style={[styles.root, { width: size, height }, style]}
+      style={[styles.root, { width: size, height, transform: [{ scale: selected ? 1.025 : 1 }] }, style]}
     >
       <Animated.View
         style={[
@@ -351,7 +356,7 @@ export function AnimatedOccupationOrbit({
         ]}
       />
       {LAYERS.map((layer) => (
-        <OccupationLayer key={layer.key} layer={layer} scale={scale} animated={animated} imageStyle={imageStyle} />
+        <OccupationLayer key={layer.key} layer={layer} scale={scale} animated={shouldAnimate} imageStyle={imageStyle} />
       ))}
     </View>
   );

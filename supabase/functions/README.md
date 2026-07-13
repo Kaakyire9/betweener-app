@@ -26,3 +26,11 @@ Preferred auth:
 
 Supabase gateway fallback:
 - If Supabase rejects the incoming `Authorization` header before the function runs, leave RevenueCat's Authorization header empty and append `?webhook_secret=YOUR_VALUE` to the webhook URL instead.
+
+Global locality search function
+
+- Function name: `search-global-localities`
+- Required secret: `GEONAMES_USERNAME`
+- Register and enable a production GeoNames web-service account; never use the `demo` account.
+- The function country-filters populated places and caches canonical results in `public.global_localities`.
+- Deploy after migration `20260712_02_global_localities.sql`.
