@@ -4530,6 +4530,51 @@ export type Database = {
           },
         ]
       }
+      profile_private_locations: {
+        Row: {
+          accuracy_meters: number | null
+          captured_at: string
+          latitude: number
+          longitude: number
+          profile_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          accuracy_meters?: number | null
+          captured_at?: string
+          latitude: number
+          longitude: number
+          profile_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          accuracy_meters?: number | null
+          captured_at?: string
+          latitude?: number
+          longitude?: number
+          profile_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "profile_private_locations_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: true
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "profile_private_locations_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: true
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profile_prompt_guesses: {
         Row: {
           attempts_count: number
@@ -4985,6 +5030,7 @@ export type Database = {
           account_state: string
           account_state_updated_at: string
           age: number | null
+          age_preference_confirmed_at: string | null
           ai_score: number | null
           ai_score_updated_at: string | null
           avatar_url: string | null
@@ -5036,6 +5082,7 @@ export type Database = {
           occupation: string | null
           onboarding_completed_at: string | null
           onboarding_step: number
+          onboarding_variant: string | null
           online: boolean
           origin_country: string | null
           origin_country_code: string | null
@@ -5087,6 +5134,7 @@ export type Database = {
           account_state?: string
           account_state_updated_at?: string
           age?: number | null
+          age_preference_confirmed_at?: string | null
           ai_score?: number | null
           ai_score_updated_at?: string | null
           avatar_url?: string | null
@@ -5138,6 +5186,7 @@ export type Database = {
           occupation?: string | null
           onboarding_completed_at?: string | null
           onboarding_step?: number
+          onboarding_variant?: string | null
           online?: boolean
           origin_country?: string | null
           origin_country_code?: string | null
@@ -5189,6 +5238,7 @@ export type Database = {
           account_state?: string
           account_state_updated_at?: string
           age?: number | null
+          age_preference_confirmed_at?: string | null
           ai_score?: number | null
           ai_score_updated_at?: string | null
           avatar_url?: string | null
@@ -5240,6 +5290,7 @@ export type Database = {
           occupation?: string | null
           onboarding_completed_at?: string | null
           onboarding_step?: number
+          onboarding_variant?: string | null
           online?: boolean
           origin_country?: string | null
           origin_country_code?: string | null
@@ -5288,13 +5339,6 @@ export type Database = {
           years_in_diaspora?: number | null
         }
         Relationships: [
-          {
-            foreignKeyName: "profiles_locality_geoname_id_fkey"
-            columns: ["locality_geoname_id"]
-            isOneToOne: false
-            referencedRelation: "ghana_localities"
-            referencedColumns: ["geoname_id"]
-          },
           {
             foreignKeyName: "profiles_roots_locality_geoname_id_fkey"
             columns: ["roots_locality_geoname_id"]
@@ -6446,6 +6490,90 @@ export type Database = {
             foreignKeyName: "vibes_v4_metric_refresh_queue_profile_id_fkey"
             columns: ["profile_id"]
             isOneToOne: true
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      vibes_v5_taste_refresh_queue: {
+        Row: {
+          attempts: number
+          last_error: string | null
+          requested_at: string
+          viewer_profile_id: string
+        }
+        Insert: {
+          attempts?: number
+          last_error?: string | null
+          requested_at?: string
+          viewer_profile_id: string
+        }
+        Update: {
+          attempts?: number
+          last_error?: string | null
+          requested_at?: string
+          viewer_profile_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vibes_v5_taste_refresh_queue_viewer_profile_id_fkey"
+            columns: ["viewer_profile_id"]
+            isOneToOne: true
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "vibes_v5_taste_refresh_queue_viewer_profile_id_fkey"
+            columns: ["viewer_profile_id"]
+            isOneToOne: true
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      vibes_v5_viewer_feature_weights: {
+        Row: {
+          evidence_count: number
+          feature_key: string
+          feature_value: string
+          negative_evidence: number
+          positive_evidence: number
+          refreshed_at: string
+          viewer_profile_id: string
+          weight: number
+        }
+        Insert: {
+          evidence_count?: number
+          feature_key: string
+          feature_value: string
+          negative_evidence?: number
+          positive_evidence?: number
+          refreshed_at?: string
+          viewer_profile_id: string
+          weight?: number
+        }
+        Update: {
+          evidence_count?: number
+          feature_key?: string
+          feature_value?: string
+          negative_evidence?: number
+          positive_evidence?: number
+          refreshed_at?: string
+          viewer_profile_id?: string
+          weight?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vibes_v5_viewer_feature_weights_viewer_profile_id_fkey"
+            columns: ["viewer_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "vibes_v5_viewer_feature_weights_viewer_profile_id_fkey"
+            columns: ["viewer_profile_id"]
+            isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
@@ -7689,6 +7817,78 @@ export type Database = {
           verified: boolean
         }[]
       }
+      get_vibes_recommendations_v3_private: {
+        Args: {
+          p_active_window_minutes?: number
+          p_limit?: number
+          p_segment?: string
+          p_user_id: string
+        }
+        Returns: {
+          age: number
+          ai_score: number
+          avatar_url: string
+          bio: string
+          city: string
+          current_country: string
+          current_country_code: string
+          distance_km: number
+          full_name: string
+          id: string
+          is_active: boolean
+          last_active: string
+          latitude: number
+          location: string
+          location_precision: string
+          longitude: number
+          online: boolean
+          personality_type: string
+          profile_video: string
+          recommendation_reasons: Json
+          region: string
+          religion: string
+          tribe: string
+          user_id: string
+          verification_level: number
+          verified: boolean
+        }[]
+      }
+      get_vibes_recommendations_v5: {
+        Args: {
+          p_active_window_minutes?: number
+          p_limit?: number
+          p_segment?: string
+          p_user_id: string
+        }
+        Returns: {
+          age: number
+          ai_score: number
+          avatar_url: string
+          bio: string
+          city: string
+          current_country: string
+          current_country_code: string
+          distance_km: number
+          full_name: string
+          id: string
+          is_active: boolean
+          last_active: string
+          latitude: number
+          location: string
+          location_precision: string
+          longitude: number
+          online: boolean
+          personality_type: string
+          profile_video: string
+          recommendation_reasons: Json
+          region: string
+          religion: string
+          tribe: string
+          user_id: string
+          verification_level: number
+          verified: boolean
+        }[]
+      }
       get_viewed_profile_prompts: {
         Args: { p_profile_id: string; p_viewer_profile_id?: string }
         Returns: {
@@ -7756,6 +7956,10 @@ export type Database = {
       }
       normalize_vibes_country_name: {
         Args: { p_country: string; p_country_code: string }
+        Returns: string
+      }
+      normalize_vibes_v5_intention: {
+        Args: { p_value: string }
         Returns: string
       }
       notify_internal_admin_queue_item: {
@@ -7840,6 +8044,10 @@ export type Database = {
       }
       refresh_profile_visibility_entitlements: {
         Args: { p_profile_ids?: string[] }
+        Returns: number
+      }
+      refresh_vibes_v5_viewer_taste: {
+        Args: { p_viewer_profile_id: string }
         Returns: number
       }
       refresh_viewer_profile_behavior_summary: {
@@ -9643,6 +9851,10 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_process_vibes_v5_taste_jobs: {
+        Args: { p_limit?: number }
+        Returns: Json
+      }
       rpc_publish_relationship_gist: {
         Args: { p_gist_id: string }
         Returns: {
@@ -10719,6 +10931,19 @@ export type Database = {
           name: string
           population: number
           region: string
+        }[]
+      }
+      set_my_precise_location: {
+        Args: {
+          p_accuracy_meters?: number
+          p_latitude: number
+          p_longitude: number
+        }
+        Returns: {
+          latitude: number
+          location_precision: string
+          longitude: number
+          profile_id: string
         }[]
       }
       show_limit: { Args: never; Returns: number }

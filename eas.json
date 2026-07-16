@@ -5,6 +5,7 @@
   },
   "build": {
     "development": {
+      "channel": "development",
       "developmentClient": true,
       "distribution": "internal",
       "ios": {
@@ -19,6 +20,7 @@
       }
     },
     "preview": {
+      "channel": "preview",
       "distribution": "internal",
       "env": {
         "EXPO_PUBLIC_ENVIRONMENT": "preview",
@@ -33,6 +35,7 @@
       }
     },
     "playInternal": {
+      "channel": "preview",
       "distribution": "store",
       "autoIncrement": true,
       "buildArtifactPaths": [
@@ -48,6 +51,7 @@
       }
     },
     "playVerification": {
+      "channel": "staging",
       "distribution": "internal",
       "android": {
         "gradleCommand": ":app:assembleRelease -PreactNativeArchitectures=arm64-v8a -Pandroid.enableMinifyInReleaseBuilds=true -Pandroid.enableShrinkResourcesInReleaseBuilds=true"
@@ -60,6 +64,7 @@
       }
     },
     "production": {
+      "channel": "production",
       "autoIncrement": true,
       "buildArtifactPaths": [
         "android/app/build/outputs/mapping/release/mapping.txt"

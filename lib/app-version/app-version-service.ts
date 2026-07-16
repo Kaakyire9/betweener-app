@@ -1,12 +1,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Application from 'expo-application';
 import Constants from 'expo-constants';
+import { Linking } from 'react-native';
 
 import { supabase } from '@/lib/supabase';
 import { logger } from '@/lib/telemetry/logger';
-import { openExternalUrl } from '@/lib/trust-links';
 import type {
-  AppVersionDecision,
   AppVersionEnvironment,
   AppVersionRule,
   CachedVersionRuleState,
@@ -15,14 +14,14 @@ import type {
 } from '@/lib/app-version/types';
 import {
   compareInstalledToTarget,
-  isBelowMinimumInstalledVersion,
-  isBehindLatestVersion,
 } from '@/lib/app-version/version-compare';
+
+export { decideAppVersionRule } from '@/lib/app-version/version-compare';
 
 // Silent-first product policy:
 // - normal releases stay quiet and rely on App Store / Play auto-update behavior
 // - soft prompts are an intentional exception, not the default release path
-// - force update remains available only for unsupported or unsafe builds
+// - force update remains available for unsupported or operationally unsafe builds
 export const ENABLE_APP_VERSION_GATE = true;
 export const ENABLE_SOFT_UPDATE_PROMPT = true;
 export const ENABLE_FORCE_UPDATE_GATE = true;
@@ -37,6 +36,20 @@ const WHATS_NEW_SEEN_KEY = 'app_version_whats_new_seen_v1';
 const DEFAULT_IOS_STORE_URL = 'https://apps.apple.com/app/betweener/id6753134347';
 const DEFAULT_ANDROID_STORE_URL =
   'https://play.google.com/store/apps/details?id=com.aduboffour.betweener';
+
+const normalizeStoreUrl = (value: unknown, platform: AppVersionRule['platform']): string => {
+  const fallback = platform === 'android' ? DEFAULT_ANDROID_STORE_URL : DEFAULT_IOS_STORE_URL;
+  const candidate = normalizeString(value);
+  if (!candidate) return fallback;
+
+  try {
+    const parsed = new URL(candidate);
+    const expectedHost = platform === 'android' ? 'play.google.com' : 'apps.apple.com';
+    return parsed.protocol === 'https:' && parsed.hostname === expectedHost ? parsed.toString() : fallback;
+  } catch {
+    return fallback;
+  }
+};
 
 const isDev = typeof __DEV__ !== 'undefined' && __DEV__;
 
@@ -106,12 +119,12 @@ const normalizeRulePayload = (value: unknown, installed: InstalledAppVersion): A
   const minimumSupportedVersion = normalizeString(raw.minimumSupportedVersion, latestVersion);
   const minimumSupportedBuildNumber = parseBuildNumber(raw.minimumSupportedBuildNumber);
   const updateMode = normalizeString(raw.updateMode, 'silent');
-  const storeUrl =
-    normalizeString(raw.storeUrl) ||
-    (platform === 'android' ? DEFAULT_ANDROID_STORE_URL : DEFAULT_IOS_STORE_URL);
 
   if (platform !== 'ios' && platform !== 'android') return null;
+  if (platform !== installed.platform || environment !== installed.environment) return null;
   if (updateMode !== 'silent' && updateMode !== 'soft' && updateMode !== 'force') return null;
+
+  const storeUrl = normalizeStoreUrl(raw.storeUrl, platform);
 
   return {
     platform,
@@ -143,42 +156,6 @@ export const fetchRemoteAppVersionRule = async (
   }
 
   return normalizeRulePayload(data, installed);
-};
-
-export const decideAppVersionRule = (
-  installed: InstalledAppVersion,
-  rule: AppVersionRule,
-): AppVersionDecision => {
-  const belowMinimum = isBelowMinimumInstalledVersion(installed, rule);
-  const behindLatest = isBehindLatestVersion(installed, rule);
-
-  if (belowMinimum) {
-    return {
-      status: 'force_update',
-      rule,
-      installed,
-      isBelowMinimum: true,
-      isBehindLatest: behindLatest,
-    };
-  }
-
-  if (behindLatest && rule.updateMode === 'soft') {
-    return {
-      status: 'show_soft_update',
-      rule,
-      installed,
-      isBelowMinimum: false,
-      isBehindLatest: true,
-    };
-  }
-
-  return {
-    status: 'continue',
-    rule,
-    installed,
-    isBelowMinimum: false,
-    isBehindLatest: behindLatest,
-  };
 };
 
 export const isInstalledVersionAtOrAboveLatest = (
@@ -267,12 +244,26 @@ export const shouldShowWhatsNew = (
 export const shouldBypassForceUpdateForCurrentBuild = (installed: InstalledAppVersion) =>
   isDev || installed.environment !== 'production';
 
-export const openAppVersionStoreUrl = async (storeUrl: string): Promise<boolean> => {
+export const openAppVersionStoreUrl = async (rule: AppVersionRule): Promise<boolean> => {
+  const nativeStoreUrl =
+    rule.platform === 'ios'
+      ? 'itms-apps://apps.apple.com/app/id6753134347'
+      : 'market://details?id=com.aduboffour.betweener';
+
   try {
-    await openExternalUrl(storeUrl);
+    await Linking.openURL(nativeStoreUrl);
     return true;
-  } catch (error) {
-    logger.error('[app-version] open_store_url_failed', error, { storeUrl });
-    return false;
+  } catch (nativeError) {
+    try {
+      await Linking.openURL(rule.storeUrl);
+      return true;
+    } catch (webError) {
+      logger.error('[app-version] open_store_url_failed', webError, {
+        nativeError,
+        nativeStoreUrl,
+        storeUrl: rule.storeUrl,
+      });
+      return false;
+    }
   }
 };

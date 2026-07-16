@@ -1,13 +1,20 @@
 import { supabase } from '@/lib/supabase';
-import {
-  isAdministrativeLocationLabel,
-  isBroadRegionLabel,
-  isKnownGhanaRegionLabel,
-} from '@/lib/location/location-display';
-import { findCountryByCode, findCountryByLabel } from '@/lib/location/countries';
+import { findCountryByCode } from '@/lib/location/countries';
+import { isGhanaCountryManagedPolicy } from '@/lib/location/country-lock';
+import { isLegacyGhanaLocalityForeignKeyError } from '@/lib/location/locality-errors';
+import { buildProfileLocationUpdate } from '@/lib/profile/profile-location-update';
 
 type Result =
-  | { ok: true }
+  | {
+      ok: true;
+      verification?: {
+        status?: string;
+        message?: string;
+        next_eligible_at?: string;
+        country_code?: string;
+        country_name?: string;
+      };
+    }
   | { ok: false; error: string; permissionDenied?: boolean };
 
 /**
@@ -24,49 +31,96 @@ export async function requestAndSavePreciseLocation(profileId: string): Promise<
   }
 
   try {
+    const { data: profileRow, error: profileError } = await supabase
+      .from('profiles')
+      .select('country_lock_policy, current_country_code')
+      .eq('id', profileId)
+      .single();
+    if (profileError) {
+      return { ok: false, error: profileError.message };
+    }
+    const requiresManagedCountryVerification = isGhanaCountryManagedPolicy(
+      profileRow?.country_lock_policy,
+    );
+
     const { status } = await Location.requestForegroundPermissionsAsync();
     if (status !== 'granted') {
       return { ok: false, error: 'Location permission was denied.', permissionDenied: true };
     }
 
-    const { coords } = await Location.getCurrentPositionAsync({
-      accuracy: Location.Accuracy.Balanced,
-      maximumAge: 30_000,
+    const location = await Location.getCurrentPositionAsync({
+      accuracy: requiresManagedCountryVerification
+        ? Location.Accuracy.Highest
+        : Location.Accuracy.High,
+      maximumAge: requiresManagedCountryVerification ? 0 : 30_000,
       mayShowUserSettingsDialog: true,
     });
 
-    const { latitude, longitude } = coords || {};
+    const { coords } = location || {};
+    const { latitude, longitude, accuracy } = coords || {};
     if (latitude == null || longitude == null) {
       return { ok: false, error: 'Unable to read device coordinates.' };
     }
 
-    const { error } = await supabase
-      .from('profiles')
-      .update({
-        latitude,
-        longitude,
-        city: null,
-        region: null,
-        location: null,
-        current_country: null,
-        current_country_code: null,
-        location_precision: 'EXACT',
-        location_updated_at: new Date().toISOString(),
-      })
-      .eq('id', profileId);
+    const mocked = location?.mocked === true || coords?.mocked === true;
+    if (mocked) {
+      return {
+        ok: false,
+        error: 'A simulated location cannot be used to verify your country.',
+      };
+    }
+
+    if (
+      requiresManagedCountryVerification
+      && (typeof accuracy !== 'number' || !Number.isFinite(accuracy) || accuracy > 150)
+    ) {
+      return {
+        ok: false,
+        error: 'Location accuracy is too low. Move outdoors, enable precise location and try again.',
+      };
+    }
+
+    const { data: preciseRows, error } = await supabase.rpc('set_my_precise_location' as any, {
+      p_latitude: latitude,
+      p_longitude: longitude,
+      p_accuracy_meters: typeof accuracy === 'number' && Number.isFinite(accuracy) ? accuracy : null,
+    });
 
     if (error) {
       return { ok: false, error: error.message };
     }
 
-    const { error: geocodeError } = await supabase.functions.invoke('reverse-geocode', {
-      body: { latitude, longitude },
-    });
-    if (geocodeError) {
-      console.log('[location] reverse-geocode failed', geocodeError);
+    const savedProfileId = Array.isArray(preciseRows) ? preciseRows[0]?.profile_id : null;
+    if (savedProfileId && savedProfileId !== profileId) {
+      return { ok: false, error: 'The saved location did not match your active profile.' };
     }
 
-    return { ok: true };
+    const { data: geocodeData, error: geocodeError } = await supabase.functions.invoke('reverse-geocode', {
+      body: {
+        latitude,
+        longitude,
+        accuracyMeters: typeof accuracy === 'number' && Number.isFinite(accuracy) ? accuracy : null,
+        mocked,
+        deviceIntegrity: 'unavailable',
+      },
+    });
+    // The precise save is authoritative. Reverse geocoding is enrichment only;
+    // if it is temporarily unavailable the existing city remains intact.
+    if (requiresManagedCountryVerification && geocodeError) {
+      return { ok: false, error: geocodeError.message || 'Country verification is temporarily unavailable.' };
+    }
+
+    if (requiresManagedCountryVerification && geocodeData?.ok === false) {
+      return {
+        ok: false,
+        error: geocodeData?.error || geocodeData?.verification?.message || 'Country verification failed.',
+      };
+    }
+
+    return {
+      ok: true,
+      verification: geocodeData?.verification,
+    };
   } catch (e: any) {
     return { ok: false, error: e?.message || 'Failed to save location.' };
   }
@@ -76,70 +130,84 @@ export async function requestAndSavePreciseLocation(profileId: string): Promise<
  * Save a coarse, manual location (city/region) and mark precision as city-level.
  * Clears stored coordinates to avoid implying exact position.
  */
+export type ManualCityLocationDraft = {
+  countryCode: string;
+  countryName?: string | null;
+  city: string;
+  region?: string | null;
+  localityGeonameId?: number | null;
+  localityDistrict?: string | null;
+  localityAdmin1Code?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+};
+
 export async function saveManualCityLocation(
   profileId: string,
-  locationLabel: string,
-  countryCode?: string
+  draft: ManualCityLocationDraft,
 ): Promise<Result> {
   try {
-    const label = locationLabel.trim();
-    if (!label) return { ok: false, error: 'Please enter a city or region.' };
+    const city = draft.city.trim();
+    const normalizedCountryCode = draft.countryCode.trim().toUpperCase();
+    if (!normalizedCountryCode) return { ok: false, error: 'Please select a country.' };
+    if (!city) return { ok: false, error: 'Please choose a verified city or town.' };
 
-    const parts = label
-      .split(',')
-      .map((part) => part.trim())
-      .filter(Boolean);
-    const primary = parts[0] || label;
-    const secondary = parts[1] || null;
-    const normalizedCountryCode = countryCode ? countryCode.trim().toUpperCase() : '';
     const { data: profileRow, error: profileError } = await supabase
       .from('profiles')
-      .select('country_lock_policy')
+      .select('country_lock_policy, current_country_code')
       .eq('id', profileId)
       .single();
     if (profileError) {
       return { ok: false, error: profileError.message };
     }
-    if (profileRow?.country_lock_policy === 'ghana_locked' && normalizedCountryCode && normalizedCountryCode !== 'GH') {
+    if (
+      isGhanaCountryManagedPolicy(profileRow?.country_lock_policy)
+      && normalizedCountryCode
+      && normalizedCountryCode !== normalizedCountryCodeFromProfile(profileRow)
+    ) {
       return {
         ok: false,
-        error: 'Current country is locked to Ghana until precise location confirms you are outside Ghana.',
+        error: 'Current country is server-verified. Use precise location to verify a move before changing countries.',
       };
     }
-    const resolvedCountry = normalizedCountryCode ? findCountryByCode(normalizedCountryCode)?.label ?? null : null;
-    const normalizedPrimary = primary.toLowerCase();
-    const normalizedResolvedCountry = resolvedCountry?.toLowerCase() ?? '';
-    const primaryCountryAlias = findCountryByLabel(primary)?.code ?? null;
-    const primaryLooksCountry =
-      (!!resolvedCountry && normalizedPrimary === normalizedResolvedCountry) ||
-      (!!normalizedCountryCode && primaryCountryAlias === normalizedCountryCode);
-    const primaryLooksBroadRegion =
-      isBroadRegionLabel(primary) || isAdministrativeLocationLabel(primary) || primaryLooksCountry;
-    const isGhanaRegionOnly = normalizedCountryCode === 'GH' && isKnownGhanaRegionLabel(primary);
-    const city = isGhanaRegionOnly || primaryLooksBroadRegion ? null : primary;
-    const region =
-      secondary ||
-      (isGhanaRegionOnly || primaryLooksBroadRegion ? primary : primary);
-    const updateData: Record<string, any> = {
-      location: city || resolvedCountry || primary,
-      city,
-      region,
-      location_precision: 'CITY',
-      latitude: null,
-      longitude: null,
+    const resolvedCountry =
+      draft.countryName?.trim() || findCountryByCode(normalizedCountryCode)?.label || null;
+    const updateData: Record<string, unknown> = {
+      ...buildProfileLocationUpdate({
+        city,
+        region: draft.region,
+        country: resolvedCountry,
+        localityGeonameId: draft.localityGeonameId,
+        localityDistrict: draft.localityDistrict,
+        localityAdmin1Code: draft.localityAdmin1Code,
+        localityProvider: draft.localityGeonameId ? 'geonames' : null,
+        latitude: draft.latitude,
+        longitude: draft.longitude,
+      }),
+      current_country_code: normalizedCountryCode,
+      current_country: resolvedCountry,
       location_updated_at: new Date().toISOString(),
     };
-    if (normalizedCountryCode) {
-      updateData.current_country_code = normalizedCountryCode;
-      if (resolvedCountry) {
-        updateData.current_country = resolvedCountry;
-      }
-    }
 
-    const { error } = await supabase
+    let { error } = await supabase
       .from('profiles')
       .update(updateData)
       .eq('id', profileId);
+
+    if (
+      error &&
+      normalizedCountryCode !== 'GH' &&
+      updateData.locality_geoname_id != null &&
+      isLegacyGhanaLocalityForeignKeyError(error)
+    ) {
+      const fallbackUpdate = {
+        ...updateData,
+        locality_geoname_id: null,
+        locality_admin1_code: null,
+        locality_provider: null,
+      };
+      ({ error } = await supabase.from('profiles').update(fallbackUpdate).eq('id', profileId));
+    }
 
     if (error) {
       return { ok: false, error: error.message };
@@ -150,3 +218,6 @@ export async function saveManualCityLocation(
     return { ok: false, error: e?.message || 'Failed to save manual location.' };
   }
 }
+
+const normalizedCountryCodeFromProfile = (profile: { current_country_code?: string | null }) =>
+  String(profile.current_country_code || 'GH').trim().toUpperCase();

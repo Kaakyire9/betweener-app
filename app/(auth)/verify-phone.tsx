@@ -382,7 +382,11 @@ export default function VerifyPhoneScreen() {
                   }
                   if (finalized) {
                     try {
-                      await withTimeout(clearSignupSession(), 2000, "clearSignupSession");
+                      await withTimeout(
+                        clearSignupSession({ preserveOnboardingVariant: true }),
+                        2000,
+                        "clearSignupSession",
+                      );
                     } catch (e) {
                       console.warn("[verify-phone] clearSignupSession error", e);
                     }

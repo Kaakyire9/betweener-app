@@ -16,6 +16,12 @@ const baseForm = () => ({
   currentCountry: "United Kingdom",
   originCountry: "",
   region: "England",
+  city: "",
+  cityDistrict: "",
+  cityLocalityGeonameId: null,
+  cityAdmin1Code: "",
+  cityLatitude: null,
+  cityLongitude: null,
   tribe: "African",
   roots: ["Akan"],
   rootsNote: "",
@@ -39,9 +45,11 @@ test("global payload preserves explicit residence and optional Ghana backfill ru
 
   assert.equal(payload.current_country, "United Kingdom");
   assert.equal(payload.current_country_code, "GB");
-  assert.equal(payload.location, "England, United Kingdom");
+  assert.equal(payload.location, "England");
   assert.equal(payload.location_precision, "REGION");
   assert.equal(payload.origin_country, null);
+  assert.equal(payload.onboarding_variant, "global");
+  assert.equal(payload.age_preference_confirmed_at, payload.onboarding_completed_at);
 });
 
 test("ghana payload stays country-locked and normalizes roots", () => {
@@ -67,6 +75,7 @@ test("ghana payload stays country-locked and normalizes roots", () => {
   assert.deepEqual(payload.roots, ["Asante"]);
   assert.equal(payload.tribe, "Asante");
   assert.equal(payload.origin_country_source, "explicit");
+  assert.equal(payload.onboarding_variant, "ghana");
 });
 
 test("roots visibility fallback retries with HIDDEN", async () => {
@@ -99,3 +108,112 @@ test("roots visibility fallback retries with HIDDEN", async () => {
   assert.equal(calls, 2);
 });
 
+test("global locality gracefully retries while the legacy Ghana-only FK is deployed", async () => {
+  const payload = {
+    ...buildPremiumOnboardingProfileData({
+      variant: "global",
+      form: {
+        ...baseForm(),
+        city: "Manchester",
+        cityLocalityGeonameId: 2643123,
+        cityAdmin1Code: "ENG",
+      },
+      customOccupation: "",
+      customTribe: "",
+      imageUrl: "https://cdn.test/avatar.jpg",
+      phoneNumber: "+447700900123",
+    }),
+    locality_geoname_id: 2643123,
+    locality_admin1_code: "ENG",
+    locality_provider: "geonames",
+  };
+
+  const payloads = [];
+  const updateProfile = async (nextPayload) => {
+    payloads.push(nextPayload);
+    if (payloads.length === 1) {
+      return {
+        error: {
+          code: "23503",
+          details: 'Key is not present in table "ghana_localities".',
+          message: 'profiles_locality_geoname_id_fkey violated',
+        },
+      };
+    }
+    return { error: null };
+  };
+
+  const error = await updateProfileWithFallbacks(updateProfile, payload);
+
+  assert.equal(error, null);
+  assert.equal(payloads.length, 2);
+  assert.equal(payloads[1].locality_geoname_id, null);
+  assert.equal(payloads[1].city, "Manchester");
+  assert.equal(payloads[1].current_country_code, "GB");
+});
+
+test("onboarding submission remains compatible before the experience column is deployed", async () => {
+  const payload = buildPremiumOnboardingProfileData({
+    variant: "global",
+    form: baseForm(),
+    customOccupation: "",
+    customTribe: "",
+    imageUrl: "https://cdn.test/avatar.jpg",
+    phoneNumber: "+447700900123",
+  });
+
+  const payloads = [];
+  const updateProfile = async (nextPayload) => {
+    payloads.push(nextPayload);
+    if (payloads.length === 1) {
+      return {
+        error: {
+          code: "PGRST204",
+          message: "Could not find the 'onboarding_variant' column in the schema cache",
+        },
+      };
+    }
+    return { error: null };
+  };
+
+  const error = await updateProfileWithFallbacks(updateProfile, payload);
+
+  assert.equal(error, null);
+  assert.equal(payloads.length, 2);
+  assert.equal(payloads[0].onboarding_variant, "global");
+  assert.equal("onboarding_variant" in payloads[1], false);
+  assert.equal(payloads[1].current_country_code, "GB");
+});
+
+test("onboarding submission remains compatible before age confirmation is deployed", async () => {
+  const payload = buildPremiumOnboardingProfileData({
+    variant: "global",
+    form: baseForm(),
+    customOccupation: "",
+    customTribe: "",
+    imageUrl: "https://cdn.test/avatar.jpg",
+    phoneNumber: "+447700900123",
+  });
+
+  const payloads = [];
+  const updateProfile = async (nextPayload) => {
+    payloads.push(nextPayload);
+    if (payloads.length === 1) {
+      return {
+        error: {
+          code: "PGRST204",
+          message: "Could not find the 'age_preference_confirmed_at' column in the schema cache",
+        },
+      };
+    }
+    return { error: null };
+  };
+
+  const error = await updateProfileWithFallbacks(updateProfile, payload);
+
+  assert.equal(error, null);
+  assert.equal(payloads.length, 2);
+  assert.equal("age_preference_confirmed_at" in payloads[1], false);
+  assert.equal(payloads[1].min_age_interest, 28);
+  assert.equal(payloads[1].max_age_interest, 40);
+});

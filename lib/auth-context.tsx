@@ -74,7 +74,7 @@ type AuthContextType = {
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signUp: (email: string, password: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
-  refreshProfile: () => Promise<void>;
+  refreshProfile: () => Promise<Profile | null>;
   refreshPhoneState: () => Promise<boolean>;
   
   // Profile Actions
@@ -822,7 +822,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (verified) {
             const ok = await finalizeSignupPhoneVerification();
             if (ok) {
-              await clearSignupSession();
+              await clearSignupSession({ preserveOnboardingVariant: true });
             } else if (typeof __DEV__ !== "undefined" && __DEV__) {
               console.log("[auth] finalize-signup failed; keeping signup session for retry");
             }
@@ -1079,8 +1079,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (user) {
       // refreshProfile is called when the UI needs the latest server state (post-save,
       // app resume, pull-to-refresh). Bypass the short profile cache to avoid stale UI.
-      await fetchProfile(user.id, { force: true });
+      return await fetchProfile(user.id, { force: true });
     }
+    return null;
   };
 
   const refreshPhoneState = async (): Promise<boolean> => {

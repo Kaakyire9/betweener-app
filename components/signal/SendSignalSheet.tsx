@@ -1,6 +1,7 @@
 import SignalIcon from "@/components/icons/SignalIcon";
 import BlurViewSafe from "@/components/NativeWrappers/BlurViewSafe";
 import LinearGradientSafe from "@/components/NativeWrappers/LinearGradientSafe";
+import SignatureSystemBubble from "@/components/signature/SignatureSystemBubble";
 import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import useSendSignal from "@/hooks/useSendSignal";
@@ -178,6 +179,8 @@ export default function SendSignalSheet({
               <Text style={styles.subtitle}>
                 {receiverName ? `To ${receiverName}. ` : ""}Choose what stood out.
               </Text>
+
+              <SignatureSystemBubble system="signal" compact />
 
               <View style={styles.quotaPill}>
                 <MaterialCommunityIcons name="timer-sand" size={14} color={theme.tint} />

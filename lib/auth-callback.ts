@@ -120,17 +120,16 @@ export const urlHasAuthPayload = (url: string) =>
 
 export const isTrustedAuthCallbackUrl = (url: string) => {
   const normalized = url.trim();
-  const lower = normalized.toLowerCase();
-
-  if (lower.startsWith("https://getbetweener.com/auth/callback")) {
-    return true;
-  }
 
   try {
     const parsed = Linking.parse(normalized);
     const scheme = parsed.scheme?.toLowerCase() ?? "";
     const host = parsed.hostname?.toLowerCase() ?? "";
     const path = (parsed.path ?? "").replace(/^\/+|\/+$/g, "").toLowerCase();
+
+    if (scheme === "https" && host === "getbetweener.com" && path === "auth/callback") {
+      return true;
+    }
 
     if (scheme === "betweenerapp" && host === "auth" && path === "callback") {
       return true;

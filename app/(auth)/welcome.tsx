@@ -2,7 +2,7 @@ import BlurViewSafe from "@/components/NativeWrappers/BlurViewSafe";
 import SignalIcon from "@/components/icons/SignalIcon";
 import { haptics } from "@/lib/haptics";
 import { type ResponsiveMetrics, useResponsiveMetrics } from "@/lib/responsive";
-import { setSignupOnboardingVariant } from "@/lib/signup-tracking";
+import { beginSignupSession } from "@/lib/signup-tracking";
 import { TRUST_LINKS, openExternalUrl } from "@/lib/trust-links";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useMemo } from "react";
@@ -77,10 +77,6 @@ export default function WelcomeScreen() {
     );
   }, [ambient, entrance]);
 
-  useEffect(() => {
-    void setSignupOnboardingVariant(variantParam);
-  }, [variantParam]);
-
   const topGlowStyle = useAnimatedStyle(() => ({
     opacity: 0.62 + ambient.value * 0.14,
     transform: [
@@ -122,6 +118,7 @@ export default function WelcomeScreen() {
 
   const handleCreateAccount = async () => {
     await haptics.light();
+    await beginSignupSession(variantParam);
     router.replace(
       variantParam
         ? { pathname: "/(auth)/signup-options", params: { variant: variantParam } }

@@ -147,7 +147,7 @@ export function GhanaCityTownPickerModal({
           type: "empty",
           id: "empty:initial",
           title: "Places are taking a moment to load",
-          body: "You can keep the region only, or try a search in a second.",
+          body: "Try a search in a second, or use a nearby town you recognise.",
         });
       }
     } else if (results.length > 0) {
@@ -160,16 +160,9 @@ export function GhanaCityTownPickerModal({
         type: "empty",
         id: "empty:results",
         title: "No town matched that search",
-        body: "Try a broader spelling, or continue with the region only.",
+        body: "Try a broader spelling or a nearby town.",
       });
     }
-
-    next.push({
-      type: "action",
-      id: "action:region-only",
-      label: `Continue with ${region} only`,
-      body: "City stays optional.",
-    });
 
     return next;
   }, [hasQuery, initializing, loading, preview, recent, region, results, suggested, visible]);
@@ -207,7 +200,7 @@ export function GhanaCityTownPickerModal({
 
             <View style={styles.modalBodyIntro}>
               <Text style={styles.modalBodyLead}>Where are you based in {region}?</Text>
-              <Text style={styles.modalBodySupport}>City stays optional.</Text>
+              <Text style={styles.modalBodySupport}>Choose the city or town you currently call home.</Text>
             </View>
 
             <View style={styles.searchBox}>

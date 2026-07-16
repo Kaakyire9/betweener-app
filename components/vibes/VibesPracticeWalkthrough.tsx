@@ -1,4 +1,5 @@
 import IntentMark from "@/components/icons/IntentMark";
+import SignalIcon from "@/components/icons/SignalIcon";
 import LinearGradientSafe from "@/components/NativeWrappers/LinearGradientSafe";
 import GlassSurface from "@/components/vibes/depth/GlassSurface";
 import VibesActionDock from "@/components/vibes/depth/VibesActionDock";
@@ -93,8 +94,8 @@ const PRACTICE_CARDS: PracticeCardData[] = [
 const STEP_COPY: Record<PracticeStep, { eyebrow: string; title: string; body: string; cta?: string }> = {
   intro: {
     eyebrow: "Practice walkthrough",
-    title: "Learn the three moves first",
-    body: "You will practice Intent, Notice, and Pass on guided profiles before the full deck opens.",
+    title: "Learn the connection path",
+    body: "Practice Intent, Notice, and Pass here. In the full deck, a limited Signal lets you say exactly what stood out.",
     cta: "Start practice",
   },
   intentPrompt: {
@@ -140,6 +141,7 @@ const STEP_COPY: Record<PracticeStep, { eyebrow: string; title: string; body: st
 const DOCK_LESSONS = [
   { icon: "close", label: "Pass", body: "Quiet exit." },
   { icon: "heart-outline", label: "Notice", body: "Light interest for 72 hours." },
+  { icon: "signal-mark", label: "Signal", body: "Limited, context-rich interest for 48 hours." },
   { icon: "intent-mark", label: "Intent", body: "Deliberate request for 48 hours." },
 ];
 
@@ -792,6 +794,8 @@ export default function VibesPracticeWalkthrough({
                   <View style={styles.introLessonIcon}>
                     {lesson.icon === "intent-mark" ? (
                       <IntentMark size={14} color={theme.tint} strokeWidth={2.25} />
+                    ) : lesson.icon === "signal-mark" ? (
+                      <SignalIcon size={14} color={theme.tint} accentColor={theme.accent} active />
                     ) : (
                       <MaterialCommunityIcons name={lesson.icon as any} size={13} color={theme.tint} />
                     )}
@@ -811,6 +815,8 @@ export default function VibesPracticeWalkthrough({
                   <View style={styles.dockLessonIcon}>
                     {lesson.icon === "intent-mark" ? (
                       <IntentMark size={14} color={theme.tint} strokeWidth={2.25} />
+                    ) : lesson.icon === "signal-mark" ? (
+                      <SignalIcon size={14} color={theme.tint} accentColor={theme.accent} active />
                     ) : (
                       <MaterialCommunityIcons name={lesson.icon as any} size={13} color={theme.tint} />
                     )}

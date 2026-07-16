@@ -1,4 +1,4 @@
-import type { AppVersionRule, InstalledAppVersion } from '@/lib/app-version/types';
+import type { AppVersionDecision, AppVersionRule, InstalledAppVersion } from '@/lib/app-version/types';
 
 const normalizeSemver = (value: string) =>
   String(value || '0.0.0')
@@ -66,4 +66,40 @@ export function isBehindLatestVersion(installed: InstalledAppVersion, rule: AppV
       rule.latestBuildNumber,
     ) < 0
   );
+}
+
+export function decideAppVersionRule(
+  installed: InstalledAppVersion,
+  rule: AppVersionRule,
+): AppVersionDecision {
+  const belowMinimum = isBelowMinimumInstalledVersion(installed, rule);
+  const behindLatest = isBehindLatestVersion(installed, rule);
+
+  if (belowMinimum || (behindLatest && rule.updateMode === 'force')) {
+    return {
+      status: 'force_update',
+      rule,
+      installed,
+      isBelowMinimum: belowMinimum,
+      isBehindLatest: behindLatest,
+    };
+  }
+
+  if (behindLatest && rule.updateMode === 'soft') {
+    return {
+      status: 'show_soft_update',
+      rule,
+      installed,
+      isBelowMinimum: false,
+      isBehindLatest: true,
+    };
+  }
+
+  return {
+    status: 'continue',
+    rule,
+    installed,
+    isBelowMinimum: false,
+    isBehindLatest: behindLatest,
+  };
 }

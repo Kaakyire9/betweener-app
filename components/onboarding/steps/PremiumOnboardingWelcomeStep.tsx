@@ -2,6 +2,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useEffect } from "react";
 import { Image, Text, View, type ViewStyle } from "react-native";
+import { AnimatedGlobalWelcomeGlobe } from "@/components/onboarding/AnimatedGlobalWelcomeGlobe";
 import Animated, {
   Easing,
   FadeInDown,
@@ -65,7 +66,16 @@ export function PremiumOnboardingWelcomeStep({ asset, dark, variant, styles }: P
   }, [breathe, orbit, reduceMotion]);
 
   const heroStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: reduceMotion ? 0 : -4 * breathe.value }, { scale: reduceMotion ? 1 : 0.985 + breathe.value * 0.02 }] as ViewStyle["transform"],
+    transform: [
+      { translateY: reduceMotion ? 0 : (variant === "global" ? -2 : -4) * breathe.value },
+      {
+        scale: reduceMotion
+          ? 1
+          : variant === "global"
+            ? 0.995 + breathe.value * 0.01
+            : 0.985 + breathe.value * 0.02,
+      },
+    ] as ViewStyle["transform"],
   }));
   const haloStyle = useAnimatedStyle(() => ({
     opacity: reduceMotion ? 0.16 : 0.09 + breathe.value * 0.12,
@@ -87,7 +97,11 @@ export function PremiumOnboardingWelcomeStep({ asset, dark, variant, styles }: P
         {LIGHTS.map((item, index) => <WelcomeLight key={index} item={item} dark={dark} styles={styles} />)}
         <View style={styles.heroBaseGlow} />
         <Animated.View style={[styles.heroImageMotion, heroStyle]}>
-          <Image source={asset} style={styles.heroImage} resizeMode="contain" />
+          {variant === "global" ? (
+            <AnimatedGlobalWelcomeGlobe style={styles.heroImage} />
+          ) : (
+            <Image source={asset} style={styles.heroImage} resizeMode="contain" />
+          )}
         </Animated.View>
         <LinearGradient colors={dark ? ["transparent", "#071E22"] : ["transparent", "#FFF7ED"]} style={styles.heroFade} />
         <Animated.View entering={FadeInDown.delay(280).duration(620).reduceMotion(ReduceMotion.System)} style={styles.welcomeStoryPanel}>

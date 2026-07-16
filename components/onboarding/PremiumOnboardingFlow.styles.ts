@@ -2014,6 +2014,14 @@ export const createPremiumOnboardingStyles = (
       color: palette.ink,
       fontFamily: "Manrope_600SemiBold",
     },
+    globalCityGuidance: {
+      paddingHorizontal: 16,
+      paddingBottom: 10,
+    },
+    globalCityAttribution: {
+      textAlign: "center",
+      paddingVertical: 10,
+    },
     cityPickerListContent: {
       paddingHorizontal: 16,
       paddingBottom: 28,

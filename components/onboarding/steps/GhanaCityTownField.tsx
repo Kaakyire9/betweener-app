@@ -245,10 +245,10 @@ export function GhanaCityTownField({
         },
       ]}
     >
-      <Text style={styles.citySectionIntro}>A little closer, if you&apos;d like</Text>
+      <Text style={styles.citySectionIntro}>Your local community</Text>
       <View style={styles.fieldLabelRow}>
         <Text style={styles.fieldLabel}>City or town</Text>
-        <Text style={styles.optionalLabel}>Optional</Text>
+        <Text style={styles.optionalLabel}>Required</Text>
       </View>
       <Pressable
         accessibilityRole="button"
@@ -303,9 +303,7 @@ export function GhanaCityTownField({
         ) : null}
       </View>
 
-      {!value ? (
-        <Text style={styles.subtleNote}>You can leave this blank and continue with the region only.</Text>
-      ) : null}
+      {!value ? <Text style={styles.subtleNote}>Choose the place you currently call home.</Text> : null}
 
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
 

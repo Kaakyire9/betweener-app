@@ -2,6 +2,7 @@ import { Colors } from '@/constants/theme';
 import BlurViewSafe from '@/components/NativeWrappers/BlurViewSafe';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useVerificationStatus } from '@/hooks/use-verification-status';
+import { requestAndSavePreciseLocation } from '@/hooks/useLocationPreference';
 import { useAuth } from '@/lib/auth-context';
 import {
   findCountryByCode,
@@ -9,8 +10,12 @@ import {
   getPrioritizedCountries,
   type CountryOption,
 } from '@/lib/location/countries';
+import { isLegacyGhanaLocalityForeignKeyError } from '@/lib/location/locality-errors';
 import {
-  isAdministrativeLocationLabel,
+  getGhanaCountryPolicyMessage,
+  isGhanaCountryManagedPolicy,
+} from '@/lib/location/country-lock';
+import {
   isKnownGhanaRegionLabel,
   normalizeLocationValue,
 } from '@/lib/location/location-display';
@@ -58,6 +63,8 @@ import {
 } from '@/lib/profile/roots-options';
 import { RELIGION_LABELS, formatReligionLabel, isReligionEnumError, normalizeReligionForProfile } from '@/lib/profile/religion';
 import { getProfileInitials } from '@/lib/profile-placeholders';
+import { buildProfileLocationUpdate } from '@/lib/profile/profile-location-update';
+import { usesGhanaOnboardingExperience } from '@/lib/profile/onboarding-experience';
 import { type ResponsiveMetrics, useResponsiveMetrics } from '@/lib/responsive';
 import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -520,6 +527,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
   const [videoUploadStage, setVideoUploadStage] = useState<string | null>(null);
   const [videoUploadProgress, setVideoUploadProgress] = useState<number | null>(null);
   const [visibilitySaving, setVisibilitySaving] = useState(false);
+  const [countryVerificationBusy, setCountryVerificationBusy] = useState(false);
   
   // Original dropdown states
   const [showHeightPicker, setShowHeightPicker] = useState(false);
@@ -621,6 +629,11 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       city: '',
       locality_geoname_id: null as number | null,
       locality_district: '',
+      locality_admin1_code: '',
+      locality_provider: null as string | null,
+      latitude: null as number | null,
+      longitude: null as number | null,
+      location_precision: 'COUNTRY',
       region: '',
       tribe: '',
       roots: [] as string[],
@@ -671,7 +684,10 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
   );
   const selectedCurrentCountryFlag = selectedCurrentCountry ? toFlagEmoji(selectedCurrentCountry.code) : '';
   const selectedOriginCountryFlag = selectedOriginCountry ? toFlagEmoji(selectedOriginCountry.code) : '';
-  const isGhanaCountryLocked = (profile as any)?.country_lock_policy === 'ghana_locked';
+  const countryLockPolicy = (profile as any)?.country_lock_policy;
+  const isGhanaCountryLocked = isGhanaCountryManagedPolicy(countryLockPolicy);
+  const isGhanaOnboardingExperience = usesGhanaOnboardingExperience(profile as any);
+  const countryPolicyMessage = getGhanaCountryPolicyMessage(countryLockPolicy);
   const effectiveCountryCode = selectedCurrentCountry?.code || formData.current_country_code || (profile as any)?.current_country_code || '';
   const effectiveCountryLabel = selectedCurrentCountry?.label || formData.current_country || (profile as any)?.current_country || '';
   const effectiveRegion = formData.region || profile?.region || '';
@@ -939,9 +955,11 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
 
   // Load current profile data when modal opens
   const hydratedFromProfileRef = useRef(false);
+  const agePreferenceTouchedRef = useRef(false);
   useEffect(() => {
     if (!visible) {
       hydratedFromProfileRef.current = false;
+      agePreferenceTouchedRef.current = false;
       closeNestedPickers();
       return;
     }
@@ -949,6 +967,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     // Only hydrate once per open so background refreshes don't clobber in-progress edits.
     if (visible && profile && !hydratedFromProfileRef.current) {
       hydratedFromProfileRef.current = true;
+      agePreferenceTouchedRef.current = false;
       setStatusMessage(null);
       setStatusTone(null);
       const normalizedLanguages = normalizeLanguages(
@@ -980,6 +999,11 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         city: profile.city || '',
         locality_geoname_id: (profile as any).locality_geoname_id ?? null,
         locality_district: (profile as any).locality_district || '',
+        locality_admin1_code: (profile as any).locality_admin1_code || '',
+        locality_provider: (profile as any).locality_provider || null,
+        latitude: (profile as any).latitude ?? null,
+        longitude: (profile as any).longitude ?? null,
+        location_precision: (profile as any).location_precision || 'COUNTRY',
         region: profile.region || '',
         tribe: (profile as any).tribe || '',
         roots: normalizedRoots,
@@ -1116,6 +1140,9 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     field: string,
     value: string | string[] | number | null | boolean,
   ) => {
+    if (field === 'min_age_interest' || field === 'max_age_interest') {
+      agePreferenceTouchedRef.current = true;
+    }
     setFormData(prev => ({
       ...prev,
       [field]: value
@@ -1404,6 +1431,39 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
 
     if (error) return null;
     return (data as any)?.id ?? null;
+  };
+
+  const verifyCountryWithPreciseLocation = async () => {
+    const pid = await resolveProfileId();
+    if (!pid || countryVerificationBusy) return;
+
+    setCountryVerificationBusy(true);
+    try {
+      const result = await requestAndSavePreciseLocation(pid);
+      if (!result.ok) {
+        Alert.alert(
+          'Country verification unavailable',
+          'error' in result ? result.error : 'Please try again.',
+        );
+        return;
+      }
+
+      hydratedFromProfileRef.current = false;
+      await refreshProfile();
+      const verification = result.verification;
+      const title = verification?.status === 'pending'
+        ? 'First location check confirmed'
+        : verification?.status === 'verified'
+          ? 'Country verified'
+          : 'Location refreshed';
+      Alert.alert(
+        title,
+        verification?.message
+          || 'Your current country and city were refreshed from your device location.',
+      );
+    } finally {
+      setCountryVerificationBusy(false);
+    }
   };
 
   const persistDiscoverableInVibes = async (next: boolean) => {
@@ -2043,6 +2103,10 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         max_age_interest: maxAgeInterest,
       };
 
+      if (agePreferenceTouchedRef.current) {
+        updateData.age_preference_confirmed_at = new Date().toISOString();
+      }
+
       // Only include optional fields if they have values
       if (formData.age && formData.age.trim()) {
         updateData.age = parseInt(formData.age);
@@ -2059,10 +2123,9 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         typeof formData.locality_geoname_id === 'number' && Number.isFinite(formData.locality_geoname_id)
           ? formData.locality_geoname_id
           : null;
-      const hasCanonicalLocality = Boolean(cityValue && localityGeonameIdValue);
       const resolvedCurrentCountry =
         isGhanaCountryLocked
-          ? 'Ghana'
+          ? normalizedString((profile as any)?.current_country) || normalizedString(formData.current_country) || 'Ghana'
           :
         selectedCurrentCountryOption?.label ||
         normalizedString(formData.current_country) ||
@@ -2070,7 +2133,9 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         (isGhanaProfile || isKnownGhanaRegionLabel(formData.region) ? 'Ghana' : '');
       const resolvedCurrentCountryCode =
         isGhanaCountryLocked
-          ? 'GH'
+          ? normalizedString((profile as any)?.current_country_code).toUpperCase()
+            || normalizedString(formData.current_country_code).toUpperCase()
+            || 'GH'
           :
         selectedCurrentCountryOption?.code ||
         normalizedString(formData.current_country_code).toUpperCase() ||
@@ -2095,42 +2160,18 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       }
       updateData.current_country = resolvedCurrentCountry || null;
       updateData.current_country_code = resolvedCurrentCountryCode || null;
-      if (regionValue) {
-        const locationParts = regionValue
-          .split(',')
-          .map((part) => part.trim())
-          .filter(Boolean);
-        const primaryLocationPart = locationParts[0] || regionValue;
-        const secondaryLocationPart = locationParts.slice(1).join(', ');
-        const regionOnlyLocation =
-          isKnownGhanaRegionLabel(primaryLocationPart) ||
-          isAdministrativeLocationLabel(primaryLocationPart);
-        const nextLocationPrecision =
-          isGhanaProfile || regionOnlyLocation
-            ? (cityValue ? 'CITY' : 'REGION')
-            : 'CITY';
-
-        if (hasCanonicalLocality) {
-          updateData.region = regionValue;
-          updateData.city = cityValue;
-          updateData.locality_geoname_id = localityGeonameIdValue;
-          updateData.locality_district = localityDistrictValue || null;
-          updateData.locality_admin1_code = normalizedString((formData as any).locality_admin1_code) || null;
-          updateData.locality_provider = normalizedString((formData as any).locality_provider) || 'geonames';
-          updateData.location = [cityValue, resolvedCurrentCountry].filter(Boolean).join(', ');
-        } else if (isGhanaProfile || regionOnlyLocation) {
-          updateData.region = primaryLocationPart;
-          updateData.city = cityValue || null;
-          updateData.locality_geoname_id = cityValue ? localityGeonameIdValue : null;
-          updateData.locality_district = cityValue ? localityDistrictValue || null : null;
-          updateData.location = cityValue || primaryLocationPart || resolvedCurrentCountry;
-        } else {
-          updateData.city = primaryLocationPart;
-          updateData.region = secondaryLocationPart || null;
-          updateData.locality_geoname_id = null;
-          updateData.locality_district = null;
-          updateData.location = regionValue;
-        }
+      if (cityValue || regionValue || resolvedCurrentCountry) {
+        Object.assign(updateData, buildProfileLocationUpdate({
+          city: cityValue,
+          region: regionValue,
+          country: resolvedCurrentCountry,
+          localityGeonameId: localityGeonameIdValue,
+          localityDistrict: localityDistrictValue,
+          localityAdmin1Code: formData.locality_admin1_code,
+          localityProvider: formData.locality_provider,
+          latitude: formData.latitude,
+          longitude: formData.longitude,
+        }));
         const previousRegion = profile?.region ? profile.region.trim() : '';
         const previousCity = profile?.city ? profile.city.trim() : '';
         const previousCountryCode = normalizeLocationValue((profile as any)?.current_country_code).toUpperCase();
@@ -2139,49 +2180,25 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           cityValue !== previousCity ||
           resolvedCurrentCountryCode !== previousCountryCode
         ) {
-          updateData.location_precision = nextLocationPrecision;
-          updateData.latitude = hasCanonicalLocality && Number.isFinite(Number((formData as any).latitude)) ? Number((formData as any).latitude) : null;
-          updateData.longitude = hasCanonicalLocality && Number.isFinite(Number((formData as any).longitude)) ? Number((formData as any).longitude) : null;
-          updateData.location_updated_at = new Date().toISOString();
-        }
-      } else if (resolvedCurrentCountry) {
-        const previousRegion = profile?.region ? profile.region.trim() : '';
-        const previousCity = profile?.city ? profile.city.trim() : '';
-        const previousCountryCode = normalizeLocationValue((profile as any)?.current_country_code).toUpperCase();
-        updateData.city = null;
-        updateData.region = null;
-        updateData.locality_geoname_id = null;
-        updateData.locality_district = null;
-        updateData.locality_admin1_code = null;
-        updateData.locality_provider = null;
-        updateData.location = resolvedCurrentCountry;
-        if (
-          previousRegion ||
-          previousCity ||
-          resolvedCurrentCountryCode !== previousCountryCode
-        ) {
-          updateData.location_precision = 'COUNTRY';
-          updateData.latitude = null;
-          updateData.longitude = null;
           updateData.location_updated_at = new Date().toISOString();
         }
       }
       const selectedOriginCountryOption =
         findCountryByCode(formData.origin_country_code) ?? findCountryByLabel(formData.origin_country);
       const explicitOriginCountry =
-        isGhanaCountryLocked
+        isGhanaOnboardingExperience
           ? 'Ghana'
           :
         selectedOriginCountryOption?.label || normalizedString(formData.origin_country);
       const explicitOriginCountryCode =
-        isGhanaCountryLocked
+        isGhanaOnboardingExperience
           ? 'GH'
           :
         selectedOriginCountryOption?.code || normalizedString(formData.origin_country_code).toUpperCase();
       if (explicitOriginCountry) {
         updateData.origin_country = explicitOriginCountry;
         updateData.origin_country_code = explicitOriginCountryCode || null;
-        updateData.origin_country_source = isGhanaCountryLocked ? 'residence_backfill' : 'explicit';
+        updateData.origin_country_source = 'explicit';
       } else if (resolvedCurrentCountryCode === 'GH' || resolvedCurrentCountry.toLowerCase() === 'ghana') {
         updateData.origin_country = 'Ghana';
         updateData.origin_country_code = 'GH';
@@ -2294,6 +2311,36 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
 
       if (
         error &&
+        updateData.age_preference_confirmed_at &&
+        String((error as any)?.code ?? '').toUpperCase() === 'PGRST204' &&
+        String((error as any)?.message ?? '').toLowerCase().includes('age_preference_confirmed_at')
+      ) {
+        console.warn('[profile-edit] age_preference_confirmation_column_not_deployed');
+        delete updateData.age_preference_confirmed_at;
+        saveResult = await updateProfile(updateData);
+        ({ error } = saveResult);
+      }
+
+      if (
+        error &&
+        resolvedCurrentCountryCode !== 'GH' &&
+        updateData.locality_geoname_id != null &&
+        isLegacyGhanaLocalityForeignKeyError(error)
+      ) {
+        // Compatibility for a staggered deployment where the client supports
+        // worldwide GeoNames IDs but the legacy Ghana-only FK still exists.
+        console.warn('[profile-edit] legacy_ghana_locality_fk_fallback');
+        Object.assign(updateData, {
+          locality_geoname_id: null,
+          locality_admin1_code: null,
+          locality_provider: null,
+        });
+        saveResult = await updateProfile(updateData);
+        ({ error } = saveResult);
+      }
+
+      if (
+        error &&
         updateData.roots_visibility === 'MATCHES_ONLY' &&
         isRootsVisibilityConstraintError(error)
       ) {
@@ -2354,6 +2401,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       }
 
       const queued = saveResult.queued === true || interestsResult.queued === true || mediaSyncPending;
+      agePreferenceTouchedRef.current = false;
       initialSelectedInterestsRef.current = selectedInterests;
       const snapshotProfileId = getSnapshotProfileId();
       if (snapshotProfileId) {
@@ -2613,8 +2661,26 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
               </TouchableOpacity>
               {isGhanaCountryLocked ? (
                 <Text style={styles.fieldHelperText}>
-                  Ghana-route accounts keep current country locked to Ghana until precise location confirms you are outside Ghana.
+                  {countryPolicyMessage}
                 </Text>
+              ) : null}
+              {isGhanaCountryLocked ? (
+                <TouchableOpacity
+                  style={[styles.countryVerificationButton, countryVerificationBusy && styles.disabledSelectButton]}
+                  onPress={verifyCountryWithPreciseLocation}
+                  disabled={countryVerificationBusy}
+                  accessibilityRole="button"
+                  accessibilityLabel="Verify current country with precise location"
+                >
+                  {countryVerificationBusy ? (
+                    <ActivityIndicator size="small" color={theme.tint} />
+                  ) : (
+                    <MaterialCommunityIcons name="crosshairs-gps" size={18} color={theme.tint} />
+                  )}
+                  <Text style={styles.countryVerificationButtonText}>
+                    {countryVerificationBusy ? 'Checking secure location…' : 'Verify a move with precise location'}
+                  </Text>
+                </TouchableOpacity>
               ) : null}
             </View>
 
@@ -2623,11 +2689,11 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
               <TouchableOpacity
                 style={styles.selectButton}
                 onPress={() => {
-                  if (isGhanaCountryLocked) return;
+                  if (isGhanaOnboardingExperience) return;
                   setCountryPickerTarget('origin');
                   setCountryModalVisible(true);
                 }}
-                disabled={isGhanaCountryLocked}
+                disabled={isGhanaOnboardingExperience}
               >
                 <View style={styles.countrySelectValue}>
                   <Text style={[styles.countryFlagText, !selectedOriginCountryFlag && styles.countryFlagPlaceholder]}>
@@ -2653,8 +2719,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                 <MaterialCommunityIcons name="chevron-down" size={20} color={theme.textMuted} />
               </TouchableOpacity>
               <Text style={styles.fieldHelperText}>
-                {isGhanaCountryLocked
-                  ? 'Origin stays Ghana on Ghana-route accounts unless precise location confirms you are outside Ghana.'
+                {isGhanaOnboardingExperience
+                  ? 'Your Ghana roots stay anchored here even when your verified current country changes.'
                   : 'This is where your roots are from, not necessarily where you live now.'}
               </Text>
             </View>
@@ -2869,7 +2935,11 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
               formData={formData}
               styles={styles}
               theme={theme}
-              isGhana={isGhanaCountryLocked}
+              isGhana={isGhanaOnboardingExperience}
+              countryManaged={isGhanaCountryLocked}
+              countryPolicyMessage={countryPolicyMessage}
+              countryVerificationBusy={countryVerificationBusy}
+              onVerifyCountry={verifyCountryWithPreciseLocation}
               dark={isDark}
               selectedInterests={selectedInterests}
               loadingInterests={loadingInterests}
@@ -4873,6 +4943,24 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
       fontSize: 12,
       lineHeight: 16,
       color: theme.textMuted,
+    },
+    countryVerificationButton: {
+      marginTop: 10,
+      minHeight: responsive.minTapTarget,
+      paddingHorizontal: 14,
+      borderRadius: 14,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: withAlpha(theme.tint, isDark ? 0.42 : 0.28),
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.12 : 0.07),
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+    },
+    countryVerificationButtonText: {
+      color: theme.tint,
+      fontSize: responsive.font(14, { min: 13, max: 15 }),
+      fontWeight: '700',
     },
     ageMetaLabel: {
       marginBottom: 8,

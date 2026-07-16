@@ -13,6 +13,12 @@ const baseForm = () => ({
   currentCountry: "United Kingdom",
   originCountry: "Ghana",
   region: "England",
+  city: "Manchester",
+  cityDistrict: "England",
+  cityLocalityGeonameId: 2643123,
+  cityAdmin1Code: "ENG",
+  cityLatitude: 53.4808,
+  cityLongitude: -2.2426,
   tribe: "African",
   roots: ["Akan"],
   rootsNote: "",
@@ -24,10 +30,10 @@ const baseForm = () => ({
   maxAgeInterest: "40",
 });
 
-test("global current location requires current country and region", () => {
+test("global current location requires current country and a city or region-only choice", () => {
   const errors = validatePremiumOnboardingStep({
     step: "current_location",
-    form: { ...baseForm(), currentCountry: "", region: "" },
+    form: { ...baseForm(), currentCountry: "", region: "", city: "", cityLocalityGeonameId: null },
     variant: "global",
     customOccupation: "",
     customTribe: "",
@@ -35,7 +41,34 @@ test("global current location requires current country and region", () => {
   });
 
   assert.equal(errors.currentCountry, "Choose where you live now.");
-  assert.equal(errors.region, "Choose the closest region.");
+  assert.equal(errors.city, "Choose your current city, or use region/state only.");
+});
+
+test("global current location accepts an explicit region-only choice", () => {
+  const errors = validatePremiumOnboardingStep({
+    step: "current_location",
+    form: { ...baseForm(), city: "", cityLocalityGeonameId: null, region: "Greater Manchester" },
+    variant: "global",
+    customOccupation: "",
+    customTribe: "",
+    hasImage: true,
+  });
+
+  assert.equal("city" in errors, false);
+  assert.equal("region" in errors, false);
+});
+
+test("ghana current location requires both region and city or town", () => {
+  const errors = validatePremiumOnboardingStep({
+    step: "current_location",
+    form: { ...baseForm(), currentCountry: "Ghana", region: "Ashanti", city: "", cityLocalityGeonameId: null },
+    variant: "ghana",
+    customOccupation: "",
+    customTribe: "",
+    hasImage: true,
+  });
+
+  assert.equal(errors.city, "Choose your current city or town.");
 });
 
 test("ghana roots requires at least one root and note for Other", () => {
@@ -85,4 +118,3 @@ test("photo step only errors when no image exists", () => {
   assert.equal(noImageErrors.profilePic, "Choose a clear profile photo to continue.");
   assert.equal("profilePic" in imageErrors, false);
 });
-

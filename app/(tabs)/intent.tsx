@@ -968,7 +968,7 @@ export default function IntentScreen() {
       }
       const { data } = await supabase
         .from('profiles')
-        .select('id,user_id,full_name,account_state,deleted_at,avatar_url,photos,age,location,city,region,looking_for,love_language,personality_type,religion,wants_children,smoking,verification_level')
+        .select('id,user_id,full_name,account_state,deleted_at,avatar_url,photos,age,location,city,region,current_country,current_country_code,location_precision,looking_for,love_language,personality_type,religion,wants_children,smoking,verification_level')
         .in('id', relevantIds);
       if (cancelled) return;
       const map: Record<string, ProfileSnippet> = {};
@@ -1992,7 +1992,9 @@ export default function IntentScreen() {
       const peerHasLeft = hasLeftBetweener(peer);
       const isArchivedPeer = Boolean(peerUserId && archivedPeerUserIds[peerUserId]);
       const name = getUserFacingDisplayName(peer, 'Someone');
-      const location = peer?.city || peer?.region || peer?.location || '';
+      const location = peer
+        ? buildLocationDisplay(peer as Record<string, any>, { surface: 'vibes' }).withFlag
+        : '';
       const metaLine = peerHasLeft ? 'No longer on Betweener' : location || 'Location hidden';
       const peerInterests = Array.isArray(interestsByProfile[peerId]) ? interestsByProfile[peerId] : [];
       const sharedInterests = myInterests.length
@@ -3203,7 +3205,9 @@ export default function IntentScreen() {
 
   const decisionPeer = currentDecision ? profiles[currentDecision.peerProfileId] : undefined;
   const decisionName = getUserFacingDisplayName(decisionPeer, 'Someone');
-  const decisionLocation = decisionPeer?.city || decisionPeer?.region || decisionPeer?.location || 'Location hidden';
+  const decisionLocation = decisionPeer
+    ? buildLocationDisplay(decisionPeer as Record<string, any>, { surface: 'vibes' }).withFlag || 'Location hidden'
+    : 'Location hidden';
   const decisionPhotos = Array.isArray(decisionPeer?.photos) ? decisionPeer.photos : [];
   const decisionAvatar =
     getSafeRemoteImageUri(decisionPeer?.avatar_url) ??
@@ -3872,7 +3876,9 @@ export default function IntentScreen() {
             itemType: 'connect',
             note: null,
             sharedInterests,
-            location: peerProfile?.city || peerProfile?.region || peerProfile?.location || null,
+            location: peerProfile
+              ? buildLocationDisplay(peerProfile as Record<string, any>, { surface: 'vibes' }).withFlag || null
+              : null,
           });
           setCelebrationMatch(null);
           openChat(peerId, peerName, peerAvatar, reply, match?.user_id ?? peerProfile?.user_id);

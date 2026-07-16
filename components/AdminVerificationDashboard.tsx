@@ -165,7 +165,7 @@ const formatVerificationType = (value?: string | null) => {
   const type = (value || "").toLowerCase();
   const labels: Record<string, string> = {
     selfie_liveness: "Selfie liveness",
-    passport: "Passport / visa",
+    passport: "Passport / visa / Ghana Card",
     residence: "Residence proof",
     social: "Social media",
     workplace: "Work / study proof",

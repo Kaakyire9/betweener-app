@@ -33,6 +33,7 @@ import {
   type PremiumOnboardingVariant as Variant,
 } from "@/lib/onboarding/premium-onboarding.types";
 import { validatePremiumOnboardingStep } from "@/lib/onboarding/premium-onboarding.validation";
+import { resolveOnboardingVariant } from '@/lib/onboarding/onboarding-routing';
 import {
   findCountryByLabel,
   getPrioritizedCountries,
@@ -76,6 +77,7 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
   const steps = useMemo(() => getPremiumOnboardingSteps(variant), [variant]);
   const styles = useMemo(() => createPremiumOnboardingStyles(responsive, meta.dark), [meta.dark, responsive]);
   const { updateProfile, user, profile, signOut, refreshProfile, phoneVerified } = useAuth();
+  const [routeValidated, setRouteValidated] = useState(false);
   const [stepIndex, setStepIndex] = useState(0);
   const [form, setForm] = useState<FormState>({
     fullName: "",
@@ -135,11 +137,47 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
   const countryData = useMemo(() => getPrioritizedCountries(countrySearch), [countrySearch]);
 
   useEffect(() => {
-    void setSignupOnboardingVariant(variant);
-    if (variant === "ghana") {
+    let active = true;
+
+    void (async () => {
+      const signupState = await getSignupPhoneState();
+      if (!active) return;
+
+      const phoneNumber = profile?.phone_number || signupState.phoneNumber || '';
+      const phoneCountryCode = inferCountryFromPhoneNumber(phoneNumber)?.code ?? null;
+      const target = resolveOnboardingVariant({
+        explicitVariant: variant,
+        profileVariant: (profile as any)?.onboarding_variant,
+        countryLockPolicy: (profile as any)?.country_lock_policy,
+        currentCountryCode: (profile as any)?.current_country_code,
+        currentCountry: (profile as any)?.current_country,
+        originCountryCode: (profile as any)?.origin_country_code,
+        originCountry: (profile as any)?.origin_country,
+        phoneCountryCode,
+      });
+
+      if (target !== variant) {
+        await setSignupOnboardingVariant(target);
+        if (!active) return;
+        router.replace(`/(auth)/onboarding-${target}`);
+        return;
+      }
+
+      await setSignupOnboardingVariant(target);
+      if (!active) return;
+      setRouteValidated(true);
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [profile, variant]);
+
+  useEffect(() => {
+    if (routeValidated && variant === "ghana") {
       logger.info("[onboarding] ghana_onboarding_welcome_viewed", { variant });
     }
-  }, [variant]);
+  }, [routeValidated, variant]);
 
   useEffect(() => {
     Animated.timing(progressAnim, {
@@ -745,7 +783,7 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
     }
   };
 
-  if (!fontsLoaded) {
+  if (!fontsLoaded || !routeValidated) {
     return (
       <SafeAreaView style={[styles.background, styles.loadingCenter]}>
         <ActivityIndicator color={styles.tokens.accent.color} />
@@ -757,7 +795,9 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
   const isGhanaWelcomeStep = isWelcomeStep && variant === "ghana";
   const ctaText = stepIndex === 0 ? meta.cta : currentStep.key === "complete" ? "Enter Betweener" : "Continue";
   const primaryDisabled =
-    currentStep.key === "current_location" && variant === "ghana" && !form.region.trim();
+    currentStep.key === "current_location" &&
+    variant === "ghana" &&
+    (!form.region.trim() || !form.city.trim());
 
   return (
     <LinearGradient

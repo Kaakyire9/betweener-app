@@ -167,7 +167,10 @@ export function PremiumOnboardingDiscoveryStep({
                 updateForm("cityLongitude", selection?.longitude ?? null);
               }} onAnalyticsEvent={onCurrentLocationAnalyticsEvent} />
             </>
-          ) : <GlobalCityField countryCode={currentCountryCode} countryName={form.currentCountry} value={form.city} region={form.region} selectedGeonameId={form.cityLocalityGeonameId} dark={dark} styles={styles} onSelect={(place) => {
+          ) : form.currentCountry ? <GlobalCityField countryCode={currentCountryCode} countryName={form.currentCountry} value={form.city} region={form.region} selectedGeonameId={form.cityLocalityGeonameId} dark={dark} styles={styles} required error={errors.city || errors.region} onRegionChange={(region) => {
+            updateForm("region", region);
+            updateForm("cityDistrict", region);
+          }} onSelect={(place) => {
             updateForm("city", place?.name ?? "");
             updateForm("region", place?.admin1Name ?? "");
             updateForm("cityDistrict", place?.admin1Name ?? "");
@@ -175,7 +178,7 @@ export function PremiumOnboardingDiscoveryStep({
             updateForm("cityAdmin1Code", place?.admin1Code ?? "");
             updateForm("cityLatitude", place?.latitude ?? null);
             updateForm("cityLongitude", place?.longitude ?? null);
-          }} />}
+          }} /> : <Text style={styles.subtleNote}>Choose your current country first, then add your city or region.</Text>}
         </View>
       );
     case "roots":

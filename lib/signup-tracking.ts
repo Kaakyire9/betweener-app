@@ -16,6 +16,11 @@ const SIGNUP_ONBOARDING_VARIANT_KEY = "signup_onboarding_variant_v1";
 
 export type SignupOnboardingVariant = "ghana" | "global";
 
+type StoredSignupOnboardingVariant = {
+  variant: SignupOnboardingVariant;
+  signupSessionId: string;
+};
+
 const normalizeSignupOnboardingVariant = (
   value?: string | null
 ): SignupOnboardingVariant | null => {
@@ -119,6 +124,21 @@ export const getSignupSessionId = async () => {
   return AsyncStorage.getItem(SIGNUP_SESSION_KEY);
 };
 
+export const beginSignupSession = async (variant?: string | null) => {
+  await clearSignupSession();
+  const signupSessionId = ExpoCrypto.randomUUID();
+  const normalized = normalizeSignupOnboardingVariant(variant);
+  const entries: [string, string][] = [[SIGNUP_SESSION_KEY, signupSessionId]];
+  if (normalized) {
+    entries.push([
+      SIGNUP_ONBOARDING_VARIANT_KEY,
+      JSON.stringify({ variant: normalized, signupSessionId } satisfies StoredSignupOnboardingVariant),
+    ]);
+  }
+  await AsyncStorage.multiSet(entries);
+  return signupSessionId;
+};
+
 export const setSignupPhoneNumber = async (phoneNumber: string) => {
   await AsyncStorage.setItem(SIGNUP_PHONE_KEY, phoneNumber);
 };
@@ -138,17 +158,22 @@ export const getSignupPhoneState = async () => {
   };
 };
 
-export const clearSignupSession = async () => {
-  await AsyncStorage.multiRemove([
-    SIGNUP_SESSION_KEY,
-    SIGNUP_PHONE_KEY,
-    SIGNUP_PHONE_VERIFIED_KEY,
+export const clearSignupSession = async (options?: { preserveOnboardingVariant?: boolean }) => {
+  const keys = [
     SIGNUP_AUTH_METHOD_KEY,
     SIGNUP_OAUTH_PROVIDER_KEY,
     SIGNUP_AUTH_NAME_KEY,
     SIGNUP_AUTH_EMAIL_KEY,
-    SIGNUP_ONBOARDING_VARIANT_KEY,
-  ]);
+  ];
+  if (!options?.preserveOnboardingVariant) {
+    keys.push(
+      SIGNUP_SESSION_KEY,
+      SIGNUP_PHONE_KEY,
+      SIGNUP_PHONE_VERIFIED_KEY,
+      SIGNUP_ONBOARDING_VARIANT_KEY,
+    );
+  }
+  await AsyncStorage.multiRemove(keys);
 };
 
 export const setSignupOnboardingVariant = async (variant?: string | null) => {
@@ -157,12 +182,30 @@ export const setSignupOnboardingVariant = async (variant?: string | null) => {
     await AsyncStorage.removeItem(SIGNUP_ONBOARDING_VARIANT_KEY);
     return;
   }
-  await AsyncStorage.setItem(SIGNUP_ONBOARDING_VARIANT_KEY, normalized);
+  const signupSessionId = await getOrCreateSignupSessionId();
+  const stored: StoredSignupOnboardingVariant = {
+    variant: normalized,
+    signupSessionId,
+  };
+  await AsyncStorage.setItem(SIGNUP_ONBOARDING_VARIANT_KEY, JSON.stringify(stored));
 };
 
 export const getSignupOnboardingVariant = async (): Promise<SignupOnboardingVariant | null> => {
-  const stored = await AsyncStorage.getItem(SIGNUP_ONBOARDING_VARIANT_KEY);
-  return normalizeSignupOnboardingVariant(stored);
+  const [stored, signupSessionId] = await Promise.all([
+    AsyncStorage.getItem(SIGNUP_ONBOARDING_VARIANT_KEY),
+    AsyncStorage.getItem(SIGNUP_SESSION_KEY),
+  ]);
+  if (!stored || !signupSessionId) return null;
+
+  try {
+    const parsed = JSON.parse(stored) as Partial<StoredSignupOnboardingVariant>;
+    if (parsed.signupSessionId !== signupSessionId) return null;
+    return normalizeSignupOnboardingVariant(parsed.variant);
+  } catch {
+    // Legacy values are tolerated only while their original signup session is
+    // still active. The verified phone country still takes routing priority.
+    return normalizeSignupOnboardingVariant(stored);
+  }
 };
 
 export const captureSignupContext = async () => {

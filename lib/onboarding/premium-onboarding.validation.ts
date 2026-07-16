@@ -54,19 +54,44 @@ export function validatePremiumOnboardingStep({
   }
 
   if (step === "current_location") {
+    const city = form.city.trim();
+    const region = form.region.trim();
     if (variant === "global" && !form.currentCountry) {
       nextErrors.currentCountry = "Choose where you live now.";
     }
-    if (currentCountryIsGhana && !form.region) {
+    if (currentCountryIsGhana && !region) {
       nextErrors.region = "Choose a Ghana region.";
     }
-    if (currentCountryIsGhana && form.city.trim() && !isValidGhanaCityTownValue(form.city)) {
-      nextErrors.city = "Add a city or town name, or leave it blank.";
+    if (currentCountryIsGhana && !city) {
+      nextErrors.city = "Choose your current city or town.";
+    } else if (currentCountryIsGhana && !isValidGhanaCityTownValue(city)) {
+      nextErrors.city = "Choose a valid Ghana city or town.";
+    }
+    if (variant === "global" && !currentCountryIsGhana && !city && !region) {
+      nextErrors.city = "Choose your current city, or use region/state only.";
+    }
+    if (variant === "global" && !currentCountryIsGhana && !city && region && region.length < 2) {
+      nextErrors.region = "Add your current region or state.";
+    }
+    if (
+      variant === "global" &&
+      !currentCountryIsGhana &&
+      city &&
+      form.cityLocalityGeonameId == null
+    ) {
+      nextErrors.city = "Choose a city or town from the verified results.";
     }
   }
 
   if (step === "roots") {
-    if (variant === "global" && !originCountryIsGhana && !tribe) {
+    if (originCountryIsGhana) {
+      if (form.roots.length === 0) {
+        nextErrors.roots = "Choose at least one community or cultural root.";
+      }
+      if (form.roots.includes("Other") && !form.rootsNote.trim()) {
+        nextErrors.rootsNote = "Tell us how you identify if you choose Other.";
+      }
+    } else if (variant === "global" && !tribe) {
       nextErrors.tribe = "Choose a cultural identity, or add your own.";
     }
   }

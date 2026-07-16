@@ -5,6 +5,36 @@ import assert from 'node:assert/strict';
 import { getAgeRangeForPreset, resolveAgePresetMode } from '../lib/vibes/age-range-presets.ts';
 import { applyInboundInterestLift, buildLocationSearchText, rerankVibesSegment } from '../lib/vibes/discovery-logic.ts';
 import { derivePreviewTone, deriveRoomSummary, hasAnyDraftFilters } from '../lib/vibes/vibes-filter-preview.ts';
+import { getLocationConnectionInsight } from '../lib/location/location-intelligence.ts';
+
+test('current-location affinity ranks silently instead of duplicating the location line', () => {
+  const viewer = { city: 'Manchester', region: 'England', current_country: 'United Kingdom' };
+
+  assert.equal(
+    getLocationConnectionInsight(viewer, {
+      city: 'Bristol',
+      region: 'England',
+      current_country: 'United Kingdom',
+      location_affinity_reason_code: 'same_region',
+      location_affinity_strength: 1.5,
+      location_affinity_short_text: 'Shared connection to England',
+    }, 'discovery'),
+    null,
+  );
+});
+
+test('heritage affinity keeps distinctive roots copy', () => {
+  assert.equal(
+    getLocationConnectionInsight({}, {
+      roots_region: 'Ashanti',
+      roots_visibility: 'VISIBLE',
+      location_affinity_reason_code: 'shared_roots_region',
+      location_affinity_strength: 1.3,
+      location_affinity_short_text: 'Shared roots in Ashanti',
+    }, 'discovery'),
+    'Shared roots in Ashanti',
+  );
+});
 
 const createMatch = (overrides: Record<string, any>) => ({
   id: overrides.id ?? 'm1',

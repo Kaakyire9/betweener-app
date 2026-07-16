@@ -5,15 +5,20 @@ import {
 } from '@/lib/onboarding/premium-onboarding.config';
 import { GHANA_ROOT_OPTIONS, GLOBAL_ROOT_OPTIONS, ROOTS_VISIBILITY_OPTIONS } from '@/lib/profile/roots-options';
 import { formatReligionLabel } from '@/lib/profile/religion';
+import { toFlagEmoji } from '@/lib/location/location-display';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useState, type ReactNode } from 'react';
-import { Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 type Props = {
   formData: any;
   styles: any;
   theme: any;
   isGhana: boolean;
+  countryManaged: boolean;
+  countryPolicyMessage?: string;
+  countryVerificationBusy: boolean;
+  onVerifyCountry: () => void;
   dark: boolean;
   selectedInterests: string[];
   loadingInterests: boolean;
@@ -100,6 +105,10 @@ export default function GhanaOnboardingProfileSections({
   styles,
   theme,
   isGhana,
+  countryManaged,
+  countryPolicyMessage,
+  countryVerificationBusy,
+  onVerifyCountry,
   dark,
   selectedInterests,
   loadingInterests,
@@ -119,7 +128,7 @@ export default function GhanaOnboardingProfileSections({
   const [expandedChapter, setExpandedChapter] = useState<ChapterKey | null>('work');
   const minAge = Number.parseInt(String(formData.min_age_interest || '24'), 10) || 24;
   const maxAge = Number.parseInt(String(formData.max_age_interest || '34'), 10) || 34;
-  const currentCountryIsGhana = isGhana || formData.current_country_code === 'GH' || String(formData.current_country || '').trim().toLowerCase() === 'ghana';
+  const currentCountryIsGhana = formData.current_country_code === 'GH' || String(formData.current_country || '').trim().toLowerCase() === 'ghana';
   const originCountryIsGhana = isGhana || formData.origin_country_code === 'GH' || String(formData.origin_country || '').trim().toLowerCase() === 'ghana';
   const globalCityStyles = {
     citySection: { marginTop: 12 },
@@ -178,14 +187,29 @@ export default function GhanaOnboardingProfileSections({
         <Text style={styles.characterCount}>{formData.bio.length}/500</Text>
       </ProfileChapter>
 
-      <ProfileChapter chapterKey="location" icon="map-marker-radius-outline" eyebrow="LOCATION" title="Where you are" body="Tell us where you live now, then optionally add where your story began." summary={[formData.city, formData.region, isGhana ? 'Ghana' : formData.current_country].filter(Boolean).join(' · ')} complete={Boolean(formData.region && (isGhana || formData.current_country))} expanded={expandedChapter === 'location'} onToggle={toggleChapter} styles={styles} theme={theme}>
+      <ProfileChapter chapterKey="location" icon="map-marker-radius-outline" eyebrow="LOCATION" title="Where you are" body="Tell us where you live now, then optionally add where your story began." summary={[formData.city, formData.region, formData.current_country].filter(Boolean).join(' · ')} complete={Boolean(formData.current_country && (formData.city || formData.region))} expanded={expandedChapter === 'location'} onToggle={toggleChapter} styles={styles} theme={theme}>
         <Text style={styles.ghanaLocationMeta}>CURRENT COUNTRY</Text>
-        {isGhana ? <>
+        {countryManaged ? <>
           <View style={styles.ghanaLocationCountryCard}>
-            <Text style={styles.ghanaCountryFlag}>🇬🇭</Text>
-            <View style={{ flex: 1 }}><Text style={styles.ghanaLocationLabel}>Ghana</Text><Text style={styles.ghanaLocationMeta}>Current country</Text></View>
+            <Text style={styles.ghanaCountryFlag}>{toFlagEmoji(formData.current_country_code || 'GH')}</Text>
+            <View style={{ flex: 1 }}><Text style={styles.ghanaLocationLabel}>{formData.current_country || 'Ghana'}</Text><Text style={styles.ghanaLocationMeta}>Server-verified current country</Text></View>
             <MaterialCommunityIcons name="lock-outline" size={17} color={theme.textMuted} />
           </View>
+          {countryPolicyMessage ? <Text style={styles.fieldHelperText}>{countryPolicyMessage}</Text> : null}
+          <TouchableOpacity
+            style={[styles.countryVerificationButton, countryVerificationBusy && styles.disabledSelectButton]}
+            onPress={onVerifyCountry}
+            disabled={countryVerificationBusy}
+            accessibilityRole="button"
+            accessibilityLabel="Verify current country with precise location"
+          >
+            {countryVerificationBusy
+              ? <ActivityIndicator size="small" color={theme.tint} />
+              : <MaterialCommunityIcons name="crosshairs-gps" size={18} color={theme.tint} />}
+            <Text style={styles.countryVerificationButtonText}>
+              {countryVerificationBusy ? 'Checking secure location…' : 'Verify a move with precise location'}
+            </Text>
+          </TouchableOpacity>
         </> : <>
           <TouchableOpacity style={styles.ghanaPremiumSelect} onPress={openCurrentCountryPicker}>
             <Text style={formData.current_country ? styles.ghanaPremiumSelectText : styles.selectButtonPlaceholder}>{formData.current_country || 'Choose current country'}</Text><MaterialCommunityIcons name="chevron-down" size={20} color={theme.textMuted} />

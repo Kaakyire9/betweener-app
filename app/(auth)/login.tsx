@@ -231,7 +231,7 @@ export default function LoginScreen() {
         </Pressable>
 
         <Pressable
-          onPress={() => router.push("/(auth)/signup-options")}
+          onPress={() => router.push("/(auth)/welcome")}
           style={styles.loginLink}
         >
           <Text style={styles.loginText}>New here? Create an account</Text>

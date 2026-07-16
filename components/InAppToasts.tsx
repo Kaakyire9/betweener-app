@@ -1424,7 +1424,7 @@ export default function InAppToasts() {
       case 'selfie_liveness':
         return 'face check';
       case 'passport':
-        return 'passport proof';
+        return 'identity document proof';
       case 'residence':
         return 'residence proof';
       case 'workplace':

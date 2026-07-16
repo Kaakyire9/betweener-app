@@ -1,5 +1,6 @@
 import { Colors } from '@/constants/theme';
 import BlurViewSafe from '@/components/NativeWrappers/BlurViewSafe';
+import SignatureSystemBubble from '@/components/signature/SignatureSystemBubble';
 import { showBetweenerAlert } from '@/components/ui/BetweenerAlertHost';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/lib/auth-context';
@@ -272,6 +273,7 @@ export default function IntentRequestSheet({
                   ? `${circleName ? `You both share ${circleName}. ` : 'You both share this Circle. '}Choose how you want to connect.`
                   : 'Choose how you want to connect.'}
               </Text>
+              <SignatureSystemBubble system={allowCircle ? 'warm_intro' : 'intent'} compact />
               {allowCircle ? (
                 <View style={styles.contextBanner}>
                   <MaterialCommunityIcons name="account-group-outline" size={15} color={theme.tint} />

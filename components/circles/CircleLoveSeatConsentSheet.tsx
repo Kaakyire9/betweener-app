@@ -2,6 +2,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import SignatureSystemBubble from '@/components/signature/SignatureSystemBubble';
 import {
   fetchMyCircleLoveSeatNominations,
   respondToCircleLoveSeatNomination,
@@ -74,6 +75,7 @@ export default function CircleLoveSeatConsentSheet({ circleId, actorProfileId, o
           <Text style={styles.body}>
             You will be featured in {nomination?.circleName || 'this Circle'} so members can ask thoughtful questions and discover your profile.
           </Text>
+          <SignatureSystemBubble system="love_seat" compact />
           {nomination?.quote ? <Text style={styles.quote}>&quot;{nomination.quote}&quot;</Text> : null}
           <Text style={styles.note}>This is opt-in. You can leave the Love Seat anytime.</Text>
           <View style={styles.actions}>

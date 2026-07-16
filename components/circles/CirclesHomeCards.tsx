@@ -5,6 +5,7 @@ import { Animated, type GestureResponderEvent, Image, Pressable, ScrollView, Sty
 import { getCircleScopePresentation } from '@/lib/circles/circle-display';
 import { useCirclePulsePalette, type CirclePulsePalette } from '@/lib/circles/pulse/circle-pulse-theme';
 import { normalizeProfilePhotoUri } from '@/lib/profile/media';
+import SignatureSystemBubble from '@/components/signature/SignatureSystemBubble';
 
 type CircleCardData = {
   id: string;
@@ -788,6 +789,7 @@ export function FeaturedSlotCard({
       <LinearGradient colors={palette.warmIntroGradient} style={styles.featuredPanel}>
         <Text style={styles.kicker}>Warm Introduction</Text>
         <Text style={styles.featuredTitle}>A Circle Host thinks you two may connect.</Text>
+        <SignatureSystemBubble system="warm_intro" compact inverted />
         <View style={styles.warmIntroBodies}>
           <View style={styles.introProfile}>
             <View style={styles.introAvatarShell}>

@@ -107,6 +107,53 @@ const intersects = (left?: string[] | null, right?: string[] | null) => {
   return arrayify(right).some((item) => leftSet.has(item));
 };
 
+const getPremiumAffinityCopy = (
+  reasonCode: LocationAffinityReasonCode,
+  source: any,
+): Pick<LocationAffinity, "shortText" | "longText"> | null => {
+  const context = buildLocationContext(source);
+  const place =
+    reasonCode === "diaspora_bridge" || reasonCode === "shared_roots_locality"
+      ? context.rootsLocality
+      : reasonCode === "shared_roots_region"
+        ? context.rootsRegion
+        : reasonCode === "same_locality"
+          ? context.city
+          : reasonCode === "same_district"
+            ? context.district
+            : reasonCode === "same_region"
+              ? context.region
+              : context.country;
+
+  if (!place) return null;
+
+  switch (reasonCode) {
+    case "diaspora_bridge":
+      return {
+        shortText: `Diaspora link through ${place}`,
+        longText: `Your stories connect through ${place}.`,
+      };
+    case "shared_roots_locality":
+    case "shared_roots_region":
+      return {
+        shortText: `Shared roots in ${place}`,
+        longText: `Your stories share roots in ${place}.`,
+      };
+    case "same_locality":
+      return {
+        shortText: `Both in ${place}`,
+        longText: `You're both part of ${place}'s local orbit.`,
+      };
+    case "same_district":
+    case "same_region":
+    case "same_country":
+      return {
+        shortText: `Shared ties to ${place}`,
+        longText: `You both share ties to ${place}.`,
+      };
+  }
+};
+
 const getDirectLocationAffinity = (source: any): LocationAffinity | null => {
   const reasonCode = toOptionalText(
     source?.locationAffinityReasonCode ?? source?.location_affinity_reason_code,
@@ -127,11 +174,14 @@ const getDirectLocationAffinity = (source: any): LocationAffinity | null => {
     return null;
   }
 
+  const resolvedReasonCode = reasonCode ?? "same_country";
+  const premiumCopy = getPremiumAffinityCopy(resolvedReasonCode, source);
+
   return {
-    reasonCode: reasonCode ?? "same_country",
+    reasonCode: resolvedReasonCode,
     strength: strength ?? 0,
-    shortText: shortText ?? longText ?? "",
-    longText: longText ?? shortText ?? "",
+    shortText: premiumCopy?.shortText ?? shortText ?? longText ?? "",
+    longText: premiumCopy?.longText ?? longText ?? shortText ?? "",
   };
 };
 
@@ -316,8 +366,8 @@ export function getLocationAffinity(viewer: any, candidate: any): LocationAffini
     return {
       reasonCode: "same_locality",
       strength: 3.2,
-      shortText: `Shared connection to ${candidateContext.city}`,
-      longText: `You both have a connection to ${candidateContext.city}.`,
+      shortText: `Both in ${candidateContext.city}`,
+      longText: `You're both part of ${candidateContext.city}'s local orbit.`,
     };
   }
 
@@ -334,8 +384,8 @@ export function getLocationAffinity(viewer: any, candidate: any): LocationAffini
     return {
       reasonCode: "same_district",
       strength: 2.1,
-      shortText: `Same district: ${candidateContext.district}`,
-      longText: `You both have ties to ${candidateContext.district}.`,
+      shortText: `Shared ties to ${candidateContext.district}`,
+      longText: `You both share ties to ${candidateContext.district}.`,
     };
   }
 
@@ -343,8 +393,8 @@ export function getLocationAffinity(viewer: any, candidate: any): LocationAffini
     return {
       reasonCode: "same_region",
       strength: 1.5,
-      shortText: `Shared connection to ${candidateContext.region}`,
-      longText: `You both have a connection to ${candidateContext.region}.`,
+      shortText: `Shared ties to ${candidateContext.region}`,
+      longText: `You both share ties to ${candidateContext.region}.`,
     };
   }
 
@@ -352,8 +402,8 @@ export function getLocationAffinity(viewer: any, candidate: any): LocationAffini
     return {
       reasonCode: "same_country",
       strength: 0.6,
-      shortText: `Both connected to ${candidateContext.country}`,
-      longText: `You both call ${candidateContext.country} home.`,
+      shortText: `Shared ties to ${candidateContext.country}`,
+      longText: `You both share ties to ${candidateContext.country}.`,
     };
   }
 
@@ -410,7 +460,7 @@ export function getCircleLocationAffinity(
   if (circleCity && viewerCity && normalizeKey(circleCity) === normalizeKey(viewerCity)) {
     return {
       reasonCode: "same_city",
-      strength: 30,
+      strength: 40,
       shortText: `Near you in ${circleCity}`,
     };
   }
@@ -418,7 +468,7 @@ export function getCircleLocationAffinity(
   if (circleRegion && viewerRegion && normalizeKey(circleRegion) === normalizeKey(viewerRegion)) {
     return {
       reasonCode: "same_region",
-      strength: 16,
+      strength: 24,
       shortText: `${circleRegion}-based circle`,
     };
   }
@@ -429,7 +479,7 @@ export function getCircleLocationAffinity(
   ) {
     return {
       reasonCode: "same_country",
-      strength: 35,
+      strength: 14,
       shortText: circleCountry ? `${circleCountry}-based circle` : "In your country",
     };
   }
@@ -454,5 +504,12 @@ export function getLocationConnectionInsight(
 ) {
   const affinity = getLocationAffinity(viewer, candidate);
   if (!affinity) return null;
+  if (
+    affinity.reasonCode !== "diaspora_bridge" &&
+    affinity.reasonCode !== "shared_roots_locality" &&
+    affinity.reasonCode !== "shared_roots_region"
+  ) {
+    return null;
+  }
   return surface === "profile" ? affinity.longText : affinity.shortText;
 }

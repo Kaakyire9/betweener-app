@@ -41,6 +41,12 @@ import {
   View
 } from 'react-native';
 import { useScopedScreenAwake } from '@/hooks/use-scoped-screen-awake';
+import { hasGhanaianProfileConnection } from '@/lib/profile/onboarding-experience';
+import {
+  buildVerificationMethods,
+  getVerificationSubmissionType,
+  type VerificationMethod,
+} from '@/lib/verification/verification-methods';
 
 const AnimatedPath = Animated.createAnimatedComponent(Path);
 
@@ -73,6 +79,7 @@ const calculateAutomatedScore = async (method: string, asset: any): Promise<{
       reason = 'Social media verification ready for review';
       return { confidence, reason };
       
+    case 'ghana_card':
     case 'passport':
     case 'residence':
     case 'workplace':
@@ -87,7 +94,9 @@ const calculateAutomatedScore = async (method: string, asset: any): Promise<{
         confidence += 0.1; // Good file size indicates quality
       }
 
-      reason = `Manual review required (${(confidence * 100).toFixed(0)}% confidence)`;
+      reason = method === 'ghana_card'
+        ? `Ghana Card manual review required (${(confidence * 100).toFixed(0)}% confidence)`
+        : `Manual review required (${(confidence * 100).toFixed(0)}% confidence)`;
       return { confidence, reason };
       
     default:
@@ -109,23 +118,6 @@ type VerificationFlowMessage = {
   body: string;
   actionLabel?: string;
   action?: () => void;
-};
-
-type VerificationMethod = {
-  id: 'passport' | 'residence' | 'social' | 'workplace' | 'selfie_liveness';
-  title: string;
-  description: string;
-  level: number;
-  icon: string;
-  color: string;
-  capture: 'library' | 'camera';
-  mediaType: 'image' | 'video';
-  submitLabel: string;
-  category: 'fast' | 'document';
-  helperLabel: string;
-  reviewLabel: string;
-  isRecommended?: boolean;
-  challengeType?: string;
 };
 
 type SocialPlatform = 'instagram' | 'tiktok' | 'facebook' | 'linkedin' | 'other';
@@ -513,85 +505,16 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
     }, 120);
   }, []);
 
-  const verificationMethods: VerificationMethod[] = [
-    {
-      id: 'passport',
-      title: 'Passport/Visa',
-      description: 'Upload a photo of your passport or visa stamps',
-      level: 2,
-      icon: 'document-text-outline',
-      color: '#4CAF50',
-      capture: 'library',
-      mediaType: 'image',
-      submitLabel: 'Upload Verification Document',
-      category: 'document',
-      helperLabel: 'Best for official identity proof',
-      reviewLabel: 'Manual review',
-    },
-    {
-      id: 'residence',
-      title: 'Residence Proof',
-      description: 'Utility bill, lease agreement, or bank statement',
-      level: 2,
-      icon: 'home-outline',
-      color: '#2196F3',
-      capture: 'library',
-      mediaType: 'image',
-      submitLabel: 'Upload Verification Document',
-      category: 'document',
-      helperLabel: 'Best for location credibility',
-      reviewLabel: 'Manual review',
-    },
-    {
-      id: 'social',
-      title: 'Social Media',
-      description: 'Share a public profile link or handle with visible location history',
-      level: 1,
-      icon: 'logo-instagram',
-      color: '#E91E63',
-      capture: 'library',
-      mediaType: 'image',
-      submitLabel: 'Submit Social Link',
-      category: 'fast',
-      helperLabel: 'Best for a lightweight linked-account trust signal',
-      reviewLabel: 'Manual review',
-    },
-    {
-      id: 'workplace',
-      title: 'Work/Study Proof',
-      description: 'Employment letter or student ID from abroad',
-      level: 2,
-      icon: 'briefcase-outline',
-      color: '#FF9800',
-      capture: 'library',
-      mediaType: 'image',
-      submitLabel: 'Upload Verification Document',
-      category: 'document',
-      helperLabel: 'Strong proof for relocation or study abroad',
-      reviewLabel: 'Manual review',
-    },
-    {
-      id: 'selfie_liveness',
-      title: 'Selfie Liveness',
-      description: 'Record a short guided selfie video so Betweener can confirm it is really you',
-      level: 2,
-      icon: 'scan-circle-outline',
-      color: '#7C4DFF',
-      capture: 'camera',
-      mediaType: 'video',
-      submitLabel: 'Record Face Check',
-      category: 'fast',
-      helperLabel: 'Fastest way to prove it is really you with a short guided video',
-      reviewLabel: 'Fast review',
-      isRecommended: true,
-      challengeType: 'guided_selfie_video',
-    },
-  ];
+  const hasGhanaianConnection = hasGhanaianProfileConnection(profile);
+  const verificationMethods = useMemo(
+    () => buildVerificationMethods(hasGhanaianConnection),
+    [hasGhanaianConnection],
+  );
   const featuredMethod = verificationMethods.find((method) => method.id === 'selfie_liveness') ?? verificationMethods[0];
   const activeMethod = verificationMethods.find((method) => method.id === selectedMethod) ?? featuredMethod;
   const activeMethodSatisfiesFreshReview = freshReviewRequired && activeMethod.level >= freshReviewTargetLevel;
   const activeMethodCanUpgrade = activeMethod.level > currentVerificationLevel || activeMethodSatisfiesFreshReview;
-  const activeMethodState = verificationStatus.methodStates[activeMethod.id];
+  const activeMethodState = verificationStatus.methodStates[getVerificationSubmissionType(activeMethod)];
   const hasHighestTrustWithoutRefresh = currentVerificationLevel >= 2 && !activeMethodSatisfiesFreshReview;
   const activeMethodCovered =
     hasHighestTrustWithoutRefresh
@@ -709,7 +632,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
         'rpc_submit_manual_verification_request',
         {
           p_profile_id: profile.id,
-          p_verification_type: method.id,
+          p_verification_type: getVerificationSubmissionType(method),
           p_document_path: data.path,
           p_auto_verification_score: autoScore.confidence,
           p_auto_verification_reason: autoScore.reason,
@@ -718,6 +641,12 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
       );
       alreadyPending = Boolean(rpcData?.[0]?.already_pending);
       requestError = rpcError;
+    }
+
+    if (requestError || alreadyPending) {
+      // The RPC keeps the existing pending request on duplicate submissions.
+      // Remove this newly uploaded, unreferenced asset so private storage does not accumulate orphans.
+      await supabase.storage.from('verification-docs').remove([data.path]);
     }
 
     if (requestError) throw requestError;
@@ -1073,7 +1002,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
         }
 
       const methodSatisfiesFreshReview = freshReviewRequired && method.level >= freshReviewTargetLevel;
-      const methodState = verificationStatus.methodStates[method.id];
+      const methodState = verificationStatus.methodStates[getVerificationSubmissionType(method)];
       const methodAlreadyApproved =
         (currentVerificationLevel >= 2 && !methodSatisfiesFreshReview)
           ? true

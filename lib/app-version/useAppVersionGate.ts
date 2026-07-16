@@ -218,7 +218,7 @@ export function useAppVersionGate({ pathname, enabled = true }: UseAppVersionGat
     pendingWhatsNewRuleRef.current = null;
   }, []);
 
-  const openStore = useCallback(async (rule: AppVersionRule) => openAppVersionStoreUrl(rule.storeUrl), []);
+  const openStore = useCallback(async (rule: AppVersionRule) => openAppVersionStoreUrl(rule), []);
 
   useEffect(() => {
     if (!ENABLE_APP_VERSION_GATE || !enabled) {

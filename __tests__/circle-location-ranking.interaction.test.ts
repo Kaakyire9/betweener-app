@@ -38,6 +38,9 @@ describe("circle location ranking", () => {
     expect(scoreCircleRelevance(sameCityCircle, profile, "near_me")).toBeGreaterThan(
       scoreCircleRelevance(sameCountryCircle, profile, "near_me"),
     );
+    expect(getCircleLocationAffinity(sameCityCircle, profile, "near_me")?.strength).toBeGreaterThan(
+      getCircleLocationAffinity(sameCountryCircle, profile, "near_me")?.strength ?? 0,
+    );
   });
 
   it("matches diaspora circles without requiring diaspora_status on the profile", () => {

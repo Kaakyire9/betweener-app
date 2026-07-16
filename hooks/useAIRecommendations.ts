@@ -1288,6 +1288,48 @@ export default function useAIRecommendations(
             p_limit: mode === 'active' ? 50 : 30,
             p_active_window_minutes: activeWindowMinutes,
           };
+          const v5 = await rpc('get_vibes_recommendations_v5', v2Args);
+          if (v5?.error?.code === 'client_timeout') {
+            noteRpcFailure(v5.error, 'get_vibes_recommendations_v5');
+            return;
+          }
+          if (!v5?.error && Array.isArray(v5?.data)) {
+            const enriched = await enrichRpcRowsWithInterests(v5.data);
+            const mapped = enriched.map((p: any) => mapRpcRow(p, true, null));
+            const filtered = filterDiscoverable(mapped);
+            if (!commitMatchesResult(filtered)) return;
+            addBreadcrumb('[recs] fetch_ok', {
+              fetchId,
+              mode,
+              fn: 'get_vibes_recommendations_v5',
+              rows: mapped.length,
+            });
+            return;
+          }
+          if (v5?.error) {
+            addBreadcrumb('[recs] v5_fallback', {
+              fetchId,
+              mode,
+              errorCode: v5.error.code ?? null,
+              message: String(v5.error.message || 'v5_error'),
+            });
+          }
+        } catch (e) {
+          addBreadcrumb('[recs] v5_throw_fallback', {
+            fetchId,
+            mode,
+            message: String((e as any)?.message || e || 'v5_throw'),
+          });
+        }
+
+        try {
+          const v2Segment = mode === 'active' ? 'active_now' : mode === 'nearby' ? 'nearby' : 'for_you';
+          const v2Args = {
+            p_user_id: userId,
+            p_segment: v2Segment,
+            p_limit: mode === 'active' ? 50 : 30,
+            p_active_window_minutes: activeWindowMinutes,
+          };
           const v3 = await rpc('get_vibes_recommendations_v3', v2Args);
           if (v3?.error?.code === 'client_timeout') {
             noteRpcFailure(v3.error, 'get_vibes_recommendations_v3');

@@ -11,6 +11,9 @@ import { corsHeaders } from '../_shared/cors.ts'
 type ReverseGeocodeRequest = {
   latitude: number
   longitude: number
+  accuracyMeters?: number | null
+  mocked?: boolean
+  deviceIntegrity?: 'passed' | 'failed' | 'unavailable'
 }
 
 const buildLocationLabel = (city?: string, region?: string, country?: string) => {
@@ -95,10 +98,25 @@ serve(async (req) => {
   }
 
   try {
-    const { latitude, longitude }: ReverseGeocodeRequest = await req.json()
+    const {
+      latitude,
+      longitude,
+      accuracyMeters = null,
+      mocked = false,
+      deviceIntegrity = 'unavailable',
+    }: ReverseGeocodeRequest = await req.json()
 
-    if (latitude == null || longitude == null) {
-      return new Response(JSON.stringify({ error: 'Latitude and longitude are required.' }), {
+    if (
+      typeof latitude !== 'number'
+      || !Number.isFinite(latitude)
+      || latitude < -90
+      || latitude > 90
+      || typeof longitude !== 'number'
+      || !Number.isFinite(longitude)
+      || longitude < -180
+      || longitude > 180
+    ) {
+      return new Response(JSON.stringify({ error: 'Valid latitude and longitude are required.' }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       })
@@ -160,7 +178,7 @@ serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
     const { data: currentProfile, error: profileError } = await supabase
       .from('profiles')
-      .select('region, location, city, current_country, current_country_code, country_lock_policy')
+      .select('region, location, city, current_country, current_country_code, country_lock_policy, onboarding_variant, phone_number, phone_verified')
       .eq('user_id', user.id)
       .limit(1)
       .single()
@@ -176,12 +194,74 @@ serve(async (req) => {
     const safeCity = city || null
     const safeCountry = country || currentProfile?.current_country || null
     const safeCountryCode = countryCode || currentProfile?.current_country_code || null
-    const nextCountryLockPolicy =
-      currentProfile?.country_lock_policy === 'ghana_locked' && safeCountryCode && safeCountryCode !== 'GH'
-        ? 'ghana_unlocked_precise_abroad'
-        : currentProfile?.country_lock_policy || 'none'
     const fallbackLocation = buildLocationLabel(safeCity || undefined, safeRegion || undefined, safeCountry || undefined)
     const safeLocation = location || fallbackLocation || null
+
+    const phoneDigits = String(currentProfile?.phone_number || '').replace(/\D/g, '')
+    const requiresGhanaCountryVerification =
+      String(currentProfile?.country_lock_policy || 'none') !== 'none'
+      || (
+        String(currentProfile?.onboarding_variant || '').toLowerCase() === 'ghana'
+        && currentProfile?.phone_verified === true
+        && phoneDigits.startsWith('233')
+      )
+
+    if (requiresGhanaCountryVerification) {
+      if (!countryCode || !country) {
+        return new Response(JSON.stringify({
+          ok: false,
+          error: 'We could not verify the country for this location. Please try again outdoors.',
+        }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
+
+      const { data: verification, error: verificationError } = await supabase.rpc(
+        'record_profile_country_verification_observation',
+        {
+          p_user_id: user.id,
+          p_latitude: latitude,
+          p_longitude: longitude,
+          p_accuracy_meters: accuracyMeters,
+          p_mocked: mocked,
+          p_country_code: countryCode,
+          p_country_name: country,
+          p_city: city || null,
+          p_region: region || null,
+          p_provider: 'nominatim',
+          p_device_integrity: deviceIntegrity,
+        },
+      )
+
+      if (verificationError) {
+        return new Response(JSON.stringify({ error: verificationError.message }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
+
+      const verificationResult = verification && typeof verification === 'object'
+        ? verification as Record<string, unknown>
+        : {}
+
+      return new Response(
+        JSON.stringify({
+          ok: verificationResult.ok !== false,
+          error: verificationResult.ok === false ? verificationResult.message : undefined,
+          verification: verificationResult,
+          location,
+          city: city || null,
+          region: region || null,
+          country: country || null,
+          country_code: countryCode || null,
+        }),
+        {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        },
+      )
+    }
 
     const { error: updateError } = await supabase
       .from('profiles')
@@ -191,7 +271,6 @@ serve(async (req) => {
         location: safeLocation,
         current_country: safeCountry,
         current_country_code: safeCountryCode,
-        country_lock_policy: nextCountryLockPolicy,
         location_precision: 'EXACT',
         locality_geoname_id: null,
         locality_district: null,

@@ -5,6 +5,7 @@ import {
   type CountryOption,
 } from "../location/countries.ts";
 import { normalizeGhanaCityTownValue } from "../location/ghana-locality-shared.ts";
+import { isLegacyGhanaLocalityForeignKeyError } from "../location/locality-errors.ts";
 import { normalizeOtherText, replaceOtherInList, resolveOtherValue } from "../profile/other-option.ts";
 import { isReligionEnumError, normalizeReligionForProfile } from "../profile/religion.ts";
 
@@ -58,6 +59,7 @@ export function buildPremiumOnboardingProfileData({
   imageUrl,
   phoneNumber,
 }: BuildPremiumOnboardingProfileArgs) {
+  const completedAt = new Date().toISOString();
   const resolvedOccupation = resolveOtherValue(form.occupation, customOccupation);
   const currentCountryIsGhana = variant === "ghana" || form.currentCountry.trim().toLowerCase() === "ghana";
   const originCountryIsGhana = variant === "ghana" || form.originCountry.trim().toLowerCase() === "ghana";
@@ -123,6 +125,7 @@ export function buildPremiumOnboardingProfileData({
     phone_verified: true,
     min_age_interest: Number(form.minAgeInterest),
     max_age_interest: Number(form.maxAgeInterest),
+    age_preference_confirmed_at: completedAt,
     city: city || null,
     locality_geoname_id: form.cityLocalityGeonameId ?? null,
     locality_district: currentCountryIsGhana ? normalizeGhanaCityTownValue(form.cityDistrict) || null : form.cityDistrict.trim() || null,
@@ -134,6 +137,7 @@ export function buildPremiumOnboardingProfileData({
     location_precision: locationPrecision as any,
     current_country: currentCountryName,
     current_country_code: currentCountryCode,
+    onboarding_variant: variant,
     origin_country: originCountryName,
     origin_country_code: originCountryCode,
     origin_country_source:
@@ -145,8 +149,8 @@ export function buildPremiumOnboardingProfileData({
     years_in_diaspora: 0,
     profile_completed: true,
     identity_status: "active",
-    onboarding_completed_at: new Date().toISOString(),
-    identity_finalized_at: new Date().toISOString(),
+    onboarding_completed_at: completedAt,
+    identity_finalized_at: completedAt,
   };
 }
 
@@ -154,14 +158,57 @@ export async function updateProfileWithFallbacks(
   updateProfile: (payload: any) => Promise<{ error?: { message?: string } | null } | any>,
   profileData: Record<string, unknown>,
 ) {
-  let { error: updateError } = await updateProfile(profileData as any);
+  let workingProfileData = { ...profileData };
+  let { error: updateError } = await updateProfile(workingProfileData as any);
 
-  if (updateError && profileData.roots_visibility === "MATCHES_ONLY" && isRootsVisibilityConstraintError(updateError)) {
-    ({ error: updateError } = await updateProfile({ ...profileData, roots_visibility: "HIDDEN" } as any));
+  const missingOnboardingVariantColumn =
+    updateError &&
+    String((updateError as any)?.code ?? '').toUpperCase() === 'PGRST204' &&
+    String((updateError as any)?.message ?? '').toLowerCase().includes('onboarding_variant');
+
+  if (missingOnboardingVariantColumn) {
+    const { onboarding_variant: _unsupportedVariant, ...compatibleProfileData } = workingProfileData;
+    workingProfileData = compatibleProfileData;
+    ({ error: updateError } = await updateProfile(workingProfileData as any));
   }
 
-  if (updateError && profileData.religion !== "OTHER" && isReligionEnumError(updateError)) {
-    ({ error: updateError } = await updateProfile({ ...profileData, religion: "OTHER" as any } as any));
+  const missingAgePreferenceConfirmationColumn =
+    updateError &&
+    String((updateError as any)?.code ?? '').toUpperCase() === 'PGRST204' &&
+    String((updateError as any)?.message ?? '').toLowerCase().includes('age_preference_confirmed_at');
+
+  if (missingAgePreferenceConfirmationColumn) {
+    const {
+      age_preference_confirmed_at: _unsupportedAgePreferenceConfirmation,
+      ...compatibleProfileData
+    } = workingProfileData;
+    workingProfileData = compatibleProfileData;
+    ({ error: updateError } = await updateProfile(workingProfileData as any));
+  }
+
+  if (
+    updateError &&
+    workingProfileData.current_country_code !== "GH" &&
+    workingProfileData.locality_geoname_id != null &&
+    isLegacyGhanaLocalityForeignKeyError(updateError)
+  ) {
+    workingProfileData = {
+      ...workingProfileData,
+      locality_geoname_id: null,
+      locality_admin1_code: null,
+      locality_provider: null,
+    };
+    ({ error: updateError } = await updateProfile(workingProfileData as any));
+  }
+
+  if (updateError && workingProfileData.roots_visibility === "MATCHES_ONLY" && isRootsVisibilityConstraintError(updateError)) {
+    workingProfileData = { ...workingProfileData, roots_visibility: "HIDDEN" };
+    ({ error: updateError } = await updateProfile(workingProfileData as any));
+  }
+
+  if (updateError && workingProfileData.religion !== "OTHER" && isReligionEnumError(updateError)) {
+    workingProfileData = { ...workingProfileData, religion: "OTHER" as any };
+    ({ error: updateError } = await updateProfile(workingProfileData as any));
   }
 
   return updateError ?? null;

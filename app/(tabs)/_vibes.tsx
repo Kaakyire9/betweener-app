@@ -10,6 +10,8 @@ import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { markInboxItemsReadByCriteria, useInbox } from "@/hooks/useInbox";
 import { requestAndSavePreciseLocation, saveManualCityLocation } from "@/hooks/useLocationPreference";
+import { GlobalCityField } from "@/components/onboarding/steps/GlobalCityField";
+import type { GlobalLocalitySuggestion } from "@/lib/location/global-locality-shared";
 import { useMoments, type MomentUser } from '@/hooks/useMoments';
 import { usePremiumState } from "@/hooks/use-premium-state";
 import { useResolvedProfileId } from "@/hooks/useResolvedProfileId";
@@ -70,9 +72,14 @@ import useVibesResponsiveMetrics from "@/components/vibes/depth/useVibesResponsi
 import Notice from "@/components/ui/Notice";
 import { ExploreStackSkeleton } from "@/components/ui/Skeleton";
 import { findCountryByCode, getPrioritizedCountries, type CountryOption } from "@/lib/location/countries";
+import {
+  getGhanaCountryPolicyMessage,
+  isGhanaCountryManagedPolicy,
+} from '@/lib/location/country-lock';
 import { toFlagEmoji } from "@/lib/location/location-display";
 import { isLikelyNetworkError } from "@/lib/network";
 import { requestOpenProfileEdit } from "@/lib/profile/edit-handoff";
+import { isGhanaianDiasporaProfile } from "@/lib/profile/onboarding-experience";
 import { logger } from "@/lib/telemetry/logger";
 import {
   formatAgePresetLabel,
@@ -137,9 +144,9 @@ export default function ExploreScreen() {
   const { profile, user, refreshProfile, authRecoveryPending, usingPersistedSessionFallback } = useAuth();
   const showingRecoveredSnapshot = authRecoveryPending || usingPersistedSessionFallback;
   const { profileId: resolvedProfileId } = useResolvedProfileId(user?.id ?? null, profile?.id ?? null);
-  const usesGhanaOnboarding = String(profile?.country_lock_policy || '').startsWith('ghana_');
-  const vibesSubtitle = usesGhanaOnboarding
-    ? 'Ghana Diaspora Connections'
+  const isGhanaianDiaspora = isGhanaianDiasporaProfile(profile);
+  const vibesSubtitle = isGhanaianDiaspora
+    ? 'Ghanaian Diaspora Connections'
     : 'Where worlds apart feel closer';
   const { hasAccess } = usePremiumState();
   const { access: signalAccess, refresh: refreshSignalAccess } = useSignalAccess(Boolean(resolvedProfileId));
@@ -360,6 +367,8 @@ export default function ExploreScreen() {
   const [previewingId, setPreviewingId] = useState<string | null>(null);
   const [manualLocationModalVisible, setManualLocationModalVisible] = useState(false);
   const [manualLocation, setManualLocation] = useState((profile as any)?.city || profile?.location || "");
+  const [manualRegion, setManualRegion] = useState<string | null>((profile as any)?.region || null);
+  const [manualLocality, setManualLocality] = useState<GlobalLocalitySuggestion | null>(null);
   const [manualCountryCode, setManualCountryCode] = useState(profileCountryCode || "");
   const [manualCountryPickerOpen, setManualCountryPickerOpen] = useState(false);
   const [manualCountrySearch, setManualCountrySearch] = useState('');
@@ -500,6 +509,29 @@ export default function ExploreScreen() {
     [manualCountrySearch],
   );
   const selectedManualCountryFlag = selectedManualCountry ? toFlagEmoji(selectedManualCountry.code) : '';
+  const manualSelectedGeonameId = manualLocality?.geonameId ?? (
+    manualLocation === (profile as any)?.city && manualCountryCode === profileCountryCode
+      ? (profile as any)?.locality_geoname_id ?? null
+      : null
+  );
+  const manualCityStyles = useMemo(() => ({
+    citySection: { gap: 8, marginTop: 14 },
+    fieldLabelRow: { flexDirection: 'row' as const, justifyContent: 'space-between' as const, alignItems: 'center' as const },
+    fieldLabel: { fontSize: 13, fontWeight: '700' as const, color: theme.text },
+    optionalLabel: { fontSize: 11, fontWeight: '700' as const, color: theme.tint },
+    input: styles.modalInput,
+    inputError: { borderColor: '#C94C4C' },
+    selectBox: styles.countrySelectButton,
+    selectBoxSelected: { borderColor: theme.tint },
+    selectValueWrap: { flex: 1, gap: 2 },
+    selectText: { fontSize: 15, fontWeight: '700' as const, color: theme.text },
+    selectPlaceholder: { color: theme.textMuted, fontWeight: '500' as const },
+    selectMetaText: { fontSize: 12, color: theme.textMuted },
+    helperText: { fontSize: 12, lineHeight: 17, color: theme.textMuted },
+    subtleNote: { fontSize: 12, fontWeight: '700' as const },
+    errorText: styles.locationError,
+    tokens: { muted: { color: theme.textMuted }, accent: { color: theme.tint } },
+  }), [styles, theme]);
   const practiceProfileId = useMemo(
     () => resolvedProfileId ?? profile?.id ?? null,
     [profile?.id, resolvedProfileId],
@@ -1002,6 +1034,7 @@ export default function ExploreScreen() {
         deck_size: matchList.length,
         compatibility: (current as any).compatibility ?? null,
         distance_km: (current as any).distanceKm ?? null,
+        recommendation_version: (current as any).recommendationVersion ?? null,
       },
     });
   }, [currentIndex, matchList, profile?.id, recordVibesEvent, showPracticeWalkthrough, vibesSegment]);
@@ -1487,15 +1520,19 @@ export default function ExploreScreen() {
 
   const recordVibesSwipe = useCallback(
     (id: string, action: 'like' | 'dislike' | 'superlike', index = currentIndex) => {
+      const swipedProfile = matchList.find((match) => String(match.id) === String(id));
       pushVibesAction({ kind: 'swipe', id: String(id), action, index });
       recordVibesEvent(String(id), action === 'dislike' ? 'pass' : action === 'superlike' ? 'signal_sent' : 'like', {
         position: index,
         dwellMs: getActiveCardDwellMs(String(id)),
-        metadata: { swipe_action: action },
+        metadata: {
+          swipe_action: action,
+          recommendation_version: (swipedProfile as any)?.recommendationVersion ?? null,
+        },
       });
       recordSwipe(id, action, index);
     },
-    [currentIndex, getActiveCardDwellMs, pushVibesAction, recordSwipe, recordVibesEvent],
+    [currentIndex, getActiveCardDwellMs, matchList, pushVibesAction, recordSwipe, recordVibesEvent],
   );
 
   const cancelDirectIntentRequest = useCallback(async (entry: Extract<VibesActionHistoryEntry, { kind: 'intent' }>) => {
@@ -1596,7 +1633,8 @@ export default function ExploreScreen() {
 
   const hasPreciseCoords = profile?.latitude != null && profile?.longitude != null;
   const hasCityOnly = !!profile?.location && profile?.location_precision === 'CITY';
-  const isGhanaCountryLocked = profile?.country_lock_policy === 'ghana_locked';
+  const isGhanaCountryLocked = isGhanaCountryManagedPolicy(profile?.country_lock_policy);
+  const countryPolicyMessage = getGhanaCountryPolicyMessage(profile?.country_lock_policy);
   const needsNearbyPreciseLocation = !hasPreciseCoords;
   const needsLocationPrompt = !hasPreciseCoords && !hasCityOnly;
   const shouldShowLocationPrompt =
@@ -1610,7 +1648,7 @@ export default function ExploreScreen() {
     setManualLocation((profile as any)?.city || profile?.location || "");
   }, [(profile as any)?.city, profile?.location]);
   useEffect(() => {
-    setManualCountryCode(isGhanaCountryLocked ? 'GH' : profileCountryCode || "");
+    setManualCountryCode(profileCountryCode || (isGhanaCountryLocked ? 'GH' : ''));
   }, [isGhanaCountryLocked, profileCountryCode]);
 
   useEffect(() => {
@@ -1657,6 +1695,16 @@ export default function ExploreScreen() {
       AsyncStorage.removeItem(VIBES_LOCATION_PROMPT_DISMISSED_KEY).catch(() => undefined);
       await refreshProfile();
       await refreshMatches();
+      if (res.verification?.message) {
+        Alert.alert(
+          res.verification.status === 'pending'
+            ? 'First location check confirmed'
+            : res.verification.status === 'verified'
+              ? 'Country verified'
+              : 'Location refreshed',
+          res.verification.message,
+        );
+      }
       await new Promise((resolve) => setTimeout(resolve, 1200));
       await refreshProfile();
       await refreshMatches();
@@ -1678,20 +1726,24 @@ export default function ExploreScreen() {
   const openManualLocationModal = useCallback(() => {
     setLocationError(null);
     setManualLocation((profile as any)?.city || profile?.location || "");
-    setManualCountryCode(isGhanaCountryLocked ? 'GH' : profileCountryCode || manualCountryCode || "");
+    setManualRegion((profile as any)?.region || null);
+    setManualLocality(null);
+    setManualCountryCode(profileCountryCode || (isGhanaCountryLocked ? 'GH' : manualCountryCode || ''));
     setManualCountryPickerOpen(false);
     setManualCountrySearch('');
     setManualLocationModalVisible(true);
-  }, [isGhanaCountryLocked, manualCountryCode, profile?.location, (profile as any)?.city, profileCountryCode]);
+  }, [isGhanaCountryLocked, manualCountryCode, profile?.location, (profile as any)?.city, (profile as any)?.region, profileCountryCode]);
 
   const openManualLocationModalFromFilters = useCallback(() => {
     setLocationError(null);
     setManualLocation((profile as any)?.city || profile?.location || "");
-    setManualCountryCode(isGhanaCountryLocked ? 'GH' : profileCountryCode || manualCountryCode || "");
+    setManualRegion((profile as any)?.region || null);
+    setManualLocality(null);
+    setManualCountryCode(profileCountryCode || (isGhanaCountryLocked ? 'GH' : manualCountryCode || ''));
     setManualCountryPickerOpen(false);
     setManualCountrySearch('');
     setFiltersPanel('location');
-  }, [isGhanaCountryLocked, manualCountryCode, profile?.location, (profile as any)?.city, profileCountryCode]);
+  }, [isGhanaCountryLocked, manualCountryCode, profile?.location, (profile as any)?.city, (profile as any)?.region, profileCountryCode]);
 
   const handleSaveManualLocation = async () => {
     if (!profile?.id) return;
@@ -1703,7 +1755,20 @@ export default function ExploreScreen() {
       setIsSavingLocation(false);
       return;
     }
-    const res = await saveManualCityLocation(profile.id, manualLocation, manualCountryCode);
+    const res = await saveManualCityLocation(profile.id, {
+      countryCode: manualCountryCode,
+      countryName: selectedManualCountry?.label,
+      city: manualLocation,
+      region: manualRegion,
+      localityGeonameId: manualSelectedGeonameId,
+      localityAdmin1Code: manualLocality?.admin1Code ?? (
+        manualLocation === (profile as any)?.city && manualCountryCode === profileCountryCode
+          ? (profile as any)?.locality_admin1_code ?? null
+          : null
+      ),
+      latitude: manualLocality?.latitude ?? null,
+      longitude: manualLocality?.longitude ?? null,
+    });
     if (!res.ok) {
       setLocationError('error' in res ? res.error : 'Unable to save location');
     } else {
@@ -1721,11 +1786,16 @@ export default function ExploreScreen() {
   };
 
   const handleSelectManualCountry = useCallback((country: CountryOption) => {
+    if (country.code !== manualCountryCode) {
+      setManualLocation('');
+      setManualRegion(null);
+      setManualLocality(null);
+    }
     setManualCountryCode(country.code);
     setManualCountrySearch('');
     setManualCountryPickerOpen(false);
     setLocationError(null);
-  }, []);
+  }, [manualCountryCode]);
 
   const handleApplyFilters = () => {
     if (!hasAdvancedFilters && (verifiedOnly || hasVideoOnly || activeOnly || distanceFilterKm != null || minVibeScore != null || minSharedInterests > 0)) {
@@ -2439,6 +2509,7 @@ export default function ExploreScreen() {
             verification_level: (fallbackSource as any).verification_level,
             current_country: (fallbackSource as any).current_country,
             current_country_code: (fallbackSource as any).current_country_code,
+            location_precision: (fallbackSource as any).location_precision,
             profileVideo: (fallbackSource as any).profileVideo,
             profile_video: (fallbackSource as any).profileVideoPath,
           }));
@@ -2467,7 +2538,7 @@ export default function ExploreScreen() {
         <ExploreHeader
           title="Vibes"
           subtitle={vibesSubtitle}
-          subtitleEmblem={usesGhanaOnboarding ? 'ghana' : 'global'}
+          subtitleEmblem={isGhanaianDiaspora ? 'ghana' : 'global'}
           tabs={[
             { id: "recommended", label: "For You", icon: "heart" },
             { id: "nearby", label: "Nearby", icon: "map-marker" },
@@ -2835,7 +2906,7 @@ export default function ExploreScreen() {
                 </View>
                 <Text style={styles.modalSubtitle}>
                   {filtersPanel === 'location'
-                    ? 'Keep your city private, or use precise location when you want distance to do the work.'
+                    ? 'Share only your chosen city, or use precise location when you want distance to do the work.'
                     : 'Set a mood, tighten the pool, and preview the shift before you apply it.'}
                 </Text>
                 <ScrollView style={styles.modalScroll} contentContainerStyle={styles.modalScrollContent} showsVerticalScrollIndicator={false}>
@@ -2846,7 +2917,7 @@ export default function ExploreScreen() {
                           <Text style={styles.filterSectionEyebrow}>Location</Text>
                           <Text style={styles.filterSectionTitle}>Set your city</Text>
                           <Text style={styles.filterSectionBody}>
-                            City-only keeps your location private. You can switch back to precise location any time.
+                            City-only shares the city you choose while keeping exact coordinates private. You can switch back any time.
                           </Text>
                         </View>
 
@@ -2854,7 +2925,7 @@ export default function ExploreScreen() {
                           <Text style={styles.modalLabel}>Country</Text>
                           {isGhanaCountryLocked ? (
                             <Text style={styles.filterHint}>
-                              Ghana-route accounts keep country locked to Ghana until precise location confirms you are outside Ghana.
+                              {countryPolicyMessage}
                             </Text>
                           ) : null}
                           <TouchableOpacity
@@ -2934,16 +3005,23 @@ export default function ExploreScreen() {
                         </View>
 
                         <View style={styles.filterFieldGroup}>
-                          <Text style={styles.modalLabel}>City</Text>
-                          <TextInput
-                            style={styles.modalInput}
-                            placeholder="e.g., Bristol"
-                            placeholderTextColor={theme.textMuted}
+                          <GlobalCityField
+                            countryCode={manualCountryCode}
+                            countryName={selectedManualCountry?.label || 'your country'}
                             value={manualLocation}
-                            onChangeText={setManualLocation}
-                            autoCapitalize="words"
+                            region={manualRegion}
+                            selectedGeonameId={manualSelectedGeonameId}
+                            dark={isDark}
+                            styles={manualCityStyles}
+                            error={locationError || undefined}
+                            required
+                            onSelect={(place) => {
+                              setManualLocality(place);
+                              setManualLocation(place?.name || '');
+                              setManualRegion(place?.admin1Name || null);
+                              setLocationError(null);
+                            }}
                           />
-                          {locationError ? <Text style={styles.locationError}>{locationError}</Text> : null}
                         </View>
                       </View>
 
@@ -3509,12 +3587,12 @@ export default function ExploreScreen() {
                     <Text style={styles.modalResetText}>Close</Text>
                   </TouchableOpacity>
                 </View>
-                <Text style={styles.modalSubtitle}>City-only keeps your location private (no GPS required).</Text>
+                <Text style={styles.modalSubtitle}>Share a verified city while keeping exact coordinates private. No GPS required.</Text>
 
                 <Text style={styles.modalLabel}>Country</Text>
                 {isGhanaCountryLocked ? (
                   <Text style={styles.filterHint}>
-                    Ghana-route accounts keep country locked to Ghana until precise location confirms you are outside Ghana.
+                    {countryPolicyMessage}
                   </Text>
                 ) : null}
                 <TouchableOpacity
@@ -3592,18 +3670,23 @@ export default function ExploreScreen() {
                   </View>
                 ) : null}
 
-                <Text style={styles.modalLabel}>City</Text>
-                <TextInput
-                  style={styles.modalInput}
-                  placeholder="e.g., Accra"
-                  placeholderTextColor={theme.textMuted}
+                <GlobalCityField
+                  countryCode={manualCountryCode}
+                  countryName={selectedManualCountry?.label || 'your country'}
                   value={manualLocation}
-                  onChangeText={setManualLocation}
-                  autoCapitalize="words"
-                  autoCorrect={false}
+                  region={manualRegion}
+                  selectedGeonameId={manualSelectedGeonameId}
+                  dark={isDark}
+                  styles={manualCityStyles}
+                  error={locationError || undefined}
+                  required
+                  onSelect={(place) => {
+                    setManualLocality(place);
+                    setManualLocation(place?.name || '');
+                    setManualRegion(place?.admin1Name || null);
+                    setLocationError(null);
+                  }}
                 />
-
-                {locationError ? <Text style={styles.locationError}>{locationError}</Text> : null}
 
                 <View style={styles.modalActions}>
                   <TouchableOpacity

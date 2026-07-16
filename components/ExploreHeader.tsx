@@ -16,7 +16,7 @@ type SubtitleEmblem = 'ghana' | 'global';
 
 export default function ExploreHeader({
   title = 'Vibes',
-  subtitle = 'Ghana Diaspora Connections',
+  subtitle = 'Where worlds apart feel closer',
   tabs,
   activeTab,
   setActiveTab,

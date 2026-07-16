@@ -14,6 +14,7 @@ import { useResolvedProfileId } from '@/hooks/useResolvedProfileId';
 import { useAuth } from '@/lib/auth-context';
 import { getCircleScopeLabel } from '@/lib/circles/circle-display';
 import { getCircleLocationAffinity } from '@/lib/location/location-intelligence';
+import { buildLocationDisplay } from '@/lib/location/location-display';
 import { endCircleLoveSeat, fetchCirclePulseDiscussionReadStates } from '@/lib/circles/pulse/circle-pulse-service';
 import { respondToCircleInvitation } from '@/lib/circles/circle-invitations';
 import { uploadImage } from '@/lib/image-upload';
@@ -117,6 +118,9 @@ type MemberRow = {
     location?: string | null;
     city?: string | null;
     region?: string | null;
+    current_country?: string | null;
+    current_country_code?: string | null;
+    location_precision?: string | null;
     online?: boolean | null;
     last_active?: string | null;
   } | null;
@@ -243,6 +247,11 @@ const normalizeMemberProfile = (
   if (!input) return null;
   return Array.isArray(input) ? (input[0] ?? null) : input;
 };
+
+const getMemberLocationLabel = (profile?: MemberRow['profiles'] | null) =>
+  profile
+    ? buildLocationDisplay(profile as Record<string, any>, { surface: 'vibes' }).withFlag || 'Location hidden'
+    : 'Location hidden';
 
 const compactDate = (value?: string | null) => {
   if (!value) return 'Soon';
@@ -747,7 +756,7 @@ export default function CircleDetailScreen() {
 
     const { data: memberRows } = await db
       .from('circle_members')
-      .select('id,role,status,is_visible,profile_id,user_id,joined_at,profiles(id,user_id,full_name,avatar_url,age,location,city,region)')
+      .select('id,role,status,is_visible,profile_id,user_id,joined_at,profiles(id,user_id,full_name,avatar_url,age,location,city,region,current_country,current_country_code,location_precision)')
       .eq('circle_id', circleId);
 
     const rows: MemberRow[] = await Promise.all(
@@ -831,7 +840,7 @@ export default function CircleDetailScreen() {
     if (nextPrompts.length > 0) {
       const { data: promptResponseRows } = await db
         .from('circle_prompt_responses')
-        .select('id,prompt_id,profile_id,response,created_at,profiles(id,full_name,avatar_url,age,location,city,region)')
+        .select('id,prompt_id,profile_id,response,created_at,profiles(id,full_name,avatar_url,age,location,city,region,current_country,current_country_code,location_precision)')
         .in('prompt_id', nextPrompts.map((item) => item.id))
         .order('created_at', { ascending: false });
 
@@ -3222,7 +3231,7 @@ export default function CircleDetailScreen() {
         name: item.profiles?.full_name || 'Circle member',
         age: item.profiles?.age ?? null,
         avatarUrl: item.profiles?.avatar_url ?? null,
-        location: item.profiles?.city || item.profiles?.region || null,
+        location: getMemberLocationLabel(item.profiles),
       })),
     [members],
   );
@@ -3511,7 +3520,7 @@ export default function CircleDetailScreen() {
                   </View>
                 ) : null}
               </View>
-              <Text style={styles.memberMeta}>{member.city || member.region || member.location || 'Location hidden'}</Text>
+              <Text style={styles.memberMeta}>{getMemberLocationLabel(member)}</Text>
             </View>
           </View>
           <View style={styles.memberBadgeRow}>
@@ -3596,7 +3605,7 @@ export default function CircleDetailScreen() {
                   {member.full_name ?? 'Circle leader'}{member.age ? `, ${member.age}` : ''}
                 </Text>
               </View>
-              <Text style={styles.memberMeta}>{joinMeta([getLeaderRoleLabel(item.role), member.city || member.region || member.location])}</Text>
+              <Text style={styles.memberMeta}>{joinMeta([getLeaderRoleLabel(item.role), getMemberLocationLabel(member)])}</Text>
               {presence.showPresence ? (
                 <View
                   style={[
@@ -3680,7 +3689,7 @@ export default function CircleDetailScreen() {
           </View>
           <Text style={styles.momentTitle} numberOfLines={1}>{profileRow?.full_name ?? 'Circle member'}</Text>
           <Text style={styles.momentMeta} numberOfLines={1}>
-            {joinMeta([profileRow?.city || profileRow?.region || profileRow?.location, moment.visibility])}
+            {joinMeta([getMemberLocationLabel(profileRow), moment.visibility])}
           </Text>
           <Text style={styles.featureBody} numberOfLines={3}>{getMomentPreview(moment)}</Text>
         </View>
@@ -3706,7 +3715,7 @@ export default function CircleDetailScreen() {
               <Text style={styles.memberName}>
                 {responder?.full_name ?? 'Circle member'}{responder?.age ? `, ${responder.age}` : ''}
               </Text>
-              <Text style={styles.memberMeta}>{joinMeta([compactDate(response.created_at), responder?.city || responder?.region || responder?.location])}</Text>
+              <Text style={styles.memberMeta}>{joinMeta([compactDate(response.created_at), getMemberLocationLabel(responder)])}</Text>
             </View>
           </View>
           {isSelf ? (
@@ -4570,7 +4579,7 @@ export default function CircleDetailScreen() {
                 {manageTargetProfile?.full_name ?? 'Member'}{manageTargetProfile?.age ? `, ${manageTargetProfile.age}` : ''}
               </Text>
               <Text style={styles.memberMeta}>
-                {joinMeta([getLeaderRoleLabel(manageMemberTarget?.role), manageTargetProfile?.city || manageTargetProfile?.region || manageTargetProfile?.location])}
+                {joinMeta([getLeaderRoleLabel(manageMemberTarget?.role), getMemberLocationLabel(manageTargetProfile)])}
               </Text>
             </View>
             {manageTargetOptions.roles.length > 0 ? (
