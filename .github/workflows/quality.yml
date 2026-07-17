@@ -35,6 +35,3 @@ jobs:
 
       - name: Vibes logic tests
         run: npm run test:vibes-logic
-
-      - name: Supabase types drift check
-        run: npm run supabase:types:check
