@@ -3,20 +3,17 @@ import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useAuth } from "@/lib/auth-context";
 import { fetchPeerVisibilityPrefs } from "@/lib/peer-visibility";
 import { getUserFacingDisplayName } from "@/lib/profile/display-name";
+import { useResponsiveMetrics, type ResponsiveMetrics } from "@/lib/responsive";
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { Image } from "expo-image";
 import { router } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
-import { Dimensions, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-const { width } = Dimensions.get("window");
-
 type ActivityType =
-  | "note"
-  | "gift"
   | "like"
   | "superlike"
   | "match"
@@ -37,20 +34,7 @@ type ActivityItem = {
   profileId?: string | null;
 };
 
-type ActivityFilter = "all" | "notes" | "gifts" | "likes" | "matches" | "reactions" | "messages";
-
-const giftLabel = (giftType?: string | null) => {
-  switch (giftType) {
-    case "rose":
-      return "a rose";
-    case "teddy":
-      return "a teddy bear";
-    case "ring":
-      return "a ring";
-    default:
-      return "a gift";
-  }
-};
+type ActivityFilter = "all" | "likes" | "matches" | "reactions" | "messages";
 
 const timeAgo = (iso?: string | null) => {
   if (!iso) return "";
@@ -88,7 +72,8 @@ export default function ActivityHistoryScreen() {
   const resolvedScheme = (colorScheme ?? "light") === "dark" ? "dark" : "light";
   const theme = Colors[resolvedScheme];
   const isDark = resolvedScheme === "dark";
-  const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
+  const responsive = useResponsiveMetrics();
+  const styles = useMemo(() => createStyles(theme, isDark, responsive), [theme, isDark, responsive]);
   const { user, profile } = useAuth();
 
   const profileId = profile?.id ?? null;
@@ -97,6 +82,8 @@ export default function ActivityHistoryScreen() {
   const [items, setItems] = useState<ActivityItem[]>([]);
   const [filter, setFilter] = useState<ActivityFilter>("all");
   const [loading, setLoading] = useState(true);
+  const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [trackedMessageIdsKey, setTrackedMessageIdsKey] = useState("");
 
   useEffect(() => {
     if (!profileId || !userId) {
@@ -110,26 +97,11 @@ export default function ActivityHistoryScreen() {
       setLoading(true);
       try {
         const [
-          notesRes,
-          giftsRes,
           swipesRes,
           matchesRes,
           profileReactionsRes,
           messagesRes,
-          messageReactionsRes,
         ] = await Promise.all([
-          supabase
-            .from("profile_notes")
-            .select("id,sender_id,note,created_at")
-            .eq("profile_id", profileId)
-            .order("created_at", { ascending: false })
-            .limit(20),
-          supabase
-            .from("profile_gifts")
-            .select("id,sender_id,gift_type,created_at")
-            .eq("profile_id", profileId)
-            .order("created_at", { ascending: false })
-            .limit(20),
           supabase
             .from("swipes")
             .select("id,swiper_id,action,created_at")
@@ -156,42 +128,37 @@ export default function ActivityHistoryScreen() {
             .eq("receiver_id", profileId)
             .order("created_at", { ascending: false })
             .limit(20),
-          supabase
-            .from("message_reactions")
-            .select("id,message_id,user_id,emoji,created_at")
-            .order("created_at", { ascending: false })
-            .limit(20),
         ]);
 
         if (cancelled) return;
 
-        const notes = (notesRes.data || []) as any[];
-        const gifts = (giftsRes.data || []) as any[];
         const swipes = (swipesRes.data || []) as any[];
         const matches = (matchesRes.data || []) as any[];
         const profileReactions = (profileReactionsRes.data || []) as any[];
         const messages = (messagesRes.data || []) as any[];
-        const messageReactions = (messageReactionsRes.data || []) as any[];
 
         const messageIds = Array.from(
-          new Set(messageReactions.map((row) => row?.message_id).filter(Boolean)),
+          new Set(messages.map((row) => row?.id).filter(Boolean)),
         );
+        const nextTrackedMessageIdsKey = [...messageIds].sort().join(":");
+        setTrackedMessageIdsKey((prev) => (prev === nextTrackedMessageIdsKey ? prev : nextTrackedMessageIdsKey));
 
-        const { data: reactionMessages } = messageIds.length
+        const { data: messageReactionsData } = messageIds.length
           ? await supabase
-              .from("messages")
-              .select("id,sender_id,receiver_id")
-              .in("id", messageIds)
+              .from("message_reactions")
+              .select("id,message_id,user_id,emoji,created_at")
+              .in("message_id", messageIds)
+              .order("created_at", { ascending: false })
+              .limit(60)
           : { data: [] };
+        const messageReactions = (messageReactionsData || []) as any[];
 
         const messageById = new Map<string, any>();
-        (reactionMessages || []).forEach((row: any) => {
+        messages.forEach((row: any) => {
           if (row?.id) messageById.set(row.id, row);
         });
 
         const actorIds = new Set<string>();
-        notes.forEach((row) => row?.sender_id && actorIds.add(row.sender_id));
-        gifts.forEach((row) => row?.sender_id && actorIds.add(row.sender_id));
         swipes.forEach((row) => row?.swiper_id && actorIds.add(row.swiper_id));
         profileReactions.forEach((row) => row?.reactor_user_id && actorIds.add(row.reactor_user_id));
         messages.forEach((row) => row?.sender_id && actorIds.add(row.sender_id));
@@ -203,17 +170,27 @@ export default function ActivityHistoryScreen() {
 
         const profileById = new Map<string, any>();
         let hiddenPeerUserIds = new Set<string>();
-        if (actorIds.size) {
-          const { data: profilesData } = await supabase
-            .from("profiles")
-            .select("id,user_id,full_name,avatar_url,account_state,deleted_at")
-            .in("id", Array.from(actorIds));
-          (profilesData || []).forEach((p: any) => {
+        if (actorIds.size > 0) {
+          const [profilesByIdRes, profilesByUserIdRes] = await Promise.all([
+            actorIds.size
+              ? supabase
+                  .from("profiles")
+                  .select("id,user_id,full_name,avatar_url,account_state,deleted_at")
+                  .in("id", Array.from(actorIds))
+              : Promise.resolve({ data: [] as any[] }),
+            actorIds.size
+              ? supabase
+                  .from("profiles")
+                  .select("id,user_id,full_name,avatar_url,account_state,deleted_at")
+                  .in("user_id", Array.from(actorIds))
+              : Promise.resolve({ data: [] as any[] }),
+          ]);
+          [...(profilesByIdRes.data || []), ...(profilesByUserIdRes.data || [])].forEach((p: any) => {
             if (p?.id) profileById.set(p.id, p);
           });
           const peerUserIds = Array.from(
             new Set(
-              ((profilesData as any[]) || [])
+              ([...(profilesByIdRes.data || []), ...(profilesByUserIdRes.data || [])] as any[])
                 .map((p) => (typeof p?.user_id === "string" ? p.user_id : null))
                 .filter((value): value is string => Boolean(value)),
             ),
@@ -228,39 +205,6 @@ export default function ActivityHistoryScreen() {
 
         const activityItems: ActivityItem[] = [];
 
-        notes.forEach((row) => {
-          const profileRow = profileById.get(row.sender_id);
-          if (profileRow?.user_id && hiddenPeerUserIds.has(profileRow.user_id)) return;
-            activityItems.push({
-              id: `note-${row.id}`,
-              type: "note",
-              actorId: row.sender_id,
-              actorUserId: profileRow?.user_id ?? null,
-              actorName: getUserFacingDisplayName(profileRow, "New note"),
-              actorAvatar: profileRow?.avatar_url ?? null,
-            body: row.note || "Sent you a note",
-            createdAt: row.created_at,
-            profileId: row.sender_id,
-          });
-        });
-
-          gifts.forEach((row) => {
-            const profileRow = profileById.get(row.sender_id);
-            if (profileRow?.user_id && hiddenPeerUserIds.has(profileRow.user_id)) return;
-            const senderName = getUserFacingDisplayName(profileRow, "New gift");
-            activityItems.push({
-            id: `gift-${row.id}`,
-            type: "gift",
-            actorId: row.sender_id,
-            actorUserId: profileRow?.user_id ?? null,
-            actorName: senderName,
-            actorAvatar: profileRow?.avatar_url ?? null,
-            body: `Sent you ${giftLabel(row.gift_type)}`,
-            createdAt: row.created_at,
-            profileId: row.sender_id,
-          });
-        });
-
         swipes.forEach((row) => {
           const profileRow = profileById.get(row.swiper_id);
           if (profileRow?.user_id && hiddenPeerUserIds.has(profileRow.user_id)) return;
@@ -272,7 +216,7 @@ export default function ActivityHistoryScreen() {
               actorUserId: profileRow?.user_id ?? null,
               actorName: getUserFacingDisplayName(profileRow, "Someone"),
               actorAvatar: profileRow?.avatar_url ?? null,
-            body: action === "superlike" ? "Superliked your profile" : "Liked your profile",
+            body: action === "superlike" ? "Sent you a Signal" : "Liked your profile",
             createdAt: row.created_at,
             profileId: row.swiper_id,
           });
@@ -360,59 +304,64 @@ export default function ActivityHistoryScreen() {
 
     void fetchActivity();
 
+    const scheduleFetchActivity = () => {
+      if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
+      refreshTimeoutRef.current = setTimeout(() => {
+        refreshTimeoutRef.current = null;
+        void fetchActivity();
+      }, 300);
+    };
+
     const channel = supabase
       .channel(`activity:${profileId}`)
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "profile_notes", filter: `profile_id=eq.${profileId}` },
-        () => void fetchActivity(),
-      )
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "profile_gifts", filter: `profile_id=eq.${profileId}` },
-        () => void fetchActivity(),
-      )
-      .on(
-        "postgres_changes",
         { event: "*", schema: "public", table: "swipes", filter: `target_id=eq.${profileId}` },
-        () => void fetchActivity(),
+        scheduleFetchActivity,
       )
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "matches" },
-        () => void fetchActivity(),
+        { event: "*", schema: "public", table: "matches", filter: `user1_id=eq.${profileId}` },
+        scheduleFetchActivity,
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "matches", filter: `user2_id=eq.${profileId}` },
+        scheduleFetchActivity,
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "messages", filter: `receiver_id=eq.${profileId}` },
-        () => void fetchActivity(),
+        scheduleFetchActivity,
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "profile_image_reactions", filter: `profile_id=eq.${profileId}` },
-        () => void fetchActivity(),
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "message_reactions" },
-        () => void fetchActivity(),
-      )
+        scheduleFetchActivity,
+      );
+    if (trackedMessageIdsKey) {
+      trackedMessageIdsKey.split(":").forEach((messageId) => {
+        channel.on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "message_reactions", filter: `message_id=eq.${messageId}` },
+          scheduleFetchActivity,
+        );
+      });
+    }
+    channel
       .subscribe();
 
     return () => {
       cancelled = true;
+      if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
       supabase.removeChannel(channel);
     };
-  }, [profileId, userId]);
+  }, [profileId, trackedMessageIdsKey, userId]);
 
   const filteredItems = useMemo(() => {
     if (filter === "all") return items;
     return items.filter((item) => {
       switch (filter) {
-        case "notes":
-          return item.type === "note";
-        case "gifts":
-          return item.type === "gift";
         case "likes":
           return item.type === "like" || item.type === "superlike";
         case "matches":
@@ -442,8 +391,6 @@ export default function ActivityHistoryScreen() {
 
   const filters: { key: ActivityFilter; label: string; icon: string }[] = [
     { key: "all", label: "All", icon: "view-grid-outline" },
-    { key: "notes", label: "Notes", icon: "message-text-outline" },
-    { key: "gifts", label: "Gifts", icon: "gift-outline" },
     { key: "likes", label: "Likes", icon: "heart-outline" },
     { key: "matches", label: "Matches", icon: "cards-heart-outline" },
     { key: "reactions", label: "Reactions", icon: "emoticon-outline" },
@@ -452,30 +399,10 @@ export default function ActivityHistoryScreen() {
 
   const emptyState = useMemo(() => {
     switch (filter) {
-      case "notes":
-        return {
-          badge: "Notes inbox",
-          title: "No notes have landed yet",
-          body: "Profiles that feel complete, specific, and warm usually attract the strongest written openings.",
-          highlights: [
-            { icon: "text-box-check-outline", text: "A clear bio and good prompts make it easier for someone to write first." },
-            { icon: "account-heart-outline", text: "Refreshing your photos and interests can invite better conversation starters." },
-          ],
-        };
-      case "gifts":
-        return {
-          badge: "Gift history",
-          title: "No gifts in your timeline yet",
-          body: "Gifts usually follow momentum. Keep your profile vivid enough that someone wants to leave a memorable signal.",
-          highlights: [
-            { icon: "gift-outline", text: "Moments and expressive prompts give admirers more reasons to act." },
-            { icon: "star-four-points-outline", text: "Premium profiles create stronger intent and stronger follow-through." },
-          ],
-        };
       case "likes":
         return {
           badge: "Interest signals",
-          title: "No likes or superlikes yet",
+          title: "No likes or Signals yet",
           body: "This part of your history fills fastest when your first photo, headline, and profile energy are doing real work.",
           highlights: [
             { icon: "heart-outline", text: "Lead with a photo that feels confident, recent, and unmistakably you." },
@@ -651,10 +578,6 @@ export default function ActivityHistoryScreen() {
 
 const iconForType = (type: ActivityType) => {
   switch (type) {
-    case "note":
-      return "message-text-outline";
-    case "gift":
-      return "gift-outline";
     case "like":
       return "heart-outline";
     case "superlike":
@@ -684,7 +607,7 @@ const withAlpha = (hex: string, alpha: number) => {
   return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, alpha))})`;
 };
 
-const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
+const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: ResponsiveMetrics) =>
   StyleSheet.create({
     container: {
       flex: 1,
@@ -697,21 +620,21 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       position: "absolute",
       top: -60,
       left: -80,
-      width: width * 0.9,
-      height: width * 0.9,
-      borderRadius: width,
+      width: responsive.usableWidth * 0.9,
+      height: responsive.usableWidth * 0.9,
+      borderRadius: responsive.usableWidth,
     },
     bgGlowRight: {
       position: "absolute",
       top: 160,
       right: -120,
-      width: width * 0.7,
-      height: width * 0.7,
-      borderRadius: width,
+      width: responsive.usableWidth * 0.7,
+      height: responsive.usableWidth * 0.7,
+      borderRadius: responsive.usableWidth,
     },
     header: {
-      paddingHorizontal: 20,
-      paddingTop: 16,
+      paddingHorizontal: responsive.horizontalGutter,
+      paddingTop: responsive.compactHeight ? 10 : 16,
       paddingBottom: 10,
     },
     backButton: {
@@ -742,8 +665,8 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       fontSize: 13,
     },
     scrollContent: {
-      paddingHorizontal: 18,
-      paddingBottom: 30,
+      paddingHorizontal: responsive.compactWidth ? 14 : 18,
+      paddingBottom: responsive.insets.bottom + 30,
     },
     filterRow: {
       flexDirection: "row",

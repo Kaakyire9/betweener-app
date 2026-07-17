@@ -165,7 +165,7 @@ const formatVerificationType = (value?: string | null) => {
   const type = (value || "").toLowerCase();
   const labels: Record<string, string> = {
     selfie_liveness: "Selfie liveness",
-    passport: "Passport / visa",
+    passport: "Passport / visa / Ghana Card",
     residence: "Residence proof",
     social: "Social media",
     workplace: "Work / study proof",
@@ -266,6 +266,7 @@ function VerificationAssetPreview({
   const player = useVideoPlayer(isVideo && uri ? uri : null, (instance) => {
     instance.loop = loop;
     instance.muted = muted;
+    instance.keepScreenOnWhilePlaying = false;
     if (autoPlay) {
       try { instance.play(); } catch {}
     }

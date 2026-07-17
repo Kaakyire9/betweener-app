@@ -1,63 +1,108 @@
 import ExploreHeader from "@/components/ExploreHeader";
+import { OnboardingArrivalCelebration } from "@/components/onboarding/OnboardingArrivalCelebration";
 import type { ExploreStackHandle } from "@/components/ExploreStack.reanimated";
 import ExploreStack from "@/components/ExploreStack.reanimated";
 import MatchModal from '@/components/MatchModal';
-import MomentCreateModal from '@/components/MomentCreateModal';
 import MomentViewer from '@/components/MomentViewer';
 import PremiumUpsellModal from '@/components/premium/PremiumUpsellModal';
 import ProfileVideoModal from '@/components/ProfileVideoModal';
 import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
+import { markInboxItemsReadByCriteria, useInbox } from "@/hooks/useInbox";
 import { requestAndSavePreciseLocation, saveManualCityLocation } from "@/hooks/useLocationPreference";
+import { GlobalCityField } from "@/components/onboarding/steps/GlobalCityField";
+import type { GlobalLocalitySuggestion } from "@/lib/location/global-locality-shared";
 import { useMoments, type MomentUser } from '@/hooks/useMoments';
 import { usePremiumState } from "@/hooks/use-premium-state";
+import { useResolvedProfileId } from "@/hooks/useResolvedProfileId";
+import useSignalAccess from "@/hooks/useSignalAccess";
 import useVibesFeed, { applyVibesFilters, type VibesFilters } from "@/hooks/useVibesFeed";
 import { useAuth } from "@/lib/auth-context";
 import { haptics } from "@/lib/haptics";
-import { canAccessInternalTools } from "@/lib/internal-tools";
+import { cancelIntentRequestOfflineSafe } from "@/lib/intents/offline-actions";
+import { cacheOfflineVideo, getOfflineVideoUri } from "@/lib/offline/video-store";
+import { subscribeToNetworkRestored } from "@/lib/network-recovery";
+import { fetchViewedMomentIds } from "@/lib/moments-views";
+import {
+  readVibesMomentContextSnapshot,
+  writeVibesMomentContextSnapshot,
+} from "@/lib/offline/vibes-store";
+import {
+  getDefaultVibesPracticeSnapshot,
+  readVibesPracticeSnapshot,
+  writeVibesPracticeSnapshot,
+  type VibesPracticeStep,
+} from "@/lib/offline/vibes-practice-store";
 import { showOpenSettingsPrompt } from "@/lib/permission-prompts";
 import { recordProfileSignal } from '@/lib/profile-signals';
+import { RELIGION_OPTIONS, formatReligionLabel, normalizeReligionForProfile } from "@/lib/profile/religion";
 import { applyDefaults as applyCompassDefaults, mapToDiscoveryFilters } from "@/lib/relationship-compass";
 import { supabase } from "@/lib/supabase";
+import { logVibesEvent, type VibesEventType } from "@/lib/vibes/events";
+import {
+  clearPremiumVibesFilters,
+  deriveActivePresetKey,
+  deriveCompatibilityHint,
+  derivePreviewTone,
+  deriveRoomSummary,
+  resolveAutoUnit,
+} from "@/lib/vibes/vibes-filter-preview";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Haptics from "expo-haptics";
 
 import BlurViewSafe from "@/components/NativeWrappers/BlurViewSafe";
-import LinearGradientSafe, { isLinearGradientAvailable } from "@/components/NativeWrappers/LinearGradientSafe";
+import LinearGradientSafe from "@/components/NativeWrappers/LinearGradientSafe";
 import IntentRequestSheet from "@/components/IntentRequestSheet";
-import { router, useFocusEffect } from 'expo-router';
-import { CircleOff, Gem, Sparkles, Target } from "lucide-react-native";
+import SendSignalSheet from "@/components/signal/SendSignalSheet";
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { Gem } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Animated, DeviceEventEmitter, Easing, KeyboardAvoidingView, Modal, PanResponder, Platform, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import VibesAllMomentsModal from "@/components/vibes/VibesAllMomentsModal";
-import VibesMomentsStrip from "@/components/vibes/VibesMomentsStrip";
-import VibesIntroModal from "@/components/vibes/VibesIntroModal";
+import FloatingMomentsCapsule from "@/components/vibes/moments/FloatingMomentsCapsule";
+import MomentsHeaderRow from "@/components/vibes/moments/MomentsHeaderRow";
+import useMomentsCapsuleMetrics from "@/components/vibes/moments/useMomentsCapsuleMetrics";
+import VibesPracticeWalkthrough, { type PracticeStep } from "@/components/vibes/VibesPracticeWalkthrough";
+import DepthBackground from "@/components/vibes/depth/DepthBackground";
+import VibesActionDock from "@/components/vibes/depth/VibesActionDock";
+import useVibesResponsiveMetrics from "@/components/vibes/depth/useVibesResponsiveMetrics";
 import Notice from "@/components/ui/Notice";
 import { ExploreStackSkeleton } from "@/components/ui/Skeleton";
+import { findCountryByCode, getPrioritizedCountries, type CountryOption } from "@/lib/location/countries";
+import {
+  getGhanaCountryPolicyMessage,
+  isGhanaCountryManagedPolicy,
+} from '@/lib/location/country-lock';
+import { toFlagEmoji } from "@/lib/location/location-display";
 import { isLikelyNetworkError } from "@/lib/network";
+import { requestOpenProfileEdit } from "@/lib/profile/edit-handoff";
+import { isGhanaianDiasporaProfile } from "@/lib/profile/onboarding-experience";
 import { logger } from "@/lib/telemetry/logger";
+import {
+  formatAgePresetLabel,
+  formatAgeRangeValue,
+  getAgePresetSupportCopy,
+  getAgeRangeForPreset,
+  resolveAgePresetMode,
+  type AgePresetMode,
+} from "@/lib/vibes/age-range-presets";
 import type { MomentRelationshipContext } from "@/types/moment-context";
+import { getMomentsInboxActivityItems } from "@/lib/inbox/badge-groups";
 
 const DISTANCE_UNIT_KEY = 'distance_unit';
 const DISTANCE_UNIT_EVENT = 'distance_unit_changed';
 const KM_PER_MILE = 1.60934;
 const VIBES_FILTERS_KEY = 'vibes_filters_v2';
 const VIBES_INTRO_SEEN_KEY = 'vibes_intro_seen_v1';
+const VIBES_PRACTICE_COMPLETE_KEY = 'vibes_practice_complete_v1';
 const VIBES_MOMENTS_COLLAPSED_KEY = 'vibes:momentsCollapsed';
 const VIBES_LOCATION_PROMPT_DISMISSED_KEY = 'vibes:locationPromptDismissed:v1';
-
-const clearPremiumVibesFilters = (filters: VibesFilters): VibesFilters => ({
-  ...filters,
-  verifiedOnly: false,
-  hasVideoOnly: false,
-  activeOnly: false,
-  distanceFilterKm: null,
-  minVibeScore: null,
-  minSharedInterests: 0,
-});
+const VIBES_VIEWED_MOMENT_IDS_KEY_PREFIX = 'vibes:viewedMomentIds:v1:';
+const VIBES_PRACTICE_VERSION = 1;
+const MOMENT_INBOX_TYPES = ['MOMENT_REACTION', 'MOMENT_COMMENT', 'MOMENT_COMMENT_REACTION'] as const;
 
 type DistanceUnit = 'auto' | 'km' | 'mi';
 type PremiumUpsellState = {
@@ -65,188 +110,46 @@ type PremiumUpsellState = {
   title: string;
   message: string;
 };
-type RoomSummary = {
-  title: string;
-  body: string;
+type VibesIntentTarget = {
+  id: string;
+  name?: string | null;
+  deckIndex?: number;
 };
-type PreviewTone = {
-  eyebrow: string;
-  title: string;
-  body: string;
-  cta: string;
+type VibesSignalTarget = VibesIntentTarget & {
+  match?: any | null;
 };
-
-const COUNTRY_OPTIONS = [
-  { label: 'Ghana', code: 'GH' },
-  { label: 'United States', code: 'US' },
-  { label: 'United Kingdom', code: 'GB' },
-  { label: 'Canada', code: 'CA' },
-  { label: 'Germany', code: 'DE' },
-  { label: 'Netherlands', code: 'NL' },
-  { label: 'Italy', code: 'IT' },
-  { label: 'Australia', code: 'AU' },
-  { label: 'South Africa', code: 'ZA' },
-  { label: 'Nigeria', code: 'NG' },
-  { label: 'Ivory Coast', code: 'CI' },
-  { label: 'Burkina Faso', code: 'BF' },
-  { label: 'France', code: 'FR' },
-  { label: 'Spain', code: 'ES' },
-  { label: 'Belgium', code: 'BE' },
-  { label: 'Sweden', code: 'SE' },
-  { label: 'Norway', code: 'NO' },
-  { label: 'UAE', code: 'AE' },
-];
-
-const resolveAutoUnit = (): 'km' | 'mi' => {
-  try {
-    const locale = Intl.DateTimeFormat().resolvedOptions().locale || '';
-    return /[-_]US\b/i.test(locale) ? 'mi' : 'km';
-  } catch {
-    return 'km';
-  }
-};
-
-const hasAnyDraftFilters = (filters: VibesFilters) =>
-  Boolean(filters.verifiedOnly) ||
-  Boolean(filters.hasVideoOnly) ||
-  Boolean(filters.activeOnly) ||
-  filters.distanceFilterKm != null ||
-  filters.minVibeScore != null ||
-  (filters.minSharedInterests || 0) > 0 ||
-  filters.minAge !== 18 ||
-  filters.maxAge !== 60 ||
-  Boolean(filters.religionFilter) ||
-  Boolean(filters.locationQuery?.trim());
-
-const deriveActivePresetKey = (filters: VibesFilters): string | null => {
-  if (filters.verifiedOnly && filters.minVibeScore === 60 && (filters.minSharedInterests || 0) >= 2) return 'real-intent';
-  if (filters.minVibeScore === 70 && (filters.minSharedInterests || 0) >= 2 && filters.activeOnly) return 'high-vibe';
-  if (filters.verifiedOnly && !filters.hasVideoOnly && !filters.activeOnly && filters.minVibeScore == null && (filters.minSharedInterests || 0) === 0) return 'verified';
-  if (filters.hasVideoOnly && !filters.verifiedOnly && !filters.activeOnly && filters.minVibeScore == null && (filters.minSharedInterests || 0) === 0) return 'video';
-  if (filters.activeOnly && !filters.verifiedOnly && !filters.hasVideoOnly && filters.minVibeScore == null && (filters.minSharedInterests || 0) === 0) return 'active';
-  return null;
-};
-
-const deriveRoomSummary = (filters: VibesFilters): RoomSummary => {
-  const preset = deriveActivePresetKey(filters);
-  if (!hasAnyDraftFilters(filters)) {
-    return {
-      title: 'Open room - discover freely',
-      body: 'Keep the room open and let chemistry surprise you.',
-    };
-  }
-  if (preset === 'real-intent') {
-    return {
-      title: 'Real-intent room',
-      body: 'Biased toward trust, overlap, and people showing stronger follow-through.',
-    };
-  }
-  if (preset === 'high-vibe') {
-    return {
-      title: 'High-vibe room',
-      body: 'Fewer, stronger profiles ahead with better chemistry and momentum.',
-    };
-  }
-  if (filters.verifiedOnly && filters.activeOnly) {
-    return {
-      title: 'Shaped around trusted, active people',
-      body: 'Less noise, more visible energy, and a tighter pace.',
-    };
-  }
-  if (filters.minVibeScore != null || (filters.minSharedInterests || 0) > 0) {
-    return {
-      title: 'Focused on stronger chemistry',
-      body: 'You are asking for fewer matches, but better overlap and better fit.',
-    };
-  }
-  if (filters.distanceFilterKm != null) {
-    return {
-      title: 'Closer, tighter room',
-      body: 'Discovery is leaning toward people within an easier reach.',
-    };
-  }
-  if (filters.religionFilter || filters.locationQuery?.trim()) {
-    return {
-      title: 'Gently refined room',
-      body: 'A few quiet boundaries are shaping discovery without closing it down too much.',
-    };
-  }
-  if (filters.hasVideoOnly) {
-    return {
-      title: 'Biased toward presence',
-      body: 'The room is leaning toward people who have shown a little more of themselves.',
-    };
-  }
-  return {
-    title: 'Room taking shape',
-    body: 'A calmer, more selective mix is starting to emerge.',
-  };
-};
-
-const deriveCompatibilityHint = (filters: VibesFilters) => {
-  if (filters.minVibeScore == null && (filters.minSharedInterests || 0) === 0) return 'Wide and open';
-  if ((filters.minVibeScore || 0) >= 70 || (filters.minSharedInterests || 0) >= 3) return 'Fewer but stronger matches';
-  if ((filters.minVibeScore || 0) >= 60 || (filters.minSharedInterests || 0) >= 2) return 'Tighter, higher-intent room';
-  return 'Balanced chemistry';
-};
-
-const derivePreviewTone = (previewCount: number | null, filters: VibesFilters, loadedCount: number): PreviewTone => {
-  if (previewCount == null) {
-    return {
-      eyebrow: 'Room preview',
-      title: 'Shape first, then preview',
-      body: 'Your count updates as the room shifts.',
-      cta: 'Apply my room',
-    };
-  }
-  if (previewCount === 0) {
-    return {
-      eyebrow: 'Very selective',
-      title: 'No one matches this room yet',
-      body: 'Ease a few controls and the room will open again.',
-      cta: 'Apply my room',
-    };
-  }
-  if (!hasAnyDraftFilters(filters)) {
-    return {
-      eyebrow: 'Open discovery',
-      title: `Preview: ${previewCount} ${previewCount === 1 ? 'person matches this room' : 'people match this room'}`,
-      body: loadedCount > 0 ? 'Broad, relaxed, and ready for surprise chemistry.' : 'A wide-open room for freer discovery.',
-      cta: 'Apply my room',
-    };
-  }
-  if (previewCount <= 5) {
-    return {
-      eyebrow: 'Highly curated',
-      title: `Preview: ${previewCount} ${previewCount === 1 ? 'person matches this room' : 'people match this room'}`,
-      body: 'Very selective. Fewer profiles ahead, but likely stronger fit.',
-      cta: 'Apply my room',
-    };
-  }
-  if (previewCount <= 15) {
-    return {
-      eyebrow: 'Focused room',
-      title: `Preview: ${previewCount} ${previewCount === 1 ? 'person matches this room' : 'people match this room'}`,
-      body: 'More selective, stronger fit.',
-      cta: 'Apply & preview my room',
-    };
-  }
-  return {
-    eyebrow: 'Balanced room',
-    title: `Preview: ${previewCount} ${previewCount === 1 ? 'person matches this room' : 'people match this room'}`,
-    body: 'A healthy mix of openness and stronger targeting.',
-    cta: 'Apply my room',
-  };
-};
+type VibesActionHistoryEntry =
+  | { kind: 'swipe'; id: string; action: 'like' | 'dislike' | 'superlike'; index: number }
+  | { kind: 'intent'; id: string; requestId: string | null; index: number }
+  | { kind: 'signal'; id: string; signalId: string; index: number };
 
 export default function ExploreScreen() {
+  const { onboardingCelebration } = useLocalSearchParams<{ onboardingCelebration?: string }>();
+  const [showOnboardingCelebration, setShowOnboardingCelebration] = useState(false);
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = (colorScheme ?? 'light') === 'dark';
   const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
-  const { profile, user, refreshProfile } = useAuth();
+  const layoutMetrics = useVibesResponsiveMetrics();
+  const vibesActionRailGap = layoutMetrics.device.compactHeight ? 18 : 24;
+
+  useEffect(() => {
+    if (onboardingCelebration !== "1") return;
+    setShowOnboardingCelebration(true);
+    router.setParams({ onboardingCelebration: undefined });
+  }, [onboardingCelebration]);
+  const vibesStackVisualReserve = layoutMetrics.device.compactHeight ? 18 : 22;
+  const momentsCapsuleMetrics = useMomentsCapsuleMetrics();
+  const { profile, user, refreshProfile, authRecoveryPending, usingPersistedSessionFallback } = useAuth();
+  const showingRecoveredSnapshot = authRecoveryPending || usingPersistedSessionFallback;
+  const { profileId: resolvedProfileId } = useResolvedProfileId(user?.id ?? null, profile?.id ?? null);
+  const isGhanaianDiaspora = isGhanaianDiasporaProfile(profile);
+  const vibesSubtitle = isGhanaianDiaspora
+    ? 'Ghanaian Diaspora Connections'
+    : 'Where worlds apart feel closer';
   const { hasAccess } = usePremiumState();
+  const { access: signalAccess, refresh: refreshSignalAccess } = useSignalAccess(Boolean(resolvedProfileId));
   const hasAdvancedFilters = hasAccess('SILVER');
   const profileCountryCode = (profile as any)?.current_country_code as string | undefined;
   const relationshipCompass = useMemo(() => {
@@ -259,6 +162,10 @@ export default function ExploreScreen() {
     currentUserId: user?.id,
     currentUserProfile: profile,
   });
+  const viewedMomentIdsStorageKey = useMemo(
+    () => (user?.id ? `${VIBES_VIEWED_MOMENT_IDS_KEY_PREFIX}${user.id}` : null),
+    [user?.id],
+  );
   const momentBoostIds = useMemo(
     () => new Set(momentUsers.filter((u) => u.moments.length > 0).map((u) => String(u.userId))),
     [momentUsers],
@@ -272,6 +179,20 @@ export default function ExploreScreen() {
   const [activeWindowMinutes, _setActiveWindowMinutes] = useState(15);
   const [distanceUnit, setDistanceUnit] = useState<DistanceUnit>('auto');
   const [viewerInterests, setViewerInterests] = useState<string[]>([]);
+  const savedMinAgePreference = useMemo(() => {
+    const raw = Number((profile as any)?.min_age_interest);
+    if (!Number.isFinite(raw)) return 18;
+    return Math.max(18, Math.min(99, Math.round(raw)));
+  }, [profile]);
+  const savedMaxAgePreference = useMemo(() => {
+    const raw = Number((profile as any)?.max_age_interest);
+    if (!Number.isFinite(raw)) return 35;
+    return Math.max(savedMinAgePreference, Math.min(99, Math.round(raw)));
+  }, [profile, savedMinAgePreference]);
+  const savedAgeRangeLabel = formatAgeRangeValue({
+    min: savedMinAgePreference,
+    max: savedMaxAgePreference,
+  });
   const vibesSegment = activeTab === 'nearby' ? 'nearby' : activeTab === 'active' ? 'activeNow' : 'forYou';
   const {
     profiles: matchList,
@@ -289,31 +210,39 @@ export default function ExploreScreen() {
     filters: appliedFilters,
     refreshRemaining: _refreshRemaining,
   } = useVibesFeed({
-    userId: profile?.id,
+    userId: resolvedProfileId,
+    snapshotOwnerIds: [resolvedProfileId, profile?.id, user?.id, (profile as any)?.user_id],
     segment: vibesSegment,
     activeWindowMinutes,
     distanceUnit,
+    liveFetchEnabled: !showingRecoveredSnapshot,
     momentUserIds: momentBoostIds,
     viewerInterests,
     viewerGender: (profile as any)?.gender ?? null,
     viewerProfile: profile,
     relationshipCompass,
+    initialFilters: {
+      minAge: savedMinAgePreference,
+      maxAge: savedMaxAgePreference,
+    },
   });
 
   const [celebrationMatch, setCelebrationMatch] = useState<any | null>(null);
   const [offlineNotice, setOfflineNotice] = useState<string | null>(null);
   const lastFeedErrorAtRef = useRef(0);
   const [momentViewerVisible, setMomentViewerVisible] = useState(false);
-  const [momentCreateVisible, setMomentCreateVisible] = useState(false);
   const [momentStartUserId, setMomentStartUserId] = useState<string | null>(null);
   const [allMomentsVisible, setAllMomentsVisible] = useState(false);
   const [momentsCollapsed, setMomentsCollapsed] = useState(true);
+  const [viewedMomentIds, setViewedMomentIds] = useState<Set<string>>(new Set());
   const [locationPromptDismissed, setLocationPromptDismissed] = useState(false);
   const [momentPriorityProfileIds, setMomentPriorityProfileIds] = useState<Set<string>>(new Set());
   const [momentRelationshipContextByProfileId, setMomentRelationshipContextByProfileId] = useState<Record<string, MomentRelationshipContext>>({});
   const [intentSheetVisible, setIntentSheetVisible] = useState(false);
-  const [intentTarget, setIntentTarget] = useState<{ id: string; name?: string | null } | null>(null);
-
+  const [intentTarget, setIntentTarget] = useState<VibesIntentTarget | null>(null);
+  const [signalSheetVisible, setSignalSheetVisible] = useState(false);
+  const [signalTarget, setSignalTarget] = useState<VibesSignalTarget | null>(null);
+  const [intentQueueBadge, setIntentQueueBadge] = useState<{ waiting: number; endingSoon: number } | null>(null);
   // when the hook reports a mutual match, show the celebration modal
   useEffect(() => {
     if (lastMutualMatch) {
@@ -322,7 +251,76 @@ export default function ExploreScreen() {
     }
   }, [lastMutualMatch]);
 
+  const { items: inboxItems } = useInbox(user?.id ?? null);
+  const momentAttentionProfileIds = useMemo(() => {
+    const next = new Set<string>();
+    getMomentsInboxActivityItems(inboxItems).forEach((item) => {
+      if (typeof item.actor_id === "string" && item.actor_id.trim().length > 0) {
+        next.add(item.actor_id.trim());
+      }
+    });
+    return next;
+  }, [inboxItems]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!user?.id) return;
+      void markInboxItemsReadByCriteria(user.id, {
+        types: [...MOMENT_INBOX_TYPES],
+        clearActionRequired: true,
+      });
+    }, [user?.id]),
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      const loadIntentQueueBadge = async () => {
+        if (!resolvedProfileId) {
+          setIntentQueueBadge(null);
+          return;
+        }
+        const nowIso = new Date().toISOString();
+        const [signalsResult, requestsResult] = await Promise.all([
+          (supabase as any)
+            .from('profile_signal_gestures')
+            .select('id,expires_at')
+            .eq('receiver_profile_id', resolvedProfileId)
+            .in('status', ['sent', 'seen'])
+            .gt('expires_at', nowIso)
+            .limit(20),
+          supabase
+            .from('intent_requests')
+            .select('id,expires_at')
+            .eq('recipient_id', resolvedProfileId)
+            .eq('status', 'pending')
+            .gt('expires_at', nowIso)
+            .limit(20),
+        ]);
+        if (cancelled || signalsResult.error || requestsResult.error) return;
+        const rows = [
+          ...(((signalsResult.data as { expires_at: string }[] | null) ?? []).filter(Boolean)),
+          ...(((requestsResult.data as { expires_at: string }[] | null) ?? []).filter(Boolean)),
+        ];
+        const endingSoon = rows.filter((item) => {
+          const ts = Date.parse(item.expires_at);
+          if (Number.isNaN(ts)) return false;
+          return (ts - Date.now()) / 3600000 <= 6;
+        }).length;
+        setIntentQueueBadge(rows.length > 0 ? { waiting: rows.length, endingSoon } : null);
+      };
+      void loadIntentQueueBadge();
+      return () => {
+        cancelled = true;
+      };
+    }, [resolvedProfileId]),
+  );
+
   useEffect(() => {
+    if (showingRecoveredSnapshot) {
+      setOfflineNotice(null);
+      return;
+    }
     if (!matchesError) {
       setOfflineNotice(null);
       return;
@@ -331,13 +329,22 @@ export default function ExploreScreen() {
     // of swiping when data is already present.
     if (matchList.length === 0) {
       const now = Date.now();
+      const networkLikeError = isLikelyNetworkError(matchesError);
       if (now - lastFeedErrorAtRef.current > 60_000) {
         lastFeedErrorAtRef.current = now;
-        logger.error("[vibes] feed_error", matchesError, {
+        const ctx = {
           segment: vibesSegment,
-          isLikelyNetwork: isLikelyNetworkError(matchesError),
+          isLikelyNetwork: networkLikeError,
           hasUserId: !!profile?.id,
-        });
+        };
+        if (networkLikeError) {
+          logger.warn("[vibes] feed_warning", {
+            ...ctx,
+            error: String((matchesError as any)?.message || matchesError || "unknown"),
+          });
+        } else {
+          logger.error("[vibes] feed_error", matchesError, ctx);
+        }
       }
 
       // Keep tester UX generic; detailed error goes to Sentry.
@@ -345,7 +352,7 @@ export default function ExploreScreen() {
       return;
     }
     setOfflineNotice(null);
-  }, [matchList.length, matchesError]);
+  }, [matchList.length, matchesError, showingRecoveredSnapshot]);
 
   const resolvedDistanceUnit = useMemo(
     () => (distanceUnit === 'auto' ? resolveAutoUnit() : distanceUnit),
@@ -355,10 +362,16 @@ export default function ExploreScreen() {
 
   const [videoModalUrl, setVideoModalUrl] = useState<string | null>(null);
   const [videoModalVisible, setVideoModalVisible] = useState(false);
+  const [videoModalTitle, setVideoModalTitle] = useState<string | null>(null);
+  const [videoModalSubtitle, setVideoModalSubtitle] = useState<string | null>(null);
   const [previewingId, setPreviewingId] = useState<string | null>(null);
   const [manualLocationModalVisible, setManualLocationModalVisible] = useState(false);
-  const [manualLocation, setManualLocation] = useState(profile?.location || "");
+  const [manualLocation, setManualLocation] = useState((profile as any)?.city || profile?.location || "");
+  const [manualRegion, setManualRegion] = useState<string | null>((profile as any)?.region || null);
+  const [manualLocality, setManualLocality] = useState<GlobalLocalitySuggestion | null>(null);
   const [manualCountryCode, setManualCountryCode] = useState(profileCountryCode || "");
+  const [manualCountryPickerOpen, setManualCountryPickerOpen] = useState(false);
+  const [manualCountrySearch, setManualCountrySearch] = useState('');
   const [locationError, setLocationError] = useState<string | null>(null);
   const [isSavingLocation, setIsSavingLocation] = useState(false);
   const [premiumUpsell, setPremiumUpsell] = useState<PremiumUpsellState | null>(null);
@@ -366,17 +379,25 @@ export default function ExploreScreen() {
   const [filtersVisible, setFiltersVisible] = useState(false);
   const [filtersPanel, setFiltersPanel] = useState<'main' | 'location'>('main');
   const [advancedExpanded, setAdvancedExpanded] = useState(false);
-  const [introVisible, setIntroVisible] = useState(false);
+  const [practiceLoaded, setPracticeLoaded] = useState(false);
+  const [practiceComplete, setPracticeComplete] = useState(true);
+  const [practiceReplayVisible, setPracticeReplayVisible] = useState(false);
+  const [practiceDismissed, setPracticeDismissed] = useState(false);
+  const [practiceStep, setPracticeStep] = useState<VibesPracticeStep>('intro');
+  const [practiceGestureLocked, setPracticeGestureLocked] = useState(false);
+  const [deckGestureLocked, setDeckGestureLocked] = useState(false);
+  const showPracticeWalkthrough = practiceLoaded && ((!practiceComplete && !practiceDismissed) || practiceReplayVisible);
   const [verifiedOnly, setVerifiedOnly] = useState(false);
   const [hasVideoOnly, setHasVideoOnly] = useState(false);
   const [activeOnly, setActiveOnly] = useState(false);
   const [distanceFilterKm, setDistanceFilterKm] = useState<number | null>(null);
-  const [minAge, setMinAge] = useState<number>(18);
-  const [maxAge, setMaxAge] = useState<number>(60);
+  const [minAge, setMinAge] = useState<number>(savedMinAgePreference);
+  const [maxAge, setMaxAge] = useState<number>(savedMaxAgePreference);
   const [religionFilter, setReligionFilter] = useState<string | null>(null);
   const [minVibeScore, setMinVibeScore] = useState<number | null>(null);
   const [minSharedInterests, setMinSharedInterests] = useState<number>(0);
   const [locationQuery, setLocationQuery] = useState<string>('');
+  const scrollViewRef = useRef<any>(null);
   const prefetchedDetailsRef = useRef<Set<string>>(new Set());
   const prefetchInFlightRef = useRef<Set<string>>(new Set());
   const refreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -391,18 +412,310 @@ export default function ExploreScreen() {
     () => (relationshipCompass ? mapToDiscoveryFilters(relationshipCompass) : {}),
     [relationshipCompass],
   );
+  const baseDiscoveryFilters = useMemo<VibesFilters>(
+    () => ({
+      verifiedOnly: false,
+      hasVideoOnly: false,
+      activeOnly: false,
+      distanceFilterKm: null,
+      minAge: savedMinAgePreference,
+      maxAge: savedMaxAgePreference,
+      religionFilter: null,
+      minVibeScore: null,
+      minSharedInterests: 0,
+      locationQuery: '',
+    }),
+    [savedMaxAgePreference, savedMinAgePreference],
+  );
+  const ageFilterBaseline = useMemo(
+    () => ({
+      minAge: baseDiscoveryFilters.minAge,
+      maxAge: baseDiscoveryFilters.maxAge,
+    }),
+    [baseDiscoveryFilters.maxAge, baseDiscoveryFilters.minAge],
+  );
+  const agePresetModes = useMemo<Exclude<AgePresetMode, 'custom'>[]>(
+    () => ['focused', 'balanced', 'open'],
+    [],
+  );
+  const previousBaseAgeRef = useRef<{ minAge: number; maxAge: number }>({
+    minAge: baseDiscoveryFilters.minAge,
+    maxAge: baseDiscoveryFilters.maxAge,
+  });
+  const buildPersistedFiltersPayload = useCallback(
+    (next: VibesFilters) => ({
+      ...next,
+      __baseMinAge: baseDiscoveryFilters.minAge,
+      __baseMaxAge: baseDiscoveryFilters.maxAge,
+    }),
+    [baseDiscoveryFilters.maxAge, baseDiscoveryFilters.minAge],
+  );
+  const normalizePersistedFilters = useCallback(
+    (parsed: any): VibesFilters => {
+      const rawMinAge =
+        typeof parsed?.minAge === 'number' ? parsed.minAge : baseDiscoveryFilters.minAge;
+      const rawMaxAge =
+        typeof parsed?.maxAge === 'number' ? parsed.maxAge : baseDiscoveryFilters.maxAge;
+      const persistedBaseMinAge =
+        typeof parsed?.__baseMinAge === 'number' ? parsed.__baseMinAge : null;
+      const persistedBaseMaxAge =
+        typeof parsed?.__baseMaxAge === 'number' ? parsed.__baseMaxAge : null;
+      const matchesPersistedBase =
+        persistedBaseMinAge != null &&
+        persistedBaseMaxAge != null &&
+        rawMinAge === persistedBaseMinAge &&
+        rawMaxAge === persistedBaseMaxAge;
+      const looksLikeLegacyDefault =
+        persistedBaseMinAge == null &&
+        persistedBaseMaxAge == null &&
+        rawMinAge === 18 &&
+        rawMaxAge === 60 &&
+        (baseDiscoveryFilters.minAge !== 18 || baseDiscoveryFilters.maxAge !== 60);
+      const shouldRebaseAge =
+        (matchesPersistedBase &&
+          (persistedBaseMinAge !== baseDiscoveryFilters.minAge ||
+            persistedBaseMaxAge !== baseDiscoveryFilters.maxAge)) ||
+        looksLikeLegacyDefault;
+
+      return {
+        ...baseDiscoveryFilters,
+        verifiedOnly: Boolean(parsed?.verifiedOnly),
+        hasVideoOnly: Boolean(parsed?.hasVideoOnly),
+        activeOnly: Boolean(parsed?.activeOnly),
+        distanceFilterKm:
+          typeof parsed?.distanceFilterKm === 'number' ? parsed.distanceFilterKm : null,
+        minAge: shouldRebaseAge ? baseDiscoveryFilters.minAge : rawMinAge,
+        maxAge: shouldRebaseAge ? baseDiscoveryFilters.maxAge : rawMaxAge,
+        religionFilter: typeof parsed?.religionFilter === 'string' ? parsed.religionFilter : null,
+        minVibeScore: typeof parsed?.minVibeScore === 'number' ? parsed.minVibeScore : null,
+        minSharedInterests:
+          typeof parsed?.minSharedInterests === 'number' ? parsed.minSharedInterests : 0,
+        locationQuery: typeof parsed?.locationQuery === 'string' ? parsed.locationQuery : '',
+      };
+    },
+    [baseDiscoveryFilters],
+  );
   const filtersLoadedKeyRef = useRef<string | null>(null);
   const introStorageKey = useMemo(
     () => (profile?.id ? `${VIBES_INTRO_SEEN_KEY}:${profile.id}` : user?.id ? `${VIBES_INTRO_SEEN_KEY}:auth:${user.id}` : null),
     [profile?.id, user?.id],
   );
+  const selectedManualCountry = useMemo(
+    () => findCountryByCode(manualCountryCode),
+    [manualCountryCode],
+  );
+  const manualCountryOptions = useMemo(
+    () => getPrioritizedCountries(manualCountrySearch),
+    [manualCountrySearch],
+  );
+  const selectedManualCountryFlag = selectedManualCountry ? toFlagEmoji(selectedManualCountry.code) : '';
+  const manualSelectedGeonameId = manualLocality?.geonameId ?? (
+    manualLocation === (profile as any)?.city && manualCountryCode === profileCountryCode
+      ? (profile as any)?.locality_geoname_id ?? null
+      : null
+  );
+  const manualCityStyles = useMemo(() => ({
+    citySection: { gap: 8, marginTop: 14 },
+    fieldLabelRow: { flexDirection: 'row' as const, justifyContent: 'space-between' as const, alignItems: 'center' as const },
+    fieldLabel: { fontSize: 13, fontWeight: '700' as const, color: theme.text },
+    optionalLabel: { fontSize: 11, fontWeight: '700' as const, color: theme.tint },
+    input: styles.modalInput,
+    inputError: { borderColor: '#C94C4C' },
+    selectBox: styles.countrySelectButton,
+    selectBoxSelected: { borderColor: theme.tint },
+    selectValueWrap: { flex: 1, gap: 2 },
+    selectText: { fontSize: 15, fontWeight: '700' as const, color: theme.text },
+    selectPlaceholder: { color: theme.textMuted, fontWeight: '500' as const },
+    selectMetaText: { fontSize: 12, color: theme.textMuted },
+    helperText: { fontSize: 12, lineHeight: 17, color: theme.textMuted },
+    subtleNote: { fontSize: 12, fontWeight: '700' as const },
+    errorText: styles.locationError,
+    tokens: { muted: { color: theme.textMuted }, accent: { color: theme.tint } },
+  }), [styles, theme]);
+  const practiceProfileId = useMemo(
+    () => resolvedProfileId ?? profile?.id ?? null,
+    [profile?.id, resolvedProfileId],
+  );
+  const practiceSnapshotOwnerId = useMemo(
+    () => practiceProfileId ?? user?.id ?? null,
+    [practiceProfileId, user?.id],
+  );
+  const backendPracticeCompletedVersion = useMemo(
+    () => Number((profile as any)?.vibes_practice_completed_version ?? 0),
+    [profile],
+  );
+  const backendPracticeCompletedAt = useMemo(
+    () => (typeof (profile as any)?.vibes_practice_completed_at === 'string'
+      ? String((profile as any)?.vibes_practice_completed_at)
+      : null),
+    [profile],
+  );
+  const legacyPracticeStorageKey = useMemo(
+    () => (profile?.id ? `${VIBES_PRACTICE_COMPLETE_KEY}:${profile.id}` : user?.id ? `${VIBES_PRACTICE_COMPLETE_KEY}:auth:${user.id}` : null),
+    [profile?.id, user?.id],
+  );
+  const scrollVibesToTop = useCallback(() => {
+    requestAnimationFrame(() => {
+      try {
+        scrollViewRef.current?.scrollTo?.({ y: 0, animated: true });
+      } catch {}
+    });
+  }, []);
 
-  const closeIntro = useCallback(async () => {
+  const syncPracticeCompletionToBackend = useCallback(async (completedAtIso: string) => {
+    if (!practiceProfileId) return false;
     try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({
+          vibes_practice_completed_at: completedAtIso,
+          vibes_practice_completed_version: VIBES_PRACTICE_VERSION,
+        } as any)
+        .eq('id', practiceProfileId);
+      return !error;
+    } catch {
+      return false;
+    }
+  }, [practiceProfileId]);
+
+  const completePractice = useCallback(async () => {
+    if (practiceReplayVisible) {
+      setPracticeReplayVisible(false);
+      setPracticeDismissed(false);
+      setPracticeStep('intro');
+      setPracticeGestureLocked(false);
+      setDeckGestureLocked(false);
+      scrollVibesToTop();
+      return;
+    }
+    const completedAtIso = new Date().toISOString();
+    setPracticeComplete(true);
+    setPracticeDismissed(false);
+    setPracticeStep('intentPrompt');
+    setPracticeGestureLocked(false);
+    setDeckGestureLocked(false);
+    scrollVibesToTop();
+    try {
+      if (legacyPracticeStorageKey) await AsyncStorage.setItem(legacyPracticeStorageKey, '1');
       if (introStorageKey) await AsyncStorage.setItem(introStorageKey, '1');
     } catch {}
-    setIntroVisible(false);
-  }, [introStorageKey]);
+    if (practiceSnapshotOwnerId) {
+      await writeVibesPracticeSnapshot(practiceSnapshotOwnerId, {
+        completedAt: completedAtIso,
+        completedVersion: VIBES_PRACTICE_VERSION,
+        completionSyncPending: Boolean(practiceProfileId),
+        currentStep: 'intro',
+        updatedAt: completedAtIso,
+      });
+    }
+    const synced = await syncPracticeCompletionToBackend(completedAtIso);
+    if (synced && practiceSnapshotOwnerId) {
+      await writeVibesPracticeSnapshot(practiceSnapshotOwnerId, {
+        completedAt: completedAtIso,
+        completedVersion: VIBES_PRACTICE_VERSION,
+        completionSyncPending: false,
+        currentStep: 'intro',
+        updatedAt: completedAtIso,
+      });
+    }
+  }, [introStorageKey, legacyPracticeStorageKey, practiceProfileId, practiceReplayVisible, practiceSnapshotOwnerId, scrollVibesToTop, syncPracticeCompletionToBackend]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setPracticeLoaded(false);
+
+    if (!practiceSnapshotOwnerId) {
+      setPracticeStep('intro');
+      setPracticeComplete(true);
+      setPracticeLoaded(true);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    (async () => {
+      try {
+        const localSnapshot = (await readVibesPracticeSnapshot(practiceSnapshotOwnerId)) ?? getDefaultVibesPracticeSnapshot();
+        const legacyPracticeComplete = legacyPracticeStorageKey
+          ? (await AsyncStorage.getItem(legacyPracticeStorageKey)) === '1'
+          : false;
+        let resolvedBackendCompletedVersion = backendPracticeCompletedVersion;
+        let resolvedBackendCompletedAt = backendPracticeCompletedAt;
+
+        if (practiceProfileId) {
+          const { data, error } = await supabase
+            .from('profiles')
+            .select('vibes_practice_completed_version,vibes_practice_completed_at')
+            .eq('id', practiceProfileId)
+            .maybeSingle();
+          if (!error && data) {
+            resolvedBackendCompletedVersion = Number((data as any)?.vibes_practice_completed_version ?? 0);
+            resolvedBackendCompletedAt = typeof (data as any)?.vibes_practice_completed_at === 'string'
+              ? String((data as any)?.vibes_practice_completed_at)
+              : resolvedBackendCompletedAt;
+          }
+        }
+
+        const localCompleted =
+          localSnapshot.completedVersion >= VIBES_PRACTICE_VERSION || legacyPracticeComplete;
+
+        if (
+          practiceProfileId &&
+          localCompleted &&
+          resolvedBackendCompletedVersion < VIBES_PRACTICE_VERSION
+        ) {
+          const localCompletedAtIso = localSnapshot.completedAt ?? new Date().toISOString();
+          const synced = await syncPracticeCompletionToBackend(localCompletedAtIso);
+          if (synced) {
+            resolvedBackendCompletedVersion = VIBES_PRACTICE_VERSION;
+            resolvedBackendCompletedAt = localCompletedAtIso;
+          }
+        }
+        if (cancelled) return;
+
+        const effectiveCompleted =
+          resolvedBackendCompletedVersion >= VIBES_PRACTICE_VERSION ||
+          localCompleted;
+        const effectiveStep = effectiveCompleted ? 'intro' : localSnapshot.currentStep;
+
+        setPracticeComplete(effectiveCompleted);
+        setPracticeDismissed(false);
+        setPracticeStep(effectiveStep);
+
+        const needsSnapshotRefresh =
+          effectiveCompleted !== (localSnapshot.completedVersion >= VIBES_PRACTICE_VERSION) ||
+          localSnapshot.currentStep !== effectiveStep ||
+          localSnapshot.completionSyncPending;
+
+        if (needsSnapshotRefresh) {
+          await writeVibesPracticeSnapshot(practiceSnapshotOwnerId, {
+            completedAt: effectiveCompleted ? (resolvedBackendCompletedAt ?? localSnapshot.completedAt ?? new Date().toISOString()) : null,
+            completedVersion: effectiveCompleted ? VIBES_PRACTICE_VERSION : 0,
+            completionSyncPending: effectiveCompleted ? false : localSnapshot.completionSyncPending,
+            currentStep: effectiveStep,
+            updatedAt: new Date().toISOString(),
+          });
+        }
+      } catch {
+        if (!cancelled) {
+          setPracticeStep('intro');
+        }
+      } finally {
+        if (!cancelled) setPracticeLoaded(true);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    backendPracticeCompletedAt,
+    backendPracticeCompletedVersion,
+    legacyPracticeStorageKey,
+    practiceProfileId,
+    practiceSnapshotOwnerId,
+    syncPracticeCompletionToBackend,
+  ]);
 
   useEffect(() => {
     if (!filtersStorageKey) return;
@@ -415,28 +728,24 @@ export default function ExploreScreen() {
         const raw = await AsyncStorage.getItem(filtersStorageKey);
         if (cancelled) return;
         if (!raw) {
-          if (Object.keys(relationshipCompassFilters).length === 0) return;
-          const compassDrivenFilters = {
-            verifiedOnly: Boolean(relationshipCompassFilters.verifiedOnly),
-            hasVideoOnly: false,
-            activeOnly: false,
-            distanceFilterKm:
-              typeof relationshipCompassFilters.distanceFilterKm === 'number'
-                ? relationshipCompassFilters.distanceFilterKm
-                : null,
-            minAge: 18,
-            maxAge: 60,
-            religionFilter: null,
-            minVibeScore: null,
-            minSharedInterests:
-              typeof relationshipCompassFilters.minSharedInterests === 'number'
-                ? relationshipCompassFilters.minSharedInterests
-                : 0,
-            locationQuery:
-              typeof relationshipCompassFilters.locationQuery === 'string'
-                ? relationshipCompassFilters.locationQuery
-                : '',
-          };
+          const compassDrivenFilters = Object.keys(relationshipCompassFilters).length === 0
+            ? baseDiscoveryFilters
+            : {
+                ...baseDiscoveryFilters,
+                verifiedOnly: Boolean(relationshipCompassFilters.verifiedOnly),
+                distanceFilterKm:
+                  typeof relationshipCompassFilters.distanceFilterKm === 'number'
+                    ? relationshipCompassFilters.distanceFilterKm
+                    : null,
+                minSharedInterests:
+                  typeof relationshipCompassFilters.minSharedInterests === 'number'
+                    ? relationshipCompassFilters.minSharedInterests
+                    : 0,
+                locationQuery:
+                  typeof relationshipCompassFilters.locationQuery === 'string'
+                    ? relationshipCompassFilters.locationQuery
+                    : '',
+              };
           setVerifiedOnly(compassDrivenFilters.verifiedOnly);
           setHasVideoOnly(compassDrivenFilters.hasVideoOnly);
           setActiveOnly(compassDrivenFilters.activeOnly);
@@ -452,31 +761,21 @@ export default function ExploreScreen() {
         }
         const parsed = JSON.parse(raw);
         if (!parsed || typeof parsed !== 'object') return;
+        const normalizedFilters = normalizePersistedFilters(parsed);
 
         // Keep it best-effort; any missing fields just fall back to defaults.
-        setVerifiedOnly(Boolean(parsed.verifiedOnly));
-        setHasVideoOnly(Boolean(parsed.hasVideoOnly));
-        setActiveOnly(Boolean(parsed.activeOnly));
-        setDistanceFilterKm(typeof parsed.distanceFilterKm === 'number' ? parsed.distanceFilterKm : null);
-        setMinAge(typeof parsed.minAge === 'number' ? parsed.minAge : 18);
-        setMaxAge(typeof parsed.maxAge === 'number' ? parsed.maxAge : 60);
-        setReligionFilter(typeof parsed.religionFilter === 'string' ? parsed.religionFilter : null);
-        setMinVibeScore(typeof parsed.minVibeScore === 'number' ? parsed.minVibeScore : null);
-        setMinSharedInterests(typeof parsed.minSharedInterests === 'number' ? parsed.minSharedInterests : 0);
-        setLocationQuery(typeof parsed.locationQuery === 'string' ? parsed.locationQuery : '');
+        setVerifiedOnly(normalizedFilters.verifiedOnly);
+        setHasVideoOnly(normalizedFilters.hasVideoOnly);
+        setActiveOnly(normalizedFilters.activeOnly);
+        setDistanceFilterKm(normalizedFilters.distanceFilterKm);
+        setMinAge(normalizedFilters.minAge);
+        setMaxAge(normalizedFilters.maxAge);
+        setReligionFilter(normalizedFilters.religionFilter);
+        setMinVibeScore(normalizedFilters.minVibeScore);
+        setMinSharedInterests(normalizedFilters.minSharedInterests);
+        setLocationQuery(normalizedFilters.locationQuery);
 
-        applyFilters({
-          verifiedOnly: Boolean(parsed.verifiedOnly),
-          hasVideoOnly: Boolean(parsed.hasVideoOnly),
-          activeOnly: Boolean(parsed.activeOnly),
-          distanceFilterKm: typeof parsed.distanceFilterKm === 'number' ? parsed.distanceFilterKm : null,
-          minAge: typeof parsed.minAge === 'number' ? parsed.minAge : 18,
-          maxAge: typeof parsed.maxAge === 'number' ? parsed.maxAge : 60,
-          religionFilter: typeof parsed.religionFilter === 'string' ? parsed.religionFilter : null,
-          minVibeScore: typeof parsed.minVibeScore === 'number' ? parsed.minVibeScore : null,
-          minSharedInterests: typeof parsed.minSharedInterests === 'number' ? parsed.minSharedInterests : 0,
-          locationQuery: typeof parsed.locationQuery === 'string' ? parsed.locationQuery : '',
-        });
+        applyFilters(normalizedFilters);
       } catch {
         // ignore
       }
@@ -485,7 +784,72 @@ export default function ExploreScreen() {
     return () => {
       cancelled = true;
     };
-  }, [applyFilters, filtersStorageKey, relationshipCompassFilters]);
+  }, [applyFilters, baseDiscoveryFilters, filtersStorageKey, normalizePersistedFilters, relationshipCompassFilters]);
+
+  useEffect(() => {
+    if (!filtersStorageKey) return;
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(filtersStorageKey);
+        if (cancelled || raw) return;
+        setMinAge(baseDiscoveryFilters.minAge);
+        setMaxAge(baseDiscoveryFilters.maxAge);
+        applyFilters(baseDiscoveryFilters);
+      } catch {
+        // ignore
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [applyFilters, baseDiscoveryFilters, filtersStorageKey]);
+
+  useEffect(() => {
+    const previousBaseAge = previousBaseAgeRef.current;
+    if (
+      previousBaseAge.minAge === baseDiscoveryFilters.minAge &&
+      previousBaseAge.maxAge === baseDiscoveryFilters.maxAge
+    ) {
+      return;
+    }
+
+    previousBaseAgeRef.current = {
+      minAge: baseDiscoveryFilters.minAge,
+      maxAge: baseDiscoveryFilters.maxAge,
+    };
+
+    if (!appliedFilters) return;
+
+    const wasUsingPreviousBaseAge =
+      appliedFilters.minAge === previousBaseAge.minAge &&
+      appliedFilters.maxAge === previousBaseAge.maxAge;
+
+    if (!wasUsingPreviousBaseAge) return;
+
+    const nextFilters: VibesFilters = {
+      ...appliedFilters,
+      minAge: baseDiscoveryFilters.minAge,
+      maxAge: baseDiscoveryFilters.maxAge,
+    };
+
+    setMinAge(nextFilters.minAge);
+    setMaxAge(nextFilters.maxAge);
+    applyFilters(nextFilters);
+
+    if (filtersStorageKey) {
+      AsyncStorage.setItem(filtersStorageKey, JSON.stringify(buildPersistedFiltersPayload(nextFilters))).catch(() => {});
+    }
+  }, [
+    appliedFilters,
+    applyFilters,
+    baseDiscoveryFilters.maxAge,
+    baseDiscoveryFilters.minAge,
+    buildPersistedFiltersPayload,
+    filtersStorageKey,
+  ]);
 
   const queueRefreshMatches = useCallback(() => {
     if (refreshDebounceRef.current) {
@@ -499,26 +863,13 @@ export default function ExploreScreen() {
     }, 150);
   }, [refreshMatches]);
 
-  useFocusEffect(
-    useCallback(() => {
-      if (!introStorageKey) return;
-      let cancelled = false;
-      (async () => {
-        try {
-          const seen = await AsyncStorage.getItem(introStorageKey);
-          if (cancelled || seen) return;
-          // Avoid showing on a cold focus while other modals might still be presenting.
-          setTimeout(() => {
-            if (cancelled) return;
-            setIntroVisible(true);
-          }, 650);
-        } catch {}
-      })();
-      return () => {
-        cancelled = true;
-      };
-    }, [introStorageKey]),
-  );
+  useEffect(() => {
+    return subscribeToNetworkRestored(() => {
+      queueRefreshMatches();
+      void refreshMoments();
+      void refreshSignalAccess();
+    });
+  }, [queueRefreshMatches, refreshMoments, refreshSignalAccess]);
 
   useFocusEffect(
     useCallback(() => {
@@ -602,18 +953,15 @@ export default function ExploreScreen() {
   }, [profile?.id]);
 
   const stackRef = useRef<ExploreStackHandle | null>(null);
+  const vibesActionHistoryRef = useRef<VibesActionHistoryEntry[]>([]);
+  const seenVibesCardKeysRef = useRef<Set<string>>(new Set());
+  const activeCardDwellRef = useRef<{ profileId: string; startedAt: number } | null>(null);
   const buttonScale = useRef(new Animated.Value(1)).current;
-  const superlikePulse = useRef(new Animated.Value(0)).current;
+  const intentBadgePulse = useRef(new Animated.Value(0)).current;
   const floatingMomentsOpacity = useRef(new Animated.Value(0)).current;
   const floatingMomentsTranslateY = useRef(new Animated.Value(-10)).current;
   const floatingMomentsScale = useRef(new Animated.Value(0.985)).current;
-  const [superlikesLeft, setSuperlikesLeft] = useState<number>(3);
   const [renderFloatingMoments, setRenderFloatingMoments] = useState(false);
-  const particles = useRef([
-    new Animated.Value(0),
-    new Animated.Value(0),
-    new Animated.Value(0),
-  ]).current;
   const fallbackEntranceTranslate = useRef(new Animated.Value(12)).current;
   const fallbackEntranceOpacity = useRef(new Animated.Value(0)).current;
 
@@ -634,6 +982,90 @@ export default function ExploreScreen() {
     ]).start();
   }, [fallbackEntranceOpacity, fallbackEntranceTranslate]);
 
+  const recordVibesEvent = useCallback(
+    (
+      targetProfileId: string | null | undefined,
+      eventType: VibesEventType,
+      opts?: { position?: number | null; dwellMs?: number | null; metadata?: Record<string, unknown> },
+    ) => {
+      if (!profile?.id || !targetProfileId) return;
+      void logVibesEvent({
+        viewerProfileId: profile.id,
+        targetProfileId: String(targetProfileId),
+        segment: vibesSegment,
+        eventType,
+        position: opts?.position ?? null,
+        dwellMs: opts?.dwellMs ?? null,
+        metadata: opts?.metadata ?? {},
+      });
+    },
+    [profile?.id, vibesSegment],
+  );
+
+  const getActiveCardDwellMs = useCallback((targetProfileId?: string | null) => {
+    const activeCard = activeCardDwellRef.current;
+    if (!activeCard || !targetProfileId || activeCard.profileId !== String(targetProfileId)) {
+      return null;
+    }
+    return Math.max(0, Date.now() - activeCard.startedAt);
+  }, []);
+
+  useEffect(() => {
+    const current = matchList[currentIndex];
+    if (!current?.id) {
+      activeCardDwellRef.current = null;
+      return;
+    }
+
+    activeCardDwellRef.current = {
+      profileId: String(current.id),
+      startedAt: Date.now(),
+    };
+
+    if (!profile?.id || showPracticeWalkthrough) return;
+
+    const key = `${vibesSegment}:${String(current.id)}`;
+    if (seenVibesCardKeysRef.current.has(key)) return;
+    seenVibesCardKeysRef.current.add(key);
+
+    recordVibesEvent(String(current.id), 'card_seen', {
+      position: currentIndex,
+      metadata: {
+        deck_size: matchList.length,
+        compatibility: (current as any).compatibility ?? null,
+        distance_km: (current as any).distanceKm ?? null,
+        recommendation_version: (current as any).recommendationVersion ?? null,
+      },
+    });
+  }, [currentIndex, matchList, profile?.id, recordVibesEvent, showPracticeWalkthrough, vibesSegment]);
+
+  useEffect(() => {
+    if (!intentQueueBadge) {
+      intentBadgePulse.stopAnimation();
+      intentBadgePulse.setValue(0);
+      return;
+    }
+
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(intentBadgePulse, {
+          toValue: 1,
+          duration: intentQueueBadge.endingSoon > 0 ? 950 : 1400,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(intentBadgePulse, {
+          toValue: 0,
+          duration: intentQueueBadge.endingSoon > 0 ? 950 : 1400,
+          easing: Easing.inOut(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [intentBadgePulse, intentQueueBadge]);
+
   const distanceChipOptions = useMemo(() => {
     const base = [5, 10, 25, 50, 100];
     if (resolvedDistanceUnit === 'mi') {
@@ -647,17 +1079,18 @@ export default function ExploreScreen() {
 
   const distinctReligions = useMemo(() => {
     const source = poolProfiles.length > 0 ? poolProfiles : matchList;
-    const preferred = ['Christian', 'Muslim'];
+    const preferred = RELIGION_OPTIONS.map((option) => option.value);
     const normalizedSeen = new Set<string>();
     const collected: string[] = [];
 
     const pushReligion = (value: unknown) => {
       const trimmed = String(value || '').trim();
       if (!trimmed) return;
-      const normalized = trimmed.toLowerCase();
+      const normalizedValue = normalizeReligionForProfile(trimmed);
+      const normalized = normalizedValue.toLowerCase();
       if (normalizedSeen.has(normalized)) return;
       normalizedSeen.add(normalized);
-      collected.push(trimmed);
+      collected.push(normalizedValue);
     };
 
     preferred.forEach(pushReligion);
@@ -692,7 +1125,23 @@ export default function ExploreScreen() {
   const hasOtherActiveMoments = prioritizedMomentUsers.length + otherMomentUsers.length > 0;
   const showMomentsEmptyState = !hasOtherActiveMoments && !hasMyActiveMoment;
   const momentUsersWithContent = useMemo(() => momentUsers.filter((u) => u.moments.length > 0), [momentUsers]);
-  const shouldShowFloatingMoments = Boolean(user?.id && !showMomentsEmptyState && !momentsCollapsed);
+  const hasMomentsHeaderOnly = Boolean(user?.id) && momentUsersWithContent.length === 0;
+  const hasCompactMomentRail = momentUsersWithContent.length > 0 && momentUsersWithContent.length <= 3;
+  const shouldShowFloatingMoments = Boolean(user?.id && !showPracticeWalkthrough && momentUsersWithContent.length > 0);
+
+  useEffect(() => {
+    if (!viewedMomentIdsStorageKey) return;
+    const activeMomentIds = new Set(
+      momentUsers.flatMap((entry) => entry.moments.map((moment) => String(moment.id))).filter(Boolean),
+    );
+    setViewedMomentIds((prev) => {
+      const nextIds = Array.from(prev).filter((id) => activeMomentIds.has(id));
+      if (nextIds.length === prev.size) return prev;
+      const next = new Set(nextIds);
+      AsyncStorage.setItem(viewedMomentIdsStorageKey, JSON.stringify(nextIds)).catch(() => {});
+      return next;
+    });
+  }, [momentUsers, viewedMomentIdsStorageKey]);
 
   useEffect(() => {
     if (shouldShowFloatingMoments) {
@@ -788,11 +1237,86 @@ export default function ExploreScreen() {
 
   useEffect(() => {
     let cancelled = false;
+    if (!viewedMomentIdsStorageKey) {
+      setViewedMomentIds(new Set());
+      return;
+    }
+    AsyncStorage.getItem(viewedMomentIdsStorageKey)
+      .then((raw) => {
+        if (cancelled) return;
+        if (!raw) {
+          setViewedMomentIds(new Set());
+          return;
+        }
+        try {
+          const parsed = JSON.parse(raw);
+          const ids = Array.isArray(parsed) ? parsed.map((value) => String(value)).filter(Boolean) : [];
+          setViewedMomentIds(new Set(ids));
+        } catch {
+          setViewedMomentIds(new Set());
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setViewedMomentIds(new Set());
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [viewedMomentIdsStorageKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!user?.id) return;
+
+    const visibleMomentIds = Array.from(
+      new Set(
+        momentUsersWithContent.flatMap((entry) => entry.moments.map((moment) => String(moment.id))).filter(Boolean),
+      ),
+    );
+
+    if (visibleMomentIds.length === 0) return;
+
+    const syncViewedMoments = async () => {
+      const remoteViewedIds = await fetchViewedMomentIds(visibleMomentIds);
+      if (cancelled || remoteViewedIds.size === 0) return;
+
+      setViewedMomentIds((prev) => {
+        let changed = false;
+        const next = new Set(prev);
+        remoteViewedIds.forEach((momentId) => {
+          if (!next.has(momentId)) {
+            next.add(momentId);
+            changed = true;
+          }
+        });
+        if (!changed) return prev;
+        if (viewedMomentIdsStorageKey) {
+          AsyncStorage.setItem(viewedMomentIdsStorageKey, JSON.stringify(Array.from(next))).catch(() => {});
+        }
+        return next;
+      });
+    };
+
+    void syncViewedMoments();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [momentUsersWithContent, user?.id, viewedMomentIdsStorageKey]);
+
+  useEffect(() => {
+    let cancelled = false;
     const loadMomentPriorityProfiles = async () => {
       if (!profile?.id) {
         setMomentPriorityProfileIds(new Set());
         setMomentRelationshipContextByProfileId({});
         return;
+      }
+
+      const cachedSnapshot = await readVibesMomentContextSnapshot(profile.id);
+      if (!cancelled && cachedSnapshot) {
+        setMomentPriorityProfileIds(new Set((cachedSnapshot.priorityProfileIds || []).map(String)));
+        setMomentRelationshipContextByProfileId(cachedSnapshot.contextByProfileId || {});
       }
 
       const positiveSwipeActions = ['LIKE', 'SUPERLIKE'];
@@ -833,6 +1357,9 @@ export default function ExploreScreen() {
       }
       if (intentError) {
         console.log('[vibes] moment priority intent fetch error', intentError);
+      }
+      if (swipeError && intentError) {
+        return;
       }
 
       ((swipeRows as { swiper_id: string; target_id: string; action: string; created_at: string | null }[] | null) ?? []).forEach((row) => {
@@ -932,6 +1459,10 @@ export default function ExploreScreen() {
           }
         });
         setMomentRelationshipContextByProfileId(nextContext);
+        void writeVibesMomentContextSnapshot(profile.id, {
+          priorityProfileIds: Array.from(next),
+          contextByProfileId: nextContext,
+        });
       }
     };
 
@@ -941,24 +1472,144 @@ export default function ExploreScreen() {
     };
   }, [profile?.id]);
 
-  const openMomentViewer = (userId: string) => {
+  const openMomentViewer = useCallback((userId: string) => {
     setMomentStartUserId(userId);
     setMomentViewerVisible(true);
-  };
+  }, []);
 
   const openIntentSheet = useCallback(() => {
     const target = matchList[currentIndex];
     if (!target) return;
-    setIntentTarget({ id: String(target.id), name: (target as any).name || (target as any).full_name });
+    recordVibesEvent(String(target.id), 'intent_opened', {
+      position: currentIndex,
+      dwellMs: getActiveCardDwellMs(String(target.id)),
+    });
+    setIntentTarget({
+      id: String(target.id),
+      name: (target as any).name || (target as any).full_name,
+      deckIndex: currentIndex,
+    });
     setIntentSheetVisible(true);
-  }, [currentIndex, matchList]);
+  }, [currentIndex, getActiveCardDwellMs, matchList, recordVibesEvent]);
+
+  const openSignalSheet = useCallback(() => {
+    const target = matchList[currentIndex];
+    if (!target) return;
+    recordVibesEvent(String(target.id), 'signal_opened', {
+      position: currentIndex,
+      dwellMs: getActiveCardDwellMs(String(target.id)),
+    });
+    setSignalTarget({
+      id: String(target.id),
+      name: (target as any).name || (target as any).full_name,
+      deckIndex: currentIndex,
+      match: target,
+    });
+    setSignalSheetVisible(true);
+  }, [currentIndex, getActiveCardDwellMs, matchList, recordVibesEvent]);
+
+  const pushVibesAction = useCallback((entry: VibesActionHistoryEntry) => {
+    vibesActionHistoryRef.current = [...vibesActionHistoryRef.current, entry].slice(-24);
+  }, []);
+
+  const popVibesAction = useCallback(() => {
+    const last = vibesActionHistoryRef.current[vibesActionHistoryRef.current.length - 1] ?? null;
+    if (last) vibesActionHistoryRef.current = vibesActionHistoryRef.current.slice(0, -1);
+    return last;
+  }, []);
+
+  const recordVibesSwipe = useCallback(
+    (id: string, action: 'like' | 'dislike' | 'superlike', index = currentIndex) => {
+      const swipedProfile = matchList.find((match) => String(match.id) === String(id));
+      pushVibesAction({ kind: 'swipe', id: String(id), action, index });
+      recordVibesEvent(String(id), action === 'dislike' ? 'pass' : action === 'superlike' ? 'signal_sent' : 'like', {
+        position: index,
+        dwellMs: getActiveCardDwellMs(String(id)),
+        metadata: {
+          swipe_action: action,
+          recommendation_version: (swipedProfile as any)?.recommendationVersion ?? null,
+        },
+      });
+      recordSwipe(id, action, index);
+    },
+    [currentIndex, getActiveCardDwellMs, matchList, pushVibesAction, recordSwipe, recordVibesEvent],
+  );
+
+  const cancelDirectIntentRequest = useCallback(async (entry: Extract<VibesActionHistoryEntry, { kind: 'intent' }>) => {
+    try {
+      let requestId = entry.requestId;
+      if (!requestId && profile?.id) {
+        const { data } = await supabase
+          .from('intent_requests')
+          .select('id')
+          .eq('actor_id', profile.id)
+          .eq('recipient_id', entry.id)
+          .eq('status', 'pending')
+          .order('created_at', { ascending: false })
+          .limit(1);
+        requestId = Array.isArray(data) ? data[0]?.id ?? null : null;
+      }
+      if (!requestId) return;
+      await cancelIntentRequestOfflineSafe(requestId, {
+        snapshotOwnerIds: [profile?.id ?? null, user?.id ?? null],
+      });
+    } catch (error) {
+      logger.warn('[vibes] undo_intent_cancel_failed', { error: String((error as any)?.message || error) });
+    }
+  }, [profile?.id]);
+
+  const cancelSignal = useCallback(async (entry: Extract<VibesActionHistoryEntry, { kind: 'signal' }>) => {
+    try {
+      const { error } = await supabase.rpc('rpc_cancel_signal', { p_signal_id: entry.signalId });
+      if (error) logger.warn('[vibes] undo_signal_cancel_failed', { error: String(error.message || error) });
+      void refreshSignalAccess();
+    } catch (error) {
+      logger.warn('[vibes] undo_signal_cancel_failed', { error: String((error as any)?.message || error) });
+    }
+  }, [refreshSignalAccess]);
+
+  const undoLastVibesAction = useCallback(() => {
+    const last = popVibesAction();
+    if (last) {
+      recordVibesEvent(last.id, 'undo', {
+        position: last.index,
+        metadata: { action_kind: last.kind },
+      });
+    }
+
+    try {
+      stackRef.current?.rewind();
+    } catch {}
+
+    if (last?.kind === 'intent') {
+      void cancelDirectIntentRequest(last);
+      setCurrentIndex(Math.max(0, last.index));
+      try { Haptics.selectionAsync(); } catch {}
+      return;
+    }
+
+    if (last?.kind === 'signal') {
+      void cancelSignal(last);
+      setCurrentIndex(Math.max(0, last.index));
+      try { Haptics.selectionAsync(); } catch {}
+      return;
+    }
+
+    const prev = undoLastSwipe?.();
+    if (prev) {
+      setCurrentIndex(Math.max(0, prev.index));
+    } else if (last?.kind === 'swipe') {
+      setCurrentIndex(Math.max(0, last.index));
+    }
+    try { Haptics.selectionAsync(); } catch {}
+  }, [cancelDirectIntentRequest, cancelSignal, popVibesAction, recordVibesEvent, undoLastSwipe]);
 
   const handlePressMyMoment = useCallback(() => {
     if (hasMyActiveMoment) {
       router.push('/my-moments');
       return;
     }
-    setMomentCreateVisible(true);
+    router.push('/moments/create');
   }, [hasMyActiveMoment, router]);
 
   const handlePressUserMoment = useCallback(
@@ -982,23 +1633,23 @@ export default function ExploreScreen() {
 
   const hasPreciseCoords = profile?.latitude != null && profile?.longitude != null;
   const hasCityOnly = !!profile?.location && profile?.location_precision === 'CITY';
+  const isGhanaCountryLocked = isGhanaCountryManagedPolicy(profile?.country_lock_policy);
+  const countryPolicyMessage = getGhanaCountryPolicyMessage(profile?.country_lock_policy);
+  const needsNearbyPreciseLocation = !hasPreciseCoords;
   const needsLocationPrompt = !hasPreciseCoords && !hasCityOnly;
   const shouldShowLocationPrompt =
-    needsLocationPrompt && (activeTab === 'nearby' || !locationPromptDismissed);
+    (activeTab === 'nearby' ? needsNearbyPreciseLocation : needsLocationPrompt)
+    && (activeTab === 'nearby' || !locationPromptDismissed);
+  const shouldShowLocationBanner =
+    shouldShowLocationPrompt && !(activeTab === 'nearby' && matchList.length === 0);
   const showCompactLocationPrompt = shouldShowLocationPrompt && activeTab !== 'nearby';
 
   useEffect(() => {
-    if (typeof profile?.superlikes_left === 'number') {
-      setSuperlikesLeft(Math.max(0, profile.superlikes_left));
-    }
-  }, [profile?.superlikes_left]);
-
+    setManualLocation((profile as any)?.city || profile?.location || "");
+  }, [(profile as any)?.city, profile?.location]);
   useEffect(() => {
-    setManualLocation(profile?.location || "");
-  }, [profile?.location]);
-  useEffect(() => {
-    setManualCountryCode(profileCountryCode || "");
-  }, [profileCountryCode]);
+    setManualCountryCode(profileCountryCode || (isGhanaCountryLocked ? 'GH' : ''));
+  }, [isGhanaCountryLocked, profileCountryCode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1044,6 +1695,16 @@ export default function ExploreScreen() {
       AsyncStorage.removeItem(VIBES_LOCATION_PROMPT_DISMISSED_KEY).catch(() => undefined);
       await refreshProfile();
       await refreshMatches();
+      if (res.verification?.message) {
+        Alert.alert(
+          res.verification.status === 'pending'
+            ? 'First location check confirmed'
+            : res.verification.status === 'verified'
+              ? 'Country verified'
+              : 'Location refreshed',
+          res.verification.message,
+        );
+      }
       await new Promise((resolve) => setTimeout(resolve, 1200));
       await refreshProfile();
       await refreshMatches();
@@ -1052,6 +1713,8 @@ export default function ExploreScreen() {
   };
 
   const closeManualLocationModal = useCallback(() => {
+    setManualCountryPickerOpen(false);
+    setManualCountrySearch('');
     setManualLocationModalVisible(false);
   }, []);
 
@@ -1062,17 +1725,25 @@ export default function ExploreScreen() {
 
   const openManualLocationModal = useCallback(() => {
     setLocationError(null);
-    setManualLocation(profile?.location || "");
-    setManualCountryCode(profileCountryCode || manualCountryCode || "");
+    setManualLocation((profile as any)?.city || profile?.location || "");
+    setManualRegion((profile as any)?.region || null);
+    setManualLocality(null);
+    setManualCountryCode(profileCountryCode || (isGhanaCountryLocked ? 'GH' : manualCountryCode || ''));
+    setManualCountryPickerOpen(false);
+    setManualCountrySearch('');
     setManualLocationModalVisible(true);
-  }, [manualCountryCode, profile?.location, profileCountryCode]);
+  }, [isGhanaCountryLocked, manualCountryCode, profile?.location, (profile as any)?.city, (profile as any)?.region, profileCountryCode]);
 
   const openManualLocationModalFromFilters = useCallback(() => {
     setLocationError(null);
-    setManualLocation(profile?.location || "");
-    setManualCountryCode(profileCountryCode || manualCountryCode || "");
+    setManualLocation((profile as any)?.city || profile?.location || "");
+    setManualRegion((profile as any)?.region || null);
+    setManualLocality(null);
+    setManualCountryCode(profileCountryCode || (isGhanaCountryLocked ? 'GH' : manualCountryCode || ''));
+    setManualCountryPickerOpen(false);
+    setManualCountrySearch('');
     setFiltersPanel('location');
-  }, [manualCountryCode, profile?.location, profileCountryCode]);
+  }, [isGhanaCountryLocked, manualCountryCode, profile?.location, (profile as any)?.city, (profile as any)?.region, profileCountryCode]);
 
   const handleSaveManualLocation = async () => {
     if (!profile?.id) return;
@@ -1080,10 +1751,24 @@ export default function ExploreScreen() {
     setLocationError(null);
     if (!manualCountryCode) {
       setLocationError('Please select a country.');
+      setManualCountryPickerOpen(true);
       setIsSavingLocation(false);
       return;
     }
-    const res = await saveManualCityLocation(profile.id, manualLocation, manualCountryCode);
+    const res = await saveManualCityLocation(profile.id, {
+      countryCode: manualCountryCode,
+      countryName: selectedManualCountry?.label,
+      city: manualLocation,
+      region: manualRegion,
+      localityGeonameId: manualSelectedGeonameId,
+      localityAdmin1Code: manualLocality?.admin1Code ?? (
+        manualLocation === (profile as any)?.city && manualCountryCode === profileCountryCode
+          ? (profile as any)?.locality_admin1_code ?? null
+          : null
+      ),
+      latitude: manualLocality?.latitude ?? null,
+      longitude: manualLocality?.longitude ?? null,
+    });
     if (!res.ok) {
       setLocationError('error' in res ? res.error : 'Unable to save location');
     } else {
@@ -1099,6 +1784,18 @@ export default function ExploreScreen() {
     }
     setIsSavingLocation(false);
   };
+
+  const handleSelectManualCountry = useCallback((country: CountryOption) => {
+    if (country.code !== manualCountryCode) {
+      setManualLocation('');
+      setManualRegion(null);
+      setManualLocality(null);
+    }
+    setManualCountryCode(country.code);
+    setManualCountrySearch('');
+    setManualCountryPickerOpen(false);
+    setLocationError(null);
+  }, [manualCountryCode]);
 
   const handleApplyFilters = () => {
     if (!hasAdvancedFilters && (verifiedOnly || hasVideoOnly || activeOnly || distanceFilterKm != null || minVibeScore != null || minSharedInterests > 0)) {
@@ -1131,7 +1828,7 @@ export default function ExploreScreen() {
 
     // Persist for a "premium" feel (your preferences stick).
     if (filtersStorageKey) {
-      AsyncStorage.setItem(filtersStorageKey, JSON.stringify(next)).catch(() => {});
+      AsyncStorage.setItem(filtersStorageKey, JSON.stringify(buildPersistedFiltersPayload(next))).catch(() => {});
     }
   };
 
@@ -1155,30 +1852,19 @@ export default function ExploreScreen() {
   }, [appliedFilters, applyFilters, filtersStorageKey, hasAdvancedFilters]);
 
   const syncFilterDraftFromApplied = useCallback(() => {
-    const base = appliedFilters ?? {
-      verifiedOnly: false,
-      hasVideoOnly: false,
-      activeOnly: false,
-      distanceFilterKm: null,
-      minAge: 18,
-      maxAge: 60,
-      religionFilter: null,
-      minVibeScore: null,
-      minSharedInterests: 0,
-      locationQuery: '',
-    };
+    const base = appliedFilters ?? baseDiscoveryFilters;
 
     setVerifiedOnly(Boolean(base.verifiedOnly));
     setHasVideoOnly(Boolean(base.hasVideoOnly));
     setActiveOnly(Boolean(base.activeOnly));
     setDistanceFilterKm(base.distanceFilterKm ?? null);
-    setMinAge(typeof base.minAge === 'number' ? base.minAge : 18);
-    setMaxAge(typeof base.maxAge === 'number' ? base.maxAge : 60);
+    setMinAge(typeof base.minAge === 'number' ? base.minAge : baseDiscoveryFilters.minAge);
+    setMaxAge(typeof base.maxAge === 'number' ? base.maxAge : baseDiscoveryFilters.maxAge);
     setReligionFilter(typeof base.religionFilter === 'string' ? base.religionFilter : null);
     setMinVibeScore(typeof base.minVibeScore === 'number' ? base.minVibeScore : null);
     setMinSharedInterests(typeof base.minSharedInterests === 'number' ? base.minSharedInterests : 0);
     setLocationQuery(typeof base.locationQuery === 'string' ? base.locationQuery : '');
-  }, [appliedFilters]);
+  }, [appliedFilters, baseDiscoveryFilters]);
 
   useEffect(() => {
     if (filtersVisible) {
@@ -1216,30 +1902,19 @@ export default function ExploreScreen() {
     setHasVideoOnly(false);
     setActiveOnly(false);
     setDistanceFilterKm(null);
-    setMinAge(18);
-    setMaxAge(60);
+    setMinAge(baseDiscoveryFilters.minAge);
+    setMaxAge(baseDiscoveryFilters.maxAge);
     setReligionFilter(null);
     setMinVibeScore(null);
     setMinSharedInterests(0);
     setLocationQuery('');
 
-    applyFilters({
-      verifiedOnly: false,
-      hasVideoOnly: false,
-      activeOnly: false,
-      distanceFilterKm: null,
-      minAge: 18,
-      maxAge: 60,
-      religionFilter: null,
-      minVibeScore: null,
-      minSharedInterests: 0,
-      locationQuery: '',
-    });
+    applyFilters(baseDiscoveryFilters);
 
     if (filtersStorageKey) {
       AsyncStorage.removeItem(filtersStorageKey).catch(() => {});
     }
-  }, [applyFilters, filtersStorageKey]);
+  }, [applyFilters, baseDiscoveryFilters, filtersStorageKey]);
 
   const formatDistanceLabel = useCallback(
     (km: number) => {
@@ -1260,12 +1935,23 @@ export default function ExploreScreen() {
     if (minVibeScore != null) chips.push({ key: 'vibe', label: `Vibe ${minVibeScore}%+`, onClear: () => setMinVibeScore(null) });
     if (minSharedInterests > 0) chips.push({ key: 'shared', label: `${minSharedInterests}+ shared`, onClear: () => setMinSharedInterests(0) });
     if (distanceFilterKm != null) chips.push({ key: 'distance', label: `<= ${formatDistanceLabel(distanceFilterKm)}`, onClear: () => setDistanceFilterKm(null) });
-    if (minAge !== 18 || maxAge !== 60) chips.push({ key: 'age', label: `${minAge}-${maxAge}`, onClear: () => { setMinAge(18); setMaxAge(60); } });
-    if (religionFilter) chips.push({ key: 'religion', label: String(religionFilter), onClear: () => setReligionFilter(null) });
+    if (minAge !== baseDiscoveryFilters.minAge || maxAge !== baseDiscoveryFilters.maxAge) {
+      chips.push({
+        key: 'age',
+        label: `${minAge}-${maxAge}`,
+        onClear: () => {
+          setMinAge(baseDiscoveryFilters.minAge);
+          setMaxAge(baseDiscoveryFilters.maxAge);
+        },
+      });
+    }
+    if (religionFilter) chips.push({ key: 'religion', label: formatReligionLabel(religionFilter), onClear: () => setReligionFilter(null) });
     if (locationQuery.trim()) chips.push({ key: 'loc', label: `City: ${locationQuery.trim()}`, onClear: () => setLocationQuery('') });
     return chips;
   }, [
     activeOnly,
+    baseDiscoveryFilters.maxAge,
+    baseDiscoveryFilters.minAge,
     distanceFilterKm,
     formatDistanceLabel,
     hasVideoOnly,
@@ -1315,6 +2001,15 @@ export default function ExploreScreen() {
         message: 'Advanced Vibes filters are included with Silver and Gold. Upgrade to shape the room by trust, activity, chemistry, and distance.',
       });
     }, 120);
+  }, []);
+
+  const showSignalUpsell = useCallback(() => {
+    setSignalSheetVisible(false);
+    setPremiumUpsell({
+      requiredPlan: 'SILVER',
+      title: 'Send Signals that stand out',
+      message: 'Signals let you show what you noticed, with priority for 48 hours. Silver includes 3 Signals each week; Gold includes 7.',
+    });
   }, []);
 
   const showSharedInterestsHint = useCallback(() => {
@@ -1377,13 +2072,55 @@ export default function ExploreScreen() {
     }
   }, [draftFiltersForPreview, filtersVisible, momentBoostIds, previewBaseProfiles, profile, relationshipCompass, vibesSegment, viewerInterests]);
 
-  const roomSummary = useMemo(() => deriveRoomSummary(draftFiltersForPreview), [draftFiltersForPreview]);
+  const roomSummary = useMemo(
+    () => deriveRoomSummary(draftFiltersForPreview, ageFilterBaseline),
+    [ageFilterBaseline, draftFiltersForPreview],
+  );
   const compatibilityHint = useMemo(() => deriveCompatibilityHint(draftFiltersForPreview), [draftFiltersForPreview]);
   const previewTone = useMemo(
-    () => derivePreviewTone(draftPreviewCount, draftFiltersForPreview, previewBaseProfiles.length),
-    [draftFiltersForPreview, draftPreviewCount, previewBaseProfiles.length],
+    () => derivePreviewTone(draftPreviewCount, draftFiltersForPreview, previewBaseProfiles.length, ageFilterBaseline),
+    [ageFilterBaseline, draftFiltersForPreview, draftPreviewCount, previewBaseProfiles.length],
   );
+  const currentAgeRange = useMemo(
+    () => ({ min: minAge, max: maxAge }),
+    [maxAge, minAge],
+  );
+  const savedAgeRange = useMemo(
+    () => ({
+      min: baseDiscoveryFilters.minAge,
+      max: baseDiscoveryFilters.maxAge,
+    }),
+    [baseDiscoveryFilters.maxAge, baseDiscoveryFilters.minAge],
+  );
+  const agePresetMode = useMemo(
+    () =>
+      resolveAgePresetMode({
+        value: currentAgeRange,
+        userAge: typeof (profile as any)?.age === 'number' ? (profile as any).age : null,
+        savedRange: savedAgeRange,
+        absoluteMin: savedAgeRange.min,
+        absoluteMax: savedAgeRange.max,
+      }),
+    [currentAgeRange, profile, savedAgeRange],
+  );
+  const ageSupportCopy = useMemo(() => getAgePresetSupportCopy(agePresetMode), [agePresetMode]);
   const activePresetKey = useMemo(() => deriveActivePresetKey(draftFiltersForPreview), [draftFiltersForPreview]);
+
+  const handleAgePresetPress = useCallback(
+    (mode: Exclude<AgePresetMode, 'custom'>) => {
+      const nextRange = getAgeRangeForPreset({
+        mode,
+        userAge: typeof (profile as any)?.age === 'number' ? (profile as any).age : null,
+        savedRange: savedAgeRange,
+        absoluteMin: savedAgeRange.min,
+        absoluteMax: savedAgeRange.max,
+      });
+      setMinAge(nextRange.min);
+      setMaxAge(nextRange.max);
+      void Haptics.selectionAsync().catch(() => undefined);
+    },
+    [profile, savedAgeRange],
+  );
 
   const applyPreset = useCallback((presetKey: string) => {
     withAdvancedFilterGuard(() => {
@@ -1438,16 +2175,25 @@ export default function ExploreScreen() {
     if (appliedFilters.minVibeScore != null) n += 1;
     if ((appliedFilters.minSharedInterests || 0) > 0) n += 1;
     if (appliedFilters.distanceFilterKm != null) n += 1;
-    if (appliedFilters.minAge !== 18 || appliedFilters.maxAge !== 60) n += 1;
+    if (appliedFilters.minAge !== baseDiscoveryFilters.minAge || appliedFilters.maxAge !== baseDiscoveryFilters.maxAge) n += 1;
     if (appliedFilters.religionFilter) n += 1;
     if (appliedFilters.locationQuery && appliedFilters.locationQuery.trim()) n += 1;
     return n;
-  }, [appliedFilters]);
+  }, [appliedFilters, baseDiscoveryFilters.maxAge, baseDiscoveryFilters.minAge]);
 
-  // Reset index if data changes
+  // Reset only when the tab changes. For ordinary feed refreshes, preserve the
+  // user's position and only clamp when the list shrinks past the current card.
   useEffect(() => {
     setCurrentIndex(0);
-  }, [matchList.length, activeTab]);
+    scrollVibesToTop();
+  }, [activeTab, scrollVibesToTop]);
+
+  useEffect(() => {
+    setCurrentIndex((prev) => {
+      if (matchList.length <= 0) return 0;
+      return Math.min(prev, Math.max(0, matchList.length - 1));
+    });
+  }, [matchList.length]);
 
   // Prefetch optional fields for the next N cards to improve perceived speed
   useEffect(() => {
@@ -1455,12 +2201,12 @@ export default function ExploreScreen() {
       Boolean(appliedFilters?.hasVideoOnly) || (appliedFilters?.minSharedInterests || 0) > 0;
     const N = wantsMoreDetails ? 10 : 2;
     let mounted = true;
-    (async () => {
-      try {
-        for (let i = 0; i <= N; i++) {
-          const idx = currentIndex + i;
-          const m = matchList[idx];
-          if (!m) break;
+      (async () => {
+        try {
+          for (let i = 1; i <= N; i++) {
+            const idx = currentIndex + i;
+            const m = matchList[idx];
+            if (!m) break;
           // skip if it already has the optional fields
           const hasVideo = !!((m as any).profileVideo);
           const hasInterests = Array.isArray((m as any).interests) && (m as any).interests.length > 0;
@@ -1471,9 +2217,9 @@ export default function ExploreScreen() {
           if (!hasVideo || !hasInterests || !hasCountryCode || !hasUsefulCity) {
             prefetchInFlightRef.current.add(id);
             try {
-              // call fetchProfileDetails to merge optional fields into matches
-              await fetchProfileDetails?.(m.id);
-            } finally {
+                // Keep enrichment off the visible card to avoid mid-gesture rewrites.
+                await fetchProfileDetails?.(m.id);
+              } finally {
               prefetchInFlightRef.current.delete(id);
               prefetchedDetailsRef.current.add(id);
             }
@@ -1488,6 +2234,69 @@ export default function ExploreScreen() {
   }, [appliedFilters?.hasVideoOnly, appliedFilters?.minSharedInterests, currentIndex, fetchProfileDetails, matchList]);
 
   const exhausted = currentIndex >= matchList.length;
+
+  useEffect(() => {
+    if (!showPracticeWalkthrough && practiceGestureLocked) {
+      setPracticeGestureLocked(false);
+    }
+  }, [practiceGestureLocked, showPracticeWalkthrough]);
+
+  const handlePracticeStepChange = useCallback(async (nextStep: PracticeStep) => {
+    setPracticeStep(nextStep);
+    if (practiceReplayVisible || practiceComplete || !practiceSnapshotOwnerId) return;
+    const existingSnapshot = (await readVibesPracticeSnapshot(practiceSnapshotOwnerId)) ?? getDefaultVibesPracticeSnapshot();
+    await writeVibesPracticeSnapshot(practiceSnapshotOwnerId, {
+      ...existingSnapshot,
+      currentStep: nextStep,
+      updatedAt: new Date().toISOString(),
+    });
+  }, [practiceComplete, practiceReplayVisible, practiceSnapshotOwnerId]);
+
+  const closePracticeWalkthrough = useCallback(() => {
+    if (practiceReplayVisible || practiceComplete) {
+      setPracticeReplayVisible(false);
+      setPracticeDismissed(false);
+      setPracticeStep('intro');
+    } else {
+      setPracticeDismissed(true);
+    }
+    setPracticeGestureLocked(false);
+    setDeckGestureLocked(false);
+    scrollVibesToTop();
+  }, [practiceComplete, practiceReplayVisible, scrollVibesToTop]);
+
+  const openPracticeReplay = useCallback(() => {
+    if (!practiceComplete) {
+      setPracticeDismissed(false);
+      setPracticeReplayVisible(false);
+    } else {
+      setPracticeStep('intro');
+      setPracticeReplayVisible(true);
+    }
+    setPracticeGestureLocked(false);
+    setDeckGestureLocked(false);
+    setRenderFloatingMoments(false);
+    floatingMomentsOpacity.setValue(0);
+    floatingMomentsTranslateY.setValue(-10);
+    floatingMomentsScale.setValue(0.985);
+    scrollVibesToTop();
+  }, [floatingMomentsOpacity, floatingMomentsScale, floatingMomentsTranslateY, practiceComplete, scrollVibesToTop]);
+
+  const handleVibesHeaderTabChange = useCallback((id: string) => {
+    if (showPracticeWalkthrough) return;
+    setActiveTab(id as any);
+    scrollVibesToTop();
+  }, [scrollVibesToTop, showPracticeWalkthrough]);
+
+  const handleOpenVibesFilters = useCallback(() => {
+    if (showPracticeWalkthrough) return;
+    setFiltersVisible(true);
+  }, [showPracticeWalkthrough]);
+
+  useEffect(() => {
+    vibesActionHistoryRef.current = [];
+    setDeckGestureLocked(false);
+  }, [activeTab]);
 
   function NoMoreProfiles() {
     const noMoreTranslate = useRef(new Animated.Value(18)).current;
@@ -1535,28 +2344,69 @@ export default function ExploreScreen() {
             </View>
           </View>
         ) : (
-          <View style={styles.emptyCard}>
-            <Text style={styles.emptyTitle}>No fresh profiles right now</Text>
-            <Text style={styles.emptySubtitle}>
-              You have reached the edge of this round. Refresh for a new set or browse nearby again.
+          <View style={[styles.emptyCard, layoutMetrics.isCompactWidth ? styles.emptyCardCompact : null]}>
+            <Text style={[styles.emptyTitle, layoutMetrics.isCompactWidth ? styles.emptyTitleCompact : null]}>
+              {activeTab === 'nearby'
+                ? (hasPreciseCoords ? 'Nearby feels quiet right now' : 'Turn on precise location for Nearby')
+                : 'No fresh profiles right now'}
             </Text>
-            <View style={styles.emptyActions}>
+            <Text style={[styles.emptySubtitle, layoutMetrics.isCompactWidth ? styles.emptySubtitleCompact : null]}>
+              {activeTab === 'nearby'
+                ? (
+                  hasPreciseCoords
+                    ? "We'll show people close to you when more verified locations are available. Explore For You for strong matches beyond distance."
+                    : 'Nearby uses your precise coordinates. Without them, you will not see nearby profiles even if other people have location turned on.'
+                )
+                : 'You have reached the edge of this round. Refresh for a new set or browse nearby again.'}
+            </Text>
+            <View style={[styles.emptyActions, layoutMetrics.isCompactWidth ? styles.emptyActionsCompact : null]}>
               <TouchableOpacity
-                style={[styles.primaryButton]}
+                style={[styles.primaryButton, layoutMetrics.isCompactWidth ? styles.primaryButtonCompact : null]}
                 onPress={() => {
+                  if (activeTab === 'nearby') {
+                    if (hasPreciseCoords) {
+                      setActiveTab('recommended');
+                      setCurrentIndex(0);
+                      return;
+                    }
+
+                    void handleUseMyLocation();
+                    return;
+                  }
+
                   void refreshMatches();
                   setCurrentIndex(0);
                 }}
               >
-                <Text style={styles.primaryButtonText}>Refresh Vibes</Text>
+                <Text style={[styles.primaryButtonText, layoutMetrics.isCompactWidth ? styles.primaryButtonTextCompact : null]}>
+                  {activeTab === 'nearby'
+                    ? (hasPreciseCoords ? 'Explore For You' : 'Use precise location')
+                    : 'Refresh Vibes'}
+                </Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={styles.ghostButton}
+                style={[styles.ghostButton, layoutMetrics.isCompactWidth ? styles.ghostButtonCompact : null]}
                 onPress={() => {
+                  if (activeTab === 'nearby') {
+                    if (hasPreciseCoords) {
+                      void refreshMatches();
+                      setCurrentIndex(0);
+                      return;
+                    }
+
+                    setActiveTab('recommended');
+                    setCurrentIndex(0);
+                    return;
+                  }
+
                   setActiveTab('nearby');
                 }}
               >
-                <Text style={styles.ghostButtonText}>Browse Nearby</Text>
+                <Text style={[styles.ghostButtonText, layoutMetrics.isCompactWidth ? styles.ghostButtonTextCompact : null]}>
+                  {activeTab === 'nearby'
+                    ? (hasPreciseCoords ? 'Refresh Nearby' : 'Explore For You')
+                    : 'Browse Nearby'}
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -1586,7 +2436,7 @@ export default function ExploreScreen() {
       stackRef.current?.performSwipe("right");
     } catch {
       const cm = matchList[currentIndex];
-      if (cm) recordSwipe(cm.id, "like", currentIndex);
+      if (cm) recordVibesSwipe(cm.id, "like", currentIndex);
       if (currentIndex < matchList.length - 1)
         setCurrentIndex(currentIndex + 1);
     }
@@ -1602,7 +2452,7 @@ export default function ExploreScreen() {
       stackRef.current?.performSwipe("left");
     } catch {
       const cm = matchList[currentIndex];
-      if (cm) recordSwipe(cm.id, "dislike", currentIndex);
+      if (cm) recordVibesSwipe(cm.id, "dislike", currentIndex);
       if (currentIndex < matchList.length - 1)
         setCurrentIndex(currentIndex + 1);
     }
@@ -1621,33 +2471,47 @@ export default function ExploreScreen() {
           targetProfileId: id,
           openedDelta: 1,
         });
+        recordVibesEvent(id, 'profile_opened', {
+          position: currentIndex,
+          dwellMs: getActiveCardDwellMs(id),
+        });
       }
       // fetch optional fields on demand and merge into matches
       const updated = await fetchProfileDetails?.(id);
-      const videoUrl = (updated && (updated as any).profileVideo) ? String((updated as any).profileVideo) : undefined;
+      const m = matchList.find((x) => String(x.id) === String(id));
+      const sourceProfile = (updated as any) ?? m;
+      const videoUrl = (sourceProfile && (sourceProfile as any).profileVideo) ? String((sourceProfile as any).profileVideo) : undefined;
       // navigate to the full profile preview screen; include videoUrl param if we have it so ProfileView can auto-play
       const params: any = { profileId: String(id) };
-      const m = matchList.find((x) => String(x.id) === String(id));
       if (m) {
         try {
-          const compatPct = typeof (m as any).compatibility === 'number' ? (m as any).compatibility : 0;
+          const fallbackSource = sourceProfile ?? m;
+          const compatPct = typeof (fallbackSource as any).compatibility === 'number' ? (fallbackSource as any).compatibility : 0;
           params.fallbackProfile = encodeURIComponent(JSON.stringify({
-            id: m.id,
-            name: (m as any).name,
-            age: (m as any).age,
-            location: (m as any).city || (m as any).location || (m as any).region || '',
-            avatar_url: (m as any).avatar_url,
-            photos: (m as any).photos,
-            occupation: (m as any).occupation,
-            education: (m as any).education,
-            bio: (m as any).tagline || (m as any).bio,
-            tribe: (m as any).tribe,
-            religion: (m as any).religion,
-            distance: (m as any).distance,
-            interests: (m as any).interests,
-            is_active: (m as any).isActiveNow,
+            id: fallbackSource.id,
+            name: (fallbackSource as any).name,
+            age: (fallbackSource as any).age,
+            location: (fallbackSource as any).city || (fallbackSource as any).location || (fallbackSource as any).region || '',
+            city: (fallbackSource as any).city,
+            region: (fallbackSource as any).region,
+            avatar_url: (fallbackSource as any).avatar_url,
+            photos: Array.isArray((fallbackSource as any).photos) ? (fallbackSource as any).photos : undefined,
+            occupation: (fallbackSource as any).occupation,
+            education: (fallbackSource as any).education,
+            bio: (fallbackSource as any).tagline || (fallbackSource as any).bio,
+            tribe: (fallbackSource as any).tribe,
+            religion: (fallbackSource as any).religion,
+            distance: (fallbackSource as any).distance,
+            interests: (fallbackSource as any).interests,
+            is_active: (fallbackSource as any).isActiveNow,
             compatibility: compatPct,
-            verified: (m as any).verified,
+            verified: (fallbackSource as any).verified,
+            verification_level: (fallbackSource as any).verification_level,
+            current_country: (fallbackSource as any).current_country,
+            current_country_code: (fallbackSource as any).current_country_code,
+            location_precision: (fallbackSource as any).location_precision,
+            profileVideo: (fallbackSource as any).profileVideo,
+            profile_video: (fallbackSource as any).profileVideoPath,
           }));
         } catch {}
       }
@@ -1658,124 +2522,119 @@ export default function ExploreScreen() {
     }
   };
 
-  const onSuperlike = () => {
-    if (superlikesLeft <= 0) {
-      try { Haptics.selectionAsync(); } catch {}
-      Alert.alert('Superlikes', 'You have no superlikes left. Upgrade to get more!');
-      return;
-    }
-
-    // decrement count in DB (best effort) and locally
-    (async () => {
-      if (profile?.id) {
-        try {
-          const { data, error } = await supabase.rpc('decrement_superlike', { p_profile_id: profile.id });
-          if (!error && typeof data === 'number') {
-            setSuperlikesLeft(Math.max(0, data));
-          } else if (error && String(error.message || '').includes('NO_SUPERLIKES')) {
-            setSuperlikesLeft(0);
-            Alert.alert('Superlikes', 'You have no superlikes left. Upgrade to get more!');
-            return;
-          } else {
-            setSuperlikesLeft((s) => Math.max(0, s - 1));
-          }
-        } catch (_e) {
-          setSuperlikesLeft((s) => Math.max(0, s - 1));
-        }
-      } else {
-        setSuperlikesLeft((s) => Math.max(0, s - 1));
-      }
-    })();
-
-    // premium pulse + small confetti burst
-    Animated.parallel([
-      Animated.sequence([
-        Animated.timing(superlikePulse, { toValue: 1, duration: 160, useNativeDriver: true }),
-        Animated.timing(superlikePulse, { toValue: 0, duration: 420, useNativeDriver: true }),
-      ]),
-      Animated.stagger(40, particles.map((p) => Animated.sequence([
-        Animated.timing(p, { toValue: 1, duration: 260, useNativeDriver: true }),
-        Animated.timing(p, { toValue: 0, duration: 260, useNativeDriver: true }),
-      ]))),
-    ]).start();
-
-    try {
-      stackRef.current?.performSwipe("superlike");
-    } catch {
-      const cm = matchList[currentIndex];
-      if (cm) recordSwipe(cm.id, "superlike", currentIndex);
-      if (currentIndex < matchList.length - 1) setCurrentIndex(currentIndex + 1);
-    }
-
-    try {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-    } catch {}
-  };
-
-  const renderSuperlikeBadge = () => (
-    <View style={[styles.superlikeBadgeInline, superlikesLeft <= 0 && styles.superlikeBadgeInlineDisabled]}>
-      <Text style={styles.superlikeBadgeInlineText}>{superlikesLeft} left</Text>
+  const renderSignalBadge = () => (
+    <View style={[styles.superlikeBadgeInline, signalAccess.remaining <= 0 && styles.superlikeBadgeInlineDisabled]}>
+      <Text style={styles.superlikeBadgeInlineText}>
+        {`${Math.max(signalAccess.remaining, 0)} left`}
+      </Text>
     </View>
   );
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
+      <DepthBackground>
       <SafeAreaView style={styles.container}>
         {/* TOP HEADER */}
         <ExploreHeader
           title="Vibes"
-          subtitle="Ghana Diaspora Connections"
+          subtitle={vibesSubtitle}
+          subtitleEmblem={isGhanaianDiaspora ? 'ghana' : 'global'}
           tabs={[
             { id: "recommended", label: "For You", icon: "heart" },
             { id: "nearby", label: "Nearby", icon: "map-marker" },
             { id: "active", label: "Active Now", icon: "circle" },
           ]}
           activeTab={activeTab}
-          setActiveTab={(id) => setActiveTab(id as any)}
+          setActiveTab={handleVibesHeaderTabChange}
           currentIndex={currentIndex}
           total={matchList.length}
           smartCount={smartCount}
-          onPressFilter={() => setFiltersVisible(true)}
+          onPressFilter={showPracticeWalkthrough ? undefined : handleOpenVibesFilters}
           filterCount={appliedFilterCount}
-          rightAccessory={(
-            <TouchableOpacity
-              style={styles.headerRefreshButton}
-              onPress={() => setIntroVisible(true)}
-              activeOpacity={0.85}
-            >
-              <MaterialCommunityIcons name="star-four-points" size={16} color={theme.tint} />
-            </TouchableOpacity>
-          )}
+          rightAccessory={!showPracticeWalkthrough ? (
+            <>
+              {intentQueueBadge ? (
+                <TouchableOpacity
+                  style={[styles.headerIntentBadge, intentQueueBadge.endingSoon > 0 && styles.headerIntentBadgeUrgent]}
+                  onPress={() => router.push({ pathname: '/(tabs)/intent', params: { filter: 'action' } } as never)}
+                  activeOpacity={0.85}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${intentQueueBadge.waiting} waiting in Intent`}
+                >
+                  <Animated.View
+                    pointerEvents="none"
+                    style={[
+                      styles.headerIntentBadgePulse,
+                      intentQueueBadge.endingSoon > 0 && styles.headerIntentBadgePulseUrgent,
+                      {
+                        opacity: intentBadgePulse.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [0.22, intentQueueBadge.endingSoon > 0 ? 0.72 : 0.46],
+                        }),
+                        transform: [
+                          {
+                            scale: intentBadgePulse.interpolate({
+                              inputRange: [0, 1],
+                              outputRange: [0.92, 1.18],
+                            }),
+                          },
+                        ],
+                      },
+                    ]}
+                  />
+                  <MaterialCommunityIcons
+                    name={intentQueueBadge.endingSoon > 0 ? 'timer-sand' : 'message-badge-outline'}
+                    size={18}
+                    color={intentQueueBadge.endingSoon > 0 ? theme.accent : theme.tint}
+                  />
+                  <View style={[styles.headerIntentBadgeCount, intentQueueBadge.endingSoon > 0 && styles.headerIntentBadgeCountUrgent]}>
+                    <Text style={styles.headerIntentBadgeText}>{intentQueueBadge.waiting > 9 ? '9+' : intentQueueBadge.waiting}</Text>
+                  </View>
+                </TouchableOpacity>
+              ) : null}
+              <TouchableOpacity
+                style={styles.headerRefreshButton}
+                onPress={openPracticeReplay}
+                activeOpacity={0.85}
+              >
+                <MaterialCommunityIcons name="star-four-points" size={16} color={theme.tint} />
+              </TouchableOpacity>
+            </>
+          ) : null}
         />
 
-        <VibesIntroModal visible={introVisible} onClose={closeIntro} />
-
         <Animated.ScrollView
+          ref={scrollViewRef}
+          scrollEnabled={!showPracticeWalkthrough && !practiceGestureLocked && !deckGestureLocked}
           onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: false })}
           scrollEventThrottle={16}
           showsVerticalScrollIndicator={false}
-          refreshControl={(
-            <RefreshControl
-              refreshing={refreshingMatches}
-              onRefresh={handleRefreshVibes}
-              tintColor={theme.tint}
-            />
-          )}
+          refreshControl={
+            showPracticeWalkthrough
+              ? undefined
+              : (
+                <RefreshControl
+                  refreshing={refreshingMatches}
+                  onRefresh={handleRefreshVibes}
+                  tintColor={theme.tint}
+                />
+              )
+          }
           contentContainerStyle={[
             styles.scrollContent,
-            { paddingBottom: Math.max(insets.bottom + 180, 180) },
+            { paddingBottom: Math.max(insets.bottom + layoutMetrics.stackBottomReserve + 92, 180) },
           ]}
         >
-          {shouldShowLocationPrompt ? (
+          {shouldShowLocationBanner ? (
             <View style={[styles.locationBanner, showCompactLocationPrompt ? styles.locationBannerCompact : null]}>
               <View style={styles.locationBannerHeader}>
                 <View style={styles.locationBannerCopy}>
                   <Text style={styles.locationTitle}>
-                    {activeTab === 'nearby' ? 'Add your location to unlock Nearby' : 'Add your city to improve nearby matches'}
+                    {activeTab === 'nearby' ? 'Use precise location to unlock Nearby' : 'Add your city to improve nearby matches'}
                   </Text>
                   <Text style={[styles.locationSubtitle, showCompactLocationPrompt ? styles.locationSubtitleCompact : null]}>
                     {activeTab === 'nearby'
-                      ? 'Use your location or set a city so nearby discovery can work properly.'
+                      ? 'Nearby only works with precise location. City-only location still works for For You and profile display.'
                       : 'For You still works without it. Nearby becomes more useful once you add a location.'}
                   </Text>
                 </View>
@@ -1819,75 +2678,121 @@ export default function ExploreScreen() {
               ) : null}
             </View>
           ) : null}
-          {user?.id && (showMomentsEmptyState || momentsCollapsed) ? (
-            <VibesMomentsStrip
-              users={momentStripUsers}
-              hasMyActiveMoment={hasMyActiveMoment}
-              showEmptyState={showMomentsEmptyState}
-              relationshipContextByProfileId={momentRelationshipContextByProfileId}
-              onPressMyMoment={handlePressMyMoment}
-              onPressUserMoment={handlePressUserMoment}
+          {user?.id && momentUsersWithContent.length === 0 ? (
+            <MomentsHeaderRow
+              momentCount={momentUsersWithContent.length}
+              isEmpty={showMomentsEmptyState}
+              expanded={!momentsCollapsed}
+              onToggle={() => setMomentsCollapsed((current) => !current)}
               onPressSeeAll={handleMomentsPress}
-              onPressPostMoment={handlePressMyMoment}
-              variant="inline"
-              collapsed={momentsCollapsed}
-              onCollapsedChange={setMomentsCollapsed}
-            />
-          ) : user?.id ? (
-            <VibesMomentsStrip
-              users={momentStripUsers}
-              hasMyActiveMoment={hasMyActiveMoment}
-              showEmptyState={showMomentsEmptyState}
-              relationshipContextByProfileId={momentRelationshipContextByProfileId}
-              onPressMyMoment={handlePressMyMoment}
-              onPressUserMoment={handlePressUserMoment}
-              onPressSeeAll={handleMomentsPress}
-              onPressPostMoment={handlePressMyMoment}
-              variant="inline"
-              collapsed={false}
-              onCollapsedChange={setMomentsCollapsed}
-              expandedAsHeaderOnly
+              onPressShare={handlePressMyMoment}
+              theme={theme}
+              isDark={isDark}
+              metrics={momentsCapsuleMetrics}
             />
           ) : null}
-          {offlineNotice ? (
-            <View>
-              <Notice
-                title="Couldn't load profiles"
-                message={offlineNotice}
-                actionLabel="Retry"
-                onAction={() => {
-                  setOfflineNotice(null);
-                  handleRefreshVibes();
-                }}
-                icon="cloud-alert"
+          {!showPracticeWalkthrough && renderFloatingMoments && user?.id ? (
+            <Animated.View
+              pointerEvents="box-none"
+              style={[
+                styles.momentsCapsuleFlow,
+                layoutMetrics.isCompactWidth ? styles.momentsCapsuleFlowCompact : null,
+                {
+                  marginTop: momentsCapsuleMetrics.capsuleMarginTop,
+                  marginBottom: hasCompactMomentRail
+                    ? Platform.OS === 'android' && (layoutMetrics.device.compactHeight || layoutMetrics.device.compactWidth)
+                      ? 24
+                      : 10
+                    : momentsCapsuleMetrics.capsuleMarginBottom,
+                  opacity: floatingMomentsOpacity,
+                  transform: [
+                    { translateY: floatingMomentsTranslateY },
+                    { scale: floatingMomentsScale },
+                  ],
+                },
+              ]}
+            >
+                <FloatingMomentsCapsule
+                  users={momentStripUsers}
+                  attentionProfileIds={momentAttentionProfileIds}
+                  relationshipContextByProfileId={momentRelationshipContextByProfileId}
+                  viewedMomentIds={viewedMomentIds}
+                  onPressMyMoment={handlePressMyMoment}
+                  onPressUserMoment={handlePressUserMoment}
+                  onPressSeeAll={handleMomentsPress}
+                onPressPostMoment={handlePressMyMoment}
+                theme={theme}
+                isDark={isDark}
+                metrics={momentsCapsuleMetrics}
               />
-              {canAccessInternalTools() ? (
-                <TouchableOpacity
-                  style={{ alignSelf: 'flex-start', marginTop: 8, paddingHorizontal: 4, paddingVertical: 4 }}
-                  onPress={() => router.push('/diagnostics')}
-                >
-                  <Text style={{ color: '#0b6b69', fontWeight: '700' }}>Open Diagnostics</Text>
-                </TouchableOpacity>
-              ) : null}
-            </View>
+            </Animated.View>
+          ) : null}
+          {!showPracticeWalkthrough && offlineNotice ? (
+            <Notice
+              title="Couldn't load profiles"
+              message={offlineNotice}
+              actionLabel="Retry"
+              onAction={() => {
+                setOfflineNotice(null);
+                handleRefreshVibes();
+              }}
+              icon="cloud-alert"
+            />
           ) : null}
 
           {/* CARD STACK */}
-          <View style={styles.stackWrapper}>
-            {loadingMatches ? (
+          <View
+            style={[
+              styles.stackWrapper,
+              {
+                width: layoutMetrics.cardWidth,
+                height: layoutMetrics.cardHeight + vibesStackVisualReserve,
+                paddingHorizontal: 0,
+                paddingBottom: vibesStackVisualReserve,
+                marginTop:
+                  !showPracticeWalkthrough && renderFloatingMoments && user?.id
+                    ? hasCompactMomentRail
+                      ? 0
+                      : -momentsCapsuleMetrics.capsuleOverlapAmount
+                    : hasMomentsHeaderOnly && Platform.OS === 'android' && (layoutMetrics.device.compactHeight || layoutMetrics.device.compactWidth)
+                      ? 14
+                      : layoutMetrics.device.compactHeight
+                        ? -12
+                      : layoutMetrics.device.tallHeight
+                        ? 4
+                        : -6,
+              },
+            ]}
+          >
+            {!practiceLoaded ? (
+              <ExploreStackSkeleton />
+            ) : showPracticeWalkthrough ? (
+              <VibesPracticeWalkthrough
+                metrics={layoutMetrics}
+                onComplete={completePractice}
+                onGestureLockChange={setPracticeGestureLocked}
+                initialStep={practiceStep}
+                onStepChange={handlePracticeStepChange}
+                allowClose
+                onClose={closePracticeWalkthrough}
+              />
+            ) : loadingMatches && matchList.length === 0 ? (
               <ExploreStackSkeleton />
             ) : offlineNotice && matchList.length === 0 ? (
               // If we failed to load, don't show the "no more profiles" empty state.
-              // The blocking Notice above already provides Retry.
-              <View />
+              // The retry Notice above already provides recovery.
+              <ExploreStackSkeleton />
             ) : !exhausted ? (
               <ExploreStack
                 ref={stackRef}
                 matches={matchList}
                 currentIndex={currentIndex}
                 setCurrentIndex={setCurrentIndex}
-                recordSwipe={recordSwipe}
+                recordSwipe={recordVibesSwipe}
                 onProfileTap={onProfileTap}
+                layoutMetrics={layoutMetrics}
+                onIntentSwipeUp={openIntentSheet}
+                onGestureLockChange={setDeckGestureLocked}
                 onPlayPress={async (id: string) => {
                   try {
                     if (previewingId) return;
@@ -1898,13 +2803,30 @@ export default function ExploreScreen() {
                         targetProfileId: id,
                         introVideoStarted: true,
                       });
+                      recordVibesEvent(id, 'intro_played', {
+                        position: currentIndex,
+                        dwellMs: getActiveCardDwellMs(id),
+                      });
                     }
-                    const updated = await fetchProfileDetails?.(id);
-                    const videoUrl = (updated && (updated as any).profileVideo) ? String((updated as any).profileVideo) : undefined;
-                    if (videoUrl) {
-                      setVideoModalUrl(videoUrl);
-                      setVideoModalVisible(true);
-                    }
+                      const updated = await fetchProfileDetails?.(id);
+                      const videoSource = (updated && ((updated as any).profileVideoPath || (updated as any).profileVideo))
+                        ? String((updated as any).profileVideoPath || (updated as any).profileVideo)
+                        : undefined;
+                      const cachedVideoUrl = videoSource ? await getOfflineVideoUri(videoSource) : null;
+                      const videoUrl = cachedVideoUrl || ((updated && (updated as any).profileVideo) ? String((updated as any).profileVideo) : undefined);
+                      if (videoUrl) {
+                        const display = updated || matchList.find((entry) => String(entry.id) === String(id));
+                        const age = typeof (display as any)?.age === 'number' ? (display as any).age : null;
+                        setVideoModalTitle(display?.name ? `${display.name}${age ? `, ${age}` : ''}` : null);
+                        setVideoModalSubtitle('Intro video');
+                        setVideoModalUrl(videoUrl);
+                        setVideoModalVisible(true);
+                        if (!cachedVideoUrl && videoSource && String(videoUrl).startsWith('http')) {
+                          void cacheOfflineVideo(videoSource, videoUrl).then((localUri) => {
+                            if (localUri) setVideoModalUrl(localUri);
+                          });
+                        }
+                      }
                   } catch (e) {
                     console.log('video preview failed', e);
                   }
@@ -1914,132 +2836,37 @@ export default function ExploreScreen() {
             ) : (
               <NoMoreProfiles />
             )}
-            {shouldShowFloatingMoments || renderFloatingMoments ? (
-              <Animated.View
-                pointerEvents="box-none"
-                style={[
-                  styles.momentsFloatingOverlay,
-                  {
-                    opacity: floatingMomentsOpacity,
-                    transform: [
-                      { translateY: floatingMomentsTranslateY },
-                      { scale: floatingMomentsScale },
-                    ],
-                  },
-                ]}
-              >
-                <VibesMomentsStrip
-                  users={momentStripUsers}
-                  hasMyActiveMoment={hasMyActiveMoment}
-                  showEmptyState={showMomentsEmptyState}
-                  relationshipContextByProfileId={momentRelationshipContextByProfileId}
-                  onPressMyMoment={handlePressMyMoment}
-                  onPressUserMoment={handlePressUserMoment}
-                  onPressSeeAll={handleMomentsPress}
-                  onPressPostMoment={handlePressMyMoment}
-                  variant="floating"
-                  collapsed={false}
-                  onCollapsedChange={setMomentsCollapsed}
-                  bodyOnly
-                />
-              </Animated.View>
-            ) : null}
           </View>
         </Animated.ScrollView>
 
-        <View style={styles.actionButtons} pointerEvents="box-none">
-          <Animated.View
+        {!showPracticeWalkthrough && practiceLoaded ? (
+          <View
             style={[
+              styles.actionButtons,
               {
+                bottom: Math.max(layoutMetrics.dockBottom, layoutMetrics.bottomNavReserve + vibesActionRailGap),
+              },
+            ]}
+            pointerEvents="box-none"
+          >
+            <VibesActionDock
+              metrics={layoutMetrics}
+              onPass={() => animateButtonPress(onReject)}
+              onUndo={undoLastVibesAction}
+              onLike={() => animateButtonPress(onLike)}
+              onPremium={() => animateButtonPress(openSignalSheet)}
+              onIntent={openIntentSheet}
+              superlikeBadge={renderSignalBadge()}
+              entranceStyle={{
                 transform: [
                   { translateY: fallbackEntranceTranslate },
                   { scale: buttonScale },
                 ],
                 opacity: fallbackEntranceOpacity,
-              },
-            ]}
-          >
-            <BlurViewSafe
-              intensity={24}
-              tint={isDark ? 'dark' : 'light'}
-              style={styles.actionFloatingCard}
-            >
-              <View style={styles.actionSecondaryCluster}>
-                <LinearGradientSafe
-                  colors={[theme.backgroundSubtle, theme.background]}
-                  style={styles.rejectRing}
-                >
-                  <TouchableOpacity
-                    style={styles.rejectButton}
-                    onPress={() => animateButtonPress(onReject)}
-                    activeOpacity={0.85}
-                  >
-                    <CircleOff size={21} color={theme.textMuted} style={{ marginTop: 1 }} />
-                  </TouchableOpacity>
-                </LinearGradientSafe>
-
-                <TouchableOpacity
-                  style={styles.infoButton}
-                  onPress={() => {
-                    try {
-                      stackRef.current?.rewind();
-                    } catch {}
-                    const prev = undoLastSwipe?.();
-                    if (prev) setCurrentIndex(Math.max(0, prev.index));
-                    try { Haptics.selectionAsync(); } catch {}
-                  }}
-                  activeOpacity={0.85}
-                >
-                  <MaterialCommunityIcons name="undo-variant" size={18} color={theme.tint} />
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.actionPrimaryCluster}>
-                <LinearGradientSafe
-                  colors={[theme.tint, theme.accent]}
-                  style={styles.requestRing}
-                >
-                  <TouchableOpacity
-                    style={styles.requestButton}
-                    onPress={openIntentSheet}
-                    activeOpacity={0.85}
-                  >
-                    <Target size={24} color={theme.text} strokeWidth={2.6} />
-                  </TouchableOpacity>
-                </LinearGradientSafe>
-
-                <View style={styles.superlikeWrap}>
-                  {renderSuperlikeBadge()}
-                  <LinearGradientSafe
-                    colors={[theme.accent, theme.backgroundSubtle]}
-                    style={[styles.superlikeButton, !isLinearGradientAvailable() && styles.superlikeFallback]}
-                  >
-                    <TouchableOpacity
-                      style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}
-                      onPress={() => animateButtonPress(onSuperlike)}
-                      activeOpacity={0.85}
-                    >
-                      <Gem size={20} color="#fff" style={{ marginTop: 1 }} />
-                    </TouchableOpacity>
-                  </LinearGradientSafe>
-                </View>
-
-                <LinearGradientSafe
-                  colors={[theme.secondary, theme.tint]}
-                  style={styles.likeRing}
-                >
-                  <TouchableOpacity
-                    style={styles.likeButton}
-                    onPress={() => animateButtonPress(onLike)}
-                    activeOpacity={0.85}
-                  >
-                    <Sparkles size={23} color="#fff" style={{ marginTop: 1 }} />
-                  </TouchableOpacity>
-                </LinearGradientSafe>
-              </View>
-            </BlurViewSafe>
-          </Animated.View>
-        </View>
+              }}
+            />
+          </View>
+        ) : null}
 
         <Modal
           visible={filtersVisible}
@@ -2059,7 +2886,12 @@ export default function ExploreScreen() {
             style={{ flex: 1 }}
           >
             <View style={[styles.modalBackdrop, { paddingTop: Math.max(insets.top + 12, 16) }]}>
-              <View style={[styles.modalCard, { paddingBottom: Math.max(insets.bottom + 16, 20), marginTop: 8 }]}>
+              <BlurViewSafe
+                intensity={34}
+                tint={isDark ? 'dark' : 'light'}
+                style={[styles.modalCard, { paddingBottom: Math.max(insets.bottom + 16, 20), marginTop: 8 }]}
+              >
+                <View style={styles.modalHandle} />
                 <View style={styles.modalTitleRow}>
                   <View style={styles.modalTitleCopy}>
                     <Text style={styles.modalEyebrow}>BETWEENER VIBES</Text>
@@ -2074,7 +2906,7 @@ export default function ExploreScreen() {
                 </View>
                 <Text style={styles.modalSubtitle}>
                   {filtersPanel === 'location'
-                    ? 'Keep your city private, or use precise location when you want distance to do the work.'
+                    ? 'Share only your chosen city, or use precise location when you want distance to do the work.'
                     : 'Set a mood, tighten the pool, and preview the shift before you apply it.'}
                 </Text>
                 <ScrollView style={styles.modalScroll} contentContainerStyle={styles.modalScrollContent} showsVerticalScrollIndicator={false}>
@@ -2085,40 +2917,111 @@ export default function ExploreScreen() {
                           <Text style={styles.filterSectionEyebrow}>Location</Text>
                           <Text style={styles.filterSectionTitle}>Set your city</Text>
                           <Text style={styles.filterSectionBody}>
-                            City-only keeps your location private. You can switch back to precise location any time.
+                            City-only shares the city you choose while keeping exact coordinates private. You can switch back any time.
                           </Text>
                         </View>
 
                         <View style={styles.filterFieldGroup}>
                           <Text style={styles.modalLabel}>Country</Text>
-                          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.countryChips}>
-                            {COUNTRY_OPTIONS.map((c) => {
-                              const active = manualCountryCode === c.code;
-                              return (
-                                <TouchableOpacity
-                                  key={c.code}
-                                  style={[styles.countryChip, active && styles.countryChipActive]}
-                                  onPress={() => setManualCountryCode(c.code)}
-                                  activeOpacity={0.85}
-                                >
-                                  <Text style={[styles.countryChipText, active && styles.countryChipTextActive]}>{c.label}</Text>
-                                </TouchableOpacity>
-                              );
-                            })}
-                          </ScrollView>
+                          {isGhanaCountryLocked ? (
+                            <Text style={styles.filterHint}>
+                              {countryPolicyMessage}
+                            </Text>
+                          ) : null}
+                          <TouchableOpacity
+                            style={[styles.countrySelectButton, isGhanaCountryLocked && styles.countrySelectButtonDisabled]}
+                            onPress={() => {
+                              if (isGhanaCountryLocked) return;
+                              setManualCountrySearch('');
+                              setManualCountryPickerOpen((current) => !current);
+                            }}
+                            activeOpacity={0.85}
+                            disabled={isGhanaCountryLocked}
+                          >
+                            <View style={styles.countrySelectValue}>
+                              <Text style={[styles.countrySelectFlag, !selectedManualCountryFlag && styles.countrySelectFlagPlaceholder]}>
+                                {selectedManualCountryFlag || '--'}
+                              </Text>
+                              <View style={styles.countrySelectCopy}>
+                                <Text style={manualCountryCode ? styles.countrySelectLabel : styles.countrySelectPlaceholder}>
+                                  {selectedManualCountry?.label || 'Select country'}
+                                </Text>
+                                <Text style={styles.countrySelectMeta}>
+                                  {selectedManualCountry
+                                    ? `${selectedManualCountry.dial} • ${selectedManualCountry.code}`
+                                    : 'Used for local matching first'}
+                                </Text>
+                              </View>
+                            </View>
+                            <MaterialCommunityIcons name="chevron-down" size={20} color={theme.textMuted} />
+                          </TouchableOpacity>
+                          {manualCountryPickerOpen ? (
+                            <View style={styles.inlineCountryPickerPanel}>
+                              <View style={styles.countrySearchWrap}>
+                                <MaterialCommunityIcons name="magnify" size={18} color={theme.textMuted} />
+                                <TextInput
+                                  value={manualCountrySearch}
+                                  onChangeText={setManualCountrySearch}
+                                  placeholder="Search country or code"
+                                  placeholderTextColor={theme.textMuted}
+                                  autoCapitalize="words"
+                                  autoCorrect={false}
+                                  style={styles.countrySearchInput}
+                                />
+                              </View>
+                              <ScrollView
+                                style={styles.inlineCountryPickerList}
+                                contentContainerStyle={styles.countryPickerListContent}
+                                keyboardShouldPersistTaps="handled"
+                                nestedScrollEnabled
+                              >
+                                {manualCountryOptions.map((country) => {
+                                  const isSelected = manualCountryCode === country.code;
+                                  return (
+                                    <TouchableOpacity
+                                      key={country.code}
+                                      style={[styles.countryPickerItem, isSelected && styles.countryPickerItemSelected]}
+                                      onPress={() => handleSelectManualCountry(country)}
+                                      activeOpacity={0.85}
+                                    >
+                                      <View style={styles.countryPickerItemRow}>
+                                        <Text style={styles.countryPickerItemFlag}>{toFlagEmoji(country.code) || '--'}</Text>
+                                        <View style={styles.countryPickerItemCopy}>
+                                          <Text style={[styles.countryPickerItemLabel, isSelected && styles.countryPickerItemLabelSelected]}>
+                                            {country.label}
+                                          </Text>
+                                          <Text style={styles.countryPickerItemMeta}>{`${country.dial} • ${country.code}`}</Text>
+                                        </View>
+                                      </View>
+                                      {isSelected ? (
+                                        <MaterialCommunityIcons name="check" size={20} color={theme.tint} />
+                                      ) : null}
+                                    </TouchableOpacity>
+                                  );
+                                })}
+                              </ScrollView>
+                            </View>
+                          ) : null}
                         </View>
 
                         <View style={styles.filterFieldGroup}>
-                          <Text style={styles.modalLabel}>City</Text>
-                          <TextInput
-                            style={styles.modalInput}
-                            placeholder="e.g., Bristol"
-                            placeholderTextColor={theme.textMuted}
+                          <GlobalCityField
+                            countryCode={manualCountryCode}
+                            countryName={selectedManualCountry?.label || 'your country'}
                             value={manualLocation}
-                            onChangeText={setManualLocation}
-                            autoCapitalize="words"
+                            region={manualRegion}
+                            selectedGeonameId={manualSelectedGeonameId}
+                            dark={isDark}
+                            styles={manualCityStyles}
+                            error={locationError || undefined}
+                            required
+                            onSelect={(place) => {
+                              setManualLocality(place);
+                              setManualLocation(place?.name || '');
+                              setManualRegion(place?.admin1Name || null);
+                              setLocationError(null);
+                            }}
                           />
-                          {locationError ? <Text style={styles.locationError}>{locationError}</Text> : null}
                         </View>
                       </View>
 
@@ -2412,16 +3315,17 @@ export default function ExploreScreen() {
 
                   <View style={[styles.filterSectionCard, styles.filterSectionCardMixed]}>
                     <View style={styles.filterSectionHeader}>
-                      <Text style={styles.filterSectionEyebrow}>Reach</Text>
+                      <Text style={styles.filterSectionEyebrow}>Discovery range</Text>
                       <View style={styles.filterSectionTitleRow}>
-                        <Text style={styles.filterSectionTitle}>Distance and age</Text>
+                        <Text style={styles.filterSectionTitle}>Set reach, then shape compatibility</Text>
                         <View style={[styles.filterTierPill, styles.filterTierPillMixed]}>
-                          <Text style={[styles.filterTierPillText, styles.filterTierPillTextMixed]}>Mixed</Text>
+                          <Text style={[styles.filterTierPillText, styles.filterTierPillTextMixed]}>Flexible</Text>
                         </View>
                       </View>
-                      <Text style={styles.filterSectionBody}>Distance is Silver+. Age range stays free.</Text>
+                      <Text style={styles.filterSectionBody}>Distance stays practical. Age range stays personal.</Text>
                     </View>
                     <View style={styles.filterFieldGroup}>
+                    <Text style={styles.filterSubsectionEyebrow}>Reach</Text>
                     <Text style={styles.filterLabel}>Distance</Text>
                     <Text style={styles.filterHint}>{activeTab === 'nearby' ? 'Nearby tab only' : 'Switch to Nearby to use distance'}</Text>
                     <View style={styles.filterChipsRowWrap}>
@@ -2454,27 +3358,38 @@ export default function ExploreScreen() {
                       </TouchableOpacity>
                     </View>
                     </View>
-                    <View style={styles.filterFieldGroup}>
-                    <Text style={styles.filterLabel}>Age range</Text>
-                    <View style={styles.ageTopRow}>
-                      <View style={styles.ageRangePill}>
-                        <Text style={styles.ageRangeText}>{minAge} - {maxAge}</Text>
-                      </View>
+                    <View style={styles.filterSubsectionDivider} />
+                    <View style={[styles.filterFieldGroup, styles.ageFieldGroup]}>
+                    <Text style={styles.filterSubsectionEyebrow}>Compatibility</Text>
+                    <View style={styles.ageTitleRow}>
+                      <Text style={styles.ageSectionTitle}>Age range</Text>
                       <TouchableOpacity
-                        style={[styles.filterChip, styles.ageAnyChip]}
+                        style={styles.ageEditAction}
                         onPress={() => {
-                          setMinAge(18);
-                          setMaxAge(60);
+                          setFiltersVisible(false);
+                          setFiltersPanel('main');
+                          requestOpenProfileEdit();
+                          router.navigate({
+                            pathname: '/(tabs)/profile',
+                            params: { openEdit: String(Date.now()) },
+                          });
                         }}
                         activeOpacity={0.85}
+                        accessibilityRole="button"
+                        accessibilityLabel="Edit saved age preference"
                       >
-                        <Text style={styles.filterChipText}>Any</Text>
+                        <Text style={styles.ageEditActionText}>Edit</Text>
+                        <MaterialCommunityIcons name="chevron-right" size={15} color={theme.tint} />
                       </TouchableOpacity>
+                    </View>
+                    <View style={styles.ageHeroPanel}>
+                      <Text style={styles.ageHeroValue}>{formatAgeRangeValue(currentAgeRange)}</Text>
+                      <Text style={styles.ageHeroSupport}>{ageSupportCopy}</Text>
                     </View>
 
                     <PremiumRangeSlider
-                      min={18}
-                      max={99}
+                      min={baseDiscoveryFilters.minAge}
+                      max={baseDiscoveryFilters.maxAge}
                       step={1}
                       valueMin={minAge}
                       valueMax={maxAge}
@@ -2484,30 +3399,34 @@ export default function ExploreScreen() {
                       }}
                       theme={theme}
                       isDark={isDark}
+                      minLabel={String(minAge)}
+                      maxLabel={String(maxAge)}
                     />
-                    <View style={styles.filterChipsRowWrap}>
-                      {[
-                        { label: '18-25', min: 18, max: 25 },
-                        { label: '26-35', min: 26, max: 35 },
-                        { label: '36-45', min: 36, max: 45 },
-                        { label: '46+', min: 46, max: 99 },
-                      ].map((p) => {
-                        const active = minAge === p.min && maxAge === p.max;
+                    <View style={styles.agePresetRow}>
+                      {agePresetModes.map((mode) => {
+                        const active = agePresetMode === mode;
                         return (
                           <TouchableOpacity
-                            key={p.label}
-                            style={[styles.filterChip, active && styles.filterChipActive]}
-                            onPress={() => {
-                              setMinAge(p.min);
-                              setMaxAge(p.max);
-                            }}
+                            key={mode}
+                            style={[styles.agePresetChip, active && styles.agePresetChipActive]}
+                            onPress={() => handleAgePresetPress(mode)}
                             activeOpacity={0.85}
+                            accessibilityRole="button"
+                            accessibilityState={{ selected: active }}
+                            accessibilityLabel={`${formatAgePresetLabel(mode)} age range${active ? ', selected' : ''}`}
                           >
-                            <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>{p.label}</Text>
+                            <Text style={[styles.agePresetChipText, active && styles.agePresetChipTextActive]}>
+                              {formatAgePresetLabel(mode)}
+                            </Text>
                           </TouchableOpacity>
                         );
                       })}
                     </View>
+                    {agePresetMode === 'custom' ? (
+                      <Text style={styles.agePresetMeta}>Custom range inside your saved preference {savedAgeRangeLabel}.</Text>
+                    ) : (
+                      <Text style={styles.agePresetMeta}>Saved preference {savedAgeRangeLabel}.</Text>
+                    )}
                     </View>
                   </View>
 
@@ -2529,7 +3448,9 @@ export default function ExploreScreen() {
                           style={[styles.filterChip, religionFilter === r && styles.filterChipActive]}
                           onPress={() => setReligionFilter((curr) => (curr === r ? null : r))}
                         >
-                          <Text style={[styles.filterChipText, religionFilter === r && styles.filterChipTextActive]}>{r}</Text>
+                          <Text style={[styles.filterChipText, religionFilter === r && styles.filterChipTextActive]}>
+                            {formatReligionLabel(r)}
+                          </Text>
                         </TouchableOpacity>
                       ))}
                       {distinctReligions.length > 0 && (
@@ -2585,11 +3506,11 @@ export default function ExploreScreen() {
                       <Text style={[styles.locationError, { marginTop: 8 }]}>{locationError}</Text>
                     ) : null}
                     <View style={styles.filterFieldGroup}>
-                    <Text style={styles.filterLabel}>Type a city</Text>
-                    <Text style={styles.filterHint}>e.g., Accra, Ghana</Text>
+                    <Text style={styles.filterLabel}>Filter loaded cards by place</Text>
+                    <Text style={styles.filterHint}>Use a city, region, or country. This does not set your own location.</Text>
                     <TextInput
                       style={[styles.filterInput, { marginTop: 8 }]}
-                      placeholder="e.g., Accra, Ghana"
+                      placeholder="e.g., Bristol or United Kingdom"
                       value={locationQuery}
                       onChangeText={setLocationQuery}
                     />
@@ -2622,7 +3543,7 @@ export default function ExploreScreen() {
                     </>
                   )}
                 </ScrollView>
-              </View>
+              </BlurViewSafe>
             </View>
           </KeyboardAvoidingView>
         </Modal>
@@ -2666,37 +3587,106 @@ export default function ExploreScreen() {
                     <Text style={styles.modalResetText}>Close</Text>
                   </TouchableOpacity>
                 </View>
-                <Text style={styles.modalSubtitle}>City-only keeps your location private (no GPS required).</Text>
+                <Text style={styles.modalSubtitle}>Share a verified city while keeping exact coordinates private. No GPS required.</Text>
 
                 <Text style={styles.modalLabel}>Country</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.countryChips}>
-                  {COUNTRY_OPTIONS.map((c) => {
-                    const active = manualCountryCode === c.code;
-                    return (
-                      <TouchableOpacity
-                        key={c.code}
-                        style={[styles.countryChip, active && styles.countryChipActive]}
-                        onPress={() => setManualCountryCode(c.code)}
-                        activeOpacity={0.85}
-                      >
-                        <Text style={[styles.countryChipText, active && styles.countryChipTextActive]}>{c.label}</Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </ScrollView>
+                {isGhanaCountryLocked ? (
+                  <Text style={styles.filterHint}>
+                    {countryPolicyMessage}
+                  </Text>
+                ) : null}
+                <TouchableOpacity
+                  style={[styles.countrySelectButton, isGhanaCountryLocked && styles.countrySelectButtonDisabled]}
+                  onPress={() => {
+                    if (isGhanaCountryLocked) return;
+                    setManualCountrySearch('');
+                    setManualCountryPickerOpen((current) => !current);
+                  }}
+                  activeOpacity={0.85}
+                  disabled={isGhanaCountryLocked}
+                >
+                  <View style={styles.countrySelectValue}>
+                    <Text style={[styles.countrySelectFlag, !selectedManualCountryFlag && styles.countrySelectFlagPlaceholder]}>
+                      {selectedManualCountryFlag || '--'}
+                    </Text>
+                    <View style={styles.countrySelectCopy}>
+                      <Text style={manualCountryCode ? styles.countrySelectLabel : styles.countrySelectPlaceholder}>
+                        {selectedManualCountry?.label || 'Select country'}
+                      </Text>
+                      <Text style={styles.countrySelectMeta}>
+                        {selectedManualCountry
+                          ? `${selectedManualCountry.dial} • ${selectedManualCountry.code}`
+                          : 'Used for local matching first'}
+                      </Text>
+                    </View>
+                  </View>
+                  <MaterialCommunityIcons name="chevron-down" size={20} color={theme.textMuted} />
+                </TouchableOpacity>
+                {manualCountryPickerOpen ? (
+                  <View style={styles.inlineCountryPickerPanel}>
+                    <View style={styles.countrySearchWrap}>
+                      <MaterialCommunityIcons name="magnify" size={18} color={theme.textMuted} />
+                      <TextInput
+                        value={manualCountrySearch}
+                        onChangeText={setManualCountrySearch}
+                        placeholder="Search country or code"
+                        placeholderTextColor={theme.textMuted}
+                        autoCapitalize="words"
+                        autoCorrect={false}
+                        style={styles.countrySearchInput}
+                      />
+                    </View>
+                    <ScrollView
+                      style={styles.inlineCountryPickerList}
+                      contentContainerStyle={styles.countryPickerListContent}
+                      keyboardShouldPersistTaps="handled"
+                      nestedScrollEnabled
+                    >
+                      {manualCountryOptions.map((country) => {
+                        const isSelected = manualCountryCode === country.code;
+                        return (
+                          <TouchableOpacity
+                            key={country.code}
+                            style={[styles.countryPickerItem, isSelected && styles.countryPickerItemSelected]}
+                            onPress={() => handleSelectManualCountry(country)}
+                            activeOpacity={0.85}
+                          >
+                            <View style={styles.countryPickerItemRow}>
+                              <Text style={styles.countryPickerItemFlag}>{toFlagEmoji(country.code) || '--'}</Text>
+                              <View style={styles.countryPickerItemCopy}>
+                                <Text style={[styles.countryPickerItemLabel, isSelected && styles.countryPickerItemLabelSelected]}>
+                                  {country.label}
+                                </Text>
+                                <Text style={styles.countryPickerItemMeta}>{`${country.dial} • ${country.code}`}</Text>
+                              </View>
+                            </View>
+                            {isSelected ? (
+                              <MaterialCommunityIcons name="check" size={20} color={theme.tint} />
+                            ) : null}
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
+                ) : null}
 
-                <Text style={styles.modalLabel}>City</Text>
-                <TextInput
-                  style={styles.modalInput}
-                  placeholder="e.g., Accra"
-                  placeholderTextColor={theme.textMuted}
+                <GlobalCityField
+                  countryCode={manualCountryCode}
+                  countryName={selectedManualCountry?.label || 'your country'}
                   value={manualLocation}
-                  onChangeText={setManualLocation}
-                  autoCapitalize="words"
-                  autoCorrect={false}
+                  region={manualRegion}
+                  selectedGeonameId={manualSelectedGeonameId}
+                  dark={isDark}
+                  styles={manualCityStyles}
+                  error={locationError || undefined}
+                  required
+                  onSelect={(place) => {
+                    setManualLocality(place);
+                    setManualLocation(place?.name || '');
+                    setManualRegion(place?.admin1Name || null);
+                    setLocationError(null);
+                  }}
                 />
-
-                {locationError ? <Text style={styles.locationError}>{locationError}</Text> : null}
 
                 <View style={styles.modalActions}>
                   <TouchableOpacity
@@ -2719,7 +3709,8 @@ export default function ExploreScreen() {
               </View>
             </View>
           </KeyboardAvoidingView>
-        </Modal>
+      </Modal>
+
           <VibesAllMomentsModal
             visible={allMomentsVisible}
             onClose={() => setAllMomentsVisible(false)}
@@ -2737,28 +3728,79 @@ export default function ExploreScreen() {
             startUserId={momentStartUserId}
             relationshipContextByProfileId={momentRelationshipContextByProfileId}
             onPressIntent={handleMomentIntent}
+            onMomentViewed={(momentId) => {
+              const normalizedMomentId = String(momentId || '').trim();
+              if (!normalizedMomentId) return;
+              setViewedMomentIds((prev) => {
+                if (prev.has(normalizedMomentId)) return prev;
+                const next = new Set(prev);
+                next.add(normalizedMomentId);
+                if (viewedMomentIdsStorageKey) {
+                  AsyncStorage.setItem(viewedMomentIdsStorageKey, JSON.stringify(Array.from(next))).catch(() => {});
+                }
+                return next;
+              });
+            }}
             onClose={() => {
               setMomentViewerVisible(false);
               setMomentStartUserId(null);
             }}
           />
-          <MomentCreateModal
-            visible={momentCreateVisible}
-            onClose={() => setMomentCreateVisible(false)}
-            onCreated={() => {
-              setMomentCreateVisible(false);
-              void refreshMoments();
-            }}
-          />
           <IntentRequestSheet
             visible={intentSheetVisible}
-            onClose={() => setIntentSheetVisible(false)}
+            onClose={() => {
+              setIntentSheetVisible(false);
+              setIntentTarget(null);
+            }}
             recipientId={intentTarget?.id}
             recipientName={intentTarget?.name ?? null}
             metadata={{ source: 'vibes' }}
-            onSent={() => {
-              // Sending an intent should advance the deck just like a swipe.
-              setCurrentIndex((i) => i + 1);
+            onSent={(requestId) => {
+              if (intentTarget?.id) {
+                recordVibesEvent(intentTarget.id, 'intent_sent', {
+                  position: intentTarget.deckIndex ?? currentIndex,
+                  metadata: { request_id: requestId ?? null },
+                });
+              }
+              if (intentTarget?.deckIndex != null) {
+                pushVibesAction({
+                  kind: 'intent',
+                  id: intentTarget.id,
+                  requestId,
+                  index: intentTarget.deckIndex,
+                });
+                setCurrentIndex((i) => Math.max(i, intentTarget.deckIndex! + 1));
+              }
+            }}
+          />
+          <SendSignalSheet
+            visible={signalSheetVisible}
+            receiverProfileId={signalTarget?.id}
+            receiverName={signalTarget?.name ?? null}
+            match={signalTarget?.match ?? null}
+            source="vibes_card"
+            onClose={() => {
+              setSignalSheetVisible(false);
+              setSignalTarget(null);
+            }}
+            onPaywall={showSignalUpsell}
+            onSent={({ signalId }) => {
+              if (signalTarget?.id) {
+                recordVibesEvent(signalTarget.id, 'signal_sent', {
+                  position: signalTarget.deckIndex ?? currentIndex,
+                  metadata: { signal_id: signalId },
+                });
+              }
+              if (signalTarget?.deckIndex != null) {
+                pushVibesAction({
+                  kind: 'signal',
+                  id: signalTarget.id,
+                  signalId,
+                  index: signalTarget.deckIndex,
+                });
+                setCurrentIndex((i) => Math.max(i, signalTarget.deckIndex! + 1));
+              }
+              void refreshSignalAccess();
             }}
           />
           {/* Match celebration modal */}
@@ -2773,8 +3815,9 @@ export default function ExploreScreen() {
               // use expo-router's router to open the chat conversation screen
               // use matched id as conversation id for QA/testing
                
-              if (m?.id) {
-                router.push({ pathname: '/chat/[id]', params: { id: String(m.id), userName: m.name, userAvatar: m.avatar_url, isOnline: String(!!m.isActiveNow) } });
+              const chatPeerId = m?.user_id ?? m?.id;
+              if (chatPeerId) {
+                router.push({ pathname: '/chat/[id]', params: { id: String(chatPeerId), userName: m?.name, userAvatar: m?.avatar_url, isOnline: String(!!m?.isActiveNow) } });
               } else {
                 router.push('/(tabs)/chat');
               }
@@ -2787,13 +3830,22 @@ export default function ExploreScreen() {
         <ProfileVideoModal
           visible={videoModalVisible}
           videoUrl={videoModalUrl ?? undefined}
+          title={videoModalTitle ?? undefined}
+          subtitle={videoModalSubtitle ?? undefined}
           onClose={() => {
             setVideoModalVisible(false);
             setVideoModalUrl(null);
+            setVideoModalTitle(null);
+            setVideoModalSubtitle(null);
             setPreviewingId(null);
           }}
         />
+        <OnboardingArrivalCelebration
+          visible={showOnboardingCelebration}
+          onDismiss={() => setShowOnboardingCelebration(false)}
+        />
       </SafeAreaView>
+      </DepthBackground>
     </GestureHandlerRootView>
   );
 }
@@ -2804,6 +3856,8 @@ function PremiumRangeSlider({
   step = 1,
   valueMin,
   valueMax,
+  minLabel,
+  maxLabel,
   onChange,
   theme,
   isDark,
@@ -2813,17 +3867,22 @@ function PremiumRangeSlider({
   step?: number;
   valueMin: number;
   valueMax: number;
+  minLabel?: string;
+  maxLabel?: string;
   onChange: (nextMin: number, nextMax: number) => void;
   theme: typeof Colors.light;
   isDark: boolean;
 }) {
   const [trackWidth, setTrackWidth] = useState(0);
+  const [activeThumb, setActiveThumb] = useState<'min' | 'max' | null>(null);
   const trackWidthRef = useRef(0);
   const boundsRef = useRef({ min, max });
   const stepRef = useRef(step);
   const valuesRef = useRef({ valueMin, valueMax });
   const startRef = useRef({ valueMin, valueMax });
   const onChangeRef = useRef(onChange);
+  const bubbleAnim = useRef(new Animated.Value(0)).current;
+  const lastHapticRef = useRef({ min: valueMin, max: valueMax });
 
   useEffect(() => {
     trackWidthRef.current = trackWidth;
@@ -2842,6 +3901,10 @@ function PremiumRangeSlider({
   }, [valueMin, valueMax]);
 
   useEffect(() => {
+    lastHapticRef.current = { min: valueMin, max: valueMax };
+  }, [valueMax, valueMin]);
+
+  useEffect(() => {
     onChangeRef.current = onChange;
   }, [onChange]);
 
@@ -2856,12 +3919,40 @@ function PremiumRangeSlider({
 
   const snapClamp = (v: number, lo: number, hi: number) => clamp(snap(v), lo, hi);
 
+  const showBubble = useCallback((thumb: 'min' | 'max') => {
+    setActiveThumb(thumb);
+    Animated.timing(bubbleAnim, {
+      toValue: 1,
+      duration: 160,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [bubbleAnim]);
+
+  const hideBubble = useCallback(() => {
+    Animated.timing(bubbleAnim, {
+      toValue: 0,
+      duration: 140,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) setActiveThumb(null);
+    });
+  }, [bubbleAnim]);
+
+  const emitSelectionHaptic = useCallback((thumb: 'min' | 'max', nextValue: number) => {
+    if (lastHapticRef.current[thumb] === nextValue) return;
+    lastHapticRef.current[thumb] = nextValue;
+    void Haptics.selectionAsync().catch(() => undefined);
+  }, []);
+
   const minPan = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
       onPanResponderGrant: () => {
         startRef.current = { ...valuesRef.current };
+        showBubble('min');
       },
       onPanResponderMove: (_evt, gesture) => {
         const w = trackWidthRef.current;
@@ -2871,8 +3962,12 @@ function PremiumRangeSlider({
         const delta = gesture.dx / pxPerValue;
         const nextMin = startRef.current.valueMin + delta;
         const maxAllowed = valuesRef.current.valueMax;
-        onChangeRef.current(snapClamp(nextMin, bMin, maxAllowed), maxAllowed);
+        const snappedMin = snapClamp(nextMin, bMin, maxAllowed);
+        emitSelectionHaptic('min', snappedMin);
+        onChangeRef.current(snappedMin, maxAllowed);
       },
+      onPanResponderRelease: hideBubble,
+      onPanResponderTerminate: hideBubble,
     }),
   ).current;
 
@@ -2882,6 +3977,7 @@ function PremiumRangeSlider({
       onMoveShouldSetPanResponder: () => true,
       onPanResponderGrant: () => {
         startRef.current = { ...valuesRef.current };
+        showBubble('max');
       },
       onPanResponderMove: (_evt, gesture) => {
         const w = trackWidthRef.current;
@@ -2891,8 +3987,12 @@ function PremiumRangeSlider({
         const delta = gesture.dx / pxPerValue;
         const nextMax = startRef.current.valueMax + delta;
         const minAllowed = valuesRef.current.valueMin;
-        onChangeRef.current(minAllowed, snapClamp(nextMax, minAllowed, bMax));
+        const snappedMax = snapClamp(nextMax, minAllowed, bMax);
+        emitSelectionHaptic('max', snappedMax);
+        onChangeRef.current(minAllowed, snappedMax);
       },
+      onPanResponderRelease: hideBubble,
+      onPanResponderTerminate: hideBubble,
     }),
   ).current;
 
@@ -2902,23 +4002,61 @@ function PremiumRangeSlider({
   const clampedMinPos = clamp(minPos, 0, trackWidth);
   const clampedMaxPos = clamp(maxPos, 0, trackWidth);
 
-  const thumbSize = 28;
-  const trackH = 6;
-  const trackBg = isDark ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.10)';
+  const thumbSize = 32;
+  const trackH = 4;
+  const trackBg = isDark ? 'rgba(244,235,221,0.10)' : 'rgba(7,30,34,0.10)';
   const activeBg = theme.tint;
-  const thumbBg = isDark ? '#0b1220' : '#fff';
-  const thumbBorder = isDark ? 'rgba(255,255,255,0.16)' : 'rgba(15,23,42,0.10)';
+  const thumbBg = isDark ? '#0c1d22' : '#fffaf6';
+  const thumbBorder = isDark ? 'rgba(127,228,220,0.24)' : 'rgba(19,168,168,0.24)';
+  const bubbleX = activeThumb === 'min' ? clampedMinPos : clampedMaxPos;
+  const bubbleValue = activeThumb === 'min' ? valueMin : valueMax;
+  const bubbleTranslateY = bubbleAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [8, 0],
+  });
+  const bubbleScale = bubbleAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.94, 1],
+  });
 
   return (
-    <View style={{ marginTop: 10 }}>
+    <View style={{ marginTop: 6 }}>
       <View
-        style={{ paddingHorizontal: thumbSize / 2, paddingVertical: 8 }}
+        style={{ paddingHorizontal: thumbSize / 2, paddingVertical: 6 }}
         onLayout={(e) => {
           const w = e.nativeEvent.layout.width - thumbSize; // remove padding on both sides
           setTrackWidth(Math.max(0, Math.round(w)));
         }}
       >
         <View style={{ height: Math.max(thumbSize, 34), justifyContent: 'center' }}>
+          {activeThumb ? (
+            <Animated.View
+              pointerEvents="none"
+              style={{
+                position: 'absolute',
+                left: thumbSize / 2 + bubbleX - 24,
+                top: -38,
+                minWidth: 48,
+                paddingHorizontal: 11,
+                paddingVertical: 6,
+                borderRadius: 13,
+                backgroundColor: isDark ? 'rgba(19,168,168,0.92)' : '#0d6f72',
+                borderWidth: 1,
+                borderColor: isDark ? 'rgba(244,235,221,0.12)' : 'rgba(255,255,255,0.22)',
+                shadowColor: theme.tint,
+                shadowOpacity: 0.18,
+                shadowRadius: 8,
+                shadowOffset: { width: 0, height: 5 },
+                elevation: 3,
+                opacity: bubbleAnim,
+                transform: [{ translateY: bubbleTranslateY }, { scale: bubbleScale }],
+              }}
+            >
+              <Text style={{ color: '#F4EBDD', fontSize: 13, fontWeight: '800', textAlign: 'center' }}>
+                {bubbleValue}
+              </Text>
+            </Animated.View>
+          ) : null}
           <View
             style={{
               height: trackH,
@@ -2936,6 +4074,10 @@ function PremiumRangeSlider({
               height: trackH,
               borderRadius: 999,
               backgroundColor: activeBg,
+              shadowColor: theme.tint,
+              shadowOpacity: isDark ? 0.18 : 0.12,
+              shadowRadius: 8,
+              shadowOffset: { width: 0, height: 2 },
             }}
           />
 
@@ -2952,14 +4094,19 @@ function PremiumRangeSlider({
               borderColor: thumbBorder,
               alignItems: 'center',
               justifyContent: 'center',
-              shadowColor: '#000',
-              shadowOpacity: isDark ? 0.25 : 0.12,
-              shadowRadius: 10,
-              shadowOffset: { width: 0, height: 6 },
-              elevation: 6,
+              shadowColor: theme.tint,
+              shadowOpacity: activeThumb === 'min' ? (isDark ? 0.18 : 0.12) : (isDark ? 0.06 : 0.04),
+              shadowRadius: activeThumb === 'min' ? 12 : 8,
+              shadowOffset: { width: 0, height: activeThumb === 'min' ? 7 : 4 },
+              elevation: activeThumb === 'min' ? 7 : 4,
             }}
+            accessible
+            accessibilityRole="adjustable"
+            accessibilityLabel={`Minimum age, ${valueMin}`}
+            accessibilityValue={{ min, max, now: valueMin }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
-            <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: activeBg, opacity: 0.9 }} />
+            <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: activeBg, opacity: 0.96 }} />
           </View>
 
           <View
@@ -2975,20 +4122,25 @@ function PremiumRangeSlider({
               borderColor: thumbBorder,
               alignItems: 'center',
               justifyContent: 'center',
-              shadowColor: '#000',
-              shadowOpacity: isDark ? 0.25 : 0.12,
-              shadowRadius: 10,
-              shadowOffset: { width: 0, height: 6 },
-              elevation: 6,
+              shadowColor: theme.tint,
+              shadowOpacity: activeThumb === 'max' ? (isDark ? 0.18 : 0.12) : (isDark ? 0.06 : 0.04),
+              shadowRadius: activeThumb === 'max' ? 12 : 8,
+              shadowOffset: { width: 0, height: activeThumb === 'max' ? 7 : 4 },
+              elevation: activeThumb === 'max' ? 7 : 4,
             }}
+            accessible
+            accessibilityRole="adjustable"
+            accessibilityLabel={`Maximum age, ${valueMax}`}
+            accessibilityValue={{ min, max, now: valueMax }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
-            <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: activeBg, opacity: 0.9 }} />
+            <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: activeBg, opacity: 0.96 }} />
           </View>
         </View>
 
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 }}>
-          <Text style={{ fontSize: 12, fontWeight: '700', color: theme.textMuted }}>{min}</Text>
-          <Text style={{ fontSize: 12, fontWeight: '700', color: theme.textMuted }}>{max}+</Text>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 }}>
+          <Text style={{ fontSize: 11.5, fontWeight: '700', color: theme.textMuted, opacity: 0.92 }}>{minLabel ?? valueMin}</Text>
+          <Text style={{ fontSize: 11.5, fontWeight: '700', color: theme.textMuted, opacity: 0.92 }}>{maxLabel ?? valueMax}</Text>
         </View>
       </View>
     </View>
@@ -2997,44 +4149,37 @@ function PremiumRangeSlider({
 
 function createStyles(theme: typeof Colors.light, isDark: boolean) {
   const surface = isDark ? '#111827' : '#fff';
-  const surfaceSubtle = isDark ? theme.backgroundSubtle : '#f8fafc';
   const cardBorder = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.06)';
   const outline = isDark ? 'rgba(255,255,255,0.12)' : '#e5e7eb';
   const shadowColor = isDark ? '#000' : '#0f172a';
-  const overlayCard = isDark ? 'rgba(15,23,42,0.72)' : 'rgba(255,255,255,0.62)';
-  const overlayBorder = isDark ? 'rgba(255,255,255,0.18)' : 'rgba(255,255,255,0.75)';
   const infoButtonBg = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.95)';
   const infoButtonBorder = isDark ? 'rgba(255,255,255,0.12)' : 'rgba(148,163,184,0.35)';
   const placeholderBg = isDark ? '#1f2937' : '#e2e8f0';
   const placeholderText = isDark ? '#cbd5e1' : '#64748b';
   const pillBg = isDark ? 'rgba(255,255,255,0.06)' : '#f8fafc';
   const chipBg = isDark ? 'rgba(255,255,255,0.04)' : '#fff';
-  const chipActiveBg = isDark ? 'rgba(255,107,107,0.14)' : '#eef2ff';
   const toggleKnob = isDark ? '#1f2937' : '#e5e7eb';
   const modalBackdrop = isDark ? 'rgba(0,0,0,0.6)' : 'rgba(0,0,0,0.35)';
   const badgeBg = isDark ? '#0b1220' : '#111827';
   const ghostBg = isDark ? 'rgba(255,255,255,0.04)' : '#fff';
 
   return StyleSheet.create({
-    container: { flex: 1, backgroundColor: surfaceSubtle },
-    scrollContent: { flexGrow: 1, paddingTop: 8 },
+    container: { flex: 1, backgroundColor: 'transparent' },
+    scrollContent: { flexGrow: 1, paddingTop: 4 },
     stackWrapper: {
-      flex: 1,
       position: 'relative',
       alignItems: "center",
-      justifyContent: "center",
-      paddingHorizontal: 20,
+      justifyContent: "flex-start",
       marginTop: -2,
-      // leave room at the bottom for action buttons
-      paddingBottom: 154,
+      alignSelf: 'center',
     },
-    momentsFloatingOverlay: {
-      position: 'absolute',
-      top: -1,
-      left: 20,
-      right: 20,
-      zIndex: 60,
-      elevation: 24,
+    momentsCapsuleFlow: {
+      marginHorizontal: 20,
+      zIndex: 8,
+      elevation: 8,
+    },
+    momentsCapsuleFlowCompact: {
+      marginHorizontal: 14,
     },
     momentsStripContainer: {
       overflow: 'hidden',
@@ -3117,7 +4262,6 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       bottom: 8, // keep the rail clear of the card copy while staying above the tab bar
       flexDirection: "row",
       justifyContent: "center",
-      paddingHorizontal: 36,
       paddingVertical: 8,
       backgroundColor: "transparent",
       // Ensure action buttons sit above the card stack
@@ -3132,14 +4276,15 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       paddingHorizontal: 12,
       paddingVertical: 8,
       borderRadius: 30,
-      backgroundColor: overlayCard,
+      backgroundColor: isDark ? 'rgba(9,18,22,0.58)' : 'rgba(255,255,255,0.58)',
       borderWidth: 1,
-      borderColor: overlayBorder,
+      borderColor: isDark ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.7)',
       shadowColor,
-      shadowOffset: { width: 0, height: 12 },
-      shadowOpacity: isDark ? 0.26 : 0.16,
-      shadowRadius: 28,
+      shadowOffset: { width: 0, height: 10 },
+      shadowOpacity: isDark ? 0.22 : 0.12,
+      shadowRadius: 24,
       elevation: 12,
+      overflow: 'hidden',
     },
     actionSecondaryCluster: {
       flexDirection: 'row',
@@ -3147,7 +4292,8 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       marginRight: 10,
       paddingRight: 10,
       borderRightWidth: 1,
-      borderRightColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.08)',
+      borderRightColor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(15,23,42,0.06)',
+      opacity: 0.86,
     },
     actionPrimaryCluster: {
       flexDirection: 'row',
@@ -3169,9 +4315,9 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       borderColor: outline,
       shadowColor,
       shadowOffset: { width: 0, height: 6 },
-      shadowOpacity: isDark ? 0.18 : 0.12,
-      shadowRadius: 12,
-      elevation: 8,
+      shadowOpacity: isDark ? 0.12 : 0.08,
+      shadowRadius: 10,
+      elevation: 5,
       justifyContent: "center",
       alignItems: "center",
     },
@@ -3186,9 +4332,9 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       borderColor: infoButtonBorder,
       shadowColor,
       shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: isDark ? 0.16 : 0.08,
-      shadowRadius: 10,
-      elevation: 4,
+      shadowOpacity: isDark ? 0.1 : 0.06,
+      shadowRadius: 8,
+      elevation: 3,
       marginHorizontal: 0,
     },
     requestRing: {
@@ -3199,7 +4345,7 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       marginHorizontal: 0,
       shadowColor: theme.tint,
       shadowOffset: { width: 0, height: 6 },
-      shadowOpacity: isDark ? 0.25 : 0.2,
+      shadowOpacity: isDark ? 0.22 : 0.16,
       shadowRadius: 12,
       elevation: 6,
     },
@@ -3220,8 +4366,8 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       marginLeft: 2,
       shadowColor: theme.tint,
       shadowOffset: { width: 0, height: 8 },
-      shadowOpacity: isDark ? 0.24 : 0.16,
-      shadowRadius: 14,
+      shadowOpacity: isDark ? 0.28 : 0.2,
+      shadowRadius: 18,
       elevation: 9,
     },
     likeButton: {
@@ -3307,6 +4453,57 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
     },
     headerBadgeDisabled: { opacity: 0.7 },
     headerBadgeText: { color: theme.tint, fontSize: 12, fontWeight: '700' },
+    headerIntentBadge: {
+      position: 'relative',
+      width: 42,
+      height: 42,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(19,168,168,0.22)' : 'rgba(19,128,128,0.14)',
+      backgroundColor: isDark ? 'rgba(19,168,168,0.06)' : 'rgba(255,255,255,0.62)',
+      overflow: 'visible',
+    },
+    headerIntentBadgeUrgent: {
+      borderColor: isDark ? 'rgba(244,232,208,0.18)' : 'rgba(139,92,255,0.15)',
+      backgroundColor: isDark ? 'rgba(244,232,208,0.055)' : 'rgba(255,248,241,0.70)',
+      shadowColor: theme.accent,
+      shadowOpacity: isDark ? 0.14 : 0.10,
+      shadowRadius: 12,
+      shadowOffset: { width: 0, height: 5 },
+      elevation: 4,
+    },
+    headerIntentBadgePulse: {
+      position: 'absolute',
+      left: -3,
+      right: -3,
+      top: -3,
+      bottom: -3,
+      borderRadius: 19,
+      backgroundColor: isDark ? 'rgba(19,168,168,0.16)' : 'rgba(19,168,168,0.12)',
+    },
+    headerIntentBadgePulseUrgent: {
+      backgroundColor: isDark ? 'rgba(244,232,208,0.16)' : 'rgba(139,92,255,0.13)',
+    },
+    headerIntentBadgeCount: {
+      position: 'absolute',
+      top: -5,
+      right: -5,
+      minWidth: 18,
+      height: 18,
+      paddingHorizontal: 4,
+      borderRadius: 9,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: isDark ? '#071E22' : '#F7EFE3',
+      backgroundColor: theme.tint,
+    },
+    headerIntentBadgeCountUrgent: {
+      backgroundColor: theme.accent,
+    },
+    headerIntentBadgeText: { color: Colors.light.background, fontSize: 10, lineHeight: 12, fontWeight: '900' },
     emptyStateContainer: {
       flex: 1,
       alignItems: 'center',
@@ -3400,6 +4597,12 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       borderWidth: 1,
       borderColor: cardBorder,
     },
+    emptyCardCompact: {
+      width: '92%',
+      paddingHorizontal: 16,
+      paddingVertical: 18,
+      borderRadius: 16,
+    },
     emptyBadge: {
       paddingHorizontal: 12,
       paddingVertical: 6,
@@ -3416,12 +4619,19 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       letterSpacing: 0.2,
     },
     emptyTitle: { fontSize: 20, fontWeight: '800', color: theme.text, marginBottom: 6 },
+    emptyTitleCompact: { fontSize: 17, lineHeight: 22 },
     emptySubtitle: { fontSize: 14, color: theme.textMuted, textAlign: 'center', marginBottom: 16 },
+    emptySubtitleCompact: { fontSize: 13, lineHeight: 19, marginBottom: 14 },
     emptyActions: { flexDirection: 'row', width: '100%', justifyContent: 'center' },
+    emptyActionsCompact: { flexDirection: 'column', gap: 10 },
     primaryButton: { backgroundColor: theme.tint, paddingVertical: 12, paddingHorizontal: 20, borderRadius: 12, marginRight: 8 },
+    primaryButtonCompact: { width: '100%', marginRight: 0, paddingVertical: 13 },
     primaryButtonText: { color: '#fff', fontWeight: '700' },
+    primaryButtonTextCompact: { fontSize: 14, textAlign: 'center' },
     ghostButton: { borderWidth: 1, borderColor: outline, paddingVertical: 12, paddingHorizontal: 16, borderRadius: 12, backgroundColor: ghostBg },
+    ghostButtonCompact: { width: '100%', paddingVertical: 13 },
     ghostButtonText: { color: theme.text, fontWeight: '600' },
+    ghostButtonTextCompact: { fontSize: 14, textAlign: 'center' },
     locationBanner: {
       backgroundColor: isDark ? 'rgba(255,255,255,0.045)' : '#f8fafc',
       paddingHorizontal: 16,
@@ -3481,7 +4691,7 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       justifyContent: 'flex-end',
     },
     modalCard: {
-      backgroundColor: surface,
+      backgroundColor: isDark ? 'rgba(8,18,28,0.82)' : 'rgba(252,247,241,0.84)',
       borderTopLeftRadius: 24,
       borderTopRightRadius: 24,
       paddingHorizontal: 18,
@@ -3489,7 +4699,21 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       paddingBottom: 20,
       maxHeight: '88%',
       borderWidth: 1,
-      borderColor: cardBorder,
+      borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(214,178,132,0.24)',
+      overflow: 'hidden',
+      shadowColor,
+      shadowOpacity: isDark ? 0.22 : 0.10,
+      shadowRadius: 20,
+      shadowOffset: { width: 0, height: 10 },
+      elevation: 10,
+    },
+    modalHandle: {
+      alignSelf: 'center',
+      width: 44,
+      height: 5,
+      borderRadius: 999,
+      backgroundColor: isDark ? 'rgba(255,255,255,0.18)' : 'rgba(15,23,42,0.14)',
+      marginBottom: 14,
     },
     modalTitleRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 },
     modalTitleCopy: { flex: 1, gap: 4 },
@@ -3500,8 +4724,8 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       paddingVertical: 6,
       borderRadius: 999,
       borderWidth: 1,
-      borderColor: outline,
-      backgroundColor: chipBg,
+      borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(214,178,132,0.18)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.48)',
     },
     modalResetText: { fontSize: 12, fontWeight: '800', color: theme.text },
     modalSubtitle: { fontSize: 13, lineHeight: 19, color: theme.textMuted, marginTop: 10, marginBottom: 16 },
@@ -3579,8 +4803,8 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       paddingHorizontal: 14,
       paddingVertical: 14,
       borderWidth: 1,
-      borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(214,178,132,0.16)',
-      backgroundColor: isDark ? 'rgba(255,255,255,0.035)' : '#fffaf6',
+      borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(214,178,132,0.16)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.055)' : 'rgba(255,250,246,0.68)',
       shadowColor,
       shadowOpacity: isDark ? 0.12 : 0.06,
       shadowRadius: 12,
@@ -3596,8 +4820,8 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       paddingVertical: 8,
       borderRadius: 999,
       borderWidth: 1,
-      borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(214,178,132,0.18)',
-      backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : '#fff',
+      borderColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(214,178,132,0.18)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.76)',
     },
     activeFilterChipText: { fontSize: 12, fontWeight: '700', color: theme.text },
     activeFiltersSummaryTitle: { fontSize: 18, lineHeight: 22, fontWeight: '800', color: theme.text, marginTop: 4 },
@@ -3605,36 +4829,170 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
     activeFiltersEmpty: { fontSize: 12.5, lineHeight: 18, color: theme.textMuted, marginTop: 6 },
     modalInput: {
       borderWidth: 1,
-      borderColor: outline,
+      borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(214,178,132,0.20)',
       borderRadius: 12,
       paddingHorizontal: 12,
       paddingVertical: 10,
       fontSize: 15,
       color: theme.text,
-      backgroundColor: isDark ? '#0b1220' : '#fff',
+      backgroundColor: isDark ? 'rgba(8,18,28,0.68)' : 'rgba(255,255,255,0.74)',
     },
     modalLabel: { fontSize: 13, fontWeight: '700', color: theme.text, marginTop: 14, marginBottom: 8 },
-    countryChips: { paddingBottom: 2 },
-    countryChip: {
-      paddingHorizontal: 12,
-      paddingVertical: 8,
-      borderRadius: 999,
+    countrySelectButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
       borderWidth: 1,
       borderColor: outline,
+      borderRadius: 16,
+      paddingHorizontal: 12,
+      paddingVertical: 11,
       backgroundColor: chipBg,
-      marginRight: 8,
+      gap: 12,
     },
-    countryChipActive: { backgroundColor: chipActiveBg, borderColor: theme.tint },
-    countryChipText: { fontSize: 13, fontWeight: '600', color: theme.text },
-    countryChipTextActive: { color: theme.tint },
+    countrySelectButtonDisabled: {
+      opacity: 0.72,
+    },
+    countrySelectValue: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    countrySelectFlag: {
+      fontSize: 20,
+      width: 28,
+      textAlign: 'center',
+    },
+    countrySelectFlagPlaceholder: {
+      color: theme.textMuted,
+    },
+    countrySelectCopy: {
+      flex: 1,
+      gap: 2,
+    },
+    countrySelectLabel: {
+      fontSize: 14,
+      fontWeight: '700',
+      color: theme.text,
+    },
+    countrySelectPlaceholder: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: theme.textMuted,
+    },
+    countrySelectMeta: {
+      fontSize: 12,
+      color: theme.textMuted,
+    },
+    inlineCountryPickerPanel: {
+      marginTop: 10,
+      borderWidth: 1,
+      borderColor: outline,
+      borderRadius: 16,
+      backgroundColor: isDark ? 'rgba(8,18,28,0.72)' : 'rgba(255,255,255,0.82)',
+      overflow: 'hidden',
+    },
+    countryPickerContainer: {
+      flex: 1,
+    },
+    countryPickerHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 18,
+      paddingTop: 10,
+      paddingBottom: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: outline,
+    },
+    countryPickerHeaderAction: {
+      fontSize: 15,
+      fontWeight: '700',
+      color: theme.tint,
+      width: 56,
+    },
+    countryPickerHeaderTitle: {
+      fontSize: 17,
+      fontWeight: '800',
+      color: theme.text,
+    },
+    countrySearchWrap: {
+      marginHorizontal: 18,
+      marginTop: 14,
+      marginBottom: 10,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      borderWidth: 1,
+      borderColor: outline,
+      borderRadius: 14,
+      paddingHorizontal: 12,
+      backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.78)',
+    },
+    countrySearchInput: {
+      flex: 1,
+      minHeight: 44,
+      fontSize: 15,
+      color: theme.text,
+    },
+    countryPickerList: {
+      flex: 1,
+    },
+    inlineCountryPickerList: {
+      maxHeight: 240,
+    },
+    countryPickerListContent: {
+      paddingHorizontal: 18,
+      paddingBottom: 32,
+    },
+    countryPickerItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingVertical: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: outline,
+      gap: 12,
+    },
+    countryPickerItemSelected: {
+      backgroundColor: isDark ? 'rgba(17,197,198,0.06)' : 'rgba(255,248,241,0.9)',
+    },
+    countryPickerItemRow: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+    },
+    countryPickerItemFlag: {
+      fontSize: 22,
+      width: 28,
+      textAlign: 'center',
+    },
+    countryPickerItemCopy: {
+      flex: 1,
+      gap: 2,
+    },
+    countryPickerItemLabel: {
+      fontSize: 15,
+      fontWeight: '700',
+      color: theme.text,
+    },
+    countryPickerItemLabelSelected: {
+      color: theme.tint,
+    },
+    countryPickerItemMeta: {
+      fontSize: 12,
+      color: theme.textMuted,
+    },
     modalPreviewRow: {
       marginTop: 2,
       paddingHorizontal: 14,
       paddingVertical: 14,
       borderRadius: 18,
       borderWidth: 1,
-      borderColor: isDark ? 'rgba(17,197,198,0.14)' : 'rgba(214,178,132,0.18)',
-      backgroundColor: isDark ? 'rgba(12,27,34,0.56)' : '#fffaf5',
+      borderColor: isDark ? 'rgba(17,197,198,0.16)' : 'rgba(214,178,132,0.18)',
+      backgroundColor: isDark ? 'rgba(12,27,34,0.62)' : 'rgba(255,250,245,0.74)',
     },
     modalPreviewEyebrow: { fontSize: 10.5, fontWeight: '800', letterSpacing: 1.1, color: theme.tint, textTransform: 'uppercase', textAlign: 'center' },
     modalPreviewTitle: { fontSize: 18, lineHeight: 22, fontWeight: '800', color: theme.text, textAlign: 'center', marginTop: 4 },
@@ -3643,29 +5001,29 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
     filterSection: { marginTop: 12, marginBottom: 10 },
     filterSectionCard: {
       borderRadius: 20,
-      paddingHorizontal: 14,
-      paddingVertical: 14,
+      paddingHorizontal: 15,
+      paddingVertical: 15,
       borderWidth: 1,
       borderColor: cardBorder,
-      backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : '#fff',
-      gap: 12,
+      backgroundColor: isDark ? 'rgba(255,255,255,0.045)' : 'rgba(255,255,255,0.72)',
+      gap: 10,
       shadowColor,
-      shadowOpacity: isDark ? 0.1 : 0.05,
-      shadowRadius: 12,
-      shadowOffset: { width: 0, height: 8 },
-      elevation: 3,
+      shadowOpacity: isDark ? 0.08 : 0.05,
+      shadowRadius: 10,
+      shadowOffset: { width: 0, height: 7 },
+      elevation: 2,
     },
     filterSectionCardPremium: {
       borderColor: isDark ? 'rgba(17,197,198,0.15)' : 'rgba(214,178,132,0.22)',
-      backgroundColor: isDark ? 'rgba(18,36,43,0.34)' : '#fffaf5',
+      backgroundColor: isDark ? 'rgba(18,36,43,0.40)' : 'rgba(255,250,245,0.76)',
     },
     filterSectionCardMixed: {
-      borderColor: isDark ? 'rgba(243,199,132,0.16)' : 'rgba(229,190,138,0.26)',
-      backgroundColor: isDark ? 'rgba(52,44,28,0.30)' : '#fffaf2',
+      borderColor: isDark ? 'rgba(214,184,120,0.14)' : 'rgba(229,190,138,0.20)',
+      backgroundColor: isDark ? 'rgba(34,30,23,0.28)' : 'rgba(255,251,245,0.70)',
     },
     filterSectionCardFree: {
       borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.05)',
-      backgroundColor: isDark ? 'rgba(255,255,255,0.025)' : '#fffefd',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.045)' : 'rgba(255,254,253,0.74)',
     },
     filterSectionHeader: { gap: 3 },
     filterSectionTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
@@ -3673,8 +5031,8 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
     filterSectionTitle: { fontSize: 17, lineHeight: 21, fontWeight: '800', color: theme.text },
     filterSectionBody: { fontSize: 12.5, lineHeight: 18, color: theme.textMuted },
     filterTierPill: {
-      paddingHorizontal: 10,
-      paddingVertical: 4,
+      paddingHorizontal: 9,
+      paddingVertical: 3,
       borderRadius: 999,
       borderWidth: 1,
       alignSelf: 'flex-start',
@@ -3688,31 +5046,45 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       borderColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(15,23,42,0.06)',
     },
     filterTierPillMixed: {
-      backgroundColor: isDark ? 'rgba(246,196,83,0.14)' : 'rgba(255,250,241,0.88)',
-      borderColor: isDark ? 'rgba(246,196,83,0.24)' : 'rgba(229,190,138,0.28)',
+      backgroundColor: isDark ? 'rgba(246,196,83,0.10)' : 'rgba(255,249,238,0.88)',
+      borderColor: isDark ? 'rgba(246,196,83,0.18)' : 'rgba(214,184,120,0.22)',
     },
-    filterTierPillText: { fontSize: 10.5, fontWeight: '800', letterSpacing: 0.4 },
+    filterTierPillText: { fontSize: 10, fontWeight: '800', letterSpacing: 0.45 },
     filterTierPillTextPremium: { color: isDark ? '#7fe4dc' : '#0b6b69' },
     filterTierPillTextFree: { color: theme.text },
-    filterTierPillTextMixed: { color: isDark ? '#f3c784' : '#8a5a09' },
+    filterTierPillTextMixed: { color: isDark ? '#e6c28a' : '#8a5a09' },
     filterFieldGroup: { gap: 6 },
+    filterSubsectionEyebrow: {
+      fontSize: 11,
+      fontWeight: '800',
+      letterSpacing: 1.15,
+      color: theme.tint,
+      textTransform: 'uppercase',
+      marginBottom: 2,
+    },
+    filterSubsectionDivider: {
+      height: 1,
+      backgroundColor: isDark ? 'rgba(244,235,221,0.06)' : 'rgba(7,30,34,0.07)',
+      marginVertical: 6,
+    },
     filterLabel: { fontSize: 14, fontWeight: '700', color: theme.text },
+    filterHelperText: { fontSize: 12, color: theme.textMuted, marginTop: 2 },
     filterHint: { fontSize: 12, color: theme.textMuted, marginTop: 2 },
     filterChipsRow: { flexDirection: 'row', marginTop: 8 },
     filterChipsRowWrap: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 6, gap: 8 },
     filterPresetRail: { paddingTop: 6, paddingBottom: 2, paddingRight: 8, gap: 10 },
     filterChip: {
-      paddingHorizontal: 13,
-      paddingVertical: 9,
-      borderRadius: 14,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 13,
       borderWidth: 1,
       borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(15,23,42,0.08)',
       marginRight: 0,
       backgroundColor: chipBg,
       shadowColor: shadowColor,
-      shadowOpacity: isDark ? 0.05 : 0.04,
-      shadowRadius: 8,
-      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: isDark ? 0.04 : 0.03,
+      shadowRadius: 6,
+      shadowOffset: { width: 0, height: 3 },
       elevation: 1,
     },
     filterPresetChip: { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#fff' },
@@ -3727,10 +5099,10 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       backgroundColor: theme.tint,
       borderColor: theme.tint,
       shadowColor: theme.tint,
-      shadowOpacity: isDark ? 0.18 : 0.14,
-      shadowRadius: 10,
-      shadowOffset: { width: 0, height: 6 },
-      elevation: 3,
+      shadowOpacity: isDark ? 0.14 : 0.10,
+      shadowRadius: 8,
+      shadowOffset: { width: 0, height: 4 },
+      elevation: 2,
     },
     filterChipDisabled: { opacity: 0.5 },
     filterChipText: { fontWeight: '700', color: theme.text },
@@ -3802,18 +5174,96 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
     expandAdvancedMetaText: { fontSize: 12.5, fontWeight: '700', color: theme.textMuted },
     filterInputsRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8 },
     filterInputWrapper: { flex: 1 },
-    filterInput: { borderWidth: 1, borderColor: outline, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontWeight: '700', color: theme.text, backgroundColor: isDark ? '#0b1220' : '#fff', marginTop: 4 },
-    ageTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 },
-    ageRangePill: {
-      paddingHorizontal: 12,
-      paddingVertical: 8,
-      borderRadius: 999,
-      borderWidth: 1,
-      borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(214,178,132,0.18)',
-      backgroundColor: isDark ? pillBg : '#fff8f1',
+    filterInput: { borderWidth: 1, borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(214,178,132,0.20)', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontWeight: '700', color: theme.text, backgroundColor: isDark ? 'rgba(8,18,28,0.68)' : 'rgba(255,255,255,0.74)', marginTop: 4 },
+    ageFieldGroup: {
+      gap: 9,
+      paddingTop: 4,
     },
-    ageRangeText: { fontSize: 13, fontWeight: '800', color: theme.text },
-    ageAnyChip: { marginRight: 0 },
+    ageTitleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    ageSectionTitle: {
+      fontSize: 18,
+      lineHeight: 22,
+      fontWeight: '800',
+      color: theme.text,
+    },
+    ageEditAction: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 1,
+      minHeight: 34,
+      paddingHorizontal: 0,
+      alignSelf: 'flex-start',
+    },
+    ageEditActionText: {
+      fontSize: 13,
+      fontWeight: '700',
+      color: theme.tint,
+    },
+    ageHeroPanel: {
+      paddingHorizontal: 14,
+      paddingVertical: 13,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(244,235,221,0.06)' : 'rgba(7,30,34,0.07)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.028)' : 'rgba(255,255,255,0.48)',
+      gap: 4,
+    },
+    ageHeroValue: {
+      fontSize: 30,
+      lineHeight: 36,
+      fontWeight: '800',
+      letterSpacing: -0.8,
+      color: theme.text,
+    },
+    ageHeroSupport: {
+      fontSize: 12.5,
+      lineHeight: 17,
+      color: theme.textMuted,
+    },
+    agePresetRow: {
+      flexDirection: 'row',
+      gap: 6,
+      marginTop: 4,
+    },
+    agePresetChip: {
+      flex: 1,
+      minHeight: 40,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(244,235,221,0.10)' : 'rgba(7,30,34,0.10)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.028)' : 'rgba(255,255,255,0.56)',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 8,
+    },
+    agePresetChipActive: {
+      backgroundColor: isDark ? 'rgba(19,168,168,0.10)' : 'rgba(19,168,168,0.08)',
+      borderColor: isDark ? 'rgba(19,168,168,0.24)' : 'rgba(19,168,168,0.20)',
+      shadowColor: theme.tint,
+      shadowOpacity: isDark ? 0.08 : 0.06,
+      shadowRadius: 8,
+      shadowOffset: { width: 0, height: 3 },
+      elevation: 1,
+    },
+    agePresetChipText: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: theme.textMuted,
+    },
+    agePresetChipTextActive: {
+      color: theme.tint,
+    },
+    agePresetMeta: {
+      fontSize: 11,
+      lineHeight: 15,
+      color: theme.textMuted,
+      marginTop: 1,
+    },
     modalApplyButton: {
       minHeight: 48,
       alignItems: 'center',

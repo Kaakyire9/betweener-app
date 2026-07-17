@@ -1,26 +1,202 @@
-import { Colors } from "@/constants/theme";
+import BetweenerLoader from "@/components/ui/BetweenerLoader";
+import { consumeSessionExpiredReason } from "@/lib/auth-session-reason";
 import { useAuth } from "@/lib/auth-context";
 import { getSignupSessionId } from "@/lib/signup-tracking";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Text, View } from "react-native";
+import { View } from "react-native";
 import { supabase } from "@/lib/supabase";
+import { clearPendingAuthProvider, getFreshPendingAuthProvider } from "@/lib/auth-callback";
+import {
+  peekPendingNotificationRoute,
+} from "@/lib/notifications/notification-routing";
 
 const AUTH_PENDING_TOKENS_KEY = "auth_pending_tokens_v1";
 const RETIRED_DUPLICATE_REDIRECT_KEY = "retired_duplicate_redirect_v1";
+const DISCONNECTED_PROVIDER_REDIRECT_KEY = "disconnected_provider_redirect_v1";
+const EXPLICIT_SIGN_OUT_KEY = "auth_explicit_sign_out_v1";
+const SESSION_CHECK_TIMEOUT_MS = 4_000;
+const GATE_PROFILE_TIMEOUT_MS = 6_000;
+const GATE_RETRY_DELAY_MS = 2_500;
+const GATE_STORAGE_HELPER_TIMEOUT_MS = 1_200;
 // Disable auth-bootstrap while stabilizing core auth/phone verification routing.
 // It can be re-enabled once the function is proven reliable in production.
 const ENABLE_AUTH_BOOTSTRAP = false;
 
+const withTimeout = async <T,>(promise: Promise<T>, fallback: T, timeoutMs: number) => {
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((resolve) => setTimeout(() => resolve(fallback), timeoutMs)),
+    ]);
+  } catch {
+    return fallback;
+  }
+};
+
+const getPendingOnboardingRoute = () => "/(auth)/onboarding";
+
 export default function AuthGateScreen() {
   const router = useRouter();
   const authContext = useAuth();
-  const { isLoading, session, user, profile, refreshPhoneState, refreshProfile, phoneVerified } = authContext;
+  const {
+    isLoading,
+    session,
+    user,
+    profile,
+    refreshPhoneState,
+    refreshProfile,
+    phoneVerified,
+    hadStableAppAccess,
+  } = authContext;
   const routedRef = useRef(false);
   const runInFlightRef = useRef(false);
+  const runTokenRef = useRef(0);
   const lastUserIdRef = useRef<string | null>(null);
-  const [statusText, setStatusText] = useState("Checking your account...");
+  const [statusText, setStatusText] = useState("Opening Betweener");
+  const [gateRetryTick, setGateRetryTick] = useState(0);
+  const activeRef = useRef(true);
+
+  useEffect(() => {
+    activeRef.current = true;
+    return () => {
+      activeRef.current = false;
+    };
+  }, []);
+
+  const waitForStoredSession = async (timeoutMs = SESSION_CHECK_TIMEOUT_MS) => {
+    try {
+      const { data, timedOut } = await Promise.race([
+        supabase.auth.getSession().then((result) => ({
+          data: result.data,
+          timedOut: false,
+        })),
+        new Promise<{ data: { session: null }; timedOut: true }>((resolve) =>
+          setTimeout(() => resolve({ data: { session: null }, timedOut: true }), timeoutMs),
+        ),
+      ]);
+      return { session: data?.session ?? null, timedOut };
+    } catch {
+      return { session: null, timedOut: true };
+    }
+  };
+
+  const getPendingNotificationRouteWithTimeout = async () =>
+    withTimeout(peekPendingNotificationRoute(), null, GATE_STORAGE_HELPER_TIMEOUT_MS);
+
+  const getFreshPendingAuthProviderWithTimeout = async () =>
+    withTimeout(getFreshPendingAuthProvider(), null, GATE_STORAGE_HELPER_TIMEOUT_MS);
+
+  const clearPendingAuthProviderWithoutBlocking = () => {
+    void withTimeout(clearPendingAuthProvider(), undefined, GATE_STORAGE_HELPER_TIMEOUT_MS);
+  };
+
+  const fetchGateProfileSnapshot = async (userId: string) => {
+    try {
+      const result = await Promise.race([
+        supabase
+          .from("profiles")
+          .select("*")
+          .eq("user_id", userId)
+          .limit(1)
+          .maybeSingle(),
+        new Promise<{ data: null; error: Error }>((resolve) =>
+          setTimeout(() => resolve({ data: null, error: new Error("gate_profile_timeout") }), GATE_PROFILE_TIMEOUT_MS),
+        ),
+      ]);
+
+      if ((result as any)?.error) {
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[auth-gate] profile snapshot error", (result as any).error?.message ?? (result as any).error);
+        }
+        return null;
+      }
+
+      return (result as any)?.data ?? null;
+    } catch (error) {
+      if (typeof __DEV__ !== "undefined" && __DEV__) {
+        console.log("[auth-gate] profile snapshot failed", error);
+      }
+      return null;
+    }
+  };
+
+  const hasText = (value: unknown) => String(value ?? "").trim().length > 0;
+
+  const canTreatProfileAsCompleted = (profileSnapshot: any, verified: boolean) => {
+    if (profileSnapshot?.profile_completed === true) return true;
+    if (!profileSnapshot || !verified) return false;
+
+    const hasCoreIdentity =
+      hasText(profileSnapshot.full_name) &&
+      profileSnapshot.age != null &&
+      hasText(profileSnapshot.gender) &&
+      (profileSnapshot.phone_verified === true || verified) &&
+      hasText(profileSnapshot.phone_number);
+
+    const hasCompletionMarker =
+      profileSnapshot.onboarding_completed_at != null ||
+      profileSnapshot.identity_finalized_at != null ||
+      profileSnapshot.identity_status === "active";
+
+    const hasProfileSubstance =
+      hasText(profileSnapshot.bio) ||
+      hasText(profileSnapshot.region) ||
+      hasText(profileSnapshot.location) ||
+      hasText(profileSnapshot.current_country) ||
+      hasText(profileSnapshot.avatar_url);
+
+    return hasCoreIdentity && (hasCompletionMarker || hasProfileSubstance);
+  };
+
+  const repairProfileCompletedFlag = async (profileSnapshot: any) => {
+    if (!profileSnapshot?.id || profileSnapshot.profile_completed === true) return;
+    try {
+      const { error } = await supabase
+        .from("profiles")
+        .update({
+          profile_completed: true,
+          identity_status: profileSnapshot.identity_status ?? "active",
+          onboarding_completed_at: profileSnapshot.onboarding_completed_at ?? new Date().toISOString(),
+          identity_finalized_at: profileSnapshot.identity_finalized_at ?? new Date().toISOString(),
+        } as any)
+        .eq("id", profileSnapshot.id);
+
+      if (error && typeof __DEV__ !== "undefined" && __DEV__) {
+        console.log("[auth-gate] profile completion repair failed", error.message);
+      }
+    } catch (error) {
+      if (typeof __DEV__ !== "undefined" && __DEV__) {
+        console.log("[auth-gate] profile completion repair exception", error);
+      }
+    }
+  };
+
+  const holdForConnectionRetry = (message = "Connection is unstable. Keeping you signed in while we retry...") => {
+    if (!activeRef.current || routedRef.current) return;
+    setStatusText(message);
+    runInFlightRef.current = false;
+    setTimeout(() => {
+      if (!activeRef.current || routedRef.current) return;
+      lastUserIdRef.current = null;
+      setStatusText("Opening Betweener");
+      setGateRetryTick((value) => value + 1);
+    }, GATE_RETRY_DELAY_MS);
+  };
+
+  const consumeExplicitSignOut = async () => {
+    try {
+      const raw = await AsyncStorage.getItem(EXPLICIT_SIGN_OUT_KEY);
+      if (!raw) return false;
+      await AsyncStorage.removeItem(EXPLICIT_SIGN_OUT_KEY);
+      const parsed = JSON.parse(raw) as { at?: number } | null;
+      if (typeof parsed?.at !== "number") return false;
+      return Date.now() - parsed.at < 2 * 60 * 1000;
+    } catch {
+      return false;
+    }
+  };
 
   const getRetiredDuplicateRoute = (
     identityStatus: string | null,
@@ -55,6 +231,35 @@ export default function AuthGateScreen() {
     }
   };
 
+  const getDisconnectedProviderRoute = (
+    provider?: string | null,
+    email?: string | null,
+  ) => ({
+    pathname: "/(auth)/disconnected-provider" as const,
+    params: {
+      ...(provider ? { method: provider } : {}),
+      ...(email ? { email: email.trim() } : {}),
+    },
+  });
+
+  const persistDisconnectedProviderRedirect = async (
+    provider?: string | null,
+    email?: string | null,
+  ) => {
+    try {
+      await AsyncStorage.setItem(
+        DISCONNECTED_PROVIDER_REDIRECT_KEY,
+        JSON.stringify({
+          method: provider ?? null,
+          email: email?.trim() || null,
+          createdAt: Date.now(),
+        }),
+      );
+    } catch {
+      // best effort only
+    }
+  };
+
   const consumeRetiredDuplicateRoute = async () => {
     try {
       const raw = await AsyncStorage.getItem(RETIRED_DUPLICATE_REDIRECT_KEY);
@@ -75,16 +280,47 @@ export default function AuthGateScreen() {
     }
   };
 
+  const consumeDisconnectedProviderRoute = async () => {
+    try {
+      const raw = await AsyncStorage.getItem(DISCONNECTED_PROVIDER_REDIRECT_KEY);
+      if (!raw) return null;
+      await AsyncStorage.removeItem(DISCONNECTED_PROVIDER_REDIRECT_KEY);
+      const parsed = JSON.parse(raw) as {
+        method?: string | null;
+        email?: string | null;
+        createdAt?: number;
+      };
+      if (typeof parsed?.createdAt === "number" && Date.now() - parsed.createdAt > 10 * 60 * 1000) {
+        return null;
+      }
+      return getDisconnectedProviderRoute(parsed?.method ?? null, parsed?.email ?? null);
+    } catch {
+      return null;
+    }
+  };
+
+  const consumeSessionExpiredRoute = async () => {
+    const expired = await consumeSessionExpiredReason();
+    if (!expired) return null;
+    return {
+      pathname: "/(auth)/login" as const,
+      params: {
+        reason: "session_expired",
+      },
+    };
+  };
+
   useEffect(() => {
     if (routedRef.current) return;
     if (isLoading) {
       runInFlightRef.current = false;
       return;
     }
-    if (runInFlightRef.current && lastUserIdRef.current === user?.id) return;
     runInFlightRef.current = true;
     lastUserIdRef.current = user?.id ?? null;
-    let active = true;
+    const runToken = ++runTokenRef.current;
+    const isCurrentRun = () =>
+      activeRef.current && !routedRef.current && runTokenRef.current === runToken;
     const checkMergedRedirect = async (nextUserId: string | null | undefined) => {
       if (!nextUserId) return false;
 
@@ -112,7 +348,7 @@ export default function AuthGateScreen() {
         // best effort only
       }
 
-      if (!active || routedRef.current) return true;
+      if (!isCurrentRun()) return true;
 
       routedRef.current = true;
       router.replace({
@@ -130,7 +366,7 @@ export default function AuthGateScreen() {
 
     const hardFallbackTimer = setTimeout(() => {
       void (async () => {
-        if (!active || routedRef.current) return;
+        if (!isCurrentRun()) return;
 
         if (typeof __DEV__ !== "undefined" && __DEV__) {
           console.log("[auth-gate] hard fallback fired");
@@ -138,13 +374,43 @@ export default function AuthGateScreen() {
 
         // If no session, go welcome
         if (!session?.user || !user?.id) {
+          const stored = await waitForStoredSession();
+          if (await consumeExplicitSignOut()) {
+            routedRef.current = true;
+            router.replace("/(auth)/welcome");
+            return;
+          }
+          if (stored.timedOut) {
+            holdForConnectionRetry();
+            return;
+          }
+          if (stored.session?.user) {
+            holdForConnectionRetry("Restoring your session. Please stay on this screen...");
+            return;
+          }
           const retiredRoute = await consumeRetiredDuplicateRoute();
+          const disconnectedProviderRoute = await consumeDisconnectedProviderRoute();
+          const sessionExpiredRoute = await consumeSessionExpiredRoute();
           routedRef.current = true;
           if (retiredRoute) {
             if (typeof __DEV__ !== "undefined" && __DEV__) {
               console.log("[auth-gate] hard fallback route", retiredRoute);
             }
             router.replace(retiredRoute);
+            return;
+          }
+          if (disconnectedProviderRoute) {
+            if (typeof __DEV__ !== "undefined" && __DEV__) {
+              console.log("[auth-gate] hard fallback route", disconnectedProviderRoute);
+            }
+            router.replace(disconnectedProviderRoute);
+            return;
+          }
+          if (sessionExpiredRoute) {
+            if (typeof __DEV__ !== "undefined" && __DEV__) {
+              console.log("[auth-gate] hard fallback route", sessionExpiredRoute);
+            }
+            router.replace(sessionExpiredRoute);
             return;
           }
           if (typeof __DEV__ !== "undefined" && __DEV__) {
@@ -171,6 +437,7 @@ export default function AuthGateScreen() {
         const identityStatus = profile?.identity_status ?? null;
         const bestVerified = phoneVerified || profile?.phone_verified === true;
         const bestCompleted = profile?.profile_completed === true;
+        const canResumeKnownGoodAppSurface = hadStableAppAccess && bestVerified;
 
         routedRef.current = true;
 
@@ -194,14 +461,15 @@ export default function AuthGateScreen() {
           return;
         }
 
-        if (!bestVerified) {
+        if (!bestVerified && !canResumeKnownGoodAppSurface) {
+          const nextOnboardingRoute = await getPendingOnboardingRoute();
           if (typeof __DEV__ !== "undefined" && __DEV__) {
             console.log("[auth-gate] hard fallback route", "/(auth)/verify-phone");
           }
           router.replace({
             pathname: "/(auth)/verify-phone",
             params: {
-              next: encodeURIComponent("/(auth)/onboarding"),
+              next: encodeURIComponent(nextOnboardingRoute),
               reason: "required_for_access",
             },
           });
@@ -211,10 +479,20 @@ export default function AuthGateScreen() {
         if (typeof __DEV__ !== "undefined" && __DEV__) {
           console.log(
             "[auth-gate] hard fallback route",
-            bestCompleted ? "/(tabs)/vibes" : "/(auth)/onboarding"
+            bestCompleted || canResumeKnownGoodAppSurface ? "/(tabs)/vibes" : "/(auth)/onboarding"
           );
         }
-        router.replace(bestCompleted ? "/(tabs)/vibes" : "/(auth)/onboarding");
+        if (bestCompleted || canResumeKnownGoodAppSurface) {
+          const pendingNotificationRoute = await getPendingNotificationRouteWithTimeout();
+          if (pendingNotificationRoute) {
+            if (typeof __DEV__ !== "undefined" && __DEV__) {
+              console.log("[auth-gate] hard fallback route", pendingNotificationRoute);
+            }
+            router.replace(pendingNotificationRoute);
+            return;
+          }
+        }
+        router.replace(bestCompleted || canResumeKnownGoodAppSurface ? "/(tabs)/vibes" : "/(auth)/onboarding");
       })();
     }, 10000);
 
@@ -227,9 +505,9 @@ export default function AuthGateScreen() {
           target: string | { pathname: string; params?: Record<string, string> },
           smooth = false
         ) => {
-          if (!active || routedRef.current) return;
+          if (!isCurrentRun()) return;
           routedRef.current = true;
-          if (smooth) setStatusText("Almost there...");
+          if (smooth) setStatusText("Opening your space");
           if (typeof __DEV__ !== "undefined" && __DEV__) {
             console.log("[auth-gate] route", target);
           }
@@ -304,11 +582,29 @@ export default function AuthGateScreen() {
         }
 
         if (!sessionToUse || !userToUse) {
+          if (await consumeExplicitSignOut()) {
+            guardRoute("/(auth)/welcome");
+            return;
+          }
+          const stored = await waitForStoredSession();
+          if (stored.timedOut) {
+            holdForConnectionRetry();
+            return;
+          }
+          if (stored.session?.user) {
+            sessionToUse = stored.session;
+            userToUse = stored.session.user;
+          }
+        }
+
+        if (!sessionToUse || !userToUse) {
           if (typeof __DEV__ !== "undefined" && __DEV__) {
             console.log("[auth-gate] no session/user");
           }
           const retiredRoute = await consumeRetiredDuplicateRoute();
-          guardRoute(retiredRoute ?? "/(auth)/welcome");
+          const disconnectedProviderRoute = await consumeDisconnectedProviderRoute();
+          const sessionExpiredRoute = await consumeSessionExpiredRoute();
+          guardRoute(retiredRoute ?? disconnectedProviderRoute ?? sessionExpiredRoute ?? "/(auth)/welcome");
           return;
         }
 
@@ -327,7 +623,7 @@ export default function AuthGateScreen() {
         // Optional: single server-side bootstrap (authoritative + fast).
         if (ENABLE_AUTH_BOOTSTRAP) {
           try {
-            setStatusText("Bootstrapping your session...");
+            setStatusText("Restoring your session");
             const signupSessionId = await getSignupSessionId();
             const { data: freshSession } = await supabase.auth.getSession();
             if (freshSession?.session?.user) {
@@ -352,22 +648,26 @@ export default function AuthGateScreen() {
               console.log("[auth-gate] bootstrap", { error: bootstrapError, data: bootstrapData });
             }
             if (bootstrapError && bootstrapError.message === "bootstrap_timeout") {
-              setStatusText("Bootstrap timeout, checking profile...");
+              setStatusText("Keeping your session ready");
             }
             if (!bootstrapError && bootstrapData) {
               const verified = bootstrapData.verified === true;
               const profileCompleted = bootstrapData.profile_completed === true;
               if (!verified) {
+                const nextOnboardingRoute = await getPendingOnboardingRoute();
                 guardRoute({
                   pathname: "/(auth)/verify-phone",
                   params: {
-                    next: encodeURIComponent("/(auth)/onboarding"),
+                    next: encodeURIComponent(nextOnboardingRoute),
                     reason: "required_for_access",
                   },
                 });
                 return;
               }
-              guardRoute(profileCompleted ? "/(tabs)/vibes" : "/(auth)/onboarding", true);
+              guardRoute(
+                profileCompleted ? "/(tabs)/vibes" : await getPendingOnboardingRoute(),
+                true
+              );
               // Refresh context in background
               void refreshProfile();
               void refreshPhoneState();
@@ -380,32 +680,38 @@ export default function AuthGateScreen() {
           }
         }
 
+        const freshProfileSnapshot = await fetchGateProfileSnapshot(userToUse.id);
         void refreshProfile();
-        const identityStatus = authContext.profile?.identity_status ?? profile?.identity_status ?? null;
+        const profileSnapshot = freshProfileSnapshot ?? authContext.profile ?? profile ?? null;
+        const identityStatus = profileSnapshot?.identity_status ?? null;
         const verified = await refreshPhoneState();
-        const profileCompleted = authContext.profile?.profile_completed === true;
+        const profileCompleted = canTreatProfileAsCompleted(profileSnapshot, verified);
+        if (profileCompleted && profileSnapshot?.profile_completed !== true) {
+          void repairProfileCompletedFlag(profileSnapshot);
+        }
 
         if (typeof __DEV__ !== "undefined" && __DEV__) {
           console.log("[auth-gate] refreshPhoneState done");
           console.log("[auth-gate] verified", {
             verified,
             profileCompleted,
+            profileId: profileSnapshot?.id ?? null,
+            profileCompletedRaw: profileSnapshot?.profile_completed ?? null,
+            completionFallbackUsed: profileCompleted && profileSnapshot?.profile_completed !== true,
           });
         }
 
         if (identityStatus === "recovered_into_existing_account" || identityStatus === "discarded_duplicate") {
           const retiredRoute = getRetiredDuplicateRoute(
             identityStatus,
-            authContext.profile?.last_successful_auth_provider ??
-              profile?.last_successful_auth_provider ??
+            profileSnapshot?.last_successful_auth_provider ??
               userToUse.app_metadata?.provider ??
               null,
             userToUse.email ?? null,
           );
           await persistRetiredDuplicateRedirect(
             identityStatus,
-            authContext.profile?.last_successful_auth_provider ??
-              profile?.last_successful_auth_provider ??
+            profileSnapshot?.last_successful_auth_provider ??
               userToUse.app_metadata?.provider ??
               null,
             userToUse.email ?? null,
@@ -419,51 +725,132 @@ export default function AuthGateScreen() {
           return;
         }
 
-        if (!verified) {
+        const pendingAuthProvider = await getFreshPendingAuthProviderWithTimeout();
+        const currentProvider =
+          String(
+            pendingAuthProvider?.provider ??
+              userToUse.app_metadata?.provider ??
+              profileSnapshot?.last_successful_auth_provider ??
+              "",
+          )
+            .trim()
+            .toLowerCase() || null;
+
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[auth-gate] provider enforcement context", {
+            pendingProvider: pendingAuthProvider?.provider ?? null,
+            appMetadataProvider: userToUse.app_metadata?.provider ?? null,
+            profileProvider: profileSnapshot?.last_successful_auth_provider ?? null,
+            currentProvider,
+            userId: userToUse.id,
+            email: userToUse.email ?? null,
+          });
+        }
+
+        if (currentProvider === "google" || currentProvider === "apple") {
+          const { data: disconnectedProvider, error: disconnectedProviderError } = await supabase.rpc(
+            "rpc_is_signin_provider_disconnected" as any,
+            { p_provider: currentProvider },
+          );
+          if (typeof __DEV__ !== "undefined" && __DEV__) {
+            console.log("[auth-gate] disconnected provider check", {
+              currentProvider,
+              disconnectedProvider: disconnectedProvider ?? null,
+              disconnectedProviderError: disconnectedProviderError?.message ?? null,
+            });
+          }
+          if (!disconnectedProviderError && disconnectedProvider === true) {
+            const providerRoute = getDisconnectedProviderRoute(currentProvider, userToUse.email ?? null);
+            await persistDisconnectedProviderRedirect(currentProvider, userToUse.email ?? null);
+            try {
+              await supabase.auth.signOut();
+            } catch {
+              // best effort only
+            }
+            if (typeof __DEV__ !== "undefined" && __DEV__) {
+              console.log("[auth-gate] disconnected provider route", providerRoute);
+            }
+            guardRoute(providerRoute);
+            return;
+          }
+        }
+
+        if (!verified && !hadStableAppAccess) {
+          const nextOnboardingRoute = await getPendingOnboardingRoute();
+          clearPendingAuthProviderWithoutBlocking();
           guardRoute({
             pathname: "/(auth)/verify-phone",
             params: {
-              next: encodeURIComponent("/(auth)/onboarding"),
+              next: encodeURIComponent(nextOnboardingRoute),
               reason: "required_for_access",
             },
           });
           return;
         }
 
-        if (!profileCompleted) {
-          guardRoute("/(auth)/onboarding", true);
+        if (!profileSnapshot && hadStableAppAccess) {
+          const pendingNotificationRoute = await getPendingNotificationRouteWithTimeout();
+          if (pendingNotificationRoute) {
+            guardRoute(pendingNotificationRoute, true);
+            return;
+          }
+          guardRoute("/(tabs)/vibes", true);
           return;
         }
 
+        if (!profileSnapshot) {
+          holdForConnectionRetry("Connection is weak. We are keeping your session open while profile details load...");
+          return;
+        }
+
+        if (!profileCompleted && !hadStableAppAccess) {
+          clearPendingAuthProviderWithoutBlocking();
+          guardRoute(await getPendingOnboardingRoute(), true);
+          return;
+        }
+
+        clearPendingAuthProviderWithoutBlocking();
+        const pendingNotificationRoute = await getPendingNotificationRouteWithTimeout();
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[auth-gate] final route decision", {
+            pendingNotificationRoute,
+            profileCompleted,
+            hadStableAppAccess,
+            verified,
+            profileId: profileSnapshot?.id ?? null,
+          });
+        }
+        if (pendingNotificationRoute) {
+          if (typeof __DEV__ !== "undefined" && __DEV__) {
+            console.log("[auth-gate] pending notification route", pendingNotificationRoute);
+          }
+          guardRoute(pendingNotificationRoute, true);
+          return;
+        }
         guardRoute("/(tabs)/vibes", true);
       } catch (_error) {
-        if (active && !routedRef.current) {
-          routedRef.current = true;
-          router.replace("/(auth)/welcome");
+        if (isCurrentRun()) {
+          holdForConnectionRetry();
         }
       } finally {
-        runInFlightRef.current = false;
+        if (runTokenRef.current === runToken) {
+          runInFlightRef.current = false;
+        }
       }
     };
 
     void run();
     return () => {
-      active = false;
       clearTimeout(hardFallbackTimer);
     };
-  }, [isLoading, user?.id, profile?.profile_completed, router]);
+  }, [gateRetryTick, isLoading, user?.id, profile?.profile_completed, router]);
 
   return (
-    <View
-      style={{
-        flex: 1,
-        alignItems: "center",
-        justifyContent: "center",
-        backgroundColor: Colors.light.background,
-      }}
-    >
-      <ActivityIndicator size="large" color={Colors.light.tint} />
-      <Text style={{ marginTop: 12, color: Colors.light.textMuted }}>{statusText}</Text>
+    <View style={{ flex: 1 }}>
+      <BetweenerLoader
+        label={statusText}
+        sublabel="A private moment while we prepare your account."
+      />
     </View>
   );
 }

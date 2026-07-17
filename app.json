@@ -3,13 +3,13 @@
     "name": "Betweener",
     "owner": "kaakyire9",
     "slug": "betweener",
-    "version": "1.0.0",
+    "version": "1.1.1",
     "runtimeVersion": {
-      "policy": "fingerprint"
+      "policy": "appVersion"
     },
     "updates": {
       "enabled": true,
-      "checkAutomatically": "ON_ERROR_RECOVERY",
+      "checkAutomatically": "ON_LOAD",
       "fallbackToCacheTimeout": 0,
       "url": "https://u.expo.dev/7de6cdc4-8616-446f-99de-82764af3a7e6"
     },
@@ -58,7 +58,14 @@
       "softwareKeyboardLayoutMode": "resize",
       "permissions": [
         "READ_CALENDAR",
-        "WRITE_CALENDAR"
+        "WRITE_CALENDAR",
+        "android.permission.CAMERA",
+        "android.permission.POST_NOTIFICATIONS"
+      ],
+      "blockedPermissions": [
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
       ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/foreground-icon.png",
@@ -135,7 +142,14 @@
         {
           "url": "https://sentry.io/",
           "project": "betweener",
-          "organization": "nyansapa-ltd"
+          "organization": "nyansapa-ltd",
+          "experimental_android": {
+            "enableAndroidGradlePlugin": true,
+            "includeProguardMapping": true,
+            "autoUploadProguardMapping": true,
+            "uploadNativeSymbols": true,
+            "autoUploadNativeSymbols": true
+          }
         }
       ]
     ],

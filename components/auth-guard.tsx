@@ -1,6 +1,7 @@
+import BetweenerLoader from '@/components/ui/BetweenerLoader';
 import { useAuth, useAuthGuard } from '@/lib/auth-context';
-import { Redirect, useSegments } from 'expo-router';
-import { ActivityIndicator, View } from 'react-native';
+import { Redirect, usePathname, useRouter, useSegments } from 'expo-router';
+import { useEffect } from 'react';
 
 type AuthGuardProps = {
   children: React.ReactNode;
@@ -20,15 +21,13 @@ export function AuthGuard({ children, fallback }: AuthGuardProps) {
   // Show loading spinner while checking auth
   if (isLoading) {
     return fallback || (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-        <ActivityIndicator size="large" color="#FF6B6B" />
-      </View>
+      <BetweenerLoader label="Opening Betweener" sublabel="Restoring your private session." />
     );
   }
 
   // Redirect based on auth state
   if (needsAuth) {
-    return <Redirect href="/(auth)/welcome" />;
+    return <Redirect href="/(auth)/gate" />;
   }
 
   if (needsEmailVerification) {
@@ -50,9 +49,7 @@ export function AuthGuard({ children, fallback }: AuthGuardProps) {
 
   // Fallback loading state
   return fallback || (
-    <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-      <ActivityIndicator size="large" color="#FF6B6B" />
-    </View>
+    <BetweenerLoader label="Opening Betweener" sublabel="Preparing your next screen." />
   );
 }
 
@@ -73,28 +70,40 @@ export function withAuthGuard<P extends object>(
 // Guest-only guard (for auth screens)
 export function GuestGuard({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isEmailVerified, hasProfile, phoneVerified, isLoading } = useAuth();
+  const pathname = usePathname();
+  const router = useRouter();
   const segments = useSegments();
   const currentScreen = segments.length > 0 ? segments[segments.length - 1] : null;
   const allowDuringAuthenticatedRecovery =
-    currentScreen === 'callback' || currentScreen === 'reset-password';
-
-  if (isLoading) {
-    return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-        <ActivityIndicator size="large" color="#FF6B6B" />
-      </View>
-    );
-  }
-
-  // If fully authenticated, redirect to main app
-  if (
+    currentScreen === 'callback' ||
+    currentScreen === 'reset-password' ||
+    currentScreen === 'gate' ||
+    currentScreen === 'disconnected-provider' ||
+    currentScreen === 'retired-duplicate-account' ||
+    currentScreen === 'merged-account';
+  const shouldRedirectAuthenticatedUser =
     isAuthenticated &&
     isEmailVerified &&
     phoneVerified &&
     hasProfile &&
-    !allowDuringAuthenticatedRecovery
-  ) {
-    return <Redirect href="/(tabs)/vibes" />;
+    !allowDuringAuthenticatedRecovery;
+
+  useEffect(() => {
+    if (!shouldRedirectAuthenticatedUser) return;
+    if (pathname === '/gate') return;
+    router.replace('/gate');
+  }, [pathname, router, shouldRedirectAuthenticatedUser]);
+
+  if (isLoading) {
+    return (
+      <BetweenerLoader label="Opening Betweener" sublabel="Restoring your private session." />
+    );
+  }
+
+  if (shouldRedirectAuthenticatedUser) {
+    return (
+      <BetweenerLoader label="Opening your space" sublabel="Taking you back into Betweener." />
+    );
   }
 
   return <>{children}</>;

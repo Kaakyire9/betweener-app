@@ -11,8 +11,11 @@ OUT_FILE = Path("supabase/types/database.ts")
 
 
 def run_cmd(project_id: str) -> str:
+    # npm-installed CLIs are exposed as .cmd shims on Windows. Passing the
+    # extension explicitly avoids CreateProcess WinError 2 from Python.
+    supabase_cli = "supabase.cmd" if os.name == "nt" else "supabase"
     cmd = [
-        "supabase",
+        supabase_cli,
         "gen",
         "types",
         "--lang",

@@ -163,7 +163,7 @@ export default function MagicLinkScreen() {
         {!isSignup ? (
           <View style={styles.inlineRow}>
             <Text style={styles.inlineText}>New here? </Text>
-            <Pressable onPress={() => router.push("/(auth)/signup-options")}>
+            <Pressable onPress={() => router.push("/(auth)/welcome")}>
               <Text style={styles.inlineLink}>Create an account</Text>
             </Pressable>
           </View>

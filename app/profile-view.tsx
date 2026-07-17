@@ -1,26 +1,94 @@
 import ProfileVideoModal from '@/components/ProfileVideoModal';
+import BlurViewSafe from '@/components/NativeWrappers/BlurViewSafe';
+import { NewHereBadge } from '@/components/NewHereBadge';
+import OfflineImage from '@/components/media/OfflineImage';
+import BoostComposerModal from '@/components/profile/BoostComposerModal';
+import {
+  ProfileViewActionDock,
+  ProfileViewGiftModal,
+  type ProfileViewGiftOption,
+} from '@/components/profile/ProfileViewActions';
+import type { BoostComposerFeedback } from '@/components/profile/BoostComposerModal';
 import PremiumUpsellModal from '@/components/premium/PremiumUpsellModal';
 import { VerificationBadge } from '@/components/VerificationBadge';
+import { PremiumPlanBadge } from '@/components/PremiumPlanBadge';
+import { showBetweenerAlert } from '@/components/ui/BetweenerAlertHost';
+import {
+  createProfileBoostV2,
+  formatBoostAudienceLabel,
+  formatBoostFocusLabel,
+  getBoostRecommendations,
+  getRecentBoostAnalytics,
+  type BoostAnalytics,
+  type CreatedBoost,
+  type BoostRecommendation,
+  type CreateBoostInput,
+} from '@/lib/boosts';
+import {
+  updateProfileBoostSnapshot,
+  updateProfileInsightsSnapshot,
+  updateSavedProfilesSnapshot,
+  readSavedProfilesSnapshotState,
+  readProfileBoostSnapshotState,
+  writeProfileBoostSnapshot,
+} from '@/lib/offline/profile-insights-store';
 import { Colors } from '@/constants/theme';
 import { usePremiumState } from '@/hooks/use-premium-state';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/lib/auth-context';
+import {
+  createIntentRequestOfflineSafe,
+  decideIntentRequestOfflineSafe,
+} from '@/lib/intents/offline-actions';
 import { hasFeatureAccess } from '@/lib/premium-access';
-import { pickPreferredLocationLabel } from '@/lib/location/location-display';
+import { useResponsiveMetrics } from '@/lib/responsive';
+import { isLikelyNetworkError } from '@/lib/network';
+import { buildLocationDisplay } from '@/lib/location/location-display';
+import { getLocationConnectionInsight } from '@/lib/location/location-intelligence';
+import { getAuthoritativePresenceDisplay } from '@/lib/presence';
 import { parseDistanceKmFromLabel } from '@/lib/profile/distance';
+import { fetchUserPresence } from '@/lib/user-presence';
+import {
+  enqueueProfileBoostCreateMutation,
+  enqueueProfileGiftSendMutation,
+  enqueueProfileImageReactionSyncMutation,
+  getBoostOfflineMutationSnapshot,
+  enqueueSwipeSyncMutation,
+  getPendingProfileImageReactionMap,
+  hasPendingSwipeSyncMutation,
+  retryFailedOfflineMutation,
+  subscribeToOfflineMutationEvents,
+} from '@/lib/offline/mutation-queue';
 import { fetchViewedProfile } from '@/lib/profile/fetch-viewed-profile';
 import { getInterestEmoji } from '@/lib/profile/interest-emoji';
+import { getProfileViewReturnCircleId, shouldReturnToCirclesHome } from '@/lib/profile/profile-view-return';
+import { formatReligionLabel } from '@/lib/profile/religion';
+import {
+  type PremiumImage,
+  type PremiumProfile,
+  type PremiumSection,
+  type ProfileImageTag,
+} from '@/lib/profile/profile-view-helpers';
+import { cacheOfflineVideo, getOfflineVideoUri } from '@/lib/offline/video-store';
 import { getProfileInitials, getProfilePlaceholderPalette } from '@/lib/profile-placeholders';
+import { isProfileSaved, setProfileSaved, type SavedProfileSummary } from '@/lib/profile-interest';
+import {
+  mergeViewedProfileSnapshots,
+  readViewedProfileSnapshot,
+  writeViewedProfileSnapshot,
+} from '@/lib/offline/profile-store';
 import { recordProfileSignal } from '@/lib/profile-signals';
+import { logVibesEvent } from '@/lib/vibes/events';
 import { isGuessPrompt, isMultipleChoiceGuess } from '@/lib/prompts/guess-prompts';
 import { supabase } from '@/lib/supabase';
 import { logger } from '@/lib/telemetry/logger';
-import type { ProfilePromptAnswer, UserProfile } from '@/types/user-profile';
 import { getViewedProfilePremiumCopy } from '@/lib/viewed-profile-premium';
+import type { ProfilePromptAnswer, UserProfile } from '@/types/user-profile';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import type { ViewToken } from '@shopify/flash-list';
 import { FlashList } from '@shopify/flash-list';
 import IntentRequestSheet from '@/components/IntentRequestSheet';
+import SignalIcon from '@/components/icons/SignalIcon';
 import Notice from '@/components/ui/Notice';
 import { ProfileHeroSkeleton } from '@/components/ui/Skeleton';
 import * as Haptics from 'expo-haptics';
@@ -28,7 +96,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { router, useLocalSearchParams } from 'expo-router';
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
-import { Alert, Dimensions, FlatList, Image, Keyboard, KeyboardAvoidingView, Modal, PanResponder, Platform, Pressable, StyleSheet, Text, TextInput, TouchableWithoutFeedback, View, type ImageStyle, type ViewStyle } from 'react-native';
+import { FlatList, Keyboard, KeyboardAvoidingView, Modal, PanResponder, Platform, Pressable, StyleSheet, Text, TextInput, TouchableWithoutFeedback, View, type ImageStyle, type ViewStyle } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
     Easing,
@@ -47,25 +115,6 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
-
-type ProfileImageTag = 'intro' | 'lifestyle' | 'prompts' | 'values';
-
-type PremiumImage = {
-  id: string;
-  uri: string;
-  tag: ProfileImageTag;
-  isVideo?: boolean;
-};
-
-type PremiumSection = {
-  id: string;
-  tag: ProfileImageTag;
-  title: string;
-  body: string;
-  chips?: string[];
-};
-
 type LightboxItem = {
   uri: string;
   tag?: ProfileImageTag;
@@ -74,24 +123,28 @@ type LightboxItem = {
   chips?: string[];
 };
 
-type PremiumProfile = {
-  id: string;
-  name: string;
-  age: number;
-  location: string;
-  verified: boolean;
-  distanceKm?: number;
-  images: PremiumImage[];
-  sections: PremiumSection[];
-};
-
 type PremiumUpsellState = {
   requiredPlan: 'SILVER' | 'GOLD';
   title: string;
   message: string;
 };
 
-const IMAGE_ITEM_HEIGHT = Math.max(220, Math.min(280, Math.round(screenHeight * 0.26)));
+type ProfileReminderItem =
+  | {
+      kind: 'signal';
+      id: string;
+      expiresAt: string;
+      title: string;
+      body: string;
+    }
+  | {
+      kind: 'request';
+      id: string;
+      expiresAt: string;
+      title: string;
+      body: string;
+    };
+
 const IMAGE_ITEM_GAP = 12;
 const COLUMN_GAP = 14;
 const REACTION_ICONS = ['heart', 'fire', 'star', 'emoticon-happy-outline'] as const;
@@ -99,7 +152,6 @@ const REACTION_ICONS = ['heart', 'fire', 'star', 'emoticon-happy-outline'] as co
 const ACTIVE_VISIBLE_PERCENT_THRESHOLD = 70;
 const RIGHT_SCROLL_HOLD_MS = 600;
 const ACTIVE_TAG_MIN_INTERVAL_MS = 120;
-const ACTIVE_NOW_MS = 3 * 60 * 1000;
 const PROFILE_REPORT_REASONS = [
   { id: 'spam', label: 'Spam' },
   { id: 'harassment', label: 'Harassment' },
@@ -115,6 +167,49 @@ function buildGuessResultMessage(name: string, tone: 'correct' | 'wrong') {
   return 'Close. Try again, or skip the game and send a message.';
 }
 
+function buildRootsSection(profile: UserProfile, isOwnProfile: boolean): PremiumSection | null {
+  const roots = Array.isArray(profile.roots)
+    ? profile.roots.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
+  const rootsVisibility = String(profile.rootsVisibility || 'VISIBLE').trim().toUpperCase();
+  const rootsNote = String(profile.rootsNote || '').trim();
+
+  if (roots.length === 0) return null;
+  if (rootsVisibility === 'HIDDEN' && !isOwnProfile) return null;
+  if (rootsVisibility === 'MATCHES_ONLY' && !isOwnProfile) return null;
+
+  return {
+    id: 'sec-roots',
+    tag: 'values',
+    title: 'Roots & Heritage',
+    body:
+      rootsNote ||
+      (roots.length === 1 ? `${roots[0]} heritage.` : 'Cultural roots shared with intention.'),
+    chips: roots,
+  };
+}
+
+const formatProfileValue = (value?: string | null) => {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  return raw
+    .replace(/_/g, ' ')
+    .replace(/\s+/g, ' ')
+    .toLowerCase()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+};
+
+const formatDetailLine = (label: string, value?: string | null, formatter: (input?: string | null) => string = formatProfileValue) => {
+  const formatted = formatter(value);
+  return formatted ? `${label}: ${formatted}` : null;
+};
+
+const normalizePremiumPlan = (value: unknown): 'SILVER' | 'GOLD' | null => {
+  const normalized = String(value || '').trim().toUpperCase();
+  if (normalized === 'SILVER' || normalized === 'GOLD') return normalized;
+  return null;
+};
+
 // Content heuristics for empty-state branching.
 // Goal: "images-only" should trigger unless the profile has real narrative/intent content.
 const BIO_MEANINGFUL_MIN_CHARS = 40;
@@ -125,52 +220,22 @@ const INTERESTS_MEANINGFUL_MIN_COUNT = 3;
 function formatHeaderTitle(name: string, age: number) {
   if (!name) return '';
   if (!age) return name;
-  return `${name}, ${age}`;
+  return `${name} · ${age}`;
 }
 
-function toFlagEmoji(code?: string | null) {
-  if (!code) return '';
-  const normalized = String(code).trim().toUpperCase();
-  if (normalized.length !== 2) return '';
-  const first = normalized.charCodeAt(0);
-  const second = normalized.charCodeAt(1);
-  if (first < 65 || first > 90 || second < 65 || second > 90) return '';
-  return String.fromCodePoint(0x1f1e6 + (first - 65), 0x1f1e6 + (second - 65));
-}
-
-function formatDistanceKm(distanceKm?: number) {
-  if (typeof distanceKm !== 'number' || !Number.isFinite(distanceKm)) return '';
-  if (distanceKm < 1) return '<1 km away';
-  if (distanceKm < 10) return `${distanceKm.toFixed(1)} km away`;
-  return `${Math.round(distanceKm)} km away`;
-}
-
-function isDistanceLabel(label?: string | null) {
-  if (!label) return false;
-  const lower = String(label).toLowerCase();
-  return lower.includes('away') || /\b(km|mi|mile|miles)\b/.test(lower) || /<\s*1/.test(lower);
+function formatReminderTimeLeft(expiresAt?: string | null) {
+  if (!expiresAt) return '48h window';
+  const ts = Date.parse(expiresAt);
+  if (Number.isNaN(ts)) return '48h window';
+  const hours = Math.max(0, (ts - Date.now()) / 3600000);
+  if (hours < 1) return 'Ending soon';
+  return `${Math.ceil(hours)}h left`;
 }
 
 function buildLocationLine(profile: UserProfile) {
-  const distanceLabel = profile.distance?.trim() || '';
-  const distanceFromKm = formatDistanceKm(profile.distanceKm);
-  const distance = distanceFromKm || (isDistanceLabel(distanceLabel) ? distanceLabel : '');
-  const base = pickPreferredLocationLabel(profile as Record<string, any>);
-  const combined = distance
-    ? base && distance !== base
-      ? `${distance} - ${base}`
-      : distance
-    : base;
-
-  const flag = toFlagEmoji(profile.currentCountryCode);
-  return flag ? `${combined} ${flag}` : combined;
-}
-
-function isActiveNowFromLastActive(lastActive?: string | null) {
-  if (!lastActive) return false;
-  const then = new Date(lastActive).getTime();
-  if (Number.isNaN(then)) return false;
-  return Date.now() - then <= ACTIVE_NOW_MS;
+  return buildLocationDisplay(profile as Record<string, any>, {
+    surface: 'profile',
+  }).withFlag;
 }
 
 function hasMeaningfulText(profile: UserProfile) {
@@ -190,6 +255,7 @@ function hasMeaningfulText(profile: UserProfile) {
 
 function shouldGateProfile(profile: UserProfile) {
   const hasAnyPhoto =
+    !!profile.heroImageUrl ||
     (Array.isArray(profile.photos) && profile.photos.some(Boolean)) ||
     !!profile.profilePicture;
   const hasBio = (profile.bio || '').trim().length >= BIO_MIN_PUBLIC_CHARS;
@@ -212,7 +278,20 @@ function parseFallbackProfile(rawParam?: string | string[]): UserProfile | null 
   for (const cand of candidates) {
     try {
       const parsed = JSON.parse(cand || '{}');
-      const photos = Array.isArray(parsed.photos) ? parsed.photos : parsed.avatar_url ? [parsed.avatar_url] : [];
+      const rawHeroImageUrl =
+        (typeof parsed.heroImageUrl === 'string' ? parsed.heroImageUrl : '') ||
+        (typeof parsed.hero_image_url === 'string' ? parsed.hero_image_url : '');
+      const photos = Array.isArray(parsed.photos)
+        ? parsed.photos
+        : rawHeroImageUrl
+          ? [rawHeroImageUrl]
+          : parsed.avatar_url
+            ? [parsed.avatar_url]
+            : [];
+      const fallbackPresence = getAuthoritativePresenceDisplay(
+        parsed.online,
+        parsed.last_active || parsed.lastActive,
+      );
       return {
         id: parsed.id || 'preview',
         userId: parsed.user_id || parsed.userId || undefined,
@@ -223,6 +302,12 @@ function parseFallbackProfile(rawParam?: string | string[]): UserProfile | null 
         region: parsed.region,
         latitude: typeof parsed.latitude === 'number' ? parsed.latitude : undefined,
         longitude: typeof parsed.longitude === 'number' ? parsed.longitude : undefined,
+        heroImageUrl:
+          (typeof parsed.heroImageUrl === 'string' ? parsed.heroImageUrl : '') ||
+          (typeof parsed.hero_image_url === 'string' ? parsed.hero_image_url : '') ||
+          parsed.avatar_url ||
+          photos[0] ||
+          '',
         profilePicture: parsed.avatar_url || photos[0] || '',
         photos,
         profileVideo: typeof parsed.profileVideo === 'string' ? parsed.profileVideo : undefined,
@@ -238,7 +323,10 @@ function parseFallbackProfile(rawParam?: string | string[]): UserProfile | null 
             : typeof parsed.distance_km === 'number'
               ? parsed.distance_km
               : parseDistanceKmFromLabel(parsed.distance),
-        isActiveNow: !!(parsed.is_active || parsed.online),
+        isActiveNow: fallbackPresence.online || fallbackPresence.activeNow,
+        online: fallbackPresence.online,
+        lastActive: parsed.lastActive || parsed.last_active || null,
+        last_active: parsed.last_active || parsed.lastActive || null,
         tribe: parsed.tribe,
         religion: parsed.religion,
         personalityType: parsed.personality_type,
@@ -288,7 +376,14 @@ function parseFallbackProfile(rawParam?: string | string[]): UserProfile | null 
 function pickTaggedImages(profile: UserProfile): PremiumImage[] {
   const tags: ProfileImageTag[] = ['intro', 'lifestyle', 'prompts', 'values'];
   const uris = Array.isArray(profile.photos) ? profile.photos.filter(Boolean) : [];
-  const safeUris = uris.length ? uris : profile.profilePicture ? [profile.profilePicture] : [];
+  const orderedUris = [
+    profile.heroImageUrl,
+    profile.profilePicture,
+    ...uris,
+  ]
+    .filter((uri): uri is string => typeof uri === 'string' && uri.trim().length > 0)
+    .filter((uri, index, arr) => arr.findIndex((item) => item === uri) === index);
+  const safeUris = orderedUris;
 
   return safeUris.map((uri, index) => ({
     id: `img-${index}`,
@@ -297,8 +392,11 @@ function pickTaggedImages(profile: UserProfile): PremiumImage[] {
   }));
 }
 
-function buildSections(profile: UserProfile): PremiumSection[] {
+function buildSections(profile: UserProfile, isOwnProfile: boolean): PremiumSection[] {
   const chipsFromInterests = (profile.interests || []).slice(0, 6).map((i) => i.name);
+  const languageNames = Array.isArray(profile.languages)
+    ? profile.languages.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
   const allPrompts = profile.promptAnswers || [];
   const topPrompt = allPrompts[0];
   const promptEntries = (profile.promptAnswers || [])
@@ -313,6 +411,12 @@ function buildSections(profile: UserProfile): PremiumSection[] {
       : promptEntries.slice(0, 2);
 
   const premiumCopy = getViewedProfilePremiumCopy(profile.name);
+  const identityLines = [
+    formatDetailLine('Faith', profile.religion, formatReligionLabel),
+    formatDetailLine('Personality', profile.personalityType),
+    formatDetailLine('Love language', profile.loveLanguage),
+    languageNames.length ? `Languages: ${languageNames.join(', ')}` : null,
+  ].filter(Boolean);
 
   const sections: PremiumSection[] = [
     {
@@ -323,18 +427,24 @@ function buildSections(profile: UserProfile): PremiumSection[] {
       chips: chipsFromInterests.length ? chipsFromInterests : undefined,
     },
     {
+      id: 'sec-details',
+      tag: 'values',
+      title: 'Identity & Values',
+      body: identityLines.length ? identityLines.join('\n') : premiumCopy.basicsEmpty,
+    },
+    {
       id: 'sec-lifestyle',
       tag: 'lifestyle',
       title: 'Lifestyle',
       body: (() => {
         const text = [
-        profile.occupation ? `Work: ${profile.occupation}` : null,
-        profile.education ? `Education: ${profile.education}` : null,
-        profile.height ? `Height: ${profile.height}` : null,
-        profile.exerciseFrequency ? `Exercise: ${profile.exerciseFrequency}` : null,
-        profile.smoking ? `Smoking: ${profile.smoking}` : null,
-        profile.drinking ? `Drinking: ${profile.drinking}` : null,
-      ]
+          formatDetailLine('Work', profile.occupation, (value) => String(value || '').trim()),
+          formatDetailLine('Education', profile.education, (value) => String(value || '').trim()),
+          formatDetailLine('Height', profile.height, (value) => String(value || '').trim()),
+          formatDetailLine('Exercise', profile.exerciseFrequency),
+          formatDetailLine('Smoking', profile.smoking),
+          formatDetailLine('Drinking', profile.drinking),
+        ]
         .filter(Boolean)
         .join('\n');
         return text || premiumCopy.lifestyleEmpty;
@@ -346,16 +456,21 @@ function buildSections(profile: UserProfile): PremiumSection[] {
       title: 'Looking For',
       body: (() => {
         const text = [
-        profile.lookingFor ? profile.lookingFor : null,
-        profile.hasChildren ? `Has children: ${profile.hasChildren}` : null,
-        profile.wantsChildren ? `Wants children: ${profile.wantsChildren}` : null,
-      ]
+          profile.lookingFor ? formatProfileValue(profile.lookingFor) : null,
+          formatDetailLine('Has children', profile.hasChildren),
+          formatDetailLine('Wants children', profile.wantsChildren),
+        ]
         .filter(Boolean)
         .join('\n');
         return text || premiumCopy.valuesEmpty;
       })(),
     },
   ];
+
+  const rootsSection = buildRootsSection(profile, isOwnProfile);
+  if (rootsSection) {
+    sections.splice(1, 0, rootsSection);
+  }
 
   if (remainingPrompts.length) {
     sections.splice(2, 0, {
@@ -376,24 +491,24 @@ function buildAutoSectionsIfNeeded(profile: UserProfile, existing: PremiumSectio
   const premiumCopy = getViewedProfilePremiumCopy(profile.name);
 
   const basics = [
-    profile.height ? `Height: ${profile.height}` : null,
-    profile.occupation ? `Work: ${profile.occupation}` : null,
-    profile.education ? `Education: ${profile.education}` : null,
-    profile.religion ? `Religion: ${profile.religion}` : null,
-    profile.tribe ? `Tribe: ${profile.tribe}` : null,
-    profile.personalityType ? `Personality: ${profile.personalityType}` : null,
+    formatDetailLine('Height', profile.height, (value) => String(value || '').trim()),
+    formatDetailLine('Work', profile.occupation, (value) => String(value || '').trim()),
+    formatDetailLine('Education', profile.education, (value) => String(value || '').trim()),
+    formatDetailLine('Faith', profile.religion, formatReligionLabel),
+    formatDetailLine('Heritage', profile.tribe, (value) => String(value || '').trim()),
+    formatDetailLine('Personality', profile.personalityType),
   ].filter(Boolean);
 
   const intentions = [
-    profile.lookingFor ? `Looking for: ${profile.lookingFor}` : null,
-    profile.hasChildren ? `Has children: ${profile.hasChildren}` : null,
-    profile.wantsChildren ? `Wants children: ${profile.wantsChildren}` : null,
+    formatDetailLine('Looking for', profile.lookingFor),
+    formatDetailLine('Has children', profile.hasChildren),
+    formatDetailLine('Wants children', profile.wantsChildren),
   ].filter(Boolean);
 
   const lifestyle = [
-    profile.exerciseFrequency ? `Exercise: ${profile.exerciseFrequency}` : null,
-    profile.smoking ? `Smoking: ${profile.smoking}` : null,
-    profile.drinking ? `Drinking: ${profile.drinking}` : null,
+    formatDetailLine('Exercise', profile.exerciseFrequency),
+    formatDetailLine('Smoking', profile.smoking),
+    formatDetailLine('Drinking', profile.drinking),
   ].filter(Boolean);
 
   const interests = (profile.interests || []).map((i) => i.name).filter(Boolean);
@@ -429,7 +544,7 @@ function buildAutoSectionsIfNeeded(profile: UserProfile, existing: PremiumSectio
   return generated;
 }
 
-function adaptToPremiumProfile(profile: UserProfile): PremiumProfile {
+function adaptToPremiumProfile(profile: UserProfile, isOwnProfile: boolean): PremiumProfile {
   return {
     id: profile.id,
     name: profile.name,
@@ -438,7 +553,7 @@ function adaptToPremiumProfile(profile: UserProfile): PremiumProfile {
     verified: profile.verified,
     distanceKm: profile.distanceKm,
     images: pickTaggedImages(profile),
-    sections: buildSections(profile),
+    sections: buildSections(profile, isOwnProfile),
   };
 }
 
@@ -447,13 +562,24 @@ export default function ProfileViewPremiumV2Screen() {
   const isDark = colorScheme === 'dark';
   const theme = Colors[colorScheme ?? 'light'];
   const { profile: currentProfile } = useAuth();
+  const { currentPlan, serverPlan, revenueCatPlan } = usePremiumState();
   const insets = useSafeAreaInsets();
+  const responsive = useResponsiveMetrics();
 
   const params = useLocalSearchParams();
   const profileId = String((params as any)?.id ?? (params as any)?.profileId ?? 'preview');
   const isPreviewReplica = String((params as any)?.isPreview ?? '').toLowerCase() === 'true';
+  const profileViewSource = String((params as any)?.source ?? '').trim().toLowerCase();
+  const returnCircleId = getProfileViewReturnCircleId(params as Record<string, string | string[] | undefined>);
+  const returnToCirclesHome = shouldReturnToCirclesHome(params as Record<string, string | string[] | undefined>);
+  const shouldUseViewedProfileCache = Boolean(
+    profileId &&
+      profileId !== 'preview' &&
+      !(currentProfile?.id && currentProfile.id === profileId && isPreviewReplica),
+  );
 
   const fallbackProfile = useMemo(() => parseFallbackProfile((params as any)?.fallbackProfile), [params]);
+  const [cachedProfile, setCachedProfile] = useState<UserProfile | null>(null);
   const [fetchedProfile, setFetchedProfile] = useState<UserProfile | null>(null);
   const [presenceState, setPresenceState] = useState<{
     online: boolean;
@@ -466,8 +592,44 @@ export default function ProfileViewPremiumV2Screen() {
   const [fetchRetryNonce, setFetchRetryNonce] = useState(0);
   const [myInterests, setMyInterests] = useState<string[]>([]);
   const signalOpenedRef = useRef<string | null>(null);
+  const fullProfileOpenedRef = useRef<string | null>(null);
   const signalIntroRef = useRef<string | null>(null);
   const dwellTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (!shouldUseViewedProfileCache) {
+      setCachedProfile(null);
+      return;
+    }
+    let mounted = true;
+    void (async () => {
+      const snapshot = await readViewedProfileSnapshot(profileId);
+      if (mounted && snapshot) {
+        setCachedProfile(snapshot);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [profileId, shouldUseViewedProfileCache]);
+
+  useEffect(() => {
+    if (!fallbackProfile || !shouldUseViewedProfileCache) return;
+    void (async () => {
+      try {
+        const existing = await readViewedProfileSnapshot(profileId);
+        const merged = mergeViewedProfileSnapshots(existing, {
+          ...fallbackProfile,
+          id: profileId,
+        });
+        if (merged) {
+          await writeViewedProfileSnapshot(merged, { merge: false });
+        }
+      } catch {
+        // best effort only
+      }
+    })();
+  }, [fallbackProfile, profileId, shouldUseViewedProfileCache]);
 
   // Fetch using the same logic extracted from app/profile-view.tsx.
   React.useEffect(() => {
@@ -493,12 +655,22 @@ export default function ProfileViewPremiumV2Screen() {
           fallbackDistanceLabel: fallbackProfile?.distance,
           fallbackDistanceKm: fallbackProfile?.distanceKm,
         });
+        const merged =
+          mergeViewedProfileSnapshots(
+            shouldUseViewedProfileCache ? cachedProfile : null,
+            fallbackProfile,
+            mapped,
+          ) ?? mapped;
         if (mounted) {
-          setFetchedProfile(mapped);
+          setFetchedProfile(merged);
+          if (shouldUseViewedProfileCache) {
+            setCachedProfile(merged);
+            void writeViewedProfileSnapshot(merged, { merge: false });
+          }
           setFetchWatchdogError(null);
         }
       } catch {
-        if (mounted) setFetchedProfile(null);
+        if (mounted && !(shouldUseViewedProfileCache && cachedProfile)) setFetchedProfile(null);
       } finally {
         clearTimeout(watchdog);
         if (mounted) setFetching(false);
@@ -508,11 +680,23 @@ export default function ProfileViewPremiumV2Screen() {
     return () => {
       mounted = false;
     };
-  }, [currentProfile?.id, profileId, fallbackProfile?.distance, fallbackProfile?.distanceKm, fetchRetryNonce]);
+  }, [
+    cachedProfile,
+    currentProfile?.id,
+    profileId,
+    fallbackProfile?.distance,
+    fallbackProfile?.distanceKm,
+    fetchRetryNonce,
+    shouldUseViewedProfileCache,
+  ]);
 
   const resolvedProfile: UserProfile = useMemo(() => {
-    if (fetchedProfile) return fetchedProfile;
-    if (fallbackProfile) return fallbackProfile;
+    const merged = mergeViewedProfileSnapshots(
+      fallbackProfile,
+      shouldUseViewedProfileCache ? cachedProfile : null,
+      fetchedProfile,
+    );
+    if (merged) return merged;
     return {
       id: profileId,
       name: 'Profile',
@@ -530,7 +714,7 @@ export default function ProfileViewPremiumV2Screen() {
       interests: [],
       compatibility: 0,
     };
-  }, [fallbackProfile, fetchedProfile, profileId]);
+  }, [cachedProfile, fallbackProfile, fetchedProfile, profileId, shouldUseViewedProfileCache]);
 
   useEffect(() => {
     if (!currentProfile?.id || !resolvedProfile?.id || resolvedProfile.id === 'preview') return;
@@ -543,6 +727,16 @@ export default function ProfileViewPremiumV2Screen() {
       targetProfileId: resolvedProfile.id,
       openedDelta: 1,
     });
+    if (fullProfileOpenedRef.current !== key) {
+      fullProfileOpenedRef.current = key;
+      void logVibesEvent({
+        viewerProfileId: currentProfile.id,
+        targetProfileId: resolvedProfile.id,
+        segment: 'forYou',
+        eventType: 'full_profile_opened',
+        metadata: { source: 'profile_view' },
+      });
+    }
   }, [currentProfile?.id, resolvedProfile.id]);
 
   useEffect(() => {
@@ -554,8 +748,16 @@ export default function ProfileViewPremiumV2Screen() {
         if (mounted) setHeroVideoUrl(null);
         return;
       }
+      const cachedUri = await getOfflineVideoUri(source);
+      if (cachedUri) {
+        if (mounted) setHeroVideoUrl(cachedUri);
+        return;
+      }
       if (source.startsWith('http')) {
         if (mounted) setHeroVideoUrl(source);
+        void cacheOfflineVideo(source, source).then((localUri) => {
+          if (mounted && localUri) setHeroVideoUrl(localUri);
+        });
         return;
       }
       const { data, error } = await supabase.storage
@@ -567,6 +769,9 @@ export default function ProfileViewPremiumV2Screen() {
         return;
       }
       setHeroVideoUrl(data.signedUrl);
+      void cacheOfflineVideo(source, data.signedUrl).then((localUri) => {
+        if (mounted && localUri) setHeroVideoUrl(localUri);
+      });
     };
     void resolveHeroVideo();
     return () => {
@@ -579,46 +784,86 @@ export default function ProfileViewPremiumV2Screen() {
       setPresenceState(null);
       return;
     }
+    const targetUserId =
+      typeof (resolvedProfile as any)?.userId === 'string' && (resolvedProfile as any).userId.length > 0
+        ? (resolvedProfile as any).userId
+        : typeof (resolvedProfile as any)?.user_id === 'string' && (resolvedProfile as any).user_id.length > 0
+          ? (resolvedProfile as any).user_id
+          : null;
+    if (!targetUserId) return;
     let cancelled = false;
     const fetchPresence = async () => {
       try {
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('online,last_active')
-          .eq('id', resolvedProfile.id)
-          .maybeSingle();
+        const { data, error } = await fetchUserPresence(targetUserId);
         if (cancelled) return;
         if (error || !data) return;
+        const presenceRow = data as { online?: boolean | null; last_active?: string | null } | null;
+        const presence = getAuthoritativePresenceDisplay(
+          presenceRow?.online,
+          presenceRow?.last_active ?? null,
+        );
         setPresenceState({
-          online: !!data.online,
-          last_active: data.last_active ?? null,
+          online: presence.online,
+          last_active: presenceRow?.last_active ?? null,
         });
       } catch {
         // ignore presence fetch errors
       }
     };
     void fetchPresence();
-    const intervalId = setInterval(fetchPresence, 15000);
+
+    const channel = supabase
+      .channel(`user_presence:profile-view:${targetUserId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'user_presence', filter: `user_id=eq.${targetUserId}` },
+        (payload) => {
+          const presenceRow = (payload.new || payload.old) as
+            | { online?: boolean | null; last_active?: string | null }
+            | null;
+          if (!presenceRow || cancelled) return;
+          const presence = getAuthoritativePresenceDisplay(
+            presenceRow.online,
+            presenceRow.last_active ?? null,
+          );
+          setPresenceState({
+            online: presence.online,
+            last_active: presenceRow.last_active ?? null,
+          });
+        },
+      )
+      .subscribe();
+
     return () => {
       cancelled = true;
-      clearInterval(intervalId);
+      supabase.removeChannel(channel);
     };
-  }, [resolvedProfile.id]);
+  }, [resolvedProfile.id, (resolvedProfile as any)?.userId, (resolvedProfile as any)?.user_id]);
 
   const presenceProfile = useMemo(() => {
-    const online = presenceState?.online ?? (resolvedProfile as any).online;
     const lastActive =
-      presenceState?.last_active ?? (resolvedProfile as any).last_active;
-    const is_active =
-      isActiveNowFromLastActive(lastActive) ||
-      !!(resolvedProfile as any).is_active;
-    return { ...(resolvedProfile as any), online, is_active } as UserProfile;
+      presenceState?.last_active ?? (resolvedProfile as any).last_active ?? (resolvedProfile as any).lastActive;
+    const presence = getAuthoritativePresenceDisplay(
+      presenceState?.online ?? (resolvedProfile as any).online,
+      lastActive,
+    );
+    return {
+      ...(resolvedProfile as any),
+      online: presence.online,
+      is_active: presence.online || presence.activeNow,
+      isActiveNow: presence.online || presence.activeNow,
+      lastActive,
+      last_active: lastActive,
+    } as UserProfile;
   }, [presenceState, resolvedProfile]);
   const isOnlineNow = !!(presenceProfile as any).online;
-  const isActiveNow =
-    presenceProfile.isActiveNow || !!(presenceProfile as any).is_active;
-  const showPresence = isOnlineNow || isActiveNow;
-  const presenceLabel = isOnlineNow ? 'Online' : 'Active now';
+  const profilePresence = getAuthoritativePresenceDisplay(
+    presenceProfile.online,
+    presenceProfile.last_active ?? presenceProfile.lastActive,
+  );
+  const isActiveNow = profilePresence.activeNow;
+  const showPresence = profilePresence.showPresence;
+  const presenceLabel = profilePresence.label;
   useEffect(() => {
     let cancelled = false;
     const loadMyInterests = async () => {
@@ -658,12 +903,16 @@ export default function ProfileViewPremiumV2Screen() {
   );
   const meaningfulText = useMemo(() => hasMeaningfulText(resolvedProfile), [resolvedProfile]);
   const gated = useMemo(() => shouldGateProfile(resolvedProfile), [resolvedProfile]);
+  const isOwnProfile = useMemo(
+    () => Boolean(currentProfile?.id && profileId && currentProfile.id === profileId),
+    [currentProfile?.id, profileId],
+  );
 
   const profile: PremiumProfile = useMemo(() => {
-    const adapted = adaptToPremiumProfile(resolvedProfile);
+    const adapted = adaptToPremiumProfile(resolvedProfile, isOwnProfile);
     const sections = buildAutoSectionsIfNeeded(resolvedProfile, adapted.sections);
     return { ...adapted, sections };
-  }, [resolvedProfile]);
+  }, [isOwnProfile, resolvedProfile]);
   const viewerPrompts = useMemo(
     () => (resolvedProfile.promptAnswers || []).filter((item) => item?.promptTitle?.trim() || item?.answer?.trim()),
     [resolvedProfile.promptAnswers],
@@ -677,10 +926,9 @@ export default function ProfileViewPremiumV2Screen() {
   const [guessInterestSending, setGuessInterestSending] = useState(false);
   const [guessInterestSent, setGuessInterestSent] = useState(false);
   const [guessResult, setGuessResult] = useState<{ tone: 'correct' | 'wrong'; message: string } | null>(null);
-  const heroHeight = Math.max(260, Math.min(390, Math.round(screenHeight * 0.36)));
-  const guessFabTop = 10 + 44 + 10 + heroHeight - 54;
+  const imageItemHeight = Math.max(220, Math.min(280, Math.round(responsive.usableHeight * 0.26)));
 
-  const isLoading = fetching && !fetchedProfile && !fallbackProfile && !fetchWatchdogError;
+  const isLoading = fetching && !fetchedProfile && !cachedProfile && !fallbackProfile && !fetchWatchdogError;
   const locationLine = useMemo(() => buildLocationLine(resolvedProfile), [resolvedProfile]);
   const sharedInterestNames = useMemo(() => {
     const mine = new Set(myInterests.map((item) => String(item || '').trim().toLowerCase()).filter(Boolean));
@@ -690,8 +938,14 @@ export default function ProfileViewPremiumV2Screen() {
       .filter((name) => mine.has(String(name).trim().toLowerCase()));
   }, [myInterests, resolvedProfile.interests]);
   const profileContextLine = useMemo(() => {
+    const locationInsight =
+      !isOwnProfile && currentProfile
+        ? getLocationConnectionInsight(currentProfile, resolvedProfile, 'profile')
+        : null;
+
     if (sharedInterestNames.length > 1) return `${sharedInterestNames.length} shared interests`;
     if (sharedInterestNames[0]) return `Shared: ${sharedInterestNames[0]}`;
+    if (locationInsight) return locationInsight;
     if (isOnlineNow) return 'Online now for a real-time intro';
     if (isActiveNow) return 'Active now and open to connection';
     if (resolvedProfile.lookingFor) return `Intent: ${resolvedProfile.lookingFor}`;
@@ -701,11 +955,27 @@ export default function ProfileViewPremiumV2Screen() {
   }, [
     isActiveNow,
     isOnlineNow,
+    currentProfile,
+    isOwnProfile,
     resolvedProfile.lookingFor,
     resolvedProfile.loveLanguage,
     resolvedProfile.personalityType,
+    resolvedProfile,
     sharedInterestNames,
   ]);
+  const profilePremiumPlan = isOwnProfile
+    ? normalizePremiumPlan(serverPlan ?? revenueCatPlan ?? currentPlan)
+    : normalizePremiumPlan(
+        resolvedProfile.premiumPlan ?? (resolvedProfile as any).premium_plan,
+      );
+  const profileIsNewHere = Boolean(
+    resolvedProfile.isNewHere ?? (resolvedProfile as any).is_new_here,
+  );
+  const profileVerificationLevel =
+    presenceProfile.verificationLevel ?? (presenceProfile.verified ? 1 : 0);
+  const lookingForLabel = resolvedProfile.lookingFor
+    ? `Looking for ${formatProfileValue(resolvedProfile.lookingFor)}`
+    : null;
 
   useEffect(() => {
     const usesMultipleChoice = isGuessPrompt(featuredPrompt?.promptType) && isMultipleChoiceGuess(featuredPrompt?.guessMode);
@@ -736,8 +1006,11 @@ export default function ProfileViewPremiumV2Screen() {
       fallbackDistanceLabel: fallbackProfile?.distance,
       fallbackDistanceKm: fallbackProfile?.distanceKm,
     });
-    setFetchedProfile(mapped);
-  }, [currentProfile?.id, fallbackProfile?.distance, fallbackProfile?.distanceKm, profileId]);
+    const merged = mergeViewedProfileSnapshots(cachedProfile, fallbackProfile, mapped) ?? mapped;
+    setFetchedProfile(merged);
+    setCachedProfile(merged);
+    void writeViewedProfileSnapshot(merged, { merge: false });
+  }, [cachedProfile, currentProfile?.id, fallbackProfile, profileId]);
 
   const submitFeaturedGuess = useCallback(async () => {
     if (!featuredPrompt?.id || !currentProfile?.id || !isGuessPrompt(featuredPrompt.promptType)) return;
@@ -752,7 +1025,11 @@ export default function ProfileViewPremiumV2Screen() {
         p_guess: guessValue,
       });
       if (error) {
-        Alert.alert('Guess unavailable', 'Please try again.');
+        showBetweenerAlert({
+          title: 'Guess unavailable',
+          message: 'Please try again.',
+          tone: 'error',
+        });
         return;
       }
 
@@ -767,7 +1044,11 @@ export default function ProfileViewPremiumV2Screen() {
       });
       await refreshViewedProfile();
     } catch {
-      Alert.alert('Guess unavailable', 'Please try again.');
+      showBetweenerAlert({
+        title: 'Guess unavailable',
+        message: 'Please try again.',
+        tone: 'error',
+      });
     } finally {
       setGuessSubmitting(false);
     }
@@ -780,36 +1061,42 @@ export default function ProfileViewPremiumV2Screen() {
 
     setGuessInterestSending(true);
     try {
-      const { error } = await supabase.rpc('rpc_create_intent_request', {
-        p_recipient_id: resolvedProfile.id,
-        p_type: 'connect',
-        p_message: `I guessed your prompt right and I’d like to know more about you.`,
-        p_metadata: {
+      const result = await createIntentRequestOfflineSafe({
+        recipientId: resolvedProfile.id,
+        type: 'connect',
+        message: `I guessed your prompt right and I’d like to know more about you.`,
+        metadata: {
           source: 'guess_prompt',
           prompt_id: featuredPrompt.id,
           guess_outcome: 'correct',
         },
+        actorProfileId: currentProfile?.id ?? null,
+        snapshotOwnerIds: [currentProfile?.id ?? null, currentUserId],
       });
 
-      if (error) {
-        logger.error('[profile-view] send_guess_interest_failed', error);
-        const message =
-          typeof error?.message === 'string' && error.message.trim()
-            ? error.message.trim()
-            : 'Please try again.';
-        const isDuplicate = /already placed a request/i.test(message);
-        if (isDuplicate) {
-          setGuessInterestSent(true);
-        }
-        Alert.alert(isDuplicate ? 'Request already placed' : 'Unable to send request', message);
-        return;
-      }
-
       setGuessInterestSent(true);
-      Alert.alert(
-        'Request sent',
-        `${resolvedProfile.name} will see that you answered the prompt correctly and want to know more.`,
-      );
+      showBetweenerAlert({
+        title: result.status === 'queued' ? 'Request queued' : 'Request sent',
+        message: result.status === 'queued'
+          ? `Your request to ${resolvedProfile.name} will send when you're back online.`
+          : `${resolvedProfile.name} will see that you answered the prompt correctly and want to know more.`,
+        tone: 'success',
+      });
+    } catch (error) {
+      logger.error('[profile-view] send_guess_interest_failed', error);
+      const message =
+        error && typeof error === 'object' && 'message' in error && typeof (error as any).message === 'string'
+          ? (error as any).message.trim()
+          : 'Please try again.';
+      const isDuplicate = /already placed a request/i.test(message);
+      if (isDuplicate) {
+        setGuessInterestSent(true);
+      }
+      showBetweenerAlert({
+        title: isDuplicate ? 'Request already placed' : 'Unable to send request',
+        message,
+        tone: isDuplicate ? 'info' : 'error',
+      });
     } finally {
       setGuessInterestSending(false);
     }
@@ -824,16 +1111,14 @@ export default function ProfileViewPremiumV2Screen() {
   const [videoModalVisible, setVideoModalVisible] = useState(false);
   const [videoModalUrl, setVideoModalUrl] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [profileReminder, setProfileReminder] = useState<ProfileReminderItem | null>(null);
+  const [profileReminderBusy, setProfileReminderBusy] = useState<'accept' | 'pass' | null>(null);
+  const [hasAcceptedMatch, setHasAcceptedMatch] = useState(false);
   const [blockStatus, setBlockStatus] = useState<typeof BLOCKED_BY_ME | typeof BLOCKED_BY_THEM | null>(null);
   const [safetySheet, setSafetySheet] = useState<'menu' | 'blockConfirm' | 'report' | null>(null);
   const [blockSubmitting, setBlockSubmitting] = useState(false);
   const [reportSubmitting, setReportSubmitting] = useState(false);
   const [selectedReportReason, setSelectedReportReason] = useState<string | null>(null);
-  const isOwnProfile = useMemo(
-    // Profiles are keyed by profiles.id (not auth.uid()), so compare against the viewer's profile id.
-    () => Boolean(currentProfile?.id && profileId && currentProfile.id === profileId),
-    [currentProfile?.id, profileId],
-  );
   const shouldFloatGuessPrompt = Boolean(
     featuredPrompt &&
       isGuessPrompt(featuredPrompt.promptType) &&
@@ -1019,12 +1304,21 @@ export default function ProfileViewPremiumV2Screen() {
 
   const loadImageReactions = useCallback(async () => {
     if (!resolvedProfile.id) return;
+    const pendingMine = await getPendingProfileImageReactionMap(resolvedProfile.id, currentUserId);
     const { data, error } = await supabase
       .from('profile_image_reactions')
       .select('image_url,emoji,reactor_user_id')
       .eq('profile_id', resolvedProfile.id);
     if (error) {
       console.log('[profile] reactions fetch error', error);
+      setImageReactions((prev) => {
+        const next = { ...prev };
+        Object.entries(pendingMine).forEach(([imageUrl, emoji]) => {
+          if (emoji) next[imageUrl] = emoji;
+          else delete next[imageUrl];
+        });
+        return next;
+      });
       return;
     }
     const counts: Record<string, { count: number; topEmoji: string | null }> = {};
@@ -1042,9 +1336,95 @@ export default function ProfileViewPremiumV2Screen() {
         mine[imageUrl] = emoji;
       }
     });
+    Object.entries(pendingMine).forEach(([imageUrl, emoji]) => {
+      if (emoji) mine[imageUrl] = emoji;
+      else delete mine[imageUrl];
+    });
     setReactionCounts(counts);
     setImageReactions(mine);
   }, [currentUserId, resolvedProfile.id]);
+
+  const handleProfileImageReactionRealtime = useCallback(
+    (payload: any) => {
+      const nextRow = (payload.new || null) as
+        | { image_url?: string | null; emoji?: string | null; reactor_user_id?: string | null }
+        | null;
+      const prevRow = (payload.old || null) as
+        | { image_url?: string | null; emoji?: string | null; reactor_user_id?: string | null }
+        | null;
+
+      const applyCountDelta = (
+        row: { image_url?: string | null; emoji?: string | null } | null,
+        delta: 1 | -1,
+      ) => {
+        if (!row?.image_url || !row.emoji) return false;
+        let needsRefresh = false;
+        setReactionCounts((prev) => {
+          const current = prev[row.image_url!] ?? { count: 0, topEmoji: null };
+          const nextCount = Math.max(0, current.count + delta);
+          if (nextCount <= 0) {
+            if (!(row.image_url! in prev)) return prev;
+            const next = { ...prev };
+            delete next[row.image_url!];
+            return next;
+          }
+          if (delta < 0 && current.topEmoji === row.emoji) {
+            needsRefresh = true;
+          }
+          return {
+            ...prev,
+            [row.image_url!]: {
+              count: nextCount,
+              topEmoji: delta > 0 ? row.emoji : current.topEmoji,
+            },
+          };
+        });
+        return needsRefresh;
+      };
+
+      const applyMineDelta = (
+        row: { image_url?: string | null; emoji?: string | null; reactor_user_id?: string | null } | null,
+        mode: "set" | "delete",
+      ) => {
+        if (!currentUserId || row?.reactor_user_id !== currentUserId || !row.image_url) return;
+        setImageReactions((prev) => {
+          const next = { ...prev };
+          if (mode === "set" && row.emoji) {
+            next[row.image_url!] = row.emoji;
+          } else {
+            delete next[row.image_url!];
+          }
+          return next;
+        });
+      };
+
+      let needsRefresh = false;
+      switch (payload.eventType) {
+        case "INSERT":
+          needsRefresh = applyCountDelta(nextRow, 1);
+          applyMineDelta(nextRow, "set");
+          break;
+        case "UPDATE":
+          needsRefresh = applyCountDelta(prevRow, -1) || needsRefresh;
+          needsRefresh = applyCountDelta(nextRow, 1) || needsRefresh;
+          applyMineDelta(prevRow, "delete");
+          applyMineDelta(nextRow, "set");
+          break;
+        case "DELETE":
+          needsRefresh = applyCountDelta(prevRow, -1) || needsRefresh;
+          applyMineDelta(prevRow, "delete");
+          break;
+        default:
+          needsRefresh = true;
+          break;
+      }
+
+      if (needsRefresh) {
+        void loadImageReactions();
+      }
+    },
+    [currentUserId, loadImageReactions],
+  );
 
   useEffect(() => {
     if (!resolvedProfile.id) return;
@@ -1054,15 +1434,13 @@ export default function ProfileViewPremiumV2Screen() {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'profile_image_reactions', filter: `profile_id=eq.${resolvedProfile.id}` },
-        () => {
-          void loadImageReactions();
-        },
+        handleProfileImageReactionRealtime,
       )
       .subscribe();
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [loadImageReactions, resolvedProfile.id]);
+  }, [handleProfileImageReactionRealtime, loadImageReactions, resolvedProfile.id]);
 
   useEffect(() => {
     // Reset any pinned hero image when switching profiles.
@@ -1091,43 +1469,51 @@ export default function ProfileViewPremiumV2Screen() {
     }
 
     const photos = Array.isArray(resolvedProfile.photos) ? resolvedProfile.photos.filter(Boolean) : [];
-    const uris = photos.length ? photos : resolvedProfile.profilePicture ? [resolvedProfile.profilePicture] : [];
+    const uris = photos.length
+      ? photos
+      : resolvedProfile.heroImageUrl
+        ? [resolvedProfile.heroImageUrl]
+        : resolvedProfile.profilePicture
+          ? [resolvedProfile.profilePicture]
+          : [];
     return uris.map((uri) => ({ uri }));
-  }, [profile.images, profile.sections, resolvedProfile.photos, resolvedProfile.profilePicture]);
+  }, [profile.images, profile.sections, resolvedProfile.heroImageUrl, resolvedProfile.photos, resolvedProfile.profilePicture]);
   const heroImageUri = useMemo(() => {
     if (heroOverrideType === 'image' && heroOverrideUri) return heroOverrideUri;
     const photos = Array.isArray(resolvedProfile.photos) ? resolvedProfile.photos : [];
-    return photos.find(Boolean) || resolvedProfile.profilePicture || '';
-  }, [heroOverrideType, heroOverrideUri, resolvedProfile.photos, resolvedProfile.profilePicture]);
+    return resolvedProfile.heroImageUrl || photos.find(Boolean) || resolvedProfile.profilePicture || '';
+  }, [heroOverrideType, heroOverrideUri, resolvedProfile.heroImageUrl, resolvedProfile.photos, resolvedProfile.profilePicture]);
+  const hasHeroVideo = Boolean(resolvedProfile.profileVideoPath || resolvedProfile.profileVideo || heroVideoUrl);
   const showHeroVideo =
     heroOverrideType === 'video'
       ? true
       : heroOverrideType === 'image'
         ? false
-        : !!heroVideoUrl;
-  useEffect(() => {
-    if (!currentProfile?.id || !resolvedProfile?.id) return;
-    if (!showHeroVideo || !heroVideoUrl) return;
-    const key = `${currentProfile.id}:${resolvedProfile.id}:intro`;
-    if (signalIntroRef.current === key) return;
-    signalIntroRef.current = key;
-    void recordProfileSignal({
-      profileId: currentProfile.id,
-      targetProfileId: resolvedProfile.id,
-      introVideoStarted: true,
-    });
-  }, [currentProfile?.id, heroVideoUrl, resolvedProfile.id, showHeroVideo]);
+        : hasHeroVideo;
   const videoThumbUri = useMemo(() => {
     if (resolvedProfile.profilePicture) return resolvedProfile.profilePicture;
     const photos = Array.isArray(resolvedProfile.photos) ? resolvedProfile.photos : [];
     return photos.find(Boolean) || '';
   }, [resolvedProfile.photos, resolvedProfile.profilePicture]);
+  const introReactionUri = useMemo(() => {
+    const source = resolvedProfile.profileVideoPath || resolvedProfile.profileVideo;
+    return source ? `video:${source}` : '';
+  }, [resolvedProfile.profileVideo, resolvedProfile.profileVideoPath]);
   const leftRailItems = useMemo<PremiumImage[]>(() => {
-    if (!heroVideoUrl) return profile.images;
+    if (!hasHeroVideo) return profile.images;
     const thumb = videoThumbUri || profile.images[0]?.uri || '';
-    const videoItem: PremiumImage = { id: 'vid-0', uri: thumb, tag: 'intro', isVideo: true };
-    return [videoItem, ...profile.images];
-  }, [heroVideoUrl, profile.images, videoThumbUri]);
+    const dedupedImages = thumb
+      ? profile.images.filter((img) => img.uri !== thumb)
+      : profile.images;
+    const videoItem: PremiumImage = {
+      id: 'vid-0',
+      uri: thumb,
+      tag: 'intro',
+      isVideo: true,
+      reactionUri: introReactionUri || thumb,
+    };
+    return [videoItem, ...dedupedImages];
+  }, [hasHeroVideo, introReactionUri, profile.images, videoThumbUri]);
 
   const openLightboxAtIndex = useCallback(
     (nextIndex: number) => {
@@ -1151,9 +1537,43 @@ export default function ProfileViewPremiumV2Screen() {
     const source = resolvedProfile.profileVideoPath || resolvedProfile.profileVideo;
     if (!source) return;
 
+    if (
+      currentProfile?.id &&
+      resolvedProfile?.id &&
+      resolvedProfile.id !== 'preview' &&
+      currentProfile.id !== resolvedProfile.id
+    ) {
+      const key = `${currentProfile.id}:${resolvedProfile.id}:intro`;
+      if (signalIntroRef.current !== key) {
+        signalIntroRef.current = key;
+        void recordProfileSignal({
+          profileId: currentProfile.id,
+          targetProfileId: resolvedProfile.id,
+          introVideoStarted: true,
+        });
+        void logVibesEvent({
+          viewerProfileId: currentProfile.id,
+          targetProfileId: resolvedProfile.id,
+          segment: 'forYou',
+          eventType: 'intro_played',
+          metadata: { source: 'profile_view', trigger: 'explicit_open' },
+        });
+      }
+    }
+
+    const cachedUri = await getOfflineVideoUri(source);
+    if (cachedUri) {
+      setVideoModalUrl(cachedUri);
+      setVideoModalVisible(true);
+      return;
+    }
+
     if (source.startsWith('http')) {
       setVideoModalUrl(source);
       setVideoModalVisible(true);
+      void cacheOfflineVideo(source, source).then((localUri) => {
+        if (localUri) setVideoModalUrl(localUri);
+      });
       return;
     }
 
@@ -1161,12 +1581,236 @@ export default function ProfileViewPremiumV2Screen() {
     if (error || !data?.signedUrl) return;
     setVideoModalUrl(data.signedUrl);
     setVideoModalVisible(true);
-  }, [resolvedProfile.profileVideo, resolvedProfile.profileVideoPath]);
+    void cacheOfflineVideo(source, data.signedUrl).then((localUri) => {
+      if (localUri) setVideoModalUrl(localUri);
+    });
+  }, [currentProfile?.id, resolvedProfile.id, resolvedProfile.profileVideo, resolvedProfile.profileVideoPath]);
 
   const openIntentSheet = useCallback(() => {
     if (!resolvedProfile.id || isOwnProfile) return;
+    if (currentProfile?.id) {
+      void logVibesEvent({
+        viewerProfileId: currentProfile.id,
+        targetProfileId: resolvedProfile.id,
+        segment: 'forYou',
+        eventType: 'intent_opened',
+        metadata: { source: 'profile_view' },
+      });
+    }
     setIntentSheetOpen(true);
-  }, [isOwnProfile, resolvedProfile.id]);
+  }, [currentProfile?.id, isOwnProfile, resolvedProfile.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadProfileReminder = async () => {
+      if (!currentProfile?.id || !resolvedProfile?.id || isOwnProfile || resolvedProfile.id === 'preview') {
+        setProfileReminder(null);
+        return;
+      }
+
+      const now = new Date().toISOString();
+      const [signalResult, requestResult] = await Promise.all([
+        (supabase as any)
+          .from('profile_signal_gestures')
+          .select('id,reason_label,note,expires_at,status,created_at')
+          .eq('sender_profile_id', resolvedProfile.id)
+          .eq('receiver_profile_id', currentProfile.id)
+          .in('status', ['sent', 'seen'])
+          .gt('expires_at', now)
+          .order('created_at', { ascending: false })
+          .limit(1),
+        supabase
+          .from('intent_requests')
+          .select('id,type,message,expires_at,status,created_at')
+          .eq('actor_id', resolvedProfile.id)
+          .eq('recipient_id', currentProfile.id)
+          .eq('status', 'pending')
+          .gt('expires_at', now)
+          .order('created_at', { ascending: false })
+          .limit(1),
+      ]);
+
+      if (cancelled) return;
+
+      const signal = Array.isArray(signalResult.data) ? signalResult.data[0] : null;
+      if (signal?.id) {
+        setProfileReminder({
+          kind: 'signal',
+          id: String(signal.id),
+          expiresAt: String(signal.expires_at),
+          title: `${resolvedProfile.name} sent you a Signal`,
+          body: String(signal.reason_label || 'They noticed something specific.'),
+        });
+        return;
+      }
+
+      const request = Array.isArray(requestResult.data) ? requestResult.data[0] : null;
+      if (request?.id) {
+        setProfileReminder({
+          kind: 'request',
+          id: String(request.id),
+          expiresAt: String(request.expires_at),
+          title: `${resolvedProfile.name} is waiting`,
+          body: String(request.message || 'A time-limited request is open.'),
+        });
+        return;
+      }
+
+      setProfileReminder(null);
+    };
+
+    void loadProfileReminder();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentProfile?.id, isOwnProfile, resolvedProfile.id, resolvedProfile.name]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadMatchState = async () => {
+      if (!currentProfile?.id || !resolvedProfile?.id || isOwnProfile || resolvedProfile.id === 'preview') {
+        setHasAcceptedMatch(false);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from('matches')
+        .select('id,status')
+        .or(
+          `and(user1_id.eq.${currentProfile.id},user2_id.eq.${resolvedProfile.id}),and(user1_id.eq.${resolvedProfile.id},user2_id.eq.${currentProfile.id})`,
+        )
+        .eq('status', 'ACCEPTED')
+        .limit(1);
+
+      if (cancelled) return;
+      if (error) {
+        if (!isLikelyNetworkError(error)) {
+          logger.error('[profile-view] load_match_state_failed', error);
+        }
+        setHasAcceptedMatch(false);
+        return;
+      }
+
+      setHasAcceptedMatch(Array.isArray(data) && data.length > 0);
+    };
+
+    void loadMatchState();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentProfile?.id, isOwnProfile, resolvedProfile.id]);
+
+  const ensureProfileMatch = useCallback(async (actorProfileId: string, recipientProfileId: string) => {
+    const { data, error: lookupError } = await supabase
+      .from('matches')
+      .select('id,status')
+      .or(
+        `and(user1_id.eq.${actorProfileId},user2_id.eq.${recipientProfileId}),and(user1_id.eq.${recipientProfileId},user2_id.eq.${actorProfileId})`,
+      )
+      .limit(1);
+    if (lookupError) throw lookupError;
+
+    if (data && data.length > 0) {
+      const match = data[0];
+      if (match.status !== 'ACCEPTED') {
+        const { error: updateError } = await supabase.from('matches').update({ status: 'ACCEPTED' }).eq('id', match.id);
+        if (updateError) throw updateError;
+      }
+      return match.id;
+    }
+
+    const [user1, user2] = [actorProfileId, recipientProfileId].sort();
+    const { data: inserted, error: insertError } = await supabase
+      .from('matches')
+      .insert({ user1_id: user1, user2_id: user2, status: 'ACCEPTED' })
+      .select('id')
+      .single();
+    if (insertError) throw insertError;
+    return inserted?.id;
+  }, []);
+
+  const acceptProfileReminder = useCallback(async () => {
+    if (!profileReminder || !currentProfile?.id || !resolvedProfile.id || profileReminderBusy) return;
+    setProfileReminderBusy('accept');
+    try {
+      if (profileReminder.kind === 'signal') {
+        const respondedAt = new Date().toISOString();
+        const { error } = await (supabase as any)
+          .from('profile_signal_gestures')
+          .update({ status: 'responded', responded_at: respondedAt })
+          .eq('id', profileReminder.id);
+        if (error) throw error;
+        await ensureProfileMatch(resolvedProfile.id, currentProfile.id);
+      } else {
+        const result = await decideIntentRequestOfflineSafe({
+          requestId: profileReminder.id,
+          decision: 'accept',
+          insertAcceptanceSystemMessages: true,
+          snapshotOwnerIds: [currentProfile?.id ?? null, currentUserId],
+        });
+        if (result.status === 'queued') {
+          showBetweenerAlert({
+            title: 'Accept queued',
+            message: 'We will accept this request when the network returns.',
+            tone: 'success',
+          });
+        }
+      }
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+      setProfileReminder(null);
+    } catch (error) {
+      logger.error('[profile-view] accept_profile_reminder_failed', error);
+      showBetweenerAlert({
+        title: 'Unable to accept',
+        message: (typeof __DEV__ !== 'undefined' && __DEV__) ? String((error as any)?.message || error) : 'Please try again.',
+        tone: 'error',
+      });
+    } finally {
+      setProfileReminderBusy(null);
+    }
+  }, [currentProfile?.id, ensureProfileMatch, profileReminder, profileReminderBusy, resolvedProfile.id]);
+
+  const passProfileReminder = useCallback(async () => {
+    if (!profileReminder || profileReminderBusy) return;
+    setProfileReminderBusy('pass');
+    try {
+      if (profileReminder.kind === 'signal') {
+        const dismissedAt = new Date().toISOString();
+        const { error } = await (supabase as any)
+          .from('profile_signal_gestures')
+          .update({ status: 'dismissed', dismissed_at: dismissedAt })
+          .eq('id', profileReminder.id);
+        if (error) throw error;
+      } else {
+        const result = await decideIntentRequestOfflineSafe({
+          requestId: profileReminder.id,
+          decision: 'pass',
+          snapshotOwnerIds: [currentProfile?.id ?? null, currentUserId],
+        });
+        if (result.status === 'queued') {
+          showBetweenerAlert({
+            title: 'Pass queued',
+            message: 'We will pass this request when the network returns.',
+            tone: 'success',
+          });
+        }
+      }
+      Haptics.selectionAsync().catch(() => undefined);
+      setProfileReminder(null);
+    } catch (error) {
+      logger.error('[profile-view] pass_profile_reminder_failed', error);
+      showBetweenerAlert({
+        title: 'Unable to pass',
+        message: (typeof __DEV__ !== 'undefined' && __DEV__) ? String((error as any)?.message || error) : 'Please try again.',
+        tone: 'error',
+      });
+    } finally {
+      setProfileReminderBusy(null);
+    }
+  }, [profileReminder, profileReminderBusy]);
+
   const handleHeroPress = useCallback(
     (uri?: string) => {
       if (showHeroVideo && heroVideoUrl) {
@@ -1180,7 +1824,7 @@ export default function ProfileViewPremiumV2Screen() {
     [heroImageUri, heroVideoUrl, openIntroVideo, openLightboxForUri, showHeroVideo],
   );
   const handleHeroDoubleTap = useCallback(() => {
-    if (heroVideoUrl) {
+    if (hasHeroVideo) {
       if (showHeroVideo) {
         if (!heroImageUri) return;
         setHeroOverrideType('image');
@@ -1199,13 +1843,23 @@ export default function ProfileViewPremiumV2Screen() {
       return next;
     });
     Haptics.selectionAsync().catch(() => undefined);
-  }, [heroImageUri, heroVideoUrl, showHeroVideo]);
+  }, [hasHeroVideo, heroImageUri, showHeroVideo]);
   const handleBack = useCallback(() => {
+    if (returnCircleId) {
+      router.replace({ pathname: '/circles/[id]', params: { id: returnCircleId } });
+      return;
+    }
+    if (returnToCirclesHome) {
+      router.replace('/(tabs)/circles');
+      return;
+    }
+    if (profileViewSource === 'me' || (isOwnProfile && isPreviewReplica)) {
+      router.replace('/(tabs)/profile');
+      return;
+    }
     router.back();
-  }, [router]);
-  const handleClose = useCallback(() => {
-    router.back();
-  }, [router]);
+  }, [isOwnProfile, isPreviewReplica, profileViewSource, returnCircleId, returnToCirclesHome]);
+  const handleClose = handleBack;
   const closeSafetySheet = useCallback(() => {
     setSafetySheet(null);
     setSelectedReportReason(null);
@@ -1231,14 +1885,22 @@ export default function ProfileViewPremiumV2Screen() {
 
       if (error) {
         console.log('[profile] unblock user error', error);
-        Alert.alert('Unblock user', 'Unable to unblock this member right now.');
+        showBetweenerAlert({
+          title: 'Unblock user',
+          message: 'Unable to unblock this member right now.',
+          tone: 'error',
+        });
         setBlockSubmitting(false);
         return;
       }
 
       setBlockStatus(null);
       closeSafetySheet();
-      Alert.alert('Unblocked', 'This member can interact with you again.');
+      showBetweenerAlert({
+        title: 'Unblocked',
+        message: 'This member can interact with you again.',
+        tone: 'success',
+      });
       return;
     }
 
@@ -1250,18 +1912,30 @@ export default function ProfileViewPremiumV2Screen() {
       if (error.code === '23505') {
         setBlockStatus(BLOCKED_BY_ME);
         closeSafetySheet();
-        Alert.alert('Blocked', 'This member is already blocked.');
+        showBetweenerAlert({
+          title: 'Blocked',
+          message: 'This member is already blocked.',
+          tone: 'info',
+        });
         return;
       }
       console.log('[profile] block user error', error);
-      Alert.alert('Block user', 'Unable to block this member right now.');
+      showBetweenerAlert({
+        title: 'Block user',
+        message: 'Unable to block this member right now.',
+        tone: 'error',
+      });
       setBlockSubmitting(false);
       return;
     }
 
     setBlockStatus(BLOCKED_BY_ME);
     closeSafetySheet();
-    Alert.alert('Blocked', 'This member has been blocked. They will not be notified.');
+    showBetweenerAlert({
+      title: 'Blocked',
+      message: 'This member has been blocked. They will not be notified.',
+      tone: 'success',
+    });
   }, [blockStatus, blockSubmitting, closeSafetySheet, currentUserId, resolvedProfile.userId]);
 
   const submitProfileReport = useCallback(async () => {
@@ -1283,13 +1957,21 @@ export default function ProfileViewPremiumV2Screen() {
 
     if (error) {
       console.log('[profile] report user error', error);
-      Alert.alert('Report user', 'Unable to send this report right now.');
+      showBetweenerAlert({
+        title: 'Report user',
+        message: 'Unable to send this report right now.',
+        tone: 'error',
+      });
       setReportSubmitting(false);
       return;
     }
 
     closeSafetySheet();
-    Alert.alert('Report sent', 'We will review this privately. They will not be notified.');
+    showBetweenerAlert({
+      title: 'Report sent',
+      message: 'We will review this privately. They will not be notified.',
+      tone: 'success',
+    });
   }, [closeSafetySheet, reportSubmitting, resolvedProfile.id, resolvedProfile.userId, selectedReportReason]);
 
   const safetyPrimaryActionLabel =
@@ -1530,15 +2212,16 @@ export default function ProfileViewPremiumV2Screen() {
 
   const handleSelectReaction = useCallback(async (item: PremiumImage, icon: string) => {
     if (!currentUserId || !resolvedProfile.id) return;
-    const existing = imageReactions[item.uri];
+    const reactionKey = item.reactionUri || item.uri;
+    const existing = imageReactions[reactionKey];
     setActiveReactionImageId(null);
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setImageReactions((prev) => {
       const next = { ...prev };
       if (existing === icon) {
-        delete next[item.uri];
+        delete next[reactionKey];
       } else {
-        next[item.uri] = icon;
+        next[reactionKey] = icon;
       }
       return next;
     });
@@ -1546,9 +2229,9 @@ export default function ProfileViewPremiumV2Screen() {
       setImageReactions((prev) => {
         const next = { ...prev };
         if (existing) {
-          next[item.uri] = existing;
+          next[reactionKey] = existing;
         } else {
-          delete next[item.uri];
+          delete next[reactionKey];
         }
         return next;
       });
@@ -1561,13 +2244,31 @@ export default function ProfileViewPremiumV2Screen() {
           .from('profile_image_reactions')
           .delete()
           .eq('profile_id', resolvedProfile.id)
-          .eq('image_url', item.uri)
+          .eq('image_url', reactionKey)
           .eq('reactor_user_id', currentUserId);
         if (error) {
+          if (isLikelyNetworkError(error)) {
+            await enqueueProfileImageReactionSyncMutation({
+              profileId: resolvedProfile.id,
+              imageUrl: reactionKey,
+              reactorUserId: currentUserId,
+              emoji: null,
+            });
+            return;
+          }
           console.log('[profile] reaction delete error', error);
           rollback();
         }
       } catch (error) {
+        if (isLikelyNetworkError(error)) {
+          await enqueueProfileImageReactionSyncMutation({
+            profileId: resolvedProfile.id,
+            imageUrl: reactionKey,
+            reactorUserId: currentUserId,
+            emoji: null,
+          });
+          return;
+        }
         console.log('[profile] reaction delete error', error);
         rollback();
       }
@@ -1579,21 +2280,49 @@ export default function ProfileViewPremiumV2Screen() {
         .upsert(
           {
             profile_id: resolvedProfile.id,
-            image_url: item.uri,
+            image_url: reactionKey,
             reactor_user_id: currentUserId,
             emoji: icon,
           },
           { onConflict: 'profile_id,image_url,reactor_user_id' },
         );
       if (error) {
+        if (isLikelyNetworkError(error)) {
+          await enqueueProfileImageReactionSyncMutation({
+            profileId: resolvedProfile.id,
+            imageUrl: reactionKey,
+            reactorUserId: currentUserId,
+            emoji: icon,
+          });
+          return;
+        }
         console.log('[profile] reaction upsert error', error);
         rollback();
       }
     } catch (error) {
+      if (isLikelyNetworkError(error)) {
+        await enqueueProfileImageReactionSyncMutation({
+          profileId: resolvedProfile.id,
+          imageUrl: reactionKey,
+          reactorUserId: currentUserId,
+          emoji: icon,
+        });
+        return;
+      }
       console.log('[profile] reaction upsert error', error);
       rollback();
     }
   }, [currentUserId, imageReactions, resolvedProfile.id]);
+  const introReactionItem = useMemo<PremiumImage | null>(() => {
+    if (!introReactionUri && !videoThumbUri) return null;
+    return {
+      id: 'vid-0',
+      uri: videoThumbUri || introReactionUri,
+      reactionUri: introReactionUri || videoThumbUri,
+      tag: 'intro',
+      isVideo: true,
+    };
+  }, [introReactionUri, videoThumbUri]);
 
   const onRightScroll = useCallback(
     (event: any) => {
@@ -1612,7 +2341,9 @@ export default function ProfileViewPremiumV2Screen() {
           locationLine={''}
         heroOverrideUri={null}
         heroOverrideType={null}
+        heroHasVideo={Boolean(resolvedProfile.profileVideoPath || resolvedProfile.profileVideo)}
         heroVideoUrl={null}
+        pauseHeroVideo={false}
         heroScrollY={heroScrollY}
         isDark={isDark}
         onBack={handleBack}
@@ -1645,7 +2376,9 @@ export default function ProfileViewPremiumV2Screen() {
         locationLine={locationLine}
         heroOverrideUri={heroOverrideUri}
         heroOverrideType={heroOverrideType}
+        heroHasVideo={Boolean(resolvedProfile.profileVideoPath || resolvedProfile.profileVideo)}
         heroVideoUrl={heroVideoUrl}
+        pauseHeroVideo={videoModalVisible}
         heroScrollY={heroScrollY}
         isDark={isDark}
         onHeroPress={handleHeroPress}
@@ -1654,6 +2387,18 @@ export default function ProfileViewPremiumV2Screen() {
         onClose={handleClose}
         onOpenSafetyMenu={openSafetySheet}
         showSafetyMenu={!isOwnProfile && Boolean(resolvedProfile.userId)}
+        guessPromptCta={
+          shouldFloatGuessPrompt && featuredPrompt
+            ? {
+                label: guessFabLabel,
+                icon: guessFabIcon,
+                colors: guessFabColors,
+                onPress: openGuessSheet,
+                haloStyle: guessFabHaloStyle,
+                motionStyle: guessFabMotionStyle,
+              }
+            : null
+        }
       />
 
       <PhotoLightboxModal
@@ -1669,6 +2414,13 @@ export default function ProfileViewPremiumV2Screen() {
       <ProfileVideoModal
         visible={videoModalVisible}
         videoUrl={videoModalUrl || undefined}
+        title={`${resolvedProfile.name}, ${resolvedProfile.age}`}
+        subtitle="Intro video"
+        reactionIcon={introReactionItem ? imageReactions[introReactionItem.reactionUri || introReactionItem.uri] ?? reactionCounts[introReactionItem.reactionUri || introReactionItem.uri]?.topEmoji ?? null : null}
+        reactionCount={introReactionItem ? reactionCounts[introReactionItem.reactionUri || introReactionItem.uri]?.count ?? 0 : 0}
+        reactionsOpen={activeReactionImageId === 'vid-0'}
+        onToggleReactions={introReactionItem ? () => toggleImageReactions(introReactionItem) : undefined}
+        onSelectReaction={introReactionItem ? (icon: string) => handleSelectReaction(introReactionItem, icon) : undefined}
         onClose={() => {
           setVideoModalVisible(false);
           setVideoModalUrl(null);
@@ -1786,83 +2538,205 @@ export default function ProfileViewPremiumV2Screen() {
         <ProfileHeroSkeleton />
       ) : (
         <View style={stylesStatic.heroDetailsWrap}>
-          <View
-            style={[
-              stylesStatic.heroDetailsCard,
-              { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
-            ]}
-          >
-            <View style={stylesStatic.heroDetailsTopRow}>
-              <Text style={[stylesStatic.heroDetailsName, { color: theme.text }]} numberOfLines={1}>
-                {formatHeaderTitle(profile.name, profile.age)}
-              </Text>
-              {(presenceProfile.verificationLevel ?? (presenceProfile.verified ? 1 : 0)) > 0 ? (
-                <VerificationBadge
-                  level={presenceProfile.verificationLevel ?? (presenceProfile.verified ? 1 : 0)}
-                  size="small"
-                  variant="betweener"
+          <View style={stylesStatic.heroDetailsShell}>
+            <LinearGradient
+              colors={
+                isDark
+                  ? ['rgba(61,195,191,0.13)', 'rgba(125,124,243,0.09)', 'rgba(255,255,255,0.03)']
+                  : ['rgba(61,195,191,0.12)', 'rgba(125,124,243,0.08)', 'rgba(255,255,255,0.34)']
+              }
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={stylesStatic.heroDetailsCardChrome}
+            >
+              <View
+                style={[
+                  stylesStatic.heroDetailsCard,
+                  {
+                    backgroundColor: isDark ? 'rgba(9,19,23,0.985)' : theme.backgroundSubtle,
+                    borderColor: isDark ? 'rgba(255,255,255,0.08)' : theme.outline,
+                  },
+                ]}
+              >
+                <View style={stylesStatic.heroDetailsAtmosphereTeal} pointerEvents="none" />
+                <View style={stylesStatic.heroDetailsAtmosphereViolet} pointerEvents="none" />
+                <LinearGradient
+                  pointerEvents="none"
+                  colors={isDark ? ['rgba(255,255,255,0.10)', 'rgba(255,255,255,0)'] : ['rgba(255,255,255,0.36)', 'rgba(255,255,255,0)']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={stylesStatic.heroDetailsSheen}
                 />
-              ) : null}
-              {showPresence ? (
-                <View
-                  style={[
-                    stylesStatic.activeBadgeHero,
-                    { backgroundColor: theme.background, borderColor: theme.outline },
-                  ]}
-                >
-                  <View style={[stylesStatic.activeDot, { backgroundColor: theme.tint }]} />
-                  <Text style={[stylesStatic.activeText, { color: theme.textMuted }]}>
-                    {presenceLabel}
+                <LinearGradient
+                  pointerEvents="none"
+                  colors={['rgba(61,195,191,0.84)', 'rgba(125,124,243,0.78)']}
+                  start={{ x: 0, y: 0.5 }}
+                  end={{ x: 1, y: 0.5 }}
+                  style={stylesStatic.heroDetailsAccentBar}
+                />
+
+                <View style={stylesStatic.heroHeaderStack}>
+              <View style={stylesStatic.heroPrimaryRow}>
+                <View style={stylesStatic.heroNameAgeRow}>
+                  <Text style={[stylesStatic.heroDetailsName, { color: theme.text }]} numberOfLines={1}>
+                    {presenceProfile.name || profile.name}
                   </Text>
+                  {presenceProfile.age ? (
+                    <Text style={[stylesStatic.heroAgeInlineText, { color: theme.textMuted }]} numberOfLines={1}>
+                      {`\u00b7 ${presenceProfile.age}`}
+                    </Text>
+                  ) : null}
                 </View>
-              ) : null}
-            </View>
 
-            {locationLine ? (
-              <View style={stylesStatic.heroDetailsSubRow}>
-                <MaterialCommunityIcons name="map-marker" size={14} color={theme.textMuted} />
-                <Text style={[stylesStatic.heroDetailsSubText, { color: theme.textMuted }]} numberOfLines={1}>
-                  {locationLine}
-                </Text>
-              </View>
-            ) : null}
+                {profileVerificationLevel > 0 ? (
+                  <VerificationBadge
+                    level={profileVerificationLevel}
+                    size="small"
+                    variant="betweener"
+                    style={stylesStatic.heroInlineVerificationBadge}
+                  />
+                ) : null}
 
-            {presenceProfile.occupation || !isOwnProfile ? (
-              <View style={stylesStatic.heroMetaRow}>
-                {presenceProfile.occupation ? (
-                  <Text style={[stylesStatic.heroDetailsMeta, { color: theme.textMuted }]} numberOfLines={1}>
-                    {presenceProfile.occupation}
-                  </Text>
-                ) : (
-                  <View />
-                )}
-                {!isOwnProfile ? (
-                  <Pressable onPress={openIntentSheet} style={stylesStatic.heroRequestWrap}>
-                    <LinearGradient
-                      colors={['#2FB2BE', '#7D7CF3']}
-                      start={{ x: 0, y: 0.5 }}
-                      end={{ x: 1, y: 0.5 }}
-                      style={stylesStatic.heroRequestButton}
-                    >
-                      <MaterialCommunityIcons name="inbox-outline" size={15} color={Colors.light.background} />
-                      <Text style={stylesStatic.heroRequestText}>Request</Text>
-                    </LinearGradient>
-                  </Pressable>
+                {showPresence ? (
+                  <View
+                    style={[
+                      stylesStatic.activeBadgeHero,
+                      { backgroundColor: theme.background, borderColor: theme.outline },
+                    ]}
+                  >
+                    <View style={[stylesStatic.activeDot, { backgroundColor: theme.tint }]} />
+                    <Text style={[stylesStatic.activeText, { color: theme.textMuted }]} numberOfLines={1}>
+                      {presenceLabel}
+                    </Text>
+                  </View>
                 ) : null}
               </View>
-            ) : null}
 
-            {profileContextLine ? (
-              <View style={stylesStatic.heroContextRow}>
-                <MaterialCommunityIcons name="star-four-points" size={12} color={theme.accent} />
-                <Text style={[stylesStatic.heroContextText, { color: theme.accent }]} numberOfLines={1}>
-                  {profileContextLine}
-                </Text>
+              {locationLine || profilePremiumPlan ? (
+                <View style={stylesStatic.heroSupportRow}>
+                  {locationLine ? (
+                    <View style={stylesStatic.heroSupportItem}>
+                      <MaterialCommunityIcons name="map-marker" size={16} color={theme.textMuted} />
+                      <Text style={[stylesStatic.heroDetailsSubText, { color: theme.textMuted }]} numberOfLines={1}>
+                        {locationLine}
+                      </Text>
+                    </View>
+                  ) : null}
+
+                  {profilePremiumPlan ? (
+                    <PremiumPlanBadge
+                      plan={profilePremiumPlan}
+                      style={stylesStatic.heroPremiumBadgeInline}
+                    />
+                  ) : null}
+                </View>
+              ) : null}
+
+              {presenceProfile.occupation || profileIsNewHere ? (
+                <View style={stylesStatic.heroSupportRow}>
+                  {presenceProfile.occupation ? (
+                    <View style={stylesStatic.heroSupportItem}>
+                      <MaterialCommunityIcons name="briefcase-outline" size={15} color={theme.textMuted} />
+                      <Text style={[stylesStatic.heroDetailsSubText, { color: theme.textMuted }]} numberOfLines={1}>
+                        {presenceProfile.occupation}
+                      </Text>
+                    </View>
+                  ) : null}
+
+                  {profileIsNewHere ? (
+                    <NewHereBadge style={stylesStatic.heroNewHereBadge} />
+                  ) : null}
+                </View>
+              ) : null}
+
+              {profileContextLine || lookingForLabel || !isOwnProfile ? (
+                <View style={stylesStatic.heroContextActionRow}>
+                  <View style={stylesStatic.heroContextLineWrap}>
+                    {profileContextLine ? (
+                      <View style={stylesStatic.heroContextRow}>
+                        <MaterialCommunityIcons name="star-four-points" size={12} color={theme.accent} />
+                        <Text style={[stylesStatic.heroContextText, { color: theme.accent }]} numberOfLines={1}>
+                          {profileContextLine}
+                        </Text>
+                      </View>
+                    ) : lookingForLabel ? (
+                      <View style={stylesStatic.heroContextRow}>
+                        <MaterialCommunityIcons name="heart" size={13} color="#C78AFF" />
+                        <Text style={[stylesStatic.heroContextText, { color: '#C78AFF' }]} numberOfLines={1}>
+                          {lookingForLabel}
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
+
+                  {!isOwnProfile && !hasAcceptedMatch ? (
+                    <Pressable onPress={openIntentSheet} style={stylesStatic.heroRequestWrap}>
+                      <LinearGradient
+                        colors={['#2FB2BE', '#7D7CF3']}
+                        start={{ x: 0, y: 0.5 }}
+                        end={{ x: 1, y: 0.5 }}
+                        style={stylesStatic.heroRequestButton}
+                      >
+                        <MaterialCommunityIcons name="inbox-outline" size={15} color={Colors.light.background} />
+                        <Text style={stylesStatic.heroRequestText}>Request</Text>
+                      </LinearGradient>
+                    </Pressable>
+                  ) : null}
+                </View>
+              ) : null}
+                </View>
               </View>
-            ) : null}
+            </LinearGradient>
           </View>
         </View>
       )}
+
+      {profileReminder && !isLoading ? (
+        <View style={stylesStatic.profileReminderWrap}>
+          <View
+            style={[
+              stylesStatic.profileReminderBar,
+              { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+            ]}
+          >
+            <View style={[stylesStatic.profileReminderIcon, { borderColor: theme.outline }]}>
+              {profileReminder.kind === 'signal' ? (
+                <SignalIcon size={22} color={theme.tint} accentColor={theme.accent} active />
+              ) : (
+                <MaterialCommunityIcons name="message-text-outline" size={19} color={theme.tint} />
+              )}
+            </View>
+            <View style={stylesStatic.profileReminderCopy}>
+              <Text style={[stylesStatic.profileReminderTitle, { color: theme.text }]} numberOfLines={1}>
+                {profileReminder.title}
+              </Text>
+              <Text style={[stylesStatic.profileReminderBody, { color: theme.textMuted }]} numberOfLines={1}>
+                {profileReminder.body} · {formatReminderTimeLeft(profileReminder.expiresAt)}
+              </Text>
+            </View>
+            <Pressable
+              onPress={() => void acceptProfileReminder()}
+              disabled={Boolean(profileReminderBusy)}
+              style={[stylesStatic.profileReminderAccept, { opacity: profileReminderBusy ? 0.65 : 1 }]}
+            >
+              <Text style={stylesStatic.profileReminderAcceptText}>
+                {profileReminderBusy === 'accept' ? 'Accepting' : 'Accept'}
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={() => void passProfileReminder()}
+              disabled={Boolean(profileReminderBusy)}
+              style={[
+                stylesStatic.profileReminderPass,
+                { borderColor: theme.outline, opacity: profileReminderBusy ? 0.65 : 1 },
+              ]}
+              accessibilityLabel="Pass on this request"
+            >
+              <MaterialCommunityIcons name="close" size={16} color={theme.textMuted} />
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
 
       {featuredPrompt && isGuessPrompt(featuredPrompt.promptType) && !shouldFloatGuessPrompt ? (
         <View
@@ -2028,18 +2902,16 @@ export default function ProfileViewPremiumV2Screen() {
                   theme={theme}
                   item={item}
                   isActive={item.tag === activeTagJs}
-                  height={IMAGE_ITEM_HEIGHT}
+                  height={imageItemHeight}
                   onTap={onImageTap}
                   isVideo={item.isVideo}
                   reactionIcon={
-                    item.isVideo
-                      ? null
-                      : imageReactions[item.uri] ?? reactionCounts[item.uri]?.topEmoji ?? null
+                    imageReactions[item.reactionUri || item.uri] ?? reactionCounts[item.reactionUri || item.uri]?.topEmoji ?? null
                   }
-                  reactionCount={item.isVideo ? 0 : reactionCounts[item.uri]?.count ?? 0}
-                  reactionsOpen={!item.isVideo && activeReactionImageId === item.id}
-                  onToggleReactions={item.isVideo ? undefined : toggleImageReactions}
-                  onSelectReaction={item.isVideo ? undefined : handleSelectReaction}
+                  reactionCount={reactionCounts[item.reactionUri || item.uri]?.count ?? 0}
+                  reactionsOpen={activeReactionImageId === item.id}
+                  onToggleReactions={toggleImageReactions}
+                  onSelectReaction={handleSelectReaction}
                 />
               )}
               ItemSeparatorComponent={() => <View style={{ height: IMAGE_ITEM_GAP }} />}
@@ -2086,33 +2958,6 @@ export default function ProfileViewPremiumV2Screen() {
       </View>
 
       {shouldFloatGuessPrompt && featuredPrompt ? (
-        <View
-          style={[
-            stylesStatic.guessFabAnchor,
-            { top: guessFabTop },
-          ]}
-          pointerEvents="box-none"
-        >
-          <Animated.View style={[stylesStatic.guessFabHalo, guessFabHaloStyle]} pointerEvents="none" />
-          <Animated.View style={guessFabMotionStyle}>
-            <Pressable onPress={openGuessSheet} style={stylesStatic.guessFabWrap}>
-              <LinearGradient
-                colors={guessFabColors}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={stylesStatic.guessFabCard}
-              >
-                <View style={stylesStatic.guessFabIconWrap}>
-                  <MaterialCommunityIcons name={guessFabIcon} size={18} color={Colors.light.background} />
-                </View>
-                <Text style={stylesStatic.guessFabTitle}>{guessFabLabel}</Text>
-              </LinearGradient>
-            </Pressable>
-          </Animated.View>
-        </View>
-      ) : null}
-
-      {shouldFloatGuessPrompt && featuredPrompt ? (
         <Modal
           visible={guessSheetOpen}
           transparent
@@ -2128,13 +2973,18 @@ export default function ProfileViewPremiumV2Screen() {
               ]}
               pointerEvents="box-none"
             >
-              <Pressable
-                style={[
-                  stylesStatic.guessSheetCard,
-                  { backgroundColor: theme.background, borderColor: theme.outline },
-                ]}
-                onPress={() => undefined}
-              >
+              <Pressable style={stylesStatic.guessSheetCardWrap} onPress={() => undefined}>
+                <BlurViewSafe
+                  intensity={30}
+                  tint={isDark ? 'dark' : 'light'}
+                  style={[
+                    stylesStatic.guessSheetCard,
+                    {
+                      backgroundColor: isDark ? 'rgba(8,18,28,0.82)' : 'rgba(248,251,252,0.84)',
+                      borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(15,61,62,0.10)',
+                    },
+                  ]}
+                >
                 <View style={stylesStatic.giftHandle} />
                 <View style={stylesStatic.guessSheetHeaderRow}>
                   <View style={stylesStatic.guessSheetHeaderText}>
@@ -2304,6 +3154,7 @@ export default function ProfileViewPremiumV2Screen() {
                     </Text>
                   </View>
                 ) : null}
+                </BlurViewSafe>
               </Pressable>
             </View>
           </View>
@@ -2318,12 +3169,14 @@ export default function ProfileViewPremiumV2Screen() {
       >
         <Pressable style={stylesStatic.safetySheetBackdrop} onPress={closeSafetySheet} />
         <View style={stylesStatic.safetySheetWrap} pointerEvents="box-none">
-          <View
+          <BlurViewSafe
+            intensity={30}
+            tint={isDark ? 'dark' : 'light'}
             style={[
               stylesStatic.safetySheetCard,
               {
-                backgroundColor: theme.background,
-                borderColor: theme.outline,
+                backgroundColor: isDark ? 'rgba(8,18,28,0.82)' : 'rgba(248,251,252,0.84)',
+                borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(15,61,62,0.10)',
                 paddingBottom: Math.max(16, insets.bottom + 6),
               },
             ]}
@@ -2462,13 +3315,14 @@ export default function ProfileViewPremiumV2Screen() {
                 </Pressable>
               </>
             ) : null}
-          </View>
+          </BlurViewSafe>
         </View>
       </Modal>
 
       <FloatingActions
         theme={theme}
         profileId={profileId}
+        profileSnapshot={resolvedProfile}
         currentUserId={currentUserId}
         viewerProfileId={currentProfile?.id ?? null}
         isOwnProfile={isOwnProfile}
@@ -2485,7 +3339,9 @@ const Header = memo(function Header({
   locationLine: _locationLine,
   heroOverrideUri,
   heroOverrideType,
+  heroHasVideo,
   heroVideoUrl,
+  pauseHeroVideo,
   heroScrollY,
   isDark,
   onHeroPress,
@@ -2494,6 +3350,7 @@ const Header = memo(function Header({
   onClose,
   onOpenSafetyMenu,
   showSafetyMenu,
+  guessPromptCta,
 }: {
   theme: typeof Colors.light;
   profile: UserProfile;
@@ -2501,7 +3358,9 @@ const Header = memo(function Header({
   locationLine: string;
   heroOverrideUri: string | null;
   heroOverrideType?: 'image' | 'video' | null;
+  heroHasVideo?: boolean;
   heroVideoUrl?: string | null;
+  pauseHeroVideo?: boolean;
   heroScrollY: SharedValue<number>;
   isDark: boolean;
   onHeroPress?: (heroUri: string) => void;
@@ -2510,7 +3369,16 @@ const Header = memo(function Header({
   onClose: () => void;
   onOpenSafetyMenu?: () => void;
   showSafetyMenu?: boolean;
+  guessPromptCta?: {
+    label: string;
+    icon: ComponentProps<typeof MaterialCommunityIcons>['name'];
+    colors: readonly [string, string];
+    onPress: () => void;
+    haloStyle?: any;
+    motionStyle?: any;
+  } | null;
 }) {
+  const responsive = useResponsiveMetrics();
   const heroUri =
     (heroOverrideType === 'image' && heroOverrideUri) ||
     (Array.isArray(profile.photos) && profile.photos.find(Boolean)) ||
@@ -2523,46 +3391,11 @@ const Header = memo(function Header({
       ? true
       : heroOverrideType === 'image'
         ? false
-        : !!heroVideoUrl;
+        : !!heroHasVideo;
   const [heroMuted, setHeroMuted] = useState(true);
   const lastHeroTapRef = useRef<number | null>(null);
   const heroTapTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const heroHeight = Math.max(260, Math.min(390, Math.round(screenHeight * 0.36)));
-  const HeroVideo = ({ uri, muted }: { uri: string; muted: boolean }) => {
-    const player = useVideoPlayer(uri, (p) => {
-      p.loop = true;
-      p.muted = muted;
-      try {
-        p.play();
-      } catch {}
-    });
-
-    useEffect(() => {
-      try {
-        player.muted = muted;
-      } catch {}
-    }, [player, muted]);
-
-    useEffect(() => {
-      try {
-        player.play();
-      } catch {}
-      return () => {
-        try {
-          player.pause();
-        } catch {}
-      };
-    }, [player]);
-
-    return (
-      <VideoView
-        style={StyleSheet.absoluteFillObject}
-        player={player}
-        contentFit="cover"
-        nativeControls={false}
-      />
-    );
-  };
+  const heroHeight = Math.max(260, Math.min(390, Math.round(responsive.usableHeight * 0.36)));
   useEffect(() => {
     return () => {
       if (heroTapTimeoutRef.current) clearTimeout(heroTapTimeoutRef.current);
@@ -2589,7 +3422,7 @@ const Header = memo(function Header({
       onHeroPress?.(heroUri);
     }, 260);
   };
-  const heroImageStyle = useAnimatedStyle<ImageStyle>(() => {
+  const heroImageStyle = useAnimatedStyle<ViewStyle>(() => {
     const translateY = interpolate(
       heroScrollY.value,
       [0, heroHeight],
@@ -2622,14 +3455,45 @@ const Header = memo(function Header({
       >
         {showHeroVideo ? (
           <View style={StyleSheet.absoluteFillObject}>
-            <HeroVideo uri={heroVideoUrl!} muted={heroMuted} />
+            {heroVideoUrl ? (
+              <HeroVideoSurface uri={heroVideoUrl} muted={heroMuted} shouldPlay={!pauseHeroVideo} />
+            ) : (
+              <LinearGradient
+                colors={['rgba(10,16,18,0.98)', 'rgba(17,27,29,0.94)']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={stylesStatic.heroImage}
+              >
+                <View style={stylesStatic.heroVideoPendingContent}>
+                  <View style={[stylesStatic.heroVideoPendingDot, { backgroundColor: theme.tint }]} />
+                  <Text style={stylesStatic.heroVideoPendingEyebrow}>Intro video</Text>
+                  <Text style={stylesStatic.heroVideoPendingText}>Preparing the live intro...</Text>
+                </View>
+              </LinearGradient>
+            )}
           </View>
         ) : heroUri ? (
-          <Animated.Image
-            source={{ uri: heroUri }}
-            style={[stylesStatic.heroImage, heroImageStyle]}
-            resizeMode="cover"
-          />
+          <Animated.View style={[StyleSheet.absoluteFillObject, heroImageStyle]}>
+            <OfflineImage
+              uri={heroUri}
+              style={stylesStatic.heroImage}
+              contentFit="cover"
+              fallback={
+                <LinearGradient
+                  colors={[placeholderPalette.start, placeholderPalette.end]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={stylesStatic.heroImage}
+                >
+                  <View style={stylesStatic.heroPlaceholderContent}>
+                    <Text style={stylesStatic.heroPlaceholderEyebrow}>Intentional presence</Text>
+                    <Text style={stylesStatic.heroPlaceholderInitials}>{profileInitials}</Text>
+                    <Text style={stylesStatic.heroPlaceholderText}>This profile is still unfolding.</Text>
+                  </View>
+                </LinearGradient>
+              }
+            />
+          </Animated.View>
         ) : (
           <LinearGradient
             colors={[placeholderPalette.start, placeholderPalette.end]}
@@ -2654,6 +3518,27 @@ const Header = memo(function Header({
           colors={['transparent', 'rgba(0,0,0,0.68)']}
           style={stylesStatic.heroBottomGradient}
         />
+
+        {guessPromptCta ? (
+          <View style={stylesStatic.heroGuessCtaAnchor} pointerEvents="box-none">
+            <Animated.View style={[stylesStatic.guessFabHalo, guessPromptCta.haloStyle]} pointerEvents="none" />
+            <Animated.View style={guessPromptCta.motionStyle}>
+              <Pressable onPress={guessPromptCta.onPress} style={stylesStatic.guessFabWrap}>
+                <LinearGradient
+                  colors={guessPromptCta.colors}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={stylesStatic.guessFabCard}
+                >
+                  <View style={stylesStatic.guessFabIconWrap}>
+                    <MaterialCommunityIcons name={guessPromptCta.icon} size={18} color={Colors.light.background} />
+                  </View>
+                  <Text style={stylesStatic.guessFabTitle}>{guessPromptCta.label}</Text>
+                </LinearGradient>
+              </Pressable>
+            </Animated.View>
+          </View>
+        ) : null}
 
         {showHeroVideo ? (
           <Pressable
@@ -2686,7 +3571,7 @@ const Header = memo(function Header({
           >
             <MaterialCommunityIcons
               name="dots-horizontal"
-              size={18}
+              size={27}
               color={isDark ? Colors.light.background : Colors.dark.background}
             />
           </Pressable>
@@ -2733,9 +3618,12 @@ function PhotoLightboxModal({
 }) {
   const listRef = useRef<FlatList<LightboxItem> | null>(null);
   const insets = useSafeAreaInsets();
+  const responsive = useResponsiveMetrics();
+  const screenWidth = responsive.width;
+  const screenHeight = responsive.height;
 
   const headerHeight = 48;
-  const viewportHeight = Math.max(1, screenHeight - insets.top - insets.bottom - headerHeight);
+  const viewportHeight = Math.max(1, responsive.usableHeight - headerHeight);
 
   const dragY = useSharedValue(0);
   const captionProgress = useSharedValue(0);
@@ -2771,7 +3659,7 @@ function PhotoLightboxModal({
           dragY.value = withTiming(0, { duration: 160 });
         },
       }),
-    [dragY, onClose],
+    [dragY, onClose, screenHeight],
   );
 
   const backdropStyle = useAnimatedStyle(() => {
@@ -2826,7 +3714,7 @@ function PhotoLightboxModal({
 
   const getItemLayout = useCallback((_: ArrayLike<LightboxItem> | null | undefined, index: number) => {
     return { length: screenWidth, offset: screenWidth * index, index };
-  }, []);
+  }, [screenWidth]);
 
   const navigateToIndex = useCallback(
     (nextIndex: number) => {
@@ -2867,7 +3755,7 @@ function PhotoLightboxModal({
         navigateToIndex(next > items.length - 1 ? 0 : next);
       }
     },
-    [index, items.length, navigateToIndex],
+    [index, items.length, navigateToIndex, screenWidth],
   );
 
   const tapGesture = useMemo(() => {
@@ -2956,7 +3844,16 @@ function PhotoLightboxModal({
                     const chips = Array.isArray(item.chips) ? item.chips.filter(Boolean).slice(0, 6) : [];
                     return (
                       <View style={{ width: screenWidth, height: viewportHeight, justifyContent: 'center' }}>
-                        <Image source={{ uri: item.uri }} resizeMode="contain" style={stylesStatic.lightboxImage} />
+                        <OfflineImage
+                          uri={item.uri}
+                          style={stylesStatic.lightboxImage}
+                          contentFit="contain"
+                          fallback={
+                            <View style={[stylesStatic.lightboxImageFallback, { backgroundColor: Colors.dark.backgroundSubtle }]}>
+                              <MaterialCommunityIcons name="image-outline" size={42} color={Colors.dark.textMuted} />
+                            </View>
+                          }
+                        />
 
                         {showText ? (
                           <Animated.View style={[stylesStatic.lightboxCaptionWrap, captionStyle]} pointerEvents="none">
@@ -3108,14 +4005,21 @@ const ImageCard = memo(function ImageCard({
         cardStyle,
       ]}
     >
-      <Image source={{ uri: item.uri }} resizeMode="cover" style={StyleSheet.absoluteFillObject} />
+      <OfflineImage
+        uri={item.uri}
+        style={StyleSheet.absoluteFillObject}
+        fallback={
+          <View style={[StyleSheet.absoluteFillObject, stylesStatic.imageCardFallback, { backgroundColor: theme.backgroundSubtle }]}>
+            <MaterialCommunityIcons name={isVideo ? "play-circle-outline" : "image-outline"} size={34} color={theme.textMuted} />
+          </View>
+        }
+      />
       <Animated.View
         pointerEvents="none"
         style={[StyleSheet.absoluteFillObject, { backgroundColor: '#000' }, overlayStyle]}
       />
 
-        {!isVideo ? (
-          <View style={stylesStatic.reactionPillWrap} pointerEvents="box-none">
+        <View style={stylesStatic.reactionPillWrap} pointerEvents="box-none">
           <Pressable
             onPress={() => onToggleReactions?.(item)}
             style={[stylesStatic.reactionPill, { borderColor: theme.outline, backgroundColor: theme.backgroundSubtle }]}
@@ -3142,18 +4046,6 @@ const ImageCard = memo(function ImageCard({
             </View>
           ) : null}
         </View>
-        ) : (
-          <View
-            style={[
-              stylesStatic.videoPill,
-              { borderColor: theme.outline, backgroundColor: theme.backgroundSubtle },
-            ]}
-            pointerEvents="none"
-          >
-            <MaterialCommunityIcons name="play" size={18} color={theme.textMuted} />
-            <Text style={[stylesStatic.reactionCount, { color: theme.textMuted }]}>Intro</Text>
-          </View>
-        )}
 
         {isVideo ? (
           <View style={[stylesStatic.videoBadge, { borderColor: theme.outline }]}>
@@ -3204,10 +4096,12 @@ const StoryHeader = memo(function StoryHeader({
   const avatarUri = profile.profilePicture || '';
   const placeholderPalette = getProfilePlaceholderPalette(profile.id || profile.name);
   const profileInitials = getProfileInitials(profile.name);
-  const isOnlineNow = !!(profile as any).online;
-  const isActiveNow = profile.isActiveNow || !!(profile as any).is_active;
-  const showPresence = isOnlineNow || isActiveNow;
-  const presenceLabel = isOnlineNow ? 'Online' : 'Active now';
+  const presence = getAuthoritativePresenceDisplay(
+    profile.online,
+    profile.last_active ?? profile.lastActive,
+  );
+  const showPresence = presence.showPresence;
+  const presenceLabel = presence.label;
   return (
     <View style={[stylesStatic.storyHeader, { backgroundColor: theme.background }]}>
       <View
@@ -3217,7 +4111,22 @@ const StoryHeader = memo(function StoryHeader({
         ]}
       >
         {avatarUri ? (
-          <Image source={{ uri: avatarUri }} style={stylesStatic.storyAvatar} />
+          <OfflineImage
+            uri={avatarUri}
+            style={stylesStatic.storyAvatar}
+            fallback={
+              <LinearGradient
+                colors={[placeholderPalette.start, placeholderPalette.end]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={stylesStatic.storyAvatar}
+              >
+                <View style={stylesStatic.storyAvatarPlaceholder}>
+                  <Text style={stylesStatic.storyAvatarInitials}>{profileInitials}</Text>
+                </View>
+              </LinearGradient>
+            }
+          />
         ) : (
           <LinearGradient
             colors={[placeholderPalette.start, placeholderPalette.end]}
@@ -3234,7 +4143,7 @@ const StoryHeader = memo(function StoryHeader({
 
       <View style={stylesStatic.storyTextCol}>
         <View style={stylesStatic.storyNameRow}>
-          <Text style={[stylesStatic.storyName, { color: theme.text }]} numberOfLines={1}>
+          <Text style={[stylesStatic.storyName, { color: theme.text }]} numberOfLines={2}>
             {formatHeaderTitle(profile.name, profile.age) || 'Profile'}
           </Text>
           {(profile.verificationLevel ?? (profile.verified ? 1 : 0)) > 0 ? (
@@ -3284,6 +4193,62 @@ const StoryHeader = memo(function StoryHeader({
         </View>
       </View>
     </View>
+  );
+});
+
+const HeroVideoSurface = memo(function HeroVideoSurface({
+  uri,
+  muted,
+  shouldPlay,
+}: {
+  uri: string;
+  muted: boolean;
+  shouldPlay: boolean;
+}) {
+  const player = useVideoPlayer(uri, (p) => {
+    p.loop = true;
+    p.muted = muted;
+    p.keepScreenOnWhilePlaying = false;
+    if (shouldPlay) {
+      try {
+        p.play();
+      } catch {}
+    }
+  });
+
+  useEffect(() => {
+    try {
+      player.muted = muted;
+    } catch {}
+  }, [player, muted]);
+
+  useEffect(() => {
+    if (shouldPlay) {
+      try {
+        player.play();
+      } catch {}
+    } else {
+      try {
+        player.pause();
+      } catch {}
+    }
+  }, [player, shouldPlay]);
+
+  useEffect(() => {
+    return () => {
+      try {
+        player.pause();
+      } catch {}
+    };
+  }, [player]);
+
+  return (
+    <VideoView
+      style={StyleSheet.absoluteFillObject}
+      player={player}
+      contentFit="cover"
+      nativeControls={false}
+    />
   );
 });
 
@@ -3402,6 +4367,7 @@ const SectionBlock = memo(function SectionBlock({
 function FloatingActions({
   theme,
   profileId,
+  profileSnapshot,
   currentUserId,
   viewerProfileId,
   isOwnProfile,
@@ -3409,6 +4375,7 @@ function FloatingActions({
 }: {
   theme: typeof Colors.light;
   profileId: string;
+  profileSnapshot: UserProfile;
   currentUserId: string | null;
   viewerProfileId: string | null;
   isOwnProfile: boolean;
@@ -3416,19 +4383,43 @@ function FloatingActions({
 }) {
   const insets = useSafeAreaInsets();
   const isDark = theme.background === Colors.dark.background;
-  const { currentPlan, hasAccess } = usePremiumState();
+  const {
+    activeBoostEndsAt,
+    currentPlan,
+    serverPlan,
+    revenueCatPlan,
+    hasAccess,
+    hasServerAccess,
+    hasActiveBoost,
+    refresh: refreshPremiumState,
+  } = usePremiumState();
   const [giftOpen, setGiftOpen] = useState(false);
   const [selectedGift, setSelectedGift] = useState<string | null>(null);
   const [giftSending, setGiftSending] = useState(false);
-  const [noteOpen, setNoteOpen] = useState(false);
-  const [noteText, setNoteText] = useState('');
-  const [noteSending, setNoteSending] = useState(false);
   const [premiumUpsell, setPremiumUpsell] = useState<PremiumUpsellState | null>(null);
-  const noteOpenAtRef = useRef(0);
   const [boostSending, setBoostSending] = useState(false);
+  const [boostComposerVisible, setBoostComposerVisible] = useState(false);
+  const [boostComposerLoading, setBoostComposerLoading] = useState(false);
+  const [boostRecommendation, setBoostRecommendation] = useState<BoostRecommendation | null>(null);
+  const [boostAnalytics, setBoostAnalytics] = useState<BoostAnalytics | null>(null);
+  const [boostFeedback, setBoostFeedback] = useState<BoostComposerFeedback | null>(null);
+  const [boostSyncState, setBoostSyncState] = useState<{
+    status: 'queued' | 'failed';
+    mutationId: string;
+    input: CreateBoostInput;
+    failureReason?: string | null;
+  } | null>(null);
   const [likeSending, setLikeSending] = useState(false);
   const [liked, setLiked] = useState(false);
-  const giftOptions = useMemo(
+  const [saved, setSaved] = useState(false);
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [saveNotice, setSaveNotice] = useState<{
+    title: string;
+    message: string;
+    actionLabel?: string;
+    onAction?: () => void;
+  } | null>(null);
+  const giftOptions = useMemo<ProfileViewGiftOption[]>(
     () => [
       { id: 'rose', label: 'Rose', icon: 'flower', note: 'Classic and elegant' },
       { id: 'teddy', label: 'Teddy Bear', icon: 'teddy-bear', note: 'Sweet and safe' },
@@ -3439,10 +4430,71 @@ function FloatingActions({
 
   const canSendToProfile = Boolean(currentUserId && profileId && currentUserId !== profileId);
   const canUseBoosts = hasAccess('SILVER');
-  const canSendNotes = hasFeatureAccess(currentPlan, 'profile_notes');
+  const canUseServerBoosts = hasServerAccess('SILVER');
+  const canUseServerGoldBoosts = hasServerAccess('GOLD');
   const canSendStandardGifts = hasFeatureAccess(currentPlan, 'standard_gifts');
   const canSendSignatureGifts = hasFeatureAccess(currentPlan, 'signature_gifts');
-  const noteLength = noteText.trim().length;
+  const canUseSandboxSilverPreview =
+    typeof __DEV__ !== 'undefined' && __DEV__ && (revenueCatPlan === 'SILVER' || revenueCatPlan === 'GOLD');
+  const canUseSandboxGoldPreview =
+    typeof __DEV__ !== 'undefined' && __DEV__ && revenueCatPlan === 'GOLD';
+  const showBoostComposerFeedback = useCallback((next: BoostComposerFeedback) => {
+    setBoostFeedback(next);
+  }, []);
+  const toBoostInput = useCallback(
+    (payload: {
+      boostType: CreateBoostInput['boostType'];
+      audienceMode: CreateBoostInput['audienceMode'];
+      focusMode: CreateBoostInput['focusMode'];
+      metadata?: Record<string, unknown> | null;
+    }): CreateBoostInput => ({
+      boostType: payload.boostType,
+      audienceMode: payload.audienceMode,
+      focusMode: payload.focusMode,
+      metadata: payload.metadata ?? undefined,
+    }),
+    [],
+  );
+  const refreshBoostSyncState = useCallback(async () => {
+    if (!viewerProfileId) {
+      setBoostSyncState(null);
+      return;
+    }
+
+    const snapshot = await getBoostOfflineMutationSnapshot(viewerProfileId);
+    const latestFailed = snapshot.failed[snapshot.failed.length - 1];
+    if (latestFailed) {
+      setBoostSyncState({
+        status: 'failed',
+        mutationId: latestFailed.id,
+        input: toBoostInput(latestFailed.payload),
+        failureReason: latestFailed.failureReason,
+      });
+      return;
+    }
+
+    const latestPending = snapshot.pending[snapshot.pending.length - 1];
+    if (latestPending) {
+      setBoostSyncState({
+        status: 'queued',
+        mutationId: latestPending.id,
+        input: toBoostInput(latestPending.payload),
+      });
+      return;
+    }
+
+    setBoostSyncState(null);
+  }, [toBoostInput, viewerProfileId]);
+  const isGoldBoostConfig = useCallback((input: CreateBoostInput) => {
+    return (
+      input.boostType === 'smart' ||
+      input.audienceMode === 'active_now' ||
+      input.audienceMode === 'intent_match' ||
+      input.audienceMode === 'second_look' ||
+      input.focusMode === 'intro' ||
+      input.focusMode === 'intent'
+    );
+  }, []);
   const openTierUpsell = (requiredPlan: 'SILVER' | 'GOLD', title: string, message: string) => {
     setPremiumUpsell({ requiredPlan, title, message });
   };
@@ -3453,23 +4505,190 @@ function FloatingActions({
       message: 'Profile boosts are included with Silver and Gold. Upgrade to activate 30-minute visibility boosts.',
     });
   };
+  const openGoldBoostUpsell = useCallback(
+    (context: 'boost_type' | 'audience_mode' | 'focus', optionId?: string) => {
+      if (context === 'boost_type') {
+        openTierUpsell(
+          'GOLD',
+          'Unlock precision boost',
+          'Precision boost is reserved for Gold. Upgrade to combine stronger audience and focus signals in one boost.',
+        );
+        return;
+      }
 
-  const openNote = () => {
-    if (!canSendToProfile) {
-      Alert.alert('Note unavailable', 'Notes can only be sent to other profiles.');
+      if (context === 'audience_mode') {
+        const message = optionId === 'active_now'
+          ? 'Gold unlocks Active now boosts so you can bias visibility toward people who are currently around.'
+          : optionId === 'intent_match'
+            ? 'Gold unlocks Intent match boosts so you can favor people whose intent looks aligned with yours.'
+            : optionId === 'second_look'
+              ? 'Gold unlocks Second look boosts so you can resurface to people who already showed curiosity.'
+              : 'Gold unlocks advanced audience modes like Active now, Intent match, and Second look.';
+        openTierUpsell('GOLD', 'Unlock advanced audience modes', message);
+        return;
+      }
+
+      const message = optionId === 'intro'
+        ? 'Gold unlocks Intro focus so your boost can lean into people most likely to open your intro.'
+        : optionId === 'intent'
+          ? 'Gold unlocks Intent focus so your boost can lean into deeper fit and intent evaluation.'
+          : 'Gold unlocks advanced focus controls like Intro and Intent.';
+      openTierUpsell('GOLD', 'Unlock advanced boost focus', message);
+    },
+    [],
+  );
+  const showBoostSyncNotice = useCallback(
+    (requiredPlan: 'SILVER' | 'GOLD') => {
+      const syncedPlan = requiredPlan === 'GOLD' ? revenueCatPlan : currentPlan;
+      showBoostComposerFeedback({
+        tone: 'info',
+        title: 'Membership syncing',
+        message:
+          syncedPlan === 'FREE'
+            ? 'Your membership has not synced to Betweener yet. Try again shortly.'
+            : `${syncedPlan} is active on this device, but Betweener has not finished syncing it yet. Try again shortly.`,
+      });
+    },
+    [currentPlan, revenueCatPlan, showBoostComposerFeedback],
+  );
+  const loadBoostComposer = useCallback(async () => {
+    await refreshBoostSyncState();
+    let hydratedFromCache = false;
+    if (viewerProfileId) {
+      const cached = await readProfileBoostSnapshotState(viewerProfileId);
+      if (cached.data) {
+        hydratedFromCache = true;
+        setBoostRecommendation(cached.data.recommendation);
+        setBoostAnalytics(cached.data.analytics);
+      }
+    }
+    setBoostComposerLoading(!hydratedFromCache);
+    try {
+      const [recommendation, analytics] = await Promise.all([
+        getBoostRecommendations(),
+        getRecentBoostAnalytics(),
+      ]);
+      setBoostRecommendation(recommendation);
+      setBoostAnalytics(analytics);
+      if (viewerProfileId) {
+        await writeProfileBoostSnapshot(viewerProfileId, {
+          recommendation,
+          analytics,
+        });
+      }
+    } catch (error) {
+      if (!isLikelyNetworkError(error)) {
+        logger.warn('[profile-view] load_boost_composer_failed', {
+          message: String((error as any)?.message || error || 'unknown'),
+        });
+      }
+    } finally {
+      await refreshBoostSyncState();
+      setBoostComposerLoading(false);
+    }
+  }, [refreshBoostSyncState, viewerProfileId]);
+  const openBoostComposer = useCallback(async () => {
+    if (!currentUserId) return;
+    if (!canUseBoosts) {
+      openBoostUpsell();
       return;
     }
-    if (!canSendNotes) {
-      openTierUpsell('SILVER', 'Unlock notes', 'Notes are included with Silver and Gold. Upgrade to send a more thoughtful first move.');
+    setBoostFeedback(null);
+    setBoostComposerVisible(true);
+    void loadBoostComposer();
+  }, [canUseBoosts, currentUserId, loadBoostComposer]);
+
+  useEffect(() => {
+    if (!boostFeedback) return;
+    const timer = setTimeout(() => {
+      setBoostFeedback((current) => (current === boostFeedback ? null : current));
+    }, 3600);
+    return () => clearTimeout(timer);
+  }, [boostFeedback]);
+
+  useEffect(() => {
+    if (!boostComposerVisible) return;
+    const hasLiveBoost =
+      hasActiveBoost || Boolean(boostRecommendation?.has_active_boost) || Boolean(boostAnalytics?.boost?.is_active);
+    if (!hasLiveBoost) return;
+
+    const timer = setInterval(() => {
+      void Promise.all([refreshPremiumState(), loadBoostComposer()]);
+    }, 15000);
+
+    return () => clearInterval(timer);
+  }, [
+    boostAnalytics?.boost?.is_active,
+    boostComposerVisible,
+    boostRecommendation?.has_active_boost,
+    hasActiveBoost,
+    loadBoostComposer,
+    refreshPremiumState,
+  ]);
+  useEffect(() => {
+    void refreshBoostSyncState();
+    if (!viewerProfileId) return;
+
+    return subscribeToOfflineMutationEvents((event) => {
+      if (event.mutation.kind !== 'profile_boost_create') return;
+      if (event.mutation.payload.ownerProfileId !== viewerProfileId) return;
+
+      void refreshBoostSyncState();
+
+      if (event.type === 'completed') {
+        void Promise.all([refreshPremiumState(), loadBoostComposer()]);
+        if (boostComposerVisible) {
+          showBoostComposerFeedback({
+            tone: 'success',
+            title: 'Queued boost is live',
+            message: 'Your saved boost finished syncing and is now running.',
+          });
+        }
+        return;
+      }
+
+      if (event.type === 'failed' && boostComposerVisible) {
+        showBoostComposerFeedback({
+          tone: 'error',
+          title: 'Queued boost needs review',
+          message: 'We could not launch your saved boost yet. Retry when the connection is stable.',
+        });
+      }
+    });
+  }, [
+    boostComposerVisible,
+    loadBoostComposer,
+    refreshBoostSyncState,
+    refreshPremiumState,
+    showBoostComposerFeedback,
+    viewerProfileId,
+  ]);
+  const handleBoostSyncAction = useCallback(async () => {
+    if (!boostSyncState) return;
+
+    if (boostSyncState.status === 'failed') {
+      const retried = await retryFailedOfflineMutation(boostSyncState.mutationId);
+      if (retried) {
+        await refreshBoostSyncState();
+        showBoostComposerFeedback({
+          tone: 'info',
+          title: 'Boost retry queued',
+          message: 'We will launch this saved boost again as soon as the connection allows it.',
+        });
+      }
       return;
     }
-    Haptics.selectionAsync().catch(() => undefined);
-    noteOpenAtRef.current = Date.now();
-    setNoteOpen(true);
-  };
+
+    router.push('/sync-activity');
+  }, [boostSyncState, refreshBoostSyncState, showBoostComposerFeedback]);
+
   const openGift = () => {
     if (!canSendToProfile) {
-      Alert.alert('Gift unavailable', 'Gifts can only be sent to other profiles.');
+      showBetweenerAlert({
+        title: 'Gift unavailable',
+        message: 'Gifts can only be sent to other profiles.',
+        tone: 'warning',
+      });
       return;
     }
     if (!canSendStandardGifts) {
@@ -3480,81 +4699,323 @@ function FloatingActions({
     setSelectedGift(null);
     setGiftOpen(true);
   };
+  const syncSavedProfilesSnapshot = useCallback(
+    async (nextSaved: boolean) => {
+      if (!viewerProfileId) return;
+      const avatarUrl =
+        profileSnapshot.profilePicture ||
+        (Array.isArray(profileSnapshot.photos)
+          ? profileSnapshot.photos.find((value): value is string => typeof value === 'string' && value.trim().length > 0) ?? null
+          : null);
+      const nextItem: SavedProfileSummary = {
+        profile_id: profileId,
+        saved_at: new Date().toISOString(),
+        full_name: profileSnapshot.name || null,
+        age: typeof profileSnapshot.age === 'number' ? profileSnapshot.age : null,
+        avatar_url: avatarUrl,
+        city: profileSnapshot.city ?? null,
+        region: profileSnapshot.region ?? null,
+        current_country: profileSnapshot.currentCountry ?? null,
+        current_country_code: profileSnapshot.currentCountryCode ?? null,
+      };
+      await updateSavedProfilesSnapshot(viewerProfileId, (current) => {
+        const rows = Array.isArray(current) ? [...current] : [];
+        if (!nextSaved) {
+          return rows.filter((item) => item.profile_id !== profileId);
+        }
+        const existingIndex = rows.findIndex((item) => item.profile_id === profileId);
+        if (existingIndex >= 0) {
+          rows[existingIndex] = {
+            ...rows[existingIndex],
+            ...nextItem,
+          };
+          return rows;
+        }
+        return [nextItem, ...rows];
+      });
+    },
+    [profileId, profileSnapshot, viewerProfileId],
+  );
+  const syncSentGiftArchiveSnapshot = useCallback(
+    async (giftType: string) => {
+      if (!viewerProfileId) return;
+      const avatarUrl =
+        profileSnapshot.profilePicture ||
+        (Array.isArray(profileSnapshot.photos)
+          ? profileSnapshot.photos.find((value): value is string => typeof value === 'string' && value.trim().length > 0) ?? null
+          : null);
+      const createdAt = new Date().toISOString();
+      await updateProfileInsightsSnapshot(viewerProfileId, (current) => ({
+        giftSummary:
+          current?.giftSummary ?? {
+            count: 0,
+            waitingCount: 0,
+            latestSender: 'Gift Signals',
+            latestGiftType: null,
+          },
+        giftArchive: current?.giftArchive ?? [],
+        sentGiftArchive: [
+          {
+            id: `local-sent-gift:${profileId}:${giftType}:${Date.now()}`,
+            recipientName: profileSnapshot.name || 'Betweener member',
+            recipientAvatar: avatarUrl,
+            recipientProfileId: profileId,
+            giftType,
+            createdAt,
+            revealedAt: null,
+            archivedAt: null,
+          },
+          ...(current?.sentGiftArchive ?? []).filter((item) => item.recipientProfileId !== profileId || item.giftType !== giftType),
+        ],
+      }));
+    },
+    [profileId, profileSnapshot, viewerProfileId],
+  );
+  const syncBoostSnapshotActive = useCallback(
+    async (created: CreatedBoost) => {
+      if (!viewerProfileId) return;
+      const optimisticRecommendation: BoostRecommendation | null = boostRecommendation
+        ? {
+            ...boostRecommendation,
+            has_active_boost: true,
+            active_boost_ends_at: created.ends_at,
+          }
+        : null;
+      const optimisticAnalytics: BoostAnalytics = {
+        has_boost: true,
+        analytics_meta: boostAnalytics?.analytics_meta ?? {
+          trust_filter: 'trusted_viewers_only',
+          is_trust_filtered: true,
+        },
+        boost: {
+          id: created.id,
+          starts_at: created.starts_at,
+          ends_at: created.ends_at,
+          created_at: created.starts_at,
+          boost_type: created.boost_type,
+          audience_mode: created.audience_mode,
+          focus_mode: created.focus_mode,
+          status: created.status,
+          is_active: created.status !== 'completed',
+        },
+        metrics: boostAnalytics?.metrics ?? {
+          unique_viewers: 0,
+          views: 0,
+          unique_intro_viewers: 0,
+          intro_opens: 0,
+          unique_savers: 0,
+          saves: 0,
+          unique_intent_viewers: 0,
+          intent_opens: 0,
+          likes: 0,
+          accepted_matches: 0,
+        },
+      };
+      setBoostRecommendation(optimisticRecommendation);
+      setBoostAnalytics(optimisticAnalytics);
+      await updateProfileBoostSnapshot(viewerProfileId, (current) => ({
+        recommendation: optimisticRecommendation ?? current?.recommendation ?? null,
+        analytics: optimisticAnalytics,
+      }));
+    },
+    [boostAnalytics, boostRecommendation, viewerProfileId],
+  );
   const closeGift = () => setGiftOpen(false);
+  const selectGift = useCallback((giftId: string) => {
+    Haptics.selectionAsync().catch(() => undefined);
+    setSelectedGift(giftId);
+  }, []);
   const sendGift = async () => {
     if (!selectedGift || !currentUserId) return;
     if (selectedGift === 'ring' && !canSendSignatureGifts) {
       openTierUpsell('GOLD', 'Unlock the Ring', 'The Ring is exclusive to Gold. Upgrade for Betweener\'s boldest gesture.');
       return;
     }
+    const nextGiftType = selectedGift;
     setGiftSending(true);
-    const { error } = await supabase.from('profile_gifts').insert({
-      profile_id: profileId,
-      sender_id: currentUserId,
-      gift_type: selectedGift,
+    const { error } = await supabase.rpc('rpc_send_profile_gift' as any, {
+      p_recipient_profile_id: profileId,
+      p_gift_type: nextGiftType,
+      p_include_sandbox_preview: typeof __DEV__ !== 'undefined' && __DEV__,
     });
     setGiftSending(false);
     if (error) {
-      logger.error('[profile-view] send_gift_failed', error);
-      Alert.alert('Unable to send gift', (typeof __DEV__ !== 'undefined' && __DEV__) ? error.message : 'Please try again.');
+      const errorMessage = String(error.message || '');
+      const isGoldGate = errorMessage.match(/gold subscription required/i);
+      const isPremiumGate = errorMessage.match(/premium subscription required/i);
+      const isCooldown = error.code === '23514' || errorMessage.match(/gift cooldown active/i);
+      const isExpectedGiftRule = Boolean(isGoldGate || isPremiumGate || isCooldown);
+
+      if (isExpectedGiftRule) {
+        logger.warn('[profile-view] send_gift_blocked', {
+          code: error.code ?? null,
+          message: errorMessage,
+          profileId,
+          giftType: nextGiftType,
+        });
+      } else {
+        logger.error('[profile-view] send_gift_failed', error);
+      }
+
+      if (isLikelyNetworkError(error)) {
+        await enqueueProfileGiftSendMutation({
+          recipientProfileId: profileId,
+          giftType: nextGiftType,
+          includeSandboxPreview: typeof __DEV__ !== 'undefined' && __DEV__,
+          clientNonce: `gift:${profileId}:${nextGiftType}:${Date.now()}`,
+        });
+        await syncSentGiftArchiveSnapshot(nextGiftType);
+        setGiftOpen(false);
+        setSelectedGift(null);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+        showBetweenerAlert({
+          title: 'Gift queued',
+          message: 'Your gift is saved and will send when you are back online.',
+          tone: 'success',
+        });
+        return;
+      }
+
+      const message = isGoldGate
+        ? 'The Ring is reserved for Gold right now.'
+        : isPremiumGate
+          ? 'Gifts are available with Silver and Gold.'
+          : isCooldown
+            ? 'Let this gift land first. You can send another one to this person a little later.'
+            : (typeof __DEV__ !== 'undefined' && __DEV__)
+              ? errorMessage
+              : 'Please try again.';
+      showBetweenerAlert({
+        title: isCooldown ? 'Gift on cooldown' : 'Unable to send gift',
+        message,
+        tone: isCooldown ? 'warning' : 'error',
+      });
       return;
     }
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+    await syncSentGiftArchiveSnapshot(nextGiftType);
     setGiftOpen(false);
-  };
-
-  const closeNote = () => setNoteOpen(false);
-
-  const sendNote = async () => {
-    const note = noteText.trim();
-    if (!note || !currentUserId) return;
-    setNoteSending(true);
-    const { error } = await supabase.from('profile_notes').insert({
-      profile_id: profileId,
-      sender_id: currentUserId,
-      note,
+    setSelectedGift(null);
+    showBetweenerAlert({
+      title: 'Gift sent',
+      message: 'Your gift is on the way. Betweener will let the moment land with warmth.',
+      tone: 'success',
     });
-    setNoteSending(false);
-    if (error) {
-      logger.error('[profile-view] send_note_failed', error);
-      Alert.alert('Unable to send note', (typeof __DEV__ !== 'undefined' && __DEV__) ? error.message : 'Please try again.');
-      return;
-    }
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
-    setNoteText('');
-    setNoteOpen(false);
   };
 
-  const sendBoost = async () => {
+  const sendBoost = async (input: CreateBoostInput) => {
     if (!currentUserId) return;
     if (!canUseBoosts) {
       openBoostUpsell();
       return;
     }
+    setBoostFeedback(null);
+    const requiresGoldBoost = isGoldBoostConfig(input);
+    if (!canUseServerBoosts && !canUseSandboxSilverPreview) {
+      showBoostSyncNotice('SILVER');
+      return;
+    }
+    if (requiresGoldBoost && !hasAccess('GOLD')) {
+      openGoldBoostUpsell('boost_type', input.boostType);
+      return;
+    }
+    if (requiresGoldBoost && !canUseServerGoldBoosts && !canUseSandboxGoldPreview) {
+      showBoostSyncNotice('GOLD');
+      return;
+    }
     setBoostSending(true);
-    const { data, error } = await supabase.rpc('rpc_create_profile_boost');
-    setBoostSending(false);
-    if (error) {
-      logger.error('[profile-view] send_boost_failed', error);
-      if (String(error.message || '').toLowerCase().includes('premium subscription required')) {
+    try {
+      const created = await createProfileBoostV2(input);
+      await syncBoostSnapshotActive(created);
+      await refreshPremiumState();
+      await loadBoostComposer();
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+      const endsAt = created.ends_at ? new Date(created.ends_at) : null;
+      const endsAtLabel =
+        endsAt && !Number.isNaN(endsAt.getTime())
+          ? endsAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+          : null;
+      showBoostComposerFeedback({
+        tone: 'success',
+        title: created.boost_type === 'smart' ? 'Precision boost active' : 'Boost active',
+        message: endsAtLabel
+          ? `${formatBoostAudienceLabel(created.audience_mode)} audience with ${formatBoostFocusLabel(created.focus_mode)} focus is live until ${endsAtLabel}.`
+          : 'Your profile is boosted for 30 minutes.',
+      });
+    } catch (error) {
+      const message = String((error as any)?.message || error || '');
+      const normalizedMessage = message.toLowerCase();
+      if (isLikelyNetworkError(error) && viewerProfileId) {
+        await enqueueProfileBoostCreateMutation({
+          ownerProfileId: viewerProfileId,
+          boostType: input.boostType,
+          audienceMode: input.audienceMode,
+          focusMode: input.focusMode,
+          metadata: (input.metadata as Record<string, unknown> | undefined) ?? null,
+        });
+        await refreshBoostSyncState();
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+        showBoostComposerFeedback({
+          tone: 'info',
+          title: 'Boost queued',
+          message: 'Your boost recipe is saved locally and will launch automatically when the connection returns.',
+        });
+        return;
+      }
+      if (normalizedMessage.includes('premium subscription required')) {
+        logger.warn('[profile-view] send_boost_blocked', {
+          message,
+          boostType: input.boostType,
+          audienceMode: input.audienceMode,
+          focusMode: input.focusMode,
+          currentPlan,
+          serverPlan,
+          revenueCatPlan,
+        });
+        if (requiresGoldBoost && hasAccess('GOLD') && !canUseServerGoldBoosts && !canUseSandboxGoldPreview) {
+          showBoostSyncNotice('GOLD');
+          return;
+        }
+        if (canUseBoosts && !canUseServerBoosts && !canUseSandboxSilverPreview) {
+          showBoostSyncNotice('SILVER');
+          return;
+        }
+        if (requiresGoldBoost) {
+          openTierUpsell(
+            'GOLD',
+            'Unlock precision boost',
+            'Precision boost and advanced targeting are reserved for Gold.',
+          );
+          return;
+        }
         openBoostUpsell();
         return;
       }
-      if (String(error.message || '').toLowerCase().includes('boost already active')) {
-        Alert.alert('Boost already live', 'Your current boost is still running. Check your premium plans screen for timing.');
+      if (normalizedMessage.includes('boost already active')) {
+        logger.warn('[profile-view] send_boost_blocked', {
+          message,
+          boostType: input.boostType,
+          audienceMode: input.audienceMode,
+          focusMode: input.focusMode,
+        });
+        await refreshPremiumState();
+        await loadBoostComposer();
+        showBoostComposerFeedback({
+          tone: 'info',
+          title: 'Boost already live',
+          message: 'Your current boost is still running. Check the live boost panel for timing and response.',
+        });
         return;
       }
-      Alert.alert('Unable to boost', (typeof __DEV__ !== 'undefined' && __DEV__) ? error.message : 'Please try again.');
-      return;
+      logger.error('[profile-view] send_boost_failed', error);
+      showBoostComposerFeedback({
+        tone: 'error',
+        title: 'Unable to boost',
+        message: (typeof __DEV__ !== 'undefined' && __DEV__) ? message : 'Please try again.',
+      });
+    } finally {
+      setBoostSending(false);
     }
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
-    const endsAt = typeof data === 'object' && data && 'ends_at' in data ? (data.ends_at as string | null) : null;
-    Alert.alert(
-      'Boost active',
-      endsAt
-        ? `Your profile is boosted until ${new Date(endsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`
-        : 'Your profile is boosted for 30 minutes.',
-    );
   };
 
   useEffect(() => {
@@ -3565,7 +5026,8 @@ function FloatingActions({
         setLiked(false);
         return;
       }
-      const { data } = await supabase
+      const hasPendingLike = await hasPendingSwipeSyncMutation(viewerProfileId, profileId, ['LIKE', 'SUPERLIKE']);
+      const { data, error } = await supabase
         .from('swipes')
         .select('action')
         .eq('swiper_id', viewerProfileId)
@@ -3573,13 +5035,94 @@ function FloatingActions({
         .in('action', ['LIKE', 'SUPERLIKE'])
         .limit(1);
       if (cancelled) return;
-      setLiked(!!(data && data.length > 0));
+      if (error && !isLikelyNetworkError(error)) {
+        setLiked(hasPendingLike);
+        return;
+      }
+      setLiked(!!(data && data.length > 0) || hasPendingLike);
     };
     void loadLikeState();
     return () => {
       cancelled = true;
     };
   }, [isOwnProfile, profileId, viewerProfileId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!viewerProfileId || !profileId || isOwnProfile) {
+      setSaved(false);
+      return;
+    }
+    void (async () => {
+      const cached = await readSavedProfilesSnapshotState(viewerProfileId);
+      if (!cancelled && cached.data?.some((item) => item.profile_id === profileId)) {
+        setSaved(true);
+      }
+      try {
+        const value = await isProfileSaved(viewerProfileId, profileId);
+        if (!cancelled) setSaved(value);
+      } catch {
+        if (!cancelled && !cached.data?.some((item) => item.profile_id === profileId)) {
+          setSaved(false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOwnProfile, profileId, viewerProfileId]);
+
+  useEffect(() => {
+    if (!saveNotice) return;
+    const timer = setTimeout(() => {
+      setSaveNotice((current) => (current === saveNotice ? null : current));
+    }, 4200);
+    return () => clearTimeout(timer);
+  }, [saveNotice]);
+
+  const toggleSaved = async () => {
+    if (!viewerProfileId || !profileId || isOwnProfile || savingProfile) return;
+    const previousSaved = saved;
+    const nextSaved = !saved;
+    setSaved(nextSaved);
+    setSavingProfile(true);
+    await syncSavedProfilesSnapshot(nextSaved);
+    try {
+      const confirmed = await setProfileSaved(viewerProfileId, profileId, nextSaved);
+      setSaved(confirmed);
+      setSaveNotice(
+        confirmed
+          ? {
+              title: 'Profile saved',
+              message: 'You can find them again in Saved Profiles.',
+              actionLabel: 'View',
+              onAction: () => {
+                setSaveNotice(null);
+                router.push('/saved-profiles');
+              },
+            }
+          : {
+              title: 'Removed from saved',
+              message: 'This profile is no longer in your saved list.',
+            },
+      );
+      await syncSavedProfilesSnapshot(confirmed);
+      Haptics.selectionAsync().catch(() => undefined);
+    } catch (error) {
+      setSaved(previousSaved);
+      await syncSavedProfilesSnapshot(previousSaved);
+      logger.warn('[profile-view] save_profile_failed', {
+        message: String((error as any)?.message || error || 'unknown'),
+      });
+      showBetweenerAlert({
+        title: 'Unable to update saved profile',
+        message: 'Please try again.',
+        tone: 'error',
+      });
+    } finally {
+      setSavingProfile(false);
+    }
+  };
 
   const sendLike = async () => {
     // Swipes are keyed by profile ids (swiper_id/target_id). Use the viewer's profile id.
@@ -3597,28 +5140,40 @@ function FloatingActions({
         ],
         { onConflict: 'swiper_id,target_id' },
       );
-    setLikeSending(false);
     if (error) {
+      setLikeSending(false);
+      if (isLikelyNetworkError(error)) {
+        await enqueueSwipeSyncMutation({
+          userId: viewerProfileId,
+          targetId: profileId,
+          action: 'LIKE',
+          mirrorIntent: true,
+          message: null,
+        });
+        setLiked(true);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+        return;
+      }
       logger.error('[profile-view] send_like_failed', error);
-      Alert.alert('Unable to like', (typeof __DEV__ !== 'undefined' && __DEV__) ? error.message : 'Please try again.');
+      showBetweenerAlert({
+        title: 'Unable to like',
+        message: (typeof __DEV__ !== 'undefined' && __DEV__) ? error.message : 'Please try again.',
+        tone: 'error',
+      });
       return;
     }
+    setLikeSending(false);
 
     // Mirror likes into Intent requests so they show up in the Intent -> Likes feed.
     try {
-      const { error: intentErr } = await supabase.rpc('rpc_create_intent_request', {
-        p_recipient_id: profileId,
-        p_type: 'like_with_note',
-        p_message: null,
-        p_metadata: { source: 'profile_view', swipe_action: 'like' },
+      await createIntentRequestOfflineSafe({
+        recipientId: profileId,
+        type: 'like_with_note',
+        message: null,
+        metadata: { source: 'profile_view', swipe_action: 'like' },
+        actorProfileId: viewerProfileId,
+        snapshotOwnerIds: [viewerProfileId, currentUserId],
       });
-      if (intentErr) {
-        logger.warn('[profile-view] create_like_intent_failed', {
-          message: intentErr.message,
-          code: (intentErr as any).code ?? null,
-          details: (intentErr as any).details ?? null,
-        });
-      }
     } catch (e) {
       // Best-effort only.
       logger.warn('[profile-view] create_like_intent_throw', { message: String((e as any)?.message || e || 'unknown') });
@@ -3637,68 +5192,36 @@ function FloatingActions({
 
   return (
     <>
-      <View
-        style={[
-          stylesStatic.fabStack,
-          { bottom: 4 + Math.max(0, insets.bottom) },
-        ]}
-        pointerEvents="box-none"
-      >
-        <LinearGradient
-          colors={[
-            isDark ? 'rgba(9,16,18,0.88)' : 'rgba(250,243,237,0.84)',
-            isDark ? 'rgba(9,16,18,0.72)' : 'rgba(250,243,237,0.68)',
-          ]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
+      {saveNotice ? (
+        <View
           style={[
-            stylesStatic.fabDock,
-            {
-              borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(31,42,42,0.08)',
-            },
+            stylesStatic.inlineSaveNotice,
+            stylesStatic.fabInlineNotice,
+            { bottom: 80 + Math.max(0, insets.bottom) },
           ]}
+          pointerEvents="box-none"
         >
-          {!isOwnProfile ? (
-            <Fab
-              theme={theme}
-              label={liked ? 'Liked' : 'Like'}
-              icon={liked ? 'heart' : 'heart-outline'}
-              colors={['#C7B3FF', '#7D7CF3'] as const}
-              onPress={sendLike}
-              showLabel={false}
-            />
-          ) : null}
-          {!isOwnProfile ? (
-            <Fab
-              theme={theme}
-              label="Note"
-              icon="message-text-outline"
-              colors={[theme.tint, '#0C6E7A'] as const}
-              onPress={openNote}
-              showLabel={false}
-            />
-          ) : null}
-          {isOwnProfile ? (
-            <Fab
-              theme={theme}
-              label={boostSending ? 'Boosting' : canUseBoosts ? 'Boost' : 'Unlock Boosts'}
-              icon="rocket-launch-outline"
-              colors={['#F6C453', '#C68B1E'] as const}
-              onPress={sendBoost}
-              showLabel={false}
-            />
-          ) : (
-            <Fab
-              theme={theme}
-              label="Gift"
-              icon="gift-outline"
-              colors={['#F3A0B4', '#C6607E'] as const}
-              onPress={openGift}
-              showLabel={false}
-            />
-          )}
-        </LinearGradient>
-      </View>
+          <Notice
+            title={saveNotice.title}
+            message={saveNotice.message}
+            actionLabel={saveNotice.actionLabel}
+            onAction={saveNotice.onAction}
+            icon="book-heart-outline"
+          />
+        </View>
+      ) : null}
+      <ProfileViewActionDock
+        theme={theme}
+        isDark={isDark}
+        isOwnProfile={isOwnProfile}
+        bottomInset={insets.bottom}
+        saved={saved}
+        liked={liked}
+        onToggleSaved={toggleSaved}
+        onLike={sendLike}
+        onOpenBoostComposer={openBoostComposer}
+        onOpenGift={openGift}
+      />
       <PremiumUpsellModal
         visible={Boolean(premiumUpsell)}
         requiredPlan={premiumUpsell?.requiredPlan ?? 'SILVER'}
@@ -3710,164 +5233,58 @@ function FloatingActions({
           router.push('/premium-plans');
         }}
       />
-      <Modal
-        visible={noteOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={closeNote}
-      >
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={{ flex: 1 }}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? -20 : 0}
-        >
-          <Pressable
-            style={stylesStatic.giftBackdrop}
-            onPress={() => {
-              if (Date.now() - noteOpenAtRef.current < 250) return;
-              closeNote();
-            }}
-          >
-            <Pressable
-              style={[
-                stylesStatic.giftSheet,
-                { backgroundColor: theme.background, marginBottom: 0 },
-              ]}
-              onPress={() => undefined}
-            >
-            <View style={stylesStatic.giftHandle} />
-            <Text style={[stylesStatic.giftTitle, { color: theme.text }]}>Send a Note</Text>
-            <Text style={[stylesStatic.giftSubtitle, { color: theme.textMuted }]}>
-              Keep it short and personal.
-            </Text>
-            <View style={[stylesStatic.noteInputWrap, { borderColor: theme.outline, backgroundColor: theme.backgroundSubtle }]}>
-              <TextInput
-                value={noteText}
-                onChangeText={setNoteText}
-                placeholder="Write a short opener..."
-                placeholderTextColor={theme.textMuted}
-                multiline
-                maxLength={280}
-                autoFocus
-                textAlignVertical="top"
-                style={[stylesStatic.noteInput, { color: theme.text }]}
-              />
-            </View>
-            <Text style={[stylesStatic.noteCounter, { color: theme.textMuted }]}>{noteLength}/280</Text>
-            <Pressable
-              onPress={sendNote}
-              disabled={!noteLength || noteSending}
-              style={[
-                stylesStatic.giftSendButton,
-                {
-                  backgroundColor: noteLength ? theme.tint : theme.outline,
-                  opacity: noteLength ? 1 : 0.6,
-                },
-              ]}
-            >
-              <Text style={[stylesStatic.giftSendText, { color: Colors.light.background }]}>
-                {noteSending ? 'Sending...' : 'Send Note'}
-              </Text>
-            </Pressable>
-            </Pressable>
-          </Pressable>
-        </KeyboardAvoidingView>
-      </Modal>
-      <Modal
+      <BoostComposerModal
+        visible={boostComposerVisible}
+        plan={currentPlan}
+        activeBoostEndsAt={activeBoostEndsAt}
+        recommendation={boostRecommendation}
+        analytics={boostAnalytics}
+        queuedDraft={boostSyncState?.input ?? null}
+        syncState={
+          boostSyncState
+            ? {
+                status: boostSyncState.status,
+                title:
+                  boostSyncState.status === 'failed'
+                    ? 'Saved boost needs attention'
+                    : 'Saved boost is waiting to launch',
+                message:
+                  boostSyncState.status === 'failed'
+                    ? 'The launch did not finish. Retry this saved recipe when your connection is stable.'
+                    : 'This recipe is stored locally and will launch automatically when your connection returns.',
+                actionLabel: boostSyncState.status === 'failed' ? 'Retry now' : 'View sync',
+              }
+            : null
+        }
+        loading={boostComposerLoading}
+        submitting={boostSending}
+        feedback={boostFeedback}
+        theme={theme}
+        isDark={isDark}
+        onClose={() => {
+          setBoostComposerVisible(false);
+          setBoostFeedback(null);
+        }}
+        onLockedGoldPress={openGoldBoostUpsell}
+        onSyncAction={handleBoostSyncAction}
+        onSubmit={sendBoost}
+      />
+      <ProfileViewGiftModal
         visible={giftOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={closeGift}
-      >
-        <Pressable style={stylesStatic.giftBackdrop} onPress={closeGift} />
-        <View style={[stylesStatic.giftSheet, { backgroundColor: theme.background }]}>
-          <View style={stylesStatic.giftHandle} />
-          <Text style={[stylesStatic.giftTitle, { color: theme.text }]}>Send a Gift</Text>
-          <Text style={[stylesStatic.giftSubtitle, { color: theme.textMuted }]}>
-            Pick a gesture to stand out.
-          </Text>
-          <View style={stylesStatic.giftGrid}>
-            {giftOptions.map((gift) => {
-              const isSelected = selectedGift === gift.id;
-              const locked = gift.id === 'ring' && !canSendSignatureGifts;
-                return (
-                  <Pressable
-                    key={gift.id}
-                    onPress={() => {
-                      if (locked) {
-                        openTierUpsell('GOLD', 'Unlock the Ring', 'The Ring is exclusive to Gold. Upgrade for Betweener\'s boldest gesture.');
-                        return;
-                      }
-                      Haptics.selectionAsync().catch(() => undefined);
-                      setSelectedGift(gift.id);
-                    }}
-                    style={[
-                      stylesStatic.giftCard,
-                      {
-                        borderColor: isSelected ? theme.tint : theme.outline,
-                        backgroundColor: theme.backgroundSubtle,
-                        opacity: locked ? 0.58 : 1,
-                      },
-                    ]}
-                  >
-                  <View style={isSelected ? stylesStatic.giftIconGlow : undefined}>
-                    <MaterialCommunityIcons
-                      name={gift.icon as any}
-                      size={26}
-                      color={isSelected ? theme.tint : theme.textMuted}
-                    />
-                  </View>
-                  <Text style={[stylesStatic.giftLabel, { color: theme.text }]}>{gift.label}</Text>
-                  <Text style={[stylesStatic.giftNote, { color: theme.textMuted }]}>{gift.note}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
-          <Pressable
-            onPress={sendGift}
-            disabled={!selectedGift || giftSending}
-            style={[
-              stylesStatic.giftSendButton,
-              {
-                backgroundColor: selectedGift ? theme.tint : theme.outline,
-                opacity: selectedGift ? 1 : 0.6,
-              },
-            ]}
-          >
-            <Text style={[stylesStatic.giftSendText, { color: Colors.light.background }]}>
-              {giftSending ? 'Sending...' : 'Send Gift'}
-            </Text>
-          </Pressable>
-        </View>
-      </Modal>
+        theme={theme}
+        isDark={isDark}
+        selectedGift={selectedGift}
+        giftSending={giftSending}
+        canSendSignatureGifts={canSendSignatureGifts}
+        giftOptions={giftOptions}
+        onClose={closeGift}
+        onOpenRingUpsell={() =>
+          openTierUpsell('GOLD', 'Unlock the Ring', 'The Ring is exclusive to Gold. Upgrade for Betweener\'s boldest gesture.')
+        }
+        onSelectGift={selectGift}
+        onSubmit={sendGift}
+      />
     </>
-  );
-}
-
-function Fab({
-  theme: _theme,
-  label,
-  icon,
-  colors,
-  onPress,
-  showLabel = true,
-}: {
-  theme: typeof Colors.light;
-  label: string;
-  icon: ComponentProps<typeof MaterialCommunityIcons>['name'];
-  colors: readonly [string, string, ...string[]];
-  onPress: () => void;
-  showLabel?: boolean;
-}) {
-  return (
-    <Pressable onPress={onPress} style={stylesStatic.fabWrap}>
-      <LinearGradient colors={colors} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={stylesStatic.fab}>
-        <MaterialCommunityIcons name={icon} size={18} color={Colors.light.background} />
-        {showLabel ? (
-          <Text style={[stylesStatic.fabLabel, { color: Colors.light.background }]}>{label}</Text>
-        ) : null}
-      </LinearGradient>
-    </Pressable>
   );
 }
 
@@ -3967,6 +5384,32 @@ const stylesStatic = StyleSheet.create({
     color: 'rgba(255,255,255,0.82)',
     textAlign: 'center',
   },
+  heroVideoPendingContent: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  heroVideoPendingDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 999,
+    marginBottom: 10,
+  },
+  heroVideoPendingEyebrow: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+    color: 'rgba(255,255,255,0.76)',
+    marginBottom: 8,
+  },
+  heroVideoPendingText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.88)',
+    textAlign: 'center',
+  },
   heroTopGradient: {
     position: 'absolute',
     left: 0,
@@ -4013,6 +5456,12 @@ const stylesStatic = StyleSheet.create({
   lightboxImage: {
     width: '100%',
     height: '100%',
+  },
+  lightboxImageFallback: {
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   lightboxCaptionWrap: {
     position: 'absolute',
@@ -4143,19 +5592,21 @@ const stylesStatic = StyleSheet.create({
   activeBadgeHero: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    gap: 5,
+    minHeight: 28,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
     borderRadius: 999,
     borderWidth: 1,
+    backgroundColor: 'rgba(8,22,27,0.72)',
   },
   activeDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
   },
   activeText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
   },
 
@@ -4211,6 +5662,93 @@ const stylesStatic = StyleSheet.create({
     paddingTop: 10,
     paddingBottom: 6,
   },
+  heroDetailsShell: {
+    borderRadius: 24,
+    shadowColor: '#020617',
+    shadowOffset: { width: 0, height: 18 },
+    shadowOpacity: 0.26,
+    shadowRadius: 30,
+    elevation: 10,
+  },
+  heroDetailsCardChrome: {
+    borderRadius: 24,
+    padding: 1,
+  },
+  inlineSaveNotice: {
+    marginBottom: 8,
+  },
+  fabInlineNotice: {
+    position: 'absolute',
+    left: 12,
+    right: 12,
+    zIndex: 20,
+  },
+  profileReminderWrap: {
+    paddingHorizontal: 12,
+    paddingTop: 3,
+    paddingBottom: 6,
+  },
+  profileReminderBar: {
+    minHeight: 62,
+    borderRadius: 22,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    shadowColor: '#13A8A8',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.12,
+    shadowRadius: 18,
+    elevation: 4,
+  },
+  profileReminderIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(19,168,168,0.08)',
+  },
+  profileReminderCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
+  profileReminderTitle: {
+    fontSize: 12.5,
+    lineHeight: 16,
+    fontWeight: '900',
+  },
+  profileReminderBody: {
+    fontSize: 10.5,
+    lineHeight: 14,
+    fontWeight: '700',
+  },
+  profileReminderAccept: {
+    minHeight: 38,
+    borderRadius: 999,
+    paddingHorizontal: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#13A8A8',
+  },
+  profileReminderAcceptText: {
+    color: Colors.light.background,
+    fontSize: 11.5,
+    fontWeight: '900',
+  },
+  profileReminderPass: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
   featuredPromptWrap: {
     paddingHorizontal: 12,
     paddingTop: 4,
@@ -4229,51 +5767,116 @@ const stylesStatic = StyleSheet.create({
   heroDetailsCard: {
     borderWidth: 1,
     borderRadius: 22,
-    paddingHorizontal: 15,
-    paddingVertical: 10,
+    paddingHorizontal: 14,
+    paddingTop: 13,
+    paddingBottom: 11,
+    overflow: 'hidden',
+    position: 'relative',
   },
-  heroDetailsTopRow: {
+  heroDetailsAtmosphereTeal: {
+    position: 'absolute',
+    width: 164,
+    height: 164,
+    borderRadius: 82,
+    right: -34,
+    top: -74,
+    backgroundColor: 'rgba(36,184,176,0.09)',
+  },
+  heroDetailsAtmosphereViolet: {
+    position: 'absolute',
+    width: 152,
+    height: 152,
+    borderRadius: 76,
+    left: -42,
+    bottom: -92,
+    backgroundColor: 'rgba(125,124,243,0.06)',
+  },
+  heroDetailsSheen: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 72,
+  },
+  heroDetailsAccentBar: {
+    position: 'absolute',
+    top: 0,
+    left: 18,
+    right: 18,
+    height: 2,
+    borderBottomLeftRadius: 999,
+    borderBottomRightRadius: 999,
+  },
+  heroHeaderStack: {
+    gap: 7,
+  },
+  heroPrimaryRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 7,
     flexWrap: 'wrap',
+    gap: 5,
+  },
+  heroNameAgeRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    flexShrink: 1,
+    minWidth: 0,
   },
   heroDetailsName: {
-    fontSize: 19,
+    fontSize: 20,
     fontWeight: '900',
     letterSpacing: 0.2,
-    lineHeight: 21,
+    lineHeight: 24,
   },
-  heroDetailsSubRow: {
-    marginTop: 3,
+  heroAgeInlineText: {
+    fontSize: 17,
+    fontWeight: '800',
+    lineHeight: 21,
+    marginLeft: 4,
+  },
+  heroSupportRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  heroSupportItem: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  heroInlineVerificationBadge: {
+    transform: [{ translateY: 1 }],
+    marginHorizontal: 1,
+  },
+  heroPremiumBadgeInline: {
+    marginLeft: 2,
+  },
+  heroNewHereBadge: {
+    marginLeft: 2,
   },
   heroDetailsSubText: {
-    fontSize: 11.5,
-    fontWeight: '600',
-    lineHeight: 15,
+    fontSize: 12.5,
+    fontWeight: '700',
+    lineHeight: 16,
+    flexShrink: 1,
   },
-  heroDetailsMeta: {
-    marginTop: 1,
-    fontSize: 11.5,
-    fontWeight: '600',
-    lineHeight: 15,
-  },
-  heroMetaRow: {
-    marginTop: 6,
+  heroContextActionRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 8,
+    gap: 10,
+  },
+  heroContextLineWrap: {
+    flex: 1,
+    minWidth: 0,
   },
   heroContextRow: {
-    marginTop: 7,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    minHeight: 16,
+    minHeight: 18,
   },
   heroContextText: {
     fontSize: 11.5,
@@ -4282,7 +5885,7 @@ const stylesStatic = StyleSheet.create({
     flexShrink: 1,
   },
   heroRequestWrap: {
-    alignSelf: 'flex-end',
+    alignSelf: 'flex-start',
     borderRadius: 999,
     overflow: 'hidden',
     shadowColor: '#000',
@@ -4292,12 +5895,16 @@ const stylesStatic = StyleSheet.create({
     elevation: 6,
   },
   heroRequestButton: {
-    paddingHorizontal: 15,
+    minHeight: 33,
+    paddingHorizontal: 14,
     paddingVertical: 6,
     borderRadius: 999,
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: 7,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.18)',
   },
   safetySheetBackdrop: {
     flex: 1,
@@ -4316,6 +5923,12 @@ const stylesStatic = StyleSheet.create({
     borderTopRightRadius: 24,
     paddingHorizontal: 16,
     paddingTop: 10,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -10 },
+    shadowOpacity: 0.16,
+    shadowRadius: 18,
+    elevation: 10,
   },
   safetySheetHandle: {
     alignSelf: 'center',
@@ -4416,9 +6029,16 @@ const stylesStatic = StyleSheet.create({
   },
   heroRequestText: {
     color: Colors.light.background,
-    fontSize: 11.5,
+    fontSize: 11,
     fontWeight: '800',
     letterSpacing: 0.2,
+  },
+  heroGuessCtaAnchor: {
+    position: 'absolute',
+    left: 12,
+    bottom: 12,
+    zIndex: 6,
+    elevation: 6,
   },
   featuredPromptCard: {
     borderWidth: 1,
@@ -4536,12 +6156,6 @@ const stylesStatic = StyleSheet.create({
   featuredPromptHidden: {
     opacity: 0,
   },
-  guessFabAnchor: {
-    position: 'absolute',
-    left: 20,
-    zIndex: 12,
-    elevation: 12,
-  },
   guessFabWrap: {
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 10 },
@@ -4593,12 +6207,17 @@ const stylesStatic = StyleSheet.create({
   guessSheetWrap: {
     paddingHorizontal: 14,
   },
+  guessSheetCardWrap: {
+    borderRadius: 24,
+    overflow: 'hidden',
+  },
   guessSheetCard: {
     borderWidth: 1,
     borderRadius: 24,
     paddingHorizontal: 16,
     paddingTop: 10,
     paddingBottom: 16,
+    overflow: 'hidden',
   },
   guessSheetHeaderRow: {
     marginTop: 4,
@@ -4778,6 +6397,10 @@ const stylesStatic = StyleSheet.create({
     alignItems: 'flex-end',
     gap: 8,
   },
+  imageCardFallback: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   videoPill: {
     position: 'absolute',
     right: 10,
@@ -4923,9 +6546,12 @@ const stylesStatic = StyleSheet.create({
     justifyContent: 'center',
   },
   storyName: {
+    flexShrink: 1,
+    minWidth: 0,
     fontSize: 18,
+    lineHeight: 22,
     fontWeight: '900',
-    maxWidth: '75%',
+    maxWidth: '82%',
   },
   storySubRow: {
     flexDirection: 'row',
@@ -5090,6 +6716,7 @@ const stylesStatic = StyleSheet.create({
     right: 16,
     bottom: 18,
     borderRadius: 20,
+    borderWidth: 1,
     paddingHorizontal: 16,
     paddingTop: 12,
     paddingBottom: 18,
@@ -5098,6 +6725,15 @@ const stylesStatic = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 18,
     elevation: 12,
+    overflow: 'hidden',
+  },
+  giftSheetWrap: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    bottom: 18,
+    borderRadius: 20,
+    overflow: 'hidden',
   },
   giftHandle: {
     alignSelf: 'center',
@@ -5119,23 +6755,6 @@ const stylesStatic = StyleSheet.create({
     marginTop: 14,
     flexDirection: 'row',
     gap: 10,
-  },
-  noteInputWrap: {
-    marginTop: 14,
-    borderRadius: 14,
-    borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  noteInput: {
-    minHeight: 88,
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  noteCounter: {
-    marginTop: 6,
-    fontSize: 11,
-    textAlign: 'right',
   },
   giftCard: {
     flex: 1,

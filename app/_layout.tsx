@@ -1,26 +1,55 @@
 import { LinearGradient } from "expo-linear-gradient";
 import * as Linking from "expo-linking";
-import { Slot, useRouter } from "expo-router";
+import { Slot, usePathname, useRouter, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
-import { useEffect, useRef, useState } from "react";
-import { Animated, Easing, StyleSheet, Text, View } from "react-native";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { Animated, AppState, Easing, InteractionManager, StyleSheet, Text, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as Notifications from "expo-notifications";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { addEventListener as addNetInfoListener, fetch as fetchNetInfo } from '@react-native-community/netinfo';
 
 import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 
 import { useAppFonts } from "@/constants/fonts";
-import { AuthProvider } from "@/lib/auth-context";
+import { AuthProvider, useAuth, useAuthGuard } from "@/lib/auth-context";
 import AccountRecoveryNotice from "@/components/AccountRecoveryNotice";
 import RecoveryMergeSuggestionNotice from "@/components/RecoveryMergeSuggestionNotice";
 import InAppToasts from "@/components/InAppToasts";
+import IntentResponseReminder from "@/components/IntentResponseReminder";
+import NetworkStatusBanner from "@/components/NetworkStatusBanner";
+import OfflineSyncHistoryHydrator from "@/components/OfflineSyncHistoryHydrator";
+import OfflineSyncStatusPill from "@/components/OfflineSyncStatusPill";
+import AppVersionGateHost from "@/components/updates/AppVersionGateHost";
+import BetweenerAlertHost from "@/components/ui/BetweenerAlertHost";
+import ScreenAwakeSafetyGuard from "@/components/system/ScreenAwakeSafetyGuard";
+import ChatRealtimeHydrator from "@/components/ChatRealtimeHydrator";
+import {
+  drainOfflineMutationQueue,
+  migrateLegacyChatSendMutationsToSQLiteOutbox,
+  startOfflineMutationQueueAutoDrain,
+} from "@/lib/offline/mutation-queue";
+import { ChatOutboxService } from "@/lib/chat/outbox/chat-outbox-service";
+import { emitNetworkRestored } from "@/lib/network-recovery";
+import { isNetworkConnectionAvailable } from "@/lib/network-state";
 import { captureException, initSentry, wrapWithSentry } from "@/lib/telemetry/sentry";
-import { SUPABASE_IS_CONFIGURED } from "@/lib/supabase";
+import { logger } from "@/lib/telemetry/logger";
+import { recoverSupabaseConnectivity, SUPABASE_IS_CONFIGURED } from "@/lib/supabase";
 import { initPushNotificationUX } from "@/lib/notifications/push";
 import {
+  buildNotificationRoute,
+  clearPendingNotificationRoute,
+  getNotificationResponseKey,
+  getPendingNotificationRouteVersion,
+  peekPendingNotificationRoute,
+  persistPendingNotificationRoute,
+  shouldDeferNotificationNavigation,
+  subscribePendingNotificationRouteChanges,
+} from "@/lib/notifications/notification-routing";
+import {
+  getFreshPendingIdentityLink,
   isTrustedAuthCallbackUrl,
   LAST_DEEP_LINK_URL_KEY,
   urlHasAuthPayload,
@@ -31,6 +60,277 @@ SplashScreen.preventAutoHideAsync().catch(() => {});
 
 // Initialize telemetry as early as possible (safe no-op if DSN isn't set).
 initSentry();
+
+function PendingNotificationRouteHydrator() {
+  const { isLoading, canAccessApp } = useAuthGuard();
+  const pathname = usePathname();
+  const segments = useSegments();
+  const router = useRouter();
+  const inFlightRef = useRef(false);
+  const routeRef = useRef<{ pathname: string; currentScreen: string | null }>({
+    pathname: "",
+    currentScreen: null,
+  });
+  const pendingRouteVersion = useSyncExternalStore(
+    subscribePendingNotificationRouteChanges,
+    getPendingNotificationRouteVersion,
+    getPendingNotificationRouteVersion,
+  );
+  const debugNotificationHydrator = useCallback((event: string, payload?: Record<string, unknown>) => {
+    if (!(typeof __DEV__ !== "undefined" && __DEV__)) return;
+    console.log("[notif-hydrator]", {
+      event,
+      ...(payload ?? {}),
+    });
+  }, []);
+
+  useEffect(() => {
+    routeRef.current = {
+      pathname: typeof pathname === "string" ? pathname : "",
+      currentScreen: segments.length > 0 ? segments[segments.length - 1] : null,
+    };
+  }, [pathname, segments]);
+
+  const hydratePendingRoute = useCallback(async (reason: string) => {
+    if (isLoading || !canAccessApp || inFlightRef.current) return;
+
+    const { pathname: currentPath, currentScreen } = routeRef.current;
+    const isAuthRecoveryScreen =
+      currentScreen === "gate" ||
+      currentScreen === "callback" ||
+      currentScreen === "verify-phone" ||
+      currentScreen === "verify-email" ||
+      currentScreen === "welcome";
+
+    if (isAuthRecoveryScreen) return;
+
+    inFlightRef.current = true;
+
+    try {
+      const target = await peekPendingNotificationRoute();
+      if (!target) return;
+
+      debugNotificationHydrator("target", {
+        reason,
+        pathname: currentPath,
+        currentScreen,
+        target,
+      });
+
+      const samePath = currentPath === target.pathname;
+      const sameId =
+        target.params?.id &&
+        typeof currentPath === "string" &&
+        currentPath.endsWith(`/${target.params.id}`);
+      const hasTargetedPulseParams = Boolean(
+        target.params?.openPulseItemId ||
+        target.params?.openPulseCommentId ||
+        target.params?.openPulseParentCommentId
+      );
+
+      if ((samePath || sameId) && !hasTargetedPulseParams) {
+        debugNotificationHydrator("clear_already_at_target", {
+          pathname: currentPath,
+          target,
+        });
+        await clearPendingNotificationRoute();
+        return;
+      }
+
+      if (typeof __DEV__ !== "undefined" && __DEV__) {
+        console.log("[root] hydrating pending notification route", target);
+      }
+      debugNotificationHydrator("replace", {
+        pathname: currentPath,
+        target,
+      });
+      router.replace(target as any);
+    } finally {
+      inFlightRef.current = false;
+    }
+  }, [canAccessApp, debugNotificationHydrator, isLoading, router]);
+
+  useEffect(() => {
+    void hydratePendingRoute("pending_route_changed");
+  }, [hydratePendingRoute, pendingRouteVersion]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") {
+        setTimeout(() => {
+          void hydratePendingRoute("app_active");
+        }, 250);
+      }
+    });
+    return () => {
+      subscription.remove();
+    };
+  }, [hydratePendingRoute]);
+
+  return null;
+}
+
+function OfflineMutationQueueHydrator() {
+  useEffect(() => {
+    let cancelled = false;
+    let stopAutoDrain: (() => void) | null = null;
+
+    void migrateLegacyChatSendMutationsToSQLiteOutbox()
+      .catch((error) => {
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[offline-queue] legacy chat migration error", error);
+        }
+      })
+      .finally(() => {
+        if (cancelled) return;
+        stopAutoDrain = startOfflineMutationQueueAutoDrain();
+      });
+
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        void migrateLegacyChatSendMutationsToSQLiteOutbox().finally(() => {
+          void drainOfflineMutationQueue();
+        });
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      stopAutoDrain?.();
+      subscription.remove();
+    };
+  }, []);
+
+  return null;
+}
+
+function ChatOutboxHydrator() {
+  const { user } = useAuth();
+  const { canAccessApp, isLoading } = useAuthGuard();
+  const flushInFlightRef = useRef<Promise<void> | null>(null);
+  const lastReachableRef = useRef<boolean | null>(null);
+
+  useEffect(() => {
+    if (isLoading || !canAccessApp || !user?.id) return;
+
+    const flush = (reason: string) => {
+      if (flushInFlightRef.current) return flushInFlightRef.current;
+      const promise = (async () => {
+        const state = await fetchNetInfo();
+        if (!isNetworkConnectionAvailable(state)) return;
+        const result = await ChatOutboxService.flushPending(user.id);
+        if (typeof __DEV__ !== "undefined" && __DEV__ && result.attemptedCount > 0) {
+          console.log("[chat-outbox]", {
+            reason,
+            attempted: result.attemptedCount,
+            sent: result.sentCount,
+            failed: result.failedCount,
+          });
+        }
+      })()
+        .catch((error) => {
+          if (typeof __DEV__ !== "undefined" && __DEV__) {
+            console.log("[chat-outbox] flush error", error);
+          }
+        })
+        .finally(() => {
+          flushInFlightRef.current = null;
+        });
+      flushInFlightRef.current = promise;
+      return promise;
+    };
+
+    void flush("mount");
+
+    const netInfoSubscription = addNetInfoListener((state) => {
+      const reachable = isNetworkConnectionAvailable(state);
+      const previous = lastReachableRef.current;
+      lastReachableRef.current = reachable;
+      if (previous === false && reachable) {
+        setTimeout(() => {
+          void flush("network_restored");
+        }, 600);
+      }
+    });
+    fetchNetInfo().then((state) => {
+      lastReachableRef.current = isNetworkConnectionAvailable(state);
+    }).catch(() => undefined);
+
+    const appStateSubscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") {
+        setTimeout(() => {
+          void flush("app_active");
+        }, 400);
+      }
+    });
+
+    return () => {
+      netInfoSubscription();
+      appStateSubscription.remove();
+    };
+  }, [canAccessApp, isLoading, user?.id]);
+
+  return null;
+}
+
+function NetworkRecoveryHydrator() {
+  const recoveryInFlightRef = useRef(false);
+  const lastReachableRef = useRef<boolean | null>(null);
+
+  useEffect(() => {
+    const runRecovery = async (reason: string) => {
+      if (recoveryInFlightRef.current) return;
+      recoveryInFlightRef.current = true;
+      try {
+        const state = await fetchNetInfo();
+        if (!isNetworkConnectionAvailable(state)) return;
+
+        await recoverSupabaseConnectivity(reason);
+        await drainOfflineMutationQueue();
+        emitNetworkRestored({ reason, at: Date.now() });
+      } finally {
+        setTimeout(() => {
+          recoveryInFlightRef.current = false;
+        }, 1500);
+      }
+    };
+
+    const scheduleRecovery = (reason: string, delayMs: number) => {
+      setTimeout(() => {
+        void runRecovery(reason);
+      }, delayMs);
+    };
+
+    const handleNetInfoState = (state: {
+      isConnected: boolean | null;
+      isInternetReachable: boolean | null;
+    }) => {
+      const reachable = isNetworkConnectionAvailable(state);
+      const previous = lastReachableRef.current;
+      lastReachableRef.current = reachable;
+
+      if (previous === false && reachable) {
+        scheduleRecovery('netinfo_restored', 700);
+      }
+    };
+
+    const netInfoSubscription = addNetInfoListener(handleNetInfoState);
+    fetchNetInfo().then(handleNetInfoState).catch(() => undefined);
+
+    const appStateSubscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        scheduleRecovery('app_active_probe', 500);
+      }
+    });
+
+    return () => {
+      netInfoSubscription();
+      appStateSubscription.remove();
+    };
+  }, []);
+
+  return null;
+}
 
 function RootLayout() {
   const fontsLoaded = useAppFonts();
@@ -63,6 +363,7 @@ function RootLayout() {
   const underlineScale = useRef(new Animated.Value(0.08)).current;
   const orbDrift = useRef(new Animated.Value(0)).current;
   const authCallbackRouteInFlightRef = useRef(false);
+  const lastHandledNotificationKeyRef = useRef<string | null>(null);
 
   // Handle deep links
   useEffect(() => {
@@ -71,6 +372,17 @@ function RootLayout() {
     try {
       const maybeStoreAuthCallbackUrl = async (url: string, source: "initial" | "listener") => {
         if (!urlHasAuthPayload(url) || !isTrustedAuthCallbackUrl(url)) {
+          return;
+        }
+
+        const pendingIdentityLink = await getFreshPendingIdentityLink();
+        if (pendingIdentityLink) {
+          if (typeof __DEV__ !== "undefined" && __DEV__) {
+            console.log("[root] identity link callback ignored by global auth route", {
+              provider: pendingIdentityLink.provider,
+              source,
+            });
+          }
           return;
         }
 
@@ -137,179 +449,95 @@ function RootLayout() {
   useEffect(() => {
     // Same reasoning as deep links: don't let a notification handler crash a release build.
     try {
-      const handleResponse = (response: Notifications.NotificationResponse) => {
+      const handleResponse = async (
+        response: Notifications.NotificationResponse,
+        options?: { deferNavigation?: boolean }
+      ) => {
         try {
-          const action = response.actionIdentifier;
-          const data = response.notification.request.content.data as Record<string, any> | undefined;
-          const pushType = data?.type;
-
-          // Category actions: treat OPEN_* the same as a normal tap.
-          const isDefaultTap = action === Notifications.DEFAULT_ACTION_IDENTIFIER;
-          const isOpenAction =
-            action === "OPEN_CHAT" ||
-            action === "OPEN_PROFILE" ||
-            action === "OPEN_MOMENTS" ||
-            action === "OPEN_COMPASS";
-          if (!isDefaultTap && !isOpenAction) {
-            // Unknown action; ignore safely.
+          const responseKey = getNotificationResponseKey({
+            requestIdentifier: response.notification.request.identifier,
+            actionIdentifier: response.actionIdentifier,
+          });
+          if (lastHandledNotificationKeyRef.current === responseKey) {
             return;
           }
 
-          if (pushType === "message" || pushType === "message_reaction") {
-            const chatId = data?.profile_id || data?.reactor_id || data?.user_id;
-            if (chatId) {
-              router.push({
-                pathname: "/chat/[id]",
-                params: {
-                  id: String(chatId),
-                  userName: data?.name ? String(data.name) : "",
-                  userAvatar: data?.avatar_url ? String(data.avatar_url) : "",
-                },
-              });
-              return;
-            }
-          }
-
-          if (pushType === "match") {
-            const chatId = data?.profile_id || data?.user_id;
-            if (chatId) {
-              router.push({
-                pathname: "/chat/[id]",
-                params: {
-                  id: String(chatId),
-                  userName: data?.name ? String(data.name) : "",
-                  userAvatar: data?.avatar_url ? String(data.avatar_url) : "",
-                },
-              });
-              return;
-            }
-          }
-
-          if (pushType === "system_message" && data?.event_type === "request_accepted") {
-            const chatId = data?.profile_id || data?.user_id;
-            if (chatId) {
-              router.push({
-                pathname: "/chat/[id]",
-                params: {
-                  id: String(chatId),
-                  userName: data?.name ? String(data.name) : "",
-                  userAvatar: data?.avatar_url ? String(data.avatar_url) : "",
-                },
-              });
-              return;
-            }
+          const target = buildNotificationRoute({
+            requestIdentifier: response.notification.request.identifier,
+            actionIdentifier: response.actionIdentifier,
+            date: response.notification.date,
+            data: response.notification.request.content.data as Record<string, unknown> | undefined,
+          });
+          if (!target) {
+            return;
           }
 
           if (
-            pushType === "system_message" &&
-            (
-              data?.event_type === "date_plan_accepted" ||
-              data?.event_type === "date_plan_declined" ||
-              data?.event_type === "date_plan_cancelled" ||
-              data?.event_type === "date_plan_concierge_requested"
-            )
+            typeof target.params?.openPulseItemId === "string" ||
+            typeof target.params?.openPulseCommentId === "string" ||
+            typeof target.params?.openPulseParentCommentId === "string"
           ) {
-            const chatId = data?.profile_id || data?.user_id;
-            if (chatId) {
-              router.push({
-                pathname: "/chat/[id]",
-                params: {
-                  id: String(chatId),
-                  userName: data?.name ? String(data.name) : "",
-                  userAvatar: data?.avatar_url ? String(data.avatar_url) : "",
-                  datePlanId: data?.date_plan_id ? String(data.date_plan_id) : "",
-                },
-              });
-              return;
-            }
-          }
-
-          if (pushType === "system_message" && data?.event_type === "request_expired") {
-            router.push({
-              pathname: "/(tabs)/intent",
-              params: {
-                requestId: data?.intent_request_id ? String(data.intent_request_id) : "",
-              },
+            logger.info("[notifications] pulse_discussion_target_built", {
+              pathname: target.pathname,
+              params: target.params,
+              responseKey,
+              deferNavigation: options?.deferNavigation === true,
             });
+          }
+
+          lastHandledNotificationKeyRef.current = responseKey;
+
+          if (options?.deferNavigation) {
+            await persistPendingNotificationRoute(target);
             return;
           }
 
-          if (pushType === "moment_post" || pushType === "moment_reaction" || pushType === "moment_comment") {
-            const startUserId =
-              data?.start_user_id ||
-              data?.poster_user_id ||
-              data?.moment_owner_user_id ||
-              data?.user_id;
-            const momentId = data?.moment_id || data?.momentId;
-            router.push({
-              pathname: "/moments",
-              params: {
-                startUserId: startUserId ? String(startUserId) : "",
-                startMomentId: momentId ? String(momentId) : "",
-                openComments: pushType === "moment_comment" ? "1" : "",
-                entrySource: pushType === "moment_comment" ? "comment" : pushType === "moment_reaction" ? "reaction" : "",
-                commentId: pushType === "moment_comment" && data?.comment_id ? String(data.comment_id) : "",
-                reactionEmoji: pushType === "moment_reaction" && data?.emoji ? String(data.emoji) : pushType === "moment_reaction" && data?.reaction_emoji ? String(data.reaction_emoji) : "",
-              },
-            });
+          const hasTargetedPulseParams = Boolean(
+            target.params?.openPulseItemId ||
+            target.params?.openPulseCommentId ||
+            target.params?.openPulseParentCommentId
+          );
+          if (hasTargetedPulseParams) {
+            router.replace(target as any);
             return;
           }
 
-          // Intent reminders: route to the Intent inbox (actionable view) so users can accept/pass quickly.
-          if (pushType === "intent_request" || pushType === "intent_expiring_soon" || pushType === "intent_last_chance") {
-            const requestId = data?.request_id || data?.requestId;
-            const requestType = data?.request_type || data?.requestType;
-            router.push({
-              pathname: "/(tabs)/intent",
-              params: {
-                requestId: requestId ? String(requestId) : "",
-                // Reuse the existing `?type=` deep-link behavior in IntentScreen.
-                type: requestType ? String(requestType) : "",
-              },
-            });
-            return;
-          }
-
-          if (pushType === "verification_outcome") {
-            router.push({
-              pathname: "/(tabs)/profile",
-              params: {
-                openVerification: "true",
-              },
-            });
-            return;
-          }
-
-          if (pushType === "relationship_compass_ready") {
-            router.push("/relationship-compass");
-            return;
-          }
-
-          const route = typeof data?.route === "string" ? String(data.route) : "";
-          if (route && route.startsWith("/")) {
-            router.push(route);
-            return;
-          }
-
-          const profileId = data?.profile_id || data?.profileId;
-          if (profileId) {
-            router.push({ pathname: "/profile-view", params: { profileId: String(profileId) } });
-          }
+          router.push(target as any);
         } catch (e) {
           captureException(e, { where: "Notifications.responseListener" });
         }
       };
 
-      // Handle taps that launched the app from a terminated state.
-      Notifications.getLastNotificationResponseAsync()
-        .then((initial) => {
-          if (initial) handleResponse(initial);
-        })
-        .catch((e) => captureException(e, { where: "Notifications.getLastNotificationResponseAsync" }));
+      let interactionHandle: { cancel?: () => void } | null = null;
+      let bootstrapTimer: ReturnType<typeof setTimeout> | null = null;
+
+      // Handle taps that launched the app from a terminated state,
+      // but only after the initial render/interaction cycle settles.
+      if (allowRender) {
+        interactionHandle = InteractionManager.runAfterInteractions(() => {
+          bootstrapTimer = setTimeout(() => {
+            Notifications.getLastNotificationResponseAsync()
+              .then((initial) => {
+                if (!initial) return;
+                void handleResponse(initial, {
+                  deferNavigation: shouldDeferNotificationNavigation({
+                    requestIdentifier: initial.notification.request.identifier,
+                    actionIdentifier: initial.actionIdentifier,
+                    date: initial.notification.date,
+                    data: initial.notification.request.content.data as Record<string, unknown> | undefined,
+                  }),
+                });
+              })
+              .catch((e) => captureException(e, { where: "Notifications.getLastNotificationResponseAsync" }));
+          }, 350);
+        });
+      }
 
       const subscription = Notifications.addNotificationResponseReceivedListener(handleResponse);
 
       return () => {
+        if (bootstrapTimer) clearTimeout(bootstrapTimer);
+        interactionHandle?.cancel?.();
         try {
           subscription.remove();
         } catch (e) {
@@ -320,7 +548,7 @@ function RootLayout() {
       captureException(e, { where: "Notifications.useEffect" });
       return;
     }
-  }, [router]);
+  }, [allowRender, router]);
 
   // Always release native splash even if fonts hang.
   useEffect(() => {
@@ -550,10 +778,22 @@ function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <AuthProvider>
         <View style={{ flex: 1, backgroundColor: Colors[colorScheme].background }}>
+          <OfflineMutationQueueHydrator />
+          <ChatOutboxHydrator />
+          <OfflineSyncHistoryHydrator />
+          <NetworkRecoveryHydrator />
+          <ScreenAwakeSafetyGuard />
+          <ChatRealtimeHydrator />
+          <PendingNotificationRouteHydrator />
           <Slot />
+          <BetweenerAlertHost />
           <InAppToasts />
+          <IntentResponseReminder />
+          <NetworkStatusBanner />
+          <OfflineSyncStatusPill />
           <AccountRecoveryNotice />
           <RecoveryMergeSuggestionNotice />
+          <AppVersionGateHost />
 
           {!SUPABASE_IS_CONFIGURED && (
             <View style={styles.envBanner} pointerEvents="none">

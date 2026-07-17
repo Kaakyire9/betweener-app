@@ -2,15 +2,21 @@
 import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import LinearGradientSafe from "@/components/NativeWrappers/LinearGradientSafe";
+import GlassSurface from "@/components/vibes/depth/GlassSurface";
+import GlowOrb from "@/components/vibes/depth/GlowOrb";
+import RimLight from "@/components/vibes/depth/RimLight";
+import DiscoveryContextLabel from "@/components/vibes/DiscoveryContextLabel";
+import { VIBES_DEPTH_COLORS } from "@/components/vibes/depth/platformGlass";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useMemo, type ReactNode } from "react";
-import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from "react-native";
 
 type Tab = { id: string; label: string; icon: string };
+type SubtitleEmblem = 'ghana' | 'global';
 
 export default function ExploreHeader({
   title = 'Vibes',
-  subtitle = 'Ghana Diaspora Connections',
+  subtitle = 'Where worlds apart feel closer',
   tabs,
   activeTab,
   setActiveTab,
@@ -20,9 +26,11 @@ export default function ExploreHeader({
   onPressFilter,
   filterCount,
   rightAccessory,
+  subtitleEmblem = 'global',
 }: {
   title?: string;
   subtitle?: string;
+  subtitleEmblem?: SubtitleEmblem;
   tabs: Tab[];
   activeTab: string;
   setActiveTab: (id: string) => void;
@@ -36,7 +44,9 @@ export default function ExploreHeader({
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? "light"];
   const isDark = (colorScheme ?? "light") === "dark";
-  const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
+  const { width, height } = useWindowDimensions();
+  const compact = width < 390 || height < 760;
+  const styles = useMemo(() => createStyles(theme, isDark, compact), [theme, isDark, compact]);
 
   return (
     <View style={styles.header}>
@@ -44,11 +54,20 @@ export default function ExploreHeader({
         <View style={styles.titleCluster}>
           <Text style={styles.title}>{title}</Text>
           <View style={styles.subtitleRow}>
-            <View style={styles.subtitleDot} />
-            <Text style={styles.subtitle}>{subtitle}</Text>
+            <DiscoveryContextLabel
+              mode={subtitleEmblem === 'ghana' ? 'ghana_diaspora' : 'global'}
+              label={subtitle}
+            />
           </View>
         </View>
-        <View style={styles.rightRail}>
+        <GlassSurface
+          radius={18}
+          intensity={18}
+          borderOpacity={0.12}
+          fallbackColor={isDark ? "rgba(7,30,34,0.78)" : "rgba(255,250,244,0.70)"}
+          style={styles.rightRail}
+          contentStyle={styles.rightRailSurface}
+        >
           <View style={styles.rightRow}>
           {rightAccessory}
           {onPressFilter ? (
@@ -62,10 +81,17 @@ export default function ExploreHeader({
             </TouchableOpacity>
           ) : null}
           </View>
-        </View>
+        </GlassSurface>
       </View>
 
-      <View style={styles.tabContainer}>
+      <GlassSurface
+        radius={22}
+        intensity={18}
+        borderOpacity={0.11}
+        fallbackColor={isDark ? "rgba(7,30,34,0.72)" : "rgba(255,250,244,0.66)"}
+        style={styles.tabContainer}
+        contentStyle={styles.tabContainerSurface}
+      >
         {tabs.map((t) => (
           <TouchableOpacity
             key={t.id}
@@ -75,18 +101,22 @@ export default function ExploreHeader({
           >
             {activeTab === t.id ? (
               <LinearGradientSafe
-                colors={[theme.tint, theme.accent]}
+                colors={isDark
+                  ? ["rgba(19,168,168,0.20)", "rgba(19,168,168,0.08)", "rgba(244,232,208,0.05)"]
+                  : ["rgba(19,168,168,0.18)", "rgba(255,255,255,0.42)", "rgba(244,232,208,0.22)"]}
                 start={[0, 0]}
                 end={[1, 1]}
                 style={styles.activeTabSurface}
               >
+                <GlowOrb color="rgba(19,168,168,0.20)" size={96} opacity={0.28} top={-42} left={-16} />
                 <MaterialCommunityIcons
                   name={t.icon as any}
                   size={14}
-                  color="#fff"
+                  color={isDark ? "#fff" : theme.tint}
                   style={styles.tabIcon}
                 />
                 <Text style={[styles.tabText, styles.activeTabText]}>{t.label}</Text>
+                <RimLight position="top" color={VIBES_DEPTH_COLORS.teal} opacity={0.2} radius={15} thickness={1} />
               </LinearGradientSafe>
             ) : (
               <View style={styles.tabSurface}>
@@ -101,69 +131,55 @@ export default function ExploreHeader({
             )}
           </TouchableOpacity>
         ))}
-      </View>
+      </GlassSurface>
     </View>
   );
 }
 
-const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
-  const surface = theme.background;
-  const outline = theme.outline;
-  const subtle = theme.backgroundSubtle;
+const createStyles = (theme: typeof Colors.light, isDark: boolean, compact: boolean) => {
+  const surface = isDark ? VIBES_DEPTH_COLORS.background : theme.background;
   const shadowColor = isDark ? "#000" : "#0f172a";
-  const filterBg = isDark ? "rgba(255,255,255,0.06)" : "#f8fafc";
-  const filterBorder = outline;
-  const railBg = isDark ? "rgba(255,255,255,0.035)" : "rgba(255,255,255,0.86)";
-  const tabBg = isDark ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.78)";
+  const filterBg = isDark ? "rgba(7,30,34,0.64)" : "rgba(255,255,255,0.48)";
+  const filterBorder = isDark ? "rgba(255,255,255,0.10)" : "rgba(0,128,128,0.14)";
+  const tabBg = isDark ? "rgba(255,255,255,0.035)" : "rgba(255,255,255,0.34)";
   return StyleSheet.create({
     header: {
-      paddingHorizontal: 20,
-      paddingTop: 14,
-      paddingBottom: 12,
-      backgroundColor: surface,
-      borderBottomColor: outline,
-      borderBottomWidth: 1,
+      paddingHorizontal: compact ? 16 : 20,
+      paddingTop: compact ? 10 : 16,
+      paddingBottom: compact ? 10 : 13,
+      backgroundColor: "transparent",
+      borderBottomColor: isDark ? "rgba(255,255,255,0.05)" : "rgba(0,128,128,0.06)",
+      borderBottomWidth: StyleSheet.hairlineWidth,
     },
-    topRow: { marginBottom: 12, flexDirection: 'row', alignItems: 'flex-start' },
-    titleCluster: { flex: 1, paddingRight: 14 },
+    topRow: { marginBottom: compact ? 10 : 14, flexDirection: 'row', alignItems: 'flex-start' },
+    titleCluster: { flex: 1, paddingRight: compact ? 10 : 14 },
     rightRail: {
       borderRadius: 18,
-      borderWidth: 1,
-      borderColor: outline,
-      backgroundColor: railBg,
-      paddingHorizontal: 7,
-      paddingVertical: 7,
-      shadowColor,
-      shadowOpacity: isDark ? 0.14 : 0.07,
-      shadowRadius: 12,
-      shadowOffset: { width: 0, height: 7 },
-      elevation: 6,
+    },
+    rightRailSurface: {
+      paddingHorizontal: compact ? 5 : 7,
+      paddingVertical: compact ? 5 : 7,
+      borderRadius: 18,
     },
     rightRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-    title: { fontSize: 28, color: theme.text, fontFamily: 'PlayfairDisplay_700Bold', letterSpacing: 0.2 },
+    title: {
+      fontSize: compact ? 32 : 38,
+      color: isDark ? VIBES_DEPTH_COLORS.cream : "#173C3B",
+      fontFamily: 'PlayfairDisplay_700Bold',
+      letterSpacing: -0.6,
+      lineHeight: compact ? 35 : 42,
+    },
     subtitleRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      marginTop: 6,
+      marginTop: compact ? 5 : 7,
     },
-    subtitleDot: {
-      width: 8,
-      height: 8,
-      borderRadius: 4,
-      marginRight: 8,
-      backgroundColor: theme.secondary,
-      shadowColor: theme.secondary,
-      shadowOpacity: isDark ? 0.45 : 0.18,
-      shadowRadius: 8,
-      shadowOffset: { width: 0, height: 0 },
-    },
-    subtitle: { color: theme.textMuted, fontFamily: 'Manrope_600SemiBold', flexShrink: 1 },
     filterButton: {
       alignItems: 'center',
       justifyContent: 'center',
-      width: 40,
-      height: 40,
-      borderRadius: 13,
+      width: compact ? 36 : 40,
+      height: compact ? 36 : 40,
+      borderRadius: compact ? 12 : 13,
       borderWidth: 1,
       borderColor: filterBorder,
       backgroundColor: filterBg,
@@ -194,18 +210,13 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
       lineHeight: 12,
     },
     tabContainer: {
+      borderRadius: 22,
+      marginTop: 4,
+    },
+    tabContainerSurface: {
       flexDirection: "row",
-      backgroundColor: subtle,
-      borderRadius: 20,
-      padding: 6,
-      marginTop: 2,
-      borderWidth: 1,
-      borderColor: outline,
-      shadowColor,
-      shadowOpacity: isDark ? 0.12 : 0.05,
-      shadowRadius: 12,
-      shadowOffset: { width: 0, height: 6 },
-      elevation: 4,
+      padding: compact ? 3 : 5,
+      borderRadius: 22,
     },
     tab: { flex: 1, borderRadius: 14 },
     activeTab: {},
@@ -213,29 +224,32 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
       flexDirection: "row",
       alignItems: "center",
       justifyContent: "center",
-      paddingVertical: 12,
-      paddingHorizontal: 10,
+      paddingVertical: compact ? 9 : 10,
+      paddingHorizontal: compact ? 6 : 10,
       borderRadius: 15,
-      shadowColor: theme.tint,
-      shadowOpacity: isDark ? 0.22 : 0.14,
-      shadowRadius: 12,
-      shadowOffset: { width: 0, height: 6 },
+      overflow: "hidden",
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: "rgba(19,168,168,0.24)",
+      shadowColor: VIBES_DEPTH_COLORS.teal,
+      shadowOpacity: isDark ? 0.2 : 0.12,
+      shadowRadius: 10,
+      shadowOffset: { width: 0, height: 5 },
       elevation: 5,
     },
     tabSurface: {
       flexDirection: "row",
       alignItems: "center",
       justifyContent: "center",
-      paddingVertical: 12,
-      paddingHorizontal: 10,
+      paddingVertical: compact ? 9 : 10,
+      paddingHorizontal: compact ? 6 : 10,
       borderRadius: 15,
       backgroundColor: tabBg,
-      borderWidth: 1,
-      borderColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(15,23,42,0.04)',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,128,128,0.06)',
     },
-    tabIcon: { marginRight: 6 },
-    tabText: { fontSize: 13, color: theme.text, fontFamily: 'Manrope_700Bold' },
-    activeTabText: { color: "#fff" },
+    tabIcon: { marginRight: compact ? 4 : 6 },
+    tabText: { fontSize: compact ? 12 : 13, color: isDark ? theme.text : "rgba(31,42,42,0.72)", fontFamily: 'Manrope_700Bold' },
+    activeTabText: { color: isDark ? "#F8FFFF" : "#173C3B" },
     counterRow: { alignItems: "center", marginTop: 12 },
     counter: { fontSize: 16, fontWeight: "800", color: theme.text },
     counterSubtitle: { fontSize: 12, color: theme.textMuted, marginTop: 2 },

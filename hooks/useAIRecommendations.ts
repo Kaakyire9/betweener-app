@@ -3,12 +3,19 @@ import { Match } from '@/types/match';
 import { computeCompatibilityPercent } from '@/lib/compat/compatibility-score';
 import {
   pickBetterLocationValue,
-  pickPreferredLocationLabel,
+  pickVibesLocationLabel,
 } from '@/lib/location/location-display';
+import {
+  cancelIntentRequestOfflineSafe,
+  createIntentRequestOfflineSafe,
+} from '@/lib/intents/offline-actions';
+import { isLikelyNetworkError } from '@/lib/network';
+import { enqueueSwipeSyncMutation } from '@/lib/offline/mutation-queue';
 import { readCache, writeCache } from '@/lib/persisted-cache';
+import { isOnlineFromLastActive } from '@/lib/presence';
 import { addBreadcrumb } from '@/lib/telemetry/sentry';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { DeviceEventEmitter, Linking } from 'react-native';
 
 // Tunable window for "Active" tab (minutes)
@@ -16,8 +23,7 @@ const ACTIVE_WINDOW_MINUTES = 15;
 const DISTANCE_UNIT_KEY = 'distance_unit';
 const KM_PER_MILE = 1.60934;
 const DISTANCE_UNIT_EVENT = 'distance_unit_changed';
-const ACTIVE_NOW_MS = 3 * 60 * 1000;
-const getPreferredLocationLabel = pickPreferredLocationLabel;
+const getPreferredLocationLabel = pickVibesLocationLabel;
 
 type DistanceUnit = 'auto' | 'km' | 'mi';
 
@@ -44,12 +50,43 @@ const parseDistanceKmFromLabel = (label?: string | null): number | undefined => 
   return undefined;
 };
 
+const arePrimitiveArraysEqual = (left: unknown, right: unknown) => {
+  if (!Array.isArray(left) || !Array.isArray(right)) return false;
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
+};
+
+const areMatchObjectsEquivalent = (left: Match, right: Match) => {
+  const leftKeys = Object.keys(left as Record<string, unknown>);
+  const rightKeys = Object.keys(right as Record<string, unknown>);
+  if (leftKeys.length !== rightKeys.length) return false;
+
+  for (const key of rightKeys) {
+    const leftValue = (left as any)[key];
+    const rightValue = (right as any)[key];
+    if (Array.isArray(leftValue) || Array.isArray(rightValue)) {
+      if (!arePrimitiveArraysEqual(leftValue, rightValue)) return false;
+      continue;
+    }
+    if (leftValue !== rightValue) return false;
+  }
+
+  return true;
+};
+
 const mergePreservingLocationMetadata = (prev: Match[], next: Match[]): Match[] => {
   if (!prev.length || !next.length) return next;
   const prevById = new Map(prev.map((item) => [String(item.id), item]));
-  return next.map((item) => {
+  let changed = false;
+  const mergedList = next.map((item) => {
     const prior = prevById.get(String(item.id));
-    if (!prior) return item;
+    if (!prior) {
+      changed = true;
+      return item;
+    }
     const incomingPrecision = String((item as any).location_precision || '').toUpperCase();
     const shouldTrustIncomingExactLocation = incomingPrecision === 'EXACT';
     const mergedCity = pickBetterLocationValue((item as any).city, (prior as any).city, {
@@ -65,7 +102,7 @@ const mergePreservingLocationMetadata = (prev: Match[], next: Match[]): Match[] 
       preferShorter: true,
       avoidAdministrative: true,
     });
-    return {
+    const mergedCandidate = {
       ...prior,
       ...item,
       city: shouldTrustIncomingExactLocation ? ((item as any).city || undefined) : mergedCity || undefined,
@@ -81,7 +118,20 @@ const mergePreservingLocationMetadata = (prev: Match[], next: Match[]): Match[] 
       distanceKm: typeof (item as any).distanceKm === 'number' ? (item as any).distanceKm : (prior as any).distanceKm,
       distance: (item as any).distance || (prior as any).distance,
     } as Match;
+
+    if (areMatchObjectsEquivalent(prior, mergedCandidate)) {
+      return prior;
+    }
+
+    changed = true;
+    return mergedCandidate;
   });
+
+  if (!changed && prev.length === mergedList.length && mergedList.every((item, index) => item === prev[index])) {
+    return prev;
+  }
+
+  return mergedList;
 };
 
 // Format distance with sensible rounding and short strings
@@ -119,16 +169,8 @@ function computeHaversineKm(lat1: number, lon1: number, lat2: number, lon2: numb
   return R * c;
 }
 
-const isActiveNowFromLastActive = (online: boolean | null | undefined, lastActive?: string | null) => {
-  if (online) return true;
-  if (!lastActive) return false;
-  try {
-    const then = new Date(lastActive).getTime();
-    if (Number.isNaN(then)) return false;
-    return Date.now() - then <= ACTIVE_NOW_MS;
-  } catch {
-    return false;
-  }
+const isActiveNowFromLastActive = (_online: boolean | null | undefined, lastActive?: string | null) => {
+  return isOnlineFromLastActive(lastActive);
 };
 
 const computeSharedInterests = (viewerInterestsRaw: string[] | undefined, interestsArr: string[]) => {
@@ -169,6 +211,7 @@ export default function useAIRecommendations(
     mode?: 'forYou' | 'nearby' | 'active';
     activeWindowMinutes?: number;
     distanceUnit?: DistanceUnit;
+    liveFetchEnabled?: boolean;
   }
 ) {
   // Start empty; prefer server-sourced profiles. Mocks are only a fallback
@@ -179,10 +222,15 @@ export default function useAIRecommendations(
   const [distanceUnit, setDistanceUnit] = useState<DistanceUnit>('auto');
   const [lastMutualMatch, setLastMutualMatch] = useState<Match | null>(null);
   const [swipeHistory, setSwipeHistory] = useState<{ id: string; action: 'like' | 'dislike' | 'superlike'; index: number; match: Match }[]>([]);
+  const swipeHistoryRef = useRef<{ id: string; action: 'like' | 'dislike' | 'superlike'; index: number; match: Match }[]>([]);
   const mountedRef = useRef(true);
-  const presencePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mode = opts?.mode ?? 'forYou';
   const activeWindowMinutes = opts?.activeWindowMinutes ?? ACTIVE_WINDOW_MINUTES;
+  const liveFetchEnabled = opts?.liveFetchEnabled !== false;
+  const queryScopeKey = useMemo(() => {
+    const win = mode === 'active' ? String(activeWindowMinutes) : '-';
+    return `${userId ?? 'anon'}:${mode}:${win}`;
+  }, [activeWindowMinutes, mode, userId]);
   const effectiveDistanceUnit =
     opts?.distanceUnit && opts.distanceUnit !== 'auto' ? opts.distanceUnit : distanceUnit;
   const resolvedDistanceUnit = useMemo(
@@ -193,10 +241,24 @@ export default function useAIRecommendations(
   const cacheKey = useMemo(() => {
     if (!userId) return null;
     const win = mode === 'active' ? String(activeWindowMinutes) : '-';
-    return `cache:ai_recs:v2:${userId}:${mode}:${win}`;
+    return `cache:ai_recs:v3:${userId}:${mode}:${win}`;
   }, [activeWindowMinutes, mode, userId]);
   const cacheLoadedKeyRef = useRef<string | null>(null);
   const cacheWriteInFlightRef = useRef(false);
+  const lastQueryScopeKeyRef = useRef<string | null>(null);
+  const activeQueryScopeKeyRef = useRef(queryScopeKey);
+  const activeFetchRunIdRef = useRef(0);
+
+  useLayoutEffect(() => {
+    if (lastQueryScopeKeyRef.current === queryScopeKey) return;
+    lastQueryScopeKeyRef.current = queryScopeKey;
+    activeQueryScopeKeyRef.current = queryScopeKey;
+    setMatches([]);
+    setLastError(null);
+    setLastFetchedAt(null);
+    swipeHistoryRef.current = [];
+    setSwipeHistory([]);
+  }, [queryScopeKey]);
 
   const persistMatchesCache = useCallback(
     async (next: Match[]) => {
@@ -222,6 +284,7 @@ export default function useAIRecommendations(
     (async () => {
       const cached = await readCache<{ fetchedAt: number; matches: Match[] }>(cacheKey, 6 * 60_000);
       if (cancelled || !cached || !Array.isArray(cached.matches)) return;
+      if (!mountedRef.current || activeQueryScopeKeyRef.current !== queryScopeKey) return;
       setMatches((prev) => (prev.length === 0 ? cached.matches : prev));
       setLastError(null);
       setLastFetchedAt((prev) => prev ?? cached.fetchedAt ?? Date.now());
@@ -230,7 +293,7 @@ export default function useAIRecommendations(
     return () => {
       cancelled = true;
     };
-  }, [cacheKey]);
+  }, [cacheKey, queryScopeKey]);
 
   const getStoredDistanceUnit = useCallback(async (): Promise<DistanceUnit> => {
     try {
@@ -259,9 +322,9 @@ export default function useAIRecommendations(
         const next = prev.map((m) => {
           const row = map.get(String(m.id));
           if (!row) return m;
-          const online = !!row.online;
           const lastActive = row.last_active ?? m.lastActive ?? null;
-          const nextIsActive = isActiveNowFromLastActive(online, lastActive);
+          const online = isOnlineFromLastActive(lastActive);
+          const nextIsActive = isActiveNowFromLastActive(row.online, lastActive);
           if (
             online === (m as any).online &&
             lastActive === m.lastActive &&
@@ -285,8 +348,9 @@ export default function useAIRecommendations(
   }, []);
 
   useEffect(() => {
-    setMatches((prev) =>
-      prev.map((m) => {
+    setMatches((prev) => {
+      let changed = false;
+      const next = prev.map((m) => {
         const fallback = getPreferredLocationLabel(m as any) || m.distance;
         let distanceKm = (m as any).distanceKm;
         if (typeof distanceKm !== 'number' || Number.isNaN(distanceKm)) {
@@ -295,36 +359,68 @@ export default function useAIRecommendations(
         if (typeof distanceKm !== 'number' || Number.isNaN(distanceKm)) {
           return m;
         }
+        const nextDistance = formatDistance(distanceKm, fallback, resolvedDistanceUnit);
+        if (nextDistance === m.distance && distanceKm === (m as any).distanceKm) {
+          return m;
+        }
+        changed = true;
         return {
           ...m,
-          distance: formatDistance(distanceKm, fallback, resolvedDistanceUnit),
+          distance: nextDistance,
           distanceKm,
         } as Match;
-      })
-    );
+      });
+      return changed ? next : prev;
+    });
   }, [resolvedDistanceUnit]);
 
   const presenceIdsKey = useMemo(
-    () => matches.map((m) => String(m.id)).join(','),
+    () => Array.from(new Set(matches.map((m) => String(m.id)).filter(Boolean))).slice(0, 60).join(','),
     [matches]
   );
 
   useEffect(() => {
     if (!presenceIdsKey) return;
-    if (presencePollRef.current) {
-      clearInterval(presencePollRef.current);
-      presencePollRef.current = null;
-    }
     const ids = presenceIdsKey.split(',').filter(Boolean);
     void refreshPresence(ids);
-    presencePollRef.current = setInterval(() => {
-      void refreshPresence(ids);
-    }, 15_000);
+    const channel = supabase.channel(`profiles-presence:vibes:${presenceIdsKey}`);
+    ids.forEach((id) => {
+      channel.on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `id=eq.${id}` },
+        (payload) => {
+          const row = payload.new as { id?: string; online?: boolean | null; last_active?: string | null } | null;
+          if (!row?.id) return;
+          setMatches((prev) => {
+            let changed = false;
+            const next = prev.map((match) => {
+              if (String(match.id) !== String(row.id)) return match;
+              const lastActive = row.last_active ?? match.lastActive ?? null;
+              const online = isOnlineFromLastActive(lastActive);
+              const nextIsActive = isActiveNowFromLastActive(row.online, lastActive);
+              if (
+                online === (match as any).online &&
+                lastActive === match.lastActive &&
+                nextIsActive === match.isActiveNow
+              ) {
+                return match;
+              }
+              changed = true;
+              return {
+                ...match,
+                online,
+                lastActive,
+                isActiveNow: nextIsActive,
+              } as Match;
+            });
+            return changed ? next : prev;
+          });
+        },
+      );
+    });
+    channel.subscribe();
     return () => {
-      if (presencePollRef.current) {
-        clearInterval(presencePollRef.current);
-        presencePollRef.current = null;
-      }
+      supabase.removeChannel(channel);
     };
   }, [presenceIdsKey, refreshPresence]);
 
@@ -356,15 +452,18 @@ export default function useAIRecommendations(
     };
   }, []);
 
-  // simple mock: when a swipe is recorded, remove the head and append a regenerated match
   const recordSwipe = useCallback((id: string, action: 'like' | 'dislike' | 'superlike', index = 0) => {
-    setSwipeHistory((prev) => {
-      const head = matches[0];
-      if (!head) return prev;
-      return [...prev, { id, action, index, match: head }];
-    });
     setMatches((prev: Match[]) => {
-      const next = prev.slice(1);
+      const resolvedIndex = prev.findIndex((match) => String(match.id) === String(id));
+      const matchIndex = resolvedIndex >= 0 ? resolvedIndex : Math.max(0, Math.min(index, prev.length - 1));
+      const swipedMatch = prev[matchIndex];
+      if (!swipedMatch) return prev;
+
+      const historyEntry = { id, action, index: matchIndex, match: swipedMatch };
+      swipeHistoryRef.current = [...swipeHistoryRef.current, historyEntry].slice(-50);
+      setSwipeHistory(swipeHistoryRef.current);
+
+      const next = prev.filter((_, itemIndex) => itemIndex !== matchIndex);
       void persistMatchesCache(next);
       return next;
     });
@@ -372,15 +471,30 @@ export default function useAIRecommendations(
     (async () => {
       try {
         if (!userId) return;
+        const swipeAction = action === 'superlike' ? 'SUPERLIKE' : action === 'like' ? 'LIKE' : 'PASS';
+        const shouldMirrorIntent = action === 'like' || action === 'superlike';
+        const queueSwipeSync = async () => {
+          await enqueueSwipeSyncMutation({
+            userId,
+            targetId: id,
+            action: swipeAction,
+            mirrorIntent: shouldMirrorIntent,
+            message: action === 'superlike' ? 'Superliked you.' : null,
+          });
+        };
         // insert swipe record
         const { error: insertErr } = await supabase
           .from('swipes')
           .upsert([{
             swiper_id: userId,
             target_id: id,
-            action: action === 'superlike' ? 'SUPERLIKE' : action === 'like' ? 'LIKE' : 'PASS',
+            action: swipeAction,
           }], { onConflict: 'swiper_id,target_id' });
         if (insertErr) {
+          if (isLikelyNetworkError(insertErr)) {
+            await queueSwipeSync();
+            return;
+          }
           console.log('[recordSwipe] failed to upsert swipe', insertErr);
         }
 
@@ -388,16 +502,19 @@ export default function useAIRecommendations(
         // We model a swipe-like as a lightweight intent_request of type `like_with_note` so it shows up
         // in Incoming/Sent and can be accepted/passed using the existing intent flow.
         if (action === 'like' || action === 'superlike') {
-          const { error: intentErr } = await supabase.rpc('rpc_create_intent_request', {
-            p_recipient_id: id,
-            p_type: 'like_with_note',
-            p_message: action === 'superlike' ? 'Superliked you.' : null,
-            p_metadata: {
+          try {
+            await createIntentRequestOfflineSafe({
+              recipientId: id,
+              type: 'like_with_note',
+              message: action === 'superlike' ? 'Superliked you.' : null,
+              metadata: {
               source: 'swipe',
               swipe_action: action,
-            },
-          });
-          if (intentErr) {
+              },
+              actorProfileId: userId,
+              snapshotOwnerIds: [userId],
+            });
+          } catch (intentErr) {
             // Best-effort: swipes should still function even if the Intent mirror fails.
             console.log('[recordSwipe] failed to create like intent', intentErr);
           }
@@ -425,7 +542,15 @@ export default function useAIRecommendations(
           }
         }
       } catch (_e) {
-        // ignore and keep local mock behavior
+        if (isLikelyNetworkError(_e) && userId) {
+          await enqueueSwipeSyncMutation({
+            userId,
+            targetId: id,
+            action: action === 'superlike' ? 'SUPERLIKE' : action === 'like' ? 'LIKE' : 'PASS',
+            mirrorIntent: action === 'like' || action === 'superlike',
+            message: action === 'superlike' ? 'Superliked you.' : null,
+          });
+        }
       }
     })();
   }, [matches, persistMatchesCache, userId]);
@@ -446,6 +571,62 @@ export default function useAIRecommendations(
     return false;
   }, [matches]);
 
+  const cleanupUndoneSwipe = useCallback(async (entry: { id: string; action: 'like' | 'dislike' | 'superlike' }) => {
+    if (!userId || !entry?.id) return;
+
+    try {
+      if (entry.action === 'like' || entry.action === 'superlike') {
+        const { data: intentRows, error: intentLookupError } = await supabase
+          .from('intent_requests')
+          .select('id')
+          .eq('actor_id', userId)
+          .eq('recipient_id', entry.id)
+          .eq('status', 'pending')
+          .order('created_at', { ascending: false })
+          .limit(1);
+
+        const intentId = Array.isArray(intentRows) ? intentRows[0]?.id : null;
+        if (!intentLookupError && intentId) {
+          try {
+            await cancelIntentRequestOfflineSafe(intentId, {
+              snapshotOwnerIds: [userId],
+            });
+          } catch (cancelError) {
+            if (typeof __DEV__ !== 'undefined' && __DEV__) {
+              console.log('[undoLastSwipe] failed to cancel mirrored intent', cancelError);
+            }
+          }
+        } else if (intentLookupError && typeof __DEV__ !== 'undefined' && __DEV__) {
+          console.log('[undoLastSwipe] failed to find mirrored intent', intentLookupError);
+        }
+      }
+
+      if (entry.action === 'superlike') {
+        const { error: refundError } = await supabase.rpc('rpc_refund_undone_superlike', {
+          p_profile_id: userId,
+          p_target_profile_id: entry.id,
+        });
+        if (refundError && typeof __DEV__ !== 'undefined' && __DEV__) {
+          console.log('[undoLastSwipe] failed to refund superlike', refundError);
+        }
+      }
+
+      const { error: deleteSwipeError } = await supabase
+        .from('swipes')
+        .delete()
+        .eq('swiper_id', userId)
+        .eq('target_id', entry.id);
+
+      if (deleteSwipeError && typeof __DEV__ !== 'undefined' && __DEV__) {
+        console.log('[undoLastSwipe] failed to remove swipe row', deleteSwipeError);
+      }
+    } catch (error) {
+      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        console.log('[undoLastSwipe] cleanup failed', error);
+      }
+    }
+  }, [userId]);
+
   // Realtime listener for matches inserts so UI can react even if swipe reciprocal check is skipped by RLS
   const matchesRef = useRef(matches);
   useEffect(() => { matchesRef.current = matches; }, [matches]);
@@ -459,7 +640,13 @@ export default function useAIRecommendations(
         const row = payload?.new;
         if (!row) return;
         if (row.user1_id !== userId && row.user2_id !== userId) return;
-        if (payload?.eventType === 'UPDATE' && payload?.old?.status === 'ACCEPTED') return;
+        const nextStatus = String(row.status || '').toUpperCase();
+        const previousStatus = String(payload?.old?.status || '').toUpperCase();
+        if (nextStatus !== 'ACCEPTED') {
+          if (payload?.eventType === 'UPDATE' && previousStatus === 'ACCEPTED') return;
+          return;
+        }
+        if (payload?.eventType === 'UPDATE' && previousStatus === 'ACCEPTED') return;
         const otherId = row.user1_id === userId ? row.user2_id : row.user1_id;
         const nowTs = Date.now();
         if (lastMatchToastRef.current.id === String(otherId) && (nowTs - lastMatchToastRef.current.ts) < 5000) {
@@ -567,13 +754,31 @@ export default function useAIRecommendations(
     };
 
     const channel = supabase
-      .channel('matches-realtime')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'matches', filter: 'status=eq.ACCEPTED' }, handleMatchChange)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'matches', filter: 'status=eq.ACCEPTED' }, handleMatchChange);
+      .channel(`matches-realtime:${userId}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'matches', filter: `user1_id=eq.${userId}` },
+        handleMatchChange,
+      )
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'matches', filter: `user2_id=eq.${userId}` },
+        handleMatchChange,
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'matches', filter: `user1_id=eq.${userId}` },
+        handleMatchChange,
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'matches', filter: `user2_id=eq.${userId}` },
+        handleMatchChange,
+      );
 
     try { channel.subscribe(); } catch {}
     return () => {
-      try { channel.unsubscribe(); } catch {}
+      try { supabase.removeChannel(channel); } catch {}
     };
   }, [userId, mode]);
 
@@ -617,27 +822,29 @@ export default function useAIRecommendations(
   }, [triggerMutualMatch]);
 
   const undoLastSwipe = useCallback((): { match: Match; index: number } | null => {
-    let lastEntry: { id: string; action: 'like' | 'dislike' | 'superlike'; index: number; match: Match } | undefined;
-    setSwipeHistory((prev) => {
-      if (prev.length === 0) return prev;
-      lastEntry = prev[prev.length - 1];
-      return prev.slice(0, -1);
-    });
+    const lastEntry = swipeHistoryRef.current[swipeHistoryRef.current.length - 1];
 
     if (!lastEntry) return null;
+    swipeHistoryRef.current = swipeHistoryRef.current.slice(0, -1);
+    setSwipeHistory(swipeHistoryRef.current);
+    void cleanupUndoneSwipe(lastEntry);
 
     // re-insert the match at the front so it becomes the active card again
     // and remove the generated tail element that was appended when the swipe
     // was originally recorded — this keeps the matches array length stable
     setMatches((prev) => {
-      if (prev.length === 0) return [lastEntry!.match];
-      const withoutLast = prev.slice(0, -1);
-      const next = [lastEntry!.match, ...withoutLast];
+      const withoutDuplicate = prev.filter((match) => String(match.id) !== String(lastEntry.match.id));
+      const insertAt = Math.max(0, Math.min(lastEntry.index, withoutDuplicate.length));
+      const next = [
+        ...withoutDuplicate.slice(0, insertAt),
+        lastEntry.match,
+        ...withoutDuplicate.slice(insertAt),
+      ];
       void persistMatchesCache(next);
       return next;
     });
     return { match: lastEntry.match, index: lastEntry.index };
-  }, [persistMatchesCache]);
+  }, [cleanupUndoneSwipe, persistMatchesCache]);
 
   const smartCount = useMemo(() => {
     // pretend some are AI-curated
@@ -658,6 +865,36 @@ export default function useAIRecommendations(
   }, []);
 
   const fetchMatchesFromServer = useCallback(async () => {
+    if (!liveFetchEnabled) return;
+    const fetchRunId = activeFetchRunIdRef.current + 1;
+    activeFetchRunIdRef.current = fetchRunId;
+
+    const isCurrentFetch = () =>
+      mountedRef.current &&
+      activeFetchRunIdRef.current === fetchRunId &&
+      activeQueryScopeKeyRef.current === queryScopeKey;
+
+    const commitFetchFailure = (err: any) => {
+      if (!isCurrentFetch()) return false;
+      setLastError(err as any);
+      setLastFetchedAt(Date.now());
+      return true;
+    };
+
+    const commitMatchesResult = (filtered: Match[]) => {
+      if (!isCurrentFetch()) return false;
+
+      let mergedFiltered = filtered;
+      setMatches((prev) => {
+        mergedFiltered = mergePreservingLocationMetadata(prev, filtered);
+        return mergedFiltered;
+      });
+      setLastError(null);
+      setLastFetchedAt(Date.now());
+      void persistMatchesCache(mergedFiltered);
+      return true;
+    };
+
     try {
       const storedUnit = await getStoredDistanceUnit();
       const unitForFormat: DistanceUnit = storedUnit === 'auto' ? resolveAutoUnit() : storedUnit;
@@ -667,9 +904,6 @@ export default function useAIRecommendations(
         mode,
         hasUserId: !!userId,
       });
-      if (typeof __DEV__ !== 'undefined' && __DEV__) {
-        console.log('[useAIRecommendations] fetchMatchesFromServer starting', { userId, fetchId, mode });
-      }
 
       // Fast path: hit the scored RPCs first. Avoid prefetching extra viewer data
       // (profile/interests) on cold start/resume, because those extra queries can hang
@@ -678,8 +912,7 @@ export default function useAIRecommendations(
         const noteRpcFailure = (err: any, fn: string) => {
           // Important: mark that a fetch attempt happened so the UI can exit skeleton/loading
           // deterministically and show a retry/error state.
-          setLastError(err as any);
-          setLastFetchedAt(Date.now());
+          commitFetchFailure(err);
           addBreadcrumb('[recs] fetch_fail', {
             fetchId,
             mode,
@@ -762,6 +995,17 @@ export default function useAIRecommendations(
             .filter((row) => !Array.isArray(row?.interests) || row.interests.length === 0)
             .map((row) => row?.id)
             .filter(Boolean);
+          const idsNeedingLocationAffinity = rows
+            .filter(
+              (row) =>
+                row?.id &&
+                row?.location_affinity_reason_code == null &&
+                row?.location_affinity_strength == null &&
+                row?.location_affinity_short_text == null &&
+                row?.location_affinity_long_text == null,
+            )
+            .map((row) => row?.id)
+            .filter(Boolean);
 
           const profileMetaMap: Record<
             string,
@@ -773,37 +1017,68 @@ export default function useAIRecommendations(
               current_country?: string | null;
               current_country_code?: string | null;
               location_precision?: string | null;
+              locality_geoname_id?: number | null;
+              locality_district?: string | null;
+              roots?: string[] | null;
+              roots_note?: string | null;
+              roots_visibility?: string | null;
+              roots_region?: string | null;
+              roots_locality?: string | null;
+              roots_locality_geoname_id?: number | null;
+              origin_country?: string | null;
+              origin_country_code?: string | null;
+            }
+          > = {};
+          const locationAffinityMap: Record<
+            string,
+            {
+              reason_code?: string | null;
+              strength?: number | null;
+              short_text?: string | null;
+              long_text?: string | null;
             }
           > = {};
           try {
             const interestsMap: Record<string, string[]> = {};
+            const interestsPromise =
+              idsNeedingInterests.length > 0
+                ? supabase
+                    .from('profile_interests')
+                    .select('profile_id, interests!inner(name)')
+                    .in('profile_id', idsNeedingInterests)
+                : Promise.resolve({ data: null, error: null } as any);
+            const profilePromise = supabase
+              .from('profiles')
+              .select('id, gender, city, location, region, current_country, current_country_code, location_precision, locality_geoname_id, locality_district, roots, roots_note, roots_visibility, roots_region, roots_locality, roots_locality_geoname_id, origin_country, origin_country_code')
+              .in('id', ids);
+            const affinityPromise =
+              userId && idsNeedingLocationAffinity.length > 0
+                ? supabase.rpc('compute_location_affinities' as any, {
+                    p_viewer_profile_id: userId,
+                    p_candidate_profile_ids: idsNeedingLocationAffinity,
+                  } as any)
+                : Promise.resolve({ data: null, error: null } as any);
 
-            if (idsNeedingInterests.length > 0) {
-              const { data: piData, error: piErr } = await supabase
-                .from('profile_interests')
-                .select('profile_id, interests!inner(name)')
-                .in('profile_id', idsNeedingInterests);
+            const [
+              { data: piData, error: piErr },
+              { data: profileRows, error: profileErr },
+              { data: affinityRows, error: affinityErr },
+            ] = await Promise.all([interestsPromise, profilePromise, affinityPromise]);
 
-              if (!piErr && Array.isArray(piData)) {
-                for (const row of piData as any[]) {
-                  const pid = row.profile_id;
-                  let arr: string[] = [];
-                  if (Array.isArray(row.interests)) {
-                    arr = row.interests.map((i: any) => i?.name).filter(Boolean);
-                  } else if (row.interests?.name) {
-                    arr = [row.interests.name];
-                  }
-                  if (!pid) continue;
-                  if (!interestsMap[pid]) interestsMap[pid] = [];
-                  interestsMap[pid] = [...interestsMap[pid], ...arr];
+            if (!piErr && Array.isArray(piData)) {
+              for (const row of piData as any[]) {
+                const pid = row.profile_id;
+                let arr: string[] = [];
+                if (Array.isArray(row.interests)) {
+                  arr = row.interests.map((i: any) => i?.name).filter(Boolean);
+                } else if (row.interests?.name) {
+                  arr = [row.interests.name];
                 }
+                if (!pid) continue;
+                if (!interestsMap[pid]) interestsMap[pid] = [];
+                interestsMap[pid] = [...interestsMap[pid], ...arr];
               }
             }
-
-            const { data: profileRows, error: profileErr } = await supabase
-              .from('profiles')
-              .select('id, gender, city, location, region, current_country, current_country_code, location_precision')
-              .in('id', ids);
 
             if (!profileErr && Array.isArray(profileRows)) {
               for (const row of profileRows as any[]) {
@@ -816,6 +1091,33 @@ export default function useAIRecommendations(
                   current_country: row.current_country ?? null,
                   current_country_code: row.current_country_code ?? null,
                   location_precision: row.location_precision ?? null,
+                  locality_geoname_id: row.locality_geoname_id ?? null,
+                  locality_district: row.locality_district ?? null,
+                  roots: row.roots ?? null,
+                  roots_note: row.roots_note ?? null,
+                  roots_visibility: row.roots_visibility ?? null,
+                  roots_region: row.roots_region ?? null,
+                  roots_locality: row.roots_locality ?? null,
+                  roots_locality_geoname_id: row.roots_locality_geoname_id ?? null,
+                  origin_country: row.origin_country ?? null,
+                  origin_country_code: row.origin_country_code ?? null,
+                };
+              }
+            }
+
+            if (!affinityErr && Array.isArray(affinityRows)) {
+              for (const row of affinityRows as any[]) {
+                if (!row?.profile_id) continue;
+                locationAffinityMap[String(row.profile_id)] = {
+                  reason_code: row.reason_code ?? null,
+                  strength:
+                    typeof row.strength === 'number'
+                      ? row.strength
+                      : typeof row.strength === 'string'
+                        ? Number(row.strength)
+                        : null,
+                  short_text: row.short_text ?? null,
+                  long_text: row.long_text ?? null,
                 };
               }
             }
@@ -833,6 +1135,36 @@ export default function useAIRecommendations(
               current_country: row?.current_country ?? profileMetaMap[String(row?.id)]?.current_country ?? null,
               current_country_code: row?.current_country_code ?? profileMetaMap[String(row?.id)]?.current_country_code ?? null,
               location_precision: row?.location_precision ?? profileMetaMap[String(row?.id)]?.location_precision ?? null,
+              locality_geoname_id: row?.locality_geoname_id ?? profileMetaMap[String(row?.id)]?.locality_geoname_id ?? null,
+              locality_district: row?.locality_district ?? profileMetaMap[String(row?.id)]?.locality_district ?? null,
+              roots: row?.roots ?? profileMetaMap[String(row?.id)]?.roots ?? null,
+              roots_note: row?.roots_note ?? profileMetaMap[String(row?.id)]?.roots_note ?? null,
+              roots_visibility: row?.roots_visibility ?? profileMetaMap[String(row?.id)]?.roots_visibility ?? null,
+              roots_region: row?.roots_region ?? profileMetaMap[String(row?.id)]?.roots_region ?? null,
+              roots_locality: row?.roots_locality ?? profileMetaMap[String(row?.id)]?.roots_locality ?? null,
+              roots_locality_geoname_id:
+                row?.roots_locality_geoname_id ??
+                profileMetaMap[String(row?.id)]?.roots_locality_geoname_id ??
+                null,
+              origin_country: row?.origin_country ?? profileMetaMap[String(row?.id)]?.origin_country ?? null,
+              origin_country_code:
+                row?.origin_country_code ?? profileMetaMap[String(row?.id)]?.origin_country_code ?? null,
+              location_affinity_reason_code:
+                row?.location_affinity_reason_code ??
+                locationAffinityMap[String(row?.id)]?.reason_code ??
+                null,
+              location_affinity_strength:
+                row?.location_affinity_strength ??
+                locationAffinityMap[String(row?.id)]?.strength ??
+                null,
+              location_affinity_short_text:
+                row?.location_affinity_short_text ??
+                locationAffinityMap[String(row?.id)]?.short_text ??
+                null,
+              location_affinity_long_text:
+                row?.location_affinity_long_text ??
+                locationAffinityMap[String(row?.id)]?.long_text ??
+                null,
             }));
           } catch {
             return rows;
@@ -903,8 +1235,180 @@ export default function useAIRecommendations(
             current_country: (p as any).current_country,
             current_country_code: (p as any).current_country_code,
             location_precision: (p as any).location_precision,
+            locationAffinityReasonCode:
+              (p as any).locationAffinityReasonCode ??
+              (p as any).location_affinity_reason_code ??
+              null,
+            locationAffinityStrength:
+              toNum((p as any).locationAffinityStrength) ??
+              toNum((p as any).location_affinity_strength) ??
+              null,
+            locationInsight:
+              (p as any).locationInsight ??
+              (typeof (p as any).location_affinity_short_text === 'string'
+                ? (p as any).location_affinity_short_text
+                : null),
+            locality_geoname_id: (p as any).locality_geoname_id ?? null,
+            locality_district: (p as any).locality_district ?? null,
+            roots: (p as any).roots ?? null,
+            roots_note: (p as any).roots_note ?? null,
+            roots_visibility: (p as any).roots_visibility ?? null,
+            roots_region: (p as any).roots_region ?? null,
+            roots_locality: (p as any).roots_locality ?? null,
+            roots_locality_geoname_id: (p as any).roots_locality_geoname_id ?? null,
+            origin_country: (p as any).origin_country ?? null,
+            origin_country_code: (p as any).origin_country_code ?? null,
+            recommendationReasons: p?.recommendation_reasons ?? undefined,
+            premiumPlan:
+              p?.recommendation_reasons?.premium_plan === 'GOLD' || p?.recommendation_reasons?.premium_plan === 'SILVER'
+                ? p.recommendation_reasons.premium_plan
+                : 'FREE',
+            hasActiveBoost: Boolean(p?.recommendation_reasons?.has_active_boost),
+            boostEndsAt:
+              typeof p?.recommendation_reasons?.boost_ends_at === 'string'
+                ? p.recommendation_reasons.boost_ends_at
+                : null,
+            subscriptionVisibilityScore:
+              typeof p?.recommendation_reasons?.subscription_visibility_score === 'number'
+                ? p.recommendation_reasons.subscription_visibility_score
+                : null,
+            recommendationVersion:
+              typeof p?.recommendation_reasons?.version === 'string'
+                ? p.recommendation_reasons.version
+                : undefined,
+            serverRanked: Boolean(p?.recommendation_reasons),
           } as Match);
         };
+
+        try {
+          const v2Segment = mode === 'active' ? 'active_now' : mode === 'nearby' ? 'nearby' : 'for_you';
+          const v2Args = {
+            p_user_id: userId,
+            p_segment: v2Segment,
+            p_limit: mode === 'active' ? 50 : 30,
+            p_active_window_minutes: activeWindowMinutes,
+          };
+          const v5 = await rpc('get_vibes_recommendations_v5', v2Args);
+          if (v5?.error?.code === 'client_timeout') {
+            noteRpcFailure(v5.error, 'get_vibes_recommendations_v5');
+            return;
+          }
+          if (!v5?.error && Array.isArray(v5?.data)) {
+            const enriched = await enrichRpcRowsWithInterests(v5.data);
+            const mapped = enriched.map((p: any) => mapRpcRow(p, true, null));
+            const filtered = filterDiscoverable(mapped);
+            if (!commitMatchesResult(filtered)) return;
+            addBreadcrumb('[recs] fetch_ok', {
+              fetchId,
+              mode,
+              fn: 'get_vibes_recommendations_v5',
+              rows: mapped.length,
+            });
+            return;
+          }
+          if (v5?.error) {
+            addBreadcrumb('[recs] v5_fallback', {
+              fetchId,
+              mode,
+              errorCode: v5.error.code ?? null,
+              message: String(v5.error.message || 'v5_error'),
+            });
+          }
+        } catch (e) {
+          addBreadcrumb('[recs] v5_throw_fallback', {
+            fetchId,
+            mode,
+            message: String((e as any)?.message || e || 'v5_throw'),
+          });
+        }
+
+        try {
+          const v2Segment = mode === 'active' ? 'active_now' : mode === 'nearby' ? 'nearby' : 'for_you';
+          const v2Args = {
+            p_user_id: userId,
+            p_segment: v2Segment,
+            p_limit: mode === 'active' ? 50 : 30,
+            p_active_window_minutes: activeWindowMinutes,
+          };
+          const v3 = await rpc('get_vibes_recommendations_v3', v2Args);
+          if (v3?.error?.code === 'client_timeout') {
+            noteRpcFailure(v3.error, 'get_vibes_recommendations_v3');
+            return;
+          }
+          if (!v3?.error && Array.isArray(v3?.data)) {
+            const enriched = await enrichRpcRowsWithInterests(v3.data);
+            const needsDistanceFallback = enriched.some(
+              (p: any) =>
+                toNum(p?.distance_km) == null &&
+                toNum(p?.latitude) != null &&
+                toNum(p?.longitude) != null,
+            );
+            const viewerCoords = needsDistanceFallback ? await loadRpcViewerCoords() : null;
+            const mapped = enriched.map((p: any) => mapRpcRow(p, true, viewerCoords));
+            const filtered = filterDiscoverable(mapped);
+            if (!commitMatchesResult(filtered)) return;
+            addBreadcrumb('[recs] fetch_ok', { fetchId, mode, fn: 'get_vibes_recommendations_v3', rows: mapped.length });
+            return;
+          }
+          if (v3?.error) {
+            addBreadcrumb('[recs] v3_fallback', {
+              fetchId,
+              mode,
+              errorCode: v3.error.code ?? null,
+              message: String(v3.error.message || 'v3_error'),
+            });
+          }
+        } catch (e) {
+          addBreadcrumb('[recs] v3_throw_fallback', {
+            fetchId,
+            mode,
+            message: String((e as any)?.message || e || 'v3_throw'),
+          });
+        }
+
+        try {
+          const v2Segment = mode === 'active' ? 'active_now' : mode === 'nearby' ? 'nearby' : 'for_you';
+          const v2Args = {
+            p_user_id: userId,
+            p_segment: v2Segment,
+            p_limit: mode === 'active' ? 50 : 30,
+            p_active_window_minutes: activeWindowMinutes,
+          };
+          const v2 = await rpc('get_vibes_recommendations_v2', v2Args);
+          if (v2?.error?.code === 'client_timeout') {
+            noteRpcFailure(v2.error, 'get_vibes_recommendations_v2');
+            return;
+          }
+          if (!v2?.error && Array.isArray(v2?.data)) {
+            const enriched = await enrichRpcRowsWithInterests(v2.data);
+            const needsDistanceFallback = enriched.some(
+              (p: any) =>
+                toNum(p?.distance_km) == null &&
+                toNum(p?.latitude) != null &&
+                toNum(p?.longitude) != null,
+            );
+            const viewerCoords = needsDistanceFallback ? await loadRpcViewerCoords() : null;
+            const mapped = enriched.map((p: any) => mapRpcRow(p, true, viewerCoords));
+            const filtered = filterDiscoverable(mapped);
+            if (!commitMatchesResult(filtered)) return;
+            addBreadcrumb('[recs] fetch_ok', { fetchId, mode, fn: 'get_vibes_recommendations_v2', rows: mapped.length });
+            return;
+          }
+          if (v2?.error) {
+            addBreadcrumb('[recs] v2_fallback', {
+              fetchId,
+              mode,
+              errorCode: v2.error.code ?? null,
+              message: String(v2.error.message || 'v2_error'),
+            });
+          }
+        } catch (e) {
+          addBreadcrumb('[recs] v2_throw_fallback', {
+            fetchId,
+            mode,
+            message: String((e as any)?.message || e || 'v2_throw'),
+          });
+        }
 
         if (mode === 'nearby') {
           try {
@@ -931,15 +1435,7 @@ export default function useAIRecommendations(
               const viewerCoords = needsDistanceFallback ? await loadRpcViewerCoords() : null;
               const mapped = enriched.map((p: any) => mapRpcRow(p, true, viewerCoords));
               const filtered = filterDiscoverable(mapped);
-              let mergedFiltered = filtered;
-              setMatches((prev) => {
-                mergedFiltered = mergePreservingLocationMetadata(prev, filtered);
-                return mergedFiltered;
-              });
-              setLastError(null);
-              setLastFetchedAt(Date.now());
-              void persistMatchesCache(mergedFiltered);
-              if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] nearby rpc result', { count: mapped.length });
+              if (!commitMatchesResult(filtered)) return;
               addBreadcrumb('[recs] fetch_ok', { fetchId, mode, rows: mapped.length });
               return;
             }
@@ -973,14 +1469,7 @@ export default function useAIRecommendations(
               const viewerCoords = needsDistanceFallback ? await loadRpcViewerCoords() : null;
               const mapped = enriched.map((p: any) => mapRpcRow(p, true, viewerCoords));
               const filtered = filterDiscoverable(mapped);
-              let mergedFiltered = filtered;
-              setMatches((prev) => {
-                mergedFiltered = mergePreservingLocationMetadata(prev, filtered);
-                return mergedFiltered;
-              });
-              setLastError(null);
-              setLastFetchedAt(Date.now());
-              void persistMatchesCache(mergedFiltered);
+              if (!commitMatchesResult(filtered)) return;
               if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] active rpc result', { count: mapped.length });
               addBreadcrumb('[recs] fetch_ok', { fetchId, mode, rows: mapped.length });
               return;
@@ -1016,14 +1505,7 @@ export default function useAIRecommendations(
               const viewerCoords = needsDistanceFallback ? await loadRpcViewerCoords() : null;
               const mapped = enriched.map((p: any) => mapRpcRow(p, true, viewerCoords));
               const filtered = filterDiscoverable(mapped);
-              let mergedFiltered = filtered;
-              setMatches((prev) => {
-                mergedFiltered = mergePreservingLocationMetadata(prev, filtered);
-                return mergedFiltered;
-              });
-              setLastError(null);
-              setLastFetchedAt(Date.now());
-              void persistMatchesCache(mergedFiltered);
+              if (!commitMatchesResult(filtered)) return;
               if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] forYou rpc result', { count: mapped.length });
               addBreadcrumb('[recs] fetch_ok', { fetchId, mode, rows: mapped.length });
               return;
@@ -1116,9 +1598,9 @@ export default function useAIRecommendations(
         // due to missing columns (Postgres error 42703), retry with a
         // minimal safe column list to avoid falling back to mocks.
         const extendedSelect =
-          'id, user_id, full_name, age, bio, avatar_url, city, location, latitude, longitude, region, tribe, religion, gender, personality_type, looking_for, love_language, wants_children, smoking, online, is_active, last_active, verification_level, profile_video, current_country, current_country_code, location_precision, matchmaking_mode, discoverable_in_vibes, profile_completed';
+          'id, user_id, full_name, age, bio, avatar_url, city, location, latitude, longitude, region, tribe, religion, gender, personality_type, looking_for, love_language, wants_children, smoking, online, is_active, last_active, verification_level, profile_video, current_country, current_country_code, location_precision, locality_geoname_id, locality_district, roots, roots_note, roots_visibility, roots_region, roots_locality, roots_locality_geoname_id, origin_country, origin_country_code, matchmaking_mode, discoverable_in_vibes, profile_completed, created_at';
         const minimalSelect =
-          'id, user_id, full_name, age, bio, avatar_url, city, location, latitude, longitude, region, tribe, religion, gender, personality_type, looking_for, love_language, wants_children, smoking, online, is_active, last_active, verification_level, profile_video, current_country, current_country_code, location_precision, matchmaking_mode, discoverable_in_vibes, profile_completed';
+          'id, user_id, full_name, age, bio, avatar_url, city, location, latitude, longitude, region, tribe, religion, gender, personality_type, looking_for, love_language, wants_children, smoking, online, is_active, last_active, verification_level, profile_video, current_country, current_country_code, location_precision, locality_geoname_id, locality_district, roots, roots_note, roots_visibility, roots_region, roots_locality, roots_locality_geoname_id, origin_country, origin_country_code, matchmaking_mode, discoverable_in_vibes, profile_completed, created_at';
 
         let data: any[] | null = null;
         let error: any = null;
@@ -1272,20 +1754,24 @@ export default function useAIRecommendations(
               current_country: p.current_country,
               current_country_code: (p as any).current_country_code,
               location_precision: p.location_precision,
+              locality_geoname_id: (p as any).locality_geoname_id ?? null,
+              locality_district: (p as any).locality_district ?? null,
+              roots: (p as any).roots ?? null,
+              roots_note: (p as any).roots_note ?? null,
+              roots_visibility: (p as any).roots_visibility ?? null,
+              roots_region: (p as any).roots_region ?? null,
+              roots_locality: (p as any).roots_locality ?? null,
+              roots_locality_geoname_id: (p as any).roots_locality_geoname_id ?? null,
+              origin_country: (p as any).origin_country ?? null,
+              origin_country_code: (p as any).origin_country_code ?? null,
               matchmaking_mode: (p as any).matchmaking_mode ?? false,
               discoverable_in_vibes: (p as any).discoverable_in_vibes ?? true,
               profile_completed: (p as any).profile_completed,
+              created_at: p.created_at ?? null,
             } as Match);
           });
           const filtered = filterDiscoverable(mapped);
-          let mergedFiltered = filtered;
-          setMatches((prev) => {
-            mergedFiltered = mergePreservingLocationMetadata(prev, filtered);
-            return mergedFiltered;
-          });
-          setLastError(null);
-          setLastFetchedAt(Date.now());
-          void persistMatchesCache(mergedFiltered);
+          if (!commitMatchesResult(filtered)) return;
           if (typeof __DEV__ !== 'undefined' && __DEV__) {
             console.log('[useAIRecommendations] fetched matches from server', { count: mapped.length, sample: mapped.slice(0, 3) });
           }
@@ -1296,9 +1782,30 @@ export default function useAIRecommendations(
         // returned zero rows, leave `matches` empty so the UI shows the empty state.
         if (error) {
           console.log('[useAIRecommendations] profiles query error (falling back to mocks)', error);
-          setLastError(error as any);
+          commitFetchFailure(error);
         } else if (Array.isArray(data) && data.length === 0) {
-          if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] profiles query returned 0 rows - leaving matches empty');
+          const cachedMatches = cacheKey
+            ? ((await readCache<{ fetchedAt: number; matches: Match[] }>(cacheKey, 6 * 60_000))?.matches ?? [])
+            : [];
+          const shouldPreserveExisting = matchesRef.current.length > 0 || cachedMatches.length > 0;
+          if (typeof __DEV__ !== 'undefined' && __DEV__) {
+            console.log('[useAIRecommendations] profiles query returned 0 rows', {
+              preservedExisting: shouldPreserveExisting,
+              liveCount: matchesRef.current.length,
+              cachedCount: cachedMatches.length,
+            });
+          }
+          if (shouldPreserveExisting) {
+            if (matchesRef.current.length === 0 && cachedMatches.length > 0) {
+              if (!isCurrentFetch()) return;
+              setMatches(cachedMatches);
+            }
+            if (!isCurrentFetch()) return;
+            setLastError(null);
+            setLastFetchedAt(Date.now());
+            return;
+          }
+          if (!isCurrentFetch()) return;
           setMatches([]);
           setLastError(null);
           setLastFetchedAt(Date.now());
@@ -1313,6 +1820,7 @@ export default function useAIRecommendations(
       }
     } catch (e) {
       console.log('[useAIRecommendations] fetch error', e);
+      if (!isCurrentFetch()) return;
       setLastError(e as any);
       setLastFetchedAt((prev) => prev ?? Date.now());
       return;
@@ -1320,9 +1828,10 @@ export default function useAIRecommendations(
     // If we reached here it means a server fetch was attempted and failed
     // (or returned no profiles). Keep any cached/previous matches visible.
     console.log('[useAIRecommendations] fetch failed (keeping existing matches if any)');
+    if (!isCurrentFetch()) return;
     setLastError((prev) => prev ?? new Error('fetch_failed'));
     setLastFetchedAt((prev) => prev ?? Date.now());
-  }, [userId, mode, activeWindowMinutes, resolvedDistanceUnit, getStoredDistanceUnit, persistMatchesCache]);
+  }, [activeWindowMinutes, getStoredDistanceUnit, liveFetchEnabled, mode, persistMatchesCache, queryScopeKey, resolvedDistanceUnit, userId]);
 
     // Fetch matches on mount and when userId changes
     useEffect(() => {
@@ -1332,6 +1841,7 @@ export default function useAIRecommendations(
   const refreshMatches = useCallback(() => {
     // fire-and-forget: try server, fallback to mock on error
     void fetchMatchesFromServer();
+    swipeHistoryRef.current = [];
     setSwipeHistory(() => []);
   }, [fetchMatchesFromServer]);
 
@@ -1342,7 +1852,7 @@ export default function useAIRecommendations(
       // fetch optional profile fields
       const { data: profileData } = await supabase
         .from('profiles')
-              .select('id, city, location, profile_video, latitude, longitude, region, tribe, religion, current_country, current_country_code, location_precision, personality_type, online, is_active, last_active, verification_level')
+              .select('id, city, location, avatar_url, photos, profile_video, latitude, longitude, region, tribe, religion, current_country, current_country_code, location_precision, locality_geoname_id, locality_district, roots, roots_note, roots_visibility, roots_region, roots_locality, roots_locality_geoname_id, origin_country, origin_country_code, personality_type, online, is_active, last_active, verification_level')
         .eq('id', profileId)
         .limit(1)
         .single();
@@ -1374,6 +1884,7 @@ export default function useAIRecommendations(
       // merge into existing matches
       let merged: any = null;
       setMatches((prev) => {
+        let changed = false;
         const next = prev.map((m) => {
           if (String(m.id) !== String(profileId)) return m;
           const personality = profileData?.personality_type
@@ -1398,7 +1909,15 @@ export default function useAIRecommendations(
           const shouldTrustIncomingExactLocation = incomingPrecision === 'EXACT';
             merged = {
               ...m,
+              avatar_url: profileData?.avatar_url ?? (m as any).avatar_url,
+              photos:
+                Array.isArray(profileData?.photos) && profileData.photos.length > 0
+                  ? profileData.photos
+                  : Array.isArray((m as any).photos)
+                    ? (m as any).photos
+                    : ((profileData?.avatar_url || (m as any).avatar_url) ? [profileData?.avatar_url ?? (m as any).avatar_url] : []),
               profileVideo: signedProfileVideo || (m as any).profileVideo,
+              profileVideoPath: profileData?.profile_video || (m as any).profileVideoPath,
               personalityTags: personality,
               interests: interestsFinal,
               commonInterests,
@@ -1414,10 +1933,25 @@ export default function useAIRecommendations(
               ? (profileData?.current_country_code || undefined)
               : profileData?.current_country_code ?? (m as any).current_country_code,
             location_precision: profileData?.location_precision ?? (m as any).location_precision,
+            locality_geoname_id: profileData?.locality_geoname_id ?? (m as any).locality_geoname_id ?? null,
+            locality_district: profileData?.locality_district ?? (m as any).locality_district ?? null,
+            roots: profileData?.roots ?? (m as any).roots ?? null,
+            roots_note: profileData?.roots_note ?? (m as any).roots_note ?? null,
+            roots_visibility: profileData?.roots_visibility ?? (m as any).roots_visibility ?? null,
+            roots_region: profileData?.roots_region ?? (m as any).roots_region ?? null,
+            roots_locality: profileData?.roots_locality ?? (m as any).roots_locality ?? null,
+            roots_locality_geoname_id:
+              profileData?.roots_locality_geoname_id ?? (m as any).roots_locality_geoname_id ?? null,
+            origin_country: profileData?.origin_country ?? (m as any).origin_country ?? null,
+            origin_country_code: profileData?.origin_country_code ?? (m as any).origin_country_code ?? null,
           } as Match;
+          if (areMatchObjectsEquivalent(m, merged)) {
+            return m;
+          }
+          changed = true;
           return merged;
         });
-        return next;
+        return changed ? next : prev;
       });
 
       return merged;

@@ -1,4 +1,5 @@
 import { Colors } from '@/constants/theme';
+import OfflineImage from '@/components/media/OfflineImage';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { MomentUser } from '@/hooks/useMoments';
 import { getSafeRemoteImageUri } from '@/lib/profile/display-name';
@@ -7,7 +8,6 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   FlatList,
-  Image,
   Modal,
   Pressable,
   StyleSheet,
@@ -134,15 +134,23 @@ export default function VibesAllMomentsModal({
       const safeAvatarUrl = getSafeRemoteImageUri(item.avatarUrl);
       return (
         <TouchableOpacity style={styles.row} onPress={() => onPressUser(item.userId)} activeOpacity={0.85}>
-          {safeAvatarUrl ? (
-            <Image source={{ uri: safeAvatarUrl }} style={styles.avatar} />
-          ) : (
-            <View style={styles.avatarFallback}>
-              <Text style={styles.avatarFallbackText}>{item.name.slice(0, 1).toUpperCase()}</Text>
-            </View>
-          )}
+          <OfflineImage
+            uri={safeAvatarUrl}
+            style={styles.avatar}
+            contentFit="cover"
+            fallback={
+              <View style={styles.avatarFallback}>
+                <Text style={styles.avatarFallbackText}>{item.name.slice(0, 1).toUpperCase()}</Text>
+              </View>
+            }
+          />
           <View style={styles.rowInfo}>
             <Text style={styles.rowName}>{item.isOwn ? 'Your Moment' : item.name}</Text>
+            {!item.isOwn && item.locationInsight ? (
+              <Text style={styles.rowInsight} numberOfLines={2}>
+                {item.locationInsight}
+              </Text>
+            ) : null}
             <Text style={styles.rowMeta}>{`${item.moments.length} moments • ${formatTimeAgo(lastAt)}`}</Text>
           </View>
           <MaterialCommunityIcons name="chevron-right" size={20} color={theme.textMuted} />
@@ -299,6 +307,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
     avatarFallbackText: { fontWeight: '700', color: theme.text },
     rowInfo: { flex: 1 },
     rowName: { fontSize: 14, fontWeight: '700', color: theme.text },
+    rowInsight: { fontSize: 11, color: theme.tint, marginTop: 4, fontWeight: '700', lineHeight: 15 },
     rowMeta: { fontSize: 12, color: theme.textMuted, marginTop: 4 },
   });
 };

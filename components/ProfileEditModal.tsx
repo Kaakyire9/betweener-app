@@ -1,16 +1,79 @@
 import { Colors } from '@/constants/theme';
+import BlurViewSafe from '@/components/NativeWrappers/BlurViewSafe';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useVerificationStatus } from '@/hooks/use-verification-status';
+import { requestAndSavePreciseLocation } from '@/hooks/useLocationPreference';
 import { useAuth } from '@/lib/auth-context';
+import {
+  findCountryByCode,
+  findCountryByLabel,
+  getPrioritizedCountries,
+  type CountryOption,
+} from '@/lib/location/countries';
+import { isLegacyGhanaLocalityForeignKeyError } from '@/lib/location/locality-errors';
+import {
+  getGhanaCountryPolicyMessage,
+  isGhanaCountryManagedPolicy,
+} from '@/lib/location/country-lock';
+import {
+  isKnownGhanaRegionLabel,
+  normalizeLocationValue,
+} from '@/lib/location/location-display';
+import { normalizeGhanaCityTownValue, type GhanaCityTownSuggestion } from '@/lib/location/ghana-locality-shared';
+import {
+  getRegionSearchExamples,
+  getSuggestedLocalities,
+  readRecentGhanaLocalities,
+  saveRecentGhanaLocality,
+} from '@/lib/location/location-intelligence';
+import { searchGhanaLocalities } from '@/lib/location/search-ghana-localities';
+import { isLikelyNetworkError } from '@/lib/network';
+import {
+  PREMIUM_ONBOARDING_GHANA_REGIONS,
+  PREMIUM_ONBOARDING_INTERESTS,
+  PREMIUM_ONBOARDING_INTENTS,
+  PREMIUM_ONBOARDING_OCCUPATIONS,
+} from '@/lib/onboarding/premium-onboarding.config';
+import {
+  drainOfflineMutationQueue,
+  enqueueProfileInterestsUpdateMutation,
+  enqueueProfileMediaSyncMutation,
+} from '@/lib/offline/mutation-queue';
+import { readMeProfileSnapshot, writeMeProfileSnapshot } from '@/lib/offline/me-store';
+import { cacheOfflineVideo, getOfflineVideoUri } from '@/lib/offline/video-store';
 import { showOpenSettingsPrompt } from '@/lib/permission-prompts';
-import { getProfileInitials, hasProfileImage } from '@/lib/profile-placeholders';
+import {
+  isLocalMediaUri,
+  normalizeLocalMediaUri,
+  normalizeGalleryPhotoList,
+  normalizeProfilePhotoUri,
+} from '@/lib/profile/media';
+import {
+  appendGalleryMedia,
+  MAX_PROFILE_GALLERY_ITEMS,
+  moveGalleryMedia,
+  promoteGalleryMediaToHero,
+  removeGalleryMediaAt,
+  resolveProfileMediaDraft,
+} from '@/lib/profile/media-studio';
+import {
+  GHANA_ROOT_OPTIONS,
+  GLOBAL_ROOT_OPTIONS,
+  ROOTS_VISIBILITY_OPTIONS,
+} from '@/lib/profile/roots-options';
+import { RELIGION_LABELS, formatReligionLabel, isReligionEnumError, normalizeReligionForProfile } from '@/lib/profile/religion';
+import { getProfileInitials } from '@/lib/profile-placeholders';
+import { buildProfileLocationUpdate } from '@/lib/profile/profile-location-update';
+import { usesGhanaOnboardingExperience } from '@/lib/profile/onboarding-experience';
+import { type ResponsiveMetrics, useResponsiveMetrics } from '@/lib/responsive';
 import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { fetch as fetchNetInfo } from '@react-native-community/netinfo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
+import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import * as FileSystem from 'expo-file-system/legacy';
-import { VideoView, useVideoPlayer } from 'expo-video';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Video as VideoCompressor, getRealPath } from 'react-native-compressor';
 import {
     ActivityIndicator,
@@ -28,12 +91,20 @@ import {
     View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { VerificationBadge } from './VerificationBadge';
+import ProfileMediaFrameSheet from './profile/ProfileMediaFrameSheet';
+import ProfileMediaStudioSection from './profile/ProfileMediaStudioSection';
+import GhanaOnboardingProfileSections from './profile/GhanaOnboardingProfileSections';
+import TrustVerificationCompactCard from './profile/TrustVerificationCompactCard';
 
 const DISTANCE_UNIT_KEY = 'distance_unit';
 const DISTANCE_UNIT_EVENT = 'distance_unit_changed';
 
 type DistanceUnit = 'auto' | 'km' | 'mi';
+type GhanaLocalityPickerRow =
+  | { type: 'section'; id: string; title: string }
+  | { type: 'action'; id: string; label: string; body: string }
+  | { type: 'empty'; id: string; title: string; body: string }
+  | { type: 'locality'; id: string; item: GhanaCityTownSuggestion };
 
 const MAX_PROFILE_VIDEO_DURATION_MS = 30_000;
 // Keep this aligned with the Supabase Storage bucket max object size for `profile-videos`.
@@ -55,12 +126,7 @@ const HEIGHT_OPTIONS = [
   "6'2\"", "6'3\"", "6'4\"", "6'5\"", "6'6\"", "Other"
 ];
 
-const OCCUPATION_OPTIONS = [
-  "Student", "Software Engineer", "Teacher", "Doctor", "Lawyer", "Nurse", 
-  "Business Owner", "Marketing", "Sales", "Designer", "Accountant", "Engineer",
-  "Consultant", "Manager", "Artist", "Writer", "Photographer", "Chef",
-  "Fitness Trainer", "Real Estate", "Healthcare", "Finance", "Other"
-];
+const ONBOARDING_OCCUPATION_OPTIONS = [...PREMIUM_ONBOARDING_OCCUPATIONS, 'Other'];
 
 const EDUCATION_OPTIONS = [
   "High School", "Some College", "Bachelor's Degree", "Master's Degree", 
@@ -68,11 +134,16 @@ const EDUCATION_OPTIONS = [
   "Ashesi University", "Central University", "Valley View University", "Other"
 ];
 
-const LOOKING_FOR_OPTIONS = [
-  "Long-term relationship", "Short-term dating", "Friendship", "Networking",
-  "Marriage", "Casual dating", "Something serious", "Let's see what happens",
-  "Life partner", "Other"
+const LEGACY_LOOKING_FOR_OPTIONS = [
+  'Long-term relationship', 'Short-term dating', 'Friendship', 'Networking',
+  'Marriage', 'Casual dating', "Let's see what happens", 'Life partner', 'Other',
 ];
+const LOOKING_FOR_OPTIONS = Array.from(new Set([
+  ...PREMIUM_ONBOARDING_INTENTS.map((intent) => intent.value),
+  ...LEGACY_LOOKING_FOR_OPTIONS,
+]));
+const formatRelationshipIntent = (value: string) =>
+  PREMIUM_ONBOARDING_INTENTS.find((intent) => intent.value === value)?.label ?? value;
 
 const GENDER_OPTIONS = [
   { label: 'Male', value: 'MALE' },
@@ -121,58 +192,16 @@ const PETS_OPTIONS = [
 ];
 
 // Ghana-specific regions and tribes
-const GHANA_REGIONS_OPTIONS = [
-  "Ahafo",
-  "Ashanti",
-  "Bono",
-  "Bono East",
-  "Central",
-  "Eastern",
-  "Greater Accra",
-  "North East",
-  "Northern",
-  "Oti",
-  "Savannah",
-  "Upper East",
-  "Upper West",
-  "Volta",
-  "Western",
-  "Western North",
-  "Other",
-];
+const GHANA_REGIONS_OPTIONS = [...PREMIUM_ONBOARDING_GHANA_REGIONS, 'Other'];
 
-const GHANA_TRIBES_OPTIONS = [
-  "Asante",
-  "Fante",
-  "Akuapem",
-  "Akyem",
-  "Brong (Bono)",
-  "Kwahu",
-  "Wassa",
-  "Sefwi",
-  "Nzema",
-  "Ga",
-  "Ewe",
-  "Mole-Dagbon",
-  "Other",
-];
+const RELIGION_OPTIONS = RELIGION_LABELS;
+const LEGACY_ROOTS_VISIBILITY_FALLBACK = 'HIDDEN';
 
-const GLOBAL_TRIBES_OPTIONS = [
-  "African",
-  "Caribbean",
-  "European",
-  "Latin American",
-  "Middle Eastern",
-  "Asian",
-  "Mixed",
-  "Other",
-];
-
-const ROOTS_VISIBILITY_OPTIONS = [
-  { value: 'VISIBLE', label: 'Visible on profile', subtitle: 'Show your roots in full profile view.' },
-  { value: 'MATCHES_ONLY', label: 'Matches only', subtitle: 'Reveal your roots only after a mutual match.' },
-  { value: 'HIDDEN', label: 'Hidden', subtitle: 'Keep your roots private.' },
-];
+const isRootsVisibilityConstraintError = (error: unknown) => {
+  const code = String((error as any)?.code || '');
+  const message = String((error as any)?.message || '').toLowerCase();
+  return code === '23514' && message.includes('profiles_roots_visibility_check');
+};
 
 // HIGH PRIORITY: Ghana-focused languages
 const GHANA_LANGUAGES_OPTIONS = [
@@ -244,6 +273,153 @@ const normalizeRoots = (items?: string[]) =>
     )
   );
 
+const normalizedString = (value: unknown) => String(value ?? '').trim();
+const sameString = (left: unknown, right: unknown) => normalizedString(left) === normalizedString(right);
+const sameNumber = (left: unknown, right: unknown) => Number(left ?? 0) === Number(right ?? 0);
+const sameStringArray = (left: unknown, right: unknown) => {
+  const normalize = (value: unknown) =>
+    Array.isArray(value)
+      ? value
+          .map((item) => normalizedString(item))
+          .filter(Boolean)
+          .sort()
+      : [];
+  return JSON.stringify(normalize(left)) === JSON.stringify(normalize(right));
+};
+
+const toFlagEmoji = (countryCode?: string | null) => {
+  const code = String(countryCode || '').trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(code)) return '';
+  return String.fromCodePoint(...code.split('').map((char) => 127397 + char.charCodeAt(0)));
+};
+
+const PROFILE_MEDIA_STAGING_FOLDER = 'betweener-profile-media';
+const HERO_CROP_ASPECT_RATIO = 16 / 9;
+const AVATAR_CROP_ASPECT_RATIO = 1;
+
+const inferMediaUploadMeta = (
+  uri: string,
+  fallbackPrefix: string,
+  fallbackContentType: string,
+) => {
+  const cleanUri = uri.split('?')[0] || uri;
+  const rawName = cleanUri.split('/').pop() || `${fallbackPrefix}-${Date.now()}`;
+  const safeName = rawName.replace(/[^a-zA-Z0-9._-]/g, '-');
+  const ext = (safeName.match(/\.([a-z0-9]+)$/i)?.[1] || '').toLowerCase();
+  const contentType =
+    ext === 'png'
+      ? 'image/png'
+      : ext === 'webp'
+        ? 'image/webp'
+        : ext === 'heic' || ext === 'heif'
+          ? 'image/heic'
+          : ext === 'mov'
+            ? 'video/quicktime'
+            : ext === 'mp4' || ext === 'm4v'
+              ? 'video/mp4'
+              : fallbackContentType;
+  const fileName = safeName.includes('.')
+    ? safeName
+    : `${safeName}.${contentType.includes('video') ? 'mp4' : 'jpg'}`;
+  return { localUri: uri, fileName, contentType };
+};
+
+const getProfileMediaStagingDirectory = () => {
+  const root = FileSystem.documentDirectory || FileSystem.cacheDirectory || '';
+  return root ? `${root}${PROFILE_MEDIA_STAGING_FOLDER}/` : '';
+};
+
+const persistProfileMediaUri = async (
+  uri: string,
+  fallbackPrefix: string,
+  fallbackContentType: string,
+) => {
+  const normalizedUri = normalizeLocalMediaUri(uri);
+  if (!isLocalMediaUri(normalizedUri)) return normalizedUri;
+  if (normalizedUri.includes(`/${PROFILE_MEDIA_STAGING_FOLDER}/`)) return normalizedUri;
+
+  const directory = getProfileMediaStagingDirectory();
+  if (!directory) return normalizedUri;
+
+  try {
+    await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
+    const meta = inferMediaUploadMeta(normalizedUri, fallbackPrefix, fallbackContentType);
+    const targetUri = `${directory}${Date.now()}-${meta.fileName}`;
+    await FileSystem.copyAsync({ from: normalizedUri, to: targetUri });
+    return targetUri;
+  } catch {
+    return normalizedUri;
+  }
+};
+
+const prepareReadableProfileMediaUri = async (
+  uri: string,
+  fallbackPrefix: string,
+  fallbackContentType: string,
+) => {
+  if (isLocalMediaUri(uri)) return uri;
+
+  const directory = getProfileMediaStagingDirectory();
+  if (!directory) {
+    throw new Error('Profile media staging directory is unavailable');
+  }
+
+  await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
+  const meta = inferMediaUploadMeta(uri, fallbackPrefix, fallbackContentType);
+  const targetUri = `${directory}readable-${Date.now()}-${meta.fileName}`;
+  const result = await FileSystem.downloadAsync(uri, targetUri);
+
+  if (!result?.uri) {
+    throw new Error('Failed to prepare readable profile media');
+  }
+
+  return result.uri;
+};
+
+const getImageDimensions = (uri: string) =>
+  new Promise<{ width: number; height: number }>((resolve, reject) => {
+    Image.getSize(
+      uri,
+      (width, height) => resolve({ width, height }),
+      reject,
+    );
+  });
+
+const buildAspectCropRect = (
+  width: number,
+  height: number,
+  aspectRatio: number,
+  focusX: number,
+  focusY: number,
+) => {
+  if (width <= 0 || height <= 0) {
+    return { originX: 0, originY: 0, width: 1, height: 1 };
+  }
+
+  const currentRatio = width / height;
+  if (currentRatio > aspectRatio) {
+    const cropWidth = Math.max(1, Math.round(height * aspectRatio));
+    const availableX = Math.max(0, width - cropWidth);
+    const originX = Math.max(0, Math.min(availableX, Math.round(availableX * focusX)));
+    return {
+      originX,
+      originY: 0,
+      width: cropWidth,
+      height,
+    };
+  }
+
+  const cropHeight = Math.max(1, Math.round(width / aspectRatio));
+  const availableY = Math.max(0, height - cropHeight);
+  const originY = Math.max(0, Math.min(availableY, Math.round(availableY * focusY)));
+  return {
+    originX: 0,
+    originY,
+    width,
+    height: cropHeight,
+  };
+};
+
 interface ProfileEditModalProps {
   visible: boolean;
   onClose: () => void;
@@ -251,32 +427,84 @@ interface ProfileEditModalProps {
   onOpenVerification?: () => void;
 }
 
-const InlineVideoPreview = ({ uri, shouldPlay, styles }: { uri: string; shouldPlay: boolean; styles: ReturnType<typeof createStyles>; }) => {
-  const player = useVideoPlayer(uri, (p) => {
-    p.loop = true;
-    p.muted = true;
-    if (shouldPlay) {
-      try { p.play(); } catch {}
-    }
-  });
-
-  useEffect(() => {
-    if (shouldPlay) {
-      try { player.play(); } catch {}
-    } else {
-      try { player.pause(); } catch {}
-    }
-  }, [player, shouldPlay]);
-
-  return <VideoView style={styles.videoPreview} player={player} contentFit="cover" nativeControls={false} />;
+type FieldPickerProps = {
+  title: string;
+  options: string[];
+  visible: boolean;
+  onClose: () => void;
+  onSelect: (value: string) => void;
+  currentValue: string;
+  styles: ReturnType<typeof createStyles>;
+  tintColor: string;
+  formatOption?: (value: string) => string;
 };
+
+const FieldPicker = ({
+  title,
+  options,
+  visible,
+  onClose,
+  onSelect,
+  currentValue,
+  styles,
+  tintColor,
+  formatOption = (value) => value,
+}: FieldPickerProps) => (
+  <Modal
+    visible={visible}
+    animationType="slide"
+    presentationStyle="pageSheet"
+    onRequestClose={onClose}
+  >
+    <SafeAreaView style={styles.pickerContainer}>
+      <View style={styles.pickerHeader}>
+        <TouchableOpacity onPress={onClose}>
+          <Text style={styles.pickerCancel}>Cancel</Text>
+        </TouchableOpacity>
+        <Text style={styles.pickerTitle}>{title}</Text>
+        <View style={{ width: 60 }} />
+      </View>
+
+      <FlatList
+        data={options}
+        keyExtractor={(item) => item}
+        style={styles.pickerList}
+        renderItem={({ item }) => (
+          <TouchableOpacity
+            style={[
+              styles.pickerItem,
+              currentValue === item && styles.pickerItemSelected,
+            ]}
+            onPress={() => {
+              onSelect(item);
+              onClose();
+            }}
+          >
+            <Text
+              style={[
+                styles.pickerItemText,
+                currentValue === item && styles.pickerItemTextSelected,
+              ]}
+            >
+              {formatOption(item)}
+            </Text>
+            {currentValue === item ? (
+              <MaterialCommunityIcons name="check" size={20} color={tintColor} />
+            ) : null}
+          </TouchableOpacity>
+        )}
+      />
+    </SafeAreaView>
+  </Modal>
+);
 
 export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerification }: ProfileEditModalProps) {
   const { user, profile, updateProfile, refreshProfile } = useAuth();
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = (colorScheme ?? 'light') === 'dark';
-  const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
+  const responsive = useResponsiveMetrics();
+  const styles = useMemo(() => createStyles(theme, isDark, responsive), [theme, isDark, responsive]);
   const { status: verificationStatus } = useVerificationStatus(profile?.user_id);
   const isGhanaProfile = useMemo(() => {
     const currentCountry = (profile as any)?.current_country;
@@ -287,16 +515,19 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     if (region && GHANA_REGIONS_OPTIONS.includes(region)) return true;
     return false;
   }, [profile]);
-  const languagesOptions = isGhanaProfile
-    ? GHANA_LANGUAGES_OPTIONS
-    : GLOBAL_LANGUAGES_OPTIONS;
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [videoUploading, setVideoUploading] = useState(false);
+  const [mediaStudioBusy, setMediaStudioBusy] = useState(false);
+  const [mediaFrameRequest, setMediaFrameRequest] = useState<{
+    slot: 'avatar' | 'hero';
+    index: number;
+    sourceUri: string;
+  } | null>(null);
   const [videoUploadStage, setVideoUploadStage] = useState<string | null>(null);
   const [videoUploadProgress, setVideoUploadProgress] = useState<number | null>(null);
-  const [videoPreviewUrl, setVideoPreviewUrl] = useState<string | null>(null);
   const [visibilitySaving, setVisibilitySaving] = useState(false);
+  const [countryVerificationBusy, setCountryVerificationBusy] = useState(false);
   
   // Original dropdown states
   const [showHeightPicker, setShowHeightPicker] = useState(false);
@@ -304,6 +535,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
   const [showEducationPicker, setShowEducationPicker] = useState(false);
   const [showLookingForPicker, setShowLookingForPicker] = useState(false);
   const [showRegionPicker, setShowRegionPicker] = useState(false);
+  const [showReligionPicker, setShowReligionPicker] = useState(false);
   
   // HIGH PRIORITY picker visibility states
   const [showExercisePicker, setShowExercisePicker] = useState(false);
@@ -316,6 +548,16 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
   const [showLivingSituationPicker, setShowLivingSituationPicker] = useState(false);
   const [showPetsPicker, setShowPetsPicker] = useState(false);
   const [showLanguagesPicker, setShowLanguagesPicker] = useState(false);
+  const [showGhanaCityTownPicker, setShowGhanaCityTownPicker] = useState(false);
+  const [countryModalVisible, setCountryModalVisible] = useState(false);
+  const [countryPickerTarget, setCountryPickerTarget] = useState<'current' | 'origin'>('current');
+  const [countrySearch, setCountrySearch] = useState('');
+  const [ghanaCityTownSearch, setGhanaCityTownSearch] = useState('');
+  const [ghanaCityTownSuggestions, setGhanaCityTownSuggestions] = useState<GhanaCityTownSuggestion[]>([]);
+  const [ghanaCityTownDefaults, setGhanaCityTownDefaults] = useState<GhanaCityTownSuggestion[]>([]);
+  const [ghanaCityTownRecent, setGhanaCityTownRecent] = useState<GhanaCityTownSuggestion[]>([]);
+  const [ghanaCityTownLoading, setGhanaCityTownLoading] = useState(false);
+  const [ghanaCityTownInitializing, setGhanaCityTownInitializing] = useState(false);
   
   // Original custom input states
   const [customHeight, setCustomHeight] = useState('');
@@ -345,6 +587,36 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
   const [selectedInterests, setSelectedInterests] = useState<string[]>([]);
   const [showInterestsPicker, setShowInterestsPicker] = useState(false);
   const [loadingInterests, setLoadingInterests] = useState(false);
+  const initialSelectedInterestsRef = useRef<string[]>([]);
+
+  const closeNestedPickers = useCallback(() => {
+    setShowHeightPicker(false);
+    setShowOccupationPicker(false);
+    setShowEducationPicker(false);
+    setShowLookingForPicker(false);
+    setShowRegionPicker(false);
+    setShowReligionPicker(false);
+    setShowExercisePicker(false);
+    setShowSmokingPicker(false);
+    setShowDrinkingPicker(false);
+    setShowHasChildrenPicker(false);
+    setShowWantsChildrenPicker(false);
+    setShowPersonalityPicker(false);
+    setShowLoveLanguagePicker(false);
+    setShowLivingSituationPicker(false);
+    setShowPetsPicker(false);
+    setShowLanguagesPicker(false);
+    setShowGhanaCityTownPicker(false);
+    setShowInterestsPicker(false);
+    setCountryModalVisible(false);
+    setCountrySearch('');
+    setGhanaCityTownSearch('');
+  }, []);
+
+  const closeProfileEditor = useCallback(() => {
+    closeNestedPickers();
+    onClose();
+  }, [closeNestedPickers, onClose]);
   
   // Form state
   const [formData, setFormData] = useState({
@@ -352,16 +624,32 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       bio: '',
       gender: '',
       age: '',
+      min_age_interest: '18',
+      max_age_interest: '35',
+      city: '',
+      locality_geoname_id: null as number | null,
+      locality_district: '',
+      locality_admin1_code: '',
+      locality_provider: null as string | null,
+      latitude: null as number | null,
+      longitude: null as number | null,
+      location_precision: 'COUNTRY',
       region: '',
       tribe: '',
       roots: [] as string[],
       roots_note: '',
       roots_visibility: 'VISIBLE',
+      religion: '',
+    current_country: '',
+    current_country_code: '',
+    origin_country: '',
+    origin_country_code: '',
     occupation: '',
     education: '',
     height: '',
     looking_for: '',
       avatar_url: '',
+      hero_image_url: '',
       photos: [] as string[],
       profile_video: '',
       matchmaking_mode: false,
@@ -382,6 +670,203 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     last_ghana_visit: '',
     future_ghana_plans: '',
   });
+  const selectedCurrentCountry = useMemo(
+    () => findCountryByCode(formData.current_country_code) ?? findCountryByLabel(formData.current_country),
+    [formData.current_country, formData.current_country_code],
+  );
+  const selectedOriginCountry = useMemo(
+    () => findCountryByCode(formData.origin_country_code) ?? findCountryByLabel(formData.origin_country),
+    [formData.origin_country, formData.origin_country_code],
+  );
+  const countryPickerData = useMemo(
+    () => getPrioritizedCountries(countrySearch),
+    [countrySearch],
+  );
+  const selectedCurrentCountryFlag = selectedCurrentCountry ? toFlagEmoji(selectedCurrentCountry.code) : '';
+  const selectedOriginCountryFlag = selectedOriginCountry ? toFlagEmoji(selectedOriginCountry.code) : '';
+  const countryLockPolicy = (profile as any)?.country_lock_policy;
+  const isGhanaCountryLocked = isGhanaCountryManagedPolicy(countryLockPolicy);
+  const isGhanaOnboardingExperience = usesGhanaOnboardingExperience(profile as any);
+  const countryPolicyMessage = getGhanaCountryPolicyMessage(countryLockPolicy);
+  const effectiveCountryCode = selectedCurrentCountry?.code || formData.current_country_code || (profile as any)?.current_country_code || '';
+  const effectiveCountryLabel = selectedCurrentCountry?.label || formData.current_country || (profile as any)?.current_country || '';
+  const effectiveRegion = formData.region || profile?.region || '';
+  const formIsGhanaProfile = useMemo(() => {
+    if (String(effectiveCountryCode).trim().toUpperCase() === 'GH') return true;
+    if (String(effectiveCountryLabel).trim().toLowerCase().includes('ghana')) return true;
+    if (effectiveRegion && GHANA_REGIONS_OPTIONS.includes(effectiveRegion)) return true;
+    return false;
+  }, [effectiveCountryCode, effectiveCountryLabel, effectiveRegion]);
+  const showLegacyCoreFields = false;
+  const ghanaCityTownPlaceholder = useMemo(() => {
+    const examples = getRegionSearchExamples(formData.region);
+    return examples.length > 0
+      ? `Search ${examples.join(', ')}...`
+      : 'Search city or town';
+  }, [formData.region]);
+  const ghanaCityTownSuggested = useMemo(
+    () =>
+      getSuggestedLocalities({
+        region: formData.region,
+        recent: ghanaCityTownRecent,
+        defaults: ghanaCityTownDefaults,
+        limit: 6,
+      }),
+    [formData.region, ghanaCityTownDefaults, ghanaCityTownRecent],
+  );
+  const ghanaCityTownPreview = useMemo(
+    () => ghanaCityTownDefaults.slice(0, 20),
+    [ghanaCityTownDefaults],
+  );
+
+  useEffect(() => {
+    if (!showGhanaCityTownPicker || !formIsGhanaProfile || !formData.region) {
+      setGhanaCityTownDefaults([]);
+      setGhanaCityTownRecent([]);
+      setGhanaCityTownInitializing(false);
+      return;
+    }
+
+    const startedAt = Date.now();
+    let active = true;
+    setGhanaCityTownInitializing(true);
+
+    void Promise.all([
+      readRecentGhanaLocalities(formData.region),
+      searchGhanaLocalities({
+        region: formData.region,
+        limit: 24,
+      }),
+    ])
+      .then(([nextRecent, nextDefaults]) => {
+        if (!active) return;
+        setGhanaCityTownRecent(nextRecent);
+        setGhanaCityTownDefaults(nextDefaults);
+      })
+      .finally(() => {
+        if (!active) return;
+        const remainingMs = Math.max(0, 120 - (Date.now() - startedAt));
+        setTimeout(() => {
+          if (active) setGhanaCityTownInitializing(false);
+        }, remainingMs);
+      });
+
+    return () => {
+      active = false;
+      setGhanaCityTownInitializing(false);
+    };
+  }, [formData.region, formIsGhanaProfile, showGhanaCityTownPicker]);
+
+  useEffect(() => {
+    if (!showGhanaCityTownPicker || !formIsGhanaProfile || !formData.region) {
+      setGhanaCityTownSuggestions([]);
+      setGhanaCityTownLoading(false);
+      return;
+    }
+
+    if (ghanaCityTownSearch.trim().length > 0 && ghanaCityTownSearch.trim().length < 2) {
+      setGhanaCityTownSuggestions([]);
+      setGhanaCityTownLoading(false);
+      return;
+    }
+
+    let active = true;
+    const timeout = setTimeout(async () => {
+      setGhanaCityTownLoading(true);
+      const nextSuggestions = await searchGhanaLocalities({
+        region: formData.region,
+        query: ghanaCityTownSearch,
+        limit: 24,
+      });
+      if (!active) return;
+      setGhanaCityTownSuggestions(nextSuggestions);
+      setGhanaCityTownLoading(false);
+    }, 220);
+
+    return () => {
+      active = false;
+      clearTimeout(timeout);
+    };
+  }, [formData.region, formIsGhanaProfile, ghanaCityTownSearch, showGhanaCityTownPicker]);
+  const ghanaCityTownRows = useMemo<GhanaLocalityPickerRow[]>(() => {
+    if (!showGhanaCityTownPicker) return [];
+
+    const query = ghanaCityTownSearch.trim();
+    const hasQuery = query.length >= 2;
+    const rows: GhanaLocalityPickerRow[] = [];
+    const seen = new Set<string>();
+    const pushLocality = (item: GhanaCityTownSuggestion) => {
+      const id =
+        item.geonameId != null
+          ? `locality:${item.geonameId}`
+          : `locality:${item.region}:${item.name}:${item.district || 'none'}`;
+      if (seen.has(id)) return;
+      seen.add(id);
+      rows.push({ type: 'locality', id, item });
+    };
+
+    if (!hasQuery) {
+      if (ghanaCityTownRecent.length > 0) {
+        rows.push({ type: 'section', id: 'section:recent', title: 'Recent' });
+        ghanaCityTownRecent.forEach(pushLocality);
+      }
+
+      if (ghanaCityTownSuggested.length > 0) {
+        rows.push({
+          type: 'section',
+          id: 'section:suggested',
+          title: `Suggested in ${formData.region}`,
+        });
+        ghanaCityTownSuggested.forEach(pushLocality);
+      }
+
+      if (ghanaCityTownPreview.length > 0) {
+        rows.push({ type: 'section', id: 'section:preview', title: 'All places' });
+        ghanaCityTownPreview.forEach(pushLocality);
+      }
+
+      if (rows.length === 0 && !ghanaCityTownInitializing) {
+        rows.push({
+          type: 'empty',
+          id: 'empty:initial',
+          title: 'Places are taking a moment to load',
+          body: 'You can keep the region only, or try a search in a second.',
+        });
+      }
+    } else if (ghanaCityTownSuggestions.length > 0) {
+      rows.push({ type: 'section', id: 'section:results', title: 'Search results' });
+      ghanaCityTownSuggestions.forEach(pushLocality);
+    } else if (!ghanaCityTownLoading) {
+      rows.push({
+        type: 'empty',
+        id: 'empty:results',
+        title: 'No town matched that search',
+        body: 'Try a broader spelling, or continue with the region only.',
+      });
+    }
+
+    rows.push({
+      type: 'action',
+      id: 'action:region-only',
+      label: `Continue with ${formData.region} only`,
+      body: 'City stays optional.',
+    });
+
+    return rows;
+  }, [
+    formData.region,
+    ghanaCityTownInitializing,
+    ghanaCityTownLoading,
+    ghanaCityTownPreview,
+    ghanaCityTownRecent,
+    ghanaCityTownSearch,
+    ghanaCityTownSuggested,
+    ghanaCityTownSuggestions,
+    showGhanaCityTownPicker,
+  ]);
+  const languagesOptions = formIsGhanaProfile
+    ? GHANA_LANGUAGES_OPTIONS
+    : GLOBAL_LANGUAGES_OPTIONS;
   const displayLanguages = useMemo(() => {
     const base =
       formData?.languages_spoken && formData.languages_spoken.length > 0
@@ -393,7 +878,17 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     () => getProfileInitials(formData.full_name || profile?.full_name || user?.email || null),
     [formData.full_name, profile?.full_name, user?.email],
   );
-  const hasAvatarImage = hasProfileImage(formData.avatar_url);
+  const mediaDraft = useMemo(
+    () =>
+      resolveProfileMediaDraft({
+        avatarUrl: formData.avatar_url,
+        heroImageUrl: formData.hero_image_url,
+        photos: formData.photos,
+        profileVideoUrl: formData.profile_video,
+      }),
+    [formData.avatar_url, formData.hero_image_url, formData.photos, formData.profile_video],
+  );
+  const [previewVideoUrl, setPreviewVideoUrl] = useState<string | null>(null);
   const verificationLevel =
     (profile as any)?.verification_level
     ?? (profile as any)?.verificationLevel
@@ -411,7 +906,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     if (verificationStatus.hasPendingRequest) {
       return {
         title: 'In review',
-        subtitle: 'Your latest verification is under review. Track it here or add another method later.',
+        subtitle: 'Your latest verification is under review.',
         action: 'Status',
         icon: 'progress-clock' as const,
       };
@@ -421,8 +916,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       return {
         title: 'Fresh check requested',
         subtitle: verificationStatus.freshReviewReason
-          ? `${verificationStatus.freshReviewReason} Your current badge stays in place.`
-          : 'Betweener asked for a quick private trust refresh. Your current badge stays in place.',
+          ? `${verificationStatus.freshReviewReason} Your badge stays in place.`
+          : 'A quick trust refresh was requested. Your badge stays in place.',
         action: 'Refresh',
         icon: 'shield-refresh-outline' as const,
       };
@@ -432,8 +927,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       return {
         title: verificationLevel >= 2 ? 'Trust confirmed' : 'Verified profile',
         subtitle: verificationLevel >= 2
-          ? 'Your profile carries Betweener verification. Review methods, history, or add another signal.'
-          : 'Your profile already has a trust signal. Strengthen it with another method.',
+          ? 'Your profile is verified.'
+          : 'Your profile has a trust signal.',
         action: verificationLevel >= 2 ? 'Details' : 'Add more',
         icon: 'shield-check-outline' as const,
       };
@@ -444,7 +939,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         title: 'Needs another try',
         subtitle: verificationStatus.rejectionReason
           ? verificationStatus.rejectionReason
-          : 'One of your submissions was rejected. Resubmit with a stronger document or selfie check.',
+          : 'One of your submissions was rejected.',
         action: 'Resubmit',
         icon: 'alert-circle-outline' as const,
       };
@@ -452,7 +947,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
 
     return {
       title: 'Build trust on Betweener',
-      subtitle: 'Add a trust signal with a document, social proof, or selfie liveness.',
+      subtitle: 'Add a trust signal.',
       action: 'Start',
       icon: 'shield-plus-outline' as const,
     };
@@ -460,15 +955,19 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
 
   // Load current profile data when modal opens
   const hydratedFromProfileRef = useRef(false);
+  const agePreferenceTouchedRef = useRef(false);
   useEffect(() => {
     if (!visible) {
       hydratedFromProfileRef.current = false;
+      agePreferenceTouchedRef.current = false;
+      closeNestedPickers();
       return;
     }
 
     // Only hydrate once per open so background refreshes don't clobber in-progress edits.
     if (visible && profile && !hydratedFromProfileRef.current) {
       hydratedFromProfileRef.current = true;
+      agePreferenceTouchedRef.current = false;
       setStatusMessage(null);
       setStatusTone(null);
       const normalizedLanguages = normalizeLanguages(
@@ -484,23 +983,45 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       const filteredLanguages = normalizedLanguages.filter(
         (lang) => languagesOptions.includes(lang) || lang === 'Other'
       );
+      const normalizedAvatarUrl = normalizeProfilePhotoUri(profile.avatar_url);
+      const normalizedPhotos = normalizeGalleryPhotoList((profile as any).photos, normalizedAvatarUrl);
+      const normalizedHeroImageUrl = normalizeProfilePhotoUri((profile as any).hero_image_url);
+      const normalizedProfileVideoUrl = normalizeLocalMediaUri(
+        (profile as any).profile_video || (profile as any).profileVideo || '',
+      );
       setFormData({
         full_name: profile.full_name || '',
         bio: profile.bio || '',
         gender: ((profile as any).gender || '').toString().trim().toUpperCase(),
         age: profile.age?.toString() || '',
+        min_age_interest: String((profile as any).min_age_interest ?? (isGhanaProfile ? 24 : 18)),
+        max_age_interest: String((profile as any).max_age_interest ?? (isGhanaProfile ? 34 : 35)),
+        city: profile.city || '',
+        locality_geoname_id: (profile as any).locality_geoname_id ?? null,
+        locality_district: (profile as any).locality_district || '',
+        locality_admin1_code: (profile as any).locality_admin1_code || '',
+        locality_provider: (profile as any).locality_provider || null,
+        latitude: (profile as any).latitude ?? null,
+        longitude: (profile as any).longitude ?? null,
+        location_precision: (profile as any).location_precision || 'COUNTRY',
         region: profile.region || '',
         tribe: (profile as any).tribe || '',
         roots: normalizedRoots,
         roots_note: (profile as any).roots_note || '',
         roots_visibility: String((profile as any).roots_visibility || 'VISIBLE').toUpperCase(),
+        religion: formatReligionLabel((profile as any).religion || ''),
+        current_country: (profile as any).current_country || '',
+        current_country_code: (profile as any).current_country_code || '',
+        origin_country: (profile as any).origin_country || '',
+        origin_country_code: (profile as any).origin_country_code || '',
         occupation: (profile as any).occupation || '',
         education: (profile as any).education || '',
         height: (profile as any).height || '',
           looking_for: (profile as any).looking_for || '',
-          avatar_url: profile.avatar_url || '',
-          photos: (profile as any).photos || [],
-          profile_video: (profile as any).profile_video || '',
+          avatar_url: normalizedAvatarUrl,
+          hero_image_url: normalizedHeroImageUrl,
+          photos: normalizedPhotos,
+          profile_video: normalizedProfileVideoUrl,
           matchmaking_mode: Boolean((profile as any).matchmaking_mode),
           discoverable_in_vibes: (profile as any).discoverable_in_vibes ?? true,
           // HIGH PRIORITY fields
@@ -522,7 +1043,78 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       // Set selected languages for multi-select
       setSelectedLanguages(filteredLanguages);
     }
-  }, [visible, profile]);
+  }, [closeNestedPickers, visible, profile]);
+
+  useEffect(() => {
+    if (!visible) return;
+    const profileId = (profile as any)?.id || user?.id;
+    if (!profileId) return;
+    let cancelled = false;
+    void (async () => {
+      const snapshot = await readMeProfileSnapshot(profileId);
+      if (cancelled || !snapshot) return;
+      const cachedAvatarUrl = normalizeProfilePhotoUri(snapshot.avatarUrl);
+      const cachedHeroImageUrl = normalizeProfilePhotoUri(snapshot.heroImageUrl);
+      const cachedPhotos = normalizeGalleryPhotoList(snapshot.photos, cachedAvatarUrl);
+      const cachedProfileVideo = normalizeLocalMediaUri(snapshot.profileVideo);
+      setFormData((prev) => ({
+        ...prev,
+        photos: prev.photos.length > 0 ? normalizeGalleryPhotoList(prev.photos, prev.avatar_url) : cachedPhotos,
+        avatar_url: prev.avatar_url || cachedAvatarUrl || '',
+        hero_image_url: prev.hero_image_url || cachedHeroImageUrl || '',
+        profile_video:
+          prev.profile_video ||
+          cachedProfileVideo,
+      }));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [profile, user?.id, visible]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const resolvePreviewVideo = async () => {
+      const source = normalizeLocalMediaUri(formData.profile_video);
+      if (!source) {
+        if (mounted) setPreviewVideoUrl(null);
+        return;
+      }
+
+      if (isLocalMediaUri(source)) {
+        if (mounted) setPreviewVideoUrl(source);
+        return;
+      }
+
+      if (source.startsWith('http')) {
+        if (mounted) setPreviewVideoUrl(source);
+        void cacheOfflineVideo(source, source);
+        return;
+      }
+
+      const cachedLocal = await getOfflineVideoUri(source);
+
+      const { data, error } = await supabase.storage
+        .from('profile-videos')
+        .createSignedUrl(source, 3600);
+
+      if (!mounted) return;
+      if (error || !data?.signedUrl) {
+        setPreviewVideoUrl(cachedLocal || null);
+        return;
+      }
+
+      setPreviewVideoUrl(data.signedUrl);
+      void cacheOfflineVideo(source, data.signedUrl);
+    };
+
+    void resolvePreviewVideo();
+
+    return () => {
+      mounted = false;
+    };
+  }, [formData.profile_video]);
 
   // One-time side loads per open (avoid clobbering edits if profile refreshes while modal is open).
   useEffect(() => {
@@ -544,41 +1136,39 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     void loadDistanceUnit();
   }, [visible]);
 
-  useEffect(() => {
-    let mounted = true;
-    const resolvePreview = async () => {
-      if (!visible) {
-        if (mounted) setVideoPreviewUrl(null);
-        return;
-      }
-      const path = formData.profile_video;
-      if (!path) {
-        if (mounted) setVideoPreviewUrl(null);
-        return;
-      }
-      if (path.startsWith('http')) {
-        if (mounted) setVideoPreviewUrl(path);
-        return;
-      }
-      const { data, error } = await supabase.storage.from('profile-videos').createSignedUrl(path, 3600);
-      if (!mounted) return;
-      if (error || !data?.signedUrl) {
-        setVideoPreviewUrl(null);
-        return;
-      }
-      setVideoPreviewUrl(data.signedUrl);
-    };
-    void resolvePreview();
-    return () => {
-      mounted = false;
-    };
-  }, [formData.profile_video, visible]);
-
-  const handleInputChange = (field: string, value: string | string[]) => {
+  const handleInputChange = (
+    field: string,
+    value: string | string[] | number | null | boolean,
+  ) => {
+    if (field === 'min_age_interest' || field === 'max_age_interest') {
+      agePreferenceTouchedRef.current = true;
+    }
     setFormData(prev => ({
       ...prev,
       [field]: value
     }));
+  };
+
+  const selectCountry = (country: CountryOption) => {
+    setFormData((prev) =>
+      countryPickerTarget === 'origin'
+        ? {
+            ...prev,
+            origin_country: country.label,
+            origin_country_code: country.code,
+            ...(prev.origin_country !== country.label ? { roots: [], roots_note: '', tribe: '' } : {}),
+          }
+        : {
+            ...prev,
+            current_country: country.label,
+            current_country_code: country.code,
+            ...(prev.current_country !== country.label
+              ? { region: '', city: '', locality_geoname_id: null, locality_district: '', locality_admin1_code: '', locality_provider: null, latitude: null, longitude: null, location_precision: 'COUNTRY' }
+              : {}),
+          },
+    );
+    setCountrySearch('');
+    setCountryModalVisible(false);
   };
 
   const handleRootToggle = (value: string) => {
@@ -595,6 +1185,238 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     });
   };
 
+  const isOfflineNow = async () => {
+    try {
+      const state = await fetchNetInfo();
+      return state.isConnected === false || state.isInternetReachable === false;
+    } catch {
+      return false;
+    }
+  };
+
+  const getSnapshotProfileId = () => (profile as any)?.id || user?.id || null;
+  const persistMeMediaSnapshot = (patch: {
+    avatarUrl?: string | null;
+    heroImageUrl?: string | null;
+    photos?: string[];
+    profileVideo?: string | null;
+  }) => {
+    const snapshotProfileId = getSnapshotProfileId();
+    if (!snapshotProfileId) return;
+    void writeMeProfileSnapshot(snapshotProfileId, patch);
+  };
+
+  const persistDraftSnapshot = (nextMedia: {
+    avatar_url?: string | null;
+    hero_image_url?: string | null;
+    photos?: string[];
+    profile_video?: string | null;
+  }) => {
+    const nextDraft = resolveProfileMediaDraft({
+      avatarUrl: nextMedia.avatar_url,
+      heroImageUrl: nextMedia.hero_image_url,
+      photos: nextMedia.photos,
+      profileVideoUrl: nextMedia.profile_video,
+    });
+    persistMeMediaSnapshot({
+      avatarUrl: nextDraft.avatarUrl || null,
+      heroImageUrl: nextDraft.heroImageUrl || null,
+      photos: nextDraft.gallery,
+      profileVideo: nextDraft.profileVideoUrl || null,
+    });
+  };
+
+  const stageImageOffline = async (uri: string, isAvatar: boolean) => {
+    const stableUri = await persistProfileMediaUri(uri, isAvatar ? 'profile-avatar' : 'profile-photo', 'image/jpeg');
+    if (isAvatar) {
+      setFormData(prev => {
+        const nextPhotos = normalizeGalleryPhotoList(prev.photos, stableUri);
+        const nextState = {
+          ...prev,
+          avatar_url: stableUri,
+          photos: nextPhotos,
+        };
+        persistDraftSnapshot(nextState);
+        return nextState;
+      });
+    } else {
+      setFormData(prev => {
+        const nextPhotos = normalizeGalleryPhotoList([...prev.photos, stableUri], prev.avatar_url);
+        const nextState = {
+          ...prev,
+          photos: nextPhotos,
+        };
+        persistDraftSnapshot(nextState);
+        return nextState;
+      });
+    }
+    Alert.alert('Photo staged', 'Photo added here. Tap Save to apply it to your profile.');
+  };
+
+  const stageGalleryBatch = async (uris: string[]) => {
+    const stagedUris = (
+      await Promise.all(
+        uris.map((uri) => persistProfileMediaUri(uri, 'profile-photo', 'image/jpeg')),
+      )
+    ).filter(Boolean);
+    if (stagedUris.length === 0) return;
+
+    let promotedToAvatar = false;
+    setFormData((prev) => {
+      const shouldSeedAvatar = !prev.avatar_url && stagedUris.length > 0;
+      const nextAvatar = shouldSeedAvatar ? stagedUris[0] : prev.avatar_url;
+      const nextPhotos = appendGalleryMedia(
+        prev.photos,
+        shouldSeedAvatar ? stagedUris.slice(1) : stagedUris,
+        nextAvatar,
+      );
+      promotedToAvatar = shouldSeedAvatar;
+      const nextState = {
+        ...prev,
+        avatar_url: nextAvatar,
+        photos: nextPhotos,
+      };
+      persistDraftSnapshot(nextState);
+      return nextState;
+    });
+    Alert.alert(
+      'Media staged',
+      promotedToAvatar
+        ? `We used the first imported photo as your avatar and staged the rest in your gallery. You can reshuffle everything below before saving.`
+        : `${stagedUris.length} photo${stagedUris.length === 1 ? '' : 's'} added to your gallery studio. Tap Save when the story feels right.`,
+    );
+  };
+
+  const createDerivedSlotMedia = async (
+    uri: string,
+    slot: 'avatar' | 'hero',
+    focus?: { x: number; y: number },
+  ) => {
+    const readableUri = await prepareReadableProfileMediaUri(
+      uri,
+      slot === 'avatar' ? 'profile-avatar-source' : 'profile-hero-source',
+      'image/jpeg',
+    );
+    const { width, height } = await getImageDimensions(readableUri);
+    const defaultFocus =
+      slot === 'avatar'
+        ? { x: 0.5, y: 0.5 }
+        : { x: 0.5, y: height > width ? 0.24 : 0.38 };
+    const cropRect =
+      slot === 'avatar'
+        ? buildAspectCropRect(width, height, AVATAR_CROP_ASPECT_RATIO, focus?.x ?? defaultFocus.x, focus?.y ?? defaultFocus.y)
+        : buildAspectCropRect(width, height, HERO_CROP_ASPECT_RATIO, focus?.x ?? defaultFocus.x, focus?.y ?? defaultFocus.y);
+    const result = await manipulateAsync(
+      readableUri,
+      [{ crop: cropRect }],
+      {
+        compress: 0.92,
+        format: SaveFormat.JPEG,
+      },
+    );
+    return persistProfileMediaUri(
+      result.uri,
+      slot === 'avatar' ? 'profile-avatar-derived' : 'profile-hero-derived',
+      'image/jpeg',
+    );
+  };
+
+  const stageAvatarFromFocus = async (
+    index: number,
+    focus?: { x: number; y: number },
+  ) => {
+    const sourceUri = normalizeProfilePhotoUri(formData.photos[index]);
+    if (!sourceUri) return;
+    try {
+      setMediaStudioBusy(true);
+      const derivedAvatarUrl = await createDerivedSlotMedia(sourceUri, 'avatar', focus);
+      setFormData((prev) => {
+        const nextState = {
+          ...prev,
+          avatar_url: derivedAvatarUrl,
+        };
+        persistDraftSnapshot(nextState);
+        return nextState;
+      });
+      Alert.alert('Avatar refined', 'A square avatar crop is staged. Save when it feels right.');
+    } catch (error) {
+      console.error('Error refining avatar media:', error);
+      Alert.alert('Refine failed', 'We could not prepare that avatar crop right now.');
+    } finally {
+      setMediaStudioBusy(false);
+    }
+  };
+
+  const stageHeroFromFocus = async (
+    index: number,
+    focus?: { x: number; y: number },
+  ) => {
+    const sourceUri = normalizeProfilePhotoUri(formData.photos[index]);
+    if (!sourceUri) return;
+    try {
+      setMediaStudioBusy(true);
+      const derivedHeroUrl = await createDerivedSlotMedia(sourceUri, 'hero', focus);
+      setFormData((prev) => {
+        const nextPhotos = promoteGalleryMediaToHero(prev.photos, index);
+        const nextState = {
+          ...prev,
+          hero_image_url: derivedHeroUrl,
+          photos: nextPhotos,
+        };
+        persistDraftSnapshot(nextState);
+        return nextState;
+      });
+      Alert.alert('Hero refined', 'A wider hero crop is staged and the source scene is moved to the front.');
+    } catch (error) {
+      console.error('Error refining hero media:', error);
+      Alert.alert('Refine failed', 'We could not prepare that hero crop right now.');
+    } finally {
+      setMediaStudioBusy(false);
+    }
+  };
+
+  const openMediaFrame = (slot: 'avatar' | 'hero', index: number) => {
+    const sourceUri = normalizeProfilePhotoUri(formData.photos[index]);
+    if (!sourceUri) return;
+    setMediaFrameRequest({ slot, index, sourceUri });
+  };
+
+  const handleFrameConfirm = async (focus: { x: number; y: number }) => {
+    if (!mediaFrameRequest) return;
+    const current = mediaFrameRequest;
+    setMediaFrameRequest(null);
+    if (current.slot === 'avatar') {
+      await stageAvatarFromFocus(current.index, focus);
+      return;
+    }
+    await stageHeroFromFocus(current.index, focus);
+  };
+
+  const moveGalleryPhoto = (fromIndex: number, toIndex: number) => {
+    setFormData((prev) => {
+      const nextPhotos = moveGalleryMedia(prev.photos, fromIndex, toIndex);
+      const nextState = {
+        ...prev,
+        photos: nextPhotos,
+      };
+      persistDraftSnapshot(nextState);
+      return nextState;
+    });
+  };
+
+  const stageVideoOffline = async (uri: string) => {
+    const stableUri = await persistProfileMediaUri(uri, 'profile-video', 'video/mp4');
+    setFormData(prev => {
+      const nextState = {
+        ...prev,
+        profile_video: stableUri,
+      };
+      persistDraftSnapshot(nextState);
+      return nextState;
+    });
+    Alert.alert('Video staged', 'Video added here. Tap Save to apply it to your profile.');
+  };
+
   const resolveProfileId = async (): Promise<string | null> => {
     const pid = (profile as any)?.id as string | undefined;
     if (pid) return pid;
@@ -609,6 +1431,39 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
 
     if (error) return null;
     return (data as any)?.id ?? null;
+  };
+
+  const verifyCountryWithPreciseLocation = async () => {
+    const pid = await resolveProfileId();
+    if (!pid || countryVerificationBusy) return;
+
+    setCountryVerificationBusy(true);
+    try {
+      const result = await requestAndSavePreciseLocation(pid);
+      if (!result.ok) {
+        Alert.alert(
+          'Country verification unavailable',
+          'error' in result ? result.error : 'Please try again.',
+        );
+        return;
+      }
+
+      hydratedFromProfileRef.current = false;
+      await refreshProfile();
+      const verification = result.verification;
+      const title = verification?.status === 'pending'
+        ? 'First location check confirmed'
+        : verification?.status === 'verified'
+          ? 'Country verified'
+          : 'Location refreshed';
+      Alert.alert(
+        title,
+        verification?.message
+          || 'Your current country and city were refreshed from your device location.',
+      );
+    } finally {
+      setCountryVerificationBusy(false);
+    }
   };
 
   const persistDiscoverableInVibes = async (next: boolean) => {
@@ -707,6 +1562,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       
       const userInterests = data?.map(item => (item as any).interests.name) || [];
       setSelectedInterests(userInterests);
+      initialSelectedInterestsRef.current = userInterests;
     } catch (error) {
       console.error('Error fetching user interests:', error);
     }
@@ -715,40 +1571,56 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
   // Save user interests to profile_interests table
   const saveUserInterests = async (interests: string[]) => {
     const pid = await resolveProfileId();
-    if (!pid) return;
+    if (!pid) return { queued: false };
+
+    const normalizedNext = normalizeLanguages(interests).sort();
+    const normalizedCurrent = normalizeLanguages(initialSelectedInterestsRef.current).sort();
+    if (JSON.stringify(normalizedNext) === JSON.stringify(normalizedCurrent)) {
+      return { queued: false };
+    }
     
     try {
-      // First, delete existing interests for this user
-      await supabase
-        .from('profile_interests')
-        .delete()
-        .eq('profile_id', pid);
-      
-      // Then insert new interests
+      let profileInterests: { profile_id: string; interest_id: string }[] = [];
       if (interests.length > 0) {
-        // Get interest IDs
         const { data: interestData, error: interestError } = await supabase
           .from('interests')
           .select('id, name')
           .in('name', interests);
-        
         if (interestError) throw interestError;
-        
-        // Insert profile_interests relationships
-        const profileInterests = interestData?.map(interest => ({
-          profile_id: pid,
-          interest_id: interest.id
-        })) || [];
-        
-        if (profileInterests.length > 0) {
-          const { error: insertError } = await supabase
-            .from('profile_interests')
-            .insert(profileInterests);
-          
-          if (insertError) throw insertError;
+
+        if ((interestData?.length ?? 0) !== interests.length) {
+          throw new Error('The interest catalog is still syncing. Please try again shortly.');
         }
+        profileInterests = interestData?.map(interest => ({
+          profile_id: pid,
+          interest_id: interest.id,
+        })) || [];
       }
+
+      const { error: deleteError } = await supabase
+        .from('profile_interests')
+        .delete()
+        .eq('profile_id', pid);
+      if (deleteError) throw deleteError;
+
+      if (profileInterests.length > 0) {
+        const { error: insertError } = await supabase
+          .from('profile_interests')
+          .insert(profileInterests);
+        if (insertError) throw insertError;
+      }
+      return { queued: false };
     } catch (error) {
+      if (isLikelyNetworkError(error)) {
+        if (typeof __DEV__ !== 'undefined' && __DEV__) {
+          console.warn('Interests update queued offline', error);
+        }
+        await enqueueProfileInterestsUpdateMutation({
+          profileId: pid,
+          interests,
+        });
+        return { queued: true };
+      }
       console.error('Error saving user interests:', error);
       throw error;
     }
@@ -766,76 +1638,15 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       if (error) throw error;
       
       const interestNames = data?.map(item => item.name) || [];
-      setAvailableInterests(interestNames);
+      setAvailableInterests(Array.from(new Set([...PREMIUM_ONBOARDING_INTERESTS, ...interestNames])));
     } catch (error) {
       console.error('Error fetching interests:', error);
       // Fallback to default interests
-      setAvailableInterests([
-        'Music', 'Travel', 'Food', 'Dancing', 'Movies', 'Art',
-        'Reading', 'Sports', 'Gaming', 'Cooking', 'Photography', 'Fitness',
-        'Nature', 'Technology', 'Fashion', 'Writing', 'Singing', 'Comedy',
-        'Business', 'Volunteering', 'Learning', 'Socializing', 'Adventure', 'Relaxing'
-      ]);
+      setAvailableInterests([...PREMIUM_ONBOARDING_INTERESTS]);
     } finally {
       setLoadingInterests(false);
     }
   };
-
-  const FieldPicker = ({ 
-    title, 
-    options, 
-    visible, 
-    onClose, 
-    onSelect, 
-    currentValue 
-  }: {
-    title: string;
-    options: string[];
-    visible: boolean;
-    onClose: () => void;
-    onSelect: (value: string) => void;
-    currentValue: string;
-  }) => (
-    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet">
-      <SafeAreaView style={styles.pickerContainer}>
-        <View style={styles.pickerHeader}>
-          <TouchableOpacity onPress={onClose}>
-            <Text style={styles.pickerCancel}>Cancel</Text>
-          </TouchableOpacity>
-          <Text style={styles.pickerTitle}>{title}</Text>
-          <View style={{ width: 60 }} />
-        </View>
-        
-        <FlatList
-          data={options}
-          keyExtractor={(item) => item}
-          style={styles.pickerList}
-          renderItem={({ item }) => (
-            <TouchableOpacity
-              style={[
-                styles.pickerItem,
-                currentValue === item && styles.pickerItemSelected
-              ]}
-              onPress={() => {
-                onSelect(item);
-                onClose();
-              }}
-            >
-              <Text style={[
-                styles.pickerItemText,
-                currentValue === item && styles.pickerItemTextSelected
-              ]}>
-                {item}
-              </Text>
-              {currentValue === item && (
-                <MaterialCommunityIcons name="check" size={20} color={theme.tint} />
-              )}
-            </TouchableOpacity>
-          )}
-        />
-      </SafeAreaView>
-    </Modal>
-  );
 
   const pickImage = async (isAvatar: boolean = false) => {
     try {
@@ -852,11 +1663,13 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       // Show action sheet for camera or gallery
       Alert.alert(
         'Select Photo',
-        'Choose how you want to select a photo',
+        isAvatar
+          ? 'Choose how you want to set your profile photo.'
+          : 'Choose how you want to build your gallery. Library import can bring in multiple photos at once.',
         [
           { text: 'Cancel', style: 'cancel' },
           { text: 'Camera', onPress: () => openCamera(isAvatar) },
-          { text: 'Gallery', onPress: () => openGallery(isAvatar) },
+          { text: isAvatar ? 'Gallery' : 'Gallery (multi-select)', onPress: () => openGallery(isAvatar) },
         ]
       );
     } catch (error) {
@@ -896,13 +1709,21 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: 'images',
-        allowsEditing: true,
+        allowsEditing: isAvatar,
+        allowsMultipleSelection: !isAvatar,
+        selectionLimit: isAvatar
+          ? 1
+          : Math.max(1, MAX_PROFILE_GALLERY_ITEMS - formData.photos.length),
         aspect: isAvatar ? [1, 1] : [3, 4],
         quality: 0.8,
       });
 
-      if (!result.canceled && result.assets[0]) {
-        await handleImageUpload(result.assets[0].uri, isAvatar);
+      if (!result.canceled && result.assets.length > 0) {
+        if (isAvatar) {
+          await handleImageUpload(result.assets[0].uri, true);
+        } else {
+          await stageGalleryBatch(result.assets.map((asset) => asset.uri).filter(Boolean));
+        }
       }
     } catch (error) {
       console.error('Error opening gallery:', error);
@@ -913,54 +1734,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
   const handleImageUpload = async (uri: string, isAvatar: boolean) => {
     try {
       setUploading(true);
-
-      if (!user?.id) {
-        Alert.alert('Error', 'User not authenticated');
-        return;
-      }
-
-      // Get file extension and create file name
-      const fileExtension = uri.split('.').pop()?.toLowerCase() || 'jpg';
-      const timestamp = Date.now();
-      const fileName = `${timestamp}.${fileExtension}`;
-      const filePath = `${user.id}/${fileName}`;
-
-      // For React Native, we need to read the file properly
-      const response = await fetch(uri);
-      const blob = await response.arrayBuffer();
-      const uint8Array = new Uint8Array(blob);
-
-      // Upload using the Uint8Array which Supabase accepts
-      const { error } = await supabase.storage
-        .from('profile-photos')
-        .upload(filePath, uint8Array, {
-          contentType: `image/${fileExtension}`,
-          upsert: false,
-        });
-
-      if (error) {
-        console.error('Upload error details:', error);
-        throw error;
-      }
-
-      // Get public URL
-      const { data: { publicUrl } } = supabase.storage
-        .from('profile-photos')
-        .getPublicUrl(filePath);
-
-      if (isAvatar) {
-        setFormData(prev => ({
-          ...prev,
-          avatar_url: publicUrl
-        }));
-      } else {
-        setFormData(prev => ({
-          ...prev,
-          photos: [...prev.photos, publicUrl]
-        }));
-      }
-
-      Alert.alert('Success', 'Photo uploaded successfully!');
+      await stageImageOffline(uri, isAvatar);
     } catch (error) {
       console.error('Error uploading image:', error);
       const errorMessage = error instanceof Error ? error.message : 'Failed to upload image';
@@ -1035,73 +1809,6 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     }
   };
 
-  const encodeStoragePath = (path: string) =>
-    path
-      .split('/')
-      .map((segment) => encodeURIComponent(segment))
-      .join('/');
-
-  const uploadToSupabaseStorageWithProgress = async (params: {
-    bucket: string;
-    filePath: string;
-    fileUri: string;
-    contentType: string;
-    onProgress: (value: number | null) => void;
-  }) => {
-    const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
-    const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
-    if (!supabaseUrl || !supabaseAnonKey) {
-      throw new Error('Supabase env vars missing (EXPO_PUBLIC_SUPABASE_URL / EXPO_PUBLIC_SUPABASE_ANON_KEY)');
-    }
-
-    const { data: sessionData } = await supabase.auth.getSession();
-    const accessToken = sessionData.session?.access_token;
-    if (!accessToken) {
-      throw new Error('Not authenticated');
-    }
-
-    const url = `${supabaseUrl}/storage/v1/object/${params.bucket}/${encodeStoragePath(params.filePath)}?upsert=false`;
-
-    const task = FileSystem.createUploadTask(
-      url,
-      params.fileUri,
-      {
-        httpMethod: 'POST',
-        uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
-        headers: {
-          'Content-Type': params.contentType,
-          Authorization: `Bearer ${accessToken}`,
-          apikey: supabaseAnonKey,
-          'x-upsert': 'false',
-        },
-      },
-      (progress) => {
-        const expected = progress.totalBytesExpectedToSend;
-        const sent = progress.totalBytesSent;
-        if (typeof expected === 'number' && expected > 0) {
-          params.onProgress(Math.max(0, Math.min(1, sent / expected)));
-        } else {
-          params.onProgress(null);
-        }
-      }
-    );
-
-    const result = await task.uploadAsync();
-    if (!result) {
-      throw new Error('Upload failed (no response)');
-    }
-
-    if (result.status < 200 || result.status >= 300) {
-      // Supabase Storage errors are usually JSON: { message, ... }
-      let message = result.body || `Upload failed (HTTP ${result.status})`;
-      try {
-        const parsed = JSON.parse(result.body || '{}');
-        if (parsed?.message) message = String(parsed.message);
-      } catch {}
-      throw new Error(message);
-    }
-  };
-
   const handleVideoUpload = async (asset: ImagePicker.ImagePickerAsset) => {
     try {
       setVideoUploading(true);
@@ -1110,6 +1817,11 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
 
       if (!user?.id) {
         Alert.alert('Error', 'User not authenticated');
+        return;
+      }
+
+      if (await isOfflineNow()) {
+        await stageVideoOffline(asset.uri);
         return;
       }
 
@@ -1213,46 +1925,10 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         }
       } catch {}
 
-      const nameHint = asset.fileName || uri.split('/').pop() || '';
-      const extMatch = nameHint.match(/\.([a-z0-9]+)$/i);
-      const fileExtension =
-        (uploadUri.toLowerCase().includes('.mp4') && 'mp4') ||
-        (uploadUri.toLowerCase().includes('.mov') && 'mov') ||
-        (extMatch?.[1] || '').toLowerCase() ||
-        (asset.mimeType?.includes('quicktime') ? 'mov' : 'mp4');
-      const timestamp = Date.now();
-      const fileName = `profile-video-${timestamp}.${fileExtension}`;
-      const filePath = `${user.id}/${fileName}`;
-      const contentType =
-        fileExtension === 'mov'
-          ? 'video/quicktime'
-          : 'video/mp4';
-
-      setVideoUploadStage('Uploading video...');
-      setVideoUploadProgress(0);
-      await uploadToSupabaseStorageWithProgress({
-        bucket: 'profile-videos',
-        filePath,
-        fileUri: uploadUri,
-        contentType,
-        onProgress: setVideoUploadProgress,
-      });
-
-      const previousPath = formData.profile_video;
-      setFormData(prev => ({
-        ...prev,
-        profile_video: filePath,
-      }));
-
-      if (previousPath && !previousPath.startsWith('http') && previousPath !== filePath) {
-        try {
-          await supabase.storage.from('profile-videos').remove([previousPath]);
-        } catch (removeError) {
-          console.log('Failed to delete previous profile video', removeError);
-        }
-      }
-
-      Alert.alert('Success', 'Profile video uploaded. Tap Save to apply.');
+      setVideoUploadStage('Staging video...');
+      setVideoUploadProgress(1);
+      await stageVideoOffline(uploadUri);
+      Alert.alert('Video ready', 'Your intro video is staged. Tap Save to apply it everywhere.');
     } catch (error) {
       console.error('Error uploading video:', error);
       const errorMessage = error instanceof Error ? error.message : 'Failed to upload video';
@@ -1274,10 +1950,14 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           text: 'Remove',
           style: 'destructive',
           onPress: () => {
-            setFormData(prev => ({
-              ...prev,
-              profile_video: '',
-            }));
+            setFormData(prev => {
+              const nextState = {
+                ...prev,
+                profile_video: '',
+              };
+              persistDraftSnapshot(nextState);
+              return nextState;
+            });
           },
         },
       ],
@@ -1294,10 +1974,22 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           text: 'Remove',
           style: 'destructive',
           onPress: () => {
-            setFormData(prev => ({
-              ...prev,
-              photos: prev.photos.filter((_, i) => i !== index)
-            }));
+            setFormData(prev => {
+              const nextPhotos = normalizeGalleryPhotoList(
+                removeGalleryMediaAt(prev.photos, index),
+                prev.avatar_url,
+              );
+              const nextState = {
+                ...prev,
+                hero_image_url:
+                  normalizeProfilePhotoUri(prev.hero_image_url) === normalizeProfilePhotoUri(prev.photos[index])
+                    ? normalizeProfilePhotoUri(nextPhotos[0]) || normalizeProfilePhotoUri(prev.avatar_url) || ''
+                    : prev.hero_image_url,
+                photos: nextPhotos
+              };
+              persistDraftSnapshot(nextState);
+              return nextState;
+            });
           }
         }
       ]
@@ -1319,44 +2011,202 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         return;
       }
 
+      const interestsChanged = JSON.stringify(normalizeLanguages(selectedInterests).sort()) !==
+        JSON.stringify(normalizeLanguages(initialSelectedInterestsRef.current).sort());
+      if (interestsChanged && (selectedInterests.length < 3 || selectedInterests.length > 5)) {
+        Alert.alert('Choose 3–5 interests', 'Keep the same focused interest mix used during onboarding.');
+        return;
+      }
+
+      const minAgeInterest = Number.parseInt(String(formData.min_age_interest || '').trim(), 10);
+      const maxAgeInterest = Number.parseInt(String(formData.max_age_interest || '').trim(), 10);
+      if (
+        Number.isNaN(minAgeInterest) ||
+        Number.isNaN(maxAgeInterest) ||
+        minAgeInterest < 18 ||
+        maxAgeInterest < 18 ||
+        minAgeInterest > 99 ||
+        maxAgeInterest > 99
+      ) {
+        Alert.alert('Error', 'Preferred age range must stay between 18 and 99.');
+        return;
+      }
+      if (minAgeInterest > maxAgeInterest) {
+        Alert.alert('Error', 'Preferred max age must be greater than or equal to preferred min age.');
+        return;
+      }
+
       // Prepare update data (preserve required fields to avoid NOT NULL constraint violations)
       const normalizedRoots = normalizeRoots(formData.roots);
       const rootsNote = formData.roots_note ? formData.roots_note.trim() : '';
+      const sanitizedPhotos = normalizeGalleryPhotoList(formData.photos, formData.avatar_url);
+      const resolvedHeroImageUrl =
+        resolveProfileMediaDraft({
+          avatarUrl: formData.avatar_url,
+          heroImageUrl: formData.hero_image_url,
+          photos: sanitizedPhotos,
+          profileVideoUrl: formData.profile_video,
+        }).heroImageUrl || null;
+      const hasLocalAvatar = isLocalMediaUri(formData.avatar_url);
+      const hasLocalHeroImage = isLocalMediaUri(resolvedHeroImageUrl);
+      const localPhotos = sanitizedPhotos.filter((photo) => isLocalMediaUri(photo));
+      const hasLocalVideo = isLocalMediaUri(formData.profile_video);
+      const remotePhotos = sanitizedPhotos.filter((photo) => !isLocalMediaUri(photo));
+      const mediaSyncPayload =
+        user?.id && (hasLocalAvatar || hasLocalHeroImage || localPhotos.length > 0 || hasLocalVideo)
+          ? {
+              userId: user.id,
+              avatar: hasLocalAvatar
+                ? inferMediaUploadMeta(formData.avatar_url, 'profile-avatar', 'image/jpeg')
+                : null,
+              hero: hasLocalHeroImage
+                ? inferMediaUploadMeta(resolvedHeroImageUrl || '', 'profile-hero', 'image/jpeg')
+                : null,
+              heroImageUrl: resolvedHeroImageUrl,
+              photos: localPhotos.length > 0 ? sanitizedPhotos : null,
+              photoItems: localPhotos.map((photo, index) =>
+                inferMediaUploadMeta(photo, `profile-photo-${index + 1}`, 'image/jpeg'),
+              ),
+              video: hasLocalVideo
+                ? {
+                    ...inferMediaUploadMeta(formData.profile_video, 'profile-video', 'video/mp4'),
+                    previousPath: (profile as any)?.profile_video ?? null,
+                  }
+                : null,
+              updatedAt: new Date().toISOString(),
+            }
+          : null;
+
       const updateData: any = {
         full_name: formData.full_name.trim(),
         bio: formData.bio.trim(),
-        avatar_url: formData.avatar_url,
-        photos: formData.photos,
-        profile_video: formData.profile_video && formData.profile_video.trim() ? formData.profile_video.trim() : null,
+        avatar_url: hasLocalAvatar ? ((profile as any)?.avatar_url ?? null) : formData.avatar_url,
+        hero_image_url: hasLocalHeroImage
+          ? ((profile as any)?.hero_image_url ?? null)
+          : resolvedHeroImageUrl,
+        photos: remotePhotos,
+        profile_video: hasLocalVideo
+          ? ((profile as any)?.profile_video ?? null)
+          : formData.profile_video && formData.profile_video.trim()
+            ? formData.profile_video.trim()
+            : null,
         // Preserve existing required fields to avoid null constraint violations
         gender: String(formData.gender || profile?.gender || 'OTHER').trim().toUpperCase(),
         age: profile?.age || 18,
         region: profile?.region || '',
-        tribe: normalizedRoots[0] ?? null,
-        roots: normalizedRoots.length > 0 ? normalizedRoots : null,
+        tribe: normalizedRoots[0] ?? (profile as any)?.tribe ?? null,
+        roots: normalizedRoots.length > 0 ? normalizedRoots : ((profile as any)?.tribe ? [(profile as any).tribe] : null),
         roots_note: rootsNote || null,
         roots_visibility: String(formData.roots_visibility || 'VISIBLE').toUpperCase(),
-        religion: profile?.religion || 'OTHER',
-        min_age_interest: profile?.min_age_interest || 18,
-        max_age_interest: profile?.max_age_interest || 35,
+        religion: normalizeReligionForProfile(formData.religion || (profile as any)?.religion || 'OTHER'),
+        min_age_interest: minAgeInterest,
+        max_age_interest: maxAgeInterest,
       };
+
+      if (agePreferenceTouchedRef.current) {
+        updateData.age_preference_confirmed_at = new Date().toISOString();
+      }
 
       // Only include optional fields if they have values
       if (formData.age && formData.age.trim()) {
         updateData.age = parseInt(formData.age);
       }
+      const existingCountry = normalizeLocationValue((profile as any)?.current_country);
+      const existingCountryCode = normalizeLocationValue((profile as any)?.current_country_code).toUpperCase();
+      const selectedCurrentCountryOption =
+        findCountryByCode(formData.current_country_code) ?? findCountryByLabel(formData.current_country);
       const regionValue = formData.region ? formData.region.trim() : '';
-      if (regionValue) {
-        updateData.region = regionValue;
-        updateData.city = regionValue;
-        updateData.location = regionValue;
+      const cityValue = formData.city ? formData.city.trim() : '';
+      const localityDistrictValue =
+        typeof formData.locality_district === 'string' ? formData.locality_district.trim() : '';
+      const localityGeonameIdValue =
+        typeof formData.locality_geoname_id === 'number' && Number.isFinite(formData.locality_geoname_id)
+          ? formData.locality_geoname_id
+          : null;
+      const resolvedCurrentCountry =
+        isGhanaCountryLocked
+          ? normalizedString((profile as any)?.current_country) || normalizedString(formData.current_country) || 'Ghana'
+          :
+        selectedCurrentCountryOption?.label ||
+        normalizedString(formData.current_country) ||
+        existingCountry ||
+        (isGhanaProfile || isKnownGhanaRegionLabel(formData.region) ? 'Ghana' : '');
+      const resolvedCurrentCountryCode =
+        isGhanaCountryLocked
+          ? normalizedString((profile as any)?.current_country_code).toUpperCase()
+            || normalizedString(formData.current_country_code).toUpperCase()
+            || 'GH'
+          :
+        selectedCurrentCountryOption?.code ||
+        normalizedString(formData.current_country_code).toUpperCase() ||
+        existingCountryCode ||
+        (resolvedCurrentCountry.toLowerCase() === 'ghana' ? 'GH' : '');
+      if (regionValue && !resolvedCurrentCountry) {
+        Alert.alert(
+          'Current country required',
+          'Select your current country before saving your city or region.',
+        );
+        setCountryPickerTarget('current');
+        setCountryModalVisible(true);
+        return;
+      }
+      if (isGhanaProfile && cityValue && !regionValue) {
+        Alert.alert(
+          'Region required',
+          'Select your region before saving your city or town.',
+        );
+        setShowRegionPicker(true);
+        return;
+      }
+      updateData.current_country = resolvedCurrentCountry || null;
+      updateData.current_country_code = resolvedCurrentCountryCode || null;
+      if (cityValue || regionValue || resolvedCurrentCountry) {
+        Object.assign(updateData, buildProfileLocationUpdate({
+          city: cityValue,
+          region: regionValue,
+          country: resolvedCurrentCountry,
+          localityGeonameId: localityGeonameIdValue,
+          localityDistrict: localityDistrictValue,
+          localityAdmin1Code: formData.locality_admin1_code,
+          localityProvider: formData.locality_provider,
+          latitude: formData.latitude,
+          longitude: formData.longitude,
+        }));
         const previousRegion = profile?.region ? profile.region.trim() : '';
-        if (regionValue !== previousRegion) {
-          updateData.location_precision = 'CITY';
-          updateData.latitude = null;
-          updateData.longitude = null;
+        const previousCity = profile?.city ? profile.city.trim() : '';
+        const previousCountryCode = normalizeLocationValue((profile as any)?.current_country_code).toUpperCase();
+        if (
+          regionValue !== previousRegion ||
+          cityValue !== previousCity ||
+          resolvedCurrentCountryCode !== previousCountryCode
+        ) {
           updateData.location_updated_at = new Date().toISOString();
         }
+      }
+      const selectedOriginCountryOption =
+        findCountryByCode(formData.origin_country_code) ?? findCountryByLabel(formData.origin_country);
+      const explicitOriginCountry =
+        isGhanaOnboardingExperience
+          ? 'Ghana'
+          :
+        selectedOriginCountryOption?.label || normalizedString(formData.origin_country);
+      const explicitOriginCountryCode =
+        isGhanaOnboardingExperience
+          ? 'GH'
+          :
+        selectedOriginCountryOption?.code || normalizedString(formData.origin_country_code).toUpperCase();
+      if (explicitOriginCountry) {
+        updateData.origin_country = explicitOriginCountry;
+        updateData.origin_country_code = explicitOriginCountryCode || null;
+        updateData.origin_country_source = 'explicit';
+      } else if (resolvedCurrentCountryCode === 'GH' || resolvedCurrentCountry.toLowerCase() === 'ghana') {
+        updateData.origin_country = 'Ghana';
+        updateData.origin_country_code = 'GH';
+        updateData.origin_country_source = 'residence_backfill';
+      } else {
+        updateData.origin_country = null;
+        updateData.origin_country_code = null;
+        updateData.origin_country_source = 'unknown';
       }
       if (formData.occupation && formData.occupation.trim()) {
         updateData.occupation = formData.occupation.trim();
@@ -1414,9 +2264,100 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         updateData.future_ghana_plans = formData.future_ghana_plans.trim();
       }
 
+      const hasProfileFieldChanges =
+        !sameString(updateData.full_name, profile?.full_name) ||
+        !sameString(updateData.bio, profile?.bio) ||
+        !sameString(updateData.gender, (profile as any)?.gender) ||
+        !sameString(updateData.hero_image_url, (profile as any)?.hero_image_url) ||
+        !sameNumber(updateData.age, profile?.age) ||
+        !sameString(updateData.city, profile?.city) ||
+        !sameString(updateData.region, profile?.region) ||
+        !sameString(updateData.tribe, (profile as any)?.tribe) ||
+        !sameStringArray(updateData.roots, (profile as any)?.roots) ||
+        !sameString(updateData.roots_note, (profile as any)?.roots_note) ||
+        !sameString(updateData.roots_visibility, (profile as any)?.roots_visibility || 'VISIBLE') ||
+        !sameString(updateData.religion, (profile as any)?.religion) ||
+        !sameString(updateData.current_country, (profile as any)?.current_country) ||
+        !sameString(updateData.current_country_code, (profile as any)?.current_country_code) ||
+        !sameString(updateData.origin_country, (profile as any)?.origin_country) ||
+        !sameString(updateData.origin_country_code, (profile as any)?.origin_country_code) ||
+        !sameString(updateData.origin_country_source, (profile as any)?.origin_country_source || 'unknown') ||
+        !sameString(updateData.occupation, (profile as any)?.occupation) ||
+        !sameString(updateData.education, (profile as any)?.education) ||
+        !sameString(updateData.height, (profile as any)?.height) ||
+        !sameString(updateData.looking_for, (profile as any)?.looking_for) ||
+        !sameString(updateData.exercise_frequency, (profile as any)?.exercise_frequency) ||
+        !sameString(updateData.smoking, (profile as any)?.smoking) ||
+        !sameString(updateData.drinking, (profile as any)?.drinking) ||
+        !sameString(updateData.has_children, (profile as any)?.has_children) ||
+        !sameString(updateData.wants_children, (profile as any)?.wants_children) ||
+        !sameString(updateData.personality_type, (profile as any)?.personality_type) ||
+        !sameString(updateData.love_language, (profile as any)?.love_language) ||
+        !sameString(updateData.living_situation, (profile as any)?.living_situation) ||
+        !sameString(updateData.pets, (profile as any)?.pets) ||
+        !sameStringArray(updateData.languages_spoken, (profile as any)?.languages_spoken) ||
+        !sameNumber(updateData.years_in_diaspora, (profile as any)?.years_in_diaspora) ||
+        !sameString(updateData.last_ghana_visit, (profile as any)?.last_ghana_visit) ||
+        !sameString(updateData.future_ghana_plans, (profile as any)?.future_ghana_plans);
+      
       // Update profile using auth context (this will refresh the UI automatically)
-      console.log('Profile update data:', updateData);
-      const { error } = await updateProfile(updateData);
+      let saveResult: { error: Error | null; queued?: boolean } = { error: null, queued: false };
+      let error: Error | null = null;
+      if (hasProfileFieldChanges || !mediaSyncPayload) {
+        console.log('Profile update data:', updateData);
+        saveResult = await updateProfile(updateData);
+        error = saveResult.error;
+      }
+
+      if (
+        error &&
+        updateData.age_preference_confirmed_at &&
+        String((error as any)?.code ?? '').toUpperCase() === 'PGRST204' &&
+        String((error as any)?.message ?? '').toLowerCase().includes('age_preference_confirmed_at')
+      ) {
+        console.warn('[profile-edit] age_preference_confirmation_column_not_deployed');
+        delete updateData.age_preference_confirmed_at;
+        saveResult = await updateProfile(updateData);
+        ({ error } = saveResult);
+      }
+
+      if (
+        error &&
+        resolvedCurrentCountryCode !== 'GH' &&
+        updateData.locality_geoname_id != null &&
+        isLegacyGhanaLocalityForeignKeyError(error)
+      ) {
+        // Compatibility for a staggered deployment where the client supports
+        // worldwide GeoNames IDs but the legacy Ghana-only FK still exists.
+        console.warn('[profile-edit] legacy_ghana_locality_fk_fallback');
+        Object.assign(updateData, {
+          locality_geoname_id: null,
+          locality_admin1_code: null,
+          locality_provider: null,
+        });
+        saveResult = await updateProfile(updateData);
+        ({ error } = saveResult);
+      }
+
+      if (
+        error &&
+        updateData.roots_visibility === 'MATCHES_ONLY' &&
+        isRootsVisibilityConstraintError(error)
+      ) {
+        console.warn('[profile-edit] roots_visibility_matches_only_not_supported');
+        const fallbackUpdateData = {
+          ...updateData,
+          roots_visibility: LEGACY_ROOTS_VISIBILITY_FALLBACK,
+        };
+        saveResult = await updateProfile(fallbackUpdateData);
+        ({ error } = saveResult);
+      }
+
+      if (error && updateData.religion !== 'OTHER' && isReligionEnumError(error)) {
+        console.warn('[profile-edit] religion_enum_value_not_supported');
+        saveResult = await updateProfile({ ...updateData, religion: 'OTHER' });
+        ({ error } = saveResult);
+      }
 
       if (error) {
         if ((error as any).code === '23505') {
@@ -1443,10 +2384,49 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       }
 
       // Save interests separately through profile_interests table
-      await saveUserInterests(selectedInterests);
+      const interestsResult = await saveUserInterests(selectedInterests);
+      let mediaSyncPending = false;
+      if (mediaSyncPayload) {
+        await enqueueProfileMediaSyncMutation(mediaSyncPayload);
+        if (!(await isOfflineNow())) {
+          try {
+            await drainOfflineMutationQueue();
+            await refreshProfile();
+          } catch {
+            mediaSyncPending = true;
+          }
+        } else {
+          mediaSyncPending = true;
+        }
+      }
 
-      Alert.alert('Success', 'Profile updated successfully!');
-      onSave(updateData);
+      const queued = saveResult.queued === true || interestsResult.queued === true || mediaSyncPending;
+      agePreferenceTouchedRef.current = false;
+      initialSelectedInterestsRef.current = selectedInterests;
+      const snapshotProfileId = getSnapshotProfileId();
+      if (snapshotProfileId) {
+        void writeMeProfileSnapshot(snapshotProfileId, {
+          avatarUrl: formData.avatar_url || null,
+          heroImageUrl: resolvedHeroImageUrl,
+          photos: sanitizedPhotos,
+          profileVideo: formData.profile_video || null,
+        });
+      }
+      Alert.alert(
+        queued ? 'Saved' : 'Success',
+        queued
+          ? 'Your profile is updated here. Some media may still finish syncing in the background.'
+          : 'Profile updated successfully!',
+      );
+      onSave({
+        ...updateData,
+        __displayAvatarUrl: formData.avatar_url || null,
+        __displayHeroImageUrl: resolvedHeroImageUrl,
+        __displayPhotos: sanitizedPhotos,
+        __displayProfileVideo: formData.profile_video || null,
+        __interests: selectedInterests,
+        __offlineQueued: queued,
+      });
       onClose();
     } catch (error) {
       console.error('Error updating profile:', error);
@@ -1462,128 +2442,74 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       visible={visible}
       animationType="slide"
       presentationStyle="pageSheet"
+      onRequestClose={closeProfileEditor}
     >
       <SafeAreaView style={styles.container}>
-        {/* Header */}
-        <View style={styles.header}>
-          <TouchableOpacity onPress={onClose}>
-            <Text style={styles.cancelButton}>Cancel</Text>
-          </TouchableOpacity>
-          <Text style={styles.title}>Edit Profile</Text>
-          <TouchableOpacity onPress={handleSave} disabled={loading}>
-            {loading ? (
-              <ActivityIndicator size="small" color={theme.tint} />
-            ) : (
-              <Text style={styles.saveButton}>Save</Text>
-            )}
-          </TouchableOpacity>
-        </View>
+        <BlurViewSafe intensity={34} tint={isDark ? 'dark' : 'light'} style={styles.shell}>
+          {/* Header */}
+          <View style={styles.header}>
+            <TouchableOpacity onPress={closeProfileEditor}>
+              <Text style={styles.cancelButton}>Cancel</Text>
+            </TouchableOpacity>
+            <Text style={styles.title}>Edit Profile</Text>
+            <TouchableOpacity onPress={handleSave} disabled={loading}>
+              {loading ? (
+                <ActivityIndicator size="small" color={theme.tint} />
+              ) : (
+                <Text style={styles.saveButton}>Save</Text>
+              )}
+            </TouchableOpacity>
+          </View>
 
-        {statusMessage && (
-          <View
-            style={[
-              styles.statusBanner,
-              statusTone === 'error' ? styles.statusBannerError : styles.statusBannerSuccess,
-            ]}
-          >
-            <MaterialCommunityIcons
-              name={statusTone === 'error' ? 'alert-circle' : 'check-circle'}
-              size={18}
-              color={statusTone === 'error' ? theme.danger : theme.tint}
-            />
-            <Text
+          {statusMessage && (
+            <View
               style={[
-                styles.statusBannerText,
-                statusTone === 'error' ? styles.statusBannerTextError : styles.statusBannerTextSuccess,
+                styles.statusBanner,
+                statusTone === 'error' ? styles.statusBannerError : styles.statusBannerSuccess,
               ]}
             >
-              {statusMessage}
-            </Text>
-          </View>
-        )}
-
-        <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-          {/* Avatar Section */}
-          <View style={styles.section}>
-            <View style={styles.sectionTitleRow}>
-              <View style={styles.sectionIconWrap}>
-                <MaterialCommunityIcons
-                  name="account-circle-outline"
-                  size={18}
-                  color={theme.accent}
-                  style={styles.sectionIcon}
-                />
-              </View>
-              <Text style={styles.sectionTitle}>Profile Photo</Text>
-            </View>
-            <View style={styles.avatarContainer}>
-              {hasAvatarImage ? (
-                <Image
-                  source={{
-                    uri: formData.avatar_url,
-                  }}
-                  style={styles.avatar}
-                />
-              ) : (
-                <View style={styles.avatarPlaceholder}>
-                  <Text style={styles.avatarPlaceholderInitials}>{avatarInitials}</Text>
-                  <Text style={styles.avatarPlaceholderCaption}>Add a clear photo to build trust faster</Text>
-                </View>
-              )}
-              <TouchableOpacity
-                style={styles.editAvatarButton}
-                onPress={() => pickImage(true)}
-                disabled={uploading}
+              <MaterialCommunityIcons
+                name={statusTone === 'error' ? 'alert-circle' : 'check-circle'}
+                size={18}
+                color={statusTone === 'error' ? theme.danger : theme.tint}
+              />
+              <Text
+                style={[
+                  styles.statusBannerText,
+                  statusTone === 'error' ? styles.statusBannerTextError : styles.statusBannerTextSuccess,
+                ]}
               >
-                {uploading ? (
-                  <ActivityIndicator size="small" color={theme.background} />
-                ) : (
-                  <MaterialCommunityIcons name="camera" size={16} color={theme.background} />
-                )}
-              </TouchableOpacity>
+                {statusMessage}
+              </Text>
             </View>
-          </View>
+          )}
 
-          <TouchableOpacity
-            activeOpacity={0.92}
-            style={styles.verificationCard}
+          <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+          <ProfileMediaStudioSection
+            theme={theme}
+            isDark={isDark}
+            draft={mediaDraft}
+            previewVideoUrl={previewVideoUrl}
+            profileInitials={avatarInitials}
+            uploading={uploading || mediaStudioBusy}
+            videoUploading={videoUploading || mediaStudioBusy}
+            onPickAvatar={() => void pickImage(true)}
+            onPickGallery={() => void pickImage(false)}
+            onPickVideo={() => void pickProfileVideo()}
+            onRemoveVideo={removeProfileVideo}
+            onRefineHero={(index) => openMediaFrame('hero', index)}
+            onRefineAvatar={(index) => openMediaFrame('avatar', index)}
+            onMoveLeft={(index) => moveGalleryPhoto(index, index - 1)}
+            onMoveRight={(index) => moveGalleryPhoto(index, index + 1)}
+            onRemovePhoto={removePhoto}
+          />
+
+          <TrustVerificationCompactCard
+            theme={theme}
+            verificationLevel={verificationLevel}
+            verificationCallout={verificationCallout}
             onPress={onOpenVerification}
-            disabled={!onOpenVerification}
-          >
-            <View style={styles.sectionTitleRow}>
-              <View style={[styles.sectionIconWrap, styles.verificationSectionIconWrap]}>
-                <MaterialCommunityIcons
-                  name="shield-check-outline"
-                  size={18}
-                  color={theme.tint}
-                  style={styles.sectionIcon}
-                />
-              </View>
-              <Text style={styles.sectionTitle}>Trust & Verification</Text>
-            </View>
-
-            <View style={styles.verificationCardRow}>
-              <View style={styles.verificationBadgeWrap}>
-                {verificationLevel > 0 ? (
-                  <VerificationBadge level={verificationLevel} size="medium" variant="betweener" />
-                ) : (
-                  <View style={styles.verificationBadgePlaceholder}>
-                    <MaterialCommunityIcons name="shield-plus-outline" size={18} color={theme.tint} />
-                  </View>
-                )}
-              </View>
-
-              <View style={styles.verificationCardCopy}>
-                <Text style={styles.verificationCardTitle}>{verificationCallout.title}</Text>
-                <Text style={styles.verificationCardSubtitle}>{verificationCallout.subtitle}</Text>
-              </View>
-
-              <View style={styles.verificationCardAction}>
-                <Text style={styles.verificationCardActionText}>{verificationCallout.action}</Text>
-                <MaterialCommunityIcons name="chevron-right" size={16} color={theme.tint} />
-              </View>
-            </View>
-          </TouchableOpacity>
+          />
 
           {/* Basic Info */}
           <View style={styles.section}>
@@ -1610,7 +2536,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
               />
             </View>
 
-            <View style={styles.inputContainer}>
+            {showLegacyCoreFields ? <View style={styles.inputContainer}>
               <Text style={styles.inputLabel}>Bio *</Text>
               <TextInput
                 style={[styles.textInput, styles.textArea]}
@@ -1623,7 +2549,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                 maxLength={500}
               />
               <Text style={styles.characterCount}>{formData.bio.length}/500</Text>
-            </View>
+            </View> : null}
 
             <View style={styles.inputContainer}>
               <Text style={styles.inputLabel}>Gender</Text>
@@ -1698,11 +2624,112 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
               </View>
             </View>
 
+            {showLegacyCoreFields ? <>
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>Current Country</Text>
+              <TouchableOpacity
+                style={styles.selectButton}
+                onPress={() => {
+                  if (isGhanaCountryLocked) return;
+                  setCountryPickerTarget('current');
+                  setCountryModalVisible(true);
+                }}
+                disabled={isGhanaCountryLocked}
+              >
+                <View style={styles.countrySelectValue}>
+                  <Text style={[styles.countryFlagText, !selectedCurrentCountryFlag && styles.countryFlagPlaceholder]}>
+                    {selectedCurrentCountryFlag || '--'}
+                  </Text>
+                  <View style={styles.countrySelectCopy}>
+                    <Text
+                      style={[
+                        formData.current_country
+                          ? styles.selectButtonText
+                          : styles.selectButtonPlaceholder,
+                      ]}
+                    >
+                      {formData.current_country || 'Select current country'}
+                    </Text>
+                    <Text style={styles.countryMetaText}>
+                      {selectedCurrentCountry
+                        ? `${selectedCurrentCountry.dial} • ${selectedCurrentCountry.code}`
+                        : 'Used for local matching first'}
+                    </Text>
+                  </View>
+                </View>
+                <MaterialCommunityIcons name="chevron-down" size={20} color={theme.textMuted} />
+              </TouchableOpacity>
+              {isGhanaCountryLocked ? (
+                <Text style={styles.fieldHelperText}>
+                  {countryPolicyMessage}
+                </Text>
+              ) : null}
+              {isGhanaCountryLocked ? (
+                <TouchableOpacity
+                  style={[styles.countryVerificationButton, countryVerificationBusy && styles.disabledSelectButton]}
+                  onPress={verifyCountryWithPreciseLocation}
+                  disabled={countryVerificationBusy}
+                  accessibilityRole="button"
+                  accessibilityLabel="Verify current country with precise location"
+                >
+                  {countryVerificationBusy ? (
+                    <ActivityIndicator size="small" color={theme.tint} />
+                  ) : (
+                    <MaterialCommunityIcons name="crosshairs-gps" size={18} color={theme.tint} />
+                  )}
+                  <Text style={styles.countryVerificationButtonText}>
+                    {countryVerificationBusy ? 'Checking secure location…' : 'Verify a move with precise location'}
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>Origin Country (Optional)</Text>
+              <TouchableOpacity
+                style={styles.selectButton}
+                onPress={() => {
+                  if (isGhanaOnboardingExperience) return;
+                  setCountryPickerTarget('origin');
+                  setCountryModalVisible(true);
+                }}
+                disabled={isGhanaOnboardingExperience}
+              >
+                <View style={styles.countrySelectValue}>
+                  <Text style={[styles.countryFlagText, !selectedOriginCountryFlag && styles.countryFlagPlaceholder]}>
+                    {selectedOriginCountryFlag || '--'}
+                  </Text>
+                  <View style={styles.countrySelectCopy}>
+                    <Text
+                      style={[
+                        formData.origin_country
+                          ? styles.selectButtonText
+                          : styles.selectButtonPlaceholder,
+                      ]}
+                    >
+                      {formData.origin_country || 'Select origin country'}
+                    </Text>
+                    <Text style={styles.countryMetaText}>
+                      {selectedOriginCountry
+                        ? `${selectedOriginCountry.dial} • ${selectedOriginCountry.code}`
+                        : 'Used for diaspora affinity'}
+                    </Text>
+                  </View>
+                </View>
+                <MaterialCommunityIcons name="chevron-down" size={20} color={theme.textMuted} />
+              </TouchableOpacity>
+              <Text style={styles.fieldHelperText}>
+                {isGhanaOnboardingExperience
+                  ? 'Your Ghana roots stay anchored here even when your verified current country changes.'
+                  : 'This is where your roots are from, not necessarily where you live now.'}
+              </Text>
+            </View>
+
             <View style={styles.inputContainer}>
               <Text style={styles.inputLabel}>
-                {isGhanaProfile ? 'Region' : 'Location'}
+                {formIsGhanaProfile ? 'Region' : 'City or Region'}
               </Text>
-              {isGhanaProfile ? (
+              {formIsGhanaProfile ? (
                 <>
                   <TouchableOpacity
                     style={styles.selectButton}
@@ -1743,21 +2770,113 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                   style={styles.textInput}
                   value={formData.region}
                   onChangeText={(text) => handleInputChange('region', text)}
-                  placeholder="City, Country"
+                  placeholder="City or region"
                   maxLength={100}
                 />
               )}
+            </View>
+
+            {formIsGhanaProfile ? (
+              <View style={styles.inputContainer}>
+                <Text style={styles.inputLabel}>City or Town (Optional)</Text>
+                <TouchableOpacity
+                  style={[
+                    styles.selectButton,
+                    formData.city && styles.selectButtonSelected,
+                    !formData.region && styles.disabledSelectButton,
+                  ]}
+                  disabled={!formData.region}
+                  onPress={() => {
+                    if (!formData.region) return;
+                    setGhanaCityTownSearch('');
+                    setGhanaCityTownInitializing(true);
+                    setShowGhanaCityTownPicker(true);
+                  }}
+                >
+                  <View style={styles.citySelectValueWrap}>
+                    <Text
+                      style={[
+                        formData.city
+                          ? styles.selectButtonText
+                          : styles.selectButtonPlaceholder,
+                      ]}
+                    >
+                      {formData.city || 'Choose a Ghana city or town'}
+                    </Text>
+                    {formData.city && formData.locality_district ? (
+                      <Text style={styles.citySelectMetaText} numberOfLines={1}>
+                        {formData.locality_district}
+                      </Text>
+                    ) : null}
+                  </View>
+                  <View style={styles.citySelectActions}>
+                    {formData.city ? (
+                      <TouchableOpacity
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        onPress={(event) => {
+                          event.stopPropagation();
+                          handleInputChange('city', '');
+                          handleInputChange('locality_geoname_id', null);
+                          handleInputChange('locality_district', '');
+                        }}
+                      >
+                        <MaterialCommunityIcons
+                          name="close-circle-outline"
+                          size={18}
+                          color={theme.textMuted}
+                        />
+                      </TouchableOpacity>
+                    ) : null}
+                    <MaterialCommunityIcons
+                      name="chevron-right"
+                      size={20}
+                      color={formData.city ? theme.tint : theme.textMuted}
+                    />
+                  </View>
+                </TouchableOpacity>
+                <Text style={styles.fieldHelperText}>
+                  {formData.region
+                    ? 'Helps your profile feel more locally relevant.'
+                    : 'Select your region first, then optionally add your city or town.'}
+                </Text>
+                {!formData.city && formData.region ? (
+                  <Text style={styles.subtleFieldNote}>You can leave this blank and keep the region only.</Text>
+                ) : null}
+              </View>
+            ) : null}
+
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>Religion</Text>
+              <TouchableOpacity
+                style={styles.selectButton}
+                onPress={() => setShowReligionPicker(true)}
+              >
+                <Text
+                  style={[
+                    formData.religion
+                      ? styles.selectButtonText
+                      : styles.selectButtonPlaceholder,
+                  ]}
+                >
+                  {formatReligionLabel(formData.religion) || 'Select religion'}
+                </Text>
+                <MaterialCommunityIcons
+                  name="chevron-down"
+                  size={20}
+                  color={theme.textMuted}
+                />
+              </TouchableOpacity>
             </View>
 
             <View style={styles.inputContainer}>
               <Text style={styles.inputLabel}>Roots</Text>
               <Text style={styles.toggleHelper}>
                 {isGhanaProfile
-                  ? 'Pick one or more roots that matter to you culturally.'
+                  ? 'Choose the communities, cultures, or identities that feel part of your story.'
                   : 'Pick one or more roots or identities that matter to you culturally.'}
               </Text>
               <View style={[styles.optionChipRow, { marginTop: 10 }]}>
-                {(isGhanaProfile ? GHANA_TRIBES_OPTIONS : GLOBAL_TRIBES_OPTIONS).map((option) => {
+                {(isGhanaProfile ? GHANA_ROOT_OPTIONS : GLOBAL_ROOT_OPTIONS).map((option) => {
                   const selected = formData.roots.includes(option);
                   return (
                     <TouchableOpacity
@@ -1777,9 +2896,14 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                 style={[styles.textInput, { marginTop: 12 }]}
                 value={formData.roots_note}
                 onChangeText={(text) => handleInputChange('roots_note', text)}
-                placeholder={isGhanaProfile ? 'Optional: Half Ewe, half Ashanti' : 'Optional: describe how you identify'}
+                placeholder={isGhanaProfile ? "Tell us more, if you'd like" : 'Optional: describe how you identify'}
                 maxLength={120}
               />
+              {isGhanaProfile ? (
+                <Text style={[styles.toggleHelper, { marginTop: 8 }]}>
+                  You can add a specific group, family story, or cultural connection.
+                </Text>
+              ) : null}
               <View style={{ marginTop: 12, gap: 10 }}>
                 {ROOTS_VISIBILITY_OPTIONS.map((option) => {
                   const active = formData.roots_visibility === option.value;
@@ -1804,6 +2928,54 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                 })}
               </View>
             </View>
+            </> : null}
+          </View>
+
+          <GhanaOnboardingProfileSections
+              formData={formData}
+              styles={styles}
+              theme={theme}
+              isGhana={isGhanaOnboardingExperience}
+              countryManaged={isGhanaCountryLocked}
+              countryPolicyMessage={countryPolicyMessage}
+              countryVerificationBusy={countryVerificationBusy}
+              onVerifyCountry={verifyCountryWithPreciseLocation}
+              dark={isDark}
+              selectedInterests={selectedInterests}
+              loadingInterests={loadingInterests}
+              customOccupation={customOccupation}
+              setCustomOccupation={setCustomOccupation}
+              handleInputChange={handleInputChange}
+              handleRootToggle={handleRootToggle}
+              setShowOccupationPicker={setShowOccupationPicker}
+              setShowRegionPicker={setShowRegionPicker}
+              openCurrentCountryPicker={() => {
+                setCountryPickerTarget('current');
+                setCountryModalVisible(true);
+              }}
+              openOriginCountryPicker={() => {
+                setCountryPickerTarget('origin');
+                setCountryModalVisible(true);
+              }}
+              openCityPicker={() => {
+                if (!formData.region) return;
+                setGhanaCityTownSearch('');
+                setGhanaCityTownInitializing(true);
+                setShowGhanaCityTownPicker(true);
+              }}
+              clearCity={() => {
+                handleInputChange('city', '');
+                handleInputChange('locality_geoname_id', null);
+                handleInputChange('locality_district', '');
+              }}
+              setShowReligionPicker={setShowReligionPicker}
+              setShowInterestsPicker={setShowInterestsPicker}
+          />
+
+          <View style={styles.ghanaAdditionalIntro}>
+              <Text style={styles.ghanaCoreIntroEyebrow}>MORE ABOUT YOU</Text>
+              <Text style={styles.ghanaAdditionalTitle}>Optional details for deeper compatibility</Text>
+              <Text style={styles.ghanaCoreIntroBody}>Add only what feels useful. Your core profile story is already above.</Text>
           </View>
 
           {/* Professional Info */}
@@ -1817,10 +2989,10 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                   style={styles.sectionIcon}
                 />
               </View>
-              <Text style={styles.sectionTitle}>Professional</Text>
+              <Text style={styles.sectionTitle}>{formIsGhanaProfile ? 'Education' : 'Professional'}</Text>
             </View>
             
-            <View style={styles.inputContainer}>
+            {showLegacyCoreFields ? <View style={styles.inputContainer}>
               <Text style={styles.inputLabel}>Occupation</Text>
               <TouchableOpacity
                 style={styles.selectButton}
@@ -1848,7 +3020,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                   }}
                 />
               )}
-            </View>
+            </View> : null}
 
             <View style={styles.inputContainer}>
               <Text style={styles.inputLabel}>Education</Text>
@@ -1882,7 +3054,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           </View>
 
           {/* Dating Preferences */}
-          <View style={styles.section}>
+          {showLegacyCoreFields ? <View style={styles.section}>
             <View style={styles.sectionTitleRow}>
               <View style={styles.sectionIconWrap}>
                 <MaterialCommunityIcons
@@ -1904,7 +3076,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                 <Text style={[
                   formData.looking_for ? styles.selectButtonText : styles.selectButtonPlaceholder
                 ]}>
-                  {formData.looking_for || 'What are you looking for?'}
+                  {formData.looking_for ? formatRelationshipIntent(formData.looking_for) : 'What are you looking for?'}
                 </Text>
                 <MaterialCommunityIcons name="chevron-down" size={20} color={theme.textMuted} />
               </TouchableOpacity>
@@ -1924,7 +3096,39 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                 />
               )}
             </View>
-          </View>
+
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>Preferred Age Range</Text>
+              <Text style={styles.fieldHelperText}>
+                This is your real discovery preference. Vibes starts from this saved range.
+              </Text>
+              <View style={styles.row}>
+                <View style={[styles.inputContainer, { flex: 1, marginRight: 8 }]}>
+                  <Text style={styles.ageMetaLabel}>Min age</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    value={formData.min_age_interest}
+                    onChangeText={(text) => handleInputChange('min_age_interest', text.replace(/[^0-9]/g, ''))}
+                    placeholder="18"
+                    keyboardType="numeric"
+                    maxLength={2}
+                  />
+                </View>
+
+                <View style={[styles.inputContainer, { flex: 1, marginLeft: 8 }]}>
+                  <Text style={styles.ageMetaLabel}>Max age</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    value={formData.max_age_interest}
+                    onChangeText={(text) => handleInputChange('max_age_interest', text.replace(/[^0-9]/g, ''))}
+                    placeholder="35"
+                    keyboardType="numeric"
+                    maxLength={2}
+                  />
+                </View>
+              </View>
+            </View>
+          </View> : null}
 
           {/* Matchmaking & Visibility */}
           <View style={styles.section}>
@@ -2379,7 +3583,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           </View>
 
           {/* Interests Section */}
-          <View style={styles.section}>
+          {showLegacyCoreFields ? <View style={styles.section}>
             <View style={styles.sectionTitleRow}>
               <View style={styles.sectionIconWrap}>
                 <MaterialCommunityIcons
@@ -2394,6 +3598,9 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
             
             <View style={styles.inputContainer}>
               <Text style={styles.inputLabel}>Select Your Interests</Text>
+              {formIsGhanaProfile ? (
+                <Text style={styles.fieldHelperText}>Choose 3–5 interests, matching your onboarding profile.</Text>
+              ) : null}
               <TouchableOpacity
                 style={styles.selectButton}
                 onPress={() => setShowInterestsPicker(true)}
@@ -2407,7 +3614,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                     : selectedInterests.length > 0 
                       ? selectedInterests.length === 1 
                         ? selectedInterests[0]
-                        : `${selectedInterests.length} interests selected`
+                        : `${selectedInterests.length}${formIsGhanaProfile ? ' / 5' : ''} interests selected`
                       : 'Choose your interests'
                   }
                 </Text>
@@ -2434,7 +3641,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                 ))}
               </View>
             )}
-          </View>
+          </View> : null}
 
           {/* Distance Unit Section */}
           <View style={styles.section}>
@@ -2471,161 +3678,42 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
             </View>
           </View>
 
-          {/* Diaspora section removed for cleaner edit experience */
+          {/* Diaspora section removed for cleaner edit experience */}
 
-/* Profile Video Section */}
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <View style={styles.sectionTitleRow}>
-                <View style={styles.sectionIconWrap}>
-                  <MaterialCommunityIcons
-                    name="play-circle-outline"
-                    size={18}
-                    color={theme.accent}
-                    style={styles.sectionIcon}
-                  />
-                </View>
-                <Text style={styles.sectionTitle}>Profile Video</Text>
-              </View>
-              <TouchableOpacity
-                style={styles.addPhotoButton}
-                onPress={pickProfileVideo}
-                disabled={videoUploading}
-              >
-                <MaterialCommunityIcons
-                  name="video-plus"
-                  size={16}
-                  color={videoUploading ? theme.textMuted : theme.tint}
-                />
-                <Text style={[
-                  styles.addPhotoText,
-                  { color: videoUploading ? theme.textMuted : theme.tint }
-                ]}>
-                  Upload Video
+            <View style={{ height: 50 }} />
+          </ScrollView>
+
+          {/* Upload Progress */}
+          {(uploading || videoUploading || mediaStudioBusy) && (
+            <View style={styles.uploadingOverlay}>
+              <View style={styles.uploadingContainer}>
+                <ActivityIndicator size="large" color={theme.tint} />
+                <Text style={styles.uploadingText}>
+                  {mediaStudioBusy
+                    ? 'Preparing your premium media framing...'
+                    : videoUploading
+                    ? `${videoUploadStage || 'Uploading video...'}${
+                        typeof videoUploadProgress === 'number'
+                          ? ` ${Math.round(videoUploadProgress * 100)}%`
+                          : ''
+                      }`
+                    : 'Uploading photo...'}
                 </Text>
-              </TouchableOpacity>
-            </View>
-
-            <Text style={styles.photoHint}>
-              Add up to 30 seconds. We optimize the clip before upload instead of relying on a platform cropper.
-            </Text>
-            <View style={styles.videoGuidanceCard}>
-              <MaterialCommunityIcons name="creation-outline" size={16} color={theme.tint} />
-              <Text style={styles.videoGuidanceText}>
-                Best result: record in-app, or choose a library video and let Betweener prepare it privately.
-              </Text>
-            </View>
-
-            {formData.profile_video ? (
-              <View style={styles.videoRow}>
-                <View style={styles.videoThumb}>
-                  {videoPreviewUrl ? (
-                    <InlineVideoPreview uri={videoPreviewUrl} shouldPlay={visible && !videoUploading} styles={styles} />
-                  ) : (
-                    <MaterialCommunityIcons name="play-circle" size={26} color={withAlpha(theme.text, isDark ? 0.5 : 0.3)} />
-                  )}
-                </View>
-                <View style={styles.videoMeta}>
-                  <Text style={styles.videoTitle}>Profile video ready</Text>
-                  <Text style={styles.videoSub}>Tap Save to apply</Text>
-                </View>
-                <TouchableOpacity style={styles.videoRemove} onPress={removeProfileVideo}>
-                  <MaterialCommunityIcons name="trash-can-outline" size={18} color={theme.tint} />
-                </TouchableOpacity>
               </View>
-            ) : (
-              <View style={styles.videoEmpty}>
-                <MaterialCommunityIcons name="video-outline" size={20} color={theme.textMuted} />
-                <Text style={styles.videoEmptyText}>No profile video yet</Text>
-              </View>
-            )}
-          </View>
-
-          {/* Photos Section */}
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <View style={styles.sectionTitleRow}>
-                <View style={styles.sectionIconWrap}>
-                  <MaterialCommunityIcons
-                    name="image-multiple-outline"
-                    size={18}
-                    color={theme.accent}
-                    style={styles.sectionIcon}
-                  />
-                </View>
-                <Text style={styles.sectionTitle}>Additional Photos</Text>
-              </View>
-              <TouchableOpacity
-                style={styles.addPhotoButton}
-                onPress={() => pickImage(false)}
-                disabled={uploading || formData.photos.length >= 6}
-              >
-                <MaterialCommunityIcons 
-                  name="plus" 
-                  size={16} 
-                  color={formData.photos.length >= 6 ? theme.textMuted : theme.tint} 
-                />
-                <Text style={[
-                  styles.addPhotoText,
-                  { color: formData.photos.length >= 6 ? theme.textMuted : theme.tint }
-                ]}>
-                  Add Photo
-                </Text>
-              </TouchableOpacity>
             </View>
-            
-            <Text style={styles.photoHint}>
-              Add up to 6 photos to showcase your personality (current: {formData.photos.length}/6)
-            </Text>
-
-            <View style={styles.photosGrid}>
-              {formData.photos.map((photo, index) => (
-                <View key={index} style={styles.photoContainer}>
-                  <Image source={{ uri: photo }} style={styles.photo} />
-                  <TouchableOpacity
-                    style={styles.removePhotoButton}
-                    onPress={() => removePhoto(index)}
-                  >
-                    <MaterialCommunityIcons name="close" size={14} color={theme.text} />
-                  </TouchableOpacity>
-                </View>
-              ))}
-              
-              {/* Empty slots */}
-              {Array.from({ length: 6 - formData.photos.length }).map((_, index) => (
-                <TouchableOpacity
-                  key={`empty-${index}`}
-                  style={styles.emptyPhotoSlot}
-                  onPress={() => pickImage(false)}
-                  disabled={uploading}
-                >
-                  <MaterialCommunityIcons name="camera-plus" size={24} color={theme.textMuted} />
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-
-          <View style={{ height: 50 }} />
-        </ScrollView>
-
-        {/* Upload Progress */}
-        {(uploading || videoUploading) && (
-          <View style={styles.uploadingOverlay}>
-            <View style={styles.uploadingContainer}>
-              <ActivityIndicator size="large" color={theme.tint} />
-              <Text style={styles.uploadingText}>
-                {videoUploading
-                  ? `${videoUploadStage || 'Uploading video...'}${
-                      typeof videoUploadProgress === 'number'
-                        ? ` ${Math.round(videoUploadProgress * 100)}%`
-                        : ''
-                    }`
-                  : 'Uploading photo...'}
-              </Text>
-            </View>
-          </View>
-        )}
+          )}
+        </BlurViewSafe>
       </SafeAreaView>
+
+      <ProfileMediaFrameSheet
+        visible={Boolean(mediaFrameRequest)}
+        theme={theme}
+        isDark={isDark}
+        sourceUri={mediaFrameRequest?.sourceUri ?? null}
+        slot={mediaFrameRequest?.slot ?? null}
+        onClose={() => setMediaFrameRequest(null)}
+        onConfirm={(focus) => void handleFrameConfirm(focus)}
+      />
 
       {/* Height Picker */}
       <FieldPicker
@@ -2640,10 +3728,243 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           handleInputChange('height', value);
         }}
         currentValue={formData.height}
+        styles={styles}
+        tintColor={theme.tint}
       />
 
+      <Modal
+        visible={countryModalVisible}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setCountryModalVisible(false)}
+      >
+        <SafeAreaView style={styles.pickerContainer}>
+          <View style={styles.pickerHeader}>
+            <TouchableOpacity onPress={() => setCountryModalVisible(false)}>
+              <Text style={styles.pickerCancel}>Cancel</Text>
+            </TouchableOpacity>
+            <Text style={styles.pickerTitle}>
+              {countryPickerTarget === 'origin' ? 'Origin Country' : 'Current Country'}
+            </Text>
+            <View style={{ width: 60 }} />
+          </View>
+
+          <View style={styles.countrySearchWrap}>
+            <MaterialCommunityIcons name="magnify" size={18} color={theme.textMuted} />
+            <TextInput
+              value={countrySearch}
+              onChangeText={setCountrySearch}
+              placeholder="Search country or code"
+              placeholderTextColor={theme.textMuted}
+              autoCapitalize="words"
+              autoCorrect={false}
+              style={styles.countrySearchInput}
+            />
+          </View>
+
+          <FlatList
+            data={countryPickerData}
+            keyExtractor={(item) => item.code}
+            keyboardShouldPersistTaps="handled"
+            style={styles.pickerList}
+            renderItem={({ item }) => {
+              const selectedCode =
+                countryPickerTarget === 'origin'
+                  ? selectedOriginCountry?.code
+                  : selectedCurrentCountry?.code;
+              const isSelected = selectedCode === item.code;
+              return (
+                <TouchableOpacity
+                  style={[
+                    styles.pickerItem,
+                    isSelected && styles.pickerItemSelected,
+                  ]}
+                  onPress={() => selectCountry(item)}
+                >
+                  <View style={styles.countryPickerRow}>
+                    <Text style={styles.countryPickerFlag}>{toFlagEmoji(item.code) || '--'}</Text>
+                    <View style={styles.countryPickerCopy}>
+                      <Text
+                        style={[
+                          styles.pickerItemText,
+                          isSelected && styles.pickerItemTextSelected,
+                        ]}
+                      >
+                        {item.label}
+                      </Text>
+                      <Text style={styles.countryPickerMeta}>{`${item.dial} • ${item.code}`}</Text>
+                    </View>
+                  </View>
+                  {isSelected ? (
+                    <MaterialCommunityIcons name="check" size={20} color={theme.tint} />
+                  ) : null}
+                </TouchableOpacity>
+              );
+            }}
+          />
+        </SafeAreaView>
+      </Modal>
+
+      <Modal
+        visible={showGhanaCityTownPicker}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setShowGhanaCityTownPicker(false)}
+      >
+        <SafeAreaView style={[styles.pickerContainer, { backgroundColor: theme.background }]}>
+          <View style={styles.pickerHeader}>
+            <TouchableOpacity onPress={() => setShowGhanaCityTownPicker(false)}>
+              <Text style={styles.pickerCancel}>Close</Text>
+            </TouchableOpacity>
+            <Text style={styles.pickerTitle}>City or Town</Text>
+            <View style={{ minWidth: 52 }} />
+          </View>
+
+          <View style={styles.locationPickerIntro}>
+            <Text style={styles.locationPickerLead}>
+              {`Where are you based in ${formData.region}?`}
+            </Text>
+            <Text style={styles.locationPickerSupport}>City stays optional.</Text>
+          </View>
+
+          <View style={styles.countrySearchWrap}>
+            <MaterialCommunityIcons
+              name="magnify"
+              size={20}
+              color={theme.textMuted}
+            />
+            <TextInput
+              style={styles.countrySearchInput}
+              value={ghanaCityTownSearch}
+              onChangeText={setGhanaCityTownSearch}
+              placeholder={ghanaCityTownPlaceholder}
+              placeholderTextColor={theme.textMuted}
+              autoCapitalize="words"
+              autoCorrect={false}
+              autoFocus
+            />
+            {ghanaCityTownLoading ? (
+              <ActivityIndicator size="small" color={theme.tint} />
+            ) : null}
+          </View>
+
+          <FlatList
+            data={ghanaCityTownRows}
+            keyExtractor={(item) => item.id}
+            keyboardShouldPersistTaps="handled"
+            style={styles.pickerList}
+            contentContainerStyle={styles.locationPickerListContent}
+            ListEmptyComponent={
+              ghanaCityTownInitializing ? (
+                <View style={styles.emptyStateWrap}>
+                  <ActivityIndicator size="small" color={theme.tint} />
+                  <Text style={styles.emptyStateTitle}>Loading places...</Text>
+                  <Text style={styles.emptyStateSubtitle}>
+                    Pulling localities for {formData.region}.
+                  </Text>
+                </View>
+              ) : null
+            }
+            renderItem={({ item }) => {
+              if (item.type === 'section') {
+                return (
+                  <Text style={styles.locationPickerSectionTitle}>{item.title}</Text>
+                );
+              }
+
+              if (item.type === 'empty') {
+                return (
+                  <View style={styles.emptyStateWrap}>
+                    <Text style={styles.emptyStateTitle}>{item.title}</Text>
+                    <Text style={styles.emptyStateSubtitle}>{item.body}</Text>
+                  </View>
+                );
+              }
+
+              if (item.type === 'action') {
+                return (
+                  <TouchableOpacity
+                    style={styles.locationPickerQuietAction}
+                    onPress={() => {
+                      handleInputChange('city', '');
+                      handleInputChange('locality_geoname_id', null);
+                      handleInputChange('locality_district', '');
+                      setGhanaCityTownSearch('');
+                      setShowGhanaCityTownPicker(false);
+                    }}
+                  >
+                    <View style={styles.countryPickerCopy}>
+                      <Text style={styles.locationPickerQuietActionText}>{item.label}</Text>
+                      <Text style={styles.countryPickerMeta}>{item.body}</Text>
+                    </View>
+                    {!formData.city ? (
+                      <MaterialCommunityIcons name="check" size={20} color={theme.tint} />
+                    ) : (
+                      <MaterialCommunityIcons
+                        name="chevron-right"
+                        size={20}
+                        color={theme.textMuted}
+                      />
+                    )}
+                  </TouchableOpacity>
+                );
+              }
+
+              const normalizedSelected = normalizeGhanaCityTownValue(formData.city).toLowerCase();
+              const isSelected =
+                (formData.locality_geoname_id != null &&
+                  item.item.geonameId != null &&
+                  formData.locality_geoname_id === item.item.geonameId) ||
+                (!formData.locality_geoname_id &&
+                  normalizedSelected === item.item.name.toLowerCase());
+              return (
+                <TouchableOpacity
+                  style={[
+                    styles.pickerItem,
+                    isSelected && styles.pickerItemSelected,
+                  ]}
+                  onPress={async () => {
+                    handleInputChange('city', normalizeGhanaCityTownValue(item.item.name));
+                    handleInputChange('locality_geoname_id', item.item.geonameId ?? null);
+                    handleInputChange('locality_district', item.item.district ?? '');
+                    await saveRecentGhanaLocality(item.item);
+                    const nextRecent = await readRecentGhanaLocalities(formData.region);
+                    setGhanaCityTownRecent(nextRecent);
+                    setGhanaCityTownSearch('');
+                    setShowGhanaCityTownPicker(false);
+                  }}
+                >
+                  <View style={styles.countryPickerCopy}>
+                    <Text
+                      style={[
+                        styles.pickerItemText,
+                        isSelected && styles.pickerItemTextSelected,
+                      ]}
+                    >
+                      {item.item.name}
+                    </Text>
+                    <Text style={styles.countryPickerMeta}>
+                      {item.item.district || item.item.region}
+                    </Text>
+                  </View>
+                  {isSelected ? (
+                    <MaterialCommunityIcons name="check" size={20} color={theme.tint} />
+                  ) : (
+                    <MaterialCommunityIcons
+                      name="chevron-right"
+                      size={20}
+                      color={theme.textMuted}
+                    />
+                  )}
+                </TouchableOpacity>
+              );
+            }}
+          />
+        </SafeAreaView>
+      </Modal>
+
       {/* Ghana Region Picker */}
-      {isGhanaProfile && (
+      {formIsGhanaProfile && (
         <FieldPicker
           title="Select Region"
           options={GHANA_REGIONS_OPTIONS}
@@ -2653,16 +3974,35 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
             if (value === 'Other') {
               setCustomRegion('');
             }
+            if (formData.region !== value && formData.city) {
+              handleInputChange('city', '');
+              handleInputChange('locality_geoname_id', null);
+              handleInputChange('locality_district', '');
+            }
             handleInputChange('region', value);
           }}
           currentValue={formData.region}
+          styles={styles}
+          tintColor={theme.tint}
         />
       )}
+
+      {/* Religion Picker */}
+      <FieldPicker
+        title="Select Religion"
+        options={RELIGION_OPTIONS}
+        visible={showReligionPicker}
+        onClose={() => setShowReligionPicker(false)}
+        onSelect={(value) => handleInputChange('religion', value)}
+        currentValue={formatReligionLabel(formData.religion)}
+        styles={styles}
+        tintColor={theme.tint}
+      />
 
       {/* Occupation Picker */}
       <FieldPicker
         title="Select Occupation"
-        options={OCCUPATION_OPTIONS}
+        options={ONBOARDING_OCCUPATION_OPTIONS}
         visible={showOccupationPicker}
         onClose={() => setShowOccupationPicker(false)}
         onSelect={(value) => {
@@ -2672,6 +4012,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           handleInputChange('occupation', value);
         }}
         currentValue={formData.occupation}
+        styles={styles}
+        tintColor={theme.tint}
       />
 
       {/* Education Picker */}
@@ -2687,6 +4029,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           handleInputChange('education', value);
         }}
         currentValue={formData.education}
+        styles={styles}
+        tintColor={theme.tint}
       />
 
       {/* Looking For Picker */}
@@ -2702,6 +4046,9 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           handleInputChange('looking_for', value);
         }}
         currentValue={formData.looking_for}
+        formatOption={formatRelationshipIntent}
+        styles={styles}
+        tintColor={theme.tint}
       />
 
       {/* HIGH PRIORITY Pickers */}
@@ -2719,6 +4066,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           handleInputChange('exercise_frequency', value);
         }}
         currentValue={formData.exercise_frequency}
+        styles={styles}
+        tintColor={theme.tint}
       />
 
       {/* Smoking Picker */}
@@ -2734,6 +4083,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           handleInputChange('smoking', value);
         }}
         currentValue={formData.smoking}
+        styles={styles}
+        tintColor={theme.tint}
       />
 
       {/* Drinking Picker */}
@@ -2749,6 +4100,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           handleInputChange('drinking', value);
         }}
         currentValue={formData.drinking}
+        styles={styles}
+        tintColor={theme.tint}
       />
 
       {/* Has Children Picker */}
@@ -2764,6 +4117,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           handleInputChange('has_children', value);
         }}
         currentValue={formData.has_children}
+        styles={styles}
+        tintColor={theme.tint}
       />
 
       {/* Wants Children Picker */}
@@ -2779,6 +4134,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           handleInputChange('wants_children', value);
         }}
         currentValue={formData.wants_children}
+        styles={styles}
+        tintColor={theme.tint}
       />
 
       {/* Personality Type Picker */}
@@ -2794,6 +4151,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           handleInputChange('personality_type', value);
         }}
         currentValue={formData.personality_type}
+        styles={styles}
+        tintColor={theme.tint}
       />
 
       {/* Love Language Picker */}
@@ -2809,6 +4168,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           handleInputChange('love_language', value);
         }}
         currentValue={formData.love_language}
+        styles={styles}
+        tintColor={theme.tint}
       />
 
       {/* Living Situation Picker */}
@@ -2824,6 +4185,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           handleInputChange('living_situation', value);
         }}
         currentValue={formData.living_situation}
+        styles={styles}
+        tintColor={theme.tint}
       />
 
       {/* Pets Picker */}
@@ -2839,10 +4202,17 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           handleInputChange('pets', value);
         }}
         currentValue={formData.pets}
+        styles={styles}
+        tintColor={theme.tint}
       />
 
       {/* Languages Multi-Select Picker */}
-      <Modal visible={showLanguagesPicker} animationType="slide" presentationStyle="pageSheet">
+      <Modal
+        visible={showLanguagesPicker}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setShowLanguagesPicker(false)}
+      >
         <SafeAreaView style={styles.pickerContainer}>
           <View style={styles.pickerHeader}>
             <TouchableOpacity onPress={() => setShowLanguagesPicker(false)}>
@@ -2896,7 +4266,12 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       </Modal>
 
       {/* Interests Multi-Select Picker */}
-      <Modal visible={showInterestsPicker} animationType="slide" presentationStyle="pageSheet">
+      <Modal
+        visible={showInterestsPicker}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setShowInterestsPicker(false)}
+      >
         <SafeAreaView style={styles.pickerContainer}>
           <View style={styles.pickerHeader}>
             <TouchableOpacity onPress={() => setShowInterestsPicker(false)}>
@@ -2932,6 +4307,10 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                       if (isSelected) {
                         setSelectedInterests(prev => prev.filter(interest => interest !== item));
                       } else {
+                        if (selectedInterests.length >= 5) {
+                          Alert.alert('Interest mix full', 'Remove one interest before choosing another.');
+                          return;
+                        }
                         setSelectedInterests(prev => [...prev, item]);
                       }
                     }}
@@ -2957,34 +4336,47 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
   );
 }
 
-const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
-  StyleSheet.create({
+const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: ResponsiveMetrics) => {
+  const pageGutter = responsive.horizontalGutter;
+  const sectionPadding = responsive.space(18, { min: 15, max: 20 });
+  const sectionMargin = responsive.compactWidth ? 12 : 16;
+  const controlPaddingX = responsive.space(16, { min: 14, max: 18 });
+  const controlPaddingY = responsive.space(12, { min: 10, max: 14 });
+  const headerPaddingY = responsive.compactHeight ? 12 : 16;
+  const avatarSize = responsive.compactHeight ? 92 : 100;
+  const avatarPlaceholderSize = responsive.compactHeight ? 102 : 112;
+
+  return StyleSheet.create({
     container: {
       flex: 1,
-      backgroundColor: theme.background,
+      backgroundColor: isDark ? 'rgba(7,30,34,0.96)' : 'rgba(244,236,226,0.96)',
+    },
+    shell: {
+      flex: 1,
+      backgroundColor: isDark ? 'rgba(7,30,34,0.82)' : 'rgba(255,249,243,0.88)',
     },
     header: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      paddingHorizontal: 20,
-      paddingVertical: 16,
-      backgroundColor: theme.background,
+      paddingHorizontal: pageGutter,
+      paddingVertical: headerPaddingY,
+      backgroundColor: withAlpha(theme.background, isDark ? 0.52 : 0.64),
       borderBottomWidth: 1,
       borderBottomColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
     },
     title: {
-      fontSize: 18,
+      fontSize: responsive.font(18, { min: 17, max: 20 }),
       fontWeight: '700',
       letterSpacing: 0.2,
       color: theme.text,
     },
     cancelButton: {
-      fontSize: 16,
+      fontSize: responsive.font(16, { min: 15, max: 17 }),
       color: theme.textMuted,
     },
     saveButton: {
-      fontSize: 16,
+      fontSize: responsive.font(16, { min: 15, max: 17 }),
       fontWeight: '600',
       color: theme.tint,
     },
@@ -2992,12 +4384,106 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       flex: 1,
       paddingTop: 6,
     },
-    section: {
-      backgroundColor: theme.backgroundSubtle,
-      paddingHorizontal: 18,
+    tokens: {
+      ink: { color: theme.text },
+      muted: { color: theme.textMuted },
+      accent: { color: theme.tint },
+    } as any,
+    ghanaCoreShell: { marginHorizontal: sectionMargin, marginBottom: 8 },
+    ghanaCoreIntro: {
+      paddingHorizontal: 6,
       paddingVertical: 18,
+    },
+    ghanaCoreIntroEyebrow: { color: theme.tint, fontSize: 10, letterSpacing: 1.7, fontFamily: 'Manrope_700Bold', marginBottom: 8 },
+    ghanaCoreIntroTitle: { color: theme.text, fontSize: responsive.font(25, { min: 22, max: 28 }), lineHeight: 31, fontFamily: 'PlayfairDisplay_700Bold', maxWidth: 360 },
+    ghanaCoreIntroBody: { color: theme.textMuted, fontSize: 12, lineHeight: 18, fontFamily: 'Manrope_500Medium', marginTop: 8, maxWidth: 380 },
+    ghanaAdditionalIntro: { marginHorizontal: sectionMargin, paddingHorizontal: 6, paddingTop: 20, paddingBottom: 14 },
+    ghanaAdditionalTitle: { color: theme.text, fontSize: 20, lineHeight: 25, fontFamily: 'PlayfairDisplay_700Bold' },
+    ghanaCoreSection: {
+      backgroundColor: isDark ? 'rgba(22,27,31,0.88)' : 'rgba(255,251,246,0.92)',
+      borderRadius: 24,
+      padding: sectionPadding,
       marginBottom: 12,
-      marginHorizontal: 16,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(82,56,43,0.08)',
+      shadowColor: isDark ? '#000000' : '#8B5CFF',
+      shadowOpacity: isDark ? 0.18 : 0.07,
+      shadowRadius: 18,
+      shadowOffset: { width: 0, height: 10 },
+      elevation: 3,
+    },
+    ghanaCoreSectionExpanded: {
+      borderColor: withAlpha(theme.tint, isDark ? 0.3 : 0.16),
+      shadowOpacity: isDark ? 0.22 : 0.1,
+      shadowRadius: 22,
+    },
+    ghanaChapterHeader: { flexDirection: 'row', alignItems: 'center', gap: 11, minHeight: 54 },
+    ghanaChapterEyebrowRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 2 },
+    ghanaChapterStatus: { paddingHorizontal: 7, paddingVertical: 3, borderRadius: 999, backgroundColor: withAlpha(theme.text, 0.05) },
+    ghanaChapterStatusComplete: { backgroundColor: withAlpha(theme.tint, isDark ? 0.18 : 0.08) },
+    ghanaChapterStatusText: { color: theme.textMuted, fontSize: 8, fontFamily: 'Manrope_600SemiBold' },
+    ghanaChapterStatusTextComplete: { color: theme.tint },
+    ghanaChapterSummary: { color: theme.textMuted, fontSize: 10, lineHeight: 14, fontFamily: 'Manrope_500Medium', marginTop: 3 },
+    ghanaChapterContent: { marginTop: 14, paddingTop: 14, borderTopWidth: 1, borderTopColor: withAlpha(theme.text, isDark ? 0.12 : 0.06) },
+    ghanaCoreHeading: { flexDirection: 'row', alignItems: 'flex-start', gap: 11, marginBottom: 15 },
+    ghanaCoreIcon: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: withAlpha(theme.tint, isDark ? 0.2 : 0.09), borderWidth: 1, borderColor: withAlpha(theme.tint, 0.16) },
+    ghanaCoreHeadingCopy: { flex: 1 },
+    ghanaCoreEyebrow: { color: theme.tint, fontSize: 9, letterSpacing: 1.35, fontFamily: 'Manrope_700Bold', marginBottom: 2 },
+    ghanaCoreTitle: { color: theme.text, fontSize: 18, lineHeight: 23, fontFamily: 'PlayfairDisplay_700Bold' },
+    ghanaCoreBody: { color: theme.textMuted, fontSize: 11, lineHeight: 16, fontFamily: 'Manrope_500Medium', marginBottom: 12 },
+    ghanaPremiumSelect: { minHeight: 54, borderRadius: 17, borderWidth: 1, borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.09), backgroundColor: withAlpha(theme.background, isDark ? 0.5 : 0.72), paddingHorizontal: 15, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+    ghanaPremiumSelectText: { flex: 1, color: theme.text, fontSize: 14, fontFamily: 'Manrope_600SemiBold' },
+    ghanaPremiumTextArea: { minHeight: 116, borderRadius: 18 },
+    ghanaLocationCountryCard: { minHeight: 58, borderRadius: 18, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 11, backgroundColor: withAlpha(theme.tint, isDark ? 0.13 : 0.06), borderWidth: 1, borderColor: withAlpha(theme.tint, 0.12), marginBottom: 10 },
+    ghanaCountryFlag: { fontSize: 23 },
+    ghanaLocationLabel: { color: theme.text, fontSize: 14, fontFamily: 'Manrope_700Bold' },
+    ghanaLocationMeta: { color: theme.textMuted, fontSize: 10, lineHeight: 14, fontFamily: 'Manrope_500Medium', marginTop: 1 },
+    ghanaVisibilityRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginTop: 12 },
+    ghanaVisibilityChip: { paddingHorizontal: 10, paddingVertical: 8, borderRadius: 999, borderWidth: 1, borderColor: withAlpha(theme.text, 0.1), backgroundColor: withAlpha(theme.background, 0.6) },
+    ghanaVisibilityChipSelected: { backgroundColor: theme.tint, borderColor: theme.tint },
+    ghanaVisibilityText: { color: theme.textMuted, fontSize: 10, fontFamily: 'Manrope_600SemiBold' },
+    ghanaVisibilityTextSelected: { color: '#FFFFFF' },
+    ghanaSelectedInterests: { flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginTop: 10 },
+    ghanaInterestChip: { paddingHorizontal: 10, paddingVertical: 7, borderRadius: 999, backgroundColor: withAlpha(theme.tint, isDark ? 0.18 : 0.08), borderWidth: 1, borderColor: withAlpha(theme.tint, 0.14) },
+    ghanaInterestText: { color: theme.text, fontSize: 10, fontFamily: 'Manrope_600SemiBold' },
+    ghanaIntentCard: { minHeight: 72, borderRadius: 18, borderWidth: 1, borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08), backgroundColor: withAlpha(theme.background, isDark ? 0.5 : 0.72), padding: 12, flexDirection: 'row', alignItems: 'center', gap: 11 },
+    ghanaIntentCardSelected: { backgroundColor: theme.tint, borderColor: theme.tint },
+    ghanaIntentIcon: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: withAlpha(theme.tint, 0.1) },
+    ghanaIntentIconSelected: { backgroundColor: 'rgba(255,255,255,0.16)' },
+    ghanaIntentTitle: { color: theme.text, fontSize: 13, fontFamily: 'Manrope_700Bold', marginBottom: 2 },
+    ghanaIntentTitleSelected: { color: '#FFFFFF' },
+    ghanaIntentBody: { color: theme.textMuted, fontSize: 10, lineHeight: 14, fontFamily: 'Manrope_500Medium' },
+    ghanaIntentBodySelected: { color: 'rgba(255,255,255,0.78)' },
+    ageRangeHero: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12, borderRadius: 17, backgroundColor: withAlpha(theme.tint, isDark ? 0.15 : 0.07), marginBottom: 11 },
+    ageRangeHeroIcon: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: withAlpha(theme.tint, 0.12) },
+    ageRangeHeroCopy: { flex: 1 },
+    ageRangeEyebrow: { color: theme.tint, fontSize: 8, letterSpacing: 1.1, fontFamily: 'Manrope_700Bold' },
+    ageRangeHeroValue: { color: theme.text, fontSize: 21, fontFamily: 'PlayfairDisplay_700Bold' },
+    ageRangeYearsPill: { paddingHorizontal: 8, paddingVertical: 5, borderRadius: 999, backgroundColor: withAlpha(theme.background, 0.7) },
+    ageRangeYearsText: { color: theme.textMuted, fontSize: 9, fontFamily: 'Manrope_600SemiBold' },
+    ageSliderCard: { borderRadius: 18, borderWidth: 1, borderColor: withAlpha(theme.text, 0.08), backgroundColor: withAlpha(theme.background, 0.7), paddingVertical: 16 },
+    ageSliderLayout: { width: '100%' },
+    ageSliderTrackArea: { height: 54, position: 'relative', justifyContent: 'center' },
+    ageSliderTrack: { position: 'absolute', height: 4, borderRadius: 2, backgroundColor: withAlpha(theme.text, 0.12) },
+    ageSliderFill: { position: 'absolute', height: 4, borderRadius: 2, backgroundColor: theme.tint },
+    ageSliderBubble: { position: 'absolute', top: -8, width: 48, alignItems: 'center', paddingVertical: 4, borderRadius: 9, backgroundColor: theme.text },
+    ageSliderBubbleText: { color: theme.background, fontSize: 10, fontFamily: 'Manrope_700Bold' },
+    ageSliderThumb: { position: 'absolute', top: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.background, borderWidth: 2, borderColor: theme.tint, shadowColor: theme.tint, shadowOpacity: 0.2, shadowRadius: 7, elevation: 3 },
+    ageSliderThumbActive: { transform: [{ scale: 1.08 }] },
+    ageSliderThumbCore: { width: 8, height: 8, borderRadius: 4, backgroundColor: theme.tint },
+    ageSliderLabels: { flexDirection: 'row', justifyContent: 'space-between' },
+    ageSliderLabel: { color: theme.textMuted, fontSize: 9, fontFamily: 'Manrope_600SemiBold' },
+    ageRangeQuickRow: { flexDirection: 'row', gap: 7, marginTop: 9 },
+    ageRangeQuickButton: { flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: 12, backgroundColor: withAlpha(theme.tint, isDark ? 0.12 : 0.06) },
+    ageRangeQuickText: { color: theme.tint, fontSize: 9, fontFamily: 'Manrope_700Bold' },
+    ageRangeReassurance: { flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 11 },
+    ageRangeReassuranceText: { flex: 1, color: theme.textMuted, fontSize: 10, lineHeight: 14, fontFamily: 'Manrope_500Medium' },
+    section: {
+      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.72 : 0.84),
+      paddingHorizontal: sectionPadding,
+      paddingVertical: sectionPadding,
+      marginBottom: responsive.space(12, { min: 10, max: 14 }),
+      marginHorizontal: sectionMargin,
       borderWidth: 1,
       borderRadius: 18,
       borderColor: withAlpha(theme.text, isDark ? 0.12 : 0.05),
@@ -3005,21 +4491,6 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       shadowOffset: { width: 0, height: 6 },
       shadowOpacity: isDark ? 0.16 : 0.08,
       shadowRadius: 14,
-      elevation: 3,
-    },
-    verificationCard: {
-      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.92 : 0.98),
-      paddingHorizontal: 18,
-      paddingVertical: 18,
-      marginBottom: 12,
-      marginHorizontal: 16,
-      borderWidth: 1,
-      borderRadius: 18,
-      borderColor: withAlpha(theme.tint, isDark ? 0.22 : 0.16),
-      shadowColor: theme.tint,
-      shadowOffset: { width: 0, height: 8 },
-      shadowOpacity: isDark ? 0.16 : 0.08,
-      shadowRadius: 16,
       elevation: 3,
     },
     sectionHeader: {
@@ -3031,9 +4502,9 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     sectionTitleRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 8,
+      gap: responsive.space(8, { min: 6, max: 10 }),
       flexShrink: 1,
-      marginBottom: 12,
+      marginBottom: responsive.space(12, { min: 10, max: 14 }),
     },
     sectionIcon: {
       marginTop: 1,
@@ -3053,85 +4524,28 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       shadowRadius: 10,
       elevation: 6,
     },
-    verificationSectionIconWrap: {
-      backgroundColor: withAlpha(theme.tint, isDark ? 0.16 : 0.1),
-      borderColor: withAlpha(theme.tint, isDark ? 0.36 : 0.22),
-      shadowColor: theme.tint,
-    },
     sectionTitle: {
-      fontSize: 16,
+      fontSize: responsive.font(16, { min: 15, max: 18 }),
       fontWeight: '700',
       letterSpacing: 0.2,
       color: theme.text,
       lineHeight: 20,
-    },
-    verificationCardRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 12,
-    },
-    verificationBadgeWrap: {
-      width: 42,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    verificationBadgePlaceholder: {
-      width: 34,
-      height: 34,
-      borderRadius: 17,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: withAlpha(theme.tint, isDark ? 0.18 : 0.12),
-      borderWidth: 1,
-      borderColor: withAlpha(theme.tint, isDark ? 0.4 : 0.22),
-    },
-    verificationCardCopy: {
-      flex: 1,
-      gap: 4,
-    },
-    verificationCardTitle: {
-      fontSize: 15,
-      fontWeight: '700',
-      color: theme.text,
-      letterSpacing: 0.2,
-    },
-    verificationCardSubtitle: {
-      fontSize: 12,
-      lineHeight: 17,
-      color: theme.textMuted,
-    },
-    verificationCardAction: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 4,
-      paddingHorizontal: 10,
-      paddingVertical: 8,
-      borderRadius: 999,
-      backgroundColor: withAlpha(theme.background, isDark ? 0.82 : 0.95),
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.1),
-    },
-    verificationCardActionText: {
-      fontSize: 12,
-      fontWeight: '700',
-      color: theme.tint,
-      letterSpacing: 0.2,
     },
     avatarContainer: {
       alignItems: 'center',
       position: 'relative',
     },
     avatar: {
-      width: 100,
-      height: 100,
-      borderRadius: 50,
+      width: avatarSize,
+      height: avatarSize,
+      borderRadius: avatarSize / 2,
       borderWidth: 3,
       borderColor: withAlpha(theme.text, isDark ? 0.25 : 0.12),
     },
     avatarPlaceholder: {
-      width: 112,
-      height: 112,
-      borderRadius: 56,
+      width: avatarPlaceholderSize,
+      height: avatarPlaceholderSize,
+      borderRadius: avatarPlaceholderSize / 2,
       borderWidth: 1,
       borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.1),
       backgroundColor: withAlpha(theme.tint, isDark ? 0.18 : 0.12),
@@ -3145,7 +4559,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       elevation: 8,
     },
     avatarPlaceholderInitials: {
-      fontSize: 30,
+      fontSize: responsive.font(30, { min: 27, max: 32 }),
       fontFamily: 'PlayfairDisplay_700Bold',
       color: theme.text,
       letterSpacing: 1.2,
@@ -3172,10 +4586,10 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderColor: theme.background,
     },
     inputContainer: {
-      marginBottom: 16,
+      marginBottom: responsive.space(16, { min: 13, max: 18 }),
     },
     inputLabel: {
-      fontSize: 13,
+      fontSize: responsive.font(13, { min: 12, max: 14 }),
       fontWeight: '600',
       color: withAlpha(theme.text, isDark ? 0.72 : 0.58),
       marginBottom: 8,
@@ -3184,14 +4598,14 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      gap: 12,
-      paddingVertical: 10,
+      gap: responsive.space(12, { min: 10, max: 14 }),
+      paddingVertical: responsive.space(10, { min: 8, max: 12 }),
     },
     toggleTextCol: {
       flex: 1,
     },
     toggleLabel: {
-      fontSize: 14,
+      fontSize: responsive.font(14, { min: 13, max: 15 }),
       fontWeight: '600',
       color: theme.text,
     },
@@ -3350,6 +4764,13 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       height: '100%',
       resizeMode: 'cover',
     },
+    photoFallback: {
+      width: '100%',
+      height: '100%',
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: withAlpha(theme.background, isDark ? 0.4 : 0.12),
+    },
     videoRow: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -3429,15 +4850,15 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     uploadingContainer: {
       backgroundColor: theme.background,
-      paddingHorizontal: 24,
-      paddingVertical: 20,
+      paddingHorizontal: responsive.space(24, { min: 20, max: 28 }),
+      paddingVertical: responsive.space(20, { min: 16, max: 22 }),
       borderRadius: 16,
       alignItems: 'center',
       borderWidth: 1,
       borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.08),
     },
     uploadingText: {
-      fontSize: 16,
+      fontSize: responsive.font(16, { min: 15, max: 17 }),
       color: theme.text,
       marginTop: 12,
     },
@@ -3451,18 +4872,18 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      paddingHorizontal: 20,
-      paddingVertical: 16,
+      paddingHorizontal: pageGutter,
+      paddingVertical: headerPaddingY,
       backgroundColor: theme.background,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: withAlpha(theme.text, isDark ? 0.14 : 0.1),
     },
     pickerCancel: {
-      fontSize: 16,
+      fontSize: responsive.font(16, { min: 15, max: 17 }),
       color: theme.textMuted,
     },
     pickerTitle: {
-      fontSize: 18,
+      fontSize: responsive.font(18, { min: 17, max: 20 }),
       fontWeight: '600',
       color: theme.text,
     },
@@ -3473,8 +4894,8 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      paddingHorizontal: 20,
-      paddingVertical: 16,
+      paddingHorizontal: pageGutter,
+      paddingVertical: responsive.space(16, { min: 14, max: 18 }),
       backgroundColor: theme.background,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: withAlpha(theme.text, isDark ? 0.12 : 0.1),
@@ -3483,7 +4904,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       backgroundColor: withAlpha(theme.tint, isDark ? 0.16 : 0.12),
     },
     pickerItemText: {
-      fontSize: 16,
+      fontSize: responsive.font(16, { min: 15, max: 17 }),
       color: theme.text,
     },
     pickerItemTextSelected: {
@@ -3497,26 +4918,213 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
       borderRadius: 16,
-      paddingHorizontal: 16,
-      paddingVertical: 12,
-      minHeight: 52,
+      paddingHorizontal: controlPaddingX,
+      paddingVertical: controlPaddingY,
+      minHeight: responsive.minTapTarget + 8,
       backgroundColor: withAlpha(theme.background, isDark ? 0.7 : 0.95),
     },
+    selectButtonSelected: {
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.12 : 0.08),
+      borderColor: withAlpha(theme.tint, isDark ? 0.28 : 0.22),
+    },
+    disabledSelectButton: {
+      opacity: 0.56,
+    },
     selectButtonText: {
-      fontSize: 16,
+      fontSize: responsive.font(16, { min: 15, max: 17 }),
       color: theme.text,
     },
     selectButtonPlaceholder: {
-      fontSize: 16,
+      fontSize: responsive.font(16, { min: 15, max: 17 }),
       color: theme.textMuted,
     },
-    
-    // Interests styles
-    interestsPreview: {
+    fieldHelperText: {
+      marginTop: 6,
+      fontSize: 12,
+      lineHeight: 16,
+      color: theme.textMuted,
+    },
+    countryVerificationButton: {
+      marginTop: 10,
+      minHeight: responsive.minTapTarget,
+      paddingHorizontal: 14,
+      borderRadius: 14,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: withAlpha(theme.tint, isDark ? 0.42 : 0.28),
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.12 : 0.07),
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+    },
+    countryVerificationButtonText: {
+      color: theme.tint,
+      fontSize: responsive.font(14, { min: 13, max: 15 }),
+      fontWeight: '700',
+    },
+    ageMetaLabel: {
+      marginBottom: 8,
+      fontSize: 12,
+      lineHeight: 16,
+      color: theme.textMuted,
+      fontWeight: '600',
+    },
+    countrySelectValue: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flex: 1,
+      marginRight: 12,
+    },
+    countrySelectCopy: {
+      flex: 1,
+    },
+    countryFlagText: {
+      width: 28,
+      fontSize: responsive.font(18, { min: 17, max: 19 }),
+      marginRight: 10,
+      color: theme.text,
+    },
+    countryFlagPlaceholder: {
+      color: theme.textMuted,
+    },
+    countryMetaText: {
+      marginTop: 2,
+      fontSize: 12,
+      color: theme.textMuted,
+    },
+    citySelectValueWrap: {
+      flex: 1,
+      marginRight: 12,
+    },
+    citySelectMetaText: {
+      marginTop: 2,
+      fontSize: 12,
+      color: theme.textMuted,
+    },
+    citySelectActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    subtleFieldNote: {
+      marginTop: 6,
+      fontSize: 12,
+      lineHeight: 16,
+      color: theme.textMuted,
+    },
+    countrySearchWrap: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingHorizontal: pageGutter,
+      paddingTop: responsive.space(12, { min: 10, max: 14 }),
+      paddingBottom: responsive.space(8, { min: 6, max: 10 }),
+    },
+    countrySearchInput: {
+      flex: 1,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
+      borderRadius: 14,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      minHeight: 46,
+      fontSize: 15,
+      color: theme.text,
+      backgroundColor: withAlpha(theme.background, isDark ? 0.7 : 0.95),
+    },
+    locationPickerIntro: {
+      paddingHorizontal: pageGutter,
+      paddingTop: responsive.space(12, { min: 10, max: 14 }),
+      paddingBottom: responsive.space(8, { min: 6, max: 10 }),
+    },
+    locationPickerLead: {
+      fontSize: responsive.font(24, { min: 22, max: 26 }),
+      lineHeight: responsive.font(30, { min: 28, max: 32 }),
+      fontFamily: 'PPEditorialNew_Italic',
+      color: theme.text,
+    },
+    locationPickerSupport: {
+      marginTop: 4,
+      fontSize: responsive.font(14, { min: 13, max: 15 }),
+      color: theme.textMuted,
+    },
+    locationPickerListContent: {
+      paddingBottom: responsive.space(24, { min: 20, max: 28 }),
+    },
+    locationPickerSectionTitle: {
+      paddingHorizontal: pageGutter,
+      paddingTop: responsive.space(18, { min: 16, max: 22 }),
+      paddingBottom: responsive.space(8, { min: 6, max: 10 }),
+      fontSize: 12,
+      fontWeight: '700',
+      letterSpacing: 1.6,
+      textTransform: 'uppercase',
+      color: theme.textMuted,
+    },
+    locationPickerQuietAction: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginHorizontal: pageGutter,
+      marginTop: responsive.space(14, { min: 12, max: 16 }),
+      paddingHorizontal: 16,
+      paddingVertical: 14,
+      borderRadius: 18,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.12),
+      backgroundColor: withAlpha(theme.background, isDark ? 0.75 : 0.96),
+    },
+    locationPickerQuietActionText: {
+      fontSize: responsive.font(15, { min: 14, max: 16 }),
+      color: theme.text,
+      fontWeight: '600',
+    },
+    countryPickerRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flex: 1,
+      marginRight: 12,
+    },
+    countryPickerFlag: {
+      width: 28,
+      fontSize: responsive.font(18, { min: 17, max: 19 }),
+      color: theme.text,
+      marginRight: 12,
+    },
+    countryPickerCopy: {
+      flex: 1,
+    },
+      countryPickerMeta: {
+        marginTop: 2,
+        fontSize: 12,
+        color: theme.textMuted,
+      },
+      emptyStateWrap: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: pageGutter,
+        paddingVertical: responsive.space(28, { min: 24, max: 34 }),
+      },
+      emptyStateTitle: {
+        fontSize: responsive.font(16, { min: 15, max: 17 }),
+        fontFamily: 'Manrope_700Bold',
+        color: theme.text,
+        textAlign: 'center',
+      },
+      emptyStateSubtitle: {
+        marginTop: 6,
+        fontSize: responsive.font(13, { min: 12, max: 14 }),
+        lineHeight: responsive.font(18, { min: 16, max: 19 }),
+        color: theme.textMuted,
+        textAlign: 'center',
+      },
+      
+      // Interests styles
+      interestsPreview: {
       flexDirection: 'row',
       flexWrap: 'wrap',
-      gap: 8,
-      marginTop: 12,
+      gap: responsive.space(8, { min: 6, max: 10 }),
+      marginTop: responsive.space(12, { min: 10, max: 14 }),
     },
     interestTag: {
       flexDirection: 'row',
@@ -3525,11 +5133,11 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderColor: withAlpha(theme.accent, isDark ? 0.4 : 0.3),
       borderWidth: 1,
       borderRadius: 20,
-      paddingHorizontal: 12,
-      paddingVertical: 6,
+      paddingHorizontal: responsive.space(12, { min: 10, max: 14 }),
+      paddingVertical: responsive.space(6, { min: 5, max: 8 }),
     },
     interestText: {
-      fontSize: 14,
+      fontSize: responsive.font(14, { min: 13, max: 15 }),
       color: theme.text,
       fontWeight: '500',
     },
@@ -3538,13 +5146,13 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       padding: 2,
     },
     distanceUnitGroup: {
-      gap: 12,
+      gap: responsive.space(12, { min: 10, max: 14 }),
     },
     distanceUnitRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      paddingVertical: 12,
-      paddingHorizontal: 12,
+      paddingVertical: controlPaddingY,
+      paddingHorizontal: responsive.space(12, { min: 10, max: 14 }),
       borderRadius: 16,
       backgroundColor: theme.background,
       borderWidth: StyleSheet.hairlineWidth,
@@ -3573,12 +5181,12 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       marginLeft: 12,
     },
     distanceUnitLabel: {
-      fontSize: 16,
+      fontSize: responsive.font(16, { min: 15, max: 17 }),
       fontFamily: 'Manrope_600SemiBold',
       color: theme.text,
     },
     distanceUnitSubtitle: {
-      fontSize: 12,
+      fontSize: responsive.font(12, { min: 12, max: 13 }),
       fontFamily: 'Manrope_400Regular',
       color: theme.textMuted,
       marginTop: 2,
@@ -3586,9 +5194,9 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     statusBanner: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 8,
-      paddingHorizontal: 14,
-      paddingVertical: 10,
+      gap: responsive.space(8, { min: 6, max: 10 }),
+      paddingHorizontal: responsive.space(14, { min: 12, max: 16 }),
+      paddingVertical: responsive.space(10, { min: 8, max: 12 }),
       borderRadius: 12,
       borderWidth: 1,
       marginTop: 12,
@@ -3603,7 +5211,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     statusBannerText: {
       flex: 1,
-      fontSize: 13,
+      fontSize: responsive.font(13, { min: 12, max: 14 }),
       fontFamily: 'Manrope_500Medium',
       color: theme.text,
     },
@@ -3614,7 +5222,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       color: theme.tint,
     },
     statusDisplay: {
-      padding: 16,
+      padding: responsive.space(16, { min: 14, max: 18 }),
       backgroundColor: theme.backgroundSubtle,
       borderRadius: 12,
       borderWidth: 1,
@@ -3626,14 +5234,15 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       justifyContent: 'space-between',
     },
     statusText: {
-      fontSize: 16,
+      fontSize: responsive.font(16, { min: 15, max: 17 }),
       fontFamily: 'Archivo_600SemiBold',
       color: theme.text,
       marginBottom: 4,
     },
     statusSubtext: {
-      fontSize: 14,
+      fontSize: responsive.font(14, { min: 13, max: 15 }),
       fontFamily: 'Manrope_400Regular',
       color: theme.textMuted,
     },
   });
+};

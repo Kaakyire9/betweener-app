@@ -1,5 +1,6 @@
-import type { Match } from '@/types/match';
-import { getRelationshipCompassMatchScore, type RelationshipCompass } from '@/lib/relationship-compass';
+import type { Match } from '../../types/match.ts';
+import { getLocationAffinityStrength } from '../location/location-intelligence.ts';
+import { getRelationshipCompassMatchScore, type RelationshipCompass } from '../relationship-compass.ts';
 
 export type VibesSegment = 'forYou' | 'nearby' | 'activeNow';
 
@@ -35,6 +36,16 @@ export const buildLocationSearchText = (match: Match) =>
       '',
   ).toLowerCase();
 
+export const applyInboundInterestLift = (list: Match[]) =>
+  list
+    .map((match, index) => {
+      const rawInterest = Number(match.interestRelevanceScore) || 0;
+      const boundedLift = Math.min(4, Math.max(0, rawInterest) / 25);
+      return { match, rank: index - boundedLift };
+    })
+    .sort((left, right) => left.rank - right.rank)
+    .map((entry) => entry.match);
+
 const getDistanceKm = (match: Match) => {
   const direct = (match as any).distanceKm;
   if (typeof direct === 'number' && Number.isFinite(direct)) return direct;
@@ -47,6 +58,21 @@ const getCompatibility = (match: Match) => {
     return Math.max(0, Math.min(100, score));
   }
   return 0;
+};
+
+const getSubscriptionVisibilityScore = (match: Match, segment: VibesSegment) => {
+  const plan = String((match as any).premiumPlan || '').trim().toUpperCase();
+  const hasActiveBoost = Boolean((match as any).hasActiveBoost);
+
+  let score = 0;
+  if (plan === 'GOLD') score += 0.9;
+  else if (plan === 'SILVER') score += 0.45;
+
+  if (hasActiveBoost) {
+    score += segment === 'forYou' ? 2.4 : segment === 'activeNow' ? 2.1 : 1.8;
+  }
+
+  return score;
 };
 
 const getSharedInterestCount = (match: Match, viewerInterests?: string[]) => {
@@ -89,6 +115,11 @@ const getNearnessScore = (match: Match) => {
   return -1.1;
 };
 
+const getLocalityContextScore = (viewerProfile: any, match: Match) => {
+  if (!viewerProfile) return 0;
+  return getLocationAffinityStrength(viewerProfile, match);
+};
+
 const getArchetypeKey = (match: Match, viewerInterests?: string[]) => {
   if (getSharedInterestCount(match, viewerInterests) > 0) return 'shared';
   if ((match as any).profileVideo) return 'video';
@@ -98,7 +129,14 @@ const getArchetypeKey = (match: Match, viewerInterests?: string[]) => {
 };
 
 const getLocaleKey = (match: Match) =>
-  String((match as any).city || (match as any).location || match.region || (match as any).current_country || '')
+  String(
+    (match as any).locality_geoname_id ||
+      (match as any).city ||
+      (match as any).location ||
+      match.region ||
+      (match as any).current_country ||
+      '',
+  )
     .trim()
     .toLowerCase();
 
@@ -119,7 +157,9 @@ export const rerankVibesSegment = (
     const freshness = getFreshnessScore(match);
     const distanceKm = getDistanceKm(match);
     const nearness = getNearnessScore(match);
+    const localityContext = getLocalityContextScore(viewerProfile, match);
     const momentBoost = momentUserIds?.has(String(match.id)) ? 2.4 : 0;
+    const subscriptionVisibility = getSubscriptionVisibilityScore(match, segment);
     const compassBoost = getRelationshipCompassMatchScore(match, relationshipCompass, {
       viewerProfile,
       viewerInterests,
@@ -132,8 +172,9 @@ export const rerankVibesSegment = (
         sharedInterests * 2.1 +
         richness * 1.15 +
         freshness * 0.9 +
-        nearness * 0.45 +
+        localityContext * 0.95 +
         momentBoost +
+        subscriptionVisibility +
         compassBoost;
     } else if (segment === 'nearby') {
       baseScore =
@@ -142,15 +183,18 @@ export const rerankVibesSegment = (
         sharedInterests * 1.1 +
         freshness * 0.6 +
         richness * 0.35 +
+        subscriptionVisibility +
         compassBoost * 0.75;
     } else {
       const urgency = (match as any).isActiveNow ? 4.8 : isRecentlyActive((match as any).lastActive) ? 2.4 : 0;
       baseScore =
         urgency +
-        nearness * 1.6 +
+        nearness * 1.15 +
+        localityContext * 0.75 +
         compatibility * 0.55 +
         sharedInterests * 1.35 +
         richness * 0.45 +
+        subscriptionVisibility +
         compassBoost * 0.65;
     }
 

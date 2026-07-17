@@ -27,11 +27,9 @@ function getStoredPreference(): ThemePreference | null {
 
 export function useColorSchemePreference() {
   const systemScheme = useRNColorScheme();
-  const [preference, setPreference] = useState<ThemePreference>('system');
-  const [hasHydrated, setHasHydrated] = useState(false);
+  const [preference, setPreference] = useState<ThemePreference>(() => getStoredPreference() ?? 'system');
 
   useEffect(() => {
-    setHasHydrated(true);
     const stored = getStoredPreference();
     if (stored) setPreference(stored);
   }, []);
@@ -42,7 +40,7 @@ export function useColorSchemePreference() {
       : preference;
 
   return {
-    resolvedScheme: hasHydrated ? resolved : 'light',
+    resolvedScheme: resolved,
     preference,
     setPreference: (value: ThemePreference) => {
       setPreference(value);

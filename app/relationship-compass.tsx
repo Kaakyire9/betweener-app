@@ -3,6 +3,10 @@ import { useColorScheme } from "@/hooks/use-color-scheme";
 import { usePremiumState } from "@/hooks/use-premium-state";
 import { useAuth } from "@/lib/auth-context";
 import {
+  readRelationshipCompassSnapshot,
+  writeRelationshipCompassSnapshot,
+} from "@/lib/offline/relationship-compass-store";
+import {
   DEFAULT_RELATIONSHIP_COMPASS,
   RelationshipCompass,
   applyDefaults,
@@ -176,6 +180,29 @@ const getCompassUpdatedAt = (value: unknown) => {
   if (!value || typeof value !== "object") return null;
   const raw = (value as { updatedAt?: unknown }).updatedAt;
   return typeof raw === "string" && raw.trim() ? raw : null;
+};
+
+const getCompassUpdatedTimestamp = (value: unknown) => {
+  const updatedAt = getCompassUpdatedAt(value);
+  if (!updatedAt) return 0;
+  const parsed = new Date(updatedAt).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const pickLatestCompass = (
+  serverValue: unknown,
+  localValue: RelationshipCompass | null,
+) => {
+  const serverHasValue = hasSavedCompassValue(serverValue);
+  const localHasValue = hasSavedCompassValue(localValue);
+  if (!serverHasValue && !localHasValue) return null;
+  if (!serverHasValue) return localValue;
+  if (!localHasValue) return applyDefaults(serverValue as Partial<RelationshipCompass>);
+
+  const serverTimestamp = getCompassUpdatedTimestamp(serverValue);
+  const localTimestamp = getCompassUpdatedTimestamp(localValue);
+  if (localTimestamp > serverTimestamp) return localValue;
+  return applyDefaults(serverValue as Partial<RelationshipCompass>);
 };
 
 const getCompassProfileLimit = (plan: string | null | undefined) => {
@@ -564,11 +591,42 @@ export default function RelationshipCompassScreen() {
   );
 
   useEffect(() => {
-    const nextSaved = hasSavedCompassValue(storedCompass);
-    setHasActivatedCompass(nextSaved);
-    setSavedAt(getCompassUpdatedAt(storedCompass));
-    setCompass(applyDefaults(storedCompass));
-  }, [storedCompass]);
+    let cancelled = false;
+
+    const hydrateCompass = async () => {
+      const localCompass = profile?.id
+        ? await readRelationshipCompassSnapshot(String(profile.id))
+        : null;
+      if (cancelled) return;
+
+      const resolvedCompass = pickLatestCompass(storedCompass, localCompass);
+      if (!resolvedCompass) {
+        setHasActivatedCompass(false);
+        setSavedAt(null);
+        setCompass(DEFAULT_RELATIONSHIP_COMPASS);
+        return;
+      }
+
+      const nextCompass = applyDefaults(resolvedCompass);
+      setHasActivatedCompass(true);
+      setSavedAt(getCompassUpdatedAt(nextCompass));
+      setCompass(nextCompass);
+
+      if (profile?.id) {
+        const localTimestamp = getCompassUpdatedTimestamp(localCompass);
+        const resolvedTimestamp = getCompassUpdatedTimestamp(nextCompass);
+        if (resolvedTimestamp >= localTimestamp) {
+          await writeRelationshipCompassSnapshot(String(profile.id), nextCompass);
+        }
+      }
+    };
+
+    void hydrateCompass();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [profile?.id, storedCompass]);
 
   useEffect(() => {
     const viewerUserId = profile?.user_id ? String(profile.user_id) : null;
@@ -654,6 +712,7 @@ export default function RelationshipCompassScreen() {
       return;
     }
     if (profile?.id) {
+      await writeRelationshipCompassSnapshot(String(profile.id), nextCompass).catch(() => {});
       const vibesFilters = {
         verifiedOnly: Boolean(compassFilters.verifiedOnly),
         hasVideoOnly: false,
@@ -696,6 +755,9 @@ export default function RelationshipCompassScreen() {
     if (error) {
       Alert.alert("Love Compass", "Unable to refresh your compass right now.");
       return;
+    }
+    if (profile?.id) {
+      await writeRelationshipCompassSnapshot(String(profile.id), nextCompass).catch(() => {});
     }
     setCompass(nextCompass);
     setSavedAt(nowIso);

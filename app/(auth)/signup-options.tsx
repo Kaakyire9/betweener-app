@@ -1,6 +1,8 @@
 import {
   logSignupEvent,
+  setSignupOnboardingVariant,
   setPendingAuthMethod,
+  setSignupIdentityHints,
   setSignupPhoneNumber,
   setSignupPhoneVerified,
 } from "@/lib/signup-tracking";
@@ -8,8 +10,8 @@ import { supabase } from "@/lib/supabase";
 import * as AppleAuthentication from "expo-apple-authentication";
 import { makeRedirectUri } from "expo-auth-session";
 import * as WebBrowser from "expo-web-browser";
-import { useRouter } from "expo-router";
-import { useState } from "react";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { useEffect, useState } from "react";
 import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
@@ -17,6 +19,8 @@ import { Colors } from "@/constants/theme";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   clearPendingAuthFlow,
+  clearPendingAuthProvider,
+  markPendingAuthProvider,
   isTrustedAuthCallbackUrl,
   LAST_DEEP_LINK_URL_KEY,
   markPendingAuthFlow,
@@ -31,10 +35,32 @@ const isAppleAuthCancelled = (error: unknown) => {
   return message.includes("canceled") || message.includes("cancelled");
 };
 
+const formatAppleFullName = (
+  fullName?: AppleAuthentication.AppleAuthenticationFullName | null,
+) => {
+  const parts = [
+    String(fullName?.givenName ?? "").trim(),
+    String(fullName?.middleName ?? "").trim(),
+    String(fullName?.familyName ?? "").trim(),
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(" ") : null;
+};
+
 export default function SignupOptionsScreen() {
   WebBrowser.maybeCompleteAuthSession();
   const router = useRouter();
+  const params = useLocalSearchParams();
   const [loadingProvider, setLoadingProvider] = useState<string | null>(null);
+  const variantParam = (() => {
+    const raw = params?.variant;
+    if (typeof raw === "string") return raw;
+    if (Array.isArray(raw)) return raw[0];
+    return null;
+  })();
+
+  useEffect(() => {
+    void setSignupOnboardingVariant(variantParam);
+  }, [variantParam]);
 
   const getRedirectUrl = () =>
     makeRedirectUri({
@@ -55,6 +81,7 @@ export default function SignupOptionsScreen() {
   const handleGoogle = async () => {
     setLoadingProvider("google");
     try {
+      await markPendingAuthProvider("google");
       await setSignupPhoneVerified(false);
       await setSignupPhoneNumber("");
       await setPendingAuthMethod("oauth", "google");
@@ -76,6 +103,7 @@ export default function SignupOptionsScreen() {
         await clearPendingAuthFlow();
       }
     } catch (error) {
+      await clearPendingAuthProvider();
       await clearPendingAuthFlow();
       console.error("[auth] google sign-in error", error);
     } finally {
@@ -87,6 +115,7 @@ export default function SignupOptionsScreen() {
     if (Platform.OS !== "ios") return;
     setLoadingProvider("apple");
     try {
+      await markPendingAuthProvider("apple");
       await setSignupPhoneVerified(false);
       await setSignupPhoneNumber("");
       await setPendingAuthMethod("oauth", "apple");
@@ -96,6 +125,10 @@ export default function SignupOptionsScreen() {
           AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
           AppleAuthentication.AppleAuthenticationScope.EMAIL,
         ],
+      });
+      await setSignupIdentityHints({
+        name: formatAppleFullName(credential.fullName),
+        email: credential.email ?? null,
       });
       if (!credential.identityToken) {
         throw new Error("Apple sign-in failed to return a token.");
@@ -113,6 +146,7 @@ export default function SignupOptionsScreen() {
       if (!isAppleAuthCancelled(error)) {
         console.error("[auth] apple sign-in error", error);
       }
+      await clearPendingAuthProvider();
     } finally {
       setLoadingProvider(null);
     }
@@ -121,7 +155,13 @@ export default function SignupOptionsScreen() {
   const handleEmailLink = async () => {
     await setPendingAuthMethod("otp");
     await logSignupEvent({ auth_method: "otp" });
-    router.push({ pathname: "/(auth)/magic-link", params: { mode: "signup" } });
+    router.push({
+      pathname: "/(auth)/magic-link",
+      params: {
+        mode: "signup",
+        ...(variantParam ? { variant: variantParam } : {}),
+      },
+    });
   };
 
   const theme = Colors.light;
@@ -159,24 +199,26 @@ export default function SignupOptionsScreen() {
       </Pressable>
 
       {Platform.OS === "ios" && (
-        <Pressable
-          onPress={handleApple}
-          disabled={loadingProvider !== null}
+        <View
           style={[
-            styles.providerButton,
-            styles.appleButton,
+            styles.appleButtonWrap,
             loadingProvider && loadingProvider !== "apple" && styles.buttonDisabled,
           ]}
+          pointerEvents={loadingProvider !== null ? "none" : "auto"}
         >
+          <AppleAuthentication.AppleAuthenticationButton
+            buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_UP}
+            buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
+            cornerRadius={16}
+            style={styles.appleButton}
+            onPress={handleApple}
+          />
           {loadingProvider === "apple" ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <>
-              <MaterialCommunityIcons name="apple" size={20} color="#fff" />
-              <Text style={styles.providerText}>Continue with Apple</Text>
-            </>
-          )}
-        </Pressable>
+            <View pointerEvents="none" style={styles.appleLoadingOverlay}>
+              <ActivityIndicator color="#fff" />
+            </View>
+          ) : null}
+        </View>
       )}
 
       <Pressable
@@ -189,13 +231,28 @@ export default function SignupOptionsScreen() {
       </Pressable>
 
       <Pressable
-        onPress={() => router.push("/(auth)/signup")}
+        onPress={() =>
+          router.push(
+            variantParam
+              ? { pathname: "/(auth)/signup", params: { variant: variantParam } }
+              : "/(auth)/signup"
+          )
+        }
         style={styles.secondaryLink}
       >
         <Text style={styles.secondaryText}>Prefer password? Use email and password</Text>
       </Pressable>
 
-        <Pressable onPress={() => router.replace("/(auth)/login")} style={styles.loginLink}>
+        <Pressable
+          onPress={() =>
+            router.replace(
+              variantParam
+                ? { pathname: "/(auth)/login", params: { variant: variantParam } }
+                : "/(auth)/login"
+            )
+          }
+          style={styles.loginLink}
+        >
           <Text style={styles.loginText}>Already have an account? Log in</Text>
         </Pressable>
 
@@ -245,8 +302,14 @@ const styles = StyleSheet.create({
   googleButton: {
     backgroundColor: "#111827",
   },
+  appleButtonWrap: {
+    position: "relative",
+    height: 52,
+    marginBottom: 12,
+  },
   appleButton: {
-    backgroundColor: "#000",
+    width: "100%",
+    height: 52,
   },
   emailButton: {
     backgroundColor: "#0FBAB5",
@@ -260,6 +323,13 @@ const styles = StyleSheet.create({
   },
   buttonDisabled: {
     opacity: 0.6,
+  },
+  appleLoadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 16,
+    backgroundColor: "rgba(0, 0, 0, 0.22)",
   },
   loginLink: {
     alignItems: "center",

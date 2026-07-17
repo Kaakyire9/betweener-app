@@ -38,10 +38,13 @@ async function getStoredPreference(): Promise<ThemePreference | null> {
 
 export function useColorSchemePreference() {
 	const systemScheme = useRNColorScheme();
-	const [preference, setPreference] = useState<ThemePreference>('system');
+	const [preference, setPreference] = useState<ThemePreference>(() => preferenceCache ?? 'system');
 
 	useEffect(() => {
 		let mounted = true;
+		if (preferenceCache) {
+			setPreference(preferenceCache);
+		}
 		getStoredPreference().then((stored) => {
 			if (mounted && stored) {
 				setPreference(stored);

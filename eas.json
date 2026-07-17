@@ -5,6 +5,7 @@
   },
   "build": {
     "development": {
+      "channel": "development",
       "developmentClient": true,
       "distribution": "internal",
       "ios": {
@@ -19,6 +20,7 @@
       }
     },
     "preview": {
+      "channel": "preview",
       "distribution": "internal",
       "env": {
         "EXPO_PUBLIC_ENVIRONMENT": "preview",
@@ -33,10 +35,14 @@
       }
     },
     "playInternal": {
+      "channel": "preview",
       "distribution": "store",
       "autoIncrement": true,
+      "buildArtifactPaths": [
+        "android/app/build/outputs/mapping/release/mapping.txt"
+      ],
       "android": {
-        "buildType": "app-bundle"
+        "gradleCommand": ":app:bundleRelease -Pandroid.enableMinifyInReleaseBuilds=true -Pandroid.enableShrinkResourcesInReleaseBuilds=true"
       },
       "env": {
         "EXPO_PUBLIC_ENVIRONMENT": "preview",
@@ -44,8 +50,28 @@
         "EXPO_USE_POD_REPO_UPDATE": "1"
       }
     },
+    "playVerification": {
+      "channel": "staging",
+      "distribution": "internal",
+      "android": {
+        "gradleCommand": ":app:assembleRelease -PreactNativeArchitectures=arm64-v8a -Pandroid.enableMinifyInReleaseBuilds=true -Pandroid.enableShrinkResourcesInReleaseBuilds=true"
+      },
+      "env": {
+        "EXPO_PUBLIC_ENVIRONMENT": "production",
+        "EXPO_PUBLIC_ENABLE_INTERNAL_TOOLS": "false",
+        "GOOGLE_PLAY_PACKAGE_VERIFICATION_TOKEN": "CSMCKSCOJWUC2AAAAAAAAAAAAA",
+        "EXPO_USE_POD_REPO_UPDATE": "1"
+      }
+    },
     "production": {
+      "channel": "production",
       "autoIncrement": true,
+      "buildArtifactPaths": [
+        "android/app/build/outputs/mapping/release/mapping.txt"
+      ],
+      "android": {
+        "gradleCommand": ":app:bundleRelease -Pandroid.enableMinifyInReleaseBuilds=true -Pandroid.enableShrinkResourcesInReleaseBuilds=true"
+      },
       "env": {
         "EXPO_PUBLIC_ENVIRONMENT": "production",
         "EXPO_PUBLIC_ENABLE_INTERNAL_TOOLS": "false",

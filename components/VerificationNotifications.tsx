@@ -59,7 +59,7 @@ const getVerificationMethodLabel = (verificationType?: string | null) => {
     case 'social':
       return 'social proof';
     case 'passport':
-      return 'passport or visa proof';
+      return 'identity document proof';
     case 'residence':
       return 'residence proof';
     case 'workplace':

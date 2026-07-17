@@ -1,3 +1,22 @@
+const fs = require('fs');
+const path = require('path');
+const { withDangerousMod } = require('@expo/config-plugins');
+
+function withGooglePlayPackageVerificationAsset(config) {
+  return withDangerousMod(config, [
+    'android',
+    async (modConfig) => {
+      const token = process.env.GOOGLE_PLAY_PACKAGE_VERIFICATION_TOKEN;
+      if (!token) return modConfig;
+
+      const assetsDir = path.join(modConfig.modRequest.platformProjectRoot, 'app', 'src', 'main', 'assets');
+      fs.mkdirSync(assetsDir, { recursive: true });
+      fs.writeFileSync(path.join(assetsDir, 'adi-registration.properties'), token.trim(), 'utf8');
+      return modConfig;
+    },
+  ]);
+}
+
 module.exports = ({ config }) => {
   const androidMapsApiKey =
     process.env.EXPO_PUBLIC_GOOGLE_MAPS_ANDROID_API_KEY ||
@@ -16,7 +35,7 @@ module.exports = ({ config }) => {
     process.env.EXPO_PUBLIC_ENVIRONMENT === 'development' ? 'development' : 'production';
   return {
     ...config,
-    newArchEnabled: false,
+    newArchEnabled: true,
     plugins: [
       // Keep this plugin first so the NSE target is present before other iOS plugins run.
       [
@@ -45,7 +64,11 @@ module.exports = ({ config }) => {
           enableFrameProcessors: true,
         },
       ],
+      withGooglePlayPackageVerificationAsset,
       ...(config.plugins ?? []),
+      'expo-asset',
+      'expo-web-browser',
+      'expo-sqlite',
       'expo-secure-store',
       'expo-audio',
       'expo-apple-authentication',

@@ -9,7 +9,9 @@ import {
 } from '@expo-google-fonts/manrope';
 import {
     PlayfairDisplay_600SemiBold,
+    PlayfairDisplay_600SemiBold_Italic,
     PlayfairDisplay_700Bold,
+    PlayfairDisplay_700Bold_Italic,
     useFonts as usePlayfair,
 } from '@expo-google-fonts/playfair-display';
 
@@ -23,7 +25,9 @@ export function useAppFonts() {
   });
   const [playfairLoaded] = usePlayfair({
     PlayfairDisplay_600SemiBold,
+    PlayfairDisplay_600SemiBold_Italic,
     PlayfairDisplay_700Bold,
+    PlayfairDisplay_700Bold_Italic,
   });
 
   return archivoLoaded && manropeLoaded && playfairLoaded;

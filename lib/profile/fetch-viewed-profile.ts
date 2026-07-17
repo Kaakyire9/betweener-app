@@ -1,6 +1,10 @@
 import { isDistanceLabel, parseDistanceKmFromLabel } from '@/lib/profile/distance';
+import { normalizeProfileVideoUri } from '@/lib/profile/media';
+import { getAuthoritativePresenceDisplay } from '@/lib/presence';
 import { getInterestEmoji } from '@/lib/profile/interest-emoji';
+import { getProfileCardContext } from '@/lib/profile-interest';
 import { supabase } from '@/lib/supabase';
+import { fetchUserPresence, overlayPresence } from '@/lib/user-presence';
 import type { Interest, ProfilePromptAnswer, UserProfile } from '@/types/user-profile';
 
 export type FetchViewedProfileOptions = {
@@ -18,9 +22,9 @@ export async function fetchViewedProfile(options: FetchViewedProfileOptions): Pr
   const { viewedProfileId, viewerProfileId, fallbackDistanceLabel, fallbackDistanceKm } = options;
 
   const selectFull =
-    'id, user_id, full_name, age, region, city, location, avatar_url, photos, profile_video, occupation, education, bio, tribe, roots, roots_note, roots_visibility, religion, personality_type, height, looking_for, love_language, languages_spoken, current_country, current_country_code, exercise_frequency, smoking, drinking, has_children, wants_children, location_precision, is_active, online, verification_level';
+    'id, user_id, full_name, age, region, city, location, avatar_url, hero_image_url, photos, profile_video, occupation, education, bio, tribe, roots, roots_note, roots_visibility, religion, personality_type, height, looking_for, love_language, languages_spoken, current_country, current_country_code, origin_country, origin_country_code, exercise_frequency, smoking, drinking, has_children, wants_children, location_precision, is_active, online, last_active, verification_level, created_at';
   const selectMinimal =
-    'id, user_id, full_name, age, region, city, location, avatar_url, bio, tribe, roots, roots_note, roots_visibility, religion, personality_type, love_language, is_active, online, verification_level, current_country_code';
+    'id, user_id, full_name, age, region, city, location, avatar_url, bio, tribe, roots, roots_note, roots_visibility, religion, personality_type, love_language, is_active, online, last_active, verification_level, current_country_code, origin_country, origin_country_code, created_at';
 
   let data: any = null;
   let error: any = null;
@@ -42,8 +46,22 @@ export async function fetchViewedProfile(options: FetchViewedProfileOptions): Pr
 
   if (error || !data) throw error || new Error('Profile not found');
 
+  const presenceResult =
+    typeof data?.user_id === 'string' && data.user_id.length > 0
+      ? await fetchUserPresence(data.user_id)
+      : { data: null, error: null };
+  const profileWithPresence = overlayPresence(data, (presenceResult.data as any) ?? null);
+
   let interestsArr: Interest[] = [];
   let promptAnswers: ProfilePromptAnswer[] = [];
+  let locationAffinity:
+    | {
+        reason_code?: string | null;
+        strength?: number | null;
+        short_text?: string | null;
+        long_text?: string | null;
+      }
+    | null = null;
   try {
     const { data: piRows } = await supabase
       .from('profile_interests')
@@ -99,7 +117,37 @@ export async function fetchViewedProfile(options: FetchViewedProfileOptions): Pr
     // non-fatal
   }
 
-  const photos = Array.isArray((data as any).photos) ? (data as any).photos : data.avatar_url ? [data.avatar_url] : [];
+  if (viewerProfileId) {
+    try {
+      const { data: affinityRows } = await supabase.rpc('compute_location_affinity' as any, {
+        p_viewer_profile_id: viewerProfileId,
+        p_candidate_profile_id: viewedProfileId,
+      } as any);
+
+      const row = Array.isArray(affinityRows) ? affinityRows[0] : null;
+      if (row) {
+        locationAffinity = {
+          reason_code: row.reason_code ?? null,
+          strength:
+            typeof row.strength === 'number'
+              ? row.strength
+              : typeof row.strength === 'string'
+                ? Number(row.strength)
+                : null,
+          short_text: row.short_text ?? null,
+          long_text: row.long_text ?? null,
+        };
+      }
+    } catch {
+      // non-fatal
+    }
+  }
+
+  const photos = Array.isArray((profileWithPresence as any).photos)
+    ? (profileWithPresence as any).photos
+    : profileWithPresence.avatar_url
+      ? [profileWithPresence.avatar_url]
+      : [];
   const computedFallbackKm =
     typeof fallbackDistanceKm === 'number'
       ? fallbackDistanceKm
@@ -107,57 +155,97 @@ export async function fetchViewedProfile(options: FetchViewedProfileOptions): Pr
         ? parseDistanceKmFromLabel(fallbackDistanceLabel)
         : undefined;
 
+  const presence = getAuthoritativePresenceDisplay(
+    profileWithPresence.online,
+    profileWithPresence.last_active ?? null,
+  );
+  let premiumPlan: 'FREE' | 'SILVER' | 'GOLD' | undefined;
+  let isNewHere = false;
+
+  try {
+    const [context] = await getProfileCardContext([viewedProfileId]);
+    const resolvedPlan = String(
+      (context as any)?.premium_plan ?? (context as any)?.premiumPlan ?? '',
+    ).trim().toUpperCase();
+    premiumPlan =
+      resolvedPlan === 'FREE' || resolvedPlan === 'SILVER' || resolvedPlan === 'GOLD'
+        ? (resolvedPlan as 'FREE' | 'SILVER' | 'GOLD')
+        : undefined;
+    isNewHere = Boolean((context as any)?.is_new_here ?? (context as any)?.isNewHere);
+  } catch {
+    const createdAtMs = Date.parse(String((profileWithPresence as any)?.created_at || ''));
+    isNewHere = Number.isFinite(createdAtMs) && Date.now() - createdAtMs <= 14 * 24 * 60 * 60 * 1000;
+  }
+
   const mapped: UserProfile = {
-    id: data.id,
-    userId: data.user_id || undefined,
-    name: data.full_name || 'Profile',
-    age: data.age || 0,
-    location: data.location || data.region || '',
-    city: data.city || undefined,
-    region: data.region || undefined,
-    latitude: typeof data.latitude === 'number' ? data.latitude : undefined,
-    longitude: typeof data.longitude === 'number' ? data.longitude : undefined,
-    profilePicture: data.avatar_url || photos[0] || '',
+    id: profileWithPresence.id,
+    userId: profileWithPresence.user_id || undefined,
+    name: profileWithPresence.full_name || 'Profile',
+    age: profileWithPresence.age || 0,
+    createdAt: (profileWithPresence as any).created_at || undefined,
+    location: profileWithPresence.location || profileWithPresence.region || '',
+    city: profileWithPresence.city || undefined,
+    region: profileWithPresence.region || undefined,
+    latitude: typeof (profileWithPresence as any).latitude === 'number' ? (profileWithPresence as any).latitude : undefined,
+    longitude: typeof (profileWithPresence as any).longitude === 'number' ? (profileWithPresence as any).longitude : undefined,
+    heroImageUrl: (profileWithPresence as any).hero_image_url || photos[0] || profileWithPresence.avatar_url || '',
+    profilePicture: profileWithPresence.avatar_url || photos[0] || '',
     photos,
-    profileVideoPath: data.profile_video || undefined,
-    occupation: data.occupation || '',
-    education: data.education || '',
-    verified: !!data.verification_level,
-    verificationLevel: typeof data.verification_level === 'number' ? data.verification_level : undefined,
-    bio: data.bio || '',
-    distance: isDistanceLabel(fallbackDistanceLabel) ? fallbackDistanceLabel || '' : data.region || data.location || '',
+    profileVideo: normalizeProfileVideoUri((profileWithPresence as any).profile_video) || undefined,
+    profileVideoPath: (profileWithPresence as any).profile_video || undefined,
+    occupation: (profileWithPresence as any).occupation || '',
+    education: (profileWithPresence as any).education || '',
+    verified: !!profileWithPresence.verification_level,
+    verificationLevel: typeof profileWithPresence.verification_level === 'number' ? profileWithPresence.verification_level : undefined,
+    bio: profileWithPresence.bio || '',
+    distance: isDistanceLabel(fallbackDistanceLabel) ? fallbackDistanceLabel || '' : profileWithPresence.region || profileWithPresence.location || '',
     distanceKm: computedFallbackKm,
-    isActiveNow: !!data.is_active || !!(data as any).online,
-    personalityType: data.personality_type || undefined,
-    height: data.height || undefined,
-    lookingFor: data.looking_for || undefined,
-    loveLanguage: data.love_language || undefined,
-    languages: Array.isArray((data as any).languages_spoken) ? (data as any).languages_spoken : undefined,
-    currentCountry: data.current_country || undefined,
-    currentCountryCode: data.current_country_code || undefined,
-    exerciseFrequency: data.exercise_frequency || undefined,
-    smoking: data.smoking || undefined,
-    drinking: data.drinking || undefined,
-    hasChildren: data.has_children || undefined,
-    wantsChildren: data.wants_children || undefined,
-    locationPrecision: data.location_precision || undefined,
-    compatibility: typeof (data as any).compatibility === 'number' ? (data as any).compatibility : 0,
-    tribe: data.tribe || undefined,
+    isActiveNow: presence.online || presence.activeNow,
+    online: presence.online,
+    lastActive: profileWithPresence.last_active ?? null,
+    last_active: profileWithPresence.last_active ?? null,
+    personalityType: (profileWithPresence as any).personality_type || undefined,
+    height: (profileWithPresence as any).height || undefined,
+    lookingFor: (profileWithPresence as any).looking_for || undefined,
+    loveLanguage: profileWithPresence.love_language || undefined,
+    languages: Array.isArray((profileWithPresence as any).languages_spoken) ? (profileWithPresence as any).languages_spoken : undefined,
+    currentCountry: (profileWithPresence as any).current_country || undefined,
+    currentCountryCode: (profileWithPresence as any).current_country_code || undefined,
+    originCountry: (profileWithPresence as any).origin_country || undefined,
+    originCountryCode: (profileWithPresence as any).origin_country_code || undefined,
+    locationAffinityReasonCode: locationAffinity?.reason_code ?? null,
+    locationAffinityStrength: locationAffinity?.strength ?? null,
+    locationAffinityShortText: locationAffinity?.short_text ?? null,
+    locationAffinityLongText: locationAffinity?.long_text ?? null,
+    locationInsight: locationAffinity?.short_text ?? null,
+    exerciseFrequency: (profileWithPresence as any).exercise_frequency || undefined,
+    smoking: (profileWithPresence as any).smoking || undefined,
+    drinking: (profileWithPresence as any).drinking || undefined,
+    hasChildren: (profileWithPresence as any).has_children || undefined,
+    wantsChildren: (profileWithPresence as any).wants_children || undefined,
+    locationPrecision: (profileWithPresence as any).location_precision || undefined,
+    compatibility: typeof (profileWithPresence as any).compatibility === 'number' ? (profileWithPresence as any).compatibility : 0,
+    tribe: profileWithPresence.tribe || undefined,
     roots:
-      Array.isArray((data as any).roots) && (data as any).roots.length > 0
-        ? (data as any).roots.filter((item: unknown): item is string => typeof item === 'string' && item.trim().length > 0)
-        : data.tribe
-          ? [String(data.tribe)]
+      Array.isArray((profileWithPresence as any).roots) && (profileWithPresence as any).roots.length > 0
+        ? (profileWithPresence as any).roots.filter((item: unknown): item is string => typeof item === 'string' && item.trim().length > 0)
+        : profileWithPresence.tribe
+          ? [String(profileWithPresence.tribe)]
           : undefined,
-    rootsNote: (data as any).roots_note || undefined,
-    rootsVisibility: (data as any).roots_visibility || undefined,
-    religion: data.religion || undefined,
+    rootsNote: (profileWithPresence as any).roots_note || undefined,
+    rootsVisibility: (profileWithPresence as any).roots_visibility || undefined,
+    religion: profileWithPresence.religion || undefined,
     interests: interestsArr,
     promptAnswers,
+    premiumPlan,
+    isNewHere,
   };
 
-  if ((!mapped.photos || mapped.photos.length === 0) && mapped.profilePicture) {
-    mapped.photos = [mapped.profilePicture];
+  if (!mapped.photos || mapped.photos.length === 0) {
+    const fallbackHeroImage = mapped.heroImageUrl || mapped.profilePicture;
+    if (fallbackHeroImage) {
+      mapped.photos = [fallbackHeroImage];
+    }
   }
 
   return mapped;

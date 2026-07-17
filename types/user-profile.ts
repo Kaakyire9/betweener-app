@@ -23,12 +23,14 @@ export type UserProfile = {
   userId?: string;
   name: string;
   age: number;
+  createdAt?: string;
   location: string;
   city?: string;
   region?: string;
   latitude?: number;
   longitude?: number;
   profilePicture: string;
+  heroImageUrl?: string;
   photos: string[];
   profileVideo?: string;
   profileVideoPath?: string;
@@ -39,6 +41,9 @@ export type UserProfile = {
   distance: string;
   distanceKm?: number;
   isActiveNow: boolean;
+  online?: boolean;
+  lastActive?: string | null;
+  last_active?: string | null;
   tribe?: string;
   roots?: string[];
   rootsNote?: string;
@@ -51,6 +56,13 @@ export type UserProfile = {
   languages?: string[];
   currentCountry?: string;
   currentCountryCode?: string;
+  originCountry?: string;
+  originCountryCode?: string;
+  locationAffinityReasonCode?: string | null;
+  locationAffinityStrength?: number | null;
+  locationAffinityShortText?: string | null;
+  locationAffinityLongText?: string | null;
+  locationInsight?: string | null;
   exerciseFrequency?: string;
   smoking?: string;
   drinking?: string;
@@ -61,4 +73,6 @@ export type UserProfile = {
   promptAnswers?: ProfilePromptAnswer[];
   compatibility: number;
   verificationLevel?: number;
+  premiumPlan?: 'FREE' | 'SILVER' | 'GOLD';
+  isNewHere?: boolean;
 };

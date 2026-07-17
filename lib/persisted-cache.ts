@@ -1,41 +1,36 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import {
+  type OfflineEnvelope,
+  peekOfflineData,
+  readOfflineEnvelope,
+  readOfflineState,
+  removeOfflineEnvelope,
+  writeOfflineEnvelope,
+} from '@/lib/offline/core';
 
-// Tiny, dependency-free AsyncStorage cache with TTL.
-// Used to render cached content immediately (cached-first) and refresh in background.
+// Backward-compatible cached-first wrapper used across the app.
+// Consumers still decide freshness with maxAgeMs, but the envelope format is now shared.
 
-export type CacheEnvelope<T> = {
-  v: 1;
-  savedAt: number;
-  data: T;
-};
+export type CacheEnvelope<T> = OfflineEnvelope<T>;
+
+export async function peekCacheEnvelope<T>(key: string): Promise<CacheEnvelope<T> | null> {
+  return readOfflineEnvelope<T>(key);
+}
 
 export async function readCache<T>(key: string, maxAgeMs: number): Promise<T | null> {
-  try {
-    const raw = await AsyncStorage.getItem(key);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as CacheEnvelope<T> | null;
-    if (!parsed || parsed.v !== 1 || typeof parsed.savedAt !== "number") return null;
-    if (Date.now() - parsed.savedAt > maxAgeMs) return null;
-    return parsed.data ?? null;
-  } catch {
-    return null;
-  }
+  const state = await readOfflineState<T>(key);
+  if (!state.data || state.savedAt == null) return null;
+  if (Date.now() - state.savedAt > maxAgeMs) return null;
+  return state.data;
+}
+
+export async function peekCache<T>(key: string): Promise<T | null> {
+  return peekOfflineData<T>(key);
 }
 
 export async function writeCache<T>(key: string, data: T): Promise<void> {
-  try {
-    const env: CacheEnvelope<T> = { v: 1, savedAt: Date.now(), data };
-    await AsyncStorage.setItem(key, JSON.stringify(env));
-  } catch {
-    // ignore cache write errors
-  }
+  await writeOfflineEnvelope(key, data, { kind: 'cache' });
 }
 
 export async function removeCache(key: string): Promise<void> {
-  try {
-    await AsyncStorage.removeItem(key);
-  } catch {
-    // ignore cache remove errors
-  }
+  await removeOfflineEnvelope(key);
 }
-

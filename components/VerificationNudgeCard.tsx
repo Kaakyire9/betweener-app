@@ -13,6 +13,7 @@ import {
 
 type VerificationNudgeCardProps = {
   theme: typeof Colors.light;
+  mode?: "invite" | "pending";
   onPress?: () => void;
   onSecondaryPress?: () => void;
 };
@@ -35,6 +36,7 @@ const withAlpha = (hex: string, alpha: number) => {
 
 export function VerificationNudgeCard({
   theme,
+  mode = "invite",
   onPress,
   onSecondaryPress,
 }: VerificationNudgeCardProps) {
@@ -250,6 +252,7 @@ export function VerificationNudgeCard({
       },
     ],
   };
+  const isPending = mode === "pending";
 
   return (
     <View style={styles.wrapper}>
@@ -265,12 +268,16 @@ export function VerificationNudgeCard({
       >
         <View style={styles.eyebrowRow}>
           <View style={styles.eyebrowPill}>
-            <MaterialCommunityIcons name="shield-star-outline" size={13} color={theme.tint} />
-            <Text style={styles.eyebrowText}>TRUST INVITATION</Text>
+            <MaterialCommunityIcons
+              name={isPending ? "clock-check-outline" : "shield-star-outline"}
+              size={13}
+              color={theme.tint}
+            />
+            <Text style={styles.eyebrowText}>{isPending ? "TRUST REVIEW" : "TRUST INVITATION"}</Text>
           </View>
           <View style={styles.metaPill}>
             <MaterialCommunityIcons name="clock-time-four-outline" size={12} color={theme.textMuted} />
-            <Text style={styles.metaText}>under 1 minute</Text>
+            <Text style={styles.metaText}>{isPending ? "in progress" : "under 1 minute"}</Text>
           </View>
         </View>
 
@@ -309,24 +316,26 @@ export function VerificationNudgeCard({
         </View>
 
         <View style={styles.copyBlock}>
-          <Text style={styles.title}>Get verified on Betweener</Text>
+          <Text style={styles.title}>{isPending ? "Verification in review" : "Get verified on Betweener"}</Text>
           <Text style={styles.subtitle}>
-            This is your trust invitation. Unlock a rarer mark, build confidence faster, and make serious matches lean in sooner.
+            {isPending
+              ? "Your proof is with Betweener now. We will update your trust mark as soon as review is complete."
+              : "This is your trust invitation. Unlock a rarer mark, build confidence faster, and make serious matches lean in sooner."}
           </Text>
         </View>
 
         <View style={styles.benefitsRow}>
           <View style={styles.benefitChip}>
-            <MaterialCommunityIcons name="flash-outline" size={13} color={theme.tint} />
-            <Text style={styles.benefitText}>Faster trust</Text>
+            <MaterialCommunityIcons name={isPending ? "shield-lock-outline" : "flash-outline"} size={13} color={theme.tint} />
+            <Text style={styles.benefitText}>{isPending ? "Private review" : "Faster trust"}</Text>
           </View>
           <View style={styles.benefitChip}>
             <MaterialCommunityIcons name="seal-variant" size={13} color={theme.tint} />
-            <Text style={styles.benefitText}>Signature mark</Text>
+            <Text style={styles.benefitText}>{isPending ? "Queue secured" : "Signature mark"}</Text>
           </View>
           <View style={styles.benefitChip}>
-            <MaterialCommunityIcons name="heart-outline" size={13} color={theme.tint} />
-            <Text style={styles.benefitText}>Safer interest</Text>
+            <MaterialCommunityIcons name={isPending ? "bell-outline" : "heart-outline"} size={13} color={theme.tint} />
+            <Text style={styles.benefitText}>{isPending ? "We will notify you" : "Safer interest"}</Text>
           </View>
         </View>
 
@@ -339,21 +348,25 @@ export function VerificationNudgeCard({
               end={{ x: 1, y: 0.7 }}
               style={styles.ctaGradient}
             >
-              <Text style={styles.ctaText}>Start verification</Text>
+              <Text style={styles.ctaText}>{isPending ? "View review status" : "Start verification"}</Text>
               <MaterialCommunityIcons name="arrow-right" size={16} color="#FFFFFF" />
             </LinearGradient>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            activeOpacity={0.88}
-            onPress={onSecondaryPress}
-            style={styles.secondaryButton}
-          >
-            <Text style={styles.secondaryButtonText}>Not now</Text>
-          </TouchableOpacity>
+          {isPending ? null : (
+            <TouchableOpacity
+              activeOpacity={0.88}
+              onPress={onSecondaryPress}
+              style={styles.secondaryButton}
+            >
+              <Text style={styles.secondaryButtonText}>Not now</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
-        <Text style={styles.helperText}>Quick face check or manual document review</Text>
+        <Text style={styles.helperText}>
+          {isPending ? "You can withdraw and resubmit from the verification screen" : "Quick face check or manual document review"}
+        </Text>
       </LinearGradient>
     </View>
   );

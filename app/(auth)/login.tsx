@@ -2,7 +2,7 @@ import { supabase } from "@/lib/supabase";
 import * as AppleAuthentication from "expo-apple-authentication";
 import { makeRedirectUri } from "expo-auth-session";
 import * as WebBrowser from "expo-web-browser";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
@@ -10,10 +10,14 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   clearPendingAuthFlow,
+  clearPendingAuthProvider,
+  markPendingAuthProvider,
   isTrustedAuthCallbackUrl,
   LAST_DEEP_LINK_URL_KEY,
   markPendingAuthFlow,
 } from "@/lib/auth-callback";
+import { setSignupIdentityHints } from "@/lib/signup-tracking";
+import { addBreadcrumb } from "@/lib/telemetry/sentry";
 
 const isAppleAuthCancelled = (error: unknown) => {
   if (!error || typeof error !== "object") return false;
@@ -26,14 +30,35 @@ const isAppleAuthCancelled = (error: unknown) => {
   );
 };
 
+const formatAppleFullName = (
+  fullName?: AppleAuthentication.AppleAuthenticationFullName | null,
+) => {
+  const parts = [
+    String(fullName?.givenName ?? "").trim(),
+    String(fullName?.middleName ?? "").trim(),
+    String(fullName?.familyName ?? "").trim(),
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(" ") : null;
+};
+
 export default function LoginScreen() {
   WebBrowser.maybeCompleteAuthSession();
   const router = useRouter();
+  const params = useLocalSearchParams<{ reason?: string }>();
   const [loadingProvider, setLoadingProvider] = useState<string | null>(null);
+  const showSessionExpiredNotice = params.reason === "session_expired";
 
   useEffect(() => {
     void supabase.auth.getSession();
   }, []);
+
+  useEffect(() => {
+    if (!showSessionExpiredNotice) return;
+    addBreadcrumb("[auth] session_expired_handoff_shown");
+    if (typeof __DEV__ !== "undefined" && __DEV__) {
+      console.log("[auth-recovery]", { event: "session_expired_handoff_shown" });
+    }
+  }, [showSessionExpiredNotice]);
 
   const getRedirectUrl = () =>
     makeRedirectUri({
@@ -54,6 +79,7 @@ export default function LoginScreen() {
   const handleGoogle = async () => {
     setLoadingProvider("google");
     try {
+      await markPendingAuthProvider("google");
       await markPendingAuthFlow("oauth");
       const redirectTo = getRedirectUrl();
       const { data, error } = await supabase.auth.signInWithOAuth({
@@ -71,6 +97,7 @@ export default function LoginScreen() {
         await clearPendingAuthFlow();
       }
     } catch (error) {
+      await clearPendingAuthProvider();
       await clearPendingAuthFlow();
       console.error("[auth] google sign-in error", error);
     } finally {
@@ -82,11 +109,16 @@ export default function LoginScreen() {
     if (Platform.OS !== "ios") return;
     setLoadingProvider("apple");
     try {
+      await markPendingAuthProvider("apple");
       const credential = await AppleAuthentication.signInAsync({
         requestedScopes: [
           AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
           AppleAuthentication.AppleAuthenticationScope.EMAIL,
         ],
+      });
+      await setSignupIdentityHints({
+        name: formatAppleFullName(credential.fullName),
+        email: credential.email ?? null,
       });
       if (!credential.identityToken) {
         throw new Error("Apple sign-in failed to return a token.");
@@ -104,6 +136,7 @@ export default function LoginScreen() {
       if (!isAppleAuthCancelled(error)) {
         console.error("[auth] apple sign-in error", error);
       }
+      await clearPendingAuthProvider();
     } finally {
       setLoadingProvider(null);
     }
@@ -130,6 +163,18 @@ export default function LoginScreen() {
           Sign in with Google or Apple, or use a secure email link.
         </Text>
 
+        {showSessionExpiredNotice ? (
+          <View style={styles.noticeCard}>
+            <MaterialCommunityIcons name="shield-refresh-outline" size={18} color="#0F766E" />
+            <View style={styles.noticeTextWrap}>
+              <Text style={styles.noticeTitle}>Session expired</Text>
+              <Text style={styles.noticeBody}>
+                Your secure session ended while the app was back online. Sign in again to continue.
+              </Text>
+            </View>
+          </View>
+        ) : null}
+
         <Pressable
           onPress={handleGoogle}
           disabled={loadingProvider !== null}
@@ -150,24 +195,26 @@ export default function LoginScreen() {
         </Pressable>
 
         {Platform.OS === "ios" && (
-          <Pressable
-            onPress={handleApple}
-            disabled={loadingProvider !== null}
+          <View
             style={[
-              styles.providerButton,
-              styles.appleButton,
+              styles.appleButtonWrap,
               loadingProvider && loadingProvider !== "apple" && styles.buttonDisabled,
             ]}
+            pointerEvents={loadingProvider !== null ? "none" : "auto"}
           >
+            <AppleAuthentication.AppleAuthenticationButton
+              buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
+              buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
+              cornerRadius={16}
+              style={styles.appleButton}
+              onPress={handleApple}
+            />
             {loadingProvider === "apple" ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <>
-                <MaterialCommunityIcons name="apple" size={20} color="#fff" />
-                <Text style={styles.providerText}>Continue with Apple</Text>
-              </>
-            )}
-          </Pressable>
+              <View pointerEvents="none" style={styles.appleLoadingOverlay}>
+                <ActivityIndicator color="#fff" />
+              </View>
+            ) : null}
+          </View>
         )}
 
         <Pressable
@@ -184,7 +231,7 @@ export default function LoginScreen() {
         </Pressable>
 
         <Pressable
-          onPress={() => router.push("/(auth)/signup-options")}
+          onPress={() => router.push("/(auth)/welcome")}
           style={styles.loginLink}
         >
           <Text style={styles.loginText}>New here? Create an account</Text>
@@ -261,6 +308,33 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     marginBottom: 28,
   },
+  noticeCard: {
+    flexDirection: "row",
+    gap: 12,
+    alignItems: "flex-start",
+    backgroundColor: "rgba(15, 118, 110, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(15, 118, 110, 0.18)",
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    marginBottom: 18,
+  },
+  noticeTextWrap: {
+    flex: 1,
+  },
+  noticeTitle: {
+    fontFamily: "Archivo_700Bold",
+    fontSize: 14.5,
+    color: "#0F172A",
+    marginBottom: 4,
+  },
+  noticeBody: {
+    fontFamily: "Manrope_400Regular",
+    fontSize: 13.5,
+    lineHeight: 19,
+    color: "#4B5563",
+  },
   providerButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -273,8 +347,14 @@ const styles = StyleSheet.create({
   googleButton: {
     backgroundColor: "#111827",
   },
+  appleButtonWrap: {
+    position: "relative",
+    height: 52,
+    marginBottom: 12,
+  },
   appleButton: {
-    backgroundColor: "#000",
+    width: "100%",
+    height: 52,
   },
   emailButton: {
     backgroundColor: "#0FBAB5",
@@ -288,6 +368,13 @@ const styles = StyleSheet.create({
   },
   buttonDisabled: {
     opacity: 0.6,
+  },
+  appleLoadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 16,
+    backgroundColor: "rgba(0, 0, 0, 0.22)",
   },
   loginLink: {
     alignItems: "center",

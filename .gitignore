@@ -7,6 +7,7 @@ node_modules/
 .expo/
 .expo-home/
 dist/
+dist-export-android/
 web-build/
 
 # Native
@@ -53,5 +54,9 @@ google-play-service-account*.json
 
 # temp/backup files
 *.tmp
+tmp/
 
 .env.local
+# Local production schema safety snapshots (never commit).
+supabase/baseline-backups/
+supabase/migrations_legacy_20260713/

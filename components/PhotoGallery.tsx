@@ -1,11 +1,11 @@
 import { Colors } from '@/constants/theme';
+import OfflineImage from '@/components/media/OfflineImage';
 import { getSafeRemoteImageUri } from '@/lib/profile/display-name';
+import { useResponsiveMetrics } from '@/lib/responsive';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useState } from 'react';
 import {
     Alert,
-    Dimensions,
-    Image,
     Modal,
     ScrollView,
     StyleSheet,
@@ -13,9 +13,6 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-
-const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
 interface PhotoGalleryProps {
   photos: string[];
@@ -37,9 +34,14 @@ export default function PhotoGallery({
   onRemovePhoto 
 }: PhotoGalleryProps) {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
-  const insets = useSafeAreaInsets();
+  const responsive = useResponsiveMetrics();
+  const insets = responsive.insets;
   const safePhotos = photos.map((photo) => getSafeRemoteImageUri(photo)).filter(Boolean) as string[];
-  const safeIntroVideoThumbnail = getSafeRemoteImageUri(introVideoThumbnail) || safePhotos[0] || null;
+  const safeIntroVideoUrl = introVideoUrl ? getSafeRemoteImageUri(introVideoUrl) : null;
+  const hasIntroVideoMedia = Boolean(safeIntroVideoUrl);
+  const safeIntroVideoThumbnail = hasIntroVideoMedia
+    ? (getSafeRemoteImageUri(introVideoThumbnail) || safePhotos[0] || null)
+    : null;
 
   const handlePhotoPress = (index: number) => {
     setSelectedIndex(index);
@@ -74,22 +76,24 @@ export default function PhotoGallery({
   };
 
   // Calculate grid layout
-  const itemWidth = (screenWidth - 60) / 3; // 3 columns with spacing
+  const gridPadding = responsive.compactWidth ? 16 : 20;
+  const gridGap = responsive.compactWidth ? 7 : 8;
+  const itemWidth = Math.floor((responsive.usableWidth - gridPadding * 2 - gridGap * 2) / 3);
   const itemHeight = itemWidth * 1.25; // 4:5 aspect ratio
 
   return (
     <View style={styles.container}>
-      <View style={styles.grid}>
-          {introVideoUrl && safeIntroVideoThumbnail ? (
+      <View style={[styles.grid, { gap: gridGap, paddingHorizontal: gridPadding }]}>
+        {hasIntroVideoMedia && safeIntroVideoThumbnail ? (
           <TouchableOpacity
             style={[styles.photoContainer, { width: itemWidth, height: itemHeight }]}
             onPress={onOpenVideo}
             activeOpacity={0.85}
           >
-            <Image
-              source={{ uri: safeIntroVideoThumbnail }}
+            <OfflineImage
+              uri={safeIntroVideoThumbnail}
               style={styles.photo}
-              resizeMode="cover"
+              cachePolicy="memory-disk"
             />
             <View style={styles.videoOverlay} />
             <View style={styles.videoBadge}>
@@ -104,10 +108,10 @@ export default function PhotoGallery({
             style={[styles.photoContainer, { width: itemWidth, height: itemHeight }]}
             onPress={() => handlePhotoPress(index)}
           >
-            <Image
-              source={{ uri: photo }}
+            <OfflineImage
+              uri={photo}
               style={styles.photo}
-              resizeMode="cover"
+              cachePolicy="memory-disk"
             />
             {canEdit && (
               <TouchableOpacity
@@ -173,10 +177,17 @@ export default function PhotoGallery({
             {/* Photo */}
             <View style={styles.photoWrapper}>
               {selectedIndex !== null && safePhotos[selectedIndex] ? (
-                <Image
-                  source={{ uri: safePhotos[selectedIndex] }}
-                  style={styles.fullScreenPhoto}
-                  resizeMode="contain"
+                <OfflineImage
+                  uri={safePhotos[selectedIndex]}
+                  style={[
+                    styles.fullScreenPhoto,
+                    {
+                      width: responsive.width,
+                      height: Math.min(responsive.usableHeight * 0.72, responsive.height - insets.top - insets.bottom - 150),
+                    },
+                  ]}
+                  contentFit="contain"
+                  cachePolicy="memory-disk"
                 />
               ) : null}
               
@@ -221,10 +232,10 @@ export default function PhotoGallery({
                     ]}
                     onPress={() => setSelectedIndex(index)}
                   >
-                    <Image
-                      source={{ uri: photo }}
+                    <OfflineImage
+                      uri={photo}
                       style={styles.thumbnailImage}
-                      resizeMode="cover"
+                      cachePolicy="memory-disk"
                     />
                   </TouchableOpacity>
                 ))}
@@ -244,8 +255,6 @@ const styles = StyleSheet.create({
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
-    paddingHorizontal: 20,
   },
   photoContainer: {
     borderRadius: 12,
@@ -353,8 +362,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   fullScreenPhoto: {
-    width: screenWidth,
-    height: screenHeight * 0.7,
   },
   navButton: {
     position: 'absolute',

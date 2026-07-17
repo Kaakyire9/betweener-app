@@ -1,180 +1,148 @@
 import { AuthGuard } from '@/components/auth-guard';
-import { HapticTab } from '@/components/haptic-tab';
-// import { IconSymbol } from '@/components/ui/icon-symbol';
+import IntentMark from '@/components/icons/IntentMark';
+import PremiumBottomTabBar from '@/components/navigation/PremiumBottomTabBar';
 import { Colors } from '@/constants/theme';
+import { useInbox } from '@/hooks/useInbox';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useIntentRequests } from '@/hooks/useIntentRequests';
 import { useResolvedProfileId } from '@/hooks/useResolvedProfileId';
 import { useAuth } from '@/lib/auth-context';
+import { ChatRepository } from '@/lib/chat/local/chat-db';
+import { useCircleInvitationCount } from '@/lib/circles/use-circle-invitation-count';
+import {
+  getInsightsInboxActivityItems,
+  getMeInboxActivityItems,
+  getMomentsInboxActivityItems,
+} from '@/lib/inbox/badge-groups';
+import { useResponsiveMetrics } from '@/lib/responsive';
+import { setAppIconBadgeCount } from '@/lib/notifications/app-badge';
 import { Tabs } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
-import { MessageCircle, Sparkles, Target, User, Users } from 'lucide-react-native';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { AppState, AppStateStatus, StyleSheet, Text, View } from 'react-native';
-import { supabase } from '@/lib/supabase';
+import { MessageCircle, Sparkles, User, Users } from 'lucide-react-native';
+import { useEffect, useState } from 'react';
+
+const withAlpha = (hex: string | undefined | null, alpha: string) => `${hex ?? '#000000'}${alpha}`;
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
+  const responsive = useResponsiveMetrics();
+  const isDark = (colorScheme ?? 'light') === 'dark';
   const { user, profile } = useAuth();
   const { profileId } = useResolvedProfileId(user?.id ?? null, profile?.id ?? null);
-  const { badgeCount } = useIntentRequests(profileId);
+  const { badgeCount, freshness: intentFreshness } = useIntentRequests(profileId, {
+    snapshotOwnerIds: [profileId, user?.id],
+  });
+  const { items: inboxItems, freshness: inboxFreshness } = useInbox(user?.id ?? null);
+  const { count: circleInvitationCount } = useCircleInvitationCount(profileId);
 
   const [unreadChats, setUnreadChats] = useState(0);
-  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
 
-  const computeUnreadChats = useMemo(() => {
-    return async (pid: string) => {
-      try {
-        // Count distinct senders with unread messages (best-effort; keep query light).
-        const { data, error } = await supabase
-          .from('messages')
-          .select('sender_id,is_read')
-          .eq('receiver_id', pid)
-          .eq('is_read', false)
-          .order('created_at', { ascending: false })
-          .limit(250);
-
-        if (error || !data) {
-          setUnreadChats(0);
-          return;
-        }
-
-        const senders = new Set<string>();
-        (data as any[]).forEach((row) => {
-          if (row?.sender_id) senders.add(String(row.sender_id));
-        });
-        setUnreadChats(senders.size);
-      } catch {
-        setUnreadChats(0);
-      }
-    };
-  }, []);
+  const insightsInboxActivityItems = getInsightsInboxActivityItems(inboxItems);
+  const momentsInboxActivityItems = getMomentsInboxActivityItems(inboxItems);
+  const meInboxActivityItems = getMeInboxActivityItems(inboxItems);
+  const trustedIntentBadgeCount = intentFreshness.hasFreshServerData ? badgeCount : 0;
+  const trustedInsightsBadgeCount = inboxFreshness.hasFreshServerData ? insightsInboxActivityItems.length : 0;
+  const trustedMomentsBadgeCount = inboxFreshness.hasFreshServerData ? momentsInboxActivityItems.length : 0;
+  const trustedMeBadgeCount = inboxFreshness.hasFreshServerData ? meInboxActivityItems.length : 0;
 
   useEffect(() => {
     const myUserId = user?.id ?? null;
     if (!myUserId) {
       setUnreadChats(0);
+      void setAppIconBadgeCount(0);
       return;
     }
 
-    void computeUnreadChats(myUserId);
+    let cancelled = false;
 
-    // Refresh the badge when a new message arrives for this user.
-    const channel = supabase
-      .channel(`badge:unread:${myUserId}`)
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'messages', filter: `receiver_id=eq.${myUserId}` },
-        () => void computeUnreadChats(myUserId),
-      )
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'messages', filter: `receiver_id=eq.${myUserId}` },
-        () => void computeUnreadChats(myUserId),
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [computeUnreadChats, user?.id]);
-
-  useEffect(() => {
-    const myUserId = user?.id ?? null;
-    if (!myUserId) return;
-
-    const markDelivered = async (messageId?: string) => {
+    const refreshUnreadChats = async () => {
       try {
-        let query = supabase
-          .from('messages')
-          .update({ delivered_at: new Date().toISOString() })
-          .eq('receiver_id', myUserId)
-          .neq('sender_id', myUserId)
-          .is('delivered_at', null);
-
-        if (messageId) {
-          query = query.eq('id', messageId);
-        }
-
-        await query;
-      } catch {}
-    };
-
-    const catchUpDelivered = () => {
-      if (appStateRef.current !== 'active') return;
-      void markDelivered();
-    };
-
-    catchUpDelivered();
-
-    const appStateSubscription = AppState.addEventListener('change', (nextState) => {
-      appStateRef.current = nextState;
-      if (nextState === 'active') {
-        catchUpDelivered();
+        const threads = await ChatRepository.getThreads(myUserId, { includeArchived: true, limit: 500 });
+        if (cancelled) return;
+        setUnreadChats(
+          threads.filter((thread) => thread.is_archived === 0 && Number(thread.unread_count) > 0).length,
+        );
+      } catch {
+        if (cancelled) return;
+        setUnreadChats(0);
       }
+    };
+
+    void refreshUnreadChats();
+
+    const unsubscribe = ChatRepository.observeThreads(myUserId, () => {
+      void refreshUnreadChats();
     });
 
-    const channel = supabase
-      .channel(`delivery:global:${myUserId}`)
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'messages', filter: `receiver_id=eq.${myUserId}` },
-        (payload) => {
-          if (appStateRef.current !== 'active') return;
-          const messageId = typeof payload.new?.id === 'string' ? payload.new.id : null;
-          if (!messageId) return;
-          void markDelivered(messageId);
-        },
-      )
-      .subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
-          catchUpDelivered();
-        }
-      });
-
     return () => {
-      appStateSubscription.remove();
-      supabase.removeChannel(channel);
+      cancelled = true;
+      unsubscribe();
     };
   }, [user?.id]);
-  
-  // Badge component for tab notifications
-  const TabBadge = ({ count }: { count: number }) => {
-    if (count === 0) return null;
-    
-    return (
-      <View style={[styles.badge, { backgroundColor: theme.tint, borderColor: theme.background }]}>
-        <Text style={styles.badgeText}>
-          {count > 99 ? '99+' : count.toString()}
-        </Text>
-      </View>
-    );
-  };
+
+  useEffect(() => {
+    const nextBadgeCount =
+      unreadChats +
+      trustedIntentBadgeCount +
+      circleInvitationCount +
+      trustedInsightsBadgeCount +
+      trustedMomentsBadgeCount +
+      trustedMeBadgeCount;
+
+    void setAppIconBadgeCount(nextBadgeCount);
+  }, [
+    circleInvitationCount,
+    trustedInsightsBadgeCount,
+    trustedIntentBadgeCount,
+    trustedMomentsBadgeCount,
+    trustedMeBadgeCount,
+    unreadChats,
+  ]);
+
+  const activeTint = theme.tint;
+  const inactiveTint = isDark ? withAlpha(theme.textMuted, 'C8') : '#6E7774';
 
   return (
     <AuthGuard>
       <Tabs
         initialRouteName="vibes"
         screenOptions={{
-          tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
-          tabBarInactiveTintColor: Colors[colorScheme ?? 'light'].textMuted,
-          tabBarStyle: {
-            backgroundColor: Colors[colorScheme ?? 'light'].background,
-            borderTopColor: Colors[colorScheme ?? 'light'].outline,
-          },
           headerShown: false,
-          tabBarButton: HapticTab,
-        }}>
+          tabBarActiveTintColor: activeTint,
+          tabBarInactiveTintColor: inactiveTint,
+          tabBarStyle: {
+            position: 'absolute',
+            backgroundColor: 'transparent',
+            borderTopWidth: 0,
+            elevation: 0,
+          },
+        }}
+        tabBar={(props) => (
+          <PremiumBottomTabBar
+            {...props}
+            badgeCounts={{
+              vibes: trustedMomentsBadgeCount,
+              circles: circleInvitationCount,
+              intent: badgeCount,
+              chat: unreadChats,
+              profile: trustedMeBadgeCount,
+            }}
+            isDark={isDark}
+            responsive={responsive}
+            theme={theme}
+          />
+        )}
+      >
         <Tabs.Screen
           name="vibes"
           options={{
             title: 'Vibes',
-            tabBarIcon: ({ color }) => (
-              <>
-                <Sparkles size={26} color={color} />
-                {/* <IconSymbol size={28} name="house.fill" color={color} /> */}
-              </>
+            tabBarIcon: ({ color, size, focused }) => (
+              <Sparkles
+                size={focused ? Math.max(size, responsive.compactWidth ? 25 : 27) : size}
+                color={color}
+                strokeWidth={focused ? 2.2 : 2}
+              />
             ),
           }}
         />
@@ -185,15 +153,22 @@ export default function TabLayout() {
           }}
         />
         <Tabs.Screen
-          name="explore"
+          name="circles"
           options={{
             title: 'Circles',
-            tabBarIcon: ({ color }) => (
-              <View style={{ position: 'relative' }}>
-                <Users size={26} color={color} />
-                {/* <IconSymbol size={28} name="magnifyingglass" color={color} /> */}
-              </View>
+            tabBarIcon: ({ color, size, focused }) => (
+              <Users
+                size={focused ? Math.max(size, responsive.compactWidth ? 25 : 27) : size}
+                color={color}
+                strokeWidth={focused ? 2.1 : 1.95}
+              />
             ),
+          }}
+        />
+        <Tabs.Screen
+          name="explore"
+          options={{
+            href: null,
           }}
         />
         <Tabs.Screen
@@ -203,43 +178,29 @@ export default function TabLayout() {
           }}
         />
         <Tabs.Screen
-          name="chat"
+          name="intent"
           options={{
-            title: 'Lounge',
-            tabBarIcon: ({ color }) => (
-              <View style={{ position: 'relative' }}>
-                <MessageCircle size={26} color={color} />
-                {/* <IconSymbol size={28} name="message.fill" color={color} /> */}
-                <TabBadge count={unreadChats} />
-              </View>
+            title: 'Intent',
+            tabBarIcon: ({ color, focused }) => (
+              <IntentMark
+                size={focused ? (responsive.compactWidth ? 28 : 30) : responsive.compactWidth ? 26 : 28}
+                color={color}
+                strokeWidth={focused ? 2.3 : 2.1}
+              />
             ),
           }}
         />
         <Tabs.Screen
-          name="intent"
+          name="chat"
           options={{
-            title: 'Intent',
-            tabBarIcon: ({ color, focused }) => {
-              const intentIconColor = colorScheme === 'light' ? theme.background : theme.text;
-              return (
-                <View style={{ position: 'relative' }}>
-                  {focused ? (
-                    <LinearGradient
-                      colors={[theme.accent, theme.tint]}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 1 }}
-                      style={styles.intentGlow}
-                    >
-                      <Target size={32} color={intentIconColor} strokeWidth={2.6} />
-                    </LinearGradient>
-                  ) : (
-                    <Target size={30} color={color} strokeWidth={2.3} />
-                  )}
-                  {/* <IconSymbol size={28} name="bell.fill" color={color} /> */}
-                  <TabBadge count={badgeCount} />
-                </View>
-              );
-            },
+            title: 'Chat',
+            tabBarIcon: ({ color, size, focused }) => (
+              <MessageCircle
+                size={focused ? Math.max(size, responsive.compactWidth ? 25 : 27) : size}
+                color={color}
+                strokeWidth={focused ? 2.1 : 1.95}
+              />
+            ),
           }}
         />
         <Tabs.Screen
@@ -252,11 +213,12 @@ export default function TabLayout() {
           name="profile"
           options={{
             title: 'Me',
-            tabBarIcon: ({ color }) => (
-              <>
-                <User size={26} color={color} />
-                {/* <IconSymbol size={28} name="person.fill" color={color} /> */}
-              </>
+            tabBarIcon: ({ color, size, focused }) => (
+              <User
+                size={focused ? Math.max(size, responsive.compactWidth ? 25 : 27) : size}
+                color={color}
+                strokeWidth={focused ? 2.1 : 1.95}
+              />
             ),
           }}
         />
@@ -264,38 +226,3 @@ export default function TabLayout() {
     </AuthGuard>
   );
 }
-
-const styles = StyleSheet.create({
-  badge: {
-    position: 'absolute',
-    top: -6,
-    right: -6,
-    backgroundColor: '#ff4757',
-    borderRadius: 10,
-    minWidth: 20,
-    height: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#fff',
-  },
-  badgeText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: 'bold',
-    textAlign: 'center',
-  },
-  intentGlow: {
-    width: 36,
-    height: 36,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 2,
-    shadowColor: Colors.light.accent,
-    shadowOpacity: 0.35,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 8,
-  },
-});

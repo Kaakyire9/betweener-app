@@ -121,6 +121,8 @@ export function usePremiumState() {
   return {
     loading,
     error,
+    serverPlan: serverState.plan,
+    revenueCatPlan,
     currentPlan,
     currentPlanEndsAt,
     hasPaidPlan: currentPlan !== "FREE",
@@ -131,6 +133,7 @@ export function usePremiumState() {
     customerInfo,
     offerings,
     hasAccess: (requiredPlan: PremiumPlan) => hasPlanAccess(currentPlan, requiredPlan),
+    hasServerAccess: (requiredPlan: PremiumPlan) => hasPlanAccess(serverState.plan, requiredPlan),
     refresh,
   };
 }

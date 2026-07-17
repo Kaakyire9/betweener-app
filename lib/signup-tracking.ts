@@ -10,6 +10,26 @@ const SIGNUP_PHONE_KEY = "signup_phone_number_v1";
 const SIGNUP_PHONE_VERIFIED_KEY = "signup_phone_verified_v1";
 const SIGNUP_AUTH_METHOD_KEY = "signup_auth_method_v1";
 const SIGNUP_OAUTH_PROVIDER_KEY = "signup_oauth_provider_v1";
+const SIGNUP_AUTH_NAME_KEY = "signup_auth_name_v1";
+const SIGNUP_AUTH_EMAIL_KEY = "signup_auth_email_v1";
+const SIGNUP_ONBOARDING_VARIANT_KEY = "signup_onboarding_variant_v1";
+
+export type SignupOnboardingVariant = "ghana" | "global";
+
+type StoredSignupOnboardingVariant = {
+  variant: SignupOnboardingVariant;
+  signupSessionId: string;
+};
+
+const normalizeSignupOnboardingVariant = (
+  value?: string | null
+): SignupOnboardingVariant | null => {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (normalized === "ghana" || normalized === "global") {
+    return normalized;
+  }
+  return null;
+};
 
 type SignupEventPayload = {
   signup_session_id: string;
@@ -104,6 +124,21 @@ export const getSignupSessionId = async () => {
   return AsyncStorage.getItem(SIGNUP_SESSION_KEY);
 };
 
+export const beginSignupSession = async (variant?: string | null) => {
+  await clearSignupSession();
+  const signupSessionId = ExpoCrypto.randomUUID();
+  const normalized = normalizeSignupOnboardingVariant(variant);
+  const entries: [string, string][] = [[SIGNUP_SESSION_KEY, signupSessionId]];
+  if (normalized) {
+    entries.push([
+      SIGNUP_ONBOARDING_VARIANT_KEY,
+      JSON.stringify({ variant: normalized, signupSessionId } satisfies StoredSignupOnboardingVariant),
+    ]);
+  }
+  await AsyncStorage.multiSet(entries);
+  return signupSessionId;
+};
+
 export const setSignupPhoneNumber = async (phoneNumber: string) => {
   await AsyncStorage.setItem(SIGNUP_PHONE_KEY, phoneNumber);
 };
@@ -123,14 +158,54 @@ export const getSignupPhoneState = async () => {
   };
 };
 
-export const clearSignupSession = async () => {
-  await AsyncStorage.multiRemove([
-    SIGNUP_SESSION_KEY,
-    SIGNUP_PHONE_KEY,
-    SIGNUP_PHONE_VERIFIED_KEY,
+export const clearSignupSession = async (options?: { preserveOnboardingVariant?: boolean }) => {
+  const keys = [
     SIGNUP_AUTH_METHOD_KEY,
     SIGNUP_OAUTH_PROVIDER_KEY,
+    SIGNUP_AUTH_NAME_KEY,
+    SIGNUP_AUTH_EMAIL_KEY,
+  ];
+  if (!options?.preserveOnboardingVariant) {
+    keys.push(
+      SIGNUP_SESSION_KEY,
+      SIGNUP_PHONE_KEY,
+      SIGNUP_PHONE_VERIFIED_KEY,
+      SIGNUP_ONBOARDING_VARIANT_KEY,
+    );
+  }
+  await AsyncStorage.multiRemove(keys);
+};
+
+export const setSignupOnboardingVariant = async (variant?: string | null) => {
+  const normalized = normalizeSignupOnboardingVariant(variant);
+  if (!normalized) {
+    await AsyncStorage.removeItem(SIGNUP_ONBOARDING_VARIANT_KEY);
+    return;
+  }
+  const signupSessionId = await getOrCreateSignupSessionId();
+  const stored: StoredSignupOnboardingVariant = {
+    variant: normalized,
+    signupSessionId,
+  };
+  await AsyncStorage.setItem(SIGNUP_ONBOARDING_VARIANT_KEY, JSON.stringify(stored));
+};
+
+export const getSignupOnboardingVariant = async (): Promise<SignupOnboardingVariant | null> => {
+  const [stored, signupSessionId] = await Promise.all([
+    AsyncStorage.getItem(SIGNUP_ONBOARDING_VARIANT_KEY),
+    AsyncStorage.getItem(SIGNUP_SESSION_KEY),
   ]);
+  if (!stored || !signupSessionId) return null;
+
+  try {
+    const parsed = JSON.parse(stored) as Partial<StoredSignupOnboardingVariant>;
+    if (parsed.signupSessionId !== signupSessionId) return null;
+    return normalizeSignupOnboardingVariant(parsed.variant);
+  } catch {
+    // Legacy values are tolerated only while their original signup session is
+    // still active. The verified phone country still takes routing priority.
+    return normalizeSignupOnboardingVariant(stored);
+  }
 };
 
 export const captureSignupContext = async () => {
@@ -185,6 +260,21 @@ export const setPendingAuthMethod = async (authMethod: string, oauthProvider?: s
   ]);
 };
 
+export const setSignupIdentityHints = async ({
+  name,
+  email,
+}: {
+  name?: string | null;
+  email?: string | null;
+}) => {
+  const normalizedName = String(name ?? "").trim();
+  const normalizedEmail = String(email ?? "").trim().toLowerCase();
+  await AsyncStorage.multiSet([
+    [SIGNUP_AUTH_NAME_KEY, normalizedName],
+    [SIGNUP_AUTH_EMAIL_KEY, normalizedEmail],
+  ]);
+};
+
 export const finalizeSignupPhoneVerification = async (): Promise<boolean> => {
   const signupSessionId = await getSignupSessionId();
   if (!signupSessionId) return false;
@@ -202,11 +292,13 @@ export const finalizeSignupPhoneVerification = async (): Promise<boolean> => {
 };
 
 export const consumeSignupMetadata = async () => {
-  const [phoneNumber, verified, authMethod, oauthProvider] = await Promise.all([
+  const [phoneNumber, verified, authMethod, oauthProvider, authName, authEmail] = await Promise.all([
     AsyncStorage.getItem(SIGNUP_PHONE_KEY),
     AsyncStorage.getItem(SIGNUP_PHONE_VERIFIED_KEY),
     AsyncStorage.getItem(SIGNUP_AUTH_METHOD_KEY),
     AsyncStorage.getItem(SIGNUP_OAUTH_PROVIDER_KEY),
+    AsyncStorage.getItem(SIGNUP_AUTH_NAME_KEY),
+    AsyncStorage.getItem(SIGNUP_AUTH_EMAIL_KEY),
   ]);
 
   return {
@@ -214,5 +306,7 @@ export const consumeSignupMetadata = async () => {
     phone_verified: verified === "true",
     auth_method: authMethod || null,
     oauth_provider: oauthProvider || null,
+    auth_name: authName || null,
+    auth_email: authEmail || null,
   };
 };

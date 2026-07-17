@@ -1,6 +1,16 @@
 import { supabase } from '@/lib/supabase';
-import { readCache, writeCache } from '@/lib/persisted-cache';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  migrateLegacyIntentRequestsSnapshot,
+  readIntentRequestsSnapshot,
+  writeIntentRequestsSnapshot,
+} from '@/lib/offline/intent-store';
+import {
+  getIntentOfflineMutationSnapshot,
+  subscribeToOfflineMutationEvents,
+  type OfflineMutation,
+  type FailedOfflineMutation,
+} from '@/lib/offline/mutation-queue';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 export type IntentRequestType = 'connect' | 'date_request' | 'like_with_note' | 'circle_intro';
 export type IntentRequestStatus = 'pending' | 'accepted' | 'passed' | 'expired' | 'cancelled' | 'matched';
@@ -25,28 +35,202 @@ const isExpired = (req: IntentRequest) => {
   return Number.isNaN(ts) ? false : ts < Date.now();
 };
 
-export const useIntentRequests = (userId?: string | null) => {
+const isOfflineIntentRow = (item: IntentRequest) => item.id.startsWith('offline-intent-');
+
+const queueActionForMutation = (mutation: OfflineMutation | FailedOfflineMutation) => {
+  if (mutation.kind === 'intent_request_create') return 'create';
+  if (mutation.kind === 'intent_request_cancel') return 'cancel';
+  if (mutation.kind === 'intent_request_decision') return mutation.payload.decision;
+  return null;
+};
+
+const buildQueuedCreateRow = (
+  mutation: Extract<OfflineMutation | FailedOfflineMutation, { kind: 'intent_request_create' }>,
+  userId: string,
+  state: 'queued' | 'failed',
+): IntentRequest => {
+  const createdAt = new Date(mutation.createdAt).toISOString();
+  return {
+    id: `offline-intent-${state}:${mutation.id}`,
+    actor_id: userId,
+    recipient_id: mutation.payload.recipientId,
+    type: mutation.payload.type,
+    message: mutation.payload.message ?? null,
+    suggested_time: mutation.payload.suggestedTime ?? null,
+    suggested_place: mutation.payload.suggestedPlace ?? null,
+    status: 'pending',
+    created_at: createdAt,
+    expires_at: new Date(mutation.createdAt + 7 * 24 * 60 * 60 * 1000).toISOString(),
+    metadata: {
+      ...(mutation.payload.metadata ?? {}),
+      offline_queue: {
+        action: 'create',
+        state,
+        queued_at: createdAt,
+        failure_reason: state === 'failed' ? (mutation as FailedOfflineMutation).failureReason : null,
+      },
+    },
+  };
+};
+
+const hasEquivalentServerCreate = (items: IntentRequest[], row: IntentRequest) =>
+  items.some((item) =>
+    !isOfflineIntentRow(item) &&
+    item.actor_id === row.actor_id &&
+    item.recipient_id === row.recipient_id &&
+    item.type === row.type &&
+    item.status === 'pending' &&
+    String(item.message ?? '') === String(row.message ?? ''),
+  );
+
+const applyIntentQueueOverlay = (
+  sourceItems: IntentRequest[],
+  userId: string,
+  pending: OfflineMutation[],
+  failed: FailedOfflineMutation[],
+) => {
+  const base = sourceItems.filter((item) => !isOfflineIntentRow(item));
+  const byId = new Map(base.map((item) => [item.id, item]));
+
+  const applyDecision = (mutation: OfflineMutation | FailedOfflineMutation, state: 'queued' | 'failed') => {
+    if (mutation.kind !== 'intent_request_decision' && mutation.kind !== 'intent_request_cancel') return;
+    const requestId = mutation.payload.requestId;
+    const existing = byId.get(requestId);
+    if (!existing) return;
+    const action = queueActionForMutation(mutation);
+    byId.set(requestId, {
+      ...existing,
+      metadata: {
+        ...(existing.metadata ?? {}),
+        offline_queue: {
+          action,
+          state,
+          queued_at: new Date(mutation.createdAt).toISOString(),
+          failure_reason: state === 'failed' ? (mutation as FailedOfflineMutation).failureReason : null,
+        },
+      },
+    });
+  };
+
+  failed.forEach((mutation) => applyDecision(mutation, 'failed'));
+  pending.forEach((mutation) => applyDecision(mutation, 'queued'));
+
+  const next = Array.from(byId.values());
+  const createRows = [
+    ...failed
+      .filter((mutation): mutation is Extract<FailedOfflineMutation, { kind: 'intent_request_create' }> => mutation.kind === 'intent_request_create')
+      .map((mutation) => buildQueuedCreateRow(mutation, userId, 'failed')),
+    ...pending
+      .filter((mutation): mutation is Extract<OfflineMutation, { kind: 'intent_request_create' }> => mutation.kind === 'intent_request_create')
+      .map((mutation) => buildQueuedCreateRow(mutation, userId, 'queued')),
+  ];
+
+  createRows.forEach((row) => {
+    if (!hasEquivalentServerCreate(next, row)) next.push(row);
+  });
+
+  return next.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+};
+
+export const useIntentRequests = (
+  userId?: string | null,
+  options?: { liveFetchEnabled?: boolean; snapshotOwnerIds?: (string | null | undefined)[] },
+) => {
   const [items, setItems] = useState<IntentRequest[]>([]);
   const [loading, setLoading] = useState(false);
-  const cacheKey = userId ? `cache:intent_requests:v1:${userId}` : null;
+  const [hasFreshServerData, setHasFreshServerData] = useState(false);
+  const [isUsingCachedSnapshot, setIsUsingCachedSnapshot] = useState(false);
+  const [lastServerFetchAt, setLastServerFetchAt] = useState<number | null>(null);
+  const [lastServerFetchFailedAt, setLastServerFetchFailedAt] = useState<number | null>(null);
+  const liveFetchEnabled = options?.liveFetchEnabled !== false;
+  const itemsCountRef = useRef(0);
+  const snapshotOwnerIdsSignature = JSON.stringify(
+    [userId, ...(options?.snapshotOwnerIds ?? [])]
+      .map((value) => (typeof value === 'string' ? value.trim() : ''))
+      .filter(Boolean),
+  );
+  const snapshotOwnerIds = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          (JSON.parse(snapshotOwnerIdsSignature) as string[])
+            .map((value) => String(value).trim())
+            .filter(Boolean),
+        ),
+      ),
+    [snapshotOwnerIdsSignature],
+  );
+
+  const persistSnapshot = useCallback(
+    async (next: IntentRequest[]) => {
+      if (snapshotOwnerIds.length === 0) return;
+      await Promise.all(
+        snapshotOwnerIds.map((ownerId) =>
+          writeIntentRequestsSnapshot(ownerId, next).catch(() => undefined),
+        ),
+      );
+    },
+    [snapshotOwnerIds],
+  );
+
+  useEffect(() => {
+    if (!liveFetchEnabled) {
+      setLoading(false);
+    }
+  }, [liveFetchEnabled]);
+
+  useEffect(() => {
+    itemsCountRef.current = items.length;
+  }, [items.length]);
+
+  useEffect(() => {
+    if (!userId) {
+      setHasFreshServerData(false);
+      setIsUsingCachedSnapshot(false);
+      setLastServerFetchAt(null);
+      setLastServerFetchFailedAt(null);
+    }
+  }, [userId]);
+
+  const reconcileOfflineQueue = useCallback(async (source?: IntentRequest[]) => {
+    if (!userId) return;
+    const snapshot = await getIntentOfflineMutationSnapshot();
+    setItems((prev) => {
+      const next = applyIntentQueueOverlay(source ?? prev, userId, snapshot.pending, snapshot.failed);
+      void persistSnapshot(next);
+      return next;
+    });
+  }, [persistSnapshot, userId]);
 
   // Cached-first: hydrate last known list quickly, then refresh in background.
   useEffect(() => {
-    if (!cacheKey) return;
+    if (snapshotOwnerIds.length === 0) return;
     let cancelled = false;
     (async () => {
-      const cached = await readCache<IntentRequest[]>(cacheKey, 10 * 60_000);
-      if (cancelled || !cached || !Array.isArray(cached)) return;
-      setItems((prev) => (prev.length === 0 ? cached : prev));
+      for (const ownerId of snapshotOwnerIds) {
+        const cached =
+          (await readIntentRequestsSnapshot<IntentRequest[]>(ownerId)) ??
+          (await migrateLegacyIntentRequestsSnapshot<IntentRequest[]>(ownerId));
+        if (cancelled || !cached || !Array.isArray(cached)) continue;
+        if (itemsCountRef.current !== 0) continue;
+        setIsUsingCachedSnapshot(true);
+        setItems(cached);
+        void reconcileOfflineQueue(cached);
+        return;
+      }
     })();
     return () => {
       cancelled = true;
     };
-  }, [cacheKey]);
+  }, [reconcileOfflineQueue, snapshotOwnerIds, userId]);
 
   const refresh = useCallback(async () => {
     if (!userId) {
-      setItems([]);
+      setLoading(false);
+      return;
+    }
+    if (!liveFetchEnabled) {
+      setLoading(false);
       return;
     }
     setLoading(true);
@@ -63,18 +247,44 @@ export const useIntentRequests = (userId?: string | null) => {
         .order('created_at', { ascending: false })
         .limit(200);
 
-      if (error) return;
+      if (error) {
+        setLastServerFetchFailedAt(Date.now());
+        return;
+      }
       const next = (data || []) as IntentRequest[];
       setItems(next);
-      if (cacheKey) void writeCache(cacheKey, next);
+      void persistSnapshot(next);
+      void reconcileOfflineQueue(next);
+      setHasFreshServerData(true);
+      setIsUsingCachedSnapshot(false);
+      setLastServerFetchAt(Date.now());
+      setLastServerFetchFailedAt(null);
     } finally {
       setLoading(false);
     }
-  }, [cacheKey, userId]);
+  }, [liveFetchEnabled, persistSnapshot, reconcileOfflineQueue, userId]);
 
   useEffect(() => {
-    void refresh();
+    if (liveFetchEnabled) {
+      void refresh();
+    }
     if (!userId) return;
+    if (!liveFetchEnabled) return;
+
+    const unsubscribeQueue = subscribeToOfflineMutationEvents((event) => {
+      if (
+        event.mutation.kind !== 'intent_request_create' &&
+        event.mutation.kind !== 'intent_request_decision' &&
+        event.mutation.kind !== 'intent_request_cancel'
+      ) {
+        return;
+      }
+      if (event.type === 'completed') {
+        void refresh();
+        return;
+      }
+      void reconcileOfflineQueue();
+    });
 
     const incomingChannel = supabase
       .channel(`intent-requests:recipient:${userId}`)
@@ -95,16 +305,45 @@ export const useIntentRequests = (userId?: string | null) => {
       .subscribe();
 
     return () => {
+      unsubscribeQueue();
       supabase.removeChannel(incomingChannel);
       supabase.removeChannel(outgoingChannel);
     };
-  }, [refresh, userId]);
+  }, [liveFetchEnabled, reconcileOfflineQueue, refresh, userId]);
 
   const incoming = useMemo(() => items.filter((item) => item.recipient_id === userId), [items, userId]);
   const sent = useMemo(() => items.filter((item) => item.actor_id === userId), [items, userId]);
   const badgeCount = useMemo(
     () => incoming.filter((item) => item.status === 'pending' && !isExpired(item)).length,
     [incoming],
+  );
+
+  const updateLocalIntent = useCallback(
+    (requestId: string, patch: Partial<IntentRequest> | null) => {
+      if (!userId || !requestId) return;
+      setItems((prev) => {
+        const next =
+          patch === null
+            ? prev.filter((item) => item.id !== requestId)
+            : prev.map((item) => (item.id === requestId ? { ...item, ...patch } : item));
+        void persistSnapshot(next);
+        return next;
+      });
+    },
+    [persistSnapshot, userId],
+  );
+
+  const addLocalIntent = useCallback(
+    (request: IntentRequest) => {
+      if (!userId || !request.id) return;
+      setItems((prev) => {
+        const next = [request, ...prev.filter((item) => item.id !== request.id)]
+          .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+        void persistSnapshot(next);
+        return next;
+      });
+    },
+    [persistSnapshot, userId],
   );
 
   return {
@@ -114,5 +353,14 @@ export const useIntentRequests = (userId?: string | null) => {
     loading,
     refresh,
     badgeCount,
+    freshness: {
+      hasFreshServerData,
+      isUsingCachedSnapshot,
+      lastServerFetchAt,
+      lastServerFetchFailedAt,
+    },
+    updateLocalIntent,
+    addLocalIntent,
+    reconcileOfflineQueue,
   };
 };

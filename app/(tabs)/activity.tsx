@@ -10,7 +10,7 @@ import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FlatList, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import type { Match } from "@/types/match";
@@ -65,6 +65,8 @@ export default function ActivityScreen() {
   const [hiddenPeerUserIds, setHiddenPeerUserIds] = useState<Record<string, true>>({});
   const [matchModalVisible, setMatchModalVisible] = useState(false);
   const [matchCandidate, setMatchCandidate] = useState<Match | null>(null);
+  const fetchedActorIdsRef = useRef<Record<string, true>>({});
+  const hiddenPeerVisibilityRef = useRef<Record<string, boolean>>({});
 
   const actorIds = useMemo(
     () =>
@@ -80,17 +82,18 @@ export default function ActivityScreen() {
 
   useEffect(() => {
     if (actorIds.length === 0) {
-      setActorMap({});
       return;
     }
 
     let cancelled = false;
+    const missingActorIds = actorIds.filter((id) => !actorMap[id] && !fetchedActorIdsRef.current[id]);
+    if (missingActorIds.length === 0) return;
 
-      const fetchActors = async () => {
+    const fetchActors = async () => {
       const { data } = await supabase
         .from("profiles")
         .select("id,user_id,full_name,avatar_url,age,bio,account_state,deleted_at")
-        .in("id", actorIds);
+        .in("id", missingActorIds);
 
       if (cancelled) return;
 
@@ -99,8 +102,12 @@ export default function ActivityScreen() {
         if (!row?.id) return;
         map[row.id] = row;
       });
+      missingActorIds.forEach((id) => {
+        fetchedActorIdsRef.current[id] = true;
+      });
 
-      setActorMap(map);
+      if (Object.keys(map).length === 0) return;
+      setActorMap((prev) => ({ ...prev, ...map }));
     };
 
     void fetchActors();
@@ -108,7 +115,7 @@ export default function ActivityScreen() {
     return () => {
       cancelled = true;
     };
-  }, [actorIds]);
+  }, [actorIds, actorMap]);
 
   useEffect(() => {
     let cancelled = false;
@@ -119,19 +126,30 @@ export default function ActivityScreen() {
           .filter((value): value is string => Boolean(value)),
       ),
     );
+    const syncHiddenPeerStateFromCache = () => {
+      const next: Record<string, true> = {};
+      peerUserIds.forEach((peerUserId) => {
+        if (hiddenPeerVisibilityRef.current[peerUserId]) {
+          next[peerUserId] = true;
+        }
+      });
+      setHiddenPeerUserIds(next);
+    };
 
     const loadHiddenPeers = async () => {
       if (!user?.id || peerUserIds.length === 0) {
         setHiddenPeerUserIds({});
         return;
       }
-      const prefs = await fetchPeerVisibilityPrefs(user.id, peerUserIds);
+      syncHiddenPeerStateFromCache();
+      const missingPeerUserIds = peerUserIds.filter((peerUserId) => !(peerUserId in hiddenPeerVisibilityRef.current));
+      if (missingPeerUserIds.length === 0) return;
+      const prefs = await fetchPeerVisibilityPrefs(user.id, missingPeerUserIds);
       if (cancelled) return;
-      const next: Record<string, true> = {};
       Object.entries(prefs).forEach(([peerUserId, pref]) => {
-        if (pref.hidden) next[peerUserId] = true;
+        hiddenPeerVisibilityRef.current[peerUserId] = Boolean(pref.hidden);
       });
-      setHiddenPeerUserIds(next);
+      syncHiddenPeerStateFromCache();
     };
 
     void loadHiddenPeers();
@@ -157,7 +175,7 @@ export default function ActivityScreen() {
         case "messages":
           return item.type === "NEW_MESSAGE" || item.type === "MESSAGE_REQUEST";
         case "moments":
-          return item.type === "MOMENT_REACTION" || item.type === "MOMENT_COMMENT";
+          return item.type === "MOMENT_REACTION" || item.type === "MOMENT_COMMENT" || item.type === "MOMENT_COMMENT_REACTION";
         case "system":
           return item.type === "SYSTEM";
         default:
@@ -173,15 +191,35 @@ export default function ActivityScreen() {
 
   const openChat = useCallback((actorId?: string | null, actorName?: string, actorAvatar?: string | null) => {
     if (!actorId) return;
+    const actor = actorMap[actorId];
     router.push({
       pathname: "/chat/[id]",
-      params: { id: actorId, userName: actorName ?? "", userAvatar: actorAvatar ?? "" },
+      params: {
+        id: actorId,
+        peerUserId: actor?.user_id ?? "",
+        peerProfileId: actor?.id ?? "",
+        userName: actorName ?? "",
+        userAvatar: actorAvatar ?? "",
+      },
     });
-  }, []);
+  }, [actorMap]);
 
-  const openMoments = useCallback((actorId?: string | null, momentId?: string | null) => {
+  const openMoments = useCallback((
+    actorId?: string | null,
+    momentId?: string | null,
+    options?: { openComments?: boolean; commentId?: string | null; entrySource?: "comment" | "reaction" | null },
+  ) => {
     if (!actorId) return;
-    router.push({ pathname: "/moments", params: { startUserId: String(actorId), startMomentId: momentId ?? "" } });
+    router.push({
+      pathname: "/moments",
+      params: {
+        startUserId: String(actorId),
+        startMomentId: momentId ?? "",
+        openComments: options?.openComments ? "1" : "",
+        entrySource: options?.entrySource ?? "",
+        commentId: options?.commentId ?? "",
+      },
+    });
   }, []);
 
   const handleMarkRead = useCallback(
@@ -275,6 +313,18 @@ export default function ActivityScreen() {
       const handleOpen = () => {
         handleMarkRead(item);
         if (item.type === "SYSTEM") {
+          const route =
+            typeof item.metadata?.route === "string" && item.metadata.route.startsWith("/")
+              ? item.metadata.route
+              : null;
+          if (item.entity_type === "profile_interest" || route === "/profile-interest") {
+            router.push("/profile-interest");
+            return;
+          }
+          if (route) {
+            router.push(route as any);
+            return;
+          }
           router.push("/(tabs)/profile");
           return;
         }
@@ -282,11 +332,29 @@ export default function ActivityScreen() {
           openChat(actorId, actorName, actorAvatar);
           return;
         }
-        if (item.type === "MOMENT_REACTION" || item.type === "MOMENT_COMMENT") {
+        if (item.type === "GIFT_RECEIVED") {
+          const route =
+            typeof item.metadata?.route === "string" && item.metadata.route.startsWith("/")
+              ? item.metadata.route
+              : null;
+          if (route) {
+            router.push(route as any);
+            return;
+          }
+        }
+        if (item.type === "MOMENT_REACTION" || item.type === "MOMENT_COMMENT" || item.type === "MOMENT_COMMENT_REACTION") {
           const momentOwnerId = typeof (item.metadata as any)?.moment_owner_user_id === "string"
             ? String((item.metadata as any).moment_owner_user_id)
             : user?.id ?? null;
-          openMoments(momentOwnerId, item.entity_id ?? null);
+          const commentId =
+            typeof (item.metadata as any)?.comment_id === "string"
+              ? String((item.metadata as any).comment_id)
+              : null;
+          openMoments(momentOwnerId, item.entity_id ?? null, {
+            openComments: item.type === "MOMENT_COMMENT" || item.type === "MOMENT_COMMENT_REACTION",
+            entrySource: item.type === "MOMENT_REACTION" ? "reaction" : "comment",
+            commentId,
+          });
           return;
         }
         if (actorId) {
@@ -324,7 +392,7 @@ export default function ActivityScreen() {
                 const momentOwnerId = typeof (item.metadata as any)?.moment_owner_user_id === "string"
                   ? String((item.metadata as any).moment_owner_user_id)
                   : user?.id ?? null;
-                openMoments(momentOwnerId, item.entity_id ?? null);
+                openMoments(momentOwnerId, item.entity_id ?? null, { entrySource: "reaction" });
               },
             };
           case "MOMENT_COMMENT":
@@ -335,15 +403,49 @@ export default function ActivityScreen() {
                 const momentOwnerId = typeof (item.metadata as any)?.moment_owner_user_id === "string"
                   ? String((item.metadata as any).moment_owner_user_id)
                   : user?.id ?? null;
-                openMoments(momentOwnerId, item.entity_id ?? null);
+                openMoments(momentOwnerId, item.entity_id ?? null, {
+                  openComments: true,
+                  entrySource: "comment",
+                  commentId:
+                    typeof (item.metadata as any)?.comment_id === "string"
+                      ? String((item.metadata as any).comment_id)
+                      : "",
+                });
+              },
+            };
+          case "MOMENT_COMMENT_REACTION":
+            return {
+              label: "View",
+              onPress: () => {
+                handleMarkRead(item);
+                const momentOwnerId = typeof (item.metadata as any)?.moment_owner_user_id === "string"
+                  ? String((item.metadata as any).moment_owner_user_id)
+                  : user?.id ?? null;
+                openMoments(momentOwnerId, item.entity_id ?? null, {
+                  openComments: true,
+                  entrySource: "comment",
+                  commentId:
+                    typeof (item.metadata as any)?.comment_id === "string"
+                      ? String((item.metadata as any).comment_id)
+                      : "",
+                });
               },
             };
           case "GIFT_RECEIVED":
-            return actorId
+            return actorId || typeof (item.metadata as any)?.actor_user_id === "string"
               ? {
-                  label: "Say Thanks",
+                  label:
+                    typeof (item.metadata as any)?.cta_label === "string" &&
+                    String((item.metadata as any).cta_label).trim()
+                      ? String((item.metadata as any).cta_label).trim()
+                      : "Say Thanks",
                   onPress: async () => {
-                    await sendThanks(actorId);
+                    await sendThanks(
+                      actor?.user_id ??
+                        (typeof (item.metadata as any)?.actor_user_id === "string"
+                          ? String((item.metadata as any).actor_user_id)
+                          : null),
+                    );
                     resolveAndRead(item);
                   },
                 }
@@ -358,9 +460,21 @@ export default function ActivityScreen() {
             };
           case "SYSTEM":
             return {
-              label: "Verify Now",
+              label:
+                typeof (item.metadata as any)?.cta_label === "string" &&
+                String((item.metadata as any).cta_label).trim()
+                  ? String((item.metadata as any).cta_label).trim()
+                  : "Open",
               onPress: () => {
                 handleMarkRead(item);
+                const route =
+                  typeof item.metadata?.route === "string" && item.metadata.route.startsWith("/")
+                    ? item.metadata.route
+                    : null;
+                if (route) {
+                  router.push(route as any);
+                  return;
+                }
                 router.push("/(tabs)/profile");
               },
             };
@@ -397,7 +511,32 @@ export default function ActivityScreen() {
                 const momentOwnerId = typeof (item.metadata as any)?.moment_owner_user_id === "string"
                   ? String((item.metadata as any).moment_owner_user_id)
                   : user?.id ?? null;
-                openMoments(momentOwnerId, item.entity_id ?? null);
+                openMoments(momentOwnerId, item.entity_id ?? null, {
+                  openComments: true,
+                  entrySource: "comment",
+                  commentId:
+                    typeof (item.metadata as any)?.comment_id === "string"
+                      ? String((item.metadata as any).comment_id)
+                      : "",
+                });
+              },
+            };
+          case "MOMENT_COMMENT_REACTION":
+            return {
+              label: "Reply",
+              onPress: () => {
+                handleMarkRead(item);
+                const momentOwnerId = typeof (item.metadata as any)?.moment_owner_user_id === "string"
+                  ? String((item.metadata as any).moment_owner_user_id)
+                  : user?.id ?? null;
+                openMoments(momentOwnerId, item.entity_id ?? null, {
+                  openComments: true,
+                  entrySource: "comment",
+                  commentId:
+                    typeof (item.metadata as any)?.comment_id === "string"
+                      ? String((item.metadata as any).comment_id)
+                      : "",
+                });
               },
             };
           case "GIFT_RECEIVED":
@@ -432,6 +571,7 @@ export default function ActivityScreen() {
             return "message-outline";
           case "MOMENT_REACTION":
           case "MOMENT_COMMENT":
+          case "MOMENT_COMMENT_REACTION":
             return "emoticon-outline";
           case "GIFT_RECEIVED":
             return "gift-outline";
@@ -452,7 +592,13 @@ export default function ActivityScreen() {
           isUnread={isUnread}
           isActionRequired={isActionRequired}
           badgeIcon={badgeIcon}
-          systemIcon={item.type === "SYSTEM" ? "shield-check-outline" : undefined}
+          systemIcon={
+            item.type === "SYSTEM"
+              ? item.entity_type?.startsWith("profile_gift")
+                ? "gift-outline"
+                : "shield-check-outline"
+              : undefined
+          }
           primaryAction={primaryAction}
           secondaryAction={secondaryAction}
           onPress={handleOpen}

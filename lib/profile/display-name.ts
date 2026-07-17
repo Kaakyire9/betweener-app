@@ -1,5 +1,6 @@
 export type UserFacingProfileNameRow = {
   full_name?: string | null;
+  username?: string | null;
   account_state?: string | null;
   deleted_at?: string | null;
 };
@@ -15,6 +16,8 @@ export const getUserFacingDisplayName = (
 ) => {
   const fullName = String(profileRow?.full_name || "").trim();
   if (fullName) return fullName;
+  const username = String(profileRow?.username || "").trim();
+  if (username) return username;
   if (hasLeftBetweener(profileRow)) return LEFT_BETWEENER_LABEL;
   return fallback;
 };
