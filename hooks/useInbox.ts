@@ -37,8 +37,109 @@ type MarkInboxItemsReadCriteria = {
 
 type InboxItemsListener = (items: InboxItem[]) => void;
 
+type InboxRealtimePayload = {
+  eventType: "INSERT" | "UPDATE" | "DELETE";
+  new: Partial<InboxItem>;
+  old: Partial<InboxItem>;
+};
+
+type InboxRealtimeListener = {
+  onChange: (payload: InboxRealtimePayload) => void;
+  onRecoveryNeeded: () => void;
+};
+
+type InboxRealtimeEntry = {
+  channel: ReturnType<typeof supabase.channel> | null;
+  cleanupTimer: ReturnType<typeof setTimeout> | null;
+  listeners: Set<InboxRealtimeListener>;
+  startPromise: Promise<void> | null;
+};
+
 const inboxItemsListeners = new Map<string, Set<InboxItemsListener>>();
 const inboxPublishTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const inboxRealtimeEntries = new Map<string, InboxRealtimeEntry>();
+
+const startInboxRealtimeEntry = (userId: string, entry: InboxRealtimeEntry) => {
+  if (entry.channel || entry.startPromise) return;
+
+  entry.startPromise = (async () => {
+    const channelName = `inbox-items:${userId}`;
+    const realtimeTopic = `realtime:${channelName}`;
+    const staleChannel = supabase.getChannels().find((channel) => channel.topic === realtimeTopic);
+
+    // Fast refresh can preserve the Supabase client while recreating this module.
+    // Remove that orphan before registering callbacks on a fresh channel.
+    if (staleChannel) {
+      await supabase.removeChannel(staleChannel);
+    }
+
+    if (entry.listeners.size === 0 || inboxRealtimeEntries.get(userId) !== entry) return;
+
+    const channel = supabase
+      .channel(channelName)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "inbox_items", filter: `user_id=eq.${userId}` },
+        (payload) => {
+          entry.listeners.forEach((listener) => {
+            listener.onChange(payload as InboxRealtimePayload);
+          });
+        },
+      )
+      .subscribe((status) => {
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+          entry.listeners.forEach((listener) => listener.onRecoveryNeeded());
+        }
+      });
+
+    entry.channel = channel;
+  })()
+    .catch(() => {
+      entry.listeners.forEach((listener) => listener.onRecoveryNeeded());
+    })
+    .finally(() => {
+      entry.startPromise = null;
+    });
+};
+
+const subscribeInboxRealtime = (userId: string, listener: InboxRealtimeListener) => {
+  let entry = inboxRealtimeEntries.get(userId);
+  if (!entry) {
+    entry = {
+      channel: null,
+      cleanupTimer: null,
+      listeners: new Set<InboxRealtimeListener>(),
+      startPromise: null,
+    };
+    inboxRealtimeEntries.set(userId, entry);
+  }
+
+  if (entry.cleanupTimer) {
+    clearTimeout(entry.cleanupTimer);
+    entry.cleanupTimer = null;
+  }
+  entry.listeners.add(listener);
+  startInboxRealtimeEntry(userId, entry);
+
+  return () => {
+    const current = inboxRealtimeEntries.get(userId);
+    if (current !== entry) return;
+    entry.listeners.delete(listener);
+    if (entry.listeners.size > 0 || entry.cleanupTimer) return;
+
+    // Delay teardown across React Strict Mode and tab remount cycles. A new
+    // consumer can cancel this without churning the underlying socket.
+    entry.cleanupTimer = setTimeout(() => {
+      entry.cleanupTimer = null;
+      if (entry.listeners.size > 0 || inboxRealtimeEntries.get(userId) !== entry) return;
+
+      inboxRealtimeEntries.delete(userId);
+      const channel = entry.channel;
+      entry.channel = null;
+      if (channel) void supabase.removeChannel(channel);
+    }, 1_000);
+  };
+};
 
 const publishInboxItems = (userId: string, items: InboxItem[]) => {
   const listeners = inboxItemsListeners.get(userId);
@@ -330,30 +431,22 @@ export const useInbox = (userId?: string | null) => {
       }, 250);
     };
 
-    const channel = supabase
-      .channel(`inbox-items:${userId}`)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "inbox_items", filter: `user_id=eq.${userId}` },
-        (payload) => {
-          const row = (payload.eventType === 'DELETE' ? payload.old : payload.new) as InboxItem;
-          if (!row?.id) return;
-          applyItemsUpdate((current) =>
-            payload.eventType === 'DELETE'
-              ? current.filter((item) => item.id !== row.id)
-              : [...current.filter((item) => item.id !== row.id), row],
-          );
-        },
-      )
-      .subscribe((status) => {
-        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-          scheduleRecoveryFetch();
-        }
-      });
+    const unsubscribeRealtime = subscribeInboxRealtime(userId, {
+      onChange: (payload) => {
+        const row = (payload.eventType === 'DELETE' ? payload.old : payload.new) as InboxItem;
+        if (!row?.id) return;
+        applyItemsUpdate((current) =>
+          payload.eventType === 'DELETE'
+            ? current.filter((item) => item.id !== row.id)
+            : [...current.filter((item) => item.id !== row.id), row],
+        );
+      },
+      onRecoveryNeeded: scheduleRecoveryFetch,
+    });
 
     return () => {
       if (recoveryTimeoutRef.current) clearTimeout(recoveryTimeoutRef.current);
-      supabase.removeChannel(channel);
+      unsubscribeRealtime();
     };
   }, [applyItemsUpdate, fetchInbox, userId]);
 

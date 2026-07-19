@@ -125,7 +125,8 @@ import * as Haptics from "expo-haptics";
 
 const DISTANCE_UNIT_KEY = 'distance_unit';
 const LINKED_METHODS_BANNER_DISMISSED_KEY = 'linked_methods_banner_dismissed_v1';
-const VERIFICATION_NUDGE_DISMISSED_KEY_PREFIX = 'verification_nudge_dismissed_v1';
+const VERIFICATION_NUDGE_SNOOZED_KEY_PREFIX = 'verification_nudge_snoozed_v2';
+const VERIFICATION_NUDGE_SNOOZE_MS = 7 * 24 * 60 * 60 * 1000;
 
 type NotificationPrefs = {
   push_enabled: boolean;
@@ -301,7 +302,7 @@ export default function ProfileScreen() {
 
   const cacheProfileId = profile?.id ?? user?.id ?? null;
   const verificationNudgeDismissedKey = useMemo(
-    () => (cacheProfileId ? `${VERIFICATION_NUDGE_DISMISSED_KEY_PREFIX}:${cacheProfileId}` : null),
+    () => (cacheProfileId ? `${VERIFICATION_NUDGE_SNOOZED_KEY_PREFIX}:${cacheProfileId}` : null),
     [cacheProfileId],
   );
   const cacheLoadedRef = useRef<Record<string, true>>({});
@@ -2636,7 +2637,8 @@ export default function ProfileScreen() {
     AsyncStorage.getItem(verificationNudgeDismissedKey)
       .then((value) => {
         if (active) {
-          setVerificationNudgeDismissed(value === '1');
+          const snoozedUntil = Number(value);
+          setVerificationNudgeDismissed(Number.isFinite(snoozedUntil) && snoozedUntil > Date.now());
         }
       })
       .catch(() => {
@@ -2654,7 +2656,10 @@ export default function ProfileScreen() {
     setVerificationNudgeDismissed(true);
     if (!verificationNudgeDismissedKey) return;
     try {
-      await AsyncStorage.setItem(verificationNudgeDismissedKey, '1');
+      await AsyncStorage.setItem(
+        verificationNudgeDismissedKey,
+        String(Date.now() + VERIFICATION_NUDGE_SNOOZE_MS),
+      );
     } catch {
       // Best-effort dismissal persistence only.
     }
@@ -2968,7 +2973,7 @@ export default function ProfileScreen() {
         visible={showAppearanceModal}
         theme={theme}
         isDark={isDark}
-        colorScheme={colorScheme}
+        colorScheme={colorScheme === 'dark' || colorScheme === 'light' ? colorScheme : null}
         themePreference={themePreference}
         onClose={() => setShowAppearanceModal(false)}
         onChoose={handleThemeChoice}

@@ -6,6 +6,10 @@ import {
   pickVibesLocationLabel,
 } from '@/lib/location/location-display';
 import {
+  buildDistanceDisplay,
+  type DistanceDisplayConfidence,
+} from '@/lib/location/distance-display';
+import {
   cancelIntentRequestOfflineSafe,
   createIntentRequestOfflineSafe,
 } from '@/lib/intents/offline-actions';
@@ -116,6 +120,7 @@ const mergePreservingLocationMetadata = (prev: Match[], next: Match[]): Match[] 
         : (item as any).current_country_code ?? (prior as any).current_country_code,
       location_precision: (item as any).location_precision ?? (prior as any).location_precision,
       distanceKm: typeof (item as any).distanceKm === 'number' ? (item as any).distanceKm : (prior as any).distanceKm,
+      distanceConfidence: (item as any).distanceConfidence ?? (prior as any).distanceConfidence,
       distance: (item as any).distance || (prior as any).distance,
     } as Match;
 
@@ -133,28 +138,6 @@ const mergePreservingLocationMetadata = (prev: Match[], next: Match[]): Match[] 
 
   return mergedList;
 };
-
-// Format distance with sensible rounding and short strings
-function formatDistance(distanceKm?: number | null, fallback?: string, unit: DistanceUnit = 'km') {
-  if (distanceKm == null || Number.isNaN(Number(distanceKm))) {
-    return fallback || '';
-  }
-  const km = Number(distanceKm);
-  const resolvedUnit: 'km' | 'mi' = unit === 'mi' ? 'mi' : 'km';
-  const value = resolvedUnit === 'mi' ? km / KM_PER_MILE : km;
-  const unitSingular = resolvedUnit === 'mi' ? 'mile' : 'km';
-  const unitPlural = resolvedUnit === 'mi' ? 'miles' : 'km';
-
-  if (value < 1) return `<1 ${unitSingular} away`;
-  if (value < 10) {
-    const pretty = Number(value.toFixed(1));
-    const label = resolvedUnit === 'mi' && pretty >= 1 && pretty < 1.5 ? unitSingular : unitPlural;
-    return `${pretty.toFixed(1)} ${label} away`;
-  }
-  const rounded = Math.round(value);
-  const label = resolvedUnit === 'mi' && rounded === 1 ? unitSingular : unitPlural;
-  return `${rounded} ${label} away`;
-}
 
 function computeHaversineKm(lat1: number, lon1: number, lat2: number, lon2: number) {
   const toRad = (v: number) => (v * Math.PI) / 180;
@@ -359,7 +342,14 @@ export default function useAIRecommendations(
         if (typeof distanceKm !== 'number' || Number.isNaN(distanceKm)) {
           return m;
         }
-        const nextDistance = formatDistance(distanceKm, fallback, resolvedDistanceUnit);
+        const presentation = buildDistanceDisplay({
+          distanceKm,
+          candidatePrecision: (m as any).location_precision,
+          localityLabel: fallback,
+          unit: resolvedDistanceUnit,
+          knownConfidence: (m as any).distanceConfidence as DistanceDisplayConfidence | undefined,
+        });
+        const nextDistance = presentation.label;
         if (nextDistance === m.distance && distanceKm === (m as any).distanceKm) {
           return m;
         }
@@ -368,6 +358,7 @@ export default function useAIRecommendations(
           ...m,
           distance: nextDistance,
           distanceKm,
+          distanceConfidence: presentation.confidence,
         } as Match;
       });
       return changed ? next : prev;
@@ -963,14 +954,18 @@ export default function useAIRecommendations(
         };
 
         let rpcViewerCoordsLoaded = false;
-        let rpcViewerCoords: { latitude?: number; longitude?: number } | null = null;
+        let rpcViewerCoords: {
+          latitude?: number;
+          longitude?: number;
+          locationPrecision?: string | null;
+        } | null = null;
         const loadRpcViewerCoords = async () => {
           if (rpcViewerCoordsLoaded) return rpcViewerCoords;
           rpcViewerCoordsLoaded = true;
           try {
             const { data: myProfile, error: myErr } = await supabase
               .from('profiles')
-              .select('latitude, longitude')
+              .select('latitude, longitude, location_precision')
               .eq('id', userId)
               .limit(1)
               .single();
@@ -978,6 +973,7 @@ export default function useAIRecommendations(
               rpcViewerCoords = {
                 latitude: toNum((myProfile as any).latitude),
                 longitude: toNum((myProfile as any).longitude),
+                locationPrecision: (myProfile as any).location_precision ?? null,
               };
             }
           } catch {
@@ -1174,7 +1170,11 @@ export default function useAIRecommendations(
         const mapRpcRow = (
           p: any,
           includeDistanceKm: boolean,
-          fallbackCoords?: { latitude?: number; longitude?: number } | null,
+          fallbackCoords?: {
+            latitude?: number;
+            longitude?: number;
+            locationPrecision?: string | null;
+          } | null,
         ): Match => {
           const interestsArr = Array.isArray(p?.interests) ? p.interests : [];
           const aiScore = toNum(p?.ai_score) ?? toNum(p?.compatibility);
@@ -1199,6 +1199,15 @@ export default function useAIRecommendations(
             }
           }
 
+          const localityLabel = getPreferredLocationLabel(p);
+          const distancePresentation = buildDistanceDisplay({
+            distanceKm,
+            candidatePrecision: p?.location_precision,
+            viewerPrecision: fallbackCoords?.locationPrecision,
+            localityLabel,
+            unit: unitForFormat,
+          });
+
           return ({
             id: p.id,
             name: p.full_name || p.user_id || String(p.id),
@@ -1209,9 +1218,10 @@ export default function useAIRecommendations(
             interests: interestsArr,
             avatar_url: p.avatar_url || undefined,
             distance: includeDistanceKm
-              ? formatDistance(distanceKm, getPreferredLocationLabel(p), unitForFormat)
-              : (getPreferredLocationLabel(p) || ''),
+              ? distancePresentation.label
+              : (localityLabel || ''),
             distanceKm: distanceKm,
+            distanceConfidence: includeDistanceKm ? distancePresentation.confidence : 'unknown',
             isActiveNow: isActiveNowFromLastActive(!!p.online, p.last_active ?? null),
             lastActive: p.last_active ?? null,
             verified: typeof p.verified === 'boolean'
@@ -1295,7 +1305,8 @@ export default function useAIRecommendations(
           }
           if (!v5?.error && Array.isArray(v5?.data)) {
             const enriched = await enrichRpcRowsWithInterests(v5.data);
-            const mapped = enriched.map((p: any) => mapRpcRow(p, true, null));
+            const viewerCoords = await loadRpcViewerCoords();
+            const mapped = enriched.map((p: any) => mapRpcRow(p, true, viewerCoords));
             const filtered = filterDiscoverable(mapped);
             if (!commitMatchesResult(filtered)) return;
             addBreadcrumb('[recs] fetch_ok', {
@@ -1337,13 +1348,7 @@ export default function useAIRecommendations(
           }
           if (!v3?.error && Array.isArray(v3?.data)) {
             const enriched = await enrichRpcRowsWithInterests(v3.data);
-            const needsDistanceFallback = enriched.some(
-              (p: any) =>
-                toNum(p?.distance_km) == null &&
-                toNum(p?.latitude) != null &&
-                toNum(p?.longitude) != null,
-            );
-            const viewerCoords = needsDistanceFallback ? await loadRpcViewerCoords() : null;
+            const viewerCoords = await loadRpcViewerCoords();
             const mapped = enriched.map((p: any) => mapRpcRow(p, true, viewerCoords));
             const filtered = filterDiscoverable(mapped);
             if (!commitMatchesResult(filtered)) return;
@@ -1381,13 +1386,7 @@ export default function useAIRecommendations(
           }
           if (!v2?.error && Array.isArray(v2?.data)) {
             const enriched = await enrichRpcRowsWithInterests(v2.data);
-            const needsDistanceFallback = enriched.some(
-              (p: any) =>
-                toNum(p?.distance_km) == null &&
-                toNum(p?.latitude) != null &&
-                toNum(p?.longitude) != null,
-            );
-            const viewerCoords = needsDistanceFallback ? await loadRpcViewerCoords() : null;
+            const viewerCoords = await loadRpcViewerCoords();
             const mapped = enriched.map((p: any) => mapRpcRow(p, true, viewerCoords));
             const filtered = filterDiscoverable(mapped);
             if (!commitMatchesResult(filtered)) return;
@@ -1426,13 +1425,7 @@ export default function useAIRecommendations(
             }
             if (!error && Array.isArray(data)) {
               const enriched = await enrichRpcRowsWithInterests(data);
-              const needsDistanceFallback = enriched.some(
-                (p: any) =>
-                  toNum(p?.distance_km) == null &&
-                  toNum(p?.latitude) != null &&
-                  toNum(p?.longitude) != null,
-              );
-              const viewerCoords = needsDistanceFallback ? await loadRpcViewerCoords() : null;
+              const viewerCoords = await loadRpcViewerCoords();
               const mapped = enriched.map((p: any) => mapRpcRow(p, true, viewerCoords));
               const filtered = filterDiscoverable(mapped);
               if (!commitMatchesResult(filtered)) return;
@@ -1460,13 +1453,7 @@ export default function useAIRecommendations(
             }
             if (!error && Array.isArray(data)) {
               const enriched = await enrichRpcRowsWithInterests(data);
-              const needsDistanceFallback = enriched.some(
-                (p: any) =>
-                  toNum(p?.distance_km) == null &&
-                  toNum(p?.latitude) != null &&
-                  toNum(p?.longitude) != null,
-              );
-              const viewerCoords = needsDistanceFallback ? await loadRpcViewerCoords() : null;
+              const viewerCoords = await loadRpcViewerCoords();
               const mapped = enriched.map((p: any) => mapRpcRow(p, true, viewerCoords));
               const filtered = filterDiscoverable(mapped);
               if (!commitMatchesResult(filtered)) return;
@@ -1496,13 +1483,7 @@ export default function useAIRecommendations(
             }
             if (!error && Array.isArray(data)) {
               const enriched = await enrichRpcRowsWithInterests(data);
-              const needsDistanceFallback = enriched.some(
-                (p: any) =>
-                  toNum(p?.distance_km) == null &&
-                  toNum(p?.latitude) != null &&
-                  toNum(p?.longitude) != null,
-              );
-              const viewerCoords = needsDistanceFallback ? await loadRpcViewerCoords() : null;
+              const viewerCoords = await loadRpcViewerCoords();
               const mapped = enriched.map((p: any) => mapRpcRow(p, true, viewerCoords));
               const filtered = filterDiscoverable(mapped);
               if (!commitMatchesResult(filtered)) return;
@@ -1528,17 +1509,25 @@ export default function useAIRecommendations(
         smoking?: string | null;
         gender?: string | null;
       } | null = null;
-      let userCoords: { latitude?: number; longitude?: number } | null = null;
+      let userCoords: {
+        latitude?: number;
+        longitude?: number;
+        locationPrecision?: string | null;
+      } | null = null;
       if (supabase && userId) {
         try {
           const { data: myProfile, error: myErr } = await supabase
             .from('profiles')
-            .select('latitude, longitude, looking_for, love_language, personality_type, religion, wants_children, smoking, gender')
+            .select('latitude, longitude, location_precision, looking_for, love_language, personality_type, religion, wants_children, smoking, gender')
             .eq('id', userId)
             .limit(1)
             .single();
           if (!myErr && myProfile) {
-            userCoords = { latitude: myProfile.latitude, longitude: myProfile.longitude };
+            userCoords = {
+              latitude: myProfile.latitude,
+              longitude: myProfile.longitude,
+              locationPrecision: myProfile.location_precision ?? null,
+            };
             viewerCompat = {
               interests: [],
               lookingFor: myProfile.looking_for ?? null,
@@ -1710,7 +1699,6 @@ export default function useAIRecommendations(
             if (userCoords && p.latitude != null && p.longitude != null && userCoords.latitude != null && userCoords.longitude != null) {
               try {
                 const km = computeHaversineKm(userCoords.latitude!, userCoords.longitude!, Number(p.latitude), Number(p.longitude));
-                distanceStr = formatDistance(km, getPreferredLocationLabel(p), unitForFormat);
                 distanceKm = km;
               } catch (_e) {
                 distanceStr = getPreferredLocationLabel(p) || '';
@@ -1718,6 +1706,15 @@ export default function useAIRecommendations(
             } else if (p.location || p.region || p.current_country) {
               distanceStr = getPreferredLocationLabel(p) || '';
             }
+
+            const distancePresentation = buildDistanceDisplay({
+              distanceKm,
+              candidatePrecision: p.location_precision,
+              viewerPrecision: userCoords?.locationPrecision,
+              localityLabel: getPreferredLocationLabel(p),
+              unit: unitForFormat,
+            });
+            distanceStr = distancePresentation.label || distanceStr;
 
             const ptags = Array.isArray(p.personality_tags) ? p.personality_tags.map((t: any) => (typeof t === 'string' ? t : t?.name || String(t))) : [];
             const compatibility = computeCompatibility(p, interestsArr || []);
@@ -1735,6 +1732,7 @@ export default function useAIRecommendations(
               avatar_url: p.avatar_url || undefined,
               distance: distanceStr || '',
               distanceKm: typeof distanceKm === 'number' && !Number.isNaN(distanceKm) ? distanceKm : undefined,
+              distanceConfidence: distancePresentation.confidence,
               isActiveNow: isActiveNowFromLastActive(!!p.online, p.last_active ?? null),
               lastActive: p.last_active ?? null,
               verified: typeof p.verified === 'boolean' ? p.verified : (typeof p.verification_level === 'number' ? p.verification_level > 0 : false),

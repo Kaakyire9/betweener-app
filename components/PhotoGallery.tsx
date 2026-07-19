@@ -297,7 +297,7 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   videoOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0, 0, 0, 0.2)',
   },
   videoBadge: {

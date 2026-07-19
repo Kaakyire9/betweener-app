@@ -254,33 +254,33 @@ function EditReconcileHarness() {
 }
 
 describe("Chat failure-path integration flows", () => {
-  it("rolls back optimistic reactions when the backend fails", () => {
-    const { getByTestId, getByText, queryByText } = render(<ReactionRollbackHarness />);
+  it("rolls back optimistic reactions when the backend fails", async () => {
+    const { getByTestId, getByText, queryByText } = await render(<ReactionRollbackHarness />);
 
     expect(getByTestId("rollback-reaction-count").props.children).toBe("1 total");
     expect(getByText("Ayo")).toBeTruthy();
     expect(queryByText("You")).toBeNull();
 
-    fireEvent.press(getByTestId("chat-quick-reaction-0"));
+    await fireEvent.press(getByTestId("chat-quick-reaction-0"));
 
     expect(getByTestId("rollback-reaction-count").props.children).toBe("2 total");
     expect(getByText("You")).toBeTruthy();
 
-    fireEvent.press(getByTestId("rollback-reaction-failure"));
+    await fireEvent.press(getByTestId("rollback-reaction-failure"));
 
     expect(getByTestId("rollback-reaction-count").props.children).toBe("1 total");
     expect(queryByText("You")).toBeNull();
   });
 
-  it("applies delete-for-everyone state from the action sheet path", () => {
-    const { getByTestId } = render(<DeleteForEveryoneHarness />);
+  it("applies delete-for-everyone state from the action sheet path", async () => {
+    const { getByTestId } = await render(<DeleteForEveryoneHarness />);
 
     expect(getByTestId("delete-message-text").props.children).toBe("Photo note");
     expect(getByTestId("delete-message-flag").props.children).toBe("false");
     expect(getByTestId("delete-message-image").props.children).toBe("true");
     expect(getByTestId("delete-message-reactions").props.children).toBe("1");
 
-    fireEvent.press(getByTestId("chat-message-action-delete"));
+    await fireEvent.press(getByTestId("chat-message-action-delete"));
 
     expect(getByTestId("delete-message-text").props.children).toBe("Message deleted");
     expect(getByTestId("delete-message-flag").props.children).toBe("true");
@@ -288,19 +288,19 @@ describe("Chat failure-path integration flows", () => {
     expect(getByTestId("delete-message-reactions").props.children).toBe("0");
   });
 
-  it("reconciles optimistic edits after the composer send path", () => {
-    const { getByTestId, getByText, queryByText } = render(<EditReconcileHarness />);
+  it("reconciles optimistic edits after the composer send path", async () => {
+    const { getByTestId, getByText, queryByText } = await render(<EditReconcileHarness />);
 
     expect(getByTestId("edit-message-text").props.children).toBe("Original copy");
     expect(getByText("Editing: Original copy")).toBeTruthy();
 
-    fireEvent.press(getByTestId("chat-composer-send"));
+    await fireEvent.press(getByTestId("chat-composer-send"));
 
     expect(getByTestId("edit-message-text").props.children).toBe("Polished draft");
     expect(getByTestId("edit-message-edited").props.children).toBe("true");
     expect(queryByText("Editing: Original copy")).toBeNull();
 
-    fireEvent.press(getByTestId("edit-message-server-reconcile"));
+    await fireEvent.press(getByTestId("edit-message-server-reconcile"));
 
     expect(getByTestId("edit-message-text").props.children).toBe("Polished draft (server)");
     expect(getByTestId("edit-message-edited").props.children).toBe("true");

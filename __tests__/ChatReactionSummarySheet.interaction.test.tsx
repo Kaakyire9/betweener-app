@@ -72,9 +72,9 @@ describe("ChatReactionSummarySheet interactions", () => {
     jest.clearAllMocks();
   });
 
-  it("renders total reactions, current user label, and filters by emoji", () => {
+  it("renders total reactions, current user label, and filters by emoji", async () => {
     const onClose = jest.fn();
-    const { getByText, getByTestId, queryByText } = render(
+    const { getByText, getByTestId, queryByText } = await render(
       <StatefulReactionSheet onClose={onClose} />
     );
 
@@ -83,20 +83,20 @@ describe("ChatReactionSummarySheet interactions", () => {
     expect(getByText("Ayo")).toBeTruthy();
     expect(getByText("Kojo")).toBeTruthy();
 
-    fireEvent.press(getByTestId("chat-reaction-filter-1"));
+    await fireEvent.press(getByTestId("chat-reaction-filter-1"));
 
     expect(queryByText("You")).toBeNull();
     expect(getByText("Ayo")).toBeTruthy();
     expect(getByText("Kojo")).toBeTruthy();
 
-    fireEvent.press(getByTestId("chat-reaction-filter-all"));
+    await fireEvent.press(getByTestId("chat-reaction-filter-all"));
 
     expect(getByText("You")).toBeTruthy();
   });
 
-  it("shows loading state and closes from close button and backdrop", () => {
+  it("shows loading state and closes from close button and backdrop", async () => {
     const onClose = jest.fn();
-    const { getByTestId, getByText } = render(
+    const { getByTestId, getByText } = await render(
       <Modal transparent visible>
         <ChatReactionSummarySheet
           visible
@@ -120,8 +120,8 @@ describe("ChatReactionSummarySheet interactions", () => {
 
     expect(getByText("Loading profiles...")).toBeTruthy();
 
-    fireEvent.press(getByTestId("chat-reaction-sheet-close"));
-    fireEvent.press(getByTestId("chat-reaction-sheet-backdrop"));
+    await fireEvent.press(getByTestId("chat-reaction-sheet-close"));
+    await fireEvent.press(getByTestId("chat-reaction-sheet-backdrop"));
 
     expect(onClose).toHaveBeenCalledTimes(2);
   });

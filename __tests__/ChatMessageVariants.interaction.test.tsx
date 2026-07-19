@@ -57,7 +57,7 @@ describe("Chat message variant interactions", () => {
     jest.clearAllMocks();
   });
 
-  it("opens image media from the bubble press path", () => {
+  it("opens image media from the bubble press path", async () => {
     const onViewImage = jest.fn();
     const item = {
       id: "image-1",
@@ -69,7 +69,7 @@ describe("Chat message variant interactions", () => {
       reactions: [],
     };
 
-    const { getByTestId, getByText } = render(
+    const { getByTestId, getByText } = await render(
       <VariantBubbleHarness item={item} onViewImage={onViewImage}>
         <MediaMessageContent
           item={item}
@@ -85,12 +85,12 @@ describe("Chat message variant interactions", () => {
 
     expect(getByText("Look at this")).toBeTruthy();
 
-    fireEvent.press(getByTestId("chat-message-bubble-pressable"));
+    await fireEvent.press(getByTestId("chat-message-bubble-pressable"));
 
     expect(onViewImage).toHaveBeenCalledWith("https://example.com/image.jpg");
   });
 
-  it("opens documents from the bubble press path", () => {
+  it("opens documents from the bubble press path", async () => {
     const onOpenDocument = jest.fn();
     const item = {
       id: "doc-1",
@@ -107,7 +107,7 @@ describe("Chat message variant interactions", () => {
       reactions: [],
     };
 
-    const { getByTestId, getByText } = render(
+    const { getByTestId, getByText } = await render(
       <VariantBubbleHarness item={item} onOpenDocument={onOpenDocument}>
         <DocumentMessageContent
           item={item}
@@ -121,12 +121,12 @@ describe("Chat message variant interactions", () => {
     expect(getByText("brochure.pdf")).toBeTruthy();
     expect(getByText("2.1 MB | PDF")).toBeTruthy();
 
-    fireEvent.press(getByTestId("chat-message-bubble-pressable"));
+    await fireEvent.press(getByTestId("chat-message-bubble-pressable"));
 
     expect(onOpenDocument).toHaveBeenCalledWith(item.document);
   });
 
-  it("opens shared locations from the bubble press path", () => {
+  it("opens shared locations from the bubble press path", async () => {
     const onOpenLocation = jest.fn();
     const item = {
       id: "loc-1",
@@ -143,7 +143,7 @@ describe("Chat message variant interactions", () => {
       reactions: [],
     };
 
-    const { getByTestId, getByText } = render(
+    const { getByTestId, getByText } = await render(
       <VariantBubbleHarness item={item} onOpenLocation={onOpenLocation}>
         <LocationMessageContent
           item={item}
@@ -159,12 +159,12 @@ describe("Chat message variant interactions", () => {
     expect(getByText("Accra Mall")).toBeTruthy();
     expect(getByText("Tap for directions")).toBeTruthy();
 
-    fireEvent.press(getByTestId("chat-message-bubble-pressable"));
+    await fireEvent.press(getByTestId("chat-message-bubble-pressable"));
 
     expect(onOpenLocation).toHaveBeenCalledWith(item);
   });
 
-  it("lets the sender stop an active live location share", () => {
+  it("lets the sender stop an active live location share", async () => {
     const onStopLiveShare = jest.fn();
     const item = {
       id: "live-1",
@@ -182,7 +182,7 @@ describe("Chat message variant interactions", () => {
       reactions: [],
     };
 
-    const { getByTestId, getByText } = render(
+    const { getByTestId, getByText } = await render(
       <LocationMessageContent
         item={item}
         isMyMessage
@@ -196,7 +196,7 @@ describe("Chat message variant interactions", () => {
     expect(getByText("Live")).toBeTruthy();
     expect(getByText("59m left")).toBeTruthy();
 
-    fireEvent.press(getByTestId("chat-location-stop-sharing"));
+    await fireEvent.press(getByTestId("chat-location-stop-sharing"));
 
     expect(onStopLiveShare).toHaveBeenCalledWith("live-1");
   });

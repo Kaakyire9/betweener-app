@@ -24,7 +24,8 @@ const buildProps = (overrides = {}) => ({
   onBlur: jest.fn(),
   placeholderTextColor: "#999",
   isRecording: false,
-  isRecordingPaused: false,
+  isVoicePreviewReady: false,
+  isVoicePreviewPlaying: false,
   isUploadingVoice: false,
   recordingDuration: 0,
   voiceButtonScale: new Animated.Value(1),
@@ -43,8 +44,8 @@ const buildProps = (overrides = {}) => ({
   onToggleMoodStickers: jest.fn(),
   onStartVoiceRecording: jest.fn(),
   onDiscardVoiceRecording: jest.fn(),
-  onPauseVoiceRecording: jest.fn(),
-  onResumeVoiceRecording: jest.fn(),
+  onFinishVoiceRecording: jest.fn(),
+  onToggleVoicePreview: jest.fn(),
   onSendVoiceRecording: jest.fn(),
   onSendMessage: jest.fn(),
   ...overrides,
@@ -55,25 +56,25 @@ describe("ChatComposer interactions", () => {
     jest.clearAllMocks();
   });
 
-  it("propagates text changes through the composer input", () => {
+  it("propagates text changes through the composer input", async () => {
     const props = buildProps();
-    const { getByTestId } = render(<ChatComposer {...props} />);
+    const { getByTestId } = await render(<ChatComposer {...props} />);
 
-    fireEvent.changeText(getByTestId("chat-composer-input"), "Hello there");
+    await fireEvent.changeText(getByTestId("chat-composer-input"), "Hello there");
 
     expect(props.onChangeText).toHaveBeenCalledWith("Hello there");
   });
 
-  it("shows the send button for non-empty text and triggers send", () => {
+  it("shows the send button for non-empty text and triggers send", async () => {
     const props = buildProps({ inputText: "Hello there" });
-    const { getByTestId } = render(<ChatComposer {...props} />);
+    const { getByTestId } = await render(<ChatComposer {...props} />);
 
-    fireEvent.press(getByTestId("chat-composer-send"));
+    await fireEvent.press(getByTestId("chat-composer-send"));
 
     expect(props.onSendMessage).toHaveBeenCalledTimes(1);
   });
 
-  it("renders edit and reply previews and supports cancelling both", () => {
+  it("renders edit and reply previews and supports cancelling both", async () => {
     const props = buildProps({
       replyingTo: {
         id: "reply-1",
@@ -93,91 +94,94 @@ describe("ChatComposer interactions", () => {
       },
     });
 
-    const { getByText, getByTestId } = render(<ChatComposer {...props} />);
+    const { getByText, getByTestId } = await render(<ChatComposer {...props} />);
 
     expect(getByText("Replying to: Original")).toBeTruthy();
     expect(getByText("Editing: Current draft")).toBeTruthy();
 
-    fireEvent.press(getByTestId("chat-composer-cancel-reply"));
-    fireEvent.press(getByTestId("chat-composer-cancel-edit"));
+    await fireEvent.press(getByTestId("chat-composer-cancel-reply"));
+    await fireEvent.press(getByTestId("chat-composer-cancel-edit"));
 
     expect(props.onCancelReply).toHaveBeenCalledTimes(1);
     expect(props.onCancelEdit).toHaveBeenCalledTimes(1);
   });
 
-  it("renders blocked state with unblock action for self-blocked chats", () => {
+  it("renders blocked state with unblock action for self-blocked chats", async () => {
     const props = buildProps({
       isChatBlocked: true,
       isBlockedByMe: true,
     });
 
-    const { getByText, getByTestId, queryByTestId } = render(
+    const { getByText, getByTestId, queryByTestId } = await render(
       <ChatComposer {...props} />
     );
 
     expect(getByText("Blocked privately")).toBeTruthy();
     expect(queryByTestId("chat-composer-input")).toBeNull();
 
-    fireEvent.press(getByTestId("chat-composer-unblock"));
+    await fireEvent.press(getByTestId("chat-composer-unblock"));
 
     expect(props.onConfirmUnblock).toHaveBeenCalledTimes(1);
   });
 
-  it("toggles attachment and mood entry points", () => {
+  it("toggles attachment and mood entry points", async () => {
     const props = buildProps();
-    const { getByTestId } = render(<ChatComposer {...props} />);
+    const { getByTestId } = await render(<ChatComposer {...props} />);
 
-    fireEvent.press(getByTestId("chat-composer-toggle-attachment"));
-    fireEvent.press(getByTestId("chat-composer-toggle-mood"));
+    await fireEvent.press(getByTestId("chat-composer-toggle-attachment"));
+    await fireEvent.press(getByTestId("chat-composer-toggle-mood"));
 
     expect(props.onToggleAttachment).toHaveBeenCalledTimes(1);
     expect(props.onToggleMoodStickers).toHaveBeenCalledTimes(1);
   });
 
-  it("starts voice recording when the mic button is pressed", () => {
+  it("starts voice recording when the mic button is pressed", async () => {
     const props = buildProps();
-    const { getByTestId, queryByTestId } = render(<ChatComposer {...props} />);
+    const { getByTestId, queryByTestId } = await render(<ChatComposer {...props} />);
 
     expect(getByTestId("chat-composer-start-voice")).toBeTruthy();
     expect(queryByTestId("chat-composer-send")).toBeNull();
 
-    fireEvent.press(getByTestId("chat-composer-start-voice"));
+    await fireEvent.press(getByTestId("chat-composer-start-voice"));
 
     expect(props.onStartVoiceRecording).toHaveBeenCalledTimes(1);
   });
 
-  it("renders active recording controls and routes pause, discard, and send", () => {
+  it("renders active recording controls and routes pause, discard, and send", async () => {
     const props = buildProps({
       isRecording: true,
       recordingDuration: 65,
     });
-    const { getByTestId, getByText, queryByTestId } = render(
+    const { getByTestId, getByText, queryByTestId } = await render(
       <ChatComposer {...props} />
     );
 
     expect(getByText("1:05")).toBeTruthy();
     expect(queryByTestId("chat-composer-start-voice")).toBeNull();
 
-    fireEvent.press(getByTestId("chat-composer-discard-voice"));
-    fireEvent.press(getByTestId("chat-composer-toggle-voice-pause"));
-    fireEvent.press(getByTestId("chat-composer-send-voice"));
+    await fireEvent.press(getByTestId("chat-composer-discard-voice"));
+    await fireEvent.press(getByTestId("chat-composer-toggle-voice-pause"));
+    await fireEvent.press(getByTestId("chat-composer-send-voice"));
 
     expect(props.onDiscardVoiceRecording).toHaveBeenCalledTimes(1);
-    expect(props.onPauseVoiceRecording).toHaveBeenCalledTimes(1);
+    expect(props.onFinishVoiceRecording).toHaveBeenCalledTimes(1);
     expect(props.onSendVoiceRecording).toHaveBeenCalledTimes(1);
   });
 
-  it("resumes paused recordings instead of pausing again", () => {
+  it("plays a finalized recording preview instead of resuming capture", async () => {
     const props = buildProps({
       isRecording: true,
-      isRecordingPaused: true,
+      isVoicePreviewReady: true,
       recordingDuration: 12,
     });
-    const { getByTestId } = render(<ChatComposer {...props} />);
+    const { getByTestId } = await render(<ChatComposer {...props} />);
 
-    fireEvent.press(getByTestId("chat-composer-toggle-voice-pause"));
+    await fireEvent.press(getByTestId("chat-composer-toggle-voice-pause"));
 
-    expect(props.onResumeVoiceRecording).toHaveBeenCalledTimes(1);
-    expect(props.onPauseVoiceRecording).not.toHaveBeenCalled();
+    expect(getByTestId("chat-composer-toggle-voice-pause").props.accessibilityLabel).toBe(
+      "Play voice preview"
+    );
+    expect(props.onToggleVoicePreview).toHaveBeenCalledTimes(1);
+    expect(props.onFinishVoiceRecording).not.toHaveBeenCalled();
   });
 });

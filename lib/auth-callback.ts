@@ -1,5 +1,4 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import * as Linking from "expo-linking";
 
 export const LAST_DEEP_LINK_URL_KEY = "last_deep_link_url";
 export const AUTH_PENDING_TOKENS_KEY = "auth_pending_tokens_v1";
@@ -122,10 +121,10 @@ export const isTrustedAuthCallbackUrl = (url: string) => {
   const normalized = url.trim();
 
   try {
-    const parsed = Linking.parse(normalized);
-    const scheme = parsed.scheme?.toLowerCase() ?? "";
-    const host = parsed.hostname?.toLowerCase() ?? "";
-    const path = (parsed.path ?? "").replace(/^\/+|\/+$/g, "").toLowerCase();
+    const parsed = new URL(normalized);
+    const scheme = parsed.protocol.replace(/:$/, "").toLowerCase();
+    const host = parsed.hostname.toLowerCase();
+    const path = parsed.pathname.replace(/^\/+|\/+$/g, "").toLowerCase();
 
     if (scheme === "https" && host === "getbetweener.com" && path === "auth/callback") {
       return true;

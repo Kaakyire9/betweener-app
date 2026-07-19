@@ -14,6 +14,32 @@ const normalizeWhitespace = (value?: string | null) =>
     .replace(/\s+/g, " ")
     .trim();
 
+const GHANA_REGIONS = [
+  "Ahafo",
+  "Ashanti",
+  "Bono",
+  "Bono East",
+  "Central",
+  "Eastern",
+  "Greater Accra",
+  "North East",
+  "Northern",
+  "Oti",
+  "Savannah",
+  "Upper East",
+  "Upper West",
+  "Volta",
+  "Western",
+  "Western North",
+] as const;
+
+export const normalizeGhanaRegionValue = (value?: string | null) => {
+  const normalized = normalizeWhitespace(value).replace(/\s+region$/i, "").trim();
+  if (!normalized) return "";
+  return GHANA_REGIONS.find((region) => region.toLowerCase() === normalized.toLowerCase())
+    ?? normalized;
+};
+
 const titleCaseToken = (token: string) =>
   token ? token.charAt(0).toUpperCase() + token.slice(1).toLowerCase() : token;
 

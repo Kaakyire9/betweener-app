@@ -496,7 +496,7 @@ const createStaticStyles = (palette: CirclePulsePalette) => StyleSheet.create({
 const createStyles = (bottomInset: number, palette: CirclePulsePalette) =>
   StyleSheet.create({
     modal: { flex: 1, justifyContent: 'flex-end' },
-    backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: palette.overlay },
+    backdrop: { ...StyleSheet.absoluteFill, backgroundColor: palette.overlay },
     keyboardArea: { flex: 1, justifyContent: 'flex-end' },
     sheet: {
       width: '100%',

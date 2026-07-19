@@ -53,7 +53,7 @@ export default function WhatsNewSheet({
               <BlurViewSafe
                 intensity={isDark ? 24 : 32}
                 tint={isDark ? 'dark' : 'light'}
-                style={StyleSheet.absoluteFillObject}
+                style={StyleSheet.absoluteFill}
               />
               <LinearGradient
                 pointerEvents="none"
@@ -64,7 +64,7 @@ export default function WhatsNewSheet({
                 }
                 start={{ x: 0.08, y: 0 }}
                 end={{ x: 1, y: 1 }}
-                style={StyleSheet.absoluteFillObject}
+                style={StyleSheet.absoluteFill}
               />
 
               <View style={styles.headerRow}>

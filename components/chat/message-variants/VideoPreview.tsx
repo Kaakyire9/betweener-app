@@ -32,7 +32,7 @@ const VideoPreview = memo(({ styles, url, resolvedUrl }: VideoPreviewProps) => {
         colors={['rgba(2, 8, 8, 0.08)', 'rgba(4, 14, 14, 0.18)', 'rgba(2, 8, 8, 0.34)']}
         start={[0, 0]}
         end={[1, 1]}
-        style={StyleSheet.absoluteFillObject}
+        style={StyleSheet.absoluteFill}
       />
       <View style={styles.videoOverlay}>
         <MaterialCommunityIcons name="play-circle" size={34} color={Colors.light.background} />

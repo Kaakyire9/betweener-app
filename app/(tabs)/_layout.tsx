@@ -140,7 +140,7 @@ export default function TabLayout() {
             tabBarIcon: ({ color, size, focused }) => (
               <Sparkles
                 size={focused ? Math.max(size, responsive.compactWidth ? 25 : 27) : size}
-                color={color}
+                color={String(color)}
                 strokeWidth={focused ? 2.2 : 2}
               />
             ),
@@ -159,7 +159,7 @@ export default function TabLayout() {
             tabBarIcon: ({ color, size, focused }) => (
               <Users
                 size={focused ? Math.max(size, responsive.compactWidth ? 25 : 27) : size}
-                color={color}
+                color={String(color)}
                 strokeWidth={focused ? 2.1 : 1.95}
               />
             ),
@@ -184,7 +184,7 @@ export default function TabLayout() {
             tabBarIcon: ({ color, focused }) => (
               <IntentMark
                 size={focused ? (responsive.compactWidth ? 28 : 30) : responsive.compactWidth ? 26 : 28}
-                color={color}
+                color={String(color)}
                 strokeWidth={focused ? 2.3 : 2.1}
               />
             ),

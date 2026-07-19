@@ -5037,6 +5037,9 @@ export type Database = {
           bio: string | null
           city: string | null
           country_lock_policy: string
+          country_verification_started_at: string | null
+          country_verification_target_code: string | null
+          country_verified_at: string | null
           created_at: string
           created_via_provider: string | null
           current_country: string | null
@@ -5141,6 +5144,9 @@ export type Database = {
           bio?: string | null
           city?: string | null
           country_lock_policy?: string
+          country_verification_started_at?: string | null
+          country_verification_target_code?: string | null
+          country_verified_at?: string | null
           created_at?: string
           created_via_provider?: string | null
           current_country?: string | null
@@ -5245,6 +5251,9 @@ export type Database = {
           bio?: string | null
           city?: string | null
           country_lock_policy?: string
+          country_verification_started_at?: string | null
+          country_verification_target_code?: string | null
+          country_verified_at?: string | null
           created_at?: string
           created_via_provider?: string | null
           current_country?: string | null
@@ -6295,6 +6304,117 @@ export type Database = {
         }
         Relationships: []
       }
+      verification_evidence_retention: {
+        Row: {
+          attempts: number
+          bucket_id: string
+          created_at: string
+          delete_after: string
+          deleted_at: string | null
+          last_error: string | null
+          object_path: string
+          processing_started_at: string | null
+          request_id: string
+          status: string
+        }
+        Insert: {
+          attempts?: number
+          bucket_id?: string
+          created_at?: string
+          delete_after: string
+          deleted_at?: string | null
+          last_error?: string | null
+          object_path: string
+          processing_started_at?: string | null
+          request_id: string
+          status?: string
+        }
+        Update: {
+          attempts?: number
+          bucket_id?: string
+          created_at?: string
+          delete_after?: string
+          deleted_at?: string | null
+          last_error?: string | null
+          object_path?: string
+          processing_started_at?: string | null
+          request_id?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "verification_evidence_retention_request_id_fkey"
+            columns: ["request_id"]
+            isOneToOne: true
+            referencedRelation: "verification_requests"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      verification_liveness_challenges: {
+        Row: {
+          actions: string[]
+          consumed_at: string | null
+          evidence: Json | null
+          expires_at: string
+          id: string
+          issued_at: string
+          nonce: string
+          profile_id: string
+          status: string
+          user_id: string
+          verification_request_id: string | null
+        }
+        Insert: {
+          actions: string[]
+          consumed_at?: string | null
+          evidence?: Json | null
+          expires_at: string
+          id?: string
+          issued_at?: string
+          nonce?: string
+          profile_id: string
+          status?: string
+          user_id: string
+          verification_request_id?: string | null
+        }
+        Update: {
+          actions?: string[]
+          consumed_at?: string | null
+          evidence?: Json | null
+          expires_at?: string
+          id?: string
+          issued_at?: string
+          nonce?: string
+          profile_id?: string
+          status?: string
+          user_id?: string
+          verification_request_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "verification_liveness_challenges_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "verification_liveness_challenges_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "verification_liveness_challenges_verification_request_id_fkey"
+            columns: ["verification_request_id"]
+            isOneToOne: false
+            referencedRelation: "verification_requests"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       verification_requests: {
         Row: {
           auto_verification_data: Json | null
@@ -7229,6 +7349,10 @@ export type Database = {
           method: string
         }[]
       }
+      can_access_chat_storage_object: {
+        Args: { p_bucket_id: string; p_object_name: string; p_user_id?: string }
+        Returns: boolean
+      }
       can_invite_to_circle: {
         Args: { p_circle_id: string; p_user_id: string }
         Returns: boolean
@@ -7238,6 +7362,10 @@ export type Database = {
         Returns: boolean
       }
       can_post_moment: { Args: { p_user_id?: string }; Returns: boolean }
+      can_users_chat: {
+        Args: { p_receiver_user_id: string; p_sender_user_id: string }
+        Returns: boolean
+      }
       can_view_moment: { Args: { p_moment_id: string }; Returns: boolean }
       circle_pulse_comment_reaction_summary_json: {
         Args: { p_comment_id: string }
@@ -7556,6 +7684,7 @@ export type Database = {
         Args: { p_peer_profile_id: string; p_profile_id: string }
         Returns: string
       }
+      get_my_country_verification_status: { Args: never; Returns: Json }
       get_nearby_users: {
         Args: { p_limit?: number; p_radius_km?: number; p_user_id: string }
         Returns: {
@@ -8029,6 +8158,22 @@ export type Database = {
           p_repeat_visit_count?: number
         }
         Returns: number
+      }
+      record_profile_country_verification_observation: {
+        Args: {
+          p_accuracy_meters: number
+          p_city?: string
+          p_country_code: string
+          p_country_name: string
+          p_device_integrity?: string
+          p_latitude: number
+          p_longitude: number
+          p_mocked: boolean
+          p_provider?: string
+          p_region?: string
+          p_user_id: string
+        }
+        Returns: Json
       }
       refresh_chat_conversation_summary: {
         Args: { p_owner_user_id: string; p_peer_user_id: string }
@@ -8747,6 +8892,15 @@ export type Database = {
         Returns: boolean
       }
       rpc_cancel_signal: { Args: { p_signal_id: string }; Returns: string }
+      rpc_claim_verification_evidence_retention: {
+        Args: { p_limit?: number }
+        Returns: {
+          attempts: number
+          bucket_id: string
+          object_path: string
+          request_id: string
+        }[]
+      }
       rpc_clear_signin_provider_disconnected: {
         Args: { p_provider: string }
         Returns: boolean
@@ -9647,6 +9801,15 @@ export type Database = {
         Args: { p_provider: string }
         Returns: boolean
       }
+      rpc_issue_selfie_liveness_challenge: {
+        Args: { p_profile_id: string }
+        Returns: {
+          actions: string[]
+          challenge_id: string
+          expires_at: string
+          nonce: string
+        }[]
+      }
       rpc_join_circle: {
         Args: { p_circle_id: string; p_profile_id: string }
         Returns: string
@@ -10404,6 +10567,20 @@ export type Database = {
           p_document_path: string
           p_profile_id: string
           p_reference_asset_path?: string
+        }
+        Returns: {
+          already_pending: boolean
+          created_at: string
+          request_id: string
+          status: string
+        }[]
+      }
+      rpc_submit_selfie_liveness_verification_v2: {
+        Args: {
+          p_challenge_id: string
+          p_document_path: string
+          p_evidence: Json
+          p_profile_id: string
         }
         Returns: {
           already_pending: boolean

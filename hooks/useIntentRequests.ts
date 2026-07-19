@@ -29,6 +29,113 @@ export type IntentRequest = {
   metadata?: Record<string, unknown> | null;
 };
 
+type IntentRealtimeEntry = {
+  channel: ReturnType<typeof supabase.channel> | null;
+  cleanupTimer: ReturnType<typeof setTimeout> | null;
+  listeners: Set<() => void>;
+  notifyTimer: ReturnType<typeof setTimeout> | null;
+  startPromise: Promise<void> | null;
+};
+
+const intentRealtimeEntries = new Map<string, IntentRealtimeEntry>();
+
+const notifyIntentRealtimeListeners = (entry: IntentRealtimeEntry) => {
+  if (entry.notifyTimer) clearTimeout(entry.notifyTimer);
+  entry.notifyTimer = setTimeout(() => {
+    entry.notifyTimer = null;
+    entry.listeners.forEach((listener) => listener());
+  }, 100);
+};
+
+const startIntentRealtimeEntry = (userId: string, entry: IntentRealtimeEntry) => {
+  if (entry.channel || entry.startPromise) return;
+
+  entry.startPromise = (async () => {
+    const channelName = `intent-requests:${userId}`;
+    const staleTopics = new Set([
+      `realtime:${channelName}`,
+      `realtime:intent-requests:recipient:${userId}`,
+      `realtime:intent-requests:actor:${userId}`,
+    ]);
+    const staleChannels = supabase.getChannels().filter((channel) => staleTopics.has(channel.topic));
+
+    // Fast Refresh can preserve the Supabase client while this module is
+    // recreated. Remove orphaned current and legacy channels before registering.
+    if (staleChannels.length > 0) {
+      await Promise.all(staleChannels.map((channel) => supabase.removeChannel(channel)));
+    }
+
+    if (entry.listeners.size === 0 || intentRealtimeEntries.get(userId) !== entry) return;
+
+    const notify = () => notifyIntentRealtimeListeners(entry);
+    entry.channel = supabase
+      .channel(channelName)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'intent_requests', filter: `recipient_id=eq.${userId}` },
+        notify,
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'intent_requests', filter: `actor_id=eq.${userId}` },
+        notify,
+      )
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          notify();
+        }
+      });
+  })()
+    .catch(() => {
+      notifyIntentRealtimeListeners(entry);
+    })
+    .finally(() => {
+      entry.startPromise = null;
+    });
+};
+
+const subscribeIntentRealtime = (userId: string, listener: () => void) => {
+  let entry = intentRealtimeEntries.get(userId);
+  if (!entry) {
+    entry = {
+      channel: null,
+      cleanupTimer: null,
+      listeners: new Set<() => void>(),
+      notifyTimer: null,
+      startPromise: null,
+    };
+    intentRealtimeEntries.set(userId, entry);
+  }
+
+  if (entry.cleanupTimer) {
+    clearTimeout(entry.cleanupTimer);
+    entry.cleanupTimer = null;
+  }
+  entry.listeners.add(listener);
+  startIntentRealtimeEntry(userId, entry);
+
+  return () => {
+    const current = intentRealtimeEntries.get(userId);
+    if (current !== entry) return;
+    entry.listeners.delete(listener);
+    if (entry.listeners.size > 0 || entry.cleanupTimer) return;
+
+    entry.cleanupTimer = setTimeout(() => {
+      entry.cleanupTimer = null;
+      if (entry.listeners.size > 0 || intentRealtimeEntries.get(userId) !== entry) return;
+
+      intentRealtimeEntries.delete(userId);
+      if (entry.notifyTimer) {
+        clearTimeout(entry.notifyTimer);
+        entry.notifyTimer = null;
+      }
+      const channel = entry.channel;
+      entry.channel = null;
+      if (channel) void supabase.removeChannel(channel);
+    }, 1_000);
+  };
+};
+
 const isExpired = (req: IntentRequest) => {
   if (req.status !== 'pending') return false;
   const ts = Date.parse(req.expires_at);
@@ -286,28 +393,11 @@ export const useIntentRequests = (
       void reconcileOfflineQueue();
     });
 
-    const incomingChannel = supabase
-      .channel(`intent-requests:recipient:${userId}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'intent_requests', filter: `recipient_id=eq.${userId}` },
-        () => void refresh(),
-      )
-      .subscribe();
-
-    const outgoingChannel = supabase
-      .channel(`intent-requests:actor:${userId}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'intent_requests', filter: `actor_id=eq.${userId}` },
-        () => void refresh(),
-      )
-      .subscribe();
+    const unsubscribeRealtime = subscribeIntentRealtime(userId, () => void refresh());
 
     return () => {
       unsubscribeQueue();
-      supabase.removeChannel(incomingChannel);
-      supabase.removeChannel(outgoingChannel);
+      unsubscribeRealtime();
     };
   }, [liveFetchEnabled, reconcileOfflineQueue, refresh, userId]);
 

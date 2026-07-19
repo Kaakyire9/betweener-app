@@ -25,7 +25,8 @@ type Props = {
   onBlur: () => void;
   placeholderTextColor: string;
   isRecording: boolean;
-  isRecordingPaused: boolean;
+  isVoicePreviewReady: boolean;
+  isVoicePreviewPlaying: boolean;
   isUploadingVoice: boolean;
   recordingDuration: number;
   voiceButtonScale: Animated.Value;
@@ -44,8 +45,8 @@ type Props = {
   onToggleMoodStickers: () => void;
   onStartVoiceRecording: () => void;
   onDiscardVoiceRecording: () => void;
-  onPauseVoiceRecording: () => void;
-  onResumeVoiceRecording: () => void;
+  onFinishVoiceRecording: () => void;
+  onToggleVoicePreview: () => void;
   onSendVoiceRecording: () => void;
   onSendMessage: () => void;
 };
@@ -71,7 +72,8 @@ export default function ChatComposer({
   onBlur,
   placeholderTextColor,
   isRecording,
-  isRecordingPaused,
+  isVoicePreviewReady,
+  isVoicePreviewPlaying,
   isUploadingVoice,
   recordingDuration,
   voiceButtonScale,
@@ -90,8 +92,8 @@ export default function ChatComposer({
   onToggleMoodStickers,
   onStartVoiceRecording,
   onDiscardVoiceRecording,
-  onPauseVoiceRecording,
-  onResumeVoiceRecording,
+  onFinishVoiceRecording,
+  onToggleVoicePreview,
   onSendVoiceRecording,
   onSendMessage,
 }: Props) {
@@ -127,6 +129,8 @@ export default function ChatComposer({
           </View>
           <TouchableOpacity
             testID="chat-composer-cancel-edit"
+            accessibilityRole="button"
+            accessibilityLabel="Cancel editing message"
             onPress={onCancelEdit}
             style={styles.cancelEditButton}
           >
@@ -157,6 +161,8 @@ export default function ChatComposer({
           {isBlockedByMe ? (
             <TouchableOpacity
               testID="chat-composer-unblock"
+              accessibilityRole="button"
+              accessibilityLabel="Unblock this member"
               style={styles.blockedInputAction}
               onPress={onConfirmUnblock}
             >
@@ -176,6 +182,9 @@ export default function ChatComposer({
             <View style={styles.inputLeftActions}>
               <TouchableOpacity
                 testID="chat-composer-toggle-attachment"
+                accessibilityRole="button"
+                accessibilityLabel={showImagePicker ? "Close attachment options" : "Add an attachment"}
+                accessibilityState={{ expanded: showImagePicker }}
                 style={[
                   styles.inputActionButton,
                   showImagePicker && styles.inputActionButtonActive,
@@ -191,6 +200,9 @@ export default function ChatComposer({
 
               <TouchableOpacity
                 testID="chat-composer-toggle-mood"
+                accessibilityRole="button"
+                accessibilityLabel={showMoodStickers ? "Close mood stickers" : "Add a mood sticker"}
+                accessibilityState={{ expanded: showMoodStickers }}
                 style={[
                   styles.inputActionButton,
                   showMoodStickers && styles.inputActionButtonSecondaryActive,
@@ -208,6 +220,8 @@ export default function ChatComposer({
             <TextInput
               ref={inputRef}
               testID="chat-composer-input"
+              accessibilityLabel={editingMessage ? "Edit message" : replyingTo ? "Write a reply" : "Message"}
+              accessibilityHint="Enter up to 500 characters"
               style={styles.textInput}
               value={inputText}
               onChangeText={onChangeText}
@@ -231,6 +245,8 @@ export default function ChatComposer({
                 <Animated.View style={{ transform: [{ scale: voiceButtonScale }] }}>
                   <Pressable
                     testID="chat-composer-start-voice"
+                    accessibilityRole="button"
+                    accessibilityLabel="Record a voice message"
                     style={styles.voiceButton}
                     onPress={onStartVoiceRecording}
                   >
@@ -259,6 +275,8 @@ export default function ChatComposer({
                 <View style={styles.recordingControls}>
                   <TouchableOpacity
                     testID="chat-composer-discard-voice"
+                    accessibilityRole="button"
+                    accessibilityLabel="Discard voice recording"
                     style={[styles.recordingControlButton, styles.recordingControlDanger]}
                     onPress={onDiscardVoiceRecording}
                     disabled={isUploadingVoice}
@@ -272,12 +290,20 @@ export default function ChatComposer({
 
                   <TouchableOpacity
                     testID="chat-composer-toggle-voice-pause"
+                    accessibilityRole="button"
+                    accessibilityLabel={
+                      !isVoicePreviewReady
+                        ? "Finish recording and review"
+                        : isVoicePreviewPlaying
+                          ? "Pause voice preview"
+                          : "Play voice preview"
+                    }
                     style={[styles.recordingControlButton, styles.recordingControlPause]}
-                    onPress={isRecordingPaused ? onResumeVoiceRecording : onPauseVoiceRecording}
+                    onPress={isVoicePreviewReady ? onToggleVoicePreview : onFinishVoiceRecording}
                     disabled={isUploadingVoice}
                   >
                     <MaterialCommunityIcons
-                      name={isRecordingPaused ? "play" : "pause"}
+                      name={!isVoicePreviewReady ? "stop" : isVoicePreviewPlaying ? "pause" : "play"}
                       size={18}
                       color={Colors.light.background}
                     />
@@ -292,6 +318,8 @@ export default function ChatComposer({
 
                   <TouchableOpacity
                     testID="chat-composer-send-voice"
+                    accessibilityRole="button"
+                    accessibilityLabel="Send voice message"
                     style={[
                       styles.recordingControlButton,
                       styles.recordingControlSend,
@@ -308,6 +336,8 @@ export default function ChatComposer({
               {inputText.trim() && (
                 <TouchableOpacity
                   testID="chat-composer-send"
+                  accessibilityRole="button"
+                  accessibilityLabel={editingMessage ? "Save edited message" : replyingTo ? "Send reply" : "Send message"}
                   style={styles.sendButtonActive}
                   onPress={onSendMessage}
                 >

@@ -674,14 +674,14 @@ export default function DashboardScreen() {
       <BlurView
         tint={isDark ? 'dark' : 'light'}
         intensity={isDark ? 16 : 22}
-        style={[StyleSheet.absoluteFillObject, { borderRadius: 20 }]}
+        style={[StyleSheet.absoluteFill, { borderRadius: 20 }]}
         pointerEvents="none"
       />
       <LinearGradient
         colors={[withAlpha(theme.text, isDark ? 0.08 : 0.05), 'transparent']}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
-        style={[StyleSheet.absoluteFillObject, { borderRadius: 20 }]}
+        style={[StyleSheet.absoluteFill, { borderRadius: 20 }]}
         pointerEvents="none"
       />
     </>

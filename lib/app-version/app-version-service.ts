@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Application from 'expo-application';
 import Constants from 'expo-constants';
-import { Linking } from 'react-native';
+import { Linking, Platform } from 'react-native';
 
 import { supabase } from '@/lib/supabase';
 import { logger } from '@/lib/telemetry/logger';
@@ -81,10 +81,6 @@ export const normalizeAppVersionEnvironment = (value?: string | null): AppVersio
 };
 
 export const getInstalledAppVersion = (): InstalledAppVersion => {
-  const platform = Application.applicationId?.includes('.android')
-    ? 'android'
-    : (Application.applicationId ? Constants.platform?.ios ? 'ios' : 'android' : undefined);
-
   const nativeVersion =
     normalizeString(Application.nativeApplicationVersion) ||
     normalizeString(Constants.expoConfig?.version) ||
@@ -94,10 +90,7 @@ export const getInstalledAppVersion = (): InstalledAppVersion => {
     parseBuildNumber((Constants.expoConfig as any)?.ios?.buildNumber) ||
     parseBuildNumber((Constants.expoConfig as any)?.android?.versionCode);
   const environment = normalizeAppVersionEnvironment(process.env.EXPO_PUBLIC_ENVIRONMENT);
-  const resolvedPlatform: InstalledAppVersion['platform'] =
-    (Constants.platform?.ios ? 'ios' : Constants.platform?.android ? 'android' : platform) === 'android'
-      ? 'android'
-      : 'ios';
+  const resolvedPlatform: InstalledAppVersion['platform'] = Platform.OS === 'android' ? 'android' : 'ios';
 
   return {
     platform: resolvedPlatform,

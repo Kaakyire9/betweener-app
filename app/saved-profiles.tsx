@@ -320,7 +320,7 @@ const styles = StyleSheet.create({
   media: { width: '100%', height: '100%' },
   mediaFallback: { width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center' },
   mediaFallbackInitial: { color: '#FFFFFF', fontFamily: 'PlayfairDisplay_700Bold', fontSize: 48 },
-  mediaFade: { ...StyleSheet.absoluteFillObject },
+  mediaFade: { ...StyleSheet.absoluteFill },
   mediaTopRow: { position: 'absolute', top: 14, left: 14, right: 14, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 },
   savedAtPill: { minHeight: 30, paddingHorizontal: 12, borderRadius: 999, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(5,20,24,0.62)', borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.16)' },
   savedAtText: { color: '#EAFDFC', fontFamily: 'Archivo_700Bold', fontSize: 10, letterSpacing: 0.45, textTransform: 'uppercase' },

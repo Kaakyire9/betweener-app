@@ -1,5 +1,8 @@
 import Purchases, {
   CustomerInfo,
+  CustomerInfoUpdateListener,
+  LogHandler,
+  LOG_LEVEL,
   PurchasesOfferings,
   PurchasesPackage,
   PurchasesError,
@@ -18,6 +21,36 @@ type ConfigureArgs = {
 
 const IOS_API_KEY = process.env.EXPO_PUBLIC_REVENUECAT_APPLE_API_KEY || "";
 const ANDROID_API_KEY = process.env.EXPO_PUBLIC_REVENUECAT_GOOGLE_API_KEY || "";
+
+type RevenueCatEventBridge = {
+  registered: boolean;
+  subscribers: Set<CustomerInfoUpdateListener>;
+  customerInfoListener: CustomerInfoUpdateListener;
+};
+
+type RevenueCatGlobal = typeof globalThis & {
+  __betweenerRevenueCatEventBridge?: RevenueCatEventBridge;
+};
+
+const revenueCatGlobal = globalThis as RevenueCatGlobal;
+const revenueCatEventBridge = revenueCatGlobal.__betweenerRevenueCatEventBridge ?? (() => {
+  const subscribers = new Set<CustomerInfoUpdateListener>();
+  const bridge: RevenueCatEventBridge = {
+    registered: false,
+    subscribers,
+    customerInfoListener: (customerInfo) => {
+      subscribers.forEach((listener) => listener(customerInfo));
+    },
+  };
+  revenueCatGlobal.__betweenerRevenueCatEventBridge = bridge;
+  return bridge;
+})();
+
+const revenueCatLogHandler: LogHandler = (level, message) => {
+  if (__DEV__ && level === LOG_LEVEL.ERROR) {
+    console.warn(`[RevenueCat] ${message}`);
+  }
+};
 
 const getPlatformEnv = (sharedName: string, androidName?: string) => {
   if (Platform.OS === "android" && androidName) {
@@ -85,8 +118,28 @@ const getRevenueCatApiKey = () => {
 
 export const isRevenueCatConfiguredForPlatform = () => Boolean(getRevenueCatApiKey()) && Platform.OS !== "web";
 
+function ensureRevenueCatEventBridge() {
+  if (!isRevenueCatConfiguredForPlatform() || revenueCatEventBridge.registered) return;
+
+  Purchases.setLogHandler(revenueCatLogHandler);
+  Purchases.addCustomerInfoUpdateListener(revenueCatEventBridge.customerInfoListener);
+  revenueCatEventBridge.registered = true;
+}
+
+export function subscribeToRevenueCatCustomerInfo(listener: CustomerInfoUpdateListener) {
+  if (!isRevenueCatConfiguredForPlatform()) return () => {};
+
+  ensureRevenueCatEventBridge();
+  revenueCatEventBridge.subscribers.add(listener);
+  return () => {
+    revenueCatEventBridge.subscribers.delete(listener);
+  };
+}
+
 export async function ensureRevenueCatConfigured({ appUserID, email, displayName }: ConfigureArgs) {
   if (!isRevenueCatConfiguredForPlatform()) return false;
+
+  ensureRevenueCatEventBridge();
 
   const configured = await Purchases.isConfigured().catch(() => false);
   if (!configured) {

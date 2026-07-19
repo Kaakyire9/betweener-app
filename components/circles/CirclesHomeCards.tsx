@@ -1056,7 +1056,7 @@ const createStyles = (palette: CirclePulsePalette) => StyleSheet.create({
   circleImage: { width: '100%', height: '100%' },
   circleImageFallback: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   circleHeroOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   circleHeroTop: {
     position: 'absolute',
@@ -1431,7 +1431,7 @@ const createStyles = (palette: CirclePulsePalette) => StyleSheet.create({
     backgroundColor: palette.dark ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.62)',
   },
   gatheringPosterCinemaImage: { width: '100%', height: '100%' },
-  gatheringPosterCinemaOverlay: { ...StyleSheet.absoluteFillObject },
+  gatheringPosterCinemaOverlay: { ...StyleSheet.absoluteFill },
   gatheringPosterCinemaTop: {
     position: 'absolute',
     top: 14,

@@ -432,16 +432,16 @@ const withAlpha = (hex: string, alpha: number) => {
 const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
   StyleSheet.create({
     modalRoot: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       zIndex: 999,
       elevation: 999,
     },
     backdrop: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       backgroundColor: isDark ? 'rgba(2,8,10,0.72)' : 'rgba(15,23,42,0.42)',
     },
     centerWrap: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       justifyContent: 'center',
       paddingHorizontal: 16,
       paddingVertical: 30,

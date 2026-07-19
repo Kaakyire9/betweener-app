@@ -1441,7 +1441,7 @@ const styles = StyleSheet.create({
     maxHeight: '94%',
   },
   heroGlow: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   header: {
     flexDirection: 'row',

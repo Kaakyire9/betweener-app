@@ -88,7 +88,7 @@ describe('CirclePulseCommentSheet', () => {
 
   it('keeps the typed comment when posting fails', async () => {
     mockSend.mockRejectedValueOnce(new Error('offline'));
-    const { getByLabelText, getByPlaceholderText, getByText } = render(
+    const { getByLabelText, getByPlaceholderText, getByText } = await render(
       <CirclePulseCommentSheet
         visible
         item={promptItem}
@@ -98,8 +98,8 @@ describe('CirclePulseCommentSheet', () => {
     );
 
     const input = getByPlaceholderText('Write something thoughtful...');
-    fireEvent.changeText(input, 'A calm conversation.');
-    fireEvent.press(getByLabelText('Send comment'));
+    await fireEvent.changeText(input, 'A calm conversation.');
+    await fireEvent.press(getByLabelText('Send comment'));
 
     await waitFor(() => expect(getByText('Reconnect to comment. Your message is still here.')).toBeTruthy());
     expect(getByPlaceholderText('Write something thoughtful...').props.value).toBe('A calm conversation.');
@@ -108,7 +108,7 @@ describe('CirclePulseCommentSheet', () => {
   it('clears the composer and refreshes the board count after posting', async () => {
     mockSend.mockResolvedValueOnce({ id: 'comment-1' });
     const onCommentsChanged = jest.fn();
-    const { getByLabelText, getByPlaceholderText } = render(
+    const { getByLabelText, getByPlaceholderText } = await render(
       <CirclePulseCommentSheet
         visible
         item={promptItem}
@@ -118,8 +118,8 @@ describe('CirclePulseCommentSheet', () => {
       />,
     );
 
-    fireEvent.changeText(getByPlaceholderText('Write something thoughtful...'), 'Thoughtful reply.');
-    fireEvent.press(getByLabelText('Send comment'));
+    await fireEvent.changeText(getByPlaceholderText('Write something thoughtful...'), 'Thoughtful reply.');
+    await fireEvent.press(getByLabelText('Send comment'));
 
     await waitFor(() => expect(onCommentsChanged).toHaveBeenCalledTimes(1));
     expect(getByPlaceholderText('Write something thoughtful...').props.value).toBe('');
@@ -144,7 +144,7 @@ describe('CirclePulseCommentSheet', () => {
       myReaction: null,
     }];
     mockSend.mockResolvedValueOnce({ id: 'comment-reply' });
-    const { getByLabelText, getByPlaceholderText } = render(
+    const { getByLabelText, getByPlaceholderText } = await render(
       <CirclePulseCommentSheet
         visible
         item={promptItem}
@@ -153,9 +153,9 @@ describe('CirclePulseCommentSheet', () => {
       />,
     );
 
-    fireEvent.press(getByLabelText('Reply to Ama'));
-    fireEvent.changeText(getByPlaceholderText('Write something thoughtful...'), 'A calm conversation.');
-    fireEvent.press(getByLabelText('Send comment'));
+    await fireEvent.press(getByLabelText('Reply to Ama'));
+    await fireEvent.changeText(getByPlaceholderText('Write something thoughtful...'), 'A calm conversation.');
+    await fireEvent.press(getByLabelText('Send comment'));
 
     await waitFor(() => {
       expect(mockSend).toHaveBeenCalledWith('A calm conversation.', 'comment-parent');
@@ -181,7 +181,7 @@ describe('CirclePulseCommentSheet', () => {
       myReaction: null,
     }];
     mockToggleReaction.mockResolvedValueOnce(true);
-    const { getByLabelText } = render(
+    const { getByLabelText } = await render(
       <CirclePulseCommentSheet
         visible
         item={promptItem}
@@ -190,7 +190,7 @@ describe('CirclePulseCommentSheet', () => {
       />,
     );
 
-    fireEvent.press(getByLabelText('React to Ama'));
+    await fireEvent.press(getByLabelText('React to Ama'));
 
     await waitFor(() => {
       expect(mockToggleReaction).toHaveBeenCalledWith('comment-1', 'heart');
@@ -198,7 +198,7 @@ describe('CirclePulseCommentSheet', () => {
     });
   });
 
-  it('closes the sheet before opening a commenter profile from the avatar', () => {
+  it('closes the sheet before opening a commenter profile from the avatar', async () => {
     mockComments = [{
       id: 'comment-1',
       itemId: 'pulse-1',
@@ -218,7 +218,7 @@ describe('CirclePulseCommentSheet', () => {
     }];
     const onClose = jest.fn();
     const onOpenProfile = jest.fn();
-    const { getByLabelText } = render(
+    const { getByLabelText } = await render(
       <CirclePulseCommentSheet
         visible
         item={promptItem}
@@ -228,7 +228,7 @@ describe('CirclePulseCommentSheet', () => {
       />,
     );
 
-    fireEvent.press(getByLabelText('View Ama profile'));
+    await fireEvent.press(getByLabelText('View Ama profile'));
 
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(onOpenProfile).toHaveBeenCalledWith('profile-2');
@@ -246,7 +246,7 @@ describe('CirclePulseCommentSheet', () => {
         { profileId: 'profile-3', name: 'Jennifer Doe', avatarUrl: null, location: 'London', joinedAt: '2026-06-02T08:00:00.000Z' },
       ],
     };
-    const { getByLabelText } = render(
+    const { getByLabelText } = await render(
       <CirclePulseCommentSheet
         visible
         item={welcomeItem}
@@ -255,7 +255,7 @@ describe('CirclePulseCommentSheet', () => {
       />,
     );
 
-    fireEvent.press(getByLabelText('Welcome Jennifer Doe'));
+    await fireEvent.press(getByLabelText('Welcome Jennifer Doe'));
 
     await waitFor(() => {
       expect(mockSend).toHaveBeenCalledWith('Welcome to the Circle, Jennifer.', null);

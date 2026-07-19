@@ -87,7 +87,9 @@ export const useChatThreadMessageUi = ({
     if (!actionMessage || !currentUserId) return false;
     return (
       actionMessage.senderId === currentUserId &&
-      actionMessage.type === "text" &&
+      actionMessage.type !== "system" &&
+      !actionMessage.isSystem &&
+      !actionMessage.isViewOnce &&
       actionMessage.status === "failed" &&
       !actionMessage.deletedForAll
     );

@@ -78,7 +78,7 @@ export default function MeProfileHero({
               colors={[placeholderPalette.start, placeholderPalette.end]}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
-              style={StyleSheet.absoluteFillObject}
+              style={StyleSheet.absoluteFill}
             />
             <ProfileInlineVideoSurface
               videoUrl={heroVideoUrl}
@@ -117,8 +117,8 @@ export default function MeProfileHero({
           <View style={styles.heroImage}>
             <OfflineImage
               uri={heroImageUri}
-              style={StyleSheet.absoluteFillObject}
-              containerStyle={StyleSheet.absoluteFillObject}
+              style={StyleSheet.absoluteFill}
+              containerStyle={StyleSheet.absoluteFill}
               cachePolicy="memory-disk"
             />
             <View style={styles.heroTint} />
@@ -274,7 +274,7 @@ function createStyles(_theme: Theme) {
       overflow: "hidden",
     },
     heroTint: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       backgroundColor: "rgba(0,0,0,0.08)",
     },
     heroImage: {
@@ -295,17 +295,17 @@ function createStyles(_theme: Theme) {
       height: 140,
     },
     heroVignette: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       backgroundColor: "rgba(0,0,0,0.08)",
     },
     heroInnerStroke: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       borderRadius: 24,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: "rgba(255,255,255,0.65)",
     },
     heroGrain: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       backgroundColor: "rgba(255,255,255,0.02)",
     },
     heroPlaceholderContent: {

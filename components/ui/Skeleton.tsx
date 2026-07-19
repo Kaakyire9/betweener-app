@@ -64,7 +64,7 @@ export function SkeletonBlock({ height, width = "100%", radius = 16, style }: Pr
       <Animated.View
         pointerEvents="none"
         style={[
-          StyleSheet.absoluteFillObject,
+          StyleSheet.absoluteFill,
           { transform: [{ translateX }], opacity: 0.9 },
         ]}
       >

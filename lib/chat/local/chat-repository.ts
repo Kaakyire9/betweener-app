@@ -997,6 +997,49 @@ export const ChatRepository = {
     }
   },
 
+  async requeueOutboxItem(ownerUserId: string, localMessageId: string, maxAttempts = 48): Promise<boolean> {
+    const db = await getChatDb();
+    const updatedAt = nowIso();
+    const result = await runSerializedWrite(() => db.runAsync(
+      `
+        update chat_pending_outbox
+        set status = 'queued',
+            attempt_count = 0,
+            max_attempts = max(max_attempts, ?),
+            next_retry_at = null,
+            error_code = null,
+            error_message = null,
+            updated_at = ?
+        where owner_user_id = ?
+          and local_message_id = ?
+          and status in ('failed', 'queued')
+      `,
+      maxAttempts,
+      updatedAt,
+      ownerUserId,
+      localMessageId,
+    ));
+    if (result.changes > 0) {
+      await runSerializedWrite(() => db.runAsync(
+        `
+          update chat_messages
+          set status = 'pending',
+              error_code = null,
+              local_only = 1,
+              local_updated_at = ?
+          where owner_user_id = ?
+            and (local_id = ? or id = ?)
+        `,
+        updatedAt,
+        ownerUserId,
+        localMessageId,
+        localMessageId,
+      ));
+      notify(threadListeners, ownerUserId);
+    }
+    return result.changes > 0;
+  },
+
   async markThreadRead(ownerUserId: string, threadId: string): Promise<void> {
     const db = await getChatDb();
     await withSerializedTransaction(db, async (txn) => {

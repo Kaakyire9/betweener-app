@@ -88,6 +88,90 @@ type UseMomentsParams = {
   } | null;
 };
 
+type MomentsRealtimeEntry = {
+  channel: ReturnType<typeof supabase.channel> | null;
+  cleanupTimer: ReturnType<typeof setTimeout> | null;
+  listeners: Set<() => void>;
+  notifyTimer: ReturnType<typeof setTimeout> | null;
+  startPromise: Promise<void> | null;
+};
+
+const momentsRealtimeEntries = new Map<string, MomentsRealtimeEntry>();
+
+const notifyMomentsRealtimeListeners = (entry: MomentsRealtimeEntry) => {
+  if (entry.notifyTimer) clearTimeout(entry.notifyTimer);
+  entry.notifyTimer = setTimeout(() => {
+    entry.notifyTimer = null;
+    entry.listeners.forEach((listener) => listener());
+  }, 350);
+};
+
+const startMomentsRealtimeEntry = (userId: string, entry: MomentsRealtimeEntry) => {
+  if (entry.channel || entry.startPromise) return;
+
+  entry.startPromise = (async () => {
+    const channelName = `moments-updates:${userId}`;
+    const realtimeTopic = `realtime:${channelName}`;
+    const staleChannel = supabase.getChannels().find((channel) => channel.topic === realtimeTopic);
+
+    // Fast Refresh can retain the Supabase client after recreating this module.
+    if (staleChannel) await supabase.removeChannel(staleChannel);
+
+    if (entry.listeners.size === 0 || momentsRealtimeEntries.get(userId) !== entry) return;
+
+    const notify = () => notifyMomentsRealtimeListeners(entry);
+    entry.channel = supabase
+      .channel(channelName)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'moments' }, notify)
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') notify();
+      });
+  })()
+    .catch(() => notifyMomentsRealtimeListeners(entry))
+    .finally(() => {
+      entry.startPromise = null;
+    });
+};
+
+const subscribeMomentsRealtime = (userId: string, listener: () => void) => {
+  let entry = momentsRealtimeEntries.get(userId);
+  if (!entry) {
+    entry = {
+      channel: null,
+      cleanupTimer: null,
+      listeners: new Set<() => void>(),
+      notifyTimer: null,
+      startPromise: null,
+    };
+    momentsRealtimeEntries.set(userId, entry);
+  }
+
+  if (entry.cleanupTimer) {
+    clearTimeout(entry.cleanupTimer);
+    entry.cleanupTimer = null;
+  }
+  entry.listeners.add(listener);
+  startMomentsRealtimeEntry(userId, entry);
+
+  return () => {
+    if (momentsRealtimeEntries.get(userId) !== entry) return;
+    entry.listeners.delete(listener);
+    if (entry.listeners.size > 0 || entry.cleanupTimer) return;
+
+    entry.cleanupTimer = setTimeout(() => {
+      entry.cleanupTimer = null;
+      if (entry.listeners.size > 0 || momentsRealtimeEntries.get(userId) !== entry) return;
+
+      momentsRealtimeEntries.delete(userId);
+      if (entry.notifyTimer) clearTimeout(entry.notifyTimer);
+      entry.notifyTimer = null;
+      const channel = entry.channel;
+      entry.channel = null;
+      if (channel) void supabase.removeChannel(channel);
+    }, 1_000);
+  };
+};
+
 const getMomentFreshnessScore = (moment?: Moment) => {
   if (!moment?.created_at) return 0;
   const createdAtMs = new Date(moment.created_at).getTime();
@@ -544,33 +628,7 @@ export function useMoments({ currentUserId, currentUserProfile }: UseMomentsPara
 
   useEffect(() => {
     if (!currentUserId) return;
-    let refreshTimeout: ReturnType<typeof setTimeout> | null = null;
-    const scheduleRefresh = () => {
-      if (refreshTimeout) clearTimeout(refreshTimeout);
-      refreshTimeout = setTimeout(() => {
-        refreshTimeout = null;
-        void refresh();
-      }, 350);
-    };
-
-    const channel = supabase
-      .channel(`moments-updates:${currentUserId}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'moments' },
-        scheduleRefresh,
-      );
-
-    channel.subscribe((status) => {
-      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-        scheduleRefresh();
-      }
-    });
-
-    return () => {
-      if (refreshTimeout) clearTimeout(refreshTimeout);
-      supabase.removeChannel(channel);
-    };
+    return subscribeMomentsRealtime(currentUserId, () => void refresh());
   }, [currentUserId, refresh]);
 
   useEffect(() => {

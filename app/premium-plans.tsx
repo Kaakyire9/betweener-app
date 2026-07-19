@@ -806,7 +806,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderWidth: 1,
       borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
     },
-    planGlow: { ...StyleSheet.absoluteFillObject },
+    planGlow: { ...StyleSheet.absoluteFill },
     planHeader: { flexDirection: "row", justifyContent: "space-between", gap: 12 },
     planHeaderCopy: { flex: 1, gap: 4 },
     planEyebrow: { fontSize: 10, fontWeight: "700", letterSpacing: 1.4, textTransform: "uppercase" },
@@ -874,7 +874,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       backgroundColor: withAlpha(theme.background, isDark ? 0.4 : 0.94),
     },
     priceHeroGlow: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
     },
     priceHeroTopline: {
       flexDirection: "row",

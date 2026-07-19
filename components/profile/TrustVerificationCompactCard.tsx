@@ -41,6 +41,9 @@ export default function TrustVerificationCompactCard({
       style={[styles.card, { backgroundColor: theme.backgroundSubtle, borderColor: withAlpha(theme.text, 0.08) }]}
       onPress={onPress}
       disabled={!onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${verificationCallout.title}. ${verificationCallout.subtitle}. ${verificationCallout.action}`}
+      accessibilityState={{ disabled: !onPress }}
     >
       <View style={styles.header}>
         <Text style={[styles.title, { color: theme.text }]}>Trust & Verification</Text>

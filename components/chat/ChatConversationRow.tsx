@@ -137,6 +137,15 @@ export function ChatConversationRow({
       <View style={[styles.avatarRing, isLeftBetweener && styles.avatarRingLeft]}>{avatarNode}</View>
     );
 
+  const conversationAccessibilityLabel = [
+    item.matchedUser.name,
+    isUnread ? 'Unread conversation' : null,
+    isTyping ? 'Typing' : previewText,
+    formattedTime,
+    item.isMuted ? 'Muted' : null,
+    item.isPinned ? 'Pinned' : null,
+  ].filter(Boolean).join('. ');
+
   return (
     <Swipeable
       ref={swipeableRef}
@@ -168,6 +177,8 @@ export function ChatConversationRow({
       renderLeftActions={() => (
         <View style={[styles.swipeActionRail, styles.swipeActionRailLeft]}>
           <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={item.isArchived ? `Return conversation with ${item.matchedUser.name}` : `Archive conversation with ${item.matchedUser.name}`}
             style={[styles.swipeAction, styles.archiveAction]}
             onPress={() => {
               swipeableRef.current?.close();
@@ -186,6 +197,8 @@ export function ChatConversationRow({
       renderRightActions={() => (
         <View style={[styles.swipeActionRail, styles.swipeActionRailRight]}>
           <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={item.peerHasLeft ? `Remove conversation with ${item.matchedUser.name}` : `More options for ${item.matchedUser.name}`}
             style={[styles.swipeAction, item.peerHasLeft ? styles.removeAction : styles.moreAction]}
             onPress={() => {
               swipeableRef.current?.close();
@@ -207,6 +220,11 @@ export function ChatConversationRow({
       )}
     >
       <Pressable
+        accessible
+        accessibilityRole="button"
+        accessibilityLabel={conversationAccessibilityLabel}
+        accessibilityHint="Opens this conversation. Long press to pin or unpin it."
+        accessibilityState={{ selected: isUnread }}
         style={({ pressed }) => [
           styles.conversationItem,
           item.isPinned && styles.pinnedConversation,

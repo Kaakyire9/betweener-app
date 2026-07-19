@@ -51,11 +51,11 @@ describe("ChatMessageActionsSheet interactions", () => {
     jest.clearAllMocks();
   });
 
-  it("retries failed messages and closes first", () => {
+  it("retries failed messages and closes first", async () => {
     const props = buildProps();
-    const { getByTestId } = render(<ChatMessageActionsSheet {...props} />);
+    const { getByTestId } = await render(<ChatMessageActionsSheet {...props} />);
 
-    fireEvent.press(getByTestId("chat-message-action-retry"));
+    await fireEvent.press(getByTestId("chat-message-action-retry"));
 
     expect(props.onClose).toHaveBeenCalledTimes(1);
     expect(props.onRetry).toHaveBeenCalledWith(actionMessage);
@@ -64,30 +64,32 @@ describe("ChatMessageActionsSheet interactions", () => {
     );
   });
 
-  it("toggles the pin label and forwards the pinned state", () => {
+  it("toggles the pin label and forwards the pinned state", async () => {
     const props = buildProps({ isActionPinned: true });
-    const { getByText, getByTestId } = render(<ChatMessageActionsSheet {...props} />);
+    const { getByText, getByTestId } = await render(<ChatMessageActionsSheet {...props} />);
 
     expect(getByText("Unpin message")).toBeTruthy();
 
-    fireEvent.press(getByTestId("chat-message-action-pin"));
+    await fireEvent.press(getByTestId("chat-message-action-pin"));
 
     expect(props.onTogglePin).toHaveBeenCalledWith(actionMessage, true);
   });
 
-  it("hides retry when the selected message is not retryable", () => {
+  it("hides retry when the selected message is not retryable", async () => {
     const props = buildProps({ canRetryActionMessage: false });
-    const { queryByTestId } = render(<ChatMessageActionsSheet {...props} />);
+    const { queryByTestId } = await render(<ChatMessageActionsSheet {...props} />);
 
     expect(queryByTestId("chat-message-action-retry")).toBeNull();
   });
 
-  it("supports closing from cancel and backdrop", () => {
+  it("supports closing from cancel and backdrop", async () => {
     const props = buildProps();
-    const { getByTestId } = render(<ChatMessageActionsSheet {...props} />);
+    const { getByTestId } = await render(<ChatMessageActionsSheet {...props} />);
 
-    fireEvent.press(getByTestId("chat-message-action-cancel"));
-    fireEvent.press(getByTestId("chat-message-actions-backdrop"));
+    await fireEvent.press(getByTestId("chat-message-action-cancel"));
+    await fireEvent.press(
+      getByTestId("chat-message-actions-backdrop", { includeHiddenElements: true })
+    );
 
     expect(props.onClose).toHaveBeenCalledTimes(2);
   });

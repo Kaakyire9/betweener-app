@@ -1405,7 +1405,7 @@ const createPracticeCardStyles = (
       borderColor: isDark ? "rgba(19,168,168,0.28)" : "rgba(15,61,62,0.22)",
     },
     photo: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       width: "100%",
       height: "100%",
     },
@@ -1429,7 +1429,7 @@ const createPracticeCardStyles = (
       textTransform: "uppercase",
     },
     noiseVeil: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       backgroundColor: isDark ? "rgba(7,30,34,0.06)" : "rgba(255,255,255,0.02)",
     },
     rimTop: {

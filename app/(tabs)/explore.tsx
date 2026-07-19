@@ -3011,7 +3011,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
     circleImage: { width: '100%', height: '100%' },
     circleImageFallback: { flex: 1, alignItems: 'center', justifyContent: 'center' },
     circleHeroOverlay: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
     },
     circleHeroTop: {
       position: 'absolute',

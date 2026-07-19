@@ -6,6 +6,7 @@ import {
   derivePlanFromCustomerInfo,
   getPlanEndsAtFromCustomerInfo,
   loadRevenueCatState,
+  subscribeToRevenueCatCustomerInfo,
 } from "@/lib/subscriptions";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CustomerInfo, PurchasesOfferings } from "react-native-purchases";
@@ -100,6 +101,8 @@ export function usePremiumState() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => subscribeToRevenueCatCustomerInfo(setCustomerInfo), []);
 
   const revenueCatPlan = useMemo(() => derivePlanFromCustomerInfo(customerInfo), [customerInfo]);
   const currentPlan = useMemo(() => {

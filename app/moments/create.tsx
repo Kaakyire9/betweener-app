@@ -1136,7 +1136,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       backgroundColor: theme.background,
     },
     screenGlow: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
     },
     keyboardWrap: {
       flex: 1,

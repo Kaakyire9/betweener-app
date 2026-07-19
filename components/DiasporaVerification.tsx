@@ -1,11 +1,12 @@
 import { Colors } from '@/constants/theme';
 import { useColorScheme as useAppColorScheme } from '@/hooks/use-color-scheme';
+import { useReduceMotion } from '@/hooks/useReduceMotion';
 import { useVerificationStatus } from '@/hooks/use-verification-status';
 import { useResponsiveMetrics } from '@/lib/responsive';
 import { supabase } from '@/lib/supabase';
 import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system/legacy';
+import { File as ExpoFile } from 'expo-file-system';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -24,9 +25,9 @@ import Animated, {
   withSpring,
   withTiming,
 } from 'react-native-reanimated';
-import { Camera as VisionCamera, useCameraDevice } from 'react-native-vision-camera';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
+    ActivityIndicator,
     Alert,
     KeyboardAvoidingView,
     LayoutChangeEvent,
@@ -47,6 +48,23 @@ import {
   getVerificationSubmissionType,
   type VerificationMethod,
 } from '@/lib/verification/verification-methods';
+import {
+  LivenessCamera,
+  type LivenessCameraHandle,
+  useLivenessCameraPermission,
+} from '@/components/verification/LivenessCamera';
+import {
+  buildLivenessEvidence,
+  createLivenessState,
+  getLivenessProgress,
+  LIVENESS_EVIDENCE_REQUIREMENTS,
+  reduceLivenessObservation,
+  validateLivenessEvidence,
+  type FaceObservation,
+  type LivenessChallenge,
+  type LivenessEvidence,
+  type LivenessState,
+} from '@/lib/verification/liveness-engine';
 
 const AnimatedPath = Animated.createAnimatedComponent(Path);
 
@@ -128,6 +146,46 @@ type LivePreviewAsset = {
   fileName: string;
   width?: number;
   height?: number;
+  fileSize?: number;
+};
+
+type LivenessSubmissionStage = 'preparing' | 'uploading' | 'securing' | 'finalizing' | null;
+
+const LIVENESS_SUBMISSION_LABELS: Record<Exclude<LivenessSubmissionStage, null>, string> = {
+  preparing: 'Preparing clip...',
+  uploading: 'Uploading securely...',
+  securing: 'Securing submission...',
+  finalizing: 'Finishing...',
+};
+
+const withOperationTimeout = async <T,>(
+  promise: PromiseLike<T>,
+  timeoutMs: number,
+  operation: string,
+): Promise<T> => {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      Promise.resolve(promise),
+      new Promise<T>((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error(`${operation} timed out`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+};
+
+const getSubmissionErrorMessage = (error: unknown) => {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === 'object' && 'message' in error) {
+    const message = (error as { message?: unknown }).message;
+    return typeof message === 'string' ? message : '';
+  }
+  return '';
 };
 
 const SOCIAL_PROOF_PLATFORMS: { id: SocialPlatform; label: string; icon: string }[] = [
@@ -146,8 +204,8 @@ const LIVENESS_GUIDE_STEPS = [
     progress: 0.25,
   },
   {
-    title: 'Turn slightly left',
-    body: 'Turn your head gently so the reviewer can see this is a live recording.',
+    title: 'Turn slightly either way',
+    body: 'Turn your head gently left or right, then return to the centre.',
     icon: 'refresh-circle-outline',
     progress: 0.55,
   },
@@ -168,16 +226,9 @@ const LIVENESS_GUIDE_STEPS = [
 const LIVE_GUIDE_WIDTH = 276;
 const LIVE_GUIDE_HEIGHT = 304;
 const LIVE_GUIDE_STROKE = 10;
-const LIVENESS_GUIDE_TIMINGS = {
-  faceSeen: 350,
-  centered: 650,
-  turn: 1700,
-  blink: 3200,
-  ready: 4600,
-  recordingTurn: 1600,
-  recordingBlink: 3200,
-  recordingStop: 5200,
-} as const;
+const LIVENESS_RECORDING_MAX_MS = 12_000;
+const LIVENESS_FILE_MAX_BYTES = 15 * 1024 * 1024;
+const LIVENESS_FILE_MIN_BYTES = 80 * 1024;
 
 const cubicPoint = (p0: number, p1: number, p2: number, p3: number, t: number) => {
   const mt = 1 - t;
@@ -266,11 +317,19 @@ const LiveChecklistPill: React.FC<LiveChecklistPillProps> = ({
   label,
   tint,
 }) => {
+  const reduceMotion = useReduceMotion();
   const scale = useSharedValue(1);
   const glow = useSharedValue(active ? 0.5 : 0);
   const mountedRef = useRef(false);
 
   useEffect(() => {
+    if (reduceMotion) {
+      scale.value = 1;
+      glow.value = active ? 0.68 : 0;
+      mountedRef.current = true;
+      return;
+    }
+
     if (!mountedRef.current) {
       mountedRef.current = true;
       return;
@@ -289,7 +348,7 @@ const LiveChecklistPill: React.FC<LiveChecklistPillProps> = ({
       scale.value = withTiming(1, { duration: 150 });
       glow.value = withTiming(0, { duration: 150 });
     }
-  }, [active, glow, scale]);
+  }, [active, glow, reduceMotion, scale]);
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ scale: scale.value }],
@@ -342,6 +401,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
   profile,
   onVerificationUpdate,
 }) => {
+  const reduceMotion = useReduceMotion();
   const colorScheme = useAppColorScheme();
   const theme = colorScheme === 'dark' ? Colors.dark : Colors.light;
   const isDark = colorScheme === 'dark';
@@ -356,6 +416,8 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
   const [liveCameraReady, setLiveCameraReady] = useState(false);
   const [liveRecording, setLiveRecording] = useState(false);
   const [liveCameraIssue, setLiveCameraIssue] = useState<string | null>(null);
+  const [liveRetrying, setLiveRetrying] = useState(false);
+  const [liveCameraAttempt, setLiveCameraAttempt] = useState(0);
   const [liveRecordingProgress, setLiveRecordingProgress] = useState(0);
   const [liveHasFace, setLiveHasFace] = useState(false);
   const [liveFaceCentered, setLiveFaceCentered] = useState(false);
@@ -363,17 +425,24 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
   const [liveBlinkComplete, setLiveBlinkComplete] = useState(false);
   const [liveChallengeReady, setLiveChallengeReady] = useState(false);
   const [livePreviewAsset, setLivePreviewAsset] = useState<LivePreviewAsset | null>(null);
+  const [liveSubmissionStage, setLiveSubmissionStage] = useState<LivenessSubmissionStage>(null);
+  const [liveSubmissionError, setLiveSubmissionError] = useState<string | null>(null);
+  const [liveCurrentAction, setLiveCurrentAction] = useState<'turn' | 'blink' | 'hold' | null>(null);
   const [, setLiveGuideLayout] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
   const { status: verificationStatus, refreshStatus } = useVerificationStatus(profile?.user_id);
+  const { requestPermission: requestCameraPermission } = useLivenessCameraPermission();
   const insets = useSafeAreaInsets();
   const responsive = useResponsiveMetrics();
-  const cameraRef = useRef<VisionCamera | null>(null);
+  const cameraRef = useRef<LivenessCameraHandle | null>(null);
   const liveGuideRef = useRef<View | null>(null);
   const verificationScrollRef = useRef<ScrollView | null>(null);
-  const device = useCameraDevice('front');
   const stopRecordingTriggeredRef = useRef(false);
+  const recordingSessionRef = useRef(0);
   const recordingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recordingStartedAtRef = useRef<number | null>(null);
+  const liveChallengeRef = useRef<LivenessChallenge | null>(null);
+  const liveEngineStateRef = useRef<LivenessState>(createLivenessState());
+  const liveEvidenceRef = useRef<LivenessEvidence | null>(null);
 
   const currentVerificationLevel =
     verificationStatus.verificationLevel
@@ -443,20 +512,12 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
 
     return {
       eyebrow: 'Shape your trust mark',
-      title: 'Help serious matches feel safer, faster',
-      body: 'Verification lowers hesitation, signals intention, and makes your profile feel more real before the first message.',
+      title: 'Give serious matches more confidence',
+      body: 'Complete a quick face check or submit an accepted document. Once approved, your profile receives a visible verification badge.',
     };
   }, [currentVerificationLevel, freshReviewReason, freshReviewRequired, verificationStatus]);
 
-  const readAssetBytes = async (uri: string) => {
-    const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
-    const byteCharacters = atob(base64);
-    const byteNumbers = new Array(byteCharacters.length);
-    for (let i = 0; i < byteCharacters.length; i += 1) {
-      byteNumbers[i] = byteCharacters.charCodeAt(i);
-    }
-    return new Uint8Array(byteNumbers);
-  };
+  const readAssetBytes = async (uri: string) => new Uint8Array(await new ExpoFile(uri).arrayBuffer());
 
   const normalizeSocialEvidence = useCallback((platform: SocialPlatform, value: string) => {
     const trimmed = value.trim();
@@ -541,10 +602,13 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
   }, [visible]);
 
   const resetLivenessGuide = () => {
+    recordingSessionRef.current += 1;
+    void cameraRef.current?.cancelRecording().catch(() => undefined);
     setShowLivenessGuide(false);
     setShowLiveLivenessCamera(false);
     setLiveCameraReady(false);
     setLiveRecording(false);
+    setLiveRetrying(false);
     setLiveCameraIssue(null);
     setLiveRecordingProgress(0);
     setLiveHasFace(false);
@@ -553,6 +617,12 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
     setLiveBlinkComplete(false);
     setLiveChallengeReady(false);
     setLivePreviewAsset(null);
+    setLiveSubmissionStage(null);
+    setLiveSubmissionError(null);
+    setLiveCurrentAction(null);
+    liveChallengeRef.current = null;
+    liveEngineStateRef.current = createLivenessState();
+    liveEvidenceRef.current = null;
     setLiveGuideLayout(null);
     stopRecordingTriggeredRef.current = false;
     recordingStartedAtRef.current = null;
@@ -572,6 +642,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
       width?: number;
       height?: number;
     },
+    livenessEvidence?: LivenessEvidence | null,
     ) => {
       if (method.mediaType === 'image') {
         const isValidImage = await validateImageQuality(asset);
@@ -598,15 +669,54 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
       if (mimeType === 'image/png') return 'png';
       return method.mediaType === 'video' ? 'mp4' : 'jpg';
     })();
-    const fileName = `verification_${method.id}_${Date.now()}.${extension}`;
-    const fileBytes = await readAssetBytes(asset.uri);
+    if (method.id === 'selfie_liveness') {
+      const fileSize = asset.fileSize ?? new ExpoFile(asset.uri).size ?? 0;
+      if (fileSize < LIVENESS_FILE_MIN_BYTES || fileSize > LIVENESS_FILE_MAX_BYTES) {
+        setFlowMessage({
+          tone: 'error',
+          title: 'Record the face check again',
+          body: fileSize > LIVENESS_FILE_MAX_BYTES
+            ? 'The clip is too large to verify safely.'
+            : 'The clip is incomplete or too short to verify.',
+        });
+        return false;
+      }
+      if (!livenessEvidence?.challenge_completed || !liveChallengeRef.current) {
+        setFlowMessage({
+          tone: 'error',
+          title: 'Complete the guided actions',
+          body: 'Betweener could not confirm the requested movement and blink. Please record a fresh clip.',
+        });
+        return false;
+      }
+      const preflight = validateLivenessEvidence(livenessEvidence);
+      if (!preflight.valid) {
+        setLiveSubmissionError(
+          `${preflight.reason || 'The guided actions were not captured clearly enough'} Retake the short clip and try again.`,
+        );
+        return false;
+      }
+    }
 
-    const { data, error } = await supabase.storage
-      .from('verification-docs')
-      .upload(`${profile.user_id}/${fileName}`, fileBytes, {
-        contentType: mimeType,
-        upsert: false,
-      });
+    const fileName = `verification_${method.id}_${Date.now()}.${extension}`;
+    if (method.id === 'selfie_liveness') setLiveSubmissionStage('preparing');
+    const fileBytes = await withOperationTimeout(
+      readAssetBytes(asset.uri),
+      20_000,
+      'Preparing the face-check clip',
+    );
+
+    if (method.id === 'selfie_liveness') setLiveSubmissionStage('uploading');
+    const { data, error } = await withOperationTimeout(
+      supabase.storage
+        .from('verification-docs')
+        .upload(`${profile.user_id}/${fileName}`, fileBytes, {
+          contentType: mimeType,
+          upsert: false,
+        }),
+      75_000,
+      'Secure clip upload',
+    );
 
     if (error) throw error;
 
@@ -614,18 +724,26 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
     let alreadyPending = false;
 
     if (method.id === 'selfie_liveness') {
-      const { data: rpcData, error: rpcError } = await supabase.rpc(
-        'rpc_submit_selfie_liveness_verification',
-        {
-          p_profile_id: profile.id,
-          p_document_path: data.path,
-          p_capture_mode: method.mediaType,
-          p_challenge_type: method.challengeType ?? 'guided_selfie_video',
-          p_reference_asset_path: null,
-        },
-      );
-      alreadyPending = Boolean(rpcData?.[0]?.already_pending);
-      requestError = rpcError;
+      setLiveSubmissionStage('securing');
+      try {
+        const { data: rpcData, error: rpcError } = await withOperationTimeout(
+          supabase.rpc(
+            'rpc_submit_selfie_liveness_verification_v2' as any,
+            {
+              p_profile_id: profile.id,
+              p_document_path: data.path,
+              p_challenge_id: liveChallengeRef.current?.id,
+              p_evidence: livenessEvidence,
+            },
+          ),
+          30_000,
+          'Securing the verification request',
+        );
+        alreadyPending = Boolean(rpcData?.[0]?.already_pending);
+        requestError = rpcError;
+      } catch (error) {
+        requestError = error;
+      }
     } else {
       const autoScore = await calculateAutomatedScore(method.id, asset);
       const { data: rpcData, error: rpcError } = await supabase.rpc(
@@ -643,15 +761,42 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
       requestError = rpcError;
     }
 
-    if (requestError || alreadyPending) {
-      // The RPC keeps the existing pending request on duplicate submissions.
-      // Remove this newly uploaded, unreferenced asset so private storage does not accumulate orphans.
+    let requestDefinitelyUnreferenced = alreadyPending;
+    if (requestError) {
+      // An RPC can commit even if the response is lost. Reconcile before deleting
+      // private evidence so a transient network failure cannot erase a valid submission.
+      const { data: reconciled, error: reconcileError } = await withOperationTimeout(
+        supabase
+          .from('verification_requests')
+          .select('id')
+          .eq('profile_id', profile.id)
+          .eq('document_url', data.path)
+          .maybeSingle(),
+        12_000,
+        'Confirming the verification request',
+      );
+      if (reconciled?.id) {
+        requestError = null;
+      } else if (!reconcileError) {
+        requestDefinitelyUnreferenced = true;
+      }
+    }
+
+    if (requestDefinitelyUnreferenced) {
+      // Duplicate or rejected requests never reference this upload.
       await supabase.storage.from('verification-docs').remove([data.path]);
     }
 
     if (requestError) throw requestError;
 
-    await refreshStatus();
+    if (method.id === 'selfie_liveness') setLiveSubmissionStage('finalizing');
+    try {
+      await withOperationTimeout(refreshStatus(), 12_000, 'Refreshing verification status');
+    } catch (refreshError) {
+      // Submission is already committed. A status refresh must never make a
+      // successful verification look like a failed one.
+      console.warn('Verification submitted but status refresh was delayed:', refreshError);
+    }
     setFlowMessage({
       tone: 'success',
       title: alreadyPending
@@ -810,11 +955,46 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
     );
   }, [cancellingRequest, refreshStatus, verificationStatus.pendingRequest]);
 
+  const issueLiveLivenessChallenge = async () => {
+    const { data, error } = await supabase.rpc(
+        'rpc_issue_selfie_liveness_challenge' as any,
+        { p_profile_id: profile.id },
+      );
+    if (error) throw error;
+    const row = Array.isArray(data) ? data[0] : data;
+    if (
+      !row?.challenge_id ||
+      !row?.nonce ||
+      !row?.expires_at ||
+      !Array.isArray(row?.actions) ||
+      row.actions.length !== 2 ||
+      row.actions.some((action: unknown) => action !== 'turn' && action !== 'blink')
+    ) {
+      throw new Error('The secure face-check challenge could not be created.');
+    }
+    const challenge: LivenessChallenge = {
+      id: row.challenge_id,
+      nonce: row.nonce,
+      actions: row.actions,
+      expiresAt: row.expires_at,
+    };
+    liveChallengeRef.current = challenge;
+    liveEngineStateRef.current = createLivenessState();
+    liveEvidenceRef.current = null;
+    setLiveCurrentAction(null);
+    setLiveRecordingProgress(0);
+    setLiveHasFace(false);
+    setLiveFaceCentered(false);
+    setLiveTurnComplete(false);
+    setLiveBlinkComplete(false);
+    setLiveChallengeReady(false);
+  };
+
   const openLiveLivenessCamera = async () => {
     setLiveCameraIssue(null);
-    const cameraPermission = await VisionCamera.requestCameraPermission();
+    const cameraPermissionGranted = await requestCameraPermission();
 
-    if (cameraPermission !== 'granted') {
+    if (!cameraPermissionGranted) {
       setLiveCameraIssue('Camera permission was not granted.');
       setFlowMessage({
         tone: 'info',
@@ -828,8 +1008,49 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
       return;
     }
 
-    setLiveCameraReady(false);
-    setShowLiveLivenessCamera(true);
+    try {
+      await issueLiveLivenessChallenge();
+      setLiveCameraReady(false);
+      setLiveCameraAttempt((attempt) => attempt + 1);
+      setShowLiveLivenessCamera(true);
+    } catch (error) {
+      setLiveCameraIssue(error instanceof Error ? error.message : 'Could not start the secure face check.');
+      setFlowMessage({
+        tone: 'error',
+        title: 'Secure face check unavailable',
+        body: 'Please try again shortly. Your camera did not start and no evidence was collected.',
+      });
+    }
+  };
+
+  const retryLiveLiveness = async () => {
+    if (liveRetrying || liveRecording) return;
+    setLiveRetrying(true);
+    recordingSessionRef.current += 1;
+    stopRecordingTriggeredRef.current = false;
+    recordingStartedAtRef.current = null;
+    if (recordingTimeoutRef.current) {
+      clearTimeout(recordingTimeoutRef.current);
+      recordingTimeoutRef.current = null;
+    }
+    await cameraRef.current?.cancelRecording().catch(() => undefined);
+    setLiveRecording(false);
+    setLivePreviewAsset(null);
+
+    try {
+      await issueLiveLivenessChallenge();
+      setLiveCameraIssue(null);
+      setLiveCameraReady(false);
+      setLiveCameraAttempt((attempt) => attempt + 1);
+    } catch (error) {
+      setLiveCameraIssue(
+        error instanceof Error
+          ? error.message
+          : 'Could not prepare another face check. Please try again.',
+      );
+    } finally {
+      setLiveRetrying(false);
+    }
   };
 
   const handleLiveGuideLayout = useCallback((event: LayoutChangeEvent) => {
@@ -850,93 +1071,121 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
     });
   }, [responsive.width]);
 
-  useEffect(() => {
-    if (!showLiveLivenessCamera || !liveCameraReady || liveRecording || livePreviewAsset) return;
+  const handleFaceObservation = useCallback((observation: FaceObservation) => {
+    setLiveHasFace(observation.faceCount === 1);
+    setLiveFaceCentered(observation.faceCount === 1 && observation.centered);
 
-    setLiveHasFace(false);
-    setLiveFaceCentered(false);
-    setLiveTurnComplete(false);
-    setLiveBlinkComplete(false);
-    setLiveChallengeReady(true);
-    setLiveRecordingProgress(1);
-  }, [liveCameraReady, livePreviewAsset, liveRecording, showLiveLivenessCamera]);
+    const challenge = liveChallengeRef.current;
+    const startedAt = recordingStartedAtRef.current;
+    if (!challenge || startedAt === null || stopRecordingTriggeredRef.current) return;
+
+    const next = reduceLivenessObservation(liveEngineStateRef.current, challenge, observation);
+    liveEngineStateRef.current = next;
+    setLiveTurnComplete(next.completedActions.includes('turn'));
+    setLiveBlinkComplete(next.completedActions.includes('blink'));
+    setLiveChallengeReady(next.phase === 'complete');
+    setLiveCurrentAction(
+      next.phase === 'hold' || next.phase === 'complete'
+        ? 'hold'
+        : next.phase === 'challenge'
+          ? challenge.actions[next.actionIndex] ?? 'hold'
+          : null,
+    );
+    setLiveRecordingProgress(getLivenessProgress(next, challenge.actions.length));
+
+    if (next.phase === 'complete') {
+      liveEvidenceRef.current = buildLivenessEvidence(next, challenge, Date.now() - startedAt);
+      stopRecordingTriggeredRef.current = true;
+      const elapsedMs = Date.now() - startedAt;
+      const minimumRemainingMs = Math.max(
+        0,
+        LIVENESS_EVIDENCE_REQUIREMENTS.minimumDurationMs - elapsedMs,
+      );
+      setTimeout(
+        () => void cameraRef.current?.stopRecording().catch(() => undefined),
+        Math.max(450, minimumRemainingMs + 120),
+      );
+    }
+  }, []);
 
   const beginLiveLivenessRecording = async () => {
     if (liveRecording) return;
-    if (!device) {
-      setLiveCameraIssue('The front camera could not be started on this device.');
-      return;
-    }
     if (!cameraRef.current || !liveCameraReady) {
       setLiveCameraIssue('The camera is still starting.');
       return;
     }
+    const challenge = liveChallengeRef.current;
+    if (!challenge || Date.parse(challenge.expiresAt) <= Date.now() + 15_000) {
+      setLiveCameraIssue('The secure challenge expired. Tap Retry for a fresh face check.');
+      return;
+    }
     try {
+      const recordingSession = recordingSessionRef.current + 1;
+      recordingSessionRef.current = recordingSession;
       setLiveRecording(true);
       setLiveCameraIssue(null);
-      setLiveHasFace(true);
-      setLiveFaceCentered(true);
+      setLiveHasFace(false);
+      setLiveFaceCentered(false);
       setLiveTurnComplete(false);
       setLiveBlinkComplete(false);
       setLiveChallengeReady(false);
-      setLiveRecordingProgress(0.12);
+      setLiveRecordingProgress(0.02);
+      liveEngineStateRef.current = createLivenessState();
+      liveEvidenceRef.current = null;
+      setLiveCurrentAction(challenge.actions[0] ?? null);
       recordingStartedAtRef.current = Date.now();
       stopRecordingTriggeredRef.current = false;
-
-      setTimeout(() => {
-        if (!recordingStartedAtRef.current || stopRecordingTriggeredRef.current) return;
-        setLiveTurnComplete(true);
-        setLiveRecordingProgress(0.55);
-      }, LIVENESS_GUIDE_TIMINGS.recordingTurn);
-
-      setTimeout(() => {
-        if (!recordingStartedAtRef.current || stopRecordingTriggeredRef.current) return;
-        setLiveBlinkComplete(true);
-        setLiveRecordingProgress(0.82);
-      }, LIVENESS_GUIDE_TIMINGS.recordingBlink);
-
-      setTimeout(() => {
-        if (!recordingStartedAtRef.current || stopRecordingTriggeredRef.current) return;
-        setLiveChallengeReady(true);
-        setLiveRecordingProgress(1);
-      }, LIVENESS_GUIDE_TIMINGS.ready);
 
       recordingTimeoutRef.current = setTimeout(() => {
         if (!stopRecordingTriggeredRef.current) {
           stopRecordingTriggeredRef.current = true;
           void cameraRef.current?.stopRecording();
         }
-      }, LIVENESS_GUIDE_TIMINGS.recordingStop);
+      }, LIVENESS_RECORDING_MAX_MS);
 
-      cameraRef.current.startRecording({
-        fileType: 'mp4',
-        onRecordingFinished: async (video) => {
-          if (recordingTimeoutRef.current) {
-            clearTimeout(recordingTimeoutRef.current);
-            recordingTimeoutRef.current = null;
-          }
-          setLiveRecording(false);
-          recordingStartedAtRef.current = null;
-          setLiveChallengeReady(true);
-          setLiveRecordingProgress(1);
-          setLivePreviewAsset({
-            uri: video.path.startsWith('file://') ? video.path : `file://${video.path}`,
-            mimeType: 'video/mp4',
-            fileName: `selfie_liveness_${Date.now()}.mp4`,
-            width: video.width,
-            height: video.height,
-          });
-        },
-        onRecordingError: (error) => {
-          if (recordingTimeoutRef.current) {
-            clearTimeout(recordingTimeoutRef.current);
-            recordingTimeoutRef.current = null;
-          }
-          setLiveRecording(false);
-          recordingStartedAtRef.current = null;
-          console.error('Live liveness recording error:', error);
-          setLiveCameraIssue('Recording failed. Please try the face check again.');
-        },
+      void cameraRef.current.startRecording(
+        Math.ceil(LIVENESS_RECORDING_MAX_MS / 1000),
+      ).then((video) => {
+        if (recordingSessionRef.current !== recordingSession) return;
+        if (recordingTimeoutRef.current) {
+          clearTimeout(recordingTimeoutRef.current);
+          recordingTimeoutRef.current = null;
+        }
+        const finishedAt = Date.now();
+        const state = liveEngineStateRef.current;
+        const challenge = liveChallengeRef.current;
+        const startedAt = recordingStartedAtRef.current;
+        setLiveRecording(false);
+        recordingStartedAtRef.current = null;
+        if (!challenge || state.phase !== 'complete' || startedAt === null) {
+          try { new ExpoFile(video.uri).delete(); } catch { /* best-effort temporary-file cleanup */ }
+          setLiveChallengeReady(false);
+          setLiveCameraIssue('The requested actions were not clearly detected. Try again in good light.');
+          return;
+        }
+        const file = new ExpoFile(video.uri);
+        const evidence = buildLivenessEvidence(state, challenge, finishedAt - startedAt);
+        const preflight = validateLivenessEvidence(evidence);
+        if (!preflight.valid) {
+          try { new ExpoFile(video.uri).delete(); } catch { /* best-effort temporary-file cleanup */ }
+          setLiveChallengeReady(false);
+          setLiveCameraIssue(`${preflight.reason || 'The face check was incomplete'} Please try again.`);
+          return;
+        }
+        liveEvidenceRef.current = evidence;
+        setLiveChallengeReady(true);
+        setLiveRecordingProgress(1);
+        setLivePreviewAsset({ ...video, fileSize: file.size ?? undefined });
+      }).catch((error) => {
+        if (recordingSessionRef.current !== recordingSession) return;
+        if (recordingTimeoutRef.current) {
+          clearTimeout(recordingTimeoutRef.current);
+          recordingTimeoutRef.current = null;
+        }
+        setLiveRecording(false);
+        recordingStartedAtRef.current = null;
+        console.error('Live liveness recording error:', error);
+        setLiveCameraIssue('Recording failed. Please try the face check again.');
       });
     } catch (error) {
       setLiveRecording(false);
@@ -948,14 +1197,19 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
 
   const retakeLiveLivenessVideo = () => {
     setLivePreviewAsset(null);
+    setLiveSubmissionStage(null);
+    setLiveSubmissionError(null);
     setLiveCameraIssue(null);
     setLiveRecording(false);
     setLiveHasFace(false);
     setLiveFaceCentered(false);
     setLiveTurnComplete(false);
     setLiveBlinkComplete(false);
-    setLiveChallengeReady(true);
-    setLiveRecordingProgress(1);
+    setLiveChallengeReady(false);
+    setLiveRecordingProgress(0);
+    liveEngineStateRef.current = createLivenessState();
+    liveEvidenceRef.current = null;
+    setLiveCurrentAction(null);
     recordingStartedAtRef.current = null;
     stopRecordingTriggeredRef.current = false;
     if (recordingTimeoutRef.current) {
@@ -969,17 +1223,39 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
 
     try {
       setLoading(true);
-      const success = await submitVerificationAsset(featuredMethod, livePreviewAsset);
+      setLiveSubmissionError(null);
+      const success = await submitVerificationAsset(featuredMethod, livePreviewAsset, liveEvidenceRef.current);
       if (success) {
         resetLivenessGuide();
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+        scrollToVerificationAction();
       }
+    } catch (error) {
+      console.error('Selfie liveness submission failed:', error);
+      const message = getSubmissionErrorMessage(error).toLowerCase();
+      const requiresFreshClip =
+        message.includes('expired') ||
+        message.includes('already used') ||
+        message.includes('thresholds not met') ||
+        message.includes('evidence');
+      setLiveSubmissionError(
+        requiresFreshClip
+          ? message.includes('expired') || message.includes('already used')
+            ? 'This secure check expired before it could be submitted. Retake the short clip to receive a fresh challenge.'
+            : 'The secure checks need a clearer turn and blink. Retake the short clip, following each prompt slowly.'
+          : 'We could not secure your face check. Your preview is still here—check your connection and try again.',
+      );
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => undefined);
     } finally {
+      setLiveSubmissionStage(null);
       setLoading(false);
     }
   };
 
   useEffect(() => {
     return () => {
+      recordingSessionRef.current += 1;
+      void cameraRef.current?.cancelRecording().catch(() => undefined);
       if (recordingTimeoutRef.current) {
         clearTimeout(recordingTimeoutRef.current);
       }
@@ -1057,11 +1333,11 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
   const getVerificationBadge = (level: number) => {
     const badges = [
       { level: 0, label: 'Unverified', color: '#9E9E9E', icon: 'help-circle-outline' },
-      { level: 1, label: 'Basic', color: '#4CAF50', icon: 'checkmark-circle-outline' },
-      { level: 2, label: 'Verified', color: '#2196F3', icon: 'shield-checkmark-outline' },
-      { level: 3, label: 'Premium', color: '#FF9800', icon: 'star-outline' },
+      { level: 1, label: 'Linked profile', color: '#4CAF50', icon: 'checkmark-circle-outline' },
+      { level: 2, label: 'Identity confirmed', color: '#2196F3', icon: 'shield-checkmark-outline' },
     ];
     
+    if (level >= 2) return badges[2];
     return badges.find(b => b.level === level) || badges[0];
   };
 
@@ -1077,27 +1353,35 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
   const prepRingOffset = ringCircumference * (1 - prepRingProgress);
   const liveRingProgress = liveRecordingProgress > 0 ? liveRecordingProgress : 0.08;
   useScopedScreenAwake({
-    enabled: visible && showLiveLivenessCamera && !livePreviewAsset && !!device && liveCameraReady,
+    enabled: visible && showLiveLivenessCamera && !livePreviewAsset && liveCameraReady,
     reason: liveRecording ? 'video_recording' : 'camera_capture',
     instanceId: 'diaspora-selfie-liveness',
   });
   const liveGuide = useMemo(() => buildFaceGuide(liveGuideWidth, liveGuideHeight), [liveGuideHeight, liveGuideWidth]);
-  const liveChallengeComplete = liveChallengeReady || (liveHasFace && liveFaceCentered && liveTurnComplete && liveBlinkComplete);
+  const liveChallengeComplete = liveChallengeReady;
   const livePrompt = liveRecording
-    ? !liveTurnComplete
-      ? 'Turn slightly left'
-      : !liveBlinkComplete
+    ? !liveHasFace
+      ? 'Only you in frame'
+      : !liveFaceCentered && liveCurrentAction !== 'turn'
+        ? 'Center your face'
+        : liveCurrentAction === 'turn'
+      ? 'Turn slightly left or right'
+      : liveCurrentAction === 'blink'
         ? 'Blink naturally'
         : 'Hold steady'
     : !liveCameraReady
       ? 'Starting camera'
       : liveCameraIssue
-        ? 'Camera needs attention'
+        ? 'Face check paused'
         : 'Ready for your face check';
   const livePromptBody = liveRecording
-    ? !liveTurnComplete
-      ? 'Move slowly and keep your face inside the guide ring.'
-      : !liveBlinkComplete
+    ? !liveHasFace
+      ? 'Make sure one face is clearly visible before continuing.'
+      : !liveFaceCentered && liveCurrentAction !== 'turn'
+        ? 'Move the phone gently until your face sits inside the guide.'
+      : liveCurrentAction === 'turn'
+      ? 'Turn your head slightly left or right. Move slowly and keep your face inside the guide ring.'
+      : liveCurrentAction === 'blink'
         ? 'Good. Blink once while staying relaxed and in frame.'
         : liveChallengeComplete
           ? 'Captured. Hold steady for one more moment while we secure the clip.'
@@ -1108,9 +1392,9 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
         ? liveCameraIssue
         : 'Tap record when you are ready. Betweener will capture one short guided clip for manual review.';
   const liveChecklist = [
-    { key: 'center', icon: 'scan-outline', label: 'Keep face visible', active: !liveRecording || (!liveTurnComplete && !liveBlinkComplete) },
-    { key: 'turn', icon: 'refresh-circle-outline', label: 'Turn slightly', active: liveRecording && liveTurnComplete && !liveBlinkComplete },
-    { key: 'blink', icon: 'eye-outline', label: 'Blink once', active: liveRecording && liveBlinkComplete },
+    { key: 'center', icon: 'scan-outline', label: 'One face', active: liveHasFace && liveFaceCentered },
+    { key: 'turn', icon: 'refresh-circle-outline', label: 'Turn', active: liveTurnComplete },
+    { key: 'blink', icon: 'eye-outline', label: 'Blink', active: liveBlinkComplete },
   ] as const;
   const [liveDisplayedProgress, setLiveDisplayedProgress] = useState(Math.round(liveRingProgress * 100));
   const liveAnimatedProgress = useSharedValue(liveRingProgress);
@@ -1132,11 +1416,16 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
   } as const;
 
   useEffect(() => {
+    if (reduceMotion) {
+      liveAnimatedProgress.value = liveRingProgress;
+      setLiveDisplayedProgress(Math.round(liveRingProgress * 100));
+      return;
+    }
     liveAnimatedProgress.value = withTiming(liveRingProgress, {
       duration: liveRecording ? 110 : liveChallengeComplete ? 280 : 220,
       easing: Easing.out(Easing.cubic),
     });
-  }, [liveAnimatedProgress, liveChallengeComplete, liveRecording, liveRingProgress]);
+  }, [liveAnimatedProgress, liveChallengeComplete, liveRecording, liveRingProgress, reduceMotion]);
 
   useAnimatedReaction(
     () => Math.round(liveAnimatedProgress.value * 100),
@@ -1149,12 +1438,16 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
   );
 
   useEffect(() => {
+    if (reduceMotion) {
+      livePromptReveal.value = 1;
+      return;
+    }
     livePromptReveal.value = 0;
     livePromptReveal.value = withTiming(1, {
       duration: 240,
       easing: Easing.out(Easing.cubic),
     });
-  }, [livePrompt, livePromptBody, livePromptReveal]);
+  }, [livePrompt, livePromptBody, livePromptReveal, reduceMotion]);
 
   useEffect(() => {
     const recoverableIssue =
@@ -1170,18 +1463,20 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
     if (liveChallengeComplete && !liveCompletedRef.current) {
       liveRingPulse.value = 0;
       livePromptCompleteAccent.value = 0;
-      liveRingPulse.value = withSequence(
-        withTiming(1, { duration: 260, easing: Easing.out(Easing.cubic) }),
-        withTiming(0, { duration: 820, easing: Easing.out(Easing.quad) }),
-      );
-      livePromptCompleteAccent.value = withSequence(
-        withTiming(1, { duration: 240, easing: Easing.out(Easing.cubic) }),
-        withTiming(0, { duration: 520, easing: Easing.out(Easing.quad) }),
-      );
+      if (!reduceMotion) {
+        liveRingPulse.value = withSequence(
+          withTiming(1, { duration: 260, easing: Easing.out(Easing.cubic) }),
+          withTiming(0, { duration: 820, easing: Easing.out(Easing.quad) }),
+        );
+        livePromptCompleteAccent.value = withSequence(
+          withTiming(1, { duration: 240, easing: Easing.out(Easing.cubic) }),
+          withTiming(0, { duration: 520, easing: Easing.out(Easing.quad) }),
+        );
+      }
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
     }
     liveCompletedRef.current = liveChallengeComplete;
-  }, [liveChallengeComplete, livePromptCompleteAccent, liveRingPulse]);
+  }, [liveChallengeComplete, livePromptCompleteAccent, liveRingPulse, reduceMotion]);
 
   const liveRingAnimatedProps = useAnimatedProps(() => ({
     strokeDashoffset: liveGuide.length * (1 - liveAnimatedProgress.value),
@@ -1220,8 +1515,19 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
               pointerEvents="none"
             />
 
-            <View style={styles.liveCameraTopBar}>
-              <TouchableOpacity onPress={resetLivenessGuide} style={styles.liveCameraClose}>
+            <View
+              style={[
+                styles.liveCameraTopBar,
+                styles.livePreviewTopBar,
+                { top: Math.max(insets.top + 12, 28) },
+              ]}
+            >
+              <TouchableOpacity
+                onPress={resetLivenessGuide}
+                style={styles.liveCameraClose}
+                accessibilityRole="button"
+                accessibilityLabel="Close face check preview"
+              >
                 <Ionicons name="close" size={22} color="#fff" />
               </TouchableOpacity>
               <View style={styles.liveCameraBadge}>
@@ -1232,7 +1538,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
               </View>
             </View>
 
-            <View style={styles.livePreviewBottom}>
+            <View style={[styles.livePreviewBottom, { bottom: Math.max(insets.bottom + 18, 28) }]}>
               <View style={styles.livePreviewCard}>
                 <View style={styles.livePreviewIconWrap}>
                   <Ionicons name="play-circle-outline" size={26} color="#fff" />
@@ -1241,6 +1547,12 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                 <Text style={styles.livePreviewBody}>
                   Make sure your face is visible and the clip shows your small turn and blink. Submit only if it feels clear.
                 </Text>
+                {liveSubmissionError ? (
+                  <View style={styles.livePreviewError} accessibilityRole="alert">
+                    <Ionicons name="alert-circle-outline" size={18} color="#FFD2D8" />
+                    <Text style={styles.livePreviewErrorText}>{liveSubmissionError}</Text>
+                  </View>
+                ) : null}
                 <View style={styles.livePreviewActions}>
                   <TouchableOpacity
                     style={[styles.livePreviewButton, styles.livePreviewSecondaryButton]}
@@ -1255,9 +1567,17 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                     onPress={submitLiveLivenessPreview}
                     disabled={loading}
                   >
-                    <Ionicons name="shield-checkmark-outline" size={18} color="#fff" />
+                    {loading ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <Ionicons name="shield-checkmark-outline" size={18} color="#fff" />
+                    )}
                     <Text style={styles.livePreviewPrimaryText}>
-                      {loading ? 'Submitting...' : 'Submit for review'}
+                      {loading && liveSubmissionStage
+                        ? LIVENESS_SUBMISSION_LABELS[liveSubmissionStage]
+                        : liveSubmissionError
+                          ? 'Retry submission'
+                          : 'Submit for review'}
                     </Text>
                   </TouchableOpacity>
                 </View>
@@ -1276,43 +1596,32 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
         onRequestClose={resetLivenessGuide}
       >
         <View style={styles.liveCameraScreen}>
-          {device ? (
-            <VisionCamera
-              ref={cameraRef}
-              style={styles.liveCamera}
-              device={device}
-              isActive={showLiveLivenessCamera}
-              video
-              preview
-              onInitialized={() => {
-                setLiveCameraIssue(null);
-                setLiveCameraReady(true);
-              }}
-              onStarted={() => {
-                setLiveCameraIssue(null);
-                setLiveCameraReady(true);
-              }}
-              onPreviewStarted={() => {
-                setLiveCameraIssue(null);
-                setLiveCameraReady(true);
-              }}
-              onError={(error) => {
-                console.error('Live liveness camera error:', error);
-                setLiveCameraReady(false);
-                setLiveCameraIssue(error?.message || 'The live liveness camera failed to start.');
-              }}
-            />
-          ) : (
-            <View style={[styles.liveCamera, styles.liveCameraFallback]}>
-              <Ionicons name="videocam-off-outline" size={44} color="#fff" />
-              <Text style={styles.liveCameraFallbackTitle}>Front camera unavailable</Text>
-              <Text style={styles.liveCameraFallbackText}>
-                {liveCameraIssue || 'This device could not start the live face-check camera.'}
-              </Text>
-            </View>
-          )}
+          <LivenessCamera
+            key={`liveness-camera-${liveCameraAttempt}`}
+            ref={cameraRef}
+            style={styles.liveCamera}
+            active={showLiveLivenessCamera}
+            onFaceObservation={handleFaceObservation}
+            onReady={() => {
+              setLiveCameraIssue(null);
+              setLiveCameraReady(true);
+            }}
+            onError={(error) => {
+              console.error('Live liveness camera error:', error);
+              setLiveCameraReady(false);
+              setLiveCameraIssue(error.message || 'The live liveness camera failed to start.');
+            }}
+          />
 
-          <View style={styles.liveCameraOverlay}>
+          <View
+            style={[
+              styles.liveCameraOverlay,
+              {
+                paddingTop: Math.max(insets.top + 12, 28),
+                paddingBottom: Math.max(insets.bottom + 18, 28),
+              },
+            ]}
+          >
             <LinearGradient
               colors={['rgba(8,12,18,0.62)', 'rgba(8,12,18,0.12)', 'rgba(8,12,18,0.68)']}
               start={{ x: 0.5, y: 0 }}
@@ -1321,17 +1630,36 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
               pointerEvents="none"
             />
             <View style={styles.liveCameraTopBar}>
-              <TouchableOpacity onPress={resetLivenessGuide} style={styles.liveCameraClose}>
+              <TouchableOpacity
+                onPress={resetLivenessGuide}
+                style={styles.liveCameraClose}
+                accessibilityRole="button"
+                accessibilityLabel="Close face check camera"
+              >
                 <Ionicons name="close" size={22} color="#fff" />
               </TouchableOpacity>
               <View style={styles.liveCameraBadge}>
                 <Text style={styles.liveCameraBadgeText}>Selfie liveness</Text>
               </View>
-              <View style={styles.liveCameraStatusWrap}>
-                <Text style={styles.liveCameraStatusText}>
-                  {!device ? 'No camera' : liveRecording ? 'Recording' : liveCameraIssue ? 'Needs attention' : liveCameraReady ? 'Ready' : 'Starting'}
-                </Text>
-              </View>
+              {liveCameraIssue ? (
+                <TouchableOpacity
+                  style={[styles.liveCameraStatusWrap, styles.liveCameraRetry]}
+                  onPress={() => void retryLiveLiveness()}
+                  disabled={liveRetrying || liveRecording}
+                  accessibilityRole="button"
+                  accessibilityLabel="Retry face check"
+                  accessibilityState={{ disabled: liveRetrying || liveRecording, busy: liveRetrying }}
+                >
+                  <Ionicons name="refresh" size={14} color="#fff" />
+                  <Text style={styles.liveCameraStatusText}>{liveRetrying ? 'Retrying' : 'Retry'}</Text>
+                </TouchableOpacity>
+              ) : (
+                <View style={styles.liveCameraStatusWrap}>
+                  <Text style={styles.liveCameraStatusText}>
+                    {liveRecording ? 'Recording' : liveCameraReady ? 'Ready' : 'Starting'}
+                  </Text>
+                </View>
+              )}
             </View>
 
             <View style={styles.liveCameraCenter}>
@@ -1404,10 +1732,10 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                 <TouchableOpacity
                   style={[
                     styles.liveRecordButton,
-                    (!device || !liveCameraReady || liveRecording || loading) && styles.liveRecordButtonDisabled,
+                    (!liveCameraReady || liveRecording || loading || liveRetrying || Boolean(liveCameraIssue)) && styles.liveRecordButtonDisabled,
                   ]}
                   onPress={beginLiveLivenessRecording}
-                  disabled={!device || !liveCameraReady || liveRecording || loading}
+                  disabled={!liveCameraReady || liveRecording || loading || liveRetrying || Boolean(liveCameraIssue)}
                 >
                   <View style={[styles.liveRecordButtonInner, liveRecording && styles.liveRecordButtonInnerActive]} />
                 </TouchableOpacity>
@@ -1497,7 +1825,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                 <Text style={[styles.livenessStepTitle, { color: titleColor }]}>What you will do on camera</Text>
               </View>
               <Text style={[styles.livenessStepBody, { color: bodyColor }]}>
-                The camera records a short clip while you keep your face in frame, turn slightly, blink once, and hold steady. No fragile real-time face detection is required.
+                The camera measures one face, framing, a small turn, and a natural blink while recording. The action order changes for each short-lived challenge, and the final decision still receives human review.
               </Text>
             </View>
 
@@ -1527,7 +1855,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                 </Text>
               </TouchableOpacity>
               <Text style={[styles.livenessPrepNote, { color: bodyColor }]}>
-                Tip: use good lighting and keep your phone at eye level for the fastest review.
+                Use good lighting and keep your phone at eye level. Your private clip is available only to authorised review and scheduled for deletion no later than 30 days, with reviewed clips removed sooner.
               </Text>
             </View>
           </ScrollView>
@@ -1603,6 +1931,9 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                   onPress={withdrawPendingVerification}
                   disabled={cancellingRequest}
                   activeOpacity={0.86}
+                  accessibilityRole="button"
+                  accessibilityLabel="Withdraw verification submission"
+                  accessibilityState={{ disabled: cancellingRequest }}
                 >
                   <Ionicons name="close-circle-outline" size={16} color={isDark ? '#f2d7d5' : '#9f3a38'} />
                   <Text style={[styles.withdrawVerificationText, { color: isDark ? '#f2d7d5' : '#9f3a38' }]}>
@@ -1628,7 +1959,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
               </View>
               <View style={styles.statusMetaRow}>
                 <View style={[styles.statusMetaPill, { backgroundColor: softTintSurface, borderColor: `${theme.tint}22` }]}>
-                  <Text style={[styles.statusMetaPillText, { color: theme.tint }]}>Current level {currentVerificationLevel}</Text>
+                  <Text style={[styles.statusMetaPillText, { color: theme.tint }]}>{currentBadge.label}</Text>
                 </View>
                 <View style={[styles.statusMetaPill, { backgroundColor: softAccentSurface, borderColor: `${theme.accent}22` }]}>
                   <Text style={[styles.statusMetaPillText, { color: theme.accent }]}>
@@ -1643,27 +1974,29 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
             <Text style={[styles.sectionEyebrow, { color: theme.accent }]}>Trust on Betweener</Text>
             <Text style={[styles.sectionTitle, { color: titleColor }]}>Why verify your profile?</Text>
             <Text style={[styles.sectionIntro, { color: bodyColor }]}>
-              Verification makes your profile feel more real, lowers hesitation, and gives serious matches
-              a stronger reason to engage.
+              Verification adds identity confidence before the first message while keeping your evidence in private review.
             </Text>
             <View style={styles.benefitsList}>
               <View style={styles.benefit}>
                 <Ionicons name="shield-checkmark" size={20} color={theme.tint} />
-                <Text style={[styles.benefitText, { color: bodyColor }]}>Build trust with potential matches</Text>
+                <Text style={[styles.benefitText, { color: bodyColor }]}>Give potential matches more confidence</Text>
               </View>
               <View style={styles.benefit}>
                 <Ionicons name="eye" size={20} color={theme.tint} />
-                <Text style={[styles.benefitText, { color: bodyColor }]}>Increase profile visibility</Text>
+                <Text style={[styles.benefitText, { color: bodyColor }]}>Verified profiles get seen more often.</Text>
               </View>
               <View style={styles.benefit}>
                 <Ionicons name="heart" size={20} color={theme.tint} />
-                <Text style={[styles.benefitText, { color: bodyColor }]}>Connect with verified diaspora members</Text>
+                <Text style={[styles.benefitText, { color: bodyColor }]}>Carry a visible verification badge</Text>
               </View>
               <View style={styles.benefit}>
                 <Ionicons name="globe" size={20} color={theme.tint} />
-                <Text style={[styles.benefitText, { color: bodyColor }]}>Access long-distance matching features</Text>
+                <Text style={[styles.benefitText, { color: bodyColor }]}>Choose the verification method that suits you</Text>
               </View>
             </View>
+            <Text style={[styles.sectionIntro, { color: bodyColor }]}>
+              Verification strengthens identity confidence. It does not guarantee compatibility or conduct.
+            </Text>
           </View>
 
           {/* Featured verification method */}
@@ -1678,6 +2011,9 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
               onPress={() => setSelectedMethod(featuredMethod.id)}
               disabled={loading}
               activeOpacity={0.92}
+              accessibilityRole="button"
+              accessibilityLabel={`${featuredMethod.title}. ${featuredMethod.description}`}
+              accessibilityState={{ selected: selectedMethod === featuredMethod.id, disabled: loading }}
             >
               <View style={styles.featuredHeader}>
                 <View style={[styles.featuredIcon, { backgroundColor: `${featuredMethod.color}18` }]}>
@@ -1705,7 +2041,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                 </View>
                 <View style={[styles.metaPill, { backgroundColor: elevatedSurface, borderColor: sectionBorder }]}>
                   <Ionicons name="shield-checkmark-outline" size={14} color={bodyColor} />
-                  <Text style={[styles.metaPillText, { color: bodyColor }]}>Level {featuredMethod.level}</Text>
+                  <Text style={[styles.metaPillText, { color: bodyColor }]}>Identity confirmed</Text>
                 </View>
               </View>
 
@@ -1723,7 +2059,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                     <View style={[styles.howItWorksBadge, { backgroundColor: softAccentSurface }]}>
                       <Text style={[styles.howItWorksBadgeText, { color: theme.accent }]}>2</Text>
                     </View>
-                    <Text style={[styles.howItWorksStepText, { color: bodyColor }]}>Keep your face in frame, turn slightly, and blink once</Text>
+                    <Text style={[styles.howItWorksStepText, { color: bodyColor }]}>Keep your face in frame, turn slightly left or right, and blink once</Text>
                   </View>
                   <View style={[styles.howItWorksDivider, { backgroundColor: `${theme.accent}35` }]} />
                   <View style={styles.howItWorksStep}>
@@ -1753,6 +2089,9 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                     ]}
                     onPress={() => setSelectedMethod(method.id)}
                     disabled={loading}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${method.title}. ${method.description}`}
+                    accessibilityState={{ selected: selectedMethod === method.id, disabled: loading }}
                   >
                     <View style={styles.methodHeader}>
                       <View style={[styles.methodIcon, { backgroundColor: `${method.color}20` }]}>
@@ -1769,7 +2108,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                         <Text style={[styles.methodHelper, { color: bodyColor }]}>{method.helperLabel}</Text>
                       </View>
                       <View style={[styles.levelBadgeMuted, { backgroundColor: softTintSurface, borderColor: `${theme.tint}30` }]}>
-                        <Text style={[styles.levelTextMuted, { color: theme.tint }]}>L{method.level}</Text>
+                        <Text style={[styles.levelTextMuted, { color: theme.tint }]}>Linked</Text>
                       </View>
                     </View>
                   </TouchableOpacity>
@@ -1789,6 +2128,9 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                   ]}
                   onPress={() => setSelectedMethod(method.id)}
                   disabled={loading}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${method.title}. ${method.description}`}
+                  accessibilityState={{ selected: selectedMethod === method.id, disabled: loading }}
                 >
                   <View style={styles.methodHeader}>
                     <View style={[styles.methodIcon, { backgroundColor: `${method.color}20` }]}>
@@ -1805,7 +2147,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                       <Text style={[styles.methodHelper, { color: bodyColor }]}>{method.helperLabel}</Text>
                     </View>
                     <View style={[styles.levelBadgeMuted, { backgroundColor: softTintSurface, borderColor: `${theme.tint}30` }]}>
-                      <Text style={[styles.levelTextMuted, { color: theme.tint }]}>L{method.level}</Text>
+                      <Text style={[styles.levelTextMuted, { color: theme.tint }]}>Confirmed</Text>
                     </View>
                   </View>
                 </TouchableOpacity>
@@ -1831,10 +2173,10 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                 <Text style={[styles.submitHelper, { color: bodyColor }]}>
                   {canSubmitActiveMethod
                     ? freshReviewRequired
-                      ? `This method satisfies the private refresh Betweener requested for Trust level ${freshReviewTargetLevel}.`
+                      ? 'This method satisfies the private identity refresh Betweener requested.'
                       : activeMethod.helperLabel
                     : activeMethodBlockedByPending
-                      ? 'Betweener is already reviewing your latest submission. Your place in the trust queue is secure.'
+                      ? 'Betweener is already reviewing your latest submission. We will notify you when it is complete.'
                       : currentVerificationLevel >= 2
                         ? 'Your profile already carries Betweener’s highest trust level. No extra self-submitted verification is needed right now.'
                         : 'Your profile already carries this level of Betweener trust. You do not need to send another proof for this method.'}
@@ -1844,7 +2186,9 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                     <Text style={[styles.submitMetaText, { color: theme.accent }]}>{activeMethod.reviewLabel}</Text>
                   </View>
                   <View style={[styles.submitMetaPill, { backgroundColor: softTintSurface, borderColor: `${theme.tint}22` }]}>
-                    <Text style={[styles.submitMetaText, { color: theme.tint }]}>Trust level {activeMethod.level}</Text>
+                    <Text style={[styles.submitMetaText, { color: theme.tint }]}>
+                      {activeMethod.level >= 2 ? 'Identity confirmed' : 'Linked profile'}
+                    </Text>
                   </View>
                 </View>
                 {flowMessage ? (
@@ -1884,6 +2228,8 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                         style={[styles.flowMessageAction, { backgroundColor: theme.tint }]}
                         onPress={flowMessage.action}
                         activeOpacity={0.86}
+                        accessibilityRole="button"
+                        accessibilityLabel={flowMessage.actionLabel}
                       >
                         <Ionicons name="settings-outline" size={15} color="#fff" />
                         <Text style={styles.flowMessageActionText}>{flowMessage.actionLabel}</Text>
@@ -1900,7 +2246,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                       <View style={styles.socialProofHeaderCopy}>
                         <Text style={[styles.socialProofTitle, { color: titleColor }]}>Connect a visible profile</Text>
                         <Text style={[styles.socialProofBody, { color: bodyColor }]}>
-                          Share a public account with location history, travel context, or consistent identity signals.
+                          Share a public account whose name, photo, or other identity details are consistent with your profile.
                         </Text>
                       </View>
                     </View>
@@ -1920,6 +2266,9 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                             onPress={() => setSocialPlatform(platform.id)}
                             disabled={loading}
                             activeOpacity={0.85}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Use ${platform.label} for verification`}
+                            accessibilityState={{ selected: isSelected, disabled: loading }}
                           >
                             <Ionicons
                               name={platform.icon as any}
@@ -1961,6 +2310,9 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                       onPress={() => void pickFileProof(activeMethod)}
                       disabled={loading}
                       activeOpacity={0.88}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Choose a PDF or file for ${activeMethod.title}`}
+                      accessibilityState={{ disabled: loading }}
                     >
                       <Ionicons name="document-attach-outline" size={18} color="#fff" />
                       <View style={styles.proofSourceCopy}>
@@ -1973,6 +2325,9 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                       onPress={() => void pickPhotoProof(activeMethod)}
                       disabled={loading}
                       activeOpacity={0.88}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Choose a photo for ${activeMethod.title}`}
+                      accessibilityState={{ disabled: loading }}
                     >
                       <Ionicons name="images-outline" size={18} color={theme.tint} />
                       <View style={styles.proofSourceCopy}>
@@ -1990,6 +2345,12 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                   ]}
                   onPress={() => handleImageUpload(selectedMethod)}
                     disabled={loading || (activeMethod.id === 'social' && !socialProfileEvidence.trim())}
+                    accessibilityRole="button"
+                    accessibilityLabel={activeMethod.submitLabel}
+                    accessibilityState={{
+                      disabled: loading || (activeMethod.id === 'social' && !socialProfileEvidence.trim()),
+                      busy: loading,
+                    }}
                   >
                     <Text style={styles.submitButtonText}>
                       {loading
@@ -2272,25 +2633,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#000',
   },
   liveCamera: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  liveCameraFallback: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 10,
-    paddingHorizontal: 28,
-    backgroundColor: '#111827',
-  },
-  liveCameraFallbackTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#fff',
-  },
-  liveCameraFallbackText: {
-    fontSize: 14,
-    lineHeight: 20,
-    color: 'rgba(255,255,255,0.8)',
-    textAlign: 'center',
+    ...StyleSheet.absoluteFill,
   },
   liveCameraOverlay: {
     flex: 1,
@@ -2301,13 +2644,19 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(15, 23, 42, 0.24)',
   },
   liveCameraGradient: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   liveCameraTopBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 10,
+  },
+  livePreviewTopBar: {
+    position: 'absolute',
+    left: 20,
+    right: 20,
+    zIndex: 2,
   },
   liveCameraClose: {
     width: 40,
@@ -2340,6 +2689,12 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(15,143,142,0.88)',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.12)',
+  },
+  liveCameraRetry: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(124,77,255,0.9)',
   },
   liveCameraStatusText: {
     fontSize: 12,
@@ -2480,7 +2835,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#05070d',
   },
   livePreviewVideo: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   livePreviewBottom: {
     position: 'absolute',
@@ -2519,6 +2874,25 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 19,
     color: 'rgba(255,255,255,0.76)',
+  },
+  livePreviewError: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 9,
+    marginTop: 13,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,164,176,0.28)',
+    backgroundColor: 'rgba(116,24,40,0.42)',
+  },
+  livePreviewErrorText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '600',
+    color: '#FFE9EC',
   },
   livePreviewActions: {
     flexDirection: 'row',

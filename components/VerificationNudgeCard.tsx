@@ -1,4 +1,5 @@
 import { Colors } from "@/constants/theme";
+import { useReduceMotion } from "@/hooks/useReduceMotion";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import React, { useEffect, useMemo, useRef } from "react";
@@ -41,12 +42,21 @@ export function VerificationNudgeCard({
   onSecondaryPress,
 }: VerificationNudgeCardProps) {
   const styles = useMemo(() => createStyles(theme), [theme]);
+  const reduceMotion = useReduceMotion();
   const revealAnim = useRef(new Animated.Value(0)).current;
   const orbitBreathAnim = useRef(new Animated.Value(0)).current;
   const ctaBreathAnim = useRef(new Animated.Value(0)).current;
   const auraAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
+    if (reduceMotion) {
+      revealAnim.setValue(1);
+      orbitBreathAnim.setValue(0);
+      ctaBreathAnim.setValue(0);
+      auraAnim.setValue(0);
+      return;
+    }
+
     Animated.sequence([
       Animated.timing(revealAnim, {
         toValue: 1,
@@ -116,7 +126,7 @@ export function VerificationNudgeCard({
       ctaLoop.stop();
       auraLoop.stop();
     };
-  }, [auraAnim, ctaBreathAnim, orbitBreathAnim, revealAnim]);
+  }, [auraAnim, ctaBreathAnim, orbitBreathAnim, reduceMotion, revealAnim]);
 
   const orbitRevealStyle: any = {
     opacity: revealAnim.interpolate({
@@ -277,7 +287,7 @@ export function VerificationNudgeCard({
           </View>
           <View style={styles.metaPill}>
             <MaterialCommunityIcons name="clock-time-four-outline" size={12} color={theme.textMuted} />
-            <Text style={styles.metaText}>{isPending ? "in progress" : "under 1 minute"}</Text>
+            <Text style={styles.metaText}>{isPending ? "in progress" : "about 1 minute to submit"}</Text>
           </View>
         </View>
 
@@ -320,27 +330,33 @@ export function VerificationNudgeCard({
           <Text style={styles.subtitle}>
             {isPending
               ? "Your proof is with Betweener now. We will update your trust mark as soon as review is complete."
-              : "This is your trust invitation. Unlock a rarer mark, build confidence faster, and make serious matches lean in sooner."}
+              : "Complete a quick face check or submit an accepted document. Once approved, your profile receives a visible verification badge."}
           </Text>
         </View>
 
         <View style={styles.benefitsRow}>
           <View style={styles.benefitChip}>
             <MaterialCommunityIcons name={isPending ? "shield-lock-outline" : "flash-outline"} size={13} color={theme.tint} />
-            <Text style={styles.benefitText}>{isPending ? "Private review" : "Faster trust"}</Text>
+            <Text style={styles.benefitText}>{isPending ? "Private review" : "Private review"}</Text>
           </View>
           <View style={styles.benefitChip}>
             <MaterialCommunityIcons name="seal-variant" size={13} color={theme.tint} />
-            <Text style={styles.benefitText}>{isPending ? "Queue secured" : "Signature mark"}</Text>
+            <Text style={styles.benefitText}>{isPending ? "Submission received" : "Visible badge"}</Text>
           </View>
           <View style={styles.benefitChip}>
             <MaterialCommunityIcons name={isPending ? "bell-outline" : "heart-outline"} size={13} color={theme.tint} />
-            <Text style={styles.benefitText}>{isPending ? "We will notify you" : "Safer interest"}</Text>
+            <Text style={styles.benefitText}>{isPending ? "We will notify you" : "Seen more often"}</Text>
           </View>
         </View>
 
         <View style={styles.actionsRow}>
-          <TouchableOpacity activeOpacity={0.94} onPress={onPress} style={styles.primaryCtaWrap}>
+          <TouchableOpacity
+            activeOpacity={0.94}
+            onPress={onPress}
+            style={styles.primaryCtaWrap}
+            accessibilityRole="button"
+            accessibilityLabel={isPending ? "View verification review status" : "Start profile verification"}
+          >
             <Animated.View pointerEvents="none" style={[styles.ctaGlow, ctaGlowStyle]} />
             <LinearGradient
               colors={[theme.tint, theme.accent]}
@@ -358,14 +374,18 @@ export function VerificationNudgeCard({
               activeOpacity={0.88}
               onPress={onSecondaryPress}
               style={styles.secondaryButton}
+              accessibilityRole="button"
+              accessibilityLabel="Remind me about verification later"
             >
-              <Text style={styles.secondaryButtonText}>Not now</Text>
+              <Text style={styles.secondaryButtonText}>Remind me later</Text>
             </TouchableOpacity>
           )}
         </View>
 
         <Text style={styles.helperText}>
-          {isPending ? "You can withdraw and resubmit from the verification screen" : "Quick face check or manual document review"}
+          {isPending
+            ? "You can withdraw and resubmit from the verification screen"
+            : "Verification strengthens identity confidence. It does not guarantee compatibility or conduct."}
         </Text>
       </LinearGradient>
     </View>

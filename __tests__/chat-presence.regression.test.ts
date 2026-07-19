@@ -8,6 +8,7 @@ import {
   RECENTLY_ACTIVE_WINDOW_MS,
   getAuthoritativePresenceDisplay,
   getChatThreadPresenceKind,
+  resolveLatestPeerActivityAt,
 } from '../lib/presence.ts';
 import {
   getThreadRealtimeReconnectDelayMs,
@@ -91,6 +92,24 @@ test('thread presence wording prioritizes direct room membership over durable he
   assert.equal(getChatThreadPresenceKind(true, fresh, true, now), 'active_now');
   assert.equal(getChatThreadPresenceKind(true, fresh, false, now), 'recently_active');
   assert.equal(getChatThreadPresenceKind(false, fresh, true, now), 'active_now');
+});
+
+test('a received peer message advances stale last-seen evidence', () => {
+  assert.equal(
+    resolveLatestPeerActivityAt(ago(10 * 60_000), ago(2 * 60_000), now),
+    ago(2 * 60_000),
+  );
+});
+
+test('message evidence never downgrades a fresher heartbeat or renders in the future', () => {
+  assert.equal(
+    resolveLatestPeerActivityAt(ago(30_000), ago(2 * 60_000), now),
+    ago(30_000),
+  );
+  assert.equal(
+    resolveLatestPeerActivityAt(null, new Date(now + 60_000).toISOString(), now),
+    new Date(now).toISOString(),
+  );
 });
 
 test('thread activity lease absorbs transient sync gaps but expires without heartbeats', () => {

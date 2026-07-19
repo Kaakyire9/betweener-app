@@ -180,7 +180,7 @@ function createStyles(theme: Theme, isDark: boolean) {
       elevation: 4,
     },
     cardGlow: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       opacity: isDark ? 1 : 0.92,
     },
     topRow: {

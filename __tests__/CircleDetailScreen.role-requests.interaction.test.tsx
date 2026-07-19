@@ -235,7 +235,7 @@ const CircleDetailScreen = require('@/app/circles/[id]').default;
 const flushMicrotasks = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 const renderFocusedScreen = async () => {
-  const screen = render(<CircleDetailScreen />);
+  const screen = await render(<CircleDetailScreen />);
   await act(async () => {
     for (const callback of mockFocusEffectCallbacks) {
       callback();
@@ -329,7 +329,7 @@ describe('Circle detail role requests and role controls', () => {
     await waitFor(() => expect(getByText('Help shape this Circle')).toBeTruthy());
     expect(getAllByText('Moderator pending').length).toBeGreaterThan(0);
 
-    fireEvent.press(getByText('Withdraw request'));
+    await fireEvent.press(getByText('Withdraw request'));
 
     await waitFor(() => {
       expect(mockRpc).toHaveBeenCalledWith('rpc_cancel_circle_role_request', {
@@ -380,7 +380,7 @@ describe('Circle detail role requests and role controls', () => {
 
     await waitFor(() => expect(getByText('Role requests')).toBeTruthy());
 
-    fireEvent.press(getByText('Approve'));
+    await fireEvent.press(getByText('Approve'));
 
     await waitFor(() => {
       expect(mockRpc).toHaveBeenCalledWith('rpc_review_circle_role_request', {
@@ -430,7 +430,7 @@ describe('Circle detail role requests and role controls', () => {
     const { getByLabelText, getByText } = await renderFocusedScreen();
 
     await waitFor(() => expect(getByLabelText('Circle options')).toBeTruthy());
-    fireEvent.press(getByLabelText('Circle options'));
+    await fireEvent.press(getByLabelText('Circle options'));
 
     expect(getByText('Add host note')).toBeTruthy();
     expect(getByText('Leave Circle')).toBeTruthy();
@@ -457,7 +457,7 @@ describe('Circle detail role requests and role controls', () => {
     const { getByLabelText, getByText, queryByText } = await renderFocusedScreen();
 
     await waitFor(() => expect(getByLabelText('Circle options')).toBeTruthy());
-    fireEvent.press(getByLabelText('Circle options'));
+    await fireEvent.press(getByLabelText('Circle options'));
 
     await waitFor(() => expect(getByText('Archive Circle')).toBeTruthy());
     expect(queryByText('Leave Circle')).toBeNull();
@@ -494,7 +494,7 @@ describe('Circle detail role requests and role controls', () => {
 
     await waitFor(() => expect(getByText('Hosts and moderators')).toBeTruthy());
 
-    fireEvent.press(getByLabelText('Circle options'));
+    await fireEvent.press(getByLabelText('Circle options'));
 
     await waitFor(() => expect(getByText('Archive Circle')).toBeTruthy());
     expect(queryByText('Leave Circle')).toBeNull();
@@ -517,7 +517,7 @@ describe('Circle detail role requests and role controls', () => {
     const { getByLabelText, getByText, queryByText } = await renderFocusedScreen();
 
     await waitFor(() => expect(getByLabelText('Circle options')).toBeTruthy());
-    fireEvent.press(getByLabelText('Circle options'));
+    await fireEvent.press(getByLabelText('Circle options'));
 
     await waitFor(() => expect(getByText('Reassign your stewardship role before leaving this Circle.')).toBeTruthy());
     expect(queryByText('Leave Circle')).toBeNull();
@@ -557,7 +557,7 @@ describe('Circle detail role requests and role controls', () => {
 
     await waitFor(() => expect(getByText('Moderation queue')).toBeTruthy());
 
-    fireEvent.press(getByText('Resolve'));
+    await fireEvent.press(getByText('Resolve'));
 
     await waitFor(() => {
       expect(mockRpc).toHaveBeenCalledWith('rpc_review_circle_report', {
@@ -620,7 +620,7 @@ describe('Circle detail role requests and role controls', () => {
     await findByText('What does intentional dating mean to you?', {}, { timeout: 4000 });
     await findByText('Remove response', {}, { timeout: 4000 });
 
-    fireEvent.press(getByText('Remove response'));
+    await fireEvent.press(getByText('Remove response'));
 
     const alertCalls = alertSpy.mock.calls;
     const removeCall = alertCalls.find((call) => call[0] === 'Remove response');
@@ -659,12 +659,12 @@ describe('Circle detail role requests and role controls', () => {
 
     await waitFor(() => expect(getByLabelText('Open Members tab')).toBeTruthy());
 
-    fireEvent.press(getByLabelText('Open Members tab'));
+    await fireEvent.press(getByLabelText('Open Members tab'));
 
     await waitFor(() => expect(getAllByText('View').length).toBeGreaterThan(1));
     expect(getByText('New')).toBeTruthy();
 
-    fireEvent.press(getAllByText('View')[1]);
+    await fireEvent.press(getAllByText('View')[1]);
 
     expect(mockPush).toHaveBeenCalledWith({
       pathname: '/profile-view',
@@ -769,7 +769,7 @@ describe('Circle detail role requests and role controls', () => {
     await waitFor(() => expect(getByText('Watch moment')).toBeTruthy());
     await waitFor(() => expect(getAllByLabelText('Open Circle media').length).toBeGreaterThan(1));
 
-    fireEvent.press(getAllByLabelText('Open Circle media')[1]);
+    await fireEvent.press(getAllByLabelText('Open Circle media')[1]);
 
     await waitFor(() => {
       expect(mockPush).toHaveBeenCalledWith({
@@ -853,7 +853,7 @@ describe('Circle detail role requests and role controls', () => {
 
     await waitFor(() => expect(getByText('View image')).toBeTruthy());
 
-    fireEvent.press(getByText('View image'));
+    await fireEvent.press(getByText('View image'));
 
     expect(getByLabelText('Close Circle media')).toBeTruthy();
     expect(mockPush).not.toHaveBeenCalledWith(expect.objectContaining({ pathname: '/moments' }));

@@ -45,16 +45,16 @@ describe('CirclePulseMediaComposer', () => {
 
   it('publishes a curated image with editorial copy', async () => {
     const onPublish = jest.fn();
-    const { getByPlaceholderText, getByText } = render(
+    const { getByPlaceholderText, getByText } = await render(
       <CirclePulseMediaComposer saving={false} onCancel={jest.fn()} onPublish={onPublish} />,
     );
 
-    fireEvent.press(getByText('Choose image'));
+    await fireEvent.press(getByText('Choose image'));
     await waitFor(() => expect(getByText('Circle image')).toBeTruthy());
-    fireEvent.changeText(getByPlaceholderText('Headline'), 'Gathering poster');
-    fireEvent.changeText(getByPlaceholderText('Optional context'), 'Sunday in Accra');
-    fireEvent.changeText(getByPlaceholderText('Optional note for members'), 'Come ready for a calm evening.');
-    fireEvent.press(getByText('Publish media'));
+    await fireEvent.changeText(getByPlaceholderText('Headline'), 'Gathering poster');
+    await fireEvent.changeText(getByPlaceholderText('Optional context'), 'Sunday in Accra');
+    await fireEvent.changeText(getByPlaceholderText('Optional note for members'), 'Come ready for a calm evening.');
+    await fireEvent.press(getByText('Publish media'));
 
     expect(onPublish).toHaveBeenCalledWith({
       uri: 'file:///poster.jpg',
@@ -70,16 +70,16 @@ describe('CirclePulseMediaComposer', () => {
     mockLaunchImageLibraryAsync
       .mockResolvedValueOnce({ canceled: false, assets: [{ uri: 'file:///guide.jpg' }] })
       .mockResolvedValueOnce({ canceled: false, assets: [{ uri: 'file:///guide.mp4' }] });
-    const { getByPlaceholderText, getByText } = render(
+    const { getByPlaceholderText, getByText } = await render(
       <CirclePulseMediaComposer saving={false} onCancel={jest.fn()} onPublish={onPublish} />,
     );
 
-    fireEvent.press(getByText('Choose image'));
+    await fireEvent.press(getByText('Choose image'));
     await waitFor(() => expect(getByText('Circle image')).toBeTruthy());
-    fireEvent.press(getByText('Choose video'));
+    await fireEvent.press(getByText('Choose video'));
     await waitFor(() => expect(getByText('Short video')).toBeTruthy());
-    fireEvent.changeText(getByPlaceholderText('Headline'), 'First date guide');
-    fireEvent.press(getByText('Publish media'));
+    await fireEvent.changeText(getByPlaceholderText('Headline'), 'First date guide');
+    await fireEvent.press(getByText('Publish media'));
 
     expect(onPublish).toHaveBeenCalledWith({
       uri: 'file:///guide.mp4',

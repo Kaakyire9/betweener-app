@@ -187,7 +187,7 @@ export default function AmbientCardGlow({
 
 const styles = StyleSheet.create({
   container: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 0,
   },
   primaryHalo: {

@@ -49,9 +49,9 @@ describe('useCirclePulseLiveDiscussion', () => {
     jest.useRealTimers();
   });
 
-  it('tracks live viewers and broadcasts typing only after the room joins', () => {
+  it('tracks live viewers and broadcasts typing only after the room joins', async () => {
     const onDiscussionChanged = jest.fn();
-    const { result, unmount } = renderHook(() =>
+    const { result, unmount } = await renderHook(() =>
       useCirclePulseLiveDiscussion({
         itemId: 'pulse-1',
         actorProfileId: 'profile-me',
@@ -61,18 +61,18 @@ describe('useCirclePulseLiveDiscussion', () => {
       }),
     );
 
-    act(() => {
+    await act(() => {
       result.current.notifyTyping(true);
     });
     expect(mockChannel.send).not.toHaveBeenCalled();
 
-    act(() => {
+    await act(() => {
       mockChannel.state = 'joined';
       subscribeCallback?.('SUBSCRIBED');
     });
     expect(mockChannel.track).toHaveBeenCalled();
 
-    act(() => {
+    await act(() => {
       presenceState = {
         'profile-me': [{ profileId: 'profile-me', typing: false }],
         'profile-other': [{ profileId: 'profile-other', typing: false }],
@@ -81,14 +81,14 @@ describe('useCirclePulseLiveDiscussion', () => {
     });
     expect(result.current.activeViewerCount).toBe(2);
 
-    act(() => {
+    await act(() => {
       listeners.get('broadcast:typing')?.({
         payload: { profileId: 'profile-other', displayName: 'Ama', typing: true },
       });
     });
     expect(result.current.typingLabel).toBe('Ama is typing');
 
-    act(() => {
+    await act(() => {
       result.current.notifyTyping(false);
       result.current.notifyTyping(true);
       result.current.announceDiscussionChanged();
@@ -97,20 +97,20 @@ describe('useCirclePulseLiveDiscussion', () => {
     expect(mockChannel.send).toHaveBeenCalledWith(expect.objectContaining({ event: 'discussion_changed' }));
 
     const typingSendCount = mockChannel.send.mock.calls.filter(([payload]) => payload.event === 'typing').length;
-    act(() => {
+    await act(() => {
       jest.advanceTimersByTime(800);
       result.current.notifyTyping(true);
     });
     expect(mockChannel.send.mock.calls.filter(([payload]) => payload.event === 'typing')).toHaveLength(typingSendCount + 1);
 
-    act(() => {
+    await act(() => {
       listeners.get('broadcast:discussion_changed')?.({
         payload: { profileId: 'profile-other' },
       });
     });
     expect(onDiscussionChanged).toHaveBeenCalledTimes(1);
 
-    unmount();
+    await unmount();
     expect(mockRemoveChannel).toHaveBeenCalledWith(mockChannel);
   });
 });

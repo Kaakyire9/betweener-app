@@ -2,6 +2,7 @@ import OfflineImage from '@/components/media/OfflineImage';
 import React, { useEffect } from 'react';
 import { StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
 import { VideoView, useVideoPlayer } from 'expo-video';
+import { isLocalMediaUri, isRemoteMediaUri } from '@/lib/profile/media';
 
 type Props = {
   videoUrl?: string | null;
@@ -66,7 +67,7 @@ function InlineVideoPlayer({
 
   return (
     <VideoView
-      style={StyleSheet.absoluteFillObject}
+      style={StyleSheet.absoluteFill}
       player={player}
       contentFit="cover"
       nativeControls={false}
@@ -82,20 +83,31 @@ export default function ProfileInlineVideoSurface({
   muted = true,
   style,
 }: Props) {
-  const videoKey = videoUrl ? `video:${videoUrl}` : 'video:none';
+  const playableVideoUrl =
+    videoUrl && (isRemoteMediaUri(videoUrl) || isLocalMediaUri(videoUrl))
+      ? videoUrl
+      : null;
+  const videoKey = playableVideoUrl ? `video:${playableVideoUrl}` : 'video:none';
 
   return (
-    <View style={[StyleSheet.absoluteFillObject, style]}>
+    <View style={[StyleSheet.absoluteFill, style]}>
       {posterUri ? (
         <OfflineImage
           uri={posterUri}
-          style={StyleSheet.absoluteFillObject}
-          containerStyle={StyleSheet.absoluteFillObject}
+          style={StyleSheet.absoluteFill}
+          containerStyle={StyleSheet.absoluteFill}
           cachePolicy="memory-disk"
           contentFit="cover"
         />
       ) : null}
-      {videoUrl ? <InlineVideoPlayer key={videoKey} videoUrl={videoUrl} shouldPlay={shouldPlay} muted={muted} /> : null}
+      {playableVideoUrl ? (
+        <InlineVideoPlayer
+          key={videoKey}
+          videoUrl={playableVideoUrl}
+          shouldPlay={shouldPlay}
+          muted={muted}
+        />
+      ) : null}
     </View>
   );
 }

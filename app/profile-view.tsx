@@ -3454,7 +3454,7 @@ const Header = memo(function Header({
         style={[stylesStatic.heroWrap, { borderColor: theme.outline, backgroundColor: theme.backgroundSubtle, height: heroHeight }]}
       >
         {showHeroVideo ? (
-          <View style={StyleSheet.absoluteFillObject}>
+          <View style={StyleSheet.absoluteFill}>
             {heroVideoUrl ? (
               <HeroVideoSurface uri={heroVideoUrl} muted={heroMuted} shouldPlay={!pauseHeroVideo} />
             ) : (
@@ -3473,7 +3473,7 @@ const Header = memo(function Header({
             )}
           </View>
         ) : heroUri ? (
-          <Animated.View style={[StyleSheet.absoluteFillObject, heroImageStyle]}>
+          <Animated.View style={[StyleSheet.absoluteFill, heroImageStyle]}>
             <OfflineImage
               uri={heroUri}
               style={stylesStatic.heroImage}
@@ -3778,7 +3778,7 @@ function PhotoLightboxModal({
       onRequestClose={onClose}
     >
       <View style={[stylesStatic.lightboxContainer, { backgroundColor: '#000' }]}>
-        <Animated.View style={[StyleSheet.absoluteFillObject, backdropStyle]} />
+        <Animated.View style={[StyleSheet.absoluteFill, backdropStyle]} />
 
         <Animated.View style={[stylesStatic.lightboxSafe, contentStyle]} {...panResponder.panHandlers}>
           {/* SafeAreaView inside Modal can be flaky across devices; use explicit insets. */}
@@ -3859,7 +3859,7 @@ function PhotoLightboxModal({
                           <Animated.View style={[stylesStatic.lightboxCaptionWrap, captionStyle]} pointerEvents="none">
                             <LinearGradient
                               colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.72)']}
-                              style={StyleSheet.absoluteFillObject}
+                              style={StyleSheet.absoluteFill}
                             />
 
                             {item.title ? (
@@ -4007,16 +4007,16 @@ const ImageCard = memo(function ImageCard({
     >
       <OfflineImage
         uri={item.uri}
-        style={StyleSheet.absoluteFillObject}
+        style={StyleSheet.absoluteFill}
         fallback={
-          <View style={[StyleSheet.absoluteFillObject, stylesStatic.imageCardFallback, { backgroundColor: theme.backgroundSubtle }]}>
+          <View style={[StyleSheet.absoluteFill, stylesStatic.imageCardFallback, { backgroundColor: theme.backgroundSubtle }]}>
             <MaterialCommunityIcons name={isVideo ? "play-circle-outline" : "image-outline"} size={34} color={theme.textMuted} />
           </View>
         }
       />
       <Animated.View
         pointerEvents="none"
-        style={[StyleSheet.absoluteFillObject, { backgroundColor: '#000' }, overlayStyle]}
+        style={[StyleSheet.absoluteFill, { backgroundColor: '#000' }, overlayStyle]}
       />
 
         <View style={stylesStatic.reactionPillWrap} pointerEvents="box-none">
@@ -4244,7 +4244,7 @@ const HeroVideoSurface = memo(function HeroVideoSurface({
 
   return (
     <VideoView
-      style={StyleSheet.absoluteFillObject}
+      style={StyleSheet.absoluteFill}
       player={player}
       contentFit="cover"
       nativeControls={false}
@@ -6201,7 +6201,7 @@ const stylesStatic = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   guessSheetBackdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0,0,0,0.5)',
   },
   guessSheetWrap: {
@@ -6297,7 +6297,7 @@ const stylesStatic = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   guessComposerBackdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0,0,0,0.58)',
   },
   guessComposerSheet: {

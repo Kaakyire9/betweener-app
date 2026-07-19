@@ -153,26 +153,26 @@ function ReactionSummaryIntegrationHarness() {
 }
 
 describe("Chat thread integration flows", () => {
-  it("retries a failed message and reconciles it with the server state", () => {
-    const { getByTestId, queryByTestId } = render(<RetryAndReconcileHarness />);
+  it("retries a failed message and reconciles it with the server state", async () => {
+    const { getByTestId, queryByTestId } = await render(<RetryAndReconcileHarness />);
 
     expect(getByTestId("chat-thread-message-status").props.children).toBe("failed");
     expect(getByTestId("chat-thread-message-id").props.children).toBe("temp-1");
     expect(getByTestId("chat-failed-retry-hint")).toBeTruthy();
 
-    fireEvent.press(getByTestId("chat-message-bubble-pressable"));
+    await fireEvent.press(getByTestId("chat-message-bubble-pressable"));
 
     expect(getByTestId("chat-thread-message-status").props.children).toBe("sending");
 
-    fireEvent.press(getByTestId("chat-thread-server-ack"));
+    await fireEvent.press(getByTestId("chat-thread-server-ack"));
 
     expect(getByTestId("chat-thread-message-status").props.children).toBe("sent");
     expect(getByTestId("chat-thread-message-id").props.children).toBe("server-9");
     expect(queryByTestId("chat-failed-retry-hint")).toBeNull();
   });
 
-  it("keeps reaction summary sheet in sync with quick reaction toggles", () => {
-    const { getByTestId, getByText, queryByText } = render(
+  it("keeps reaction summary sheet in sync with quick reaction toggles", async () => {
+    const { getByTestId, getByText, queryByText } = await render(
       <ReactionSummaryIntegrationHarness />
     );
 
@@ -180,12 +180,12 @@ describe("Chat thread integration flows", () => {
     expect(getByText("Ayo")).toBeTruthy();
     expect(queryByText("You")).toBeNull();
 
-    fireEvent.press(getByTestId("chat-quick-reaction-0"));
+    await fireEvent.press(getByTestId("chat-quick-reaction-0"));
 
     expect(getByTestId("chat-thread-reaction-count").props.children.join("")).toBe("2 total");
     expect(getByText("You")).toBeTruthy();
 
-    fireEvent.press(getByTestId("chat-quick-reaction-0"));
+    await fireEvent.press(getByTestId("chat-quick-reaction-0"));
 
     expect(getByTestId("chat-thread-reaction-count").props.children.join("")).toBe("1 total");
     expect(queryByText("You")).toBeNull();

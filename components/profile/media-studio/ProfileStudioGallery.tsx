@@ -49,7 +49,7 @@ export default function ProfileStudioGallery({
                   colors={['transparent', 'rgba(4,12,16,0.28)']}
                   start={{ x: 0.5, y: 0.1 }}
                   end={{ x: 0.5, y: 1 }}
-                  style={StyleSheet.absoluteFillObject}
+                  style={StyleSheet.absoluteFill}
                 />
               <View style={styles.galleryCardTop}>
                 {index === 0 ? (

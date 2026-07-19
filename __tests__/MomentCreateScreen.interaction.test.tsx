@@ -69,28 +69,28 @@ describe('Moment create circle context', () => {
     mockBack.mockReset();
   });
 
-  it('shows the circle context banner when launched from a circle', () => {
+  it('shows the circle context banner when launched from a circle', async () => {
     mockParams = {
       source: 'circles',
       circleId: 'circle-123',
       circleName: 'Test Circle',
     };
 
-    const { getByText } = render(<MomentCreateScreen />);
+    const { getByText } = await render(<MomentCreateScreen />);
 
     expect(getByText('From Test Circle')).toBeTruthy();
   });
 
-  it('returns to the circle when the close control is pressed', () => {
+  it('returns to the circle when the close control is pressed', async () => {
     mockParams = {
       source: 'circles',
       circleId: 'circle-123',
       circleName: 'Test Circle',
     };
 
-    const { getByLabelText } = render(<MomentCreateScreen />);
+    const { getByLabelText } = await render(<MomentCreateScreen />);
 
-    fireEvent.press(getByLabelText('Close'));
+    await fireEvent.press(getByLabelText('Close'));
 
     expect(mockReplace).toHaveBeenCalledWith({
       pathname: '/circles/[id]',

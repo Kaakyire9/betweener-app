@@ -3,7 +3,7 @@ import * as Linking from "expo-linking";
 import { Slot, usePathname, useRouter, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { Animated, AppState, Easing, InteractionManager, StyleSheet, Text, View } from "react-native";
+import { Animated, AppState, Easing, StyleSheet, Text, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as Notifications from "expo-notifications";
@@ -15,6 +15,7 @@ import { useColorScheme } from "@/hooks/use-color-scheme";
 
 import { useAppFonts } from "@/constants/fonts";
 import { AuthProvider, useAuth, useAuthGuard } from "@/lib/auth-context";
+import { scheduleIdleTask } from "@/lib/scheduling/idle-task";
 import AccountRecoveryNotice from "@/components/AccountRecoveryNotice";
 import RecoveryMergeSuggestionNotice from "@/components/RecoveryMergeSuggestionNotice";
 import InAppToasts from "@/components/InAppToasts";
@@ -514,7 +515,7 @@ function RootLayout() {
       // Handle taps that launched the app from a terminated state,
       // but only after the initial render/interaction cycle settles.
       if (allowRender) {
-        interactionHandle = InteractionManager.runAfterInteractions(() => {
+        interactionHandle = scheduleIdleTask(() => {
           bootstrapTimer = setTimeout(() => {
             Notifications.getLastNotificationResponseAsync()
               .then((initial) => {
@@ -978,7 +979,7 @@ function RootLayout() {
 
 const styles = StyleSheet.create({
   splashOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 9999,
   },
 
@@ -1013,7 +1014,7 @@ const styles = StyleSheet.create({
   },
 
   vignette: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: "rgba(0,0,0,0.22)",
   },
 

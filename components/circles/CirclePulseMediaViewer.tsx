@@ -104,7 +104,7 @@ export default function CirclePulseMediaViewer({ visible, item, onClose, onOpenC
           )}
           <LinearGradient
             colors={['rgba(6,12,16,0.88)', 'rgba(6,12,16,0.2)', 'rgba(6,12,16,0.86)']}
-            style={StyleSheet.absoluteFillObject}
+            style={StyleSheet.absoluteFill}
             pointerEvents="none"
           />
           <View style={[styles.videoDragHandleWrap, { top: Math.max(insets.top + 4, 14) }]} pointerEvents="none">
@@ -157,7 +157,7 @@ export default function CirclePulseMediaViewer({ visible, item, onClose, onOpenC
   return (
     <Modal visible={visible && !!item} transparent animationType="fade" onRequestClose={onClose}>
       <View style={imageStyles.backdrop}>
-        <LinearGradient colors={palette.viewerGradient} style={StyleSheet.absoluteFillObject} />
+        <LinearGradient colors={palette.viewerGradient} style={StyleSheet.absoluteFill} />
         <SafeAreaView edges={['bottom', 'left', 'right']} style={imageStyles.safeArea}>
           <View style={imageStyles.header}>
             <Pressable accessibilityLabel="Close Circle media" style={imageStyles.iconButton} onPress={onClose}>

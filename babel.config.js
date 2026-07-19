@@ -2,12 +2,11 @@ module.exports = function (api) {
   api.cache(true);
   return {
     // Use the Expo preset (recommended for SDK 50+). The expo-router plugin
-    // is deprecated in favor of this preset. Keep reanimated plugin last.
+    // is deprecated in favor of this preset. Keep the Worklets plugin last.
     presets: ["babel-preset-expo"],
     plugins: [
-      "react-native-worklets-core/plugin",
-      // Keep Reanimated plugin last as required by react-native-reanimated docs.
-      "react-native-reanimated/plugin",
+      // Reanimated 4 moved its Babel plugin to react-native-worklets.
+      "react-native-worklets/plugin",
     ],
   };
 };

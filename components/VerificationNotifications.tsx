@@ -278,13 +278,15 @@ export const VerificationNotifications: React.FC<VerificationNotificationsProps>
                 <Text style={styles.subtitle}>
                   {notification.reason
                     ? `${notification.reason} Your current badge stays in place while we review it.`
-                    : `Complete a private Trust level ${notification.target_level} refresh. Your current badge stays in place while we review it.`}
+                    : 'Complete a private identity refresh. Your current badge stays in place while we review it.'}
                 </Text>
 
                 <View style={styles.actions}>
                   <TouchableOpacity
                     style={[styles.primaryAction, styles.freshReviewAction]}
                     onPress={() => handlePrimaryAction(notification)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Complete verification refresh"
                   >
                     <Text style={styles.primaryActionText}>Complete refresh</Text>
                   </TouchableOpacity>
@@ -292,8 +294,10 @@ export const VerificationNotifications: React.FC<VerificationNotificationsProps>
                   <TouchableOpacity
                     style={styles.secondaryAction}
                     onPress={() => markAsNotified(notification)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Dismiss verification refresh"
                   >
-                    <Text style={styles.secondaryActionText}>Later</Text>
+                    <Text style={styles.secondaryActionText}>Dismiss</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -302,6 +306,7 @@ export const VerificationNotifications: React.FC<VerificationNotificationsProps>
                 style={styles.dismissButton}
                 onPress={() => markAsNotified(notification)}
                 accessibilityLabel="Dismiss fresh review update"
+                accessibilityRole="button"
               >
                 <Ionicons name="close" size={18} color="#9CB3AE" />
               </TouchableOpacity>
@@ -337,7 +342,9 @@ export const VerificationNotifications: React.FC<VerificationNotificationsProps>
               </Text>
               <Text style={styles.subtitle}>
                 {isApproved
-                  ? `Your profile now carries Trust level ${targetLevel}. Serious matches will see a stronger signal from you.`
+                  ? targetLevel >= 2
+                    ? 'Your identity-confirmed badge is now active. Verified profiles get seen more often.'
+                    : 'Your linked-profile badge is now active. Verified profiles get seen more often.'
                   : `We could not confirm enough from your ${methodLabel}. Add a clearer proof or choose another trust method.`}
               </Text>
 
@@ -345,6 +352,8 @@ export const VerificationNotifications: React.FC<VerificationNotificationsProps>
                 <TouchableOpacity
                   style={[styles.primaryAction, isApproved ? styles.approvedAction : styles.rejectedAction]}
                   onPress={() => handlePrimaryAction(notification)}
+                  accessibilityRole="button"
+                  accessibilityLabel={isApproved ? 'View verification status' : 'Improve verification proof'}
                 >
                   <Text style={styles.primaryActionText}>
                     {isApproved ? 'View trust status' : 'Improve proof'}
@@ -354,8 +363,10 @@ export const VerificationNotifications: React.FC<VerificationNotificationsProps>
                 <TouchableOpacity
                   style={styles.secondaryAction}
                   onPress={() => markAsNotified(notification)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Dismiss verification update"
                 >
-                  <Text style={styles.secondaryActionText}>Later</Text>
+                  <Text style={styles.secondaryActionText}>Dismiss</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -364,6 +375,7 @@ export const VerificationNotifications: React.FC<VerificationNotificationsProps>
               style={styles.dismissButton}
               onPress={() => markAsNotified(notification)}
               accessibilityLabel="Dismiss verification update"
+              accessibilityRole="button"
             >
               <Ionicons name="close" size={18} color="#9CB3AE" />
             </TouchableOpacity>

@@ -491,7 +491,7 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       flex: 1,
     },
     screenGlow: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       opacity: isDark ? 1 : 0.92,
     },
     header: {

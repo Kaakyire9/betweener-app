@@ -20,6 +20,7 @@ import { useMoments } from "@/hooks/useMoments";
 import { useAuth } from "@/lib/auth-context";
 import { clearActiveChatThread, setActiveChatThread } from "@/lib/chat/active-thread";
 import { ChatThreadActionsService } from "@/lib/chat/chat-thread-actions-service";
+import { validateChatAttachment } from "@/lib/chat/attachment-policy";
 import { acknowledgeIncomingMessagesDelivered } from "@/lib/chat/delivery-receipts";
 import { useChatMessages } from "@/lib/chat/hooks/use-chat-messages";
 import { useChatThreadBrowseUi } from "@/lib/chat/hooks/use-chat-thread-browse-ui";
@@ -82,6 +83,7 @@ import {
 } from "@/lib/chat/sync/chat-realtime-service";
 import { flushThreadOutboxAndRefresh, startThreadSyncCoordinator } from "@/lib/chat/sync/chat-thread-sync-coordinator";
 import { fetchRemoteSystemMessages, fetchRemoteThreadMessages } from "@/lib/chat/sync/chat-sync-service";
+import { resolveChatImageUri, resolveChatVideoUri } from "@/lib/chat/media-uri";
 import { encryptMediaBytes, getOrCreateDeviceKeypair } from "@/lib/e2ee";
 import { decideIntentRequestOfflineSafe } from "@/lib/intents/offline-actions";
 import { computeConversationSignalLabel, computeFirstReplyHours, computeInterestOverlapRatio } from "@/lib/match/match-score";
@@ -90,6 +92,7 @@ import { isLikelyNetworkError } from "@/lib/network";
 import {
   getAuthoritativePresenceDisplay,
   getChatThreadPresenceKind,
+  resolveLatestPeerActivityAt,
 } from "@/lib/presence";
 import { fetchViewedMomentIds } from "@/lib/moments-views";
 import { cacheOfflineImage, getOfflineImageUri, rememberOfflineImageUri } from "@/lib/offline/image-store";
@@ -150,7 +153,6 @@ import {
     Animated,
     Easing,
     Image,
-    InteractionManager,
     Keyboard,
     KeyboardAvoidingView,
     Linking,
@@ -165,6 +167,7 @@ import {
     View,
 } from "react-native";
 import { PinchGestureHandler, State } from "react-native-gesture-handler";
+import { scheduleIdleTask } from "@/lib/scheduling/idle-task";
 import MapView, { Marker, PROVIDER_GOOGLE, Region } from "react-native-maps";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import RNSvg, { Path } from "react-native-svg";
@@ -253,7 +256,7 @@ const BLOCKED_BY_THEM = 'blocked_me';
 const HEADER_HINT_STORAGE_KEY = 'chat_header_longpress_hint_v1';
 const CHAT_PREFS_STORAGE_KEY = 'chat_header_prefs_v1';
 const CHAT_SAFETY_SEEN_KEY = 'chat_safety_seen_v2';
-const MESSAGE_SELECT_FIELDS = 'id,client_message_id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform,deleted_for_all,deleted_at,deleted_by,edited_at,reply_to_message_id,is_view_once,encrypted_media,encrypted_media_path,encrypted_key_sender,encrypted_key_receiver,encrypted_key_nonce,encrypted_media_nonce,encrypted_media_alg,encrypted_media_mime,encrypted_media_size';
+const MESSAGE_SELECT_FIELDS = 'id,client_message_id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform,deleted_for_all,deleted_at,deleted_by,edited_at,reply_to_message_id,is_view_once,encrypted_media,encrypted_media_path,encrypted_key_sender,encrypted_key_receiver,encrypted_key_nonce,encrypted_media_nonce,encrypted_media_alg,encrypted_media_mime,encrypted_media_size,storage_path';
 const MAP_STYLE_LIGHT = [
   { elementType: 'geometry', stylers: [{ color: '#F3E5D8' }] },
   { elementType: 'labels.text.fill', stylers: [{ color: '#5F706C' }] },
@@ -281,6 +284,26 @@ const MAP_STYLE_DARK = [
 const PICKER_MEDIA_TYPES_ALL: ImagePicker.MediaType[] = ['images', 'videos'];
 const CHAT_MEDIA_UPLOAD_RETRIES = 2;
 const CHAT_MEDIA_UPLOAD_RETRY_DELAY_MS = 900;
+const DURABLE_CHAT_OUTBOX_MAX_ATTEMPTS = 48;
+
+const getLegacyChatMediaStoragePath = (url?: string | null) => {
+  if (!url) return null;
+  const markers = [
+    '/storage/v1/object/public/chat-media/',
+    '/storage/v1/object/sign/chat-media/',
+  ];
+  for (const marker of markers) {
+    const markerIndex = url.indexOf(marker);
+    if (markerIndex < 0) continue;
+    const encodedPath = url.slice(markerIndex + marker.length).split('?')[0];
+    try {
+      return decodeURIComponent(encodedPath);
+    } catch {
+      return encodedPath;
+    }
+  }
+  return null;
+};
 
 const encodeStoragePath = (path: string) =>
   path
@@ -358,6 +381,7 @@ type MessageRow = {
   encrypted_media_alg?: string | null;
   encrypted_media_mime?: string | null;
   encrypted_media_size?: number | null;
+  storage_path?: string | null;
 };
 
 const serializeCachedMessages = (messages: MessageType[]): CachedMessageType[] =>
@@ -557,17 +581,18 @@ const buildTextOutboxRow = ({
         receiverId: threadId,
         text:
           message.type === 'image'
-            ? message.imageUrl ?? message.text
+            ? message.storagePath ? '' : message.imageUrl ?? message.text
             : message.type === 'video'
-            ? message.videoUrl ?? message.text
+            ? message.storagePath ? '' : message.videoUrl ?? message.text
             : message.text,
         messageType: message.type,
         clientMessageId: localMessageId,
         replyToMessageId: message.replyToId ?? null,
+        storagePath: message.storagePath ?? null,
         metadataJson: safeJsonStringify(message),
     }) ?? '{}',
     attempt_count: 0,
-    max_attempts: 5,
+    max_attempts: DURABLE_CHAT_OUTBOX_MAX_ATTEMPTS,
     next_retry_at: null,
     status: durableOutboxStatus,
     error_code: error?.code ?? null,
@@ -661,7 +686,7 @@ const buildMediaOutboxRow = ({
         documentTypeLabel: documentTypeLabel ?? null,
       }) ?? '{}',
     attempt_count: 0,
-    max_attempts: 5,
+    max_attempts: DURABLE_CHAT_OUTBOX_MAX_ATTEMPTS,
     next_retry_at: null,
     status: 'queued',
     error_code: null,
@@ -711,7 +736,7 @@ const buildVoiceOutboxRow = ({
         replyToMessageId: message.replyToId ?? null,
       }) ?? '{}',
     attempt_count: 0,
-    max_attempts: 5,
+    max_attempts: DURABLE_CHAT_OUTBOX_MAX_ATTEMPTS,
     next_retry_at: null,
     status: 'queued',
     error_code: null,
@@ -2863,12 +2888,14 @@ const MessageRowItem = memo(
             if (item.type === 'voice') {
               return;
             }
-            if (item.type === 'image' && item.imageUrl) {
-              onViewImage(item.offlineImageUri ?? item.imageUrl);
+            const resolvedImageUri = resolveChatImageUri(item, cachedImageUrl);
+            if (item.type === 'image' && resolvedImageUri) {
+              onViewImage(resolvedImageUri);
               return;
             }
-            if (item.type === 'video' && item.videoUrl) {
-              onViewVideo(item.offlineVideoUri ?? item.videoUrl);
+            const resolvedVideoUri = resolveChatVideoUri(item, cachedVideoUrl);
+            if (item.type === 'video' && resolvedVideoUri) {
+              onViewVideo(resolvedVideoUri);
               return;
             }
             if (item.type === 'document' && item.document?.url) {
@@ -3531,6 +3558,8 @@ export default function ConversationScreen() {
   }, [conversationId, momentUsers, viewedMomentIds, viewedMomentIdsReady]);
 
   const [messages, setMessages] = useState<MessageType[]>([]);
+  const signedChatMediaUrlsRef = useRef(new Map<string, string>());
+  const signingChatMediaPathsRef = useRef(new Set<string>());
   const [messagesLoaded, setMessagesLoaded] = useState(false);
   const [threadBootstrapSettled, setThreadBootstrapSettled] = useState(false);
   const [remoteMessagesChecked, setRemoteMessagesChecked] = useState(false);
@@ -3658,7 +3687,8 @@ export default function ConversationScreen() {
   const [showReactions, setShowReactions] = useState<string | null>(null);
   const [showMoodStickers, setShowMoodStickers] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
-  const [isRecordingPaused, setIsRecordingPaused] = useState(false);
+  const [isVoicePreviewReady, setIsVoicePreviewReady] = useState(false);
+  const [isVoicePreviewPlaying, setIsVoicePreviewPlaying] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [isUploadingVoice, setIsUploadingVoice] = useState(false);
   const [mediaUploadStatus, setMediaUploadStatus] = useState<MediaUploadStatus | null>(null);
@@ -4361,10 +4391,12 @@ export default function ConversationScreen() {
   const typingAnimation = useRef(new Animated.Value(0)).current;
   const recordingAnimation = useRef(new Animated.Value(0)).current;
   const recordingRef = useRef<AudioRecorder | null>(null);
+  const recordingDraftRef = useRef<{ uri: string; durationSeconds: number } | null>(null);
   const recordingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const recordingPulseRef = useRef<Animated.CompositeAnimation | null>(null);
   const voiceButtonScale = useRef(new Animated.Value(1)).current;
   const voiceSoundRef = useRef<AudioPlayer | null>(null);
+  const voicePreviewSoundRef = useRef<AudioPlayer | null>(null);
   const mapRef = useRef<MapView>(null);
   const inputRef = useRef<TextInput>(null);
   const reconnectToastOpacity = useRef(new Animated.Value(0)).current;
@@ -4418,7 +4450,7 @@ export default function ConversationScreen() {
       }, delayMs);
       initialScrollTimersRef.current.push(timer);
     };
-    InteractionManager.runAfterInteractions(() => {
+    scheduleIdleTask(() => {
       flatListRef.current?.scrollToEnd({ animated: false });
       schedule(60);
       schedule(220);
@@ -4566,14 +4598,31 @@ const resolveQueuedVideoUri = async (
   const downloaded = await cacheOfflineVideo(url, url);
   return downloaded || url;
 };
+  const latestPeerMessageAt = useMemo(() => {
+    if (!resolvedPeerAuthUserId) return null;
+    let latestTimestamp = 0;
+    messages.forEach((message) => {
+      if (message.senderId !== resolvedPeerAuthUserId || message.deletedForAll) return;
+      latestTimestamp = Math.max(latestTimestamp, message.timestamp.getTime());
+    });
+    return latestTimestamp > 0 ? new Date(latestTimestamp).toISOString() : null;
+  }, [messages, resolvedPeerAuthUserId]);
+  const effectivePeerLastActiveAt = resolveLatestPeerActivityAt(
+    peerLastSeen?.toISOString() ?? null,
+    latestPeerMessageAt,
+    nowTick,
+  );
+  const effectivePeerLastSeen = effectivePeerLastActiveAt
+    ? new Date(effectivePeerLastActiveAt)
+    : null;
   const peerPresenceDisplay = getAuthoritativePresenceDisplay(
     peerOnline,
-    peerLastSeen?.toISOString() ?? null,
+    effectivePeerLastActiveAt,
     nowTick,
   );
   const peerThreadPresenceKind = getChatThreadPresenceKind(
     peerOnline,
-    peerLastSeen?.toISOString() ?? null,
+    effectivePeerLastActiveAt,
     peerThreadActive,
     nowTick,
   );
@@ -4589,15 +4638,15 @@ const resolveQueuedVideoUri = async (
           ? 'Active now'
       : peerThreadPresenceKind === 'recently_active'
         ? 'Recently active'
-          : peerLastSeen
-            ? `Last seen ${formatLastSeen(peerLastSeen)}`
+          : effectivePeerLastSeen
+            ? `Last seen ${formatLastSeen(effectivePeerLastSeen)}`
             : 'Last seen unavailable';
 
   useEffect(() => {
   }, [
     headerStatusLabel,
     isTyping,
-    peerLastSeen,
+    effectivePeerLastActiveAt,
     peerOnline,
     peerPresenceDisplay.label,
     peerThreadActive,
@@ -4799,6 +4848,7 @@ const resolveQueuedVideoUri = async (
       let documentSizeLabel: string | null | undefined;
       let documentTypeLabel: string | null | undefined;
       let messageText = row.text ?? '';
+      let storagePath = row.storage_path ?? null;
       let location: MessageType['location'] | undefined;
       let dateInvite: MessageType['dateInvite'] | undefined;
       let sticker: MessageType['sticker'] | undefined;
@@ -4813,13 +4863,15 @@ const resolveQueuedVideoUri = async (
         if (messageType === 'image') {
           if (!encryptedMedia) {
             const [firstLine, ...rest] = messageText.split('\n');
-            imageUrl = firstLine || undefined;
+            storagePath = storagePath ?? getLegacyChatMediaStoragePath(firstLine);
+            imageUrl = storagePath ? undefined : firstLine || undefined;
             messageText = rest.join('\n');
           }
         } else if (messageType === 'video') {
           if (!encryptedMedia) {
             const [firstLine, ...rest] = messageText.split('\n');
-            videoUrl = firstLine || undefined;
+            storagePath = storagePath ?? getLegacyChatMediaStoragePath(firstLine);
+            videoUrl = storagePath ? undefined : firstLine || undefined;
             messageText = rest.join('\n');
           }
         } else if (messageType === 'text' && messageText.startsWith(`${VIDEO_TEXT_PREFIX}\n`)) {
@@ -4848,9 +4900,10 @@ const resolveQueuedVideoUri = async (
           const cleanedLabel = label.replace(prefixPattern, '').trim();
           const labelParts = cleanedLabel.split(' | ').map((part) => part.trim()).filter(Boolean);
           const [namePart, sizePart, typePart] = labelParts;
-          if (url) {
+          storagePath = storagePath ?? getLegacyChatMediaStoragePath(url);
+          if (url || storagePath) {
             resolvedType = 'document';
-            documentUrl = url;
+            documentUrl = storagePath ? '' : url;
             documentName = namePart || 'Document';
             documentSizeLabel = sizePart ?? null;
             documentTypeLabel = typePart ?? null;
@@ -4934,6 +4987,7 @@ const resolveQueuedVideoUri = async (
         encryptedMediaAlg,
         encryptedMediaMime,
         encryptedMediaSize,
+        storagePath,
         imageUrl,
         videoUrl,
         document:
@@ -4962,6 +5016,61 @@ const resolveQueuedVideoUri = async (
     },
     [user?.id]
   );
+
+  useEffect(() => {
+    const pendingPaths = Array.from(
+      new Set(
+        messages
+          .filter((message) => !message.deletedForAll && message.storagePath)
+          .map((message) => message.storagePath as string)
+          .filter(
+            (path) =>
+              !signedChatMediaUrlsRef.current.has(path) &&
+              !signingChatMediaPathsRef.current.has(path),
+          ),
+      ),
+    );
+    if (pendingPaths.length === 0) return;
+
+    let cancelled = false;
+    pendingPaths.forEach((path) => signingChatMediaPathsRef.current.add(path));
+    void Promise.all(
+      pendingPaths.map(async (path) => {
+        const { data, error } = await supabase.storage
+          .from(CHAT_MEDIA_BUCKET)
+          .createSignedUrl(path, 3600);
+        signingChatMediaPathsRef.current.delete(path);
+        if (error || !data?.signedUrl) return null;
+        signedChatMediaUrlsRef.current.set(path, data.signedUrl);
+        return { path, signedUrl: data.signedUrl };
+      }),
+    ).then((resolved) => {
+      if (cancelled) return;
+      const signedByPath = new Map(
+        resolved
+          .filter((entry): entry is { path: string; signedUrl: string } => Boolean(entry))
+          .map((entry) => [entry.path, entry.signedUrl]),
+      );
+      if (signedByPath.size === 0) return;
+      setMessages((current) =>
+        current.map((message) => {
+          const path = message.storagePath;
+          const signedUrl = path ? signedByPath.get(path) : null;
+          if (!signedUrl) return message;
+          if (message.type === 'image') return { ...message, imageUrl: signedUrl };
+          if (message.type === 'video') return { ...message, videoUrl: signedUrl };
+          if (message.type === 'document' && message.document) {
+            return { ...message, document: { ...message.document, url: signedUrl } };
+          }
+          return message;
+        }),
+      );
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [messages]);
 
   const reconcileDeliveredFallback = useCallback(
     (items: MessageType[]) => {
@@ -5985,7 +6094,10 @@ const resolveQueuedVideoUri = async (
     if (!accessToken) {
       throw new Error('unauthenticated_storage');
     }
-    const filePath = `${user?.id ?? 'anon'}/${Date.now()}-${fileName}`;
+    if (!activePeerMessageUserId) {
+      throw new Error('missing_chat_participant');
+    }
+    const filePath = `${user?.id ?? 'anon'}/${activePeerMessageUserId}/${Date.now()}-${fileName}`;
     const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
     const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
     if (!supabaseUrl || !supabaseAnonKey) {
@@ -6012,10 +6124,13 @@ const resolveQueuedVideoUri = async (
           throw new Error('Upload failed (no response)');
         }
         if (result.status >= 200 && result.status < 300) {
-          const { data } = supabase.storage
+          const { data: signedData, error: signedError } = await supabase.storage
             .from(CHAT_MEDIA_BUCKET)
-            .getPublicUrl(filePath);
-          return { publicUrl: data.publicUrl, filePath };
+            .createSignedUrl(filePath, 3600);
+          if (signedError || !signedData?.signedUrl) {
+            throw signedError ?? new Error('signed_media_url_unavailable');
+          }
+          return { signedUrl: signedData.signedUrl, filePath };
         }
 
         let message = result.body || `Upload failed (HTTP ${result.status})`;
@@ -6037,7 +6152,7 @@ const resolveQueuedVideoUri = async (
     }
 
     throw lastError ?? new Error('upload_failed');
-  }, [user?.id]);
+  }, [activePeerMessageUserId, user?.id]);
 
   const uploadEncryptedChatMedia = useCallback(async ({
     bytes,
@@ -6052,7 +6167,10 @@ const resolveQueuedVideoUri = async (
     if (!sessionData.session) {
       throw new Error('unauthenticated_storage');
     }
-    const filePath = `${user?.id ?? 'anon'}/${Date.now()}-${fileName}`;
+    if (!activePeerMessageUserId) {
+      throw new Error('missing_chat_participant');
+    }
+    const filePath = `${user?.id ?? 'anon'}/${activePeerMessageUserId}/${Date.now()}-${fileName}`;
     const { error: uploadError } = await supabase
       .storage
       .from(CHAT_MEDIA_BUCKET)
@@ -6062,7 +6180,7 @@ const resolveQueuedVideoUri = async (
       throw uploadError;
     }
     return filePath;
-  }, [user?.id]);
+  }, [activePeerMessageUserId, user?.id]);
 
   const ensureOwnKeypair = useCallback(async () => {
     if (!user?.id) return null;
@@ -6121,6 +6239,7 @@ const resolveQueuedVideoUri = async (
 
   const sendImageAttachment = useCallback(async ({
     imageUrl,
+    storagePath,
     isViewOnce = false,
     encryptedPayload,
     encryptedPath,
@@ -6128,6 +6247,7 @@ const resolveQueuedVideoUri = async (
     size,
   }: {
     imageUrl?: string;
+    storagePath?: string | null;
     isViewOnce?: boolean;
     encryptedPayload?: {
       encryptedKeySender: string;
@@ -6166,6 +6286,7 @@ const resolveQueuedVideoUri = async (
       reactions: [],
       status: 'sending',
       imageUrl: isViewOnce ? undefined : imageUrl,
+      storagePath: storagePath ?? null,
       replyToId: replyingTo?.id ?? null,
       replyTo: replyingTo || undefined,
     };
@@ -6302,6 +6423,7 @@ const resolveQueuedVideoUri = async (
 
   const sendVideoAttachment = useCallback(async ({
     videoUrl,
+    storagePath,
     isViewOnce = false,
     encryptedPayload,
     encryptedPath,
@@ -6309,6 +6431,7 @@ const resolveQueuedVideoUri = async (
     size,
   }: {
     videoUrl?: string;
+    storagePath?: string | null;
     isViewOnce?: boolean;
     encryptedPayload?: {
       encryptedKeySender: string;
@@ -6347,6 +6470,7 @@ const resolveQueuedVideoUri = async (
       reactions: [],
       status: 'sending',
       videoUrl: isViewOnce ? undefined : videoUrl,
+      storagePath: storagePath ?? null,
       replyToId: replyingTo?.id ?? null,
       replyTo: replyingTo || undefined,
     };
@@ -7514,6 +7638,28 @@ const resolveQueuedVideoUri = async (
     scheduleOutgoingReceiptStateSync(data.id as string);
   }, [activePeerMessageUserId, isChatBlocked, linkReplies, mapRowToMessage, markLocalMessageFailed, networkReady, scheduleOutgoingReceiptStateSync, user?.id]);
 
+  const retryFailedMessage = useCallback(async (message: MessageType) => {
+    if (!user?.id || isChatBlocked || message.status !== 'failed') return;
+    if (message.type === 'text') {
+      await retryFailedTextMessage(message.id);
+      return;
+    }
+    const localMessageId = message.clientMessageId ?? message.id;
+    setMessages((current) => setMessageStatus(current, message.id, networkReady ? 'sending' : 'queued'));
+    try {
+      const result = await ChatOutboxService.retryMessage(user.id, localMessageId);
+      if (!result.requeued) {
+        setMessages((current) => setMessageStatus(current, message.id, 'failed'));
+        Alert.alert('Retry unavailable', 'This attachment is no longer available on this device.');
+      }
+    } catch (error) {
+      setMessages((current) => setMessageStatus(current, message.id, 'failed'));
+      if (!isLikelyNetworkError(error)) {
+        Alert.alert('Retry failed', 'Unable to resend this attachment right now.');
+      }
+    }
+  }, [isChatBlocked, networkReady, retryFailedTextMessage, user?.id]);
+
   useEffect(() => {
     if (!messagesLoaded) return;
     if (!remoteMessagesChecked) return;
@@ -8367,6 +8513,40 @@ const resolveQueuedVideoUri = async (
     [getPinnedPreview, primaryPinnedMessage]
   );
 
+  const [remoteSearchResults, setRemoteSearchResults] = useState<MessageType[]>([]);
+  useEffect(() => {
+    const query = chatSearchQuery.trim();
+    if (query.length < 2 || !user?.id || !activePeerMessageUserId) {
+      setRemoteSearchResults([]);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      const { data, error } = await supabase
+        .from('messages')
+        .select(MESSAGE_SELECT_FIELDS)
+        .or(
+          `and(sender_id.eq.${user.id},receiver_id.eq.${activePeerMessageUserId}),and(sender_id.eq.${activePeerMessageUserId},receiver_id.eq.${user.id})`,
+        )
+        .eq('message_type', 'text')
+        .eq('deleted_for_all', false)
+        .ilike('text', `%${query}%`)
+        .order('created_at', { ascending: false })
+        .limit(100);
+      if (cancelled) return;
+      if (error) {
+        console.log('[chat] full history search error', error);
+        setRemoteSearchResults([]);
+        return;
+      }
+      setRemoteSearchResults(((data ?? []) as MessageRow[]).map(mapRowToMessage));
+    }, 280);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [activePeerMessageUserId, chatSearchQuery, mapRowToMessage, user?.id]);
+
   const {
     pinnedSheetVisible,
     pinnedBannerExpanded,
@@ -8385,6 +8565,7 @@ const resolveQueuedVideoUri = async (
   } = useChatThreadBrowseUi({
     chatSearchQuery,
     renderedMessages,
+    remoteSearchResults,
     pinnedMessageCount,
     primaryPinnedMessage,
     jumpToMessage,
@@ -8774,8 +8955,15 @@ const resolveQueuedVideoUri = async (
   const resetRecordingState = useCallback(() => {
     stopRecordingTimer();
     stopRecordingPulse();
+    if (voicePreviewSoundRef.current) {
+      voicePreviewSoundRef.current.pause();
+      voicePreviewSoundRef.current.remove();
+      voicePreviewSoundRef.current = null;
+    }
+    recordingDraftRef.current = null;
     setIsRecording(false);
-    setIsRecordingPaused(false);
+    setIsVoicePreviewReady(false);
+    setIsVoicePreviewPlaying(false);
     setRecordingDuration(0);
     recordingRef.current = null;
   }, [stopRecordingPulse, stopRecordingTimer]);
@@ -8810,8 +8998,10 @@ const resolveQueuedVideoUri = async (
       }
       recording.record();
       recordingRef.current = recording;
+      recordingDraftRef.current = null;
       setIsRecording(true);
-      setIsRecordingPaused(false);
+      setIsVoicePreviewReady(false);
+      setIsVoicePreviewPlaying(false);
       setRecordingDuration(0);
       startRecordingPulse();
       startRecordingTimer();
@@ -8823,40 +9013,92 @@ const resolveQueuedVideoUri = async (
     }
   };
 
-  const pauseVoiceRecording = useCallback(async () => {
-    if (!recordingRef.current || !isRecording || isRecordingPaused) return;
+  const finishVoiceRecording = useCallback(async () => {
+    if (!recordingRef.current || !isRecording || isVoicePreviewReady) return;
+    let finalizedUri: string | null = null;
     try {
-      recordingRef.current.pause();
-      setIsRecordingPaused(true);
+      const recording = recordingRef.current;
+      const status = recording.getStatus();
+      const durationSeconds = Math.max(
+        recordingDuration,
+        typeof status.durationMillis === 'number' ? status.durationMillis / 1000 : 0,
+      );
+      await recording.stop();
+      const uri = recording.uri;
+      if (!uri) {
+        throw new Error('Recording completed without a local file.');
+      }
+      finalizedUri = uri;
+      recordingRef.current = null;
+      recordingDraftRef.current = { uri, durationSeconds };
+      await setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
+        interruptionMode: 'duckOthers',
+        shouldPlayInBackground: false,
+        shouldRouteThroughEarpiece: false,
+      });
+      setIsVoicePreviewReady(true);
+      setIsVoicePreviewPlaying(false);
       stopRecordingTimer();
       stopRecordingPulse();
     } catch (error) {
-      console.log('[chat] pause recording error', error);
+      console.log('[chat] finish recording for preview error', error);
+      if (finalizedUri) {
+        await FileSystem.deleteAsync(finalizedUri, { idempotent: true }).catch(() => undefined);
+      }
+      Alert.alert('Voice message', 'Could not prepare this recording for review. Please try again.');
+      resetRecordingState();
     }
-  }, [isRecording, isRecordingPaused, stopRecordingPulse, stopRecordingTimer]);
+  }, [isRecording, isVoicePreviewReady, recordingDuration, resetRecordingState, stopRecordingPulse, stopRecordingTimer]);
 
-  const resumeVoiceRecording = useCallback(async () => {
-    if (!recordingRef.current || !isRecording || !isRecordingPaused) return;
+  const toggleVoicePreview = useCallback(async () => {
+    const draft = recordingDraftRef.current;
+    if (!draft || !isRecording || !isVoicePreviewReady) return;
     try {
-      recordingRef.current.record();
-      setIsRecordingPaused(false);
-      startRecordingTimer();
-      startRecordingPulse();
+      if (voicePreviewSoundRef.current) {
+        if (isVoicePreviewPlaying) {
+          voicePreviewSoundRef.current.pause();
+          setIsVoicePreviewPlaying(false);
+        } else {
+          voicePreviewSoundRef.current.play();
+          setIsVoicePreviewPlaying(true);
+        }
+        return;
+      }
+
+      const player = createAudioPlayer({ uri: draft.uri }, { updateInterval: 100 });
+      voicePreviewSoundRef.current = player;
+      (player as any).addListener?.('playbackStatusUpdate', (status: any) => {
+        if (!status?.didJustFinish) return;
+        player.pause();
+        player.remove();
+        if (voicePreviewSoundRef.current === player) {
+          voicePreviewSoundRef.current = null;
+          setIsVoicePreviewPlaying(false);
+        }
+      });
+      player.play();
+      setIsVoicePreviewPlaying(true);
     } catch (error) {
-      console.log('[chat] resume recording error', error);
+      console.log('[chat] voice preview error', error);
+      setIsVoicePreviewPlaying(false);
+      Alert.alert('Voice message', 'Could not play this recording. Please try again.');
     }
-  }, [isRecording, isRecordingPaused, startRecordingPulse, startRecordingTimer]);
+  }, [isRecording, isVoicePreviewPlaying, isVoicePreviewReady]);
 
   const discardVoiceRecording = useCallback(async () => {
     if (!isRecording) return;
+    const draftUri = recordingDraftRef.current?.uri ?? null;
     try {
       const recording = recordingRef.current;
+      let uri = draftUri;
       if (recording) {
         await recording.stop();
-        const uri = recording.uri;
-        if (uri) {
-          await FileSystem.deleteAsync(uri, { idempotent: true });
-        }
+        uri = recording.uri ?? uri;
+      }
+      if (uri) {
+        await FileSystem.deleteAsync(uri, { idempotent: true });
       }
       await setAudioModeAsync({
         allowsRecording: false,
@@ -8873,18 +9115,27 @@ const resolveQueuedVideoUri = async (
   }, [isRecording, resetRecordingState]);
 
   const sendVoiceRecording = useCallback(async () => {
-    if (!recordingRef.current || !user?.id || !conversationId || isUploadingVoice) return;
+    if ((!recordingRef.current && !recordingDraftRef.current) || !user?.id || !conversationId || isUploadingVoice) return;
     setIsUploadingVoice(true);
     const recording = recordingRef.current;
-    let uri: string | null = null;
-    let durationSeconds = recordingDuration;
+    const draft = recordingDraftRef.current;
+    let uri: string | null = draft?.uri ?? null;
+    let durationSeconds = Math.max(recordingDuration, draft?.durationSeconds ?? 0);
     try {
-      const status = recording.getStatus();
-      if (typeof status.durationMillis === 'number') {
-        durationSeconds = Math.max(durationSeconds, status.durationMillis / 1000);
+      if (voicePreviewSoundRef.current) {
+        voicePreviewSoundRef.current.pause();
+        voicePreviewSoundRef.current.remove();
+        voicePreviewSoundRef.current = null;
+        setIsVoicePreviewPlaying(false);
       }
-      await recording.stop();
-      uri = recording.uri;
+      if (recording) {
+        const status = recording.getStatus();
+        if (typeof status.durationMillis === 'number') {
+          durationSeconds = Math.max(durationSeconds, status.durationMillis / 1000);
+        }
+        await recording.stop();
+        uri = recording.uri;
+      }
       await setAudioModeAsync({
         allowsRecording: false,
         playsInSilentMode: true,
@@ -9095,6 +9346,17 @@ const resolveQueuedVideoUri = async (
     closeAttachmentSheet();
     const asset = result.assets?.[0];
     if (!asset?.uri) return;
+    const attachmentError = validateChatAttachment({
+      kind: asset.type === 'video' ? 'video' : 'image',
+      fileName: asset.fileName,
+      mimeType: asset.mimeType,
+      sizeBytes: asset.fileSize,
+      durationMs: asset.duration,
+    });
+    if (attachmentError) {
+      Alert.alert('Attachment unavailable', attachmentError);
+      return;
+    }
     const mediaKind = asset.type === 'video' ? 'video' : 'photo';
     const uploadStatusId = beginMediaUploadStatus(
       viewOnceMode ? `Securing private ${mediaKind}...` : `Uploading ${mediaKind}...`,
@@ -9154,7 +9416,7 @@ const resolveQueuedVideoUri = async (
           'This can take a moment on larger videos.',
           'cloud-upload-outline'
         );
-        const { publicUrl } = await uploadChatMedia({
+        const { signedUrl, filePath } = await uploadChatMedia({
           uri: normalized.uri,
           fileName: normalized.fileName,
           contentType: normalized.contentType,
@@ -9166,9 +9428,9 @@ const resolveQueuedVideoUri = async (
           'send-outline'
         );
         if (asset.type === 'image') {
-          await sendImageAttachment({ imageUrl: publicUrl });
+          await sendImageAttachment({ imageUrl: signedUrl, storagePath: filePath });
         } else {
-          await sendVideoAttachment({ videoUrl: publicUrl });
+          await sendVideoAttachment({ videoUrl: signedUrl, storagePath: filePath });
         }
       }
     } catch (error) {
@@ -9233,6 +9495,17 @@ const resolveQueuedVideoUri = async (
     closeAttachmentSheet();
     const asset = result.assets?.[0];
     if (!asset?.uri) return;
+    const attachmentError = validateChatAttachment({
+      kind: asset.type === 'video' ? 'video' : 'image',
+      fileName: asset.fileName,
+      mimeType: asset.mimeType,
+      sizeBytes: asset.fileSize,
+      durationMs: asset.duration,
+    });
+    if (attachmentError) {
+      Alert.alert('Attachment unavailable', attachmentError);
+      return;
+    }
     const mediaKind = asset.type === 'video' ? 'video' : 'photo';
     const uploadStatusId = beginMediaUploadStatus(
       viewOnceMode ? `Securing private ${mediaKind}...` : `Uploading ${mediaKind}...`,
@@ -9292,7 +9565,7 @@ const resolveQueuedVideoUri = async (
           'This can take a moment on larger videos.',
           'cloud-upload-outline'
         );
-        const { publicUrl } = await uploadChatMedia({
+        const { signedUrl, filePath } = await uploadChatMedia({
           uri: normalized.uri,
           fileName: normalized.fileName,
           contentType: normalized.contentType,
@@ -9304,9 +9577,9 @@ const resolveQueuedVideoUri = async (
           'send-outline'
         );
         if (asset.type === 'image') {
-          await sendImageAttachment({ imageUrl: publicUrl });
+          await sendImageAttachment({ imageUrl: signedUrl, storagePath: filePath });
         } else {
-          await sendVideoAttachment({ videoUrl: publicUrl });
+          await sendVideoAttachment({ videoUrl: signedUrl, storagePath: filePath });
         }
       }
     } catch (error) {
@@ -9347,6 +9620,16 @@ const resolveQueuedVideoUri = async (
     closeAttachmentSheet();
     const asset = result.assets?.[0];
     if (!asset?.uri) return;
+    const attachmentError = validateChatAttachment({
+      kind: 'document',
+      fileName: asset.name,
+      mimeType: asset.mimeType,
+      sizeBytes: asset.size,
+    });
+    if (attachmentError) {
+      Alert.alert('Attachment unavailable', attachmentError);
+      return;
+    }
     const uploadStatusId = beginMediaUploadStatus(
       'Preparing file...',
       asset.name ? `Queueing ${asset.name}` : 'Keep this chat open while Betweener prepares your file.',
@@ -9517,7 +9800,7 @@ const resolveQueuedVideoUri = async (
     if (!hasAutoScrolledRef.current) {
       hasAutoScrolledRef.current = true;
       shouldAutoScrollRef.current = true;
-      InteractionManager.runAfterInteractions(() => {
+      scheduleIdleTask(() => {
         flatListRef.current?.scrollToEnd({ animated: false });
         initialAutoScrollDoneRef.current = true;
       });
@@ -9532,7 +9815,7 @@ const resolveQueuedVideoUri = async (
       return;
     }
     if (!shouldAutoScrollRef.current) return;
-    InteractionManager.runAfterInteractions(() => {
+    scheduleIdleTask(() => {
       flatListRef.current?.scrollToEnd({ animated: true });
     });
   }, [messages.length, threadBootstrapSettled]);
@@ -9548,7 +9831,7 @@ const resolveQueuedVideoUri = async (
       setKeyboardInset(inset);
       if (getDistanceToBottom() <= 200) {
         shouldAutoScrollRef.current = true;
-        InteractionManager.runAfterInteractions(() => {
+        scheduleIdleTask(() => {
           flatListRef.current?.scrollToEnd({ animated: true });
         });
       }
@@ -9558,7 +9841,7 @@ const resolveQueuedVideoUri = async (
       setKeyboardInset(0);
       if (getDistanceToBottom() <= 60) {
         shouldAutoScrollRef.current = true;
-        InteractionManager.runAfterInteractions(() => {
+        scheduleIdleTask(() => {
           flatListRef.current?.scrollToEnd({ animated: true });
         });
       }
@@ -9921,6 +10204,11 @@ const resolveQueuedVideoUri = async (
         voiceSoundRef.current.remove();
         voiceSoundRef.current = null;
       }
+      if (voicePreviewSoundRef.current) {
+        voicePreviewSoundRef.current.pause();
+        voicePreviewSoundRef.current.remove();
+        voicePreviewSoundRef.current = null;
+      }
     };
   }, [stopRecordingTimer]);
 
@@ -10007,6 +10295,19 @@ const resolveQueuedVideoUri = async (
     setBlockStatus,
     setChatSearchQuery,
   });
+
+  const openSearchResult = useCallback((result: MessageType) => {
+    const alreadyLoaded = messagesRef.current.some((message) => message.id === result.id);
+    if (!alreadyLoaded) {
+      setMessages((current) =>
+        linkReplies(
+          [...current, result].sort((left, right) => left.timestamp.getTime() - right.timestamp.getTime()),
+        ),
+      );
+    }
+    closeChatSearch();
+    setTimeout(() => jumpToMessage(result.id), alreadyLoaded ? 50 : 180);
+  }, [closeChatSearch, jumpToMessage, linkReplies]);
 
   const reportEvidencePreview = useMemo(
     () => getReportEvidencePreview(reportEvidenceMessage),
@@ -11524,10 +11825,9 @@ const resolveQueuedVideoUri = async (
                   <Pressable
                     key={result.id}
                     style={styles.searchResult}
-                    onPress={() => {
-                      closeChatSearch();
-                      jumpToMessage(result.id);
-                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Message from ${formatDayLabel(result.timestamp)}. ${result.text}`}
+                    onPress={() => openSearchResult(result)}
                   >
                     {renderHighlightedText(result.text, chatSearchQuery)}
                     <Text style={styles.searchResultMeta}>
@@ -11689,7 +11989,7 @@ const resolveQueuedVideoUri = async (
         }}
         onRetry={(message) => {
           triggerActionHaptic(Haptics.ImpactFeedbackStyle.Medium);
-          void retryFailedTextMessage(message.id);
+          void retryFailedMessage(message);
         }}
         onEdit={(message) => {
           triggerActionHaptic(Haptics.ImpactFeedbackStyle.Medium);
@@ -12078,7 +12378,7 @@ const resolveQueuedVideoUri = async (
                   latitudeDelta: 0.012,
                   longitudeDelta: 0.012,
                 }}
-                showsPointsOfInterest
+                showsPointsOfInterests
                 showsBuildings
               >
                 <Marker
@@ -12162,7 +12462,7 @@ const resolveQueuedVideoUri = async (
             onPress={handleMapPress}
             showsUserLocation={locationStatus === 'granted'}
             showsMyLocationButton={locationStatus === 'granted'}
-            showsPointsOfInterest
+            showsPointsOfInterests
             showsBuildings
           >
             {selectedPlace && (
@@ -12557,7 +12857,8 @@ const resolveQueuedVideoUri = async (
             onBlur={handleInputBlur}
             placeholderTextColor={withAlpha(theme.textMuted, isDark ? 0.66 : 0.72)}
             isRecording={isRecording}
-            isRecordingPaused={isRecordingPaused}
+            isVoicePreviewReady={isVoicePreviewReady}
+            isVoicePreviewPlaying={isVoicePreviewPlaying}
             isUploadingVoice={isUploadingVoice}
             recordingDuration={recordingDuration}
             voiceButtonScale={voiceButtonScale}
@@ -12576,8 +12877,8 @@ const resolveQueuedVideoUri = async (
             onToggleMoodStickers={toggleComposerMoodStickers}
             onStartVoiceRecording={startVoiceRecording}
             onDiscardVoiceRecording={discardVoiceRecording}
-            onPauseVoiceRecording={pauseVoiceRecording}
-            onResumeVoiceRecording={resumeVoiceRecording}
+            onFinishVoiceRecording={finishVoiceRecording}
+            onToggleVoicePreview={toggleVoicePreview}
             onSendVoiceRecording={sendVoiceRecording}
             onSendMessage={sendMessage}
           />
@@ -13052,7 +13353,7 @@ const createStyles = (
       backgroundColor: withAlpha(theme.background, isDark ? 0.2 : 0.85),
     },
     pinnedBannerBlur: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
     },
     pinnedBannerContent: {
       flexDirection: 'row',
@@ -13128,7 +13429,7 @@ const createStyles = (
       marginTop: 2,
     },
     pinnedSheetBackdrop: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       backgroundColor: withAlpha(Colors.dark.background, 0.45),
     },
     pinnedSheet: {
@@ -13149,7 +13450,7 @@ const createStyles = (
       elevation: 8,
     },
     pinnedSheetBlur: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
     },
     pinnedSheetHeader: {
       flexDirection: 'row',
@@ -13247,7 +13548,7 @@ const createStyles = (
       paddingTop: 4,
     },
     reactionSheetBackdrop: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       backgroundColor: withAlpha(Colors.dark.background, 0.45),
     },
     reactionSheet: {
@@ -13268,7 +13569,7 @@ const createStyles = (
       elevation: 8,
     },
     reactionSheetBlur: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
     },
     reactionSheetHeader: {
       flexDirection: 'row',
@@ -13397,7 +13698,7 @@ const createStyles = (
       color: theme.textMuted,
     },
     datePlannerBackdrop: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       backgroundColor: withAlpha(Colors.dark.background, 0.62),
     },
     datePlannerKeyboard: {
@@ -13414,7 +13715,7 @@ const createStyles = (
       borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.1),
     },
     datePlannerBlur: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
     },
     datePlannerContent: {
       padding: 18,
@@ -13842,7 +14143,7 @@ const createStyles = (
       maxHeight: '84%',
     },
     dateDetailBlur: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
     },
     dateDetailContent: {
       padding: 18,
@@ -13943,7 +14244,7 @@ const createStyles = (
       lineHeight: 18,
     },
     headerMenuBackdrop: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       backgroundColor: withAlpha(Colors.dark.background, 0.55),
       zIndex: 1,
       elevation: 1,
@@ -14151,7 +14452,7 @@ const createStyles = (
       color: theme.textMuted,
     },
     searchBackdrop: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       backgroundColor: 'rgba(0,0,0,0.35)',
     },
     searchSheet: {
@@ -14164,7 +14465,7 @@ const createStyles = (
       overflow: 'hidden',
     },
     searchBlur: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
     },
     searchContent: {
       flex: 1,
@@ -14242,7 +14543,7 @@ const createStyles = (
       color: theme.textMuted,
     },
     mediaHubBackdrop: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       backgroundColor: 'rgba(0,0,0,0.35)',
     },
     mediaHubSheet: {
@@ -14255,7 +14556,7 @@ const createStyles = (
       overflow: 'hidden',
     },
     mediaHubBlur: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
     },
     mediaHubContent: {
       flex: 1,
@@ -14375,7 +14676,7 @@ const createStyles = (
 
     // Message Actions Sheet
     messageActionBackdrop: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       backgroundColor: withAlpha(Colors.dark.background, 0.45),
     },
     messageActionSheet: {
@@ -14395,7 +14696,7 @@ const createStyles = (
       elevation: 7,
     },
     messageActionBlur: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
     },
     messageActionContent: {
       paddingHorizontal: 14,
@@ -14468,7 +14769,7 @@ const createStyles = (
 
     // Edit History Sheet
     editHistoryBackdrop: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       backgroundColor: withAlpha(Colors.dark.background, 0.45),
     },
     editHistorySheet: {
@@ -14489,7 +14790,7 @@ const createStyles = (
       elevation: 7,
     },
     editHistoryBlur: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
     },
     editHistoryHeader: {
       flexDirection: 'row',
@@ -14572,11 +14873,11 @@ const createStyles = (
       paddingVertical: 10,
     },
     viewOnceModalBackdrop: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       backgroundColor: 'rgba(0,0,0,0.92)',
     },
     viewOnceFullScreen: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       alignItems: 'center',
       justifyContent: 'center',
     },
@@ -14653,7 +14954,7 @@ const createStyles = (
 
     // Report Sheet
     reportBackdrop: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       backgroundColor: withAlpha(Colors.dark.background, 0.45),
     },
     reportSheet: {
@@ -14673,7 +14974,7 @@ const createStyles = (
       elevation: 7,
     },
     reportBlur: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
     },
     reportContent: {
       paddingHorizontal: 14,
@@ -14971,16 +15272,16 @@ const createStyles = (
       zIndex: 0,
     },
     messageRowSpotlightBlur: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
     },
     messageRowSpotlightTint: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
     },
     messageRowVignetteVertical: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
     },
     messageRowVignetteHorizontal: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
     },
     messageBubbleContainer: {
       flexDirection: 'row',
@@ -15025,10 +15326,10 @@ const createStyles = (
       overflow: 'hidden',
     },
     messageFocusSpotlightBlur: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
     },
     messageFocusSpotlightTint: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
     },
     textWithMeta: {
       flexDirection: 'row',
@@ -15475,11 +15776,11 @@ const createStyles = (
       backgroundColor: withAlpha(Colors.dark.background, isDark ? 0.32 : 0.22),
     },
     quickReactionBackdropBlur: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       backgroundColor: withAlpha(Colors.dark.background, isDark ? 0.7 : 0.58),
     },
     quickReactionBackdrop: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
     },
     quickReactionOverlayScroller: {
       width: '82%',
@@ -16760,7 +17061,7 @@ const createStyles = (
       color: theme.text,
     },
     locationGlass: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       backgroundColor: withAlpha(theme.background, isDark ? 0.5 : 0.65),
     },
     locationSuggestionsPanel: {
@@ -16981,7 +17282,7 @@ const createStyles = (
       color: Colors.light.background,
     },
     locationLoadingOverlay: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       backgroundColor: withAlpha(theme.background, 0.92),
       alignItems: 'center',
       justifyContent: 'center',

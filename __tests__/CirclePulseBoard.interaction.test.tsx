@@ -133,9 +133,9 @@ const welcomeSeatItems = welcomeItem.welcomeProfiles.map((profile, index) => ({
 }));
 
 describe('CirclePulseBoard', () => {
-  it('uses the Circle join wording for non-members', () => {
+  it('uses the Circle join wording for non-members', async () => {
     const onJoin = jest.fn();
-    const { getByText } = render(
+    const { getByText } = await render(
       <CirclePulseBoard
         items={[]}
         isMember={false}
@@ -145,25 +145,25 @@ describe('CirclePulseBoard', () => {
       />,
     );
 
-    fireEvent.press(getByText('Request to join'));
+    await fireEvent.press(getByText('Request to join'));
 
     expect(onJoin).toHaveBeenCalledTimes(1);
   });
 
-  it('lets a host open the spotlight picker from an empty board', () => {
+  it('lets a host open the spotlight picker from an empty board', async () => {
     const onAddToPulse = jest.fn();
-    const { getByText } = render(
+    const { getByText } = await render(
       <CirclePulseBoard items={[]} isMember canManage onAddToPulse={onAddToPulse} />,
     );
 
-    fireEvent.press(getByText('Add to Pulse'));
+    await fireEvent.press(getByText('Add to Pulse'));
 
     expect(onAddToPulse).toHaveBeenCalledTimes(1);
   });
 
-  it('routes Prompt answers through the existing Circle flow', () => {
+  it('routes Prompt answers through the existing Circle flow', async () => {
     const onAnswerPrompt = jest.fn();
-    const { getByText } = render(
+    const { getByText } = await render(
       <CirclePulseBoard
         items={[promptItem]}
         isMember
@@ -173,14 +173,14 @@ describe('CirclePulseBoard', () => {
     );
 
     expect(getByText('First-date energy')).toBeTruthy();
-    fireEvent.press(getByText('Answer'));
+    await fireEvent.press(getByText('Answer'));
 
     expect(onAnswerPrompt).toHaveBeenCalledWith('prompt-1');
   });
 
-  it('opens the selected spotlight discussion', () => {
+  it('opens the selected spotlight discussion', async () => {
     const onOpenComments = jest.fn();
-    const { getByText } = render(
+    const { getByText } = await render(
       <CirclePulseBoard
         items={[promptItem]}
         isMember
@@ -189,16 +189,16 @@ describe('CirclePulseBoard', () => {
       />,
     );
 
-    fireEvent.press(getByText('Start discussion'));
+    await fireEvent.press(getByText('Start discussion'));
 
     expect(onOpenComments).toHaveBeenCalledWith(promptItem);
   });
 
-  it('exposes profile and Signal actions for an accepted Love Seat', () => {
+  it('exposes profile and Signal actions for an accepted Love Seat', async () => {
     const onOpenFeaturedProfile = jest.fn();
     const onSendSignal = jest.fn();
     const onOpenComments = jest.fn();
-    const { getAllByText, getByText } = render(
+    const { getAllByText, getByText } = await render(
       <CirclePulseBoard
         items={[loveSeatItem]}
         isMember
@@ -213,18 +213,18 @@ describe('CirclePulseBoard', () => {
     expect(getByText('Akosua, 28')).toBeTruthy();
     expect(getAllByText('Love Seat')).toHaveLength(1);
     expect(getByText('Seats')).toBeTruthy();
-    fireEvent.press(getByText('View profile'));
-    fireEvent.press(getByText('Ask a question'));
-    fireEvent.press(getByText('Send Signal'));
+    await fireEvent.press(getByText('View profile'));
+    await fireEvent.press(getByText('Ask a question'));
+    await fireEvent.press(getByText('Send Signal'));
 
     expect(onOpenFeaturedProfile).toHaveBeenCalledWith('profile-2');
     expect(onOpenComments).toHaveBeenCalledWith(loveSeatItem);
     expect(onSendSignal).toHaveBeenCalledWith('profile-2', 'Akosua');
   });
 
-  it('lets the featured member leave their Love Seat', () => {
+  it('lets the featured member leave their Love Seat', async () => {
     const onEndLoveSeat = jest.fn();
-    const { getByText } = render(
+    const { getByText } = await render(
       <CirclePulseBoard
         items={[loveSeatItem]}
         isMember
@@ -234,15 +234,15 @@ describe('CirclePulseBoard', () => {
       />,
     );
 
-    fireEvent.press(getByText('Leave Love Seat'));
+    await fireEvent.press(getByText('Leave Love Seat'));
 
     expect(onEndLoveSeat).toHaveBeenCalledWith(loveSeatItem);
   });
 
-  it('opens a selected video Moment and its discussion from the Media spotlight', () => {
+  it('opens a selected video Moment and its discussion from the Media spotlight', async () => {
     const onOpenMedia = jest.fn();
     const onOpenComments = jest.fn();
-    const { getByLabelText, getByText } = render(
+    const { getByLabelText, getByText } = await render(
       <CirclePulseBoard
         items={[mediaItem]}
         isMember
@@ -256,14 +256,14 @@ describe('CirclePulseBoard', () => {
     expect(getByLabelText('Circle video preview')).toBeTruthy();
     expect(mockInlinePlayer.loop).toBe(true);
     expect(mockInlinePlayer.muted).toBe(true);
-    fireEvent.press(getByText('Watch moment'));
-    fireEvent.press(getByLabelText('Open media discussion'));
+    await fireEvent.press(getByText('Watch moment'));
+    await fireEvent.press(getByLabelText('Open media discussion'));
 
     expect(onOpenMedia).toHaveBeenCalledWith(mediaItem);
     expect(onOpenComments).toHaveBeenCalledWith(mediaItem);
   });
 
-  it('renders a deliberate audio spotlight when there is no image preview', () => {
+  it('renders a deliberate audio spotlight when there is no image preview', async () => {
     const onOpenMedia = jest.fn();
     const audioItem = {
       ...mediaItem,
@@ -272,7 +272,7 @@ describe('CirclePulseBoard', () => {
       mediaUrl: 'https://example.com/moment.m4a',
       mediaType: 'audio',
     };
-    const { getByText } = render(
+    const { getByText } = await render(
       <CirclePulseBoard
         items={[audioItem]}
         isMember
@@ -282,12 +282,12 @@ describe('CirclePulseBoard', () => {
     );
 
     expect(getByText('Audio Moment')).toBeTruthy();
-    fireEvent.press(getByText('Listen now'));
+    await fireEvent.press(getByText('Listen now'));
 
     expect(onOpenMedia).toHaveBeenCalledWith(audioItem);
   });
 
-  it('uses editorial copy for direct Circle Media images', () => {
+  it('uses editorial copy for direct Circle Media images', async () => {
     const onOpenMedia = jest.fn();
     const editorialItem = {
       ...mediaItem,
@@ -296,7 +296,7 @@ describe('CirclePulseBoard', () => {
       mediaType: 'image',
       momentId: null,
     };
-    const { getByText } = render(
+    const { getByText } = await render(
       <CirclePulseBoard
         items={[editorialItem]}
         isMember
@@ -306,7 +306,7 @@ describe('CirclePulseBoard', () => {
     );
 
     expect(getByText('Circle Image')).toBeTruthy();
-    fireEvent.press(getByText('View image'));
+    await fireEvent.press(getByText('View image'));
 
     expect(onOpenMedia).toHaveBeenCalledWith(editorialItem);
   });
@@ -329,20 +329,20 @@ describe('CirclePulseBoard', () => {
       mediaType: 'video',
       momentId: null,
     };
-    const { getByLabelText, getByText } = render(
+    const { getByLabelText, getByText } = await render(
       <CirclePulseBoard items={[imageItem, videoItem]} isMember canManage={false} />,
     );
 
     expect(getByText('Gathering image')).toBeTruthy();
     expect(getByLabelText('Show Circle Media spotlight 1').props.accessibilityState.selected).toBe(true);
-    fireEvent.press(getByLabelText('Next Circle spotlight'));
+    await fireEvent.press(getByLabelText('Next Circle spotlight'));
 
     await waitFor(() => expect(getByText('First date guide')).toBeTruthy());
     expect(getByLabelText('Show Circle Media spotlight 2').props.accessibilityState.selected).toBe(true);
   });
 
   it('keeps Welcome as one main spotlight while paging members inside it', async () => {
-    const { getByText, queryByText, getByLabelText } = render(
+    const { getByText, queryByText, getByLabelText } = await render(
       <CirclePulseBoard
         items={[promptItem, ...welcomeSeatItems.slice(0, 2), loveSeatItem]}
         isMember
@@ -351,26 +351,26 @@ describe('CirclePulseBoard', () => {
     );
 
     expect(getByText('First-date energy')).toBeTruthy();
-    fireEvent.press(getByLabelText('Next Circle spotlight'));
+    await fireEvent.press(getByLabelText('Next Circle spotlight'));
 
     await waitFor(() => expect(getByText('Jennifer Doe')).toBeTruthy());
     expect(queryByText('Ama Mensah')).toBeNull();
-    fireEvent.press(getByLabelText('Next Circle spotlight'));
+    await fireEvent.press(getByLabelText('Next Circle spotlight'));
 
     await waitFor(() => expect(getByText('Akosua, 28')).toBeTruthy());
   });
 
-  it('pages new members inside the Welcome Seat and opens a targeted discussion', () => {
+  it('pages new members inside the Welcome Seat and opens a targeted discussion', async () => {
     const onOpenComments = jest.fn();
-    const { getByLabelText, getByText } = render(
+    const { getByLabelText, getByText } = await render(
       <CirclePulseBoard items={welcomeSeatItems} isMember canManage={false} onOpenComments={onOpenComments} />,
     );
 
     expect(getByText('Jennifer Doe')).toBeTruthy();
     expect(getByText('New')).toBeTruthy();
     expect(getByText('1 of 4')).toBeTruthy();
-    fireEvent.press(getByLabelText('Next new member'));
-    fireEvent.press(getByText('Welcome Ama'));
+    await fireEvent.press(getByLabelText('Next new member'));
+    await fireEvent.press(getByText('Welcome Ama'));
 
     expect(getByText('Ama Mensah')).toBeTruthy();
     expect(onOpenComments).toHaveBeenCalledWith(expect.objectContaining({
@@ -382,7 +382,7 @@ describe('CirclePulseBoard', () => {
     expect(onOpenComments.mock.calls[0][0].welcomeProfiles[0].profileId).toBe('profile-4');
   });
 
-  it('automatically advances the Pulse carousel', () => {
+  it('automatically advances the Pulse carousel', async () => {
     jest.useFakeTimers();
     const gatheringItem = {
       ...promptItem,
@@ -392,17 +392,17 @@ describe('CirclePulseBoard', () => {
       promptId: null,
       gatheringId: 'gathering-1',
     };
-    const { getByText, unmount } = render(
+    const { getByText, unmount } = await render(
       <CirclePulseBoard items={[promptItem, gatheringItem]} isMember canManage={false} />,
     );
 
     expect(getByText('First-date energy')).toBeTruthy();
-    act(() => {
+    await act(() => {
       jest.advanceTimersByTime(8000);
     });
 
     expect(getByText('Sunday gathering')).toBeTruthy();
-    unmount();
+    await unmount();
     jest.useRealTimers();
   });
 });

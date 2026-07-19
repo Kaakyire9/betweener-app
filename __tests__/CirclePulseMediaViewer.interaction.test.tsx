@@ -104,10 +104,10 @@ const editorialItem = {
 };
 
 describe('CirclePulseMediaViewer', () => {
-  it('opens discussion from a direct Circle Media poster', () => {
+  it('opens discussion from a direct Circle Media poster', async () => {
     const onClose = jest.fn();
     const onOpenComments = jest.fn();
-    const { getByText } = render(
+    const { getByText } = await render(
       <CirclePulseMediaViewer
         visible
         item={editorialItem}
@@ -117,13 +117,13 @@ describe('CirclePulseMediaViewer', () => {
     );
 
     expect(getByText('Gathering poster')).toBeTruthy();
-    fireEvent.press(getByText('2 comments'));
+    await fireEvent.press(getByText('2 comments'));
 
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(onOpenComments).toHaveBeenCalledWith(editorialItem);
   });
 
-  it('uses intro-video chrome for direct Circle videos', () => {
+  it('uses intro-video chrome for direct Circle videos', async () => {
     const videoItem = {
       ...editorialItem,
       id: 'pulse-video',
@@ -133,7 +133,7 @@ describe('CirclePulseMediaViewer', () => {
       mediaUrl: 'https://example.com/guide.mp4',
       mediaType: 'video',
     };
-    const { getByLabelText, getByText } = render(
+    const { getByLabelText, getByText } = await render(
       <CirclePulseMediaViewer
         visible
         item={videoItem}
@@ -144,12 +144,12 @@ describe('CirclePulseMediaViewer', () => {
 
     expect(getByText('Circle video')).toBeTruthy();
     expect(getByText('Swipe down to close')).toBeTruthy();
-    fireEvent.press(getByLabelText('Mute Circle video'));
+    await fireEvent.press(getByLabelText('Mute Circle video'));
 
     expect(getByLabelText('Unmute Circle video')).toBeTruthy();
   });
 
-  it('dismisses a direct Circle video after a downward swipe', () => {
+  it('dismisses a direct Circle video after a downward swipe', async () => {
     const { Animated } = require('react-native');
     const { State } = require('react-native-gesture-handler');
     const timingSpy = jest.spyOn(Animated, 'timing').mockImplementation(() => ({
@@ -163,7 +163,7 @@ describe('CirclePulseMediaViewer', () => {
       mediaUrl: 'https://example.com/guide.mp4',
       mediaType: 'video',
     };
-    const { getByLabelText } = render(
+    const { getByLabelText } = await render(
       <CirclePulseMediaViewer
         visible
         item={videoItem}
@@ -173,7 +173,7 @@ describe('CirclePulseMediaViewer', () => {
     );
 
     const gestureSurface = getByLabelText('Dismiss Circle video gesture');
-    act(() => {
+    await act(() => {
       gestureSurface.props.onHandlerStateChange({
         nativeEvent: {
           oldState: State.ACTIVE,
