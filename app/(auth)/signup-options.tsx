@@ -325,7 +325,7 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
   appleLoadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 16,

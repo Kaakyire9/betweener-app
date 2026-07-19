@@ -62,7 +62,7 @@ export function OnboardingArrivalCelebration({ visible, onDismiss }: { visible: 
 }
 
 const styles = StyleSheet.create({
-  overlay: { ...StyleSheet.absoluteFillObject, zIndex: 1000, backgroundColor: "rgba(11,10,18,0.72)" },
+  overlay: { ...StyleSheet.absoluteFill, zIndex: 1000, backgroundColor: "rgba(11,10,18,0.72)" },
   dismissArea: { flex: 1, alignItems: "center", justifyContent: "center", padding: 28 },
   card: {
     width: "100%", maxWidth: 360, alignItems: "center", borderRadius: 30, paddingHorizontal: 28, paddingVertical: 30,

@@ -54,6 +54,9 @@ function ActionCard({
   return (
     <TouchableOpacity
       testID={testID}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityHint={hint}
       style={[styles.messageActionCard, danger && styles.messageActionDanger]}
       onPress={onPress}
     >
@@ -98,15 +101,23 @@ export default function ChatMessageActionsSheet({
 }: Props) {
   return (
     <Modal transparent visible={visible} animationType="fade" onRequestClose={onClose}>
-      <Pressable testID="chat-message-actions-backdrop" style={styles.messageActionBackdrop} onPress={onClose} />
-      <View style={styles.messageActionSheet}>
+      <Pressable
+        testID="chat-message-actions-backdrop"
+        accessible={false}
+        importantForAccessibility="no"
+        style={styles.messageActionBackdrop}
+        onPress={onClose}
+      />
+      <View style={styles.messageActionSheet} accessibilityViewIsModal>
         <BlurViewSafe
           intensity={34}
           tint={isDark ? "dark" : "light"}
           style={styles.messageActionBlur}
         />
         <View style={styles.messageActionContent}>
-          <Text style={styles.messageActionTitle}>Message options</Text>
+          <Text accessibilityRole="header" style={styles.messageActionTitle}>
+            Message options
+          </Text>
           {actionMessage ? (
             <>
               <ActionCard
@@ -240,7 +251,13 @@ export default function ChatMessageActionsSheet({
             </>
           ) : null}
         </View>
-        <TouchableOpacity testID="chat-message-action-cancel" style={styles.messageActionCancel} onPress={onClose}>
+        <TouchableOpacity
+          testID="chat-message-action-cancel"
+          accessibilityRole="button"
+          accessibilityLabel="Cancel"
+          style={styles.messageActionCancel}
+          onPress={onClose}
+        >
           <Text style={styles.messageActionCancelText}>Cancel</Text>
         </TouchableOpacity>
       </View>

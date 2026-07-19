@@ -1,5 +1,9 @@
 import { supabase } from "@/lib/supabase";
-import { type GhanaCityTownSuggestion } from "@/lib/location/ghana-locality-shared";
+import {
+  normalizeGhanaRegionValue,
+  type GhanaCityTownSuggestion,
+} from "@/lib/location/ghana-locality-shared";
+import { searchGlobalLocalities } from "@/lib/location/search-global-localities";
 
 type SearchArgs = {
   region?: string | null;
@@ -70,7 +74,7 @@ export async function searchGhanaLocalities({
   query,
   limit = 40,
 }: SearchArgs): Promise<GhanaCityTownSuggestion[]> {
-  const normalizedRegion = normalizeWhitespace(region);
+  const normalizedRegion = normalizeGhanaRegionValue(region);
   if (!normalizedRegion) return [];
   const normalizedQuery = normalizeWhitespace(query) || null;
   const normalizedLimit = Math.max(1, Math.min(limit, 120));
@@ -114,11 +118,45 @@ export async function searchGhanaLocalities({
           }))
           .filter((row) => row.name.length > 0),
       );
-      SEARCH_CACHE.set(cacheKey, deduped);
-      return deduped;
+      if (deduped.length > 0 || !normalizedQuery) {
+        SEARCH_CACHE.set(cacheKey, deduped);
+        return deduped;
+      }
     }
   } catch {
-    return [];
+    // Fall through to the country-wide GeoNames search for neighbourhoods or
+    // newer settlements that have not reached the Ghana catalogue yet.
+  }
+
+  if (normalizedQuery) {
+    try {
+      const globalResults = await searchGlobalLocalities({
+        countryCode: "GH",
+        query: normalizedQuery,
+        limit: Math.min(normalizedLimit, 30),
+      });
+      const fallback = dedupeSuggestions(
+        globalResults
+          .filter((row) => {
+            const resultRegion = normalizeGhanaRegionValue(row.admin1Name);
+            return !resultRegion || resultRegion.toLowerCase() === normalizedRegion.toLowerCase();
+          })
+          .map((row) => ({
+            name: row.name,
+            region: normalizeGhanaRegionValue(row.admin1Name) || normalizedRegion,
+            district: null,
+            population: row.population,
+            geonameId: row.geonameId,
+            latitude: row.latitude,
+            longitude: row.longitude,
+            featureCode: row.featureCode,
+          })),
+      );
+      SEARCH_CACHE.set(cacheKey, fallback);
+      return fallback;
+    } catch {
+      return [];
+    }
   }
 
   return [];

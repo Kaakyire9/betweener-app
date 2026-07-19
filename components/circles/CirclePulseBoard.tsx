@@ -1047,7 +1047,7 @@ const createStyles = (compactWidth: boolean, compactHeight: boolean, palette: Ci
     mediaSpotlight: { borderWidth: 1, borderColor: palette.tealBorder },
     mediaPoster: { position: 'relative', height: compactHeight ? 220 : 252, borderRadius: 20 },
     mediaImage: { width: '100%', height: '100%' },
-    mediaOverlay: { ...StyleSheet.absoluteFillObject },
+    mediaOverlay: { ...StyleSheet.absoluteFill },
     mediaFallback: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.purpleSoft },
     audioPreview: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 15, backgroundColor: palette.tealSoft },
     audioIcon: {
@@ -1168,7 +1168,7 @@ const createStyles = (compactWidth: boolean, compactHeight: boolean, palette: Ci
     gatheringAvatarHeroMeta: { color: palette.teal, fontSize: 12, lineHeight: 18, fontWeight: '800' },
     gatheringAvatarHeroSupport: { color: palette.textSoft, fontSize: 11, lineHeight: 16 },
     gatheringPosterImage: { width: '100%', height: '100%' },
-    gatheringPosterImageOverlay: { ...StyleSheet.absoluteFillObject },
+    gatheringPosterImageOverlay: { ...StyleSheet.absoluteFill },
     gatheringPosterDateBadge: {
       position: 'absolute',
       top: 10,

@@ -227,7 +227,7 @@ export default function GhanaOnboardingProfileSections({
             {formData.city ? <TouchableOpacity onPress={(event) => { event.stopPropagation(); clearCity(); }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}><MaterialCommunityIcons name="close-circle-outline" size={18} color={theme.textMuted} /></TouchableOpacity> : <MaterialCommunityIcons name="chevron-right" size={20} color={theme.textMuted} />}
           </TouchableOpacity>
         </> : <>
-          {formData.current_country ? <GlobalCityField countryCode={formData.current_country_code || ''} countryName={formData.current_country} value={formData.city || ''} region={formData.region} selectedGeonameId={formData.locality_geoname_id} dark={dark} styles={globalCityStyles} onSelect={(place) => {
+          {formData.current_country ? <GlobalCityField countryCode={formData.current_country_code || ''} countryName={formData.current_country} value={formData.city || ''} region={formData.region} selectedGeonameId={formData.locality_geoname_id} dark={dark} styles={globalCityStyles} modalMode="screen" onSelect={(place) => {
             handleInputChange('city', place?.name ?? '');
             handleInputChange('region', place?.admin1Name ?? '');
             handleInputChange('locality_district', place?.admin1Name ?? '');

@@ -22,7 +22,7 @@ describe('useCirclePulseRefresh', () => {
     jest.useRealTimers();
   });
 
-  it('reloads stale data on foreground without polling and cleans up on unmount', () => {
+  it('reloads stale data on foreground without polling and cleans up on unmount', async () => {
     const reload = jest.fn();
     const remove = jest.fn();
     let onAppStateChange: ((state: string) => void) | null = null;
@@ -31,33 +31,33 @@ describe('useCirclePulseRefresh', () => {
       return { remove } as any;
     });
 
-    const { unmount } = render(<RefreshHarness enabled reload={reload} />);
+    const { unmount } = await render(<RefreshHarness enabled reload={reload} />);
 
-    act(() => {
+    await act(() => {
       jest.advanceTimersByTime(CIRCLE_PULSE_FOREGROUND_MIN_GAP_MS);
     });
     expect(reload).not.toHaveBeenCalled();
 
-    act(() => {
+    await act(() => {
       onAppStateChange?.('active');
     });
     expect(reload).toHaveBeenCalledTimes(1);
 
-    unmount();
+    await unmount();
     expect(remove).toHaveBeenCalledTimes(1);
 
-    act(() => {
+    await act(() => {
       jest.advanceTimersByTime(CIRCLE_PULSE_FOREGROUND_MIN_GAP_MS);
     });
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
-  it('does not subscribe while refresh is disabled', () => {
+  it('does not subscribe while refresh is disabled', async () => {
     const reload = jest.fn();
 
-    render(<RefreshHarness enabled={false} reload={reload} />);
+    await render(<RefreshHarness enabled={false} reload={reload} />);
 
-    act(() => {
+    await act(() => {
       jest.advanceTimersByTime(CIRCLE_PULSE_FOREGROUND_MIN_GAP_MS);
     });
     expect(reload).not.toHaveBeenCalled();

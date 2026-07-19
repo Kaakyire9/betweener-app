@@ -364,17 +364,17 @@ export default function MatchModal({
 
 const styles = StyleSheet.create({
   overlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 20000,
     elevation: 100,
     justifyContent: 'center',
     alignItems: 'center',
   },
   backdropTap: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   backdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: '#05070D',
   },
   celebrationFlash: {

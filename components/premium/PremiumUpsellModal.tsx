@@ -107,7 +107,7 @@ export default function PremiumUpsellModal({
 const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
   StyleSheet.create({
     backdrop: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       backgroundColor: "rgba(4,10,16,0.56)",
     },
     sheetWrap: {
@@ -128,10 +128,10 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       elevation: 14,
     },
     cardGlow: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
     },
     blur: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
     },
     header: {
       paddingHorizontal: 20,

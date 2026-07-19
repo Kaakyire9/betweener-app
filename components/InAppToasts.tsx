@@ -3279,7 +3279,7 @@ const styles = StyleSheet.create({
     height: 42,
   },
   toastThumbOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',

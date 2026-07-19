@@ -28,6 +28,7 @@ type DocHubItem = {
 type UseChatThreadBrowseUiArgs = {
   chatSearchQuery: string;
   renderedMessages: MessageType[];
+  remoteSearchResults?: MessageType[];
   pinnedMessageCount: number;
   primaryPinnedMessage: MessageType | null;
   jumpToMessage: (messageId: string) => void;
@@ -36,6 +37,7 @@ type UseChatThreadBrowseUiArgs = {
 export const useChatThreadBrowseUi = ({
   chatSearchQuery,
   renderedMessages,
+  remoteSearchResults = [],
   pinnedMessageCount,
   primaryPinnedMessage,
   jumpToMessage,
@@ -57,12 +59,14 @@ export const useChatThreadBrowseUi = ({
   const searchResults = useMemo(() => {
     const query = trimmedChatSearchQuery.toLowerCase();
     if (!query) return [];
-    return renderedMessages.filter((msg) => {
+    const merged = new Map<string, MessageType>();
+    [...remoteSearchResults, ...renderedMessages].forEach((message) => merged.set(message.id, message));
+    return Array.from(merged.values()).filter((msg) => {
       if (msg.deletedForAll) return false;
       if (msg.type !== "text") return false;
       return (msg.text || "").toLowerCase().includes(query);
     });
-  }, [renderedMessages, trimmedChatSearchQuery]);
+  }, [remoteSearchResults, renderedMessages, trimmedChatSearchQuery]);
 
   const matchMessageIds = useMemo(() => searchResults.map((result) => result.id), [searchResults]);
   const matchMessageIdSet = useMemo(() => new Set(matchMessageIds), [matchMessageIds]);

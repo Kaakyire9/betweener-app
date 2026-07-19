@@ -9,6 +9,13 @@ import {
   pickBetterLocationValue,
   pickPreferredLocationLabel,
 } from '../lib/location/location-display.ts';
+import { normalizeGhanaRegionValue } from '../lib/location/ghana-locality-shared.ts';
+
+test('Ghana locality search canonicalizes legacy Region suffixes', () => {
+  assert.equal(normalizeGhanaRegionValue('Greater Accra Region'), 'Greater Accra');
+  assert.equal(normalizeGhanaRegionValue('  ASHANTI region  '), 'Ashanti');
+  assert.equal(normalizeGhanaRegionValue('Volta'), 'Volta');
+});
 
 test('pickPreferredLocationLabel prefers city over coarse region', () => {
   const value = pickPreferredLocationLabel({

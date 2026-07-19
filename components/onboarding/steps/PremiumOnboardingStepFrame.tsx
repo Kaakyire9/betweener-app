@@ -65,7 +65,7 @@ export function PremiumOnboardingStepFrame({
 
   const entering = (transitionDirection === "forward" ? FadeInRight : FadeInLeft)
     .duration(320)
-    .withInitialValues({ transform: [{ translateX: transitionDirection === "forward" ? 18 : -18 }, { scale: 0.992 }] })
+    .withInitialValues({ transform: [{ translateX: transitionDirection === "forward" ? 18 : -18 }] })
     .reduceMotion(ReduceMotion.System);
   const exiting = (transitionDirection === "forward" ? FadeOutLeft : FadeOutRight)
     .duration(180)

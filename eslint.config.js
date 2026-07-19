@@ -1,8 +1,12 @@
-// Flat ESLint config for ESLint v9 (Expo SDK 54+ toolchain).
-// Keep it local so `npm run lint` works without `expo lint`.
+// Flat ESLint 10 config. Expo SDK 57 still publishes a few ESLint 9-era rules,
+// so @eslint/compat supplies the removed rule-context APIs until Expo updates them.
 const expoConfig = require('eslint-config-expo/flat');
+const { fixupConfigRules } = require('@eslint/compat');
 const { defineConfig } = require('eslint/config');
-const tsEslint = require('@typescript-eslint/eslint-plugin');
+const compatibleExpoConfig = fixupConfigRules(expoConfig);
+const tsEslint = compatibleExpoConfig.find(
+  (config) => config.plugins?.['@typescript-eslint'],
+)?.plugins?.['@typescript-eslint'];
 
 module.exports = defineConfig([
   {
@@ -22,7 +26,7 @@ module.exports = defineConfig([
       'metro.config.js',
     ],
   },
-  expoConfig,
+  ...compatibleExpoConfig,
   {
     plugins: {
       '@typescript-eslint': tsEslint,
@@ -55,6 +59,9 @@ module.exports = defineConfig([
       'react-hooks/refs': 'off',
       'react-hooks/purity': 'off',
       'react-hooks/use-memo': 'off',
+      // React Compiler is not enabled. Reanimated shared values, Expo Video players,
+      // and refs intentionally use imperative mutation; revisit with a compiler rollout.
+      'react-hooks/immutability': 'off',
 
       // `react-native` ships Flow syntax in JS entrypoints which `eslint-plugin-import` can't parse.
       'import/namespace': 'off',
@@ -62,9 +69,6 @@ module.exports = defineConfig([
   },
   // Some files intentionally use `require()` (e.g., tests, optional native wrappers).
   {
-    plugins: {
-      '@typescript-eslint': tsEslint,
-    },
     files: ['**/__tests__/**', 'components/NativeWrappers/**', 'hooks/useLocationPreference.ts'],
     rules: {
       '@typescript-eslint/no-require-imports': 'off',

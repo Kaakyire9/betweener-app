@@ -235,7 +235,7 @@ const styles = StyleSheet.create({
     borderRadius: 62,
   },
   sheen: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   headerRow: {
     flexDirection: "row",

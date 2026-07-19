@@ -335,7 +335,7 @@ export const createPremiumOnboardingStyles = (
       borderRadius: 28,
     },
     welcomeButtonGradient: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       borderRadius: 28,
     },
     welcomeButtonTopHighlight: {

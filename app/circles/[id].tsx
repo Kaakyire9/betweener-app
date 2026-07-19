@@ -2248,8 +2248,13 @@ export default function CircleDetailScreen() {
     [getGatheringPosterMember, getGatheringPosterMemberByProfileId],
   );
   const selectedGatheringPosterMember = useMemo(
-    () => (gatheringComposerPosterMemberId ? gatheringPosterMembersByProfileId[gatheringComposerPosterMemberId] ?? null : null)
-      ?? getGatheringPosterMember(gatheringComposerPosterUrl),
+    () => {
+      if (gatheringComposerPosterMemberId) {
+        const selectedMember = gatheringPosterMembersByProfileId[gatheringComposerPosterMemberId];
+        if (selectedMember) return selectedMember;
+      }
+      return getGatheringPosterMember(gatheringComposerPosterUrl);
+    },
     [gatheringComposerPosterMemberId, gatheringComposerPosterUrl, gatheringPosterMembersByProfileId, getGatheringPosterMember],
   );
   const selectedGatheringPosterSeatContext = useMemo(
@@ -5397,7 +5402,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       gap: 12,
     },
     gatheringPosterImage: { width: '100%', height: '100%' },
-    gatheringPosterOverlay: { ...StyleSheet.absoluteFillObject },
+    gatheringPosterOverlay: { ...StyleSheet.absoluteFill },
     gatheringPosterBadge: {
       position: 'absolute',
       left: 12,

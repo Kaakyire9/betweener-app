@@ -46,24 +46,24 @@ describe("ChatQuickReactionsBar interactions", () => {
     jest.clearAllMocks();
   });
 
-  it("forwards quick reaction taps with message id and emoji", () => {
+  it("forwards quick reaction taps with message id and emoji", async () => {
     const props = buildProps();
-    const { getByTestId } = render(<ChatQuickReactionsBar {...props} />);
+    const { getByTestId } = await render(<ChatQuickReactionsBar {...props} />);
 
-    fireEvent.press(getByTestId("chat-quick-reaction-1"));
+    await fireEvent.press(getByTestId("chat-quick-reaction-1"));
 
     expect(props.onAddReaction).toHaveBeenCalledWith("message-1", "😂");
   });
 
-  it("handles reply, pin, and delete actions and closes after each", () => {
+  it("handles reply, pin, and delete actions and closes after each", async () => {
     const props = buildProps({ isActionPinned: true });
-    const { getByTestId, getByText } = render(<ChatQuickReactionsBar {...props} />);
+    const { getByTestId, getByText } = await render(<ChatQuickReactionsBar {...props} />);
 
     expect(getByText("Unpin")).toBeTruthy();
 
-    fireEvent.press(getByTestId("chat-quick-action-reply"));
-    fireEvent.press(getByTestId("chat-quick-action-pin"));
-    fireEvent.press(getByTestId("chat-quick-action-delete"));
+    await fireEvent.press(getByTestId("chat-quick-action-reply"));
+    await fireEvent.press(getByTestId("chat-quick-action-pin"));
+    await fireEvent.press(getByTestId("chat-quick-action-delete"));
 
     expect(props.onReply).toHaveBeenCalledWith(baseMessage);
     expect(props.onTogglePin).toHaveBeenCalledWith(baseMessage, true);
@@ -71,47 +71,47 @@ describe("ChatQuickReactionsBar interactions", () => {
     expect(props.onCloseReactions).toHaveBeenCalledTimes(3);
   });
 
-  it("hides copy for view-once messages", () => {
+  it("hides copy for view-once messages", async () => {
     const props = buildProps({
       item: {
         ...baseMessage,
         isViewOnce: true,
       },
     });
-    const { queryByTestId } = render(<ChatQuickReactionsBar {...props} />);
+    const { queryByTestId } = await render(<ChatQuickReactionsBar {...props} />);
 
     expect(queryByTestId("chat-quick-action-copy")).toBeNull();
   });
 
-  it("hides reaction tray and action row for deleted messages", () => {
+  it("hides reaction tray and action row for deleted messages", async () => {
     const props = buildProps({
       item: {
         ...baseMessage,
         deletedForAll: true,
       },
     });
-    const { queryByTestId } = render(<ChatQuickReactionsBar {...props} />);
+    const { queryByTestId } = await render(<ChatQuickReactionsBar {...props} />);
 
     expect(queryByTestId("chat-quick-reaction-0")).toBeNull();
     expect(queryByTestId("chat-quick-action-reply")).toBeNull();
   });
 
-  it("shows a focused message preview and dismisses from the transparent backdrop", () => {
+  it("shows a focused message preview and dismisses from the transparent backdrop", async () => {
     const props = buildProps();
-    const { getByTestId, getByText } = render(<ChatQuickReactionsBar {...props} />);
+    const { getByTestId, getByText } = await render(<ChatQuickReactionsBar {...props} />);
 
     expect(getByTestId("chat-quick-reaction-background-blur")).toBeTruthy();
     expect(getByTestId("chat-quick-reaction-preview")).toBeTruthy();
     expect(getByText("Hello")).toBeTruthy();
 
-    fireEvent.press(getByTestId("chat-quick-reaction-backdrop"));
+    await fireEvent.press(getByTestId("chat-quick-reaction-backdrop"));
 
     expect(props.onCloseReactions).toHaveBeenCalledTimes(1);
   });
 
-  it("places reactions above the focused bubble and actions below it", () => {
+  it("places reactions above the focused bubble and actions below it", async () => {
     const props = buildProps();
-    const { getByTestId } = render(<ChatQuickReactionsBar {...props} />);
+    const { getByTestId } = await render(<ChatQuickReactionsBar {...props} />);
     const layout = getByTestId("chat-quick-reaction-layout");
     const orderedIds = [
       "chat-quick-reactions-tray",
@@ -121,13 +121,13 @@ describe("ChatQuickReactionsBar interactions", () => {
 
     expect(
       layout
-        .findAll((node) => orderedIds.includes(node.props.testID))
+        .queryAll((node) => orderedIds.includes(node.props.testID))
         .map((node) => node.props.testID)
         .filter((id, index, ids) => index === 0 || id !== ids[index - 1])
     ).toEqual(orderedIds);
   });
 
-  it("renders video messages as focused media bubbles", () => {
+  it("renders video messages as focused media bubbles", async () => {
     const props = buildProps({
       item: {
         ...baseMessage,
@@ -135,12 +135,12 @@ describe("ChatQuickReactionsBar interactions", () => {
         videoUrl: "https://cdn.example.com/chat-video.mp4",
       },
     });
-    const { getByTestId } = render(<ChatQuickReactionsBar {...props} />);
+    const { getByTestId } = await render(<ChatQuickReactionsBar {...props} />);
 
     expect(getByTestId("chat-quick-reaction-video-preview")).toBeTruthy();
   });
 
-  it("renders document messages with the live thread document bubble", () => {
+  it("renders document messages with the live thread document bubble", async () => {
     const props = buildProps({
       item: {
         ...baseMessage,
@@ -151,7 +151,7 @@ describe("ChatQuickReactionsBar interactions", () => {
         },
       },
     });
-    const { getByText } = render(<ChatQuickReactionsBar {...props} />);
+    const { getByText } = await render(<ChatQuickReactionsBar {...props} />);
 
     expect(getByText("IMG-20260510-WA0002.jpg")).toBeTruthy();
     expect(getByText("Tap to open")).toBeTruthy();

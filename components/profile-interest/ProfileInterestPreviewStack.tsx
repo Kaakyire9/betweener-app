@@ -185,10 +185,10 @@ const styles = StyleSheet.create({
     fontFamily: 'Archivo_700Bold',
   },
   avatarTint: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   scrim: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(9, 18, 24, 0.12)',
   },
   ctaPill: {

@@ -15,6 +15,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import { isLocalMediaUri, isRemoteMediaUri } from '@/lib/profile/media';
 
 type Props = {
   visible: boolean;
@@ -92,6 +93,10 @@ export default function ProfileVideoModal({
   onSelectReaction,
   onClose,
 }: Props) {
+  const playableVideoUrl =
+    videoUrl && (isRemoteMediaUri(videoUrl) || isLocalMediaUri(videoUrl))
+      ? videoUrl
+      : undefined;
   const responsive = useResponsiveMetrics();
   const screenH = responsive.height;
   const [muted, setMuted] = useState(false);
@@ -175,8 +180,8 @@ export default function ProfileVideoModal({
         <GestureDetector gesture={panGesture}>
           <Animated.View style={[styles.container, contentStyle]}>
           <View style={styles.videoWrapper}>
-            {videoUrl ? (
-              <ModalVideoPlayer uri={videoUrl} shouldPlay={visible} muted={muted} />
+            {playableVideoUrl ? (
+              <ModalVideoPlayer uri={playableVideoUrl} shouldPlay={visible} muted={muted} />
             ) : (
               <View style={styles.fallback}>
                 <Text style={styles.fallbackEyebrow}>Intro video</Text>

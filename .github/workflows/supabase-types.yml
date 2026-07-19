@@ -16,7 +16,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24.18.0
           cache: npm
 
       - name: Install Dependencies
@@ -25,7 +25,7 @@ jobs:
       - name: Setup Supabase CLI
         uses: supabase/setup-cli@v1
         with:
-          version: 2.67.1
+          version: 2.109.1
 
       - name: Supabase Login (CI)
         run: supabase login --token "${SUPABASE_ACCESS_TOKEN}"
@@ -36,4 +36,3 @@ jobs:
         run: npm run supabase:types:check
         env:
           SUPABASE_PROJECT_ID: jbyblhithbqwojhwlenv
-

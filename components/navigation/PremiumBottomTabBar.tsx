@@ -2,8 +2,10 @@ import BlurViewSafe from '@/components/NativeWrappers/BlurViewSafe';
 import { Colors } from '@/constants/theme';
 import type { ResponsiveMetrics } from '@/lib/responsive';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Tabs } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import React, { memo, useEffect, useMemo, useRef } from 'react';
+import type { ComponentProps } from 'react';
 import {
   Animated,
   Easing,
@@ -16,38 +18,8 @@ import {
 
 type ThemeColors = typeof Colors.light;
 
-type BottomTabBarConfig = {
-  state: {
-    index: number;
-    routes: {
-      key: string;
-      name: string;
-      params?: object;
-    }[];
-  };
-  descriptors: Record<
-    string,
-    {
-      options: {
-        title?: string;
-        href?: unknown;
-        tabBarAccessibilityLabel?: string;
-        tabBarIcon?: (props: {
-          focused: boolean;
-          color: string;
-          size: number;
-          position: 'below-icon';
-        }) => React.ReactNode;
-        tabBarItemStyle?: any;
-        tabBarLabel?: string | ((props: { focused: boolean; color: string }) => React.ReactNode);
-      };
-    }
-  >;
-  navigation: {
-    emit: (event: any) => any;
-    navigate: (name: string, params?: object) => void;
-  };
-};
+type TabsProps = ComponentProps<typeof Tabs>;
+type BottomTabBarConfig = Parameters<NonNullable<TabsProps['tabBar']>>[0];
 
 type PremiumBottomTabBarProps = BottomTabBarConfig & {
   isDark: boolean;
@@ -128,7 +100,6 @@ const PremiumTabItem = memo(function PremiumTabItem({
           focused,
           color: iconColor,
           size: iconSize,
-          position: 'below-icon',
         })
       : null;
 
@@ -384,7 +355,7 @@ export default function PremiumBottomTabBar({
           if (!options) return false;
           const href = (options as { href?: unknown }).href;
           if (href === null) return false;
-          return options.tabBarItemStyle?.display !== 'none';
+          return StyleSheet.flatten(options.tabBarItemStyle)?.display !== 'none';
         }),
     [descriptors, state.routes],
   );
@@ -441,7 +412,7 @@ export default function PremiumBottomTabBar({
         <BlurViewSafe
           intensity={isDark ? 26 : 34}
           tint={isDark ? 'dark' : 'light'}
-          style={StyleSheet.absoluteFillObject}
+          style={StyleSheet.absoluteFill}
         />
         <View
           pointerEvents="none"
@@ -557,31 +528,31 @@ const styles = StyleSheet.create({
     elevation: 6,
   },
   rearAura: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     opacity: 0.52,
   },
   edgeAura: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     opacity: 0.82,
   },
   innerShell: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     marginHorizontal: 3,
     marginVertical: 3,
     borderWidth: 1,
   },
   highlight: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   toneWash: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     opacity: 0.28,
   },
   toneWashAndroid: {
     opacity: 0.09,
   },
   depthWash: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   topHairline: {
     position: 'absolute',
@@ -610,7 +581,7 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   activePill: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     borderRadius: 16,
     elevation: Platform.OS === 'android' ? 0 : 2,
     marginHorizontal: 9,
@@ -618,10 +589,10 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   activePillSheen: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   activePillCore: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     margin: 1,
     borderRadius: 15,
   },

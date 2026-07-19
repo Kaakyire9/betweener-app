@@ -14,6 +14,7 @@ type TextOutboxPayload = {
   clientMessageId?: string | null;
   replyToMessageId?: string | null;
   metadataJson?: string | null;
+  storagePath?: string | null;
 };
 
 type MediaOutboxPayload = {
@@ -60,6 +61,7 @@ type RemoteMessageRow = {
   audio_path?: string | null;
   audio_duration?: number | null;
   audio_waveform?: unknown;
+  storage_path?: string | null;
 };
 
 type FlushResult = {
@@ -70,11 +72,12 @@ type FlushResult = {
 };
 
 const REMOTE_MESSAGE_SELECT =
-  'id,client_message_id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,reply_to_message_id,audio_path,audio_duration,audio_waveform';
+  'id,client_message_id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,reply_to_message_id,audio_path,audio_duration,audio_waveform,storage_path';
 const CHAT_MEDIA_BUCKET = 'chat-media';
 const VOICE_MESSAGES_BUCKET = 'voice-messages';
 const DOCUMENT_TEXT_PREFIX = '\u{1F4CE}';
 const RETRY_DELAYS_MS = [5_000, 15_000, 45_000, 120_000, 300_000, 900_000, 1_800_000, 3_600_000];
+const DURABLE_OUTBOX_MAX_ATTEMPTS = 48;
 
 const nowIso = () => new Date().toISOString();
 
@@ -122,7 +125,7 @@ const createQueuedTextOutboxRow = (args: {
       metadataJson: args.metadataJson,
     }),
     attempt_count: 0,
-    max_attempts: 5,
+    max_attempts: DURABLE_OUTBOX_MAX_ATTEMPTS,
     next_retry_at: null,
     status: 'queued',
     error_code: null,
@@ -207,8 +210,8 @@ const encodeStoragePath = (path: string) =>
     .map((segment) => encodeURIComponent(segment))
     .join('/');
 
-const uploadQueuedPublicChatMedia = async (payload: MediaOutboxPayload) => {
-  if (!payload.senderId || !payload.localUri || !payload.fileName || !payload.contentType) {
+const uploadQueuedPrivateChatMedia = async (payload: MediaOutboxPayload) => {
+  if (!payload.senderId || !payload.receiverId || !payload.localUri || !payload.fileName || !payload.contentType) {
     throw new Error('invalid_media_payload');
   }
   const { data: sessionData } = await supabase.auth.getSession();
@@ -219,7 +222,7 @@ const uploadQueuedPublicChatMedia = async (payload: MediaOutboxPayload) => {
   const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
   if (!supabaseUrl || !supabaseAnonKey) throw new Error('missing_supabase_upload_config');
 
-  const filePath = `${payload.senderId}/${Date.now()}-${payload.fileName}`;
+  const filePath = `${payload.senderId}/${payload.receiverId}/${Date.now()}-${payload.fileName}`;
   const uploadUrl = `${supabaseUrl}/storage/v1/object/${CHAT_MEDIA_BUCKET}/${encodeStoragePath(filePath)}?upsert=true`;
   const task = FileSystem.createUploadTask(uploadUrl, payload.localUri, {
     httpMethod: 'POST',
@@ -238,15 +241,14 @@ const uploadQueuedPublicChatMedia = async (payload: MediaOutboxPayload) => {
     (uploadError as { status?: number }).status = result.status;
     throw uploadError;
   }
-  const { data } = supabase.storage.from(CHAT_MEDIA_BUCKET).getPublicUrl(filePath);
-  return data.publicUrl;
+  return filePath;
 };
 
 const uploadQueuedVoice = async (payload: VoiceOutboxPayload) => {
-  if (!payload.senderId || !payload.localUri || !payload.fileName || !payload.contentType) {
+  if (!payload.senderId || !payload.receiverId || !payload.localUri || !payload.fileName || !payload.contentType) {
     throw new Error('invalid_voice_payload');
   }
-  const filePath = `${payload.senderId}/${Date.now()}-${payload.fileName}`;
+  const filePath = `${payload.senderId}/${payload.receiverId}/${Date.now()}-${payload.fileName}`;
   const response = await fetch(payload.localUri);
   const arrayBuffer = await response.arrayBuffer();
   const bytes = new Uint8Array(arrayBuffer);
@@ -334,6 +336,7 @@ const buildMessageMetadataJson = (
     reactions: [],
     status,
     replyToId: row.reply_to_message_id ?? null,
+    storagePath: row.storage_path ?? null,
   };
 
   if (payload?.kind === 'chat_media_send' && payload.mediaType === 'image') {
@@ -349,7 +352,7 @@ const buildMessageMetadataJson = (
       type: 'document',
       document: {
         name: payload.documentName || payload.fileName || 'Document',
-        url: url || row.text || '',
+        url: url || '',
         sizeLabel: payload.documentSizeLabel ?? null,
         typeLabel: payload.documentTypeLabel ?? null,
       },
@@ -454,7 +457,17 @@ const scheduleOutboxRetry = async (
   const errorInfo = getErrorInfo(error, fallbackCode, fallbackMessage);
   const attemptCount = item.attempt_count + 1;
 
-  if (attemptCount >= item.max_attempts) {
+  const errorCode = String(errorInfo.code || '').toLowerCase();
+  const errorMessage = String(errorInfo.message || '').toLowerCase();
+  const isPermanentFailure =
+    errorCode === '42501' ||
+    errorCode === '23514' ||
+    errorCode === 'invalid_payload' ||
+    errorMessage.includes('row-level security') ||
+    errorMessage.includes('messaging unavailable') ||
+    errorMessage.includes('not allowed');
+
+  if (isPermanentFailure || attemptCount >= item.max_attempts) {
     await ChatRepository.markOutboxItemStatus(item.owner_user_id, item.local_message_id, 'failed', errorInfo);
     return;
   }
@@ -487,6 +500,7 @@ const sendTextOutboxItem = async (item: ChatPendingOutboxRow) => {
       is_read: false,
       message_type: payload.messageType ?? 'text',
       reply_to_message_id: payload.replyToMessageId ?? null,
+      storage_path: payload.storagePath ?? null,
     })
     .select(REMOTE_MESSAGE_SELECT)
     .single();
@@ -517,15 +531,15 @@ const sendMediaOutboxItem = async (item: ChatPendingOutboxRow, payload: MediaOut
 
   const clientMessageId = payload.clientMessageId ?? item.local_message_id;
   await ChatRepository.markOutboxItemAttempting(item.owner_user_id, item.local_message_id);
-  const publicUrl = await uploadQueuedPublicChatMedia(payload);
+  const storagePath = await uploadQueuedPrivateChatMedia(payload);
   const documentText =
     payload.mediaType === 'document'
       ? `${DOCUMENT_TEXT_PREFIX} ${[
           payload.documentName || payload.fileName,
           payload.documentSizeLabel,
           payload.documentTypeLabel,
-        ].filter(Boolean).join(' | ')}\n${publicUrl}`
-      : publicUrl;
+        ].filter(Boolean).join(' | ')}`
+      : '';
 
   const { data, error } = await supabase
     .from('messages')
@@ -537,6 +551,7 @@ const sendMediaOutboxItem = async (item: ChatPendingOutboxRow, payload: MediaOut
       is_read: false,
       message_type: payload.mediaType === 'document' ? 'text' : payload.mediaType,
       reply_to_message_id: payload.replyToMessageId ?? null,
+      storage_path: storagePath,
     })
     .select(REMOTE_MESSAGE_SELECT)
     .single();
@@ -610,6 +625,17 @@ const sendOutboxItem = async (item: ChatPendingOutboxRow) => {
 };
 
 export const ChatOutboxService = {
+  async retryMessage(ownerUserId: string, localMessageId: string) {
+    const requeued = await ChatRepository.requeueOutboxItem(
+      ownerUserId,
+      localMessageId,
+      DURABLE_OUTBOX_MAX_ATTEMPTS,
+    );
+    if (!requeued) return { requeued: false, result: null };
+    const result = await ChatOutboxService.flushPending(ownerUserId);
+    return { requeued: true, result };
+  },
+
   async queueTextMessage(args: {
     ownerUserId: string;
     threadId: string;

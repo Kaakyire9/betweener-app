@@ -9,6 +9,22 @@ const getLastActiveTime = (lastActive?: string | null) => {
   return Number.isNaN(time) ? null : time;
 };
 
+export const resolveLatestPeerActivityAt = (
+  backendLastActive?: string | null,
+  latestPeerMessageAt?: string | null,
+  now = Date.now(),
+) => {
+  const backendTime = getLastActiveTime(backendLastActive);
+  const messageTime = getLastActiveTime(latestPeerMessageAt);
+  const validTimes = [backendTime, messageTime]
+    .filter((value): value is number => value != null)
+    // Server clocks can differ slightly; never render activity in the future.
+    .map((value) => Math.min(value, now));
+
+  if (validTimes.length === 0) return null;
+  return new Date(Math.max(...validTimes)).toISOString();
+};
+
 export const getPresenceAgeMs = (lastActive?: string | null, now = Date.now()) => {
   const time = getLastActiveTime(lastActive);
   if (time == null) return null;

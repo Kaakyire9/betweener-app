@@ -178,7 +178,7 @@ serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
     const { data: currentProfile, error: profileError } = await supabase
       .from('profiles')
-      .select('region, location, city, current_country, current_country_code, country_lock_policy, onboarding_variant, phone_number, phone_verified')
+      .select('region, location, city, current_country, current_country_code, country_lock_policy, onboarding_variant, onboarding_completed_at, profile_completed, phone_number, phone_verified')
       .eq('user_id', user.id)
       .limit(1)
       .single()
@@ -198,15 +198,20 @@ serve(async (req) => {
     const safeLocation = location || fallbackLocation || null
 
     const phoneDigits = String(currentProfile?.phone_number || '').replace(/\D/g, '')
-    const requiresGhanaCountryVerification =
+    const hasCompletedGlobalCountry =
+      String(currentProfile?.onboarding_variant || '').toLowerCase() === 'global'
+      && (currentProfile?.profile_completed === true || Boolean(currentProfile?.onboarding_completed_at))
+      && Boolean(currentProfile?.current_country_code)
+    const requiresManagedCountryVerification =
       String(currentProfile?.country_lock_policy || 'none') !== 'none'
       || (
         String(currentProfile?.onboarding_variant || '').toLowerCase() === 'ghana'
         && currentProfile?.phone_verified === true
         && phoneDigits.startsWith('233')
       )
+      || hasCompletedGlobalCountry
 
-    if (requiresGhanaCountryVerification) {
+    if (requiresManagedCountryVerification) {
       if (!countryCode || !country) {
         return new Response(JSON.stringify({
           ok: false,

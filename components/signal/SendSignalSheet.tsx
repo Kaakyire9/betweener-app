@@ -436,7 +436,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       fontFamily: "Manrope_600SemiBold",
     },
     successOverlay: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       alignItems: "center",
       justifyContent: "center",
       paddingHorizontal: 24,

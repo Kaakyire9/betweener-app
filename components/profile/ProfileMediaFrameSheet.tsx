@@ -270,7 +270,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   backdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(3,10,14,0.6)',
   },
   sheet: {
@@ -337,7 +337,7 @@ const styles = StyleSheet.create({
     fontFamily: 'Manrope_500Medium',
   },
   gridOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     flexDirection: 'row',
     justifyContent: 'space-between',
     paddingHorizontal: '33.33%',
@@ -347,7 +347,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.22)',
   },
   gridOverlayHorizontal: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     justifyContent: 'space-between',
     paddingVertical: '33.33%',
   },

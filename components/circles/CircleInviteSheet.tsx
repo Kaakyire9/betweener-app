@@ -349,7 +349,7 @@ export default function CircleInviteSheet({ visible, circleId, circleName, actor
 
 const createStyles = (palette: CirclePulsePalette, bottomInset: number) => StyleSheet.create({
   modal: { flex: 1, justifyContent: 'flex-end' },
-  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: palette.overlay },
+  backdrop: { ...StyleSheet.absoluteFill, backgroundColor: palette.overlay },
   keyboardArea: { flex: 1, justifyContent: 'flex-end' },
   sheet: {
     height: '90%',

@@ -46,7 +46,8 @@ export const subscribeThreadMessageRealtime = ({
       reportedFailure = null;
       if (
         !reportedSubscribed &&
-        channelStates.get('messages') === 'SUBSCRIBED' &&
+        channelStates.get('inbox') === 'SUBSCRIBED' &&
+        channelStates.get('sent') === 'SUBSCRIBED' &&
         channelStates.get('system') === 'SUBSCRIBED'
       ) {
         reportedSubscribed = true;
@@ -63,31 +64,51 @@ export const subscribeThreadMessageRealtime = ({
     }
   };
 
-  const messagesChannel = supabase
-    .channel(`messages:thread:${currentUserId}:${peerUserId}`)
+  const inboxChannel = supabase
+    .channel(`messages:thread:inbox:${currentUserId}:${peerUserId}`)
     .on(
       'postgres_changes',
       {
         event: '*',
         schema: 'public',
         table: 'messages',
+        filter: `receiver_id=eq.${currentUserId}`,
       },
       (payload) => {
         if (payload.eventType === 'DELETE') return;
         const row = payload.new as RemoteThreadMessageRow;
-        const isInbox = row.receiver_id === currentUserId && row.sender_id === peerUserId;
-        const isSent = row.sender_id === currentUserId && row.receiver_id === peerUserId;
-        if (!isInbox && !isSent) return;
+        if (row.sender_id !== peerUserId) return;
         if (payload.eventType === 'INSERT') {
-          if (isInbox) onInboxInsert(row);
-          if (isSent) onSentInsert(row);
+          onInboxInsert(row);
           return;
         }
-        if (isInbox) onInboxUpdate(row);
-        if (isSent) onSentUpdate(row);
+        onInboxUpdate(row);
       },
     )
-    .subscribe((status) => reportStatus('messages', status));
+    .subscribe((status) => reportStatus('inbox', status));
+
+  const sentChannel = supabase
+    .channel(`messages:thread:sent:${currentUserId}:${peerUserId}`)
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'messages',
+        filter: `sender_id=eq.${currentUserId}`,
+      },
+      (payload) => {
+        if (payload.eventType === 'DELETE') return;
+        const row = payload.new as RemoteThreadMessageRow;
+        if (row.receiver_id !== peerUserId) return;
+        if (payload.eventType === 'INSERT') {
+          onSentInsert(row);
+          return;
+        }
+        onSentUpdate(row);
+      },
+    )
+    .subscribe((status) => reportStatus('sent', status));
 
   const systemChannel = supabase
     .channel(`system_messages:${currentUserId}:${peerUserId}`)
@@ -108,7 +129,8 @@ export const subscribeThreadMessageRealtime = ({
     .subscribe((status) => reportStatus('system', status));
 
   return () => {
-    supabase.removeChannel(messagesChannel);
+    supabase.removeChannel(inboxChannel);
+    supabase.removeChannel(sentChannel);
     supabase.removeChannel(systemChannel);
   };
 };

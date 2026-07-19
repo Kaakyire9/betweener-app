@@ -16,7 +16,38 @@ Notifications.setNotificationHandler({
 });
 
 const LOG_THROTTLE_MS = 60_000;
+const PUSH_TOKEN_RETRY_DELAYS_MS = [0, 900, 2_400] as const;
 const logLastAtByKey = new Map<string, number>();
+
+const wait = (delayMs: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+
+const isTransientPushTokenError = (error: unknown) => {
+  const message = String((error as any)?.message || error || '').toLowerCase();
+  return (
+    message.includes('fetchrequestcanceledexception') ||
+    message.includes('request has been canceled') ||
+    message.includes('request has been cancelled') ||
+    message.includes('fetch failed') ||
+    message.includes('network request failed')
+  );
+};
+
+const getExpoPushTokenWithRetry = async (projectId: string) => {
+  let lastError: unknown = null;
+
+  for (const delayMs of PUSH_TOKEN_RETRY_DELAYS_MS) {
+    if (delayMs > 0) await wait(delayMs);
+    try {
+      return await Notifications.getExpoPushTokenAsync({ projectId });
+    } catch (error) {
+      lastError = error;
+      if (!isTransientPushTokenError(error)) throw error;
+    }
+  }
+
+  throw lastError;
+};
 
 const logOnce = (key: string, context: Record<string, unknown>) => {
   const now = Date.now();
@@ -229,7 +260,7 @@ export const registerPushToken = async (userId: string) => {
 
   let token: string | null = null;
   try {
-    const tokenResponse = await Notifications.getExpoPushTokenAsync({ projectId });
+    const tokenResponse = await getExpoPushTokenWithRetry(projectId);
     token = tokenResponse.data || null;
   } catch (e) {
     console.log('[push] getExpoPushToken error', e);

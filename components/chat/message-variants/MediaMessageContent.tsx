@@ -7,6 +7,7 @@ import type { MessageType } from "@/components/chat/types";
 import type { ChatMessageStyles } from "@/components/chat/message-variants/shared";
 import { getReceiptIconState } from "@/components/chat/message-variants/shared";
 import VideoPreview from "@/components/chat/message-variants/VideoPreview";
+import { resolveChatImageUri, resolveChatVideoUri } from "@/lib/chat/media-uri";
 
 type MediaMessageContentProps = {
   item: MessageType;
@@ -50,10 +51,11 @@ const MediaMessageContent = memo(
     }, [isMyMessage, item.status, styles.mediaMetaOverlayDelivered, styles.mediaMetaOverlayRead, styles.mediaMetaOverlaySent]);
 
     if (item.type === 'image') {
+      const resolvedImageUri = resolveChatImageUri(item, cachedImageUrl);
       return (
         <View style={[styles.imageMessageContainer, styles.mediaSurface]}>
           <ExpoImage
-            source={{ uri: item.offlineImageUri ?? cachedImageUrl ?? item.imageUrl }}
+            source={{ uri: resolvedImageUri ?? undefined }}
             style={[
               styles.messageImage,
               imageSize ? { width: imageSize.width, height: imageSize.height } : null,
@@ -110,13 +112,14 @@ const MediaMessageContent = memo(
     }
 
     if (item.type === 'video') {
+      const resolvedVideoUri = resolveChatVideoUri(item, cachedVideoUrl);
       return (
         <View style={[styles.videoMessageContainer, styles.mediaSurface]}>
           {item.videoUrl ? (
             <VideoPreview
               styles={styles}
               url={item.videoUrl}
-              resolvedUrl={item.offlineVideoUri ?? cachedVideoUrl}
+              resolvedUrl={resolvedVideoUri ?? undefined}
             />
           ) : null}
           <Animated.View

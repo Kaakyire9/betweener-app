@@ -5,6 +5,7 @@
   },
   "build": {
     "development": {
+      "node": "24.18.0",
       "channel": "development",
       "developmentClient": true,
       "distribution": "internal",
@@ -20,6 +21,7 @@
       }
     },
     "preview": {
+      "node": "24.18.0",
       "channel": "preview",
       "distribution": "internal",
       "env": {
@@ -35,6 +37,7 @@
       }
     },
     "playInternal": {
+      "node": "24.18.0",
       "channel": "preview",
       "distribution": "store",
       "autoIncrement": true,
@@ -51,6 +54,7 @@
       }
     },
     "playVerification": {
+      "node": "24.18.0",
       "channel": "staging",
       "distribution": "internal",
       "android": {
@@ -64,6 +68,7 @@
       }
     },
     "production": {
+      "node": "24.18.0",
       "channel": "production",
       "autoIncrement": true,
       "buildArtifactPaths": [

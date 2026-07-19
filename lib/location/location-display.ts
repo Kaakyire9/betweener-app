@@ -102,7 +102,7 @@ const sameLocationLabel = (a?: string | null, b?: string | null) => {
 
 const isDistanceLabel = (label?: string | null) => {
   const lower = String(label || '').toLowerCase();
-  return lower.includes('away') || /\b(km|mi|mile|miles)\b/.test(lower) || /<\s*1/.test(lower);
+  return lower.includes('away') || lower.includes('close by') || /\b(km|mi|mile|miles)\b/.test(lower) || /<\s*1/.test(lower);
 };
 
 const getCountry = (source: Record<string, any>) =>

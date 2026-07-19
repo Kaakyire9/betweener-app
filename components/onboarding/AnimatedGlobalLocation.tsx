@@ -170,7 +170,7 @@ export function AnimatedGlobalLocation({ size = 240, selected = false }: Props) 
               locations={[0, 0.42, 0.58, 1]}
               start={{ x: 0, y: 0 }}
               end={{ x: 0, y: 1 }}
-              style={StyleSheet.absoluteFillObject}
+              style={StyleSheet.absoluteFill}
             />
           </Animated.View>
         </View>

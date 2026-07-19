@@ -18,6 +18,8 @@ export type MessageType = {
   encryptedMediaAlg?: string | null;
   encryptedMediaMime?: string | null;
   encryptedMediaSize?: number | null;
+  /** Stable private object reference. Renderers resolve this to a short-lived signed URL. */
+  storagePath?: string | null;
   reactions: { userId: string; emoji: string; }[];
   status?: 'queued' | 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
   readAt?: Date;

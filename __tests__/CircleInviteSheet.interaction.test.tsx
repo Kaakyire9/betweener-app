@@ -62,7 +62,7 @@ describe('CircleInviteSheet', () => {
 
   it('searches members and sends an internal invitation', async () => {
     mockInviteProfile.mockResolvedValue(undefined);
-    const { getByLabelText, getByText } = render(
+    const { getByLabelText, getByText } = await render(
       <CircleInviteSheet
         visible
         circleId="circle-1"
@@ -73,7 +73,7 @@ describe('CircleInviteSheet', () => {
     );
 
     await waitFor(() => expect(getByText('Jennifer, 35')).toBeTruthy());
-    fireEvent.press(getByLabelText('Invite Jennifer'));
+    await fireEvent.press(getByLabelText('Invite Jennifer'));
 
     await waitFor(() => {
       expect(mockInviteProfile).toHaveBeenCalledWith('circle-1', 'profile-host', 'profile-jennifer');
@@ -83,7 +83,7 @@ describe('CircleInviteSheet', () => {
 
   it('opens external sharing only after the external option is selected', async () => {
     const shareSpy = jest.spyOn(Share, 'share').mockResolvedValue({ action: 'sharedAction' });
-    const { getByText } = render(
+    const { getByText } = await render(
       <CircleInviteSheet
         visible
         circleId="circle-1"
@@ -94,7 +94,7 @@ describe('CircleInviteSheet', () => {
     );
 
     expect(shareSpy).not.toHaveBeenCalled();
-    fireEvent.press(getByText('Share an external invite'));
+    await fireEvent.press(getByText('Share an external invite'));
 
     await waitFor(() => expect(shareSpy).toHaveBeenCalledWith({
       message: expect.stringContaining('betweenerapp://circles/circle-1'),

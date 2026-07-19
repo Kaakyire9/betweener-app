@@ -1,6 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { findCountryByCode } from '@/lib/location/countries';
-import { isGhanaCountryManagedPolicy } from '@/lib/location/country-lock';
+import { shouldManageProfileCountry } from '@/lib/location/country-lock';
 import { isLegacyGhanaLocalityForeignKeyError } from '@/lib/location/locality-errors';
 import { buildProfileLocationUpdate } from '@/lib/profile/profile-location-update';
 
@@ -33,15 +33,13 @@ export async function requestAndSavePreciseLocation(profileId: string): Promise<
   try {
     const { data: profileRow, error: profileError } = await supabase
       .from('profiles')
-      .select('country_lock_policy, current_country_code')
+      .select('country_lock_policy, onboarding_variant, onboarding_completed_at, profile_completed, phone_number, phone_verified, current_country_code')
       .eq('id', profileId)
       .single();
     if (profileError) {
       return { ok: false, error: profileError.message };
     }
-    const requiresManagedCountryVerification = isGhanaCountryManagedPolicy(
-      profileRow?.country_lock_policy,
-    );
+    const requiresManagedCountryVerification = shouldManageProfileCountry(profileRow);
 
     const { status } = await Location.requestForegroundPermissionsAsync();
     if (status !== 'granted') {
@@ -154,14 +152,14 @@ export async function saveManualCityLocation(
 
     const { data: profileRow, error: profileError } = await supabase
       .from('profiles')
-      .select('country_lock_policy, current_country_code')
+      .select('country_lock_policy, onboarding_variant, onboarding_completed_at, profile_completed, phone_number, phone_verified, current_country_code')
       .eq('id', profileId)
       .single();
     if (profileError) {
       return { ok: false, error: profileError.message };
     }
     if (
-      isGhanaCountryManagedPolicy(profileRow?.country_lock_policy)
+      shouldManageProfileCountry(profileRow)
       && normalizedCountryCode
       && normalizedCountryCode !== normalizedCountryCodeFromProfile(profileRow)
     ) {

@@ -1379,20 +1379,20 @@ const createStyles = (theme: typeof Colors.dark, isDark: boolean) => StyleSheet.
     flex: 1,
   },
   backdropLayer: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   backdropBlur: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   backdropScrim: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: isDark ? 'rgba(4,10,16,0.54)' : 'rgba(10,22,34,0.26)',
   },
   backdropPressable: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   sheetWrapper: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     justifyContent: 'flex-end',
   },
   sheet: {
@@ -1412,7 +1412,7 @@ const createStyles = (theme: typeof Colors.dark, isDark: boolean) => StyleSheet.
     overflow: 'hidden',
   },
   sheetGlassFill: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: isDark ? 'rgba(8,22,30,0.58)' : 'rgba(255,247,239,0.74)',
   },
   sheetGlassSheen: {

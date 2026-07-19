@@ -77,7 +77,7 @@ export function AnimatedGlobalWelcomeGlobe({ style }: Props) {
             locations={[0, 0.42, 0.58, 1]}
             start={{ x: 0, y: 0.5 }}
             end={{ x: 1, y: 0.5 }}
-            style={StyleSheet.absoluteFillObject}
+            style={StyleSheet.absoluteFill}
           />
         </Animated.View>
       </View>
@@ -90,7 +90,7 @@ const styles = StyleSheet.create({
     position: "relative",
   },
   image: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     width: "100%",
     height: "100%",
   },

@@ -34,7 +34,7 @@ function StudioHeroPreview({
         colors={isDark ? ['#102A2F', '#151D2C'] : ['#D8F4F3', '#EFE5FF']}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
-        style={StyleSheet.absoluteFillObject}
+        style={StyleSheet.absoluteFill}
       />
       {hasIntroVideo ? (
         <ProfileInlineVideoSurface
@@ -46,8 +46,8 @@ function StudioHeroPreview({
       ) : hasHeroImage ? (
         <OfflineImage
           uri={draft.heroImageUrl}
-          style={StyleSheet.absoluteFillObject}
-          containerStyle={StyleSheet.absoluteFillObject}
+          style={StyleSheet.absoluteFill}
+          containerStyle={StyleSheet.absoluteFill}
           contentFit="cover"
         />
       ) : null}
@@ -57,7 +57,7 @@ function StudioHeroPreview({
         colors={['rgba(4,12,16,0.08)', 'rgba(4,12,16,0.48)']}
         start={{ x: 0.5, y: 0 }}
         end={{ x: 0.5, y: 1 }}
-        style={StyleSheet.absoluteFillObject}
+        style={StyleSheet.absoluteFill}
       />
       <View style={styles.previewHeroTopBar}>
         <View style={[styles.previewPill, { backgroundColor: 'rgba(7,20,26,0.56)', borderColor: 'rgba(255,255,255,0.18)' }]}>
@@ -137,7 +137,7 @@ export default function ProfileStudioPreview({
               colors={['transparent', 'rgba(4,12,16,0.36)']}
               start={{ x: 0.5, y: 0 }}
               end={{ x: 0.5, y: 1 }}
-              style={StyleSheet.absoluteFillObject}
+              style={StyleSheet.absoluteFill}
             />
             {index === 0 ? (
               <View style={[styles.detailHeroBadge, { backgroundColor: theme.tint }]}>
@@ -153,7 +153,7 @@ export default function ProfileStudioPreview({
               colors={['transparent', 'rgba(4,12,16,0.44)']}
               start={{ x: 0.5, y: 0 }}
               end={{ x: 0.5, y: 1 }}
-              style={StyleSheet.absoluteFillObject}
+              style={StyleSheet.absoluteFill}
             />
             <View style={[styles.detailVideoBadge, { backgroundColor: 'rgba(7,20,26,0.76)' }]}>
               <MaterialCommunityIcons name="play-circle-outline" size={12} color="#FFFFFF" />

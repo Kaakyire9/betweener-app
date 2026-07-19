@@ -6,7 +6,7 @@
  */
 
 import { supabase } from '@/lib/supabase';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 interface VerificationRequest {
   id: string;
@@ -61,6 +61,99 @@ type VerificationRequestRow = {
   submitted_at?: string;
   reviewed_at?: string;
   reviewer_notes?: string;
+};
+
+type VerificationRealtimeEntry = {
+  channel: ReturnType<typeof supabase.channel> | null;
+  cleanupTimer: ReturnType<typeof setTimeout> | null;
+  listeners: Set<() => void>;
+  notifyTimer: ReturnType<typeof setTimeout> | null;
+  startPromise: Promise<void> | null;
+};
+
+const verificationRealtimeEntries = new Map<string, VerificationRealtimeEntry>();
+
+const notifyVerificationListeners = (entry: VerificationRealtimeEntry) => {
+  if (entry.notifyTimer) clearTimeout(entry.notifyTimer);
+  entry.notifyTimer = setTimeout(() => {
+    entry.notifyTimer = null;
+    entry.listeners.forEach((listener) => listener());
+  }, 100);
+};
+
+const startVerificationRealtimeEntry = (userId: string, entry: VerificationRealtimeEntry) => {
+  if (entry.channel || entry.startPromise) return;
+
+  entry.startPromise = (async () => {
+    const channelName = `verification-status:${userId}`;
+    const staleTopics = new Set([`realtime:${channelName}`, 'realtime:verification-status']);
+    const staleChannels = supabase.getChannels().filter((channel) => staleTopics.has(channel.topic));
+    if (staleChannels.length > 0) {
+      await Promise.all(staleChannels.map((channel) => supabase.removeChannel(channel)));
+    }
+
+    if (entry.listeners.size === 0 || verificationRealtimeEntries.get(userId) !== entry) return;
+
+    const notify = () => notifyVerificationListeners(entry);
+    entry.channel = supabase
+      .channel(channelName)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'verification_requests', filter: `user_id=eq.${userId}` },
+        notify,
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `user_id=eq.${userId}` },
+        notify,
+      )
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') notify();
+      });
+  })()
+    .catch(() => notifyVerificationListeners(entry))
+    .finally(() => {
+      entry.startPromise = null;
+    });
+};
+
+const subscribeVerificationRealtime = (userId: string, listener: () => void) => {
+  let entry = verificationRealtimeEntries.get(userId);
+  if (!entry) {
+    entry = {
+      channel: null,
+      cleanupTimer: null,
+      listeners: new Set<() => void>(),
+      notifyTimer: null,
+      startPromise: null,
+    };
+    verificationRealtimeEntries.set(userId, entry);
+  }
+
+  if (entry.cleanupTimer) {
+    clearTimeout(entry.cleanupTimer);
+    entry.cleanupTimer = null;
+  }
+  entry.listeners.add(listener);
+  startVerificationRealtimeEntry(userId, entry);
+
+  return () => {
+    if (verificationRealtimeEntries.get(userId) !== entry) return;
+    entry.listeners.delete(listener);
+    if (entry.listeners.size > 0 || entry.cleanupTimer) return;
+
+    entry.cleanupTimer = setTimeout(() => {
+      entry.cleanupTimer = null;
+      if (entry.listeners.size > 0 || verificationRealtimeEntries.get(userId) !== entry) return;
+
+      verificationRealtimeEntries.delete(userId);
+      if (entry.notifyTimer) clearTimeout(entry.notifyTimer);
+      entry.notifyTimer = null;
+      const channel = entry.channel;
+      entry.channel = null;
+      if (channel) void supabase.removeChannel(channel);
+    }, 1_000);
+  };
 };
 
 const getVerificationRequestTargetLevel = (verificationType?: string | null) => {
@@ -204,47 +297,16 @@ export const useVerificationStatus = (userId?: string) => {
     }
   };
 
+  const fetchVerificationStatusRef = useRef(fetchVerificationStatus);
+  fetchVerificationStatusRef.current = fetchVerificationStatus;
+
   useEffect(() => {
     fetchVerificationStatus();
   }, [userId]);
 
-  // Set up real-time subscription for verification requests
   useEffect(() => {
     if (!userId) return;
-
-    const subscription = supabase
-      .channel('verification-status')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'verification_requests',
-          filter: `user_id=eq.${userId}`,
-        },
-        () => {
-          // Refresh status when verification requests change
-          fetchVerificationStatus();
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'profiles',
-          filter: `user_id=eq.${userId}`,
-        },
-        () => {
-          // Refresh status when profile verification level changes
-          fetchVerificationStatus();
-        }
-      )
-      .subscribe();
-
-    return () => {
-      subscription.unsubscribe();
-    };
+    return subscribeVerificationRealtime(userId, () => void fetchVerificationStatusRef.current());
   }, [userId]);
 
   return {

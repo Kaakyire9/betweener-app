@@ -14,8 +14,8 @@ describe("ChatSafetyModal interactions", () => {
     jest.clearAllMocks();
   });
 
-  it("renders the safety copy when visible", () => {
-    const { getByText } = render(
+  it("renders the safety copy when visible", async () => {
+    const { getByText } = await render(
       <ChatSafetyModal visible onGotIt={jest.fn()} />
     );
 
@@ -28,11 +28,11 @@ describe("ChatSafetyModal interactions", () => {
     const onGotIt = jest.fn();
     const tapSpy = jest.spyOn(haptics, "tap");
 
-    const { getByText } = render(
+    const { getByText } = await render(
       <ChatSafetyModal visible onGotIt={onGotIt} />
     );
 
-    fireEvent.press(getByText("Got it"));
+    await fireEvent.press(getByText("Got it"));
 
     await waitFor(() => {
       expect(onGotIt).toHaveBeenCalledTimes(1);
@@ -40,8 +40,8 @@ describe("ChatSafetyModal interactions", () => {
     expect(tapSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("renders nothing when hidden", () => {
-    const { queryByText } = render(
+  it("renders nothing when hidden", async () => {
+    const { queryByText } = await render(
       <ChatSafetyModal visible={false} onGotIt={jest.fn()} />
     );
 

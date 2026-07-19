@@ -109,18 +109,18 @@ describe('Moments screen circle context', () => {
     mockBack.mockReset();
   });
 
-  it('shows circle context and routes back to the circle when launched from Circles', () => {
+  it('shows circle context and routes back to the circle when launched from Circles', async () => {
     mockParams = {
       source: 'circles',
       circleId: 'circle-123',
       circleName: 'Test Circle',
     };
 
-    const { getByText, getByLabelText } = render(<MomentsScreen />);
+    const { getByText, getByLabelText } = await render(<MomentsScreen />);
 
     expect(getByText('Inside Test Circle')).toBeTruthy();
 
-    fireEvent.press(getByLabelText('Back'));
+    await fireEvent.press(getByLabelText('Back'));
 
     expect(mockReplace).toHaveBeenCalledWith({
       pathname: '/circles/[id]',
@@ -128,16 +128,16 @@ describe('Moments screen circle context', () => {
     });
   });
 
-  it('preserves circle context when opening Moment creation', () => {
+  it('preserves circle context when opening Moment creation', async () => {
     mockParams = {
       source: 'circles',
       circleId: 'circle-123',
       circleName: 'Test Circle',
     };
 
-    const { getByText } = render(<MomentsScreen />);
+    const { getByText } = await render(<MomentsScreen />);
 
-    fireEvent.press(getByText('Post a Moment'));
+    await fireEvent.press(getByText('Post a Moment'));
 
     expect(mockPush).toHaveBeenCalledWith({
       pathname: '/moments/create',

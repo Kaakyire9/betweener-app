@@ -1735,11 +1735,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#13222A',
   },
   previewAvatarScrim: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(8, 18, 24, 0.16)',
   },
   previewAvatarScrimAndroid: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(8, 18, 24, 0.09)',
   },
   previewLockTail: {
@@ -1768,7 +1768,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#08131A',
   },
   heroSparkField: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   heroOrbA: {
     position: 'absolute',

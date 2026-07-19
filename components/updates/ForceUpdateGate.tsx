@@ -42,7 +42,7 @@ export default function ForceUpdateGate({
           }
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
-          style={StyleSheet.absoluteFillObject}
+          style={StyleSheet.absoluteFill}
         />
         <SafeAreaView style={styles.safeArea}>
           <View
@@ -65,7 +65,7 @@ export default function ForceUpdateGate({
               <BlurViewSafe
                 intensity={isDark ? 28 : 34}
                 tint={isDark ? 'dark' : 'light'}
-                style={StyleSheet.absoluteFillObject}
+                style={StyleSheet.absoluteFill}
               />
               <View style={styles.badgeRow}>
                 <View

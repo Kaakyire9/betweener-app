@@ -15,6 +15,7 @@ import { VIBES_DEPTH_COLORS } from "@/components/vibes/depth/platformGlass";
 import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { buildLocationDisplay, getFirstLocationPart } from "@/lib/location/location-display";
+import { buildNearbyLocalityLabel } from "@/lib/location/distance-display";
 import { getAuthoritativePresenceDisplay } from "@/lib/presence";
 import { getProfileInitials, getProfilePlaceholderPalette, hasProfileImage } from "@/lib/profile-placeholders";
 import type { Match } from "@/types/match";
@@ -102,6 +103,9 @@ function ExploreCard({
     [isDark],
   );
   const recommendationSegment = String((match as any).recommendationReasons?.segment || '').trim().toLowerCase();
+  const publicRecommendationReasons = Array.isArray((match as any).recommendationReasons?.public_reasons)
+    ? (match as any).recommendationReasons.public_reasons.map((reason: unknown) => String(reason || '').toLowerCase())
+    : [];
   const isNearbyCard = recommendationSegment === 'nearby';
   const distanceLabel = isNearbyCard ? match.distance || '' : '';
   const locationPresentation = useMemo(
@@ -109,7 +113,16 @@ function ExploreCard({
     [distanceLabel, match],
   );
   const countryFlag = locationPresentation.flag;
-  const locationDisplay = locationPresentation.withFlag.replace(countryFlag, '').trim();
+  const baseLocationDisplay = locationPresentation.withFlag.replace(countryFlag, '').trim();
+  const locationDisplay = isNearbyCard
+    ? buildNearbyLocalityLabel({
+        confidence: match.distanceConfidence,
+        localityLabel: locationPresentation.primary,
+        affinityReasonCode: match.locationAffinityReasonCode,
+        sameCityConfirmed: publicRecommendationReasons.includes('same_city'),
+        fallbackLabel: baseLocationDisplay,
+      })
+    : baseLocationDisplay;
   const blockedLabels = useMemo(() => {
     const values = new Set<string>();
     const addValue = (value?: string | null) => {

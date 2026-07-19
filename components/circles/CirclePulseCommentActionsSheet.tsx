@@ -74,7 +74,7 @@ export default function CirclePulseCommentActionsSheet({
   return (
     <Modal transparent visible animationType="fade" onRequestClose={onClose}>
       <View style={styles.overlay}>
-        <Pressable style={[StyleSheet.absoluteFillObject, { backgroundColor: palette.overlay }]} onPress={onClose} />
+        <Pressable style={[StyleSheet.absoluteFill, { backgroundColor: palette.overlay }]} onPress={onClose} />
         <View style={styles.content}>
           <BlurViewSafe
             intensity={46}

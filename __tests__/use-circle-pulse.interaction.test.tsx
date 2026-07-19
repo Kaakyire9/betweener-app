@@ -102,7 +102,7 @@ describe('useCirclePulse', () => {
 
   it('keeps live Pulse data on screen when a later refresh fails', async () => {
     mockFetchCirclePulseItems.mockResolvedValueOnce([liveItem]);
-    const { result } = renderHook(() =>
+    const { result } = await renderHook(() =>
       useCirclePulse({ circleId: 'circle-1', enabled: true, viewerProfileId: 'profile-1' }),
     );
 
@@ -122,7 +122,7 @@ describe('useCirclePulse', () => {
   it('does not persist an empty snapshot before Pulse hydration resolves', async () => {
     mockFetchCirclePulseItems.mockImplementation(() => new Promise(() => undefined));
 
-    renderHook(() =>
+    await renderHook(() =>
       useCirclePulse({ circleId: 'circle-1', enabled: true, viewerProfileId: 'profile-1' }),
     );
 
@@ -142,7 +142,7 @@ describe('useCirclePulse', () => {
       isStale: false,
     });
 
-    const { result } = renderHook(() =>
+    const { result } = await renderHook(() =>
       useCirclePulse({ circleId: 'circle-1', enabled: true, viewerProfileId: 'profile-1' }),
     );
 

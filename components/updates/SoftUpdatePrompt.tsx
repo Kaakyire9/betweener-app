@@ -55,7 +55,7 @@ export default function SoftUpdatePrompt({
               <BlurViewSafe
                 intensity={isDark ? 26 : 34}
                 tint={isDark ? 'dark' : 'light'}
-                style={StyleSheet.absoluteFillObject}
+                style={StyleSheet.absoluteFill}
               />
               <LinearGradient
                 pointerEvents="none"
@@ -180,7 +180,7 @@ const styles = StyleSheet.create({
     elevation: 10,
   },
   glow: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   headerRow: {
     flexDirection: 'row',

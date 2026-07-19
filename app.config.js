@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { withDangerousMod } = require('@expo/config-plugins');
+const { withDangerousMod } = require('expo/config-plugins');
 
 function withGooglePlayPackageVerificationAsset(config) {
   return withDangerousMod(config, [
@@ -35,7 +35,6 @@ module.exports = ({ config }) => {
     process.env.EXPO_PUBLIC_ENVIRONMENT === 'development' ? 'development' : 'production';
   return {
     ...config,
-    newArchEnabled: true,
     plugins: [
       // Keep this plugin first so the NSE target is present before other iOS plugins run.
       [
@@ -50,23 +49,26 @@ module.exports = ({ config }) => {
         {
           android: {
             minSdkVersion: 26,
-            compileSdkVersion: 35,
-            targetSdkVersion: 35,
+            compileSdkVersion: 36,
+            targetSdkVersion: 36,
           },
           ios: {
-            deploymentTarget: '15.5',
+            deploymentTarget: '16.4',
           },
         },
       ],
       [
-        'react-native-vision-camera',
+        'react-native-maps',
         {
-          enableFrameProcessors: true,
+          iosGoogleMapsApiKey: iosMapsApiKey,
+          androidGoogleMapsApiKey: androidMapsApiKey,
         },
       ],
       withGooglePlayPackageVerificationAsset,
       ...(config.plugins ?? []),
       'expo-asset',
+      'expo-image',
+      '@react-native-community/datetimepicker',
       'expo-web-browser',
       'expo-sqlite',
       'expo-secure-store',
@@ -76,22 +78,5 @@ module.exports = ({ config }) => {
       // ["@sentry/react-native/expo", { organization, project }]
       // Avoid adding '@sentry/react-native' here to prevent duplicate/competing config plugins.
     ],
-    ios: {
-      ...config.ios,
-      config: {
-        ...(config.ios?.config ?? {}),
-        googleMapsApiKey: iosMapsApiKey,
-      },
-    },
-    android: {
-      ...config.android,
-      config: {
-        ...(config.android?.config ?? {}),
-        googleMaps: {
-          ...(config.android?.config?.googleMaps ?? {}),
-          apiKey: androidMapsApiKey,
-        },
-      },
-    },
   };
 };

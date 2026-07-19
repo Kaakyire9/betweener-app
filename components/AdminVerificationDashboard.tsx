@@ -236,6 +236,30 @@ const getSocialVerificationEvidence = (item: Pick<VerificationRow, "verification
   return { platform, profileUrl, handle };
 };
 
+const getLivenessMeasurementEvidence = (
+  item: Pick<VerificationRow, "verification_type" | "auto_verification_data">,
+) => {
+  if ((item.verification_type || "").toLowerCase() !== "selfie_liveness") return null;
+  const root = item.auto_verification_data || {};
+  const evidence = root.evidence;
+  if (!evidence || typeof evidence !== "object" || Array.isArray(evidence)) return null;
+  const record = evidence as Record<string, unknown>;
+  const requestedActions = Array.isArray(record.requested_actions)
+    ? record.requested_actions.filter((value): value is string => typeof value === "string")
+    : [];
+  const numberValue = (key: string) => typeof record[key] === "number" ? record[key] as number : null;
+  return {
+    requestedActions,
+    completed: record.challenge_completed === true,
+    durationMs: numberValue("duration_ms"),
+    sampleCount: numberValue("sample_count"),
+    singleFaceSamples: numberValue("single_face_samples"),
+    centeredSamples: numberValue("centered_samples"),
+    maxAbsoluteYaw: numberValue("max_absolute_yaw"),
+    source: typeof root.measurement_source === "string" ? root.measurement_source : null,
+  };
+};
+
 function VerificationAssetPreview({
   uri,
   isVideo,
@@ -1147,6 +1171,7 @@ export const AdminVerificationDashboard = () => {
                 const checklist = getVerificationReviewChecklist(item);
                 const rejectReasons = getVerificationRejectReasons(item);
                 const socialEvidence = getSocialVerificationEvidence(item);
+                const livenessEvidence = getLivenessMeasurementEvidence(item);
                 const statusTone =
                   item.status === "approved" ? styles.statusApproved : item.status === "rejected" ? styles.statusRejected : styles.statusPending;
                 return (
@@ -1215,6 +1240,27 @@ export const AdminVerificationDashboard = () => {
                             </Text>
                           </Pressable>
                         ) : null}
+                      </View>
+                    ) : null}
+
+                    {livenessEvidence ? (
+                      <View style={styles.socialEvidenceCard}>
+                        <Text style={styles.socialEvidenceTitle}>Measured challenge evidence</Text>
+                        <Text style={styles.socialEvidenceText}>
+                          Sequence: {livenessEvidence.requestedActions.join(" → ") || "Not recorded"}
+                        </Text>
+                        <Text style={styles.socialEvidenceText}>
+                          Result: {livenessEvidence.completed ? "Device checks completed" : "Incomplete"} · Duration: {livenessEvidence.durationMs !== null ? `${(livenessEvidence.durationMs / 1000).toFixed(1)}s` : "N/A"}
+                        </Text>
+                        <Text style={styles.socialEvidenceText}>
+                          One-face frames: {livenessEvidence.singleFaceSamples ?? "N/A"}/{livenessEvidence.sampleCount ?? "N/A"} · Centered: {livenessEvidence.centeredSamples ?? "N/A"}
+                        </Text>
+                        <Text style={styles.socialEvidenceText}>
+                          Maximum measured turn: {livenessEvidence.maxAbsoluteYaw !== null ? `${Math.round(livenessEvidence.maxAbsoluteYaw)}°` : "N/A"}
+                        </Text>
+                        <Text style={styles.evidenceCautionText}>
+                          Device measurements are preflight evidence, not identity proof. Review the clip for replay, screen, mask, and continuity cues.
+                        </Text>
                       </View>
                     ) : null}
 
@@ -2032,6 +2078,14 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       fontSize: 12,
       lineHeight: 17,
       fontFamily: "Manrope_600SemiBold",
+    },
+    evidenceCautionText: {
+      color: theme.textMuted,
+      fontSize: 11,
+      lineHeight: 16,
+      fontFamily: "Manrope_500Medium",
+      marginTop: 4,
+      fontStyle: "italic",
     },
     socialEvidenceLink: {
       flexDirection: "row",

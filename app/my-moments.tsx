@@ -1747,7 +1747,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       backgroundColor: 'rgba(0,0,0,0.52)',
     },
     sheetWrap: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       justifyContent: 'flex-end',
     },
     reactorsSheet: {

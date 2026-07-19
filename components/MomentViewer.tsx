@@ -1450,11 +1450,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#000',
   },
   mediaBackdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     opacity: 0.3,
   },
   mediaBackdropShade: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   wideMediaFrameWrap: {
     justifyContent: 'center',
@@ -1681,6 +1681,6 @@ const styles = StyleSheet.create({
   },
   commentCount: { color: '#fff', fontSize: 9, fontFamily: 'Manrope_600SemiBold', marginTop: 2 },
   gestureLayer: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
 });

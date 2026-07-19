@@ -73,8 +73,8 @@ import Notice from "@/components/ui/Notice";
 import { ExploreStackSkeleton } from "@/components/ui/Skeleton";
 import { findCountryByCode, getPrioritizedCountries, type CountryOption } from "@/lib/location/countries";
 import {
-  getGhanaCountryPolicyMessage,
-  isGhanaCountryManagedPolicy,
+  getCountryPolicyMessage,
+  shouldManageProfileCountry,
 } from '@/lib/location/country-lock';
 import { toFlagEmoji } from "@/lib/location/location-display";
 import { isLikelyNetworkError } from "@/lib/network";
@@ -1631,10 +1631,19 @@ export default function ExploreScreen() {
     setAllMomentsVisible(true);
   };
 
-  const hasPreciseCoords = profile?.latitude != null && profile?.longitude != null;
-  const hasCityOnly = !!profile?.location && profile?.location_precision === 'CITY';
-  const isGhanaCountryLocked = isGhanaCountryManagedPolicy(profile?.country_lock_policy);
-  const countryPolicyMessage = getGhanaCountryPolicyMessage(profile?.country_lock_policy);
+  const profileLocationPrecision = String(profile?.location_precision || '').toUpperCase();
+  const hasPreciseCoords =
+    profileLocationPrecision === 'EXACT' &&
+    profile?.latitude != null &&
+    profile?.longitude != null;
+  const hasCityOnly =
+    Boolean((profile as any)?.city || profile?.location) &&
+    profileLocationPrecision === 'CITY';
+  const isCountryManaged = shouldManageProfileCountry(profile as any);
+  const countryPolicyMessage = getCountryPolicyMessage(profile?.country_lock_policy)
+    || (isCountryManaged
+      ? 'Your current country is protected. Use precise location to securely verify a move.'
+      : '');
   const needsNearbyPreciseLocation = !hasPreciseCoords;
   const needsLocationPrompt = !hasPreciseCoords && !hasCityOnly;
   const shouldShowLocationPrompt =
@@ -1648,8 +1657,8 @@ export default function ExploreScreen() {
     setManualLocation((profile as any)?.city || profile?.location || "");
   }, [(profile as any)?.city, profile?.location]);
   useEffect(() => {
-    setManualCountryCode(profileCountryCode || (isGhanaCountryLocked ? 'GH' : ''));
-  }, [isGhanaCountryLocked, profileCountryCode]);
+    setManualCountryCode(profileCountryCode || '');
+  }, [profileCountryCode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1728,22 +1737,22 @@ export default function ExploreScreen() {
     setManualLocation((profile as any)?.city || profile?.location || "");
     setManualRegion((profile as any)?.region || null);
     setManualLocality(null);
-    setManualCountryCode(profileCountryCode || (isGhanaCountryLocked ? 'GH' : manualCountryCode || ''));
+    setManualCountryCode(profileCountryCode || manualCountryCode || '');
     setManualCountryPickerOpen(false);
     setManualCountrySearch('');
     setManualLocationModalVisible(true);
-  }, [isGhanaCountryLocked, manualCountryCode, profile?.location, (profile as any)?.city, (profile as any)?.region, profileCountryCode]);
+  }, [manualCountryCode, profile?.location, (profile as any)?.city, (profile as any)?.region, profileCountryCode]);
 
   const openManualLocationModalFromFilters = useCallback(() => {
     setLocationError(null);
     setManualLocation((profile as any)?.city || profile?.location || "");
     setManualRegion((profile as any)?.region || null);
     setManualLocality(null);
-    setManualCountryCode(profileCountryCode || (isGhanaCountryLocked ? 'GH' : manualCountryCode || ''));
+    setManualCountryCode(profileCountryCode || manualCountryCode || '');
     setManualCountryPickerOpen(false);
     setManualCountrySearch('');
     setFiltersPanel('location');
-  }, [isGhanaCountryLocked, manualCountryCode, profile?.location, (profile as any)?.city, (profile as any)?.region, profileCountryCode]);
+  }, [manualCountryCode, profile?.location, (profile as any)?.city, (profile as any)?.region, profileCountryCode]);
 
   const handleSaveManualLocation = async () => {
     if (!profile?.id) return;
@@ -2923,20 +2932,20 @@ export default function ExploreScreen() {
 
                         <View style={styles.filterFieldGroup}>
                           <Text style={styles.modalLabel}>Country</Text>
-                          {isGhanaCountryLocked ? (
+                          {isCountryManaged ? (
                             <Text style={styles.filterHint}>
                               {countryPolicyMessage}
                             </Text>
                           ) : null}
                           <TouchableOpacity
-                            style={[styles.countrySelectButton, isGhanaCountryLocked && styles.countrySelectButtonDisabled]}
+                            style={[styles.countrySelectButton, isCountryManaged && styles.countrySelectButtonDisabled]}
                             onPress={() => {
-                              if (isGhanaCountryLocked) return;
+                              if (isCountryManaged) return;
                               setManualCountrySearch('');
                               setManualCountryPickerOpen((current) => !current);
                             }}
                             activeOpacity={0.85}
-                            disabled={isGhanaCountryLocked}
+                            disabled={isCountryManaged}
                           >
                             <View style={styles.countrySelectValue}>
                               <Text style={[styles.countrySelectFlag, !selectedManualCountryFlag && styles.countrySelectFlagPlaceholder]}>
@@ -3590,20 +3599,20 @@ export default function ExploreScreen() {
                 <Text style={styles.modalSubtitle}>Share a verified city while keeping exact coordinates private. No GPS required.</Text>
 
                 <Text style={styles.modalLabel}>Country</Text>
-                {isGhanaCountryLocked ? (
+                {isCountryManaged ? (
                   <Text style={styles.filterHint}>
                     {countryPolicyMessage}
                   </Text>
                 ) : null}
                 <TouchableOpacity
-                  style={[styles.countrySelectButton, isGhanaCountryLocked && styles.countrySelectButtonDisabled]}
+                  style={[styles.countrySelectButton, isCountryManaged && styles.countrySelectButtonDisabled]}
                   onPress={() => {
-                    if (isGhanaCountryLocked) return;
+                    if (isCountryManaged) return;
                     setManualCountrySearch('');
                     setManualCountryPickerOpen((current) => !current);
                   }}
                   activeOpacity={0.85}
-                  disabled={isGhanaCountryLocked}
+                  disabled={isCountryManaged}
                 >
                   <View style={styles.countrySelectValue}>
                     <Text style={[styles.countrySelectFlag, !selectedManualCountryFlag && styles.countrySelectFlagPlaceholder]}>

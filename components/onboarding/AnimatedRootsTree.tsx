@@ -128,7 +128,7 @@ export function AnimatedRootsTree({ size = 260, selectedCount = 0, decorative = 
       <Animated.View style={[{ width: size, height: size }, animatedStyle]}>
         <Image source={ROOTS_TREE} resizeMode="contain" style={{ width: size, height: size }} />
       </Animated.View>
-      <Animated.View style={[StyleSheet.absoluteFillObject, particleStyle]}>
+      <Animated.View style={[StyleSheet.absoluteFill, particleStyle]}>
         {PARTICLES.map((particle, index) => (
           <View
             key={`${particle.x}-${particle.y}`}

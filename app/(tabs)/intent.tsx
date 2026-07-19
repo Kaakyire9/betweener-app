@@ -2212,7 +2212,7 @@ export default function IntentScreen() {
                     .delay(Math.min(index, 6) * 45)
                     .easing(Motion.easing.outCubic)
                     .withInitialValues({
-                      transform: [{ translateY: 8 }, { scale: highlightIncoming ? 0.985 : 1 }],
+                      transform: [{ translateY: 8 }],
                       opacity: 0,
                     })
             }

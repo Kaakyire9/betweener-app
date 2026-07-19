@@ -70,7 +70,7 @@ describe('CirclePulseManagerSheet', () => {
   });
 
   it('keeps Circle Media visible when there are no member Moments', async () => {
-    const { getByLabelText, getByText } = render(
+    const { getByLabelText, getByText } = await render(
       <CirclePulseManagerSheet
         {...defaultProps}
       />,
@@ -81,7 +81,7 @@ describe('CirclePulseManagerSheet', () => {
       expect(getByText('Add Circle media')).toBeTruthy();
     });
 
-    fireEvent.press(getByText('Add Circle media'));
+    await fireEvent.press(getByText('Add Circle media'));
 
     expect(getByLabelText('Publish mocked Circle media')).toBeTruthy();
   });
@@ -89,7 +89,7 @@ describe('CirclePulseManagerSheet', () => {
   it('publishes host-curated Circle Media without creating a Moment', async () => {
     const onClose = jest.fn();
     const onFeatured = jest.fn();
-    const { getByLabelText, getByText } = render(
+    const { getByLabelText, getByText } = await render(
       <CirclePulseManagerSheet
         {...defaultProps}
         onClose={onClose}
@@ -97,8 +97,8 @@ describe('CirclePulseManagerSheet', () => {
       />,
     );
 
-    fireEvent.press(getByText('Add Circle media'));
-    fireEvent.press(getByLabelText('Publish mocked Circle media'));
+    await fireEvent.press(getByText('Add Circle media'));
+    await fireEvent.press(getByLabelText('Publish mocked Circle media'));
 
     await waitFor(() => {
       expect(mockCreateCirclePulseEditorialMedia).toHaveBeenCalledWith('circle-1', 'profile-1', {
@@ -116,7 +116,7 @@ describe('CirclePulseManagerSheet', () => {
   it('features an eligible member Moment from its separate section', async () => {
     const onClose = jest.fn();
     const onFeatured = jest.fn();
-    const { getAllByText, getByText } = render(
+    const { getAllByText, getByText } = await render(
       <CirclePulseManagerSheet
         {...defaultProps}
         media={[
@@ -140,7 +140,7 @@ describe('CirclePulseManagerSheet', () => {
       expect(getByText("Kojo's Moment")).toBeTruthy();
     });
 
-    fireEvent.press(getByText('plus'));
+    await fireEvent.press(getByText('plus'));
 
     await waitFor(() => {
       expect(mockFeatureCirclePulseItem).toHaveBeenCalledWith('circle-1', 'profile-1', {

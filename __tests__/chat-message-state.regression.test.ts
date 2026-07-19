@@ -14,6 +14,7 @@ import {
   replaceMessageById,
   setMessageStatus,
 } from '../lib/chat/message-state.ts';
+import { resolveChatImageUri, resolveChatVideoUri } from '../lib/chat/media-uri.ts';
 
 const baseMessage = {
   id: 'msg-1',
@@ -221,4 +222,24 @@ test('applySyncedOutgoingReceiptState keeps failed messages failed when server h
 
   assert.equal(reconciled.resolvedStatus, 'failed');
   assert.equal(reconciled.items[0].status, 'failed');
+});
+
+test('chat image viewer opens the same offline or cached URI rendered by the bubble', () => {
+  const message = {
+    imageUrl: null,
+    offlineImageUri: 'file:///local/chat-photo.jpg',
+  };
+
+  assert.equal(resolveChatImageUri(message, 'file:///cache/chat-photo.jpg'), message.offlineImageUri);
+  assert.equal(
+    resolveChatImageUri({ imageUrl: null }, 'file:///cache/chat-photo.jpg'),
+    'file:///cache/chat-photo.jpg',
+  );
+});
+
+test('chat video viewer falls back to the signed remote URI', () => {
+  assert.equal(
+    resolveChatVideoUri({ videoUrl: 'https://signed.example/video.mp4' }),
+    'https://signed.example/video.mp4',
+  );
 });

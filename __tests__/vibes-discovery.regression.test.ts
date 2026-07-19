@@ -6,6 +6,122 @@ import { getAgeRangeForPreset, resolveAgePresetMode } from '../lib/vibes/age-ran
 import { applyInboundInterestLift, buildLocationSearchText, rerankVibesSegment } from '../lib/vibes/discovery-logic.ts';
 import { derivePreviewTone, deriveRoomSummary, hasAnyDraftFilters } from '../lib/vibes/vibes-filter-preview.ts';
 import { getLocationConnectionInsight } from '../lib/location/location-intelligence.ts';
+import { buildDistanceDisplay, buildNearbyLocalityLabel } from '../lib/location/distance-display.ts';
+
+test('exact-to-exact proximity is clearly presented as approximate', () => {
+  assert.deepEqual(
+    buildDistanceDisplay({
+      distanceKm: 8.24,
+      viewerPrecision: 'EXACT',
+      candidatePrecision: 'EXACT',
+      localityLabel: 'Bristol',
+      unit: 'km',
+    }),
+    { label: 'About 8.2 km away', confidence: 'approximate' },
+  );
+});
+
+test('city-centroid proximity never masquerades as an exact distance', () => {
+  assert.deepEqual(
+    buildDistanceDisplay({
+      distanceKm: 8.24,
+      viewerPrecision: 'EXACT',
+      candidatePrecision: 'CITY',
+      localityLabel: 'Bristol',
+      unit: 'km',
+    }),
+    { label: 'Near Bristol', confidence: 'locality' },
+  );
+});
+
+test('unit changes preserve locality-level confidence instead of revealing a number', () => {
+  assert.deepEqual(
+    buildDistanceDisplay({
+      distanceKm: 8.24,
+      candidatePrecision: 'EXACT',
+      localityLabel: 'Bristol',
+      unit: 'mi',
+      knownConfidence: 'locality',
+    }),
+    { label: 'Near Bristol', confidence: 'locality' },
+  );
+});
+
+test('Nearby distinguishes confirmed same-city affinity from a city-centroid estimate', () => {
+  assert.equal(
+    buildNearbyLocalityLabel({
+      confidence: 'locality',
+      localityLabel: 'Bristol',
+      affinityReasonCode: 'same_city',
+      fallbackLabel: 'Bristol',
+    }),
+    'Also in Bristol',
+  );
+  assert.equal(
+    buildNearbyLocalityLabel({
+      confidence: 'locality',
+      localityLabel: 'Bristol',
+      affinityReasonCode: 'same_locality',
+      fallbackLabel: 'Bristol',
+    }),
+    'Also in Bristol',
+  );
+  assert.equal(
+    buildNearbyLocalityLabel({
+      confidence: 'locality',
+      localityLabel: 'Bristol',
+      affinityReasonCode: 'shared_roots_region',
+      sameCityConfirmed: true,
+      fallbackLabel: 'Bristol',
+    }),
+    'Also in Bristol',
+  );
+  assert.equal(
+    buildNearbyLocalityLabel({
+      confidence: 'locality',
+      localityLabel: 'Bristol',
+      affinityReasonCode: null,
+      fallbackLabel: 'Bristol',
+    }),
+    'Near Bristol',
+  );
+});
+
+test('Very close by is reserved for sub-kilometre approximate proximity', () => {
+  assert.equal(
+    buildDistanceDisplay({
+      distanceKm: 0.72,
+      viewerPrecision: 'EXACT',
+      candidatePrecision: 'EXACT',
+      localityLabel: 'Bristol',
+      unit: 'mi',
+    }).label,
+    'Very close by',
+  );
+  assert.equal(
+    buildDistanceDisplay({
+      distanceKm: 1.2,
+      viewerPrecision: 'EXACT',
+      candidatePrecision: 'EXACT',
+      localityLabel: 'Bristol',
+      unit: 'mi',
+    }).label,
+    'About 0.7 miles away',
+  );
+});
+
+test('region-only proximity does not fabricate distance copy', () => {
+  assert.deepEqual(
+    buildDistanceDisplay({
+      distanceKm: null,
+      viewerPrecision: 'EXACT',
+      candidatePrecision: 'REGION',
+      localityLabel: 'Greater Accra',
+      unit: 'km',
+    }),
+    { label: 'Greater Accra', confidence: 'unknown' },
+  );
+});
 
 test('current-location affinity ranks silently instead of duplicating the location line', () => {
   const viewer = { city: 'Manchester', region: 'England', current_country: 'United Kingdom' };

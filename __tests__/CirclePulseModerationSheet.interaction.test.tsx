@@ -49,7 +49,7 @@ describe('CirclePulseModerationSheet', () => {
     mockReviewReport.mockResolvedValueOnce(undefined);
     const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
     const onChanged = jest.fn();
-    const { getByLabelText, getByText } = render(
+    const { getByLabelText, getByText } = await render(
       <CirclePulseModerationSheet
         visible
         circleId="circle-1"
@@ -60,7 +60,7 @@ describe('CirclePulseModerationSheet', () => {
     );
 
     await waitFor(() => expect(getByText('Ama')).toBeTruthy());
-    fireEvent.press(getByLabelText('Remove reported Pulse comment'));
+    await fireEvent.press(getByLabelText('Remove reported Pulse comment'));
 
     const actions = alertSpy.mock.calls[0][2];
     await act(async () => {

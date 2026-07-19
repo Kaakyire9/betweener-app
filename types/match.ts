@@ -5,6 +5,7 @@ export type Match = {
   age?: number | null;
   distance?: string | null;
   distanceKm?: number | null;
+  distanceConfidence?: 'approximate' | 'locality' | 'unknown';
   location?: string | null;
   region?: string | null;
   city?: string | null;

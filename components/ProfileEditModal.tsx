@@ -12,8 +12,8 @@ import {
 } from '@/lib/location/countries';
 import { isLegacyGhanaLocalityForeignKeyError } from '@/lib/location/locality-errors';
 import {
-  getGhanaCountryPolicyMessage,
-  isGhanaCountryManagedPolicy,
+  getCountryPolicyMessage,
+  shouldManageProfileCountry,
 } from '@/lib/location/country-lock';
 import {
   isKnownGhanaRegionLabel,
@@ -685,9 +685,12 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
   const selectedCurrentCountryFlag = selectedCurrentCountry ? toFlagEmoji(selectedCurrentCountry.code) : '';
   const selectedOriginCountryFlag = selectedOriginCountry ? toFlagEmoji(selectedOriginCountry.code) : '';
   const countryLockPolicy = (profile as any)?.country_lock_policy;
-  const isGhanaCountryLocked = isGhanaCountryManagedPolicy(countryLockPolicy);
+  const isCountryManaged = shouldManageProfileCountry(profile as any);
   const isGhanaOnboardingExperience = usesGhanaOnboardingExperience(profile as any);
-  const countryPolicyMessage = getGhanaCountryPolicyMessage(countryLockPolicy);
+  const countryPolicyMessage = getCountryPolicyMessage(countryLockPolicy)
+    || (isCountryManaged
+      ? 'Your current country is protected. Use precise location to securely verify a move.'
+      : '');
   const effectiveCountryCode = selectedCurrentCountry?.code || formData.current_country_code || (profile as any)?.current_country_code || '';
   const effectiveCountryLabel = selectedCurrentCountry?.label || formData.current_country || (profile as any)?.current_country || '';
   const effectiveRegion = formData.region || profile?.region || '';
@@ -946,8 +949,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     }
 
     return {
-      title: 'Build trust on Betweener',
-      subtitle: 'Add a trust signal.',
+      title: 'Give matches more confidence',
+      subtitle: 'Verify privately and add a visible badge to your profile.',
       action: 'Start',
       icon: 'shield-plus-outline' as const,
     };
@@ -2115,6 +2118,10 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       const existingCountryCode = normalizeLocationValue((profile as any)?.current_country_code).toUpperCase();
       const selectedCurrentCountryOption =
         findCountryByCode(formData.current_country_code) ?? findCountryByLabel(formData.current_country);
+      const managedCountryCode =
+        normalizedString((profile as any)?.current_country_code).toUpperCase()
+        || normalizedString(formData.current_country_code).toUpperCase();
+      const managedCountryOption = findCountryByCode(managedCountryCode);
       const regionValue = formData.region ? formData.region.trim() : '';
       const cityValue = formData.city ? formData.city.trim() : '';
       const localityDistrictValue =
@@ -2124,18 +2131,19 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           ? formData.locality_geoname_id
           : null;
       const resolvedCurrentCountry =
-        isGhanaCountryLocked
-          ? normalizedString((profile as any)?.current_country) || normalizedString(formData.current_country) || 'Ghana'
+        isCountryManaged
+          ? normalizedString((profile as any)?.current_country)
+            || managedCountryOption?.label
+            || normalizedString(formData.current_country)
+            || (isGhanaOnboardingExperience ? 'Ghana' : '')
           :
         selectedCurrentCountryOption?.label ||
         normalizedString(formData.current_country) ||
         existingCountry ||
         (isGhanaProfile || isKnownGhanaRegionLabel(formData.region) ? 'Ghana' : '');
       const resolvedCurrentCountryCode =
-        isGhanaCountryLocked
-          ? normalizedString((profile as any)?.current_country_code).toUpperCase()
-            || normalizedString(formData.current_country_code).toUpperCase()
-            || 'GH'
+        isCountryManaged
+          ? managedCountryCode || (isGhanaOnboardingExperience ? 'GH' : '')
           :
         selectedCurrentCountryOption?.code ||
         normalizedString(formData.current_country_code).toUpperCase() ||
@@ -2630,11 +2638,11 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
               <TouchableOpacity
                 style={styles.selectButton}
                 onPress={() => {
-                  if (isGhanaCountryLocked) return;
+                  if (isCountryManaged) return;
                   setCountryPickerTarget('current');
                   setCountryModalVisible(true);
                 }}
-                disabled={isGhanaCountryLocked}
+                disabled={isCountryManaged}
               >
                 <View style={styles.countrySelectValue}>
                   <Text style={[styles.countryFlagText, !selectedCurrentCountryFlag && styles.countryFlagPlaceholder]}>
@@ -2659,12 +2667,12 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                 </View>
                 <MaterialCommunityIcons name="chevron-down" size={20} color={theme.textMuted} />
               </TouchableOpacity>
-              {isGhanaCountryLocked ? (
+              {isCountryManaged ? (
                 <Text style={styles.fieldHelperText}>
                   {countryPolicyMessage}
                 </Text>
               ) : null}
-              {isGhanaCountryLocked ? (
+              {isCountryManaged ? (
                 <TouchableOpacity
                   style={[styles.countryVerificationButton, countryVerificationBusy && styles.disabledSelectButton]}
                   onPress={verifyCountryWithPreciseLocation}
@@ -2936,7 +2944,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
               styles={styles}
               theme={theme}
               isGhana={isGhanaOnboardingExperience}
-              countryManaged={isGhanaCountryLocked}
+              countryManaged={isCountryManaged}
               countryPolicyMessage={countryPolicyMessage}
               countryVerificationBusy={countryVerificationBusy}
               onVerifyCountry={verifyCountryWithPreciseLocation}

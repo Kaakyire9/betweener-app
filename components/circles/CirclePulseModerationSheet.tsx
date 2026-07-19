@@ -174,7 +174,7 @@ export default function CirclePulseModerationSheet({
 const createStyles = (bottomInset: number, palette: CirclePulsePalette) =>
   StyleSheet.create({
     modal: { flex: 1, justifyContent: 'flex-end' },
-    backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: palette.overlay },
+    backdrop: { ...StyleSheet.absoluteFill, backgroundColor: palette.overlay },
     sheet: {
       maxHeight: '82%',
       minHeight: 350,

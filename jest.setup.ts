@@ -19,6 +19,74 @@ jest.mock("expo", () => ({
   requireNativeModule: jest.fn(() => ({})),
 }));
 
+jest.mock("expo-clipboard", () => ({
+  getStringAsync: jest.fn(async () => ""),
+  setStringAsync: jest.fn(async () => true),
+  hasStringAsync: jest.fn(async () => false),
+}));
+
+jest.mock("expo-constants", () => ({
+  __esModule: true,
+  default: {
+    expoConfig: { version: "1.1.1", extra: {} },
+    nativeAppVersion: "1.1.1",
+    nativeBuildVersion: "1",
+    executionEnvironment: "storeClient",
+  },
+  ExecutionEnvironment: { StoreClient: "storeClient" },
+}));
+
+jest.mock("expo-keep-awake", () => ({
+  ExpoKeepAwakeTag: "ExpoKeepAwakeDefaultTag",
+  activateKeepAwakeAsync: jest.fn(async () => undefined),
+  deactivateKeepAwake: jest.fn(),
+  isAvailableAsync: jest.fn(async () => true),
+}));
+
+jest.mock("expo-file-system/legacy", () => ({
+  cacheDirectory: "file:///test-cache/",
+  documentDirectory: "file:///test-documents/",
+  FileSystemUploadType: { BINARY_CONTENT: 0, MULTIPART: 1 },
+  createUploadTask: jest.fn(() => ({
+    uploadAsync: jest.fn(async () => ({ status: 200, body: "", headers: {} })),
+    cancelAsync: jest.fn(async () => undefined),
+  })),
+  copyAsync: jest.fn(async () => undefined),
+  deleteAsync: jest.fn(async () => undefined),
+  getInfoAsync: jest.fn(async () => ({ exists: false, isDirectory: false, size: 0 })),
+  makeDirectoryAsync: jest.fn(async () => undefined),
+  moveAsync: jest.fn(async () => undefined),
+  readAsStringAsync: jest.fn(async () => ""),
+  writeAsStringAsync: jest.fn(async () => undefined),
+}));
+
+jest.mock("expo-sqlite", () => {
+  const database = {
+    closeAsync: jest.fn(async () => undefined),
+    execAsync: jest.fn(async () => undefined),
+    getAllAsync: jest.fn(async () => []),
+    getFirstAsync: jest.fn(async () => null),
+    runAsync: jest.fn(async () => ({ changes: 0, lastInsertRowId: 0 })),
+    withTransactionAsync: jest.fn(async (task: () => Promise<void>) => task()),
+  };
+  return {
+    openDatabaseAsync: jest.fn(async () => database),
+    deleteDatabaseAsync: jest.fn(async () => undefined),
+  };
+});
+
+jest.mock("expo-crypto", () => {
+  const nodeCrypto = require("node:crypto");
+  return {
+    CryptoDigestAlgorithm: { SHA256: "SHA-256" },
+    digestStringAsync: jest.fn(async (_algorithm: string, value: string) =>
+      nodeCrypto.createHash("sha256").update(value).digest("hex")
+    ),
+    getRandomBytes: jest.fn((length: number) => new Uint8Array(nodeCrypto.randomBytes(length))),
+    randomUUID: jest.fn(() => nodeCrypto.randomUUID()),
+  };
+});
+
 jest.mock("expo-image", () => {
   const React = require("react");
   const { View } = require("react-native");
@@ -26,6 +94,15 @@ jest.mock("expo-image", () => {
     Image: ({ children, ...props }: any) => React.createElement(View, props, children),
   };
 });
+
+jest.mock("expo-image-manipulator", () => ({
+  SaveFormat: { JPEG: "jpeg", PNG: "png", WEBP: "webp" },
+  manipulateAsync: jest.fn(async (uri: string) => ({
+    uri,
+    width: 1080,
+    height: 1080,
+  })),
+}));
 
 jest.mock("react-native-mmkv", () => {
   const store = new Map<string, string>();
