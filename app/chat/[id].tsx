@@ -20,7 +20,17 @@ import { useMoments } from "@/hooks/useMoments";
 import { useAuth } from "@/lib/auth-context";
 import { clearActiveChatThread, setActiveChatThread } from "@/lib/chat/active-thread";
 import { ChatThreadActionsService } from "@/lib/chat/chat-thread-actions-service";
-import { validateChatAttachment } from "@/lib/chat/attachment-policy";
+import {
+  CHAT_ATTACHMENT_LIMITS,
+  CHAT_DOCUMENT_PICKER_MIME_TYPES,
+  validateChatAttachment,
+} from "@/lib/chat/attachment-policy";
+import {
+  buildDeterministicChatAttachmentPath,
+  createChatAttachmentId,
+  finalizeChatAttachment,
+} from "@/lib/chat/attachment-lifecycle";
+import { prepareChatVideo } from "@/lib/chat/video-preparation";
 import { acknowledgeIncomingMessagesDelivered } from "@/lib/chat/delivery-receipts";
 import { useChatMessages } from "@/lib/chat/hooks/use-chat-messages";
 import { useChatThreadBrowseUi } from "@/lib/chat/hooks/use-chat-thread-browse-ui";
@@ -83,7 +93,12 @@ import {
 } from "@/lib/chat/sync/chat-realtime-service";
 import { flushThreadOutboxAndRefresh, startThreadSyncCoordinator } from "@/lib/chat/sync/chat-thread-sync-coordinator";
 import { fetchRemoteSystemMessages, fetchRemoteThreadMessages } from "@/lib/chat/sync/chat-sync-service";
-import { resolveChatImageUri, resolveChatVideoUri } from "@/lib/chat/media-uri";
+import {
+  resolveChatImageUri,
+  resolveChatImageViewerUri,
+  resolveKnownSignedChatMediaUri,
+  resolveChatVideoUri,
+} from "@/lib/chat/media-uri";
 import { encryptMediaBytes, getOrCreateDeviceKeypair } from "@/lib/e2ee";
 import { decideIntentRequestOfflineSafe } from "@/lib/intents/offline-actions";
 import { computeConversationSignalLabel, computeFirstReplyHours, computeInterestOverlapRatio } from "@/lib/match/match-score";
@@ -95,9 +110,10 @@ import {
   resolveLatestPeerActivityAt,
 } from "@/lib/presence";
 import { fetchViewedMomentIds } from "@/lib/moments-views";
-import { cacheOfflineImage, getOfflineImageUri, rememberOfflineImageUri } from "@/lib/offline/image-store";
+import { cacheOfflineImage, getOfflineImageUri, rememberOfflineImageUri, removeOfflineImage } from "@/lib/offline/image-store";
 import {
   buildChatPeerStoreKey,
+  patchChatConversationReadSnapshot,
   buildChatThreadStoreKey,
   migrateLegacyChatThreadSnapshot,
   peekOfflineSnapshot,
@@ -109,7 +125,7 @@ import {
 import {
   enqueueChatReactionSyncMutation,
 } from "@/lib/offline/mutation-queue";
-import { cacheOfflineVideo, getOfflineVideoUri, rememberOfflineVideoUri } from "@/lib/offline/video-store";
+import { cacheOfflineVideo, getOfflineVideoUri, rememberOfflineVideoUri, removeOfflineVideo } from "@/lib/offline/video-store";
 import { showOpenSettingsPrompt } from "@/lib/permission-prompts";
 import { getSafeRemoteImageUri, getUserFacingDisplayName, hasLeftBetweener } from "@/lib/profile/display-name";
 import { type ResponsiveMetrics, useResponsiveMetrics } from "@/lib/responsive";
@@ -139,6 +155,7 @@ import { Image as ExpoImage } from "expo-image";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Haptics from 'expo-haptics';
 import * as ImageManipulator from "expo-image-manipulator";
+import * as WebBrowser from "expo-web-browser";
 import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Location from "expo-location";
@@ -312,6 +329,23 @@ const encodeStoragePath = (path: string) =>
     .join('/');
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const LOCAL_CHAT_OPERATION_TIMEOUT_MS = Platform.OS === 'ios' ? 1200 : 3000;
+
+const withTimeoutFallback = async <T,>(
+  task: Promise<T>,
+  timeoutMs: number,
+  fallback: T,
+): Promise<{ value: T; timedOut: boolean }> => {
+  let timedOut = false;
+  const timeoutTask = new Promise<T>((resolve) => {
+    setTimeout(() => {
+      timedOut = true;
+      resolve(fallback);
+    }, timeoutMs);
+  });
+  const value = await Promise.race([task, timeoutTask]);
+  return { value, timedOut };
+};
 
 const isRetryableUploadError = (error: unknown) => {
   const message = String((error as any)?.message || error || '').toLowerCase();
@@ -327,11 +361,18 @@ const isRetryableUploadError = (error: unknown) => {
 };
 
 const getAttachmentUploadErrorMessage = (error: unknown) => {
-  const message = String((error as any)?.message || error || '').toLowerCase();
+  const rawMessage = String((error as any)?.message || error || '');
+  const message = rawMessage.toLowerCase();
+  if (message.includes('could not be reduced enough') || message.includes('2 minutes or shorter')) {
+    return rawMessage;
+  }
+  if (message.includes('payload too large') || message.includes('entity too large') || message.includes('maximum allowed size')) {
+    return 'This file is still too large to send. Try trimming the video or choosing a smaller document.';
+  }
   if (message.includes('timeout') || message.includes('network')) {
     return 'The upload timed out. Try again on a stronger connection or send a smaller video.';
   }
-  return 'Unable to upload this file.';
+  return 'This file could not be sent. Please try again.';
 };
 
 // Message type definition
@@ -652,6 +693,10 @@ const buildMediaOutboxRow = ({
   mediaType,
   documentSizeLabel,
   documentTypeLabel,
+  byteSize,
+  width,
+  height,
+  durationMs,
 }: {
   ownerUserId: string;
   threadId: string;
@@ -662,6 +707,10 @@ const buildMediaOutboxRow = ({
   mediaType: 'image' | 'video' | 'document';
   documentSizeLabel?: string | null;
   documentTypeLabel?: string | null;
+  byteSize?: number | null;
+  width?: number | null;
+  height?: number | null;
+  durationMs?: number | null;
 }): ChatPendingOutboxRow => {
   const now = new Date().toISOString();
   const localMessageId = message.clientMessageId ?? message.id;
@@ -680,6 +729,11 @@ const buildMediaOutboxRow = ({
         fileName,
         contentType,
         mediaType,
+        attachmentId: createChatAttachmentId(),
+        byteSize: byteSize ?? null,
+        width: width ?? null,
+        height: height ?? null,
+        durationMs: durationMs ?? null,
         replyToMessageId: message.replyToId ?? null,
         documentName: mediaType === 'document' ? fileName : null,
         documentSizeLabel: documentSizeLabel ?? null,
@@ -731,6 +785,7 @@ const buildVoiceOutboxRow = ({
         localUri,
         fileName,
         contentType,
+        attachmentId: createChatAttachmentId(),
         durationSeconds,
         waveform,
         replyToMessageId: message.replyToId ?? null,
@@ -1491,9 +1546,10 @@ type MessageRowItemProps = {
   onDeleteMessage: (message: MessageType) => void;
   isActionPinned: boolean;
   onOpenReactionSheet: (message: MessageType) => void;
-  onViewImage: (url: string) => void;
-  onViewVideo: (url: string) => void;
-  onOpenDocument: (doc?: MessageType['document']) => void;
+  onViewImage: (message: MessageType, renderedUrl: string) => void;
+  onViewVideo: (message: MessageType, renderedUrl: string) => void;
+  onOpenDocument: (message: MessageType) => void;
+  onRefreshMedia: (message: MessageType) => void;
   onOpenLocation: (message: MessageType) => void;
   onStopLiveShare: (messageId: string) => void;
   onOpenViewOnce: (message: MessageType) => void;
@@ -2374,6 +2430,7 @@ const MessageRowItem = memo(
     onViewImage,
     onViewVideo,
     onOpenDocument,
+    onRefreshMedia,
     onOpenLocation,
     onStopLiveShare,
     onOpenViewOnce,
@@ -2889,17 +2946,17 @@ const MessageRowItem = memo(
               return;
             }
             const resolvedImageUri = resolveChatImageUri(item, cachedImageUrl);
-            if (item.type === 'image' && resolvedImageUri) {
-              onViewImage(resolvedImageUri);
+            if (item.type === 'image' && (resolvedImageUri || item.storagePath)) {
+              onViewImage(item, resolvedImageUri || '');
               return;
             }
             const resolvedVideoUri = resolveChatVideoUri(item, cachedVideoUrl);
-            if (item.type === 'video' && resolvedVideoUri) {
-              onViewVideo(resolvedVideoUri);
+            if (item.type === 'video' && (resolvedVideoUri || item.storagePath)) {
+              onViewVideo(item, resolvedVideoUri || '');
               return;
             }
-            if (item.type === 'document' && item.document?.url) {
-              onOpenDocument(item.document);
+            if (item.type === 'document' && (item.document?.url || item.storagePath)) {
+              onOpenDocument(item);
               return;
             }
             if (item.type === 'date_plan' && item.dateInvite?.mapLink) {
@@ -3196,6 +3253,7 @@ const MessageRowItem = memo(
                   theme={theme}
                   isDark={isDark}
                   receiptPulseStyle={receiptPulseStyle}
+                  onMediaLoadError={onRefreshMedia}
                 />
               ) : item.type === 'date_plan' ? (
                 <DatePlanMessageContent
@@ -3559,7 +3617,9 @@ export default function ConversationScreen() {
 
   const [messages, setMessages] = useState<MessageType[]>([]);
   const signedChatMediaUrlsRef = useRef(new Map<string, string>());
+  const signedChatMediaExpiryRef = useRef(new Map<string, number>());
   const signingChatMediaPathsRef = useRef(new Set<string>());
+  const [mediaSignatureEpoch, setMediaSignatureEpoch] = useState(0);
   const [messagesLoaded, setMessagesLoaded] = useState(false);
   const [threadBootstrapSettled, setThreadBootstrapSettled] = useState(false);
   const [remoteMessagesChecked, setRemoteMessagesChecked] = useState(false);
@@ -3707,6 +3767,9 @@ export default function ConversationScreen() {
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
   const [keyboardInset, setKeyboardInset] = useState(0);
   const [imageViewerUrl, setImageViewerUrl] = useState<string | null>(null);
+  const [imageViewerVisible, setImageViewerVisible] = useState(false);
+  const [imageViewerLoading, setImageViewerLoading] = useState(false);
+  const [imageViewerError, setImageViewerError] = useState(false);
   const [videoViewerUrl, setVideoViewerUrl] = useState<string | null>(null);
   const [cachedImageUris, setCachedImageUris] = useState<Record<string, string>>({});
   const [cachedVideoUris, setCachedVideoUris] = useState<Record<string, string>>({});
@@ -4384,6 +4447,8 @@ export default function ConversationScreen() {
   const imageScaleBase = useRef(new Animated.Value(1)).current;
   const imagePinchScale = useRef(new Animated.Value(1)).current;
   const imageScaleRef = useRef(1);
+  const imageViewerRequestRef = useRef(0);
+  const imageViewerSourceRef = useRef<{ message: MessageType; renderedUrl: string } | null>(null);
   const imageScale = useMemo(
     () => Animated.multiply(imageScaleBase, imagePinchScale),
     [imagePinchScale, imageScaleBase]
@@ -4562,7 +4627,7 @@ export default function ConversationScreen() {
     setShowReactions,
     viewOnceStatusRef,
     setViewOnceStatus,
-    chatMediaBucket: CHAT_MEDIA_BUCKET,
+    _chatMediaBucket: CHAT_MEDIA_BUCKET,
   });
 
   const isBlockedByMe = blockStatus === BLOCKED_BY_ME;
@@ -4892,7 +4957,7 @@ const resolveQueuedVideoUri = async (
           } else {
             messageText = label;
           }
-        } else if (messageType === 'text' && (messageText.startsWith(DOCUMENT_TEXT_PREFIX) || messageText.startsWith('dY\"Z'))) {
+        } else if (messageType === 'document' || (messageType === 'text' && (messageText.startsWith(DOCUMENT_TEXT_PREFIX) || messageText.startsWith('dY\"Z')))) {
           const [label, url, ...rest] = messageText.split('\n');
           const prefixPattern = messageText.startsWith('dY\"Z')
             ? /^dY"Z\s*/
@@ -4901,7 +4966,7 @@ const resolveQueuedVideoUri = async (
           const labelParts = cleanedLabel.split(' | ').map((part) => part.trim()).filter(Boolean);
           const [namePart, sizePart, typePart] = labelParts;
           storagePath = storagePath ?? getLegacyChatMediaStoragePath(url);
-          if (url || storagePath) {
+          if (url || storagePath || messageType === 'document') {
             resolvedType = 'document';
             documentUrl = storagePath ? '' : url;
             documentName = namePart || 'Document';
@@ -4964,6 +5029,21 @@ const resolveQueuedVideoUri = async (
         sticker = undefined;
       }
 
+      // A signing request can finish before the server acknowledgement replaces an
+      // optimistic media row. Reapply that already-valid URL during reconciliation
+      // so sent media never falls back to a permanent loading placeholder.
+      if (!deletedForAll) {
+        if (resolvedType === 'image') {
+          imageUrl = resolveKnownSignedChatMediaUri(storagePath, imageUrl, signedChatMediaUrlsRef.current) ?? undefined;
+        }
+        if (resolvedType === 'video') {
+          videoUrl = resolveKnownSignedChatMediaUri(storagePath, videoUrl, signedChatMediaUrlsRef.current) ?? undefined;
+        }
+        if (resolvedType === 'document') {
+          documentUrl = resolveKnownSignedChatMediaUri(storagePath, documentUrl, signedChatMediaUrlsRef.current) ?? undefined;
+        }
+      }
+
       return {
         id: row.id,
         clientMessageId: row.client_message_id ?? null,
@@ -4991,10 +5071,10 @@ const resolveQueuedVideoUri = async (
         imageUrl,
         videoUrl,
         document:
-          resolvedType === 'document' && documentUrl
+          resolvedType === 'document' && (documentUrl || storagePath)
             ? {
                 name: documentName || 'Document',
-                url: documentUrl,
+                url: documentUrl || '',
                 sizeLabel: documentSizeLabel ?? null,
                 typeLabel: documentTypeLabel ?? null,
               }
@@ -5018,15 +5098,23 @@ const resolveQueuedVideoUri = async (
   );
 
   useEffect(() => {
+    const timer = setInterval(() => setMediaSignatureEpoch((value) => value + 1), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const now = Date.now();
     const pendingPaths = Array.from(
       new Set(
         messages
           .filter((message) => !message.deletedForAll && message.storagePath)
           .map((message) => message.storagePath as string)
           .filter(
-            (path) =>
-              !signedChatMediaUrlsRef.current.has(path) &&
-              !signingChatMediaPathsRef.current.has(path),
+            (path) => {
+              if (signingChatMediaPathsRef.current.has(path)) return false;
+              const refreshAt = signedChatMediaExpiryRef.current.get(path) ?? 0;
+              return !signedChatMediaUrlsRef.current.has(path) || refreshAt <= now;
+            },
           ),
       ),
     );
@@ -5042,6 +5130,8 @@ const resolveQueuedVideoUri = async (
         signingChatMediaPathsRef.current.delete(path);
         if (error || !data?.signedUrl) return null;
         signedChatMediaUrlsRef.current.set(path, data.signedUrl);
+        // Supabase URL lives for 60 minutes. Refresh proactively at 50 minutes.
+        signedChatMediaExpiryRef.current.set(path, Date.now() + 50 * 60 * 1000);
         return { path, signedUrl: data.signedUrl };
       }),
     ).then((resolved) => {
@@ -5070,7 +5160,7 @@ const resolveQueuedVideoUri = async (
     return () => {
       cancelled = true;
     };
-  }, [messages]);
+  }, [mediaSignatureEpoch, messages]);
 
   const reconcileDeliveredFallback = useCallback(
     (items: MessageType[]) => {
@@ -5175,6 +5265,14 @@ const resolveQueuedVideoUri = async (
       chatThreadLocalLoadedKeyRef.current = localKey;
     }
 
+    console.log('[chat][thread][local] observer-apply', {
+      currentUserId: user.id,
+      peerUserId: activePeerMessageUserId,
+      messageCount: localThreadState.mergedMessages.length,
+      hasMore: localThreadState.hasMore,
+      remoteMessagesChecked,
+    });
+
     if (messagesRef.current !== localThreadState.mergedMessages) {
       setMessages((prev) => {
         const prevKey = prev.map(getMessageLocalObserverKey).join("|");
@@ -5235,91 +5333,8 @@ const resolveQueuedVideoUri = async (
     void writeOfflineSnapshot(chatThreadCacheKey, serializeCachedMessages(messages));
   }, [chatThreadCacheKey, messages, messagesLoaded]);
 
-  useEffect(() => {
-    const imageUrls = Array.from(
-      new Set(
-        messages
-          .map((message) => message.imageUrl)
-          .filter((value): value is string => Boolean(value && value.startsWith('http'))),
-      ),
-    );
-    if (!imageUrls.length) return;
-    let cancelled = false;
-    void (async () => {
-      for (const url of imageUrls) {
-        const cached = await getOfflineImageUri(url);
-        if (cancelled) return;
-        if (cached) {
-          setCachedImageUris((prev) => (prev[url] === cached ? prev : { ...prev, [url]: cached }));
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.type === 'image' && msg.imageUrl === url && msg.offlineImageUri !== cached
-                ? { ...msg, offlineImageUri: cached }
-                : msg
-            )
-          );
-          continue;
-        }
-        if (!networkReady) continue;
-        const downloaded = await cacheOfflineImage(url, url);
-        if (cancelled || !downloaded) continue;
-        setCachedImageUris((prev) => (prev[url] === downloaded ? prev : { ...prev, [url]: downloaded }));
-        setMessages((prev) =>
-          prev.map((msg) =>
-            msg.type === 'image' && msg.imageUrl === url && msg.offlineImageUri !== downloaded
-              ? { ...msg, offlineImageUri: downloaded }
-              : msg
-          )
-        );
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [messages, networkReady]);
-
-  useEffect(() => {
-    const videoUrls = Array.from(
-      new Set(
-        messages
-          .map((message) => message.videoUrl)
-          .filter((value): value is string => Boolean(value && value.startsWith('http'))),
-      ),
-    );
-    if (!videoUrls.length) return;
-    let cancelled = false;
-    void (async () => {
-      for (const url of videoUrls) {
-        const cached = await getOfflineVideoUri(url);
-        if (cancelled) return;
-        if (cached) {
-          setCachedVideoUris((prev) => (prev[url] === cached ? prev : { ...prev, [url]: cached }));
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.type === 'video' && msg.videoUrl === url && msg.offlineVideoUri !== cached
-                ? { ...msg, offlineVideoUri: cached }
-                : msg
-            )
-          );
-          continue;
-        }
-        if (!networkReady) continue;
-        const downloaded = await cacheOfflineVideo(url, url);
-        if (cancelled || !downloaded) continue;
-        setCachedVideoUris((prev) => (prev[url] === downloaded ? prev : { ...prev, [url]: downloaded }));
-        setMessages((prev) =>
-          prev.map((msg) =>
-            msg.type === 'video' && msg.videoUrl === url && msg.offlineVideoUri !== downloaded
-              ? { ...msg, offlineVideoUri: downloaded }
-              : msg
-          )
-        );
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [messages, networkReady]);
+  // Media is cached only when opened. Expo Image handles lightweight bubble
+  // caching; eager full-thread downloads waste bandwidth and duplicate signed URLs.
 
   const markLocalMessageFailed = useCallback((messageId: string) => {
     setMessages((prev) => setMessageStatus(prev, messageId, 'failed'));
@@ -5365,6 +5380,33 @@ const resolveQueuedVideoUri = async (
       return next;
     });
   }, [conversationId, linkReplies, mapRowToMessage, updatePinnedMessageIds, user?.id]);
+
+  const fetchCanonicalRealtimeMessageRow = useCallback(async (row: MessageRow) => {
+    const requiresCanonicalHydration = Boolean(
+      row?.id &&
+        (
+          row.is_view_once ||
+          row.encrypted_media ||
+          row.storage_path ||
+          row.message_type === 'image' ||
+          row.message_type === 'video' ||
+          row.message_type === 'document'
+        )
+    );
+    if (!requiresCanonicalHydration) {
+      return row;
+    }
+    const { data, error } = await supabase
+      .from('messages')
+      .select(MESSAGE_SELECT_FIELDS)
+      .eq('id', row.id)
+      .maybeSingle();
+    if (error) {
+      console.log('[chat] canonical realtime hydration error', error);
+      return row;
+    }
+    return (data as MessageRow | null) ?? row;
+  }, []);
 
   const locationViewerMessage = useMemo(() => {
     if (!locationViewerMessageId) return null;
@@ -6079,14 +6121,16 @@ const resolveQueuedVideoUri = async (
     };
   }, [currentCoords, selectedPlace]);
 
-  const uploadChatMedia = useCallback(async ({
+  const _uploadChatMedia = useCallback(async ({
     uri,
     fileName,
     contentType,
+    onProgress,
   }: {
     uri: string;
     fileName: string;
     contentType: string;
+    onProgress?: (progress: number) => void;
   }) => {
     // Ensure we have an auth session for storage RLS
     const { data: sessionData } = await supabase.auth.getSession();
@@ -6109,16 +6153,24 @@ const resolveQueuedVideoUri = async (
 
     for (let attempt = 0; attempt <= CHAT_MEDIA_UPLOAD_RETRIES; attempt += 1) {
       try {
-        const task = FileSystem.createUploadTask(uploadUrl, uri, {
-          httpMethod: 'POST',
-          uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
-          headers: {
-            'Content-Type': contentType,
-            Authorization: `Bearer ${accessToken}`,
-            apikey: supabaseAnonKey,
-            'x-upsert': 'true',
+        const task = FileSystem.createUploadTask(
+          uploadUrl,
+          uri,
+          {
+            httpMethod: 'POST',
+            uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+            headers: {
+              'Content-Type': contentType,
+              Authorization: `Bearer ${accessToken}`,
+              apikey: supabaseAnonKey,
+              'x-upsert': 'true',
+            },
           },
-        });
+          (progress) => {
+            if (!progress.totalBytesExpectedToSend) return;
+            onProgress?.(progress.totalBytesSent / progress.totalBytesExpectedToSend);
+          },
+        );
         const result = await task.uploadAsync();
         if (!result) {
           throw new Error('Upload failed (no response)');
@@ -6158,10 +6210,14 @@ const resolveQueuedVideoUri = async (
     bytes,
     fileName,
     contentType,
+    clientMessageId,
+    attachmentId,
   }: {
     bytes: Uint8Array;
     fileName: string;
     contentType: string;
+    clientMessageId: string;
+    attachmentId: string;
   }) => {
     const { data: sessionData } = await supabase.auth.getSession();
     if (!sessionData.session) {
@@ -6170,7 +6226,14 @@ const resolveQueuedVideoUri = async (
     if (!activePeerMessageUserId) {
       throw new Error('missing_chat_participant');
     }
-    const filePath = `${user?.id ?? 'anon'}/${activePeerMessageUserId}/${Date.now()}-${fileName}`;
+    const filePath = buildDeterministicChatAttachmentPath({
+      senderId: user?.id ?? 'anon',
+      receiverId: activePeerMessageUserId,
+      clientMessageId,
+      attachmentId,
+      fileName,
+      mimeType: contentType,
+    });
     const { error: uploadError } = await supabase
       .storage
       .from(CHAT_MEDIA_BUCKET)
@@ -6237,7 +6300,7 @@ const resolveQueuedVideoUri = async (
     return { keypair, recipientPublicKey };
   }, [conversationId, ensureOwnKeypair, fetchPeerPublicKey, user?.id]);
 
-  const sendImageAttachment = useCallback(async ({
+  const _sendImageAttachment = useCallback(async ({
     imageUrl,
     storagePath,
     isViewOnce = false,
@@ -6333,17 +6396,55 @@ const resolveQueuedVideoUri = async (
     kind: 'image' | 'video';
   }) => {
     if (isChatBlocked) {
+      console.log('[chat][view-once-send] blocked', {
+        kind,
+        isBlockedByMe,
+        isChatBlocked,
+      });
       Alert.alert('Messaging unavailable', isBlockedByMe ? 'Unblock to send messages.' : 'You can\'t message this user.');
       return;
     }
-    if (!user?.id || !conversationId) return;
+    if (!user?.id || !conversationId) {
+      console.log('[chat][view-once-send] missing-user-or-conversation', {
+        kind,
+        hasUserId: Boolean(user?.id),
+        hasConversationId: Boolean(conversationId),
+      });
+      return;
+    }
+
+    const startedAt = Date.now();
+    console.log('[chat][view-once-send] start', {
+      kind,
+      userId: user.id,
+      conversationId,
+      activePeerMessageUserId,
+      fileName,
+      contentType,
+      replyingToId: replyingTo?.id ?? null,
+    });
 
     const keys = await ensureViewOnceKeys();
-    if (!keys) return;
+    if (!keys) {
+      console.log('[chat][view-once-send] keys-unavailable', {
+        kind,
+        userId: user.id,
+        conversationId,
+        durationMs: Date.now() - startedAt,
+      });
+      return;
+    }
     const { keypair, recipientPublicKey } = keys;
+    console.log('[chat][view-once-send] keys-ready', {
+      kind,
+      hasSenderPublicKey: Boolean(keypair.publicKeyB64),
+      hasRecipientPublicKey: Boolean(recipientPublicKey),
+      durationMs: Date.now() - startedAt,
+    });
 
     const tempId = `temp-viewonce-${Date.now()}`;
     const clientMessageId = tempId;
+    const attachmentId = createChatAttachmentId();
     const optimistic: MessageType = {
       id: tempId,
       clientMessageId,
@@ -6363,6 +6464,24 @@ const resolveQueuedVideoUri = async (
     setViewOnceMode(false);
 
     try {
+      const fileInfo = await FileSystem.getInfoAsync(uri);
+      const fileSize = fileInfo.exists && 'size' in fileInfo && typeof fileInfo.size === 'number'
+        ? fileInfo.size
+        : 0;
+      console.log('[chat][view-once-send] file-info', {
+        kind,
+        uri,
+        fileExists: fileInfo.exists,
+        fileSize,
+        durationMs: Date.now() - startedAt,
+      });
+      const viewOnceLimit = kind === 'video'
+        ? CHAT_ATTACHMENT_LIMITS.viewOnceVideoBytes
+        : CHAT_ATTACHMENT_LIMITS.imageBytes;
+      if (fileSize > viewOnceLimit) {
+        const limitMb = Math.round(viewOnceLimit / (1024 * 1024));
+        throw new Error(`view_once_media_exceeds_${limitMb}mb`);
+      }
       const response = await fetch(uri);
       const arrayBuffer = await response.arrayBuffer();
       const plaintext = new Uint8Array(arrayBuffer);
@@ -6372,56 +6491,87 @@ const resolveQueuedVideoUri = async (
         receiverPublicKeyB64: recipientPublicKey,
       });
       plaintext.fill(0);
-
-      const encryptedPath = await uploadEncryptedChatMedia({
-        bytes: encryptedPayload.cipherBytes,
-        fileName: `${fileName}.enc`,
-        contentType,
+      console.log('[chat][view-once-send] encrypted', {
+        kind,
+        encryptedByteSize: encryptedPayload.cipherBytes.length,
+        durationMs: Date.now() - startedAt,
       });
 
-      const { data, error } = await supabase
-        .from('messages')
-        .insert({
-          text: '',
-          client_message_id: clientMessageId,
-          sender_id: user.id,
-          receiver_id: activePeerMessageUserId,
-          is_read: false,
-          message_type: kind,
-          reply_to_message_id: replyingTo?.id ?? null,
-          is_view_once: true,
-          encrypted_media: true,
-          encrypted_media_path: encryptedPath,
-          encrypted_key_sender: encryptedPayload.encryptedKeySenderB64,
-          encrypted_key_receiver: encryptedPayload.encryptedKeyReceiverB64,
-          encrypted_key_nonce: encryptedPayload.keyNonceB64,
-          encrypted_media_nonce: encryptedPayload.mediaNonceB64,
-          encrypted_media_alg: 'nacl-secretbox',
-          encrypted_media_mime: contentType,
-          encrypted_media_size: plaintext.length,
-        })
-        .select(MESSAGE_SELECT_FIELDS)
-        .single();
-
-      if (error || !data) {
-        console.log('[chat] send encrypted view-once error', error);
-        setMessages((prev) => prev.filter((msg) => msg.id !== tempId));
-      } else {
-        const nextMessage = mapRowToMessage(data as MessageRow);
-        setMessages((prev) =>
-          replyingTo
-            ? linkReplies(replaceMessageById(prev, tempId, nextMessage))
-            : replaceMessageById(prev, tempId, nextMessage)
-        );
+      const encryptedByteSize = encryptedPayload.cipherBytes.length;
+      let encryptedPath: string;
+      try {
+        encryptedPath = await uploadEncryptedChatMedia({
+          bytes: encryptedPayload.cipherBytes,
+          fileName: `${fileName}.enc`,
+          contentType,
+          clientMessageId,
+          attachmentId,
+        });
+        console.log('[chat][view-once-send] upload-success', {
+          kind,
+          attachmentId,
+          clientMessageId,
+          encryptedPath,
+          durationMs: Date.now() - startedAt,
+        });
+      } finally {
+        encryptedPayload.cipherBytes.fill(0);
       }
+
+      const data = await finalizeChatAttachment({
+        receiverId: activePeerMessageUserId,
+        clientMessageId,
+        attachmentId,
+        attachmentType: kind,
+        bucketId: CHAT_MEDIA_BUCKET,
+        storagePath: encryptedPath,
+        originalName: fileName,
+        mimeType: contentType,
+        byteSize: encryptedByteSize,
+        replyToMessageId: replyingTo?.id ?? null,
+        isViewOnce: true,
+        encryptedKeySender: encryptedPayload.encryptedKeySenderB64,
+        encryptedKeyReceiver: encryptedPayload.encryptedKeyReceiverB64,
+        encryptedKeyNonce: encryptedPayload.keyNonceB64,
+        encryptedMediaNonce: encryptedPayload.mediaNonceB64,
+        encryptedMediaAlg: 'nacl-secretbox',
+        senderPublicKey: keypair.publicKeyB64,
+      });
+      console.log('[chat][view-once-send] finalize-success', {
+        kind,
+        attachmentId,
+        clientMessageId,
+        encryptedPath,
+        remoteMessageId: (data as { id?: string })?.id ?? null,
+        durationMs: Date.now() - startedAt,
+      });
+      const nextMessage = mapRowToMessage(data as MessageRow);
+      setMessages((prev) =>
+        replyingTo
+          ? linkReplies(replaceMessageById(prev, tempId, nextMessage))
+          : replaceMessageById(prev, tempId, nextMessage)
+      );
     } catch (err) {
-      console.log('[chat] encrypted view-once error', err);
-      Alert.alert('View once', 'Unable to send encrypted media.');
+      console.log('[chat][view-once-send] error', {
+        kind,
+        attachmentId,
+        clientMessageId,
+        durationMs: Date.now() - startedAt,
+        code: (err as { code?: string })?.code ?? null,
+        message: err instanceof Error ? err.message : String(err),
+      }, err);
+      const errorMessage = err instanceof Error ? err.message : '';
+      Alert.alert(
+        'View once',
+        errorMessage.startsWith('view_once_media_exceeds_')
+          ? `For reliable encrypted delivery, choose a ${kind} smaller than ${kind === 'video' ? '25 MB' : '15 MB'}.`
+          : 'Unable to send encrypted media.',
+      );
       setMessages((prev) => prev.filter((msg) => msg.id !== tempId));
     }
   }, [conversationId, ensureViewOnceKeys, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, replaceMessageById, replyingTo, uploadEncryptedChatMedia, user?.id]);
 
-  const sendVideoAttachment = useCallback(async ({
+  const _sendVideoAttachment = useCallback(async ({
     videoUrl,
     storagePath,
     isViewOnce = false,
@@ -6512,6 +6662,10 @@ const resolveQueuedVideoUri = async (
     mediaType,
     documentSizeLabel,
     documentTypeLabel,
+    byteSize,
+    width,
+    height,
+    durationMs,
   }: {
     localUri: string;
     fileName: string;
@@ -6519,6 +6673,10 @@ const resolveQueuedVideoUri = async (
     mediaType: 'image' | 'video' | 'document';
     documentSizeLabel?: string | null;
     documentTypeLabel?: string | null;
+    byteSize?: number | null;
+    width?: number | null;
+    height?: number | null;
+    durationMs?: number | null;
   }) => {
     if (!user?.id || !conversationId) return;
     const stagedUri = await stageOfflineChatUpload(localUri, fileName);
@@ -6571,6 +6729,10 @@ const resolveQueuedVideoUri = async (
         mediaType,
         documentSizeLabel: documentSizeLabel ?? null,
         documentTypeLabel: documentTypeLabel ?? null,
+        byteSize: byteSize ?? null,
+        width: width ?? null,
+        height: height ?? null,
+        durationMs: durationMs ?? null,
       }),
     );
     void ChatOutboxService.flushPending(user.id).catch((error) => {
@@ -7124,141 +7286,292 @@ const resolveQueuedVideoUri = async (
 
   const fetchSystemMessages = useCallback(async () => {
     if (!user?.id || !activePeerMessageUserId) return [] as MessageType[];
+    const startedAt = Date.now();
     try {
-      return await fetchRemoteSystemMessages({
+      console.log('[chat][thread][system] start', {
         currentUserId: user.id,
         peerUserId: activePeerMessageUserId,
-        mapRow: (row) => mapSystemRowToMessage(row as SystemMessageRow),
       });
+      const { value: rows, timedOut } = await withTimeoutFallback(
+        fetchRemoteSystemMessages({
+          currentUserId: user.id,
+          peerUserId: activePeerMessageUserId,
+          mapRow: (row) => mapSystemRowToMessage(row as SystemMessageRow),
+        }),
+        LOCAL_CHAT_OPERATION_TIMEOUT_MS,
+        [] as MessageType[],
+      );
+      if (timedOut) {
+        console.log('[chat][thread][system] timeout', {
+          currentUserId: user.id,
+          peerUserId: activePeerMessageUserId,
+          durationMs: Date.now() - startedAt,
+          timeoutMs: LOCAL_CHAT_OPERATION_TIMEOUT_MS,
+        });
+      }
+      console.log('[chat][thread][system] success', {
+        currentUserId: user.id,
+        peerUserId: activePeerMessageUserId,
+        durationMs: Date.now() - startedAt,
+        rowCount: rows.length,
+      });
+      return rows;
     } catch (error) {
+      console.log('[chat][thread][system] error', {
+        currentUserId: user.id,
+        peerUserId: activePeerMessageUserId,
+        durationMs: Date.now() - startedAt,
+      });
       console.log('[chat] fetch system messages error', error);
       return [] as MessageType[];
     }
   }, [activePeerMessageUserId, mapSystemRowToMessage, user?.id]);
 
   const fetchMessages = useCallback(async () => {
-    if (!user?.id || !activePeerMessageUserId) return;
-    if (!isScreenFocusedRef.current) return;
+    if (!user?.id || !activePeerMessageUserId) {
+      console.log('[chat][thread][remote] skip:missing-user-or-peer', {
+        hasUserId: Boolean(user?.id),
+        hasPeerUserId: Boolean(activePeerMessageUserId),
+      });
+      return;
+    }
+    if (!isScreenFocusedRef.current) {
+      console.log('[chat][thread][remote] skip:not-focused', {
+        currentUserId: user.id,
+        peerUserId: activePeerMessageUserId,
+      });
+      return;
+    }
     const fetchKey = `${user.id}:${activePeerMessageUserId}`;
     if (fetchMessagesInFlightRef.current?.key === fetchKey) {
+      console.log('[chat][thread][remote] reuse-in-flight', {
+        currentUserId: user.id,
+        peerUserId: activePeerMessageUserId,
+        existingMessageCount: messagesRef.current.length,
+      });
       await fetchMessagesInFlightRef.current.promise;
       return;
     }
     const run = async () => {
-    const { data, error, isIncrementalFetch, threadSyncCursor } = await fetchRemoteThreadMessages({
-      currentUserId: user.id,
-      peerUserId: activePeerMessageUserId,
-      pageSize: PAGE_SIZE,
-      selectFields: MESSAGE_SELECT_FIELDS,
-      currentMessages: messagesRef.current,
-    });
-    const isStaleFetch = activePeerMessageUserIdRef.current !== activePeerMessageUserId;
-    if (isStaleFetch) {
-      return;
-    }
-    if (!isChatInstanceMountedRef.current) {
-      return;
-    }
+      const startedAt = Date.now();
+      console.log('[chat][thread][remote] start', {
+        currentUserId: user.id,
+        peerUserId: activePeerMessageUserId,
+        existingMessageCount: messagesRef.current.length,
+      });
+      const { data, error, isIncrementalFetch, threadSyncCursor } = await fetchRemoteThreadMessages({
+        currentUserId: user.id,
+        peerUserId: activePeerMessageUserId,
+        pageSize: PAGE_SIZE,
+        selectFields: MESSAGE_SELECT_FIELDS,
+        currentMessages: messagesRef.current,
+      });
+      const isStaleFetch = activePeerMessageUserIdRef.current !== activePeerMessageUserId;
+      if (isStaleFetch) {
+        console.log('[chat][thread][remote] skip:stale-fetch', {
+          currentUserId: user.id,
+          peerUserId: activePeerMessageUserId,
+          durationMs: Date.now() - startedAt,
+        });
+        return;
+      }
+      if (!isChatInstanceMountedRef.current) {
+        console.log('[chat][thread][remote] skip:unmounted', {
+          currentUserId: user.id,
+          peerUserId: activePeerMessageUserId,
+          durationMs: Date.now() - startedAt,
+        });
+        return;
+      }
 
-    if (error) {
-      void ChatRepository.markSyncFailed(user.id, 'thread_messages', {
-        code: (error as { code?: string })?.code ?? null,
-        message: error.message || 'Failed to load thread messages',
-      }, { threadId: activePeerMessageUserId });
-      console.log('[chat] fetch messages error', error);
-      if (isLikelyNetworkError(error)) {
-        if (messagesRef.current.length === 0 && chatThreadCacheKey) {
-          const cached =
-            (await readOfflineSnapshot<CachedMessageType[]>(chatThreadCacheKey)) ??
-            (user?.id && conversationId
-              ? await migrateLegacyChatThreadSnapshot<CachedMessageType[]>(user.id, conversationId)
-              : null);
-          if (cached) {
-            if (!isChatInstanceMountedRef.current) {
-              return;
+      if (error) {
+        void ChatRepository.markSyncFailed(user.id, 'thread_messages', {
+          code: (error as { code?: string })?.code ?? null,
+          message: error.message || 'Failed to load thread messages',
+        }, { threadId: activePeerMessageUserId });
+        console.log('[chat][thread][remote] error', {
+          currentUserId: user.id,
+          peerUserId: activePeerMessageUserId,
+          durationMs: Date.now() - startedAt,
+          code: (error as { code?: string })?.code ?? null,
+          message: error.message || 'Failed to load thread messages',
+          isLikelyNetworkError: isLikelyNetworkError(error),
+        });
+        if (isLikelyNetworkError(error)) {
+          if (messagesRef.current.length === 0 && chatThreadCacheKey) {
+            const cached =
+              (await readOfflineSnapshot<CachedMessageType[]>(chatThreadCacheKey)) ??
+              (user?.id && conversationId
+                ? await migrateLegacyChatThreadSnapshot<CachedMessageType[]>(user.id, conversationId)
+                : null);
+            if (cached) {
+              if (!isChatInstanceMountedRef.current) {
+                return;
+              }
+              const hydrated = reconcileDeliveredFallback(linkReplies(deserializeCachedMessages(cached)));
+              console.log('[chat][thread][remote] network-fallback-cache-applied', {
+                currentUserId: user.id,
+                peerUserId: activePeerMessageUserId,
+                cachedMessageCount: hydrated.length,
+              });
+              setMessages(hydrated);
+              setHasMore(hydrated.length >= PAGE_SIZE);
+              setOldestTimestamp(hydrated[0]?.timestamp ?? null);
             }
-            const hydrated = reconcileDeliveredFallback(linkReplies(deserializeCachedMessages(cached)));
-            setMessages(hydrated);
-            setHasMore(hydrated.length >= PAGE_SIZE);
-            setOldestTimestamp(hydrated[0]?.timestamp ?? null);
           }
-        }
-        if (!isChatInstanceMountedRef.current) {
+          if (!isChatInstanceMountedRef.current) {
+            return;
+          }
+          setMessagesLoaded(true);
+          setThreadBootstrapSettled(true);
+          console.log('[chat][thread][remote] settle:network-error', {
+            currentUserId: user.id,
+            peerUserId: activePeerMessageUserId,
+            finalMessageCount: messagesRef.current.length,
+          });
           return;
         }
         setMessagesLoaded(true);
         setThreadBootstrapSettled(true);
+        setRemoteMessagesChecked(true);
+        console.log('[chat][thread][remote] settle:error', {
+          currentUserId: user.id,
+          peerUserId: activePeerMessageUserId,
+          finalMessageCount: messagesRef.current.length,
+        });
         return;
       }
+
+      const hiddenSet = hiddenMessageIdsRef.current;
+      const previousById = new Map(messagesRef.current.map((message) => [message.id, message] as const));
+      const mapped: MessageType[] = (data || [])
+        .map((row: MessageRow) => {
+          const nextMessage = mapRowToMessage(row);
+          const previous = previousById.get(nextMessage.id);
+          const withOfflineMedia = mergeOfflineMediaIntoMessage(nextMessage, previous);
+          return previous
+            ? mergeMessageWithMonotonicReceipt(previous, withOfflineMedia)
+            : withOfflineMedia;
+        })
+        .filter((msg) => !hiddenSet.has(msg.id));
+
+      const ordered = isIncrementalFetch ? mapped : mapped.reverse();
+      console.log('[chat][thread][remote] success', {
+        currentUserId: user.id,
+        peerUserId: activePeerMessageUserId,
+        durationMs: Date.now() - startedAt,
+        remoteRowCount: (data || []).length,
+        orderedMessageCount: ordered.length,
+        isIncrementalFetch,
+      });
+      const systemRows = await fetchSystemMessages();
+      if (!isChatInstanceMountedRef.current) {
+        console.log('[chat][thread][remote] skip:unmounted-after-system', {
+          currentUserId: user.id,
+          peerUserId: activePeerMessageUserId,
+        });
+        return;
+      }
+      const combined = [...ordered, ...systemRows].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+      const linked = reconcileDeliveredFallback(linkReplies(combined));
+      let mergedForState: MessageType[] = linked;
+      setMessages((prev) => {
+        if (!isIncrementalFetch && linked.length === 0 && prev.length > 0) {
+          mergedForState = prev;
+          console.log('[chat][thread][remote] state-preserve-existing', {
+            currentUserId: user.id,
+            peerUserId: activePeerMessageUserId,
+            previousMessageCount: prev.length,
+          });
+          return prev;
+        }
+        const fetchedMessages = isIncrementalFetch ? mergeIncrementalFetchedMessages(prev, linked) : linked;
+        mergedForState = reconcileDeliveredFallback(
+          linkReplies(
+            mergeFetchedMessagesWithLocalPending({
+              fetchedMessages,
+              previousMessages: prev,
+              currentUserId: user.id,
+            }),
+          ),
+        );
+        mergedForState = preserveUnchangedMessageReferences(
+          prev,
+          mergedForState,
+          getMessageLocalObserverKey,
+        );
+        console.log('[chat][thread][remote] state-apply', {
+          currentUserId: user.id,
+          peerUserId: activePeerMessageUserId,
+          previousMessageCount: prev.length,
+          nextMessageCount: mergedForState.length,
+          linkedMessageCount: linked.length,
+          systemMessageCount: systemRows.length,
+          isIncrementalFetch,
+        });
+        return mergedForState;
+      });
       setMessagesLoaded(true);
       setThreadBootstrapSettled(true);
       setRemoteMessagesChecked(true);
-      return;
-    }
-
-    const hiddenSet = hiddenMessageIdsRef.current;
-    const previousById = new Map(messagesRef.current.map((message) => [message.id, message] as const));
-    const mapped: MessageType[] = (data || [])
-      .map((row: MessageRow) => {
-        const nextMessage = mapRowToMessage(row);
-        const previous = previousById.get(nextMessage.id);
-        const withOfflineMedia = mergeOfflineMediaIntoMessage(nextMessage, previous);
-        return previous
-          ? mergeMessageWithMonotonicReceipt(previous, withOfflineMedia)
-          : withOfflineMedia;
-      })
-      .filter((msg) => !hiddenSet.has(msg.id));
-
-    const ordered = isIncrementalFetch ? mapped : mapped.reverse();
-    const systemRows = await fetchSystemMessages();
-    if (!isChatInstanceMountedRef.current) {
-      return;
-    }
-    const combined = [...ordered, ...systemRows].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-    const linked = reconcileDeliveredFallback(linkReplies(combined));
-    let mergedForState: MessageType[] = linked;
-    setMessages((prev) => {
-      if (!isIncrementalFetch && linked.length === 0 && prev.length > 0) {
-        mergedForState = prev;
-        return prev;
+      console.log('[chat][thread][remote] settle:success', {
+        currentUserId: user.id,
+        peerUserId: activePeerMessageUserId,
+        finalMessageCount: mergedForState.length,
+        threadSyncCursor,
+      });
+      if (ordered.length > 0) {
+        void (async () => {
+          try {
+            const { timedOut } = await withTimeoutFallback(
+              ChatRepository.upsertMessages(
+                user.id,
+                activePeerMessageUserId,
+                ordered.map((message) =>
+                  chatMessageToLocalRow(user.id, activePeerMessageUserId, message),
+                ),
+              ),
+              LOCAL_CHAT_OPERATION_TIMEOUT_MS,
+              undefined,
+            );
+            if (timedOut) {
+              console.log('[chat][thread][remote] local-persist-timeout', {
+                currentUserId: user.id,
+                peerUserId: activePeerMessageUserId,
+                timeoutMs: LOCAL_CHAT_OPERATION_TIMEOUT_MS,
+                messageCount: ordered.length,
+              });
+            } else {
+              console.log('[chat][thread][remote] local-persist-success', {
+                currentUserId: user.id,
+                peerUserId: activePeerMessageUserId,
+                messageCount: ordered.length,
+              });
+            }
+          } catch (localPersistError) {
+            // Remote data remains authoritative and should still render even if
+            // the device cache is temporarily unavailable.
+            console.log('[chat][thread][remote] local-repair-error', localPersistError);
+          }
+        })();
       }
-      const fetchedMessages = isIncrementalFetch ? mergeIncrementalFetchedMessages(prev, linked) : linked;
-      mergedForState = reconcileDeliveredFallback(
-        linkReplies(
-          mergeFetchedMessagesWithLocalPending({
-            fetchedMessages,
-            previousMessages: prev,
-            currentUserId: user.id,
-          }),
-        ),
-      );
-      mergedForState = preserveUnchangedMessageReferences(
-        prev,
-        mergedForState,
-        getMessageLocalObserverKey,
-      );
-      return mergedForState;
-    });
-    setMessagesLoaded(true);
-    setThreadBootstrapSettled(true);
-    setRemoteMessagesChecked(true);
-    if (chatThreadCacheKey) {
-      void writeOfflineSnapshot(chatThreadCacheKey, serializeCachedMessages(mergedForState));
-    }
-    void ChatRepository.markSyncSucceeded(user.id, 'thread_messages', {
-      threadId: activePeerMessageUserId,
-      cursor: threadSyncCursor,
-    });
-    void syncMessageReactions(mergedForState.map((msg) => msg.id).filter((id) => !id.startsWith('system:')));
-    const viewOnceIds = mergedForState.filter((msg) => msg.isViewOnce).map((msg) => msg.id);
-    void syncViewOnceStatus(viewOnceIds);
-    if (!isIncrementalFetch) {
-      setHasMore((data || []).length === PAGE_SIZE);
-      setOldestTimestamp(ordered[0]?.timestamp ?? null);
-    }
+      if (chatThreadCacheKey) {
+        void writeOfflineSnapshot(chatThreadCacheKey, serializeCachedMessages(mergedForState));
+      }
+      void ChatRepository.markSyncSucceeded(user.id, 'thread_messages', {
+        threadId: activePeerMessageUserId,
+        cursor: threadSyncCursor,
+      });
+      void syncMessageReactions(mergedForState.map((msg) => msg.id).filter((id) => !id.startsWith('system:')));
+      const viewOnceIds = mergedForState.filter((msg) => msg.isViewOnce).map((msg) => msg.id);
+      void syncViewOnceStatus(viewOnceIds);
+      if (!isIncrementalFetch) {
+        setHasMore((data || []).length === PAGE_SIZE);
+        setOldestTimestamp(ordered[0]?.timestamp ?? null);
+      }
 
-    await acknowledgeIncomingMessagesDelivered(user.id, null, activePeerMessageUserId);
-    await focusedThreadReadActionRef.current();
+      await acknowledgeIncomingMessagesDelivered(user.id, null, activePeerMessageUserId);
+      await focusedThreadReadActionRef.current();
     };
     const promise = run().finally(() => {
       if (fetchMessagesInFlightRef.current?.key === fetchKey) {
@@ -7702,10 +8015,24 @@ const resolveQueuedVideoUri = async (
     shouldAutoScrollRef.current = false;
     wasAtBottomRef.current = false;
     try {
-      const localRows = await ChatRepository.getMessages(user.id, activePeerMessageUserId, {
-        limit: PAGE_SIZE,
-        before: oldestTimestamp.toISOString(),
-      });
+      const localReadStartedAt = Date.now();
+      const localRows = await Promise.race([
+        ChatRepository.getMessages(user.id, activePeerMessageUserId, {
+          limit: PAGE_SIZE,
+          before: oldestTimestamp.toISOString(),
+        }),
+        new Promise<ChatMessageRow[]>((resolve) => {
+          setTimeout(() => resolve([]), Platform.OS === 'ios' ? 1200 : 2500);
+        }),
+      ]);
+      if (localRows.length === 0 && Date.now() - localReadStartedAt >= (Platform.OS === 'ios' ? 1150 : 2450)) {
+        console.log('[chat][thread][local] load-earlier-timeout', {
+          currentUserId: user.id,
+          peerUserId: activePeerMessageUserId,
+          platform: Platform.OS,
+          durationMs: Date.now() - localReadStartedAt,
+        });
+      }
       const localEarlierMessages = localRows.map(localRowToChatMessage);
       let networkBefore = oldestTimestamp;
 
@@ -7807,142 +8134,154 @@ const resolveQueuedVideoUri = async (
         peerUserId: activePeerMessageUserId,
         onStatus: handleRealtimeStatus,
         onInboxInsert: (row) => {
-        setIsTyping(false);
-        const incomingMessage = mapRowToMessage(row as MessageRow);
-        void ChatRepository.upsertMessages(user.id, activePeerMessageUserId, [
-          chatMessageToLocalRow(user.id, activePeerMessageUserId, incomingMessage),
-        ]).catch((error) => console.log('[chat] inbox realtime insert local persist error', error));
-        void ChatRepository.markSyncSucceeded(user.id, 'thread_messages', {
-          threadId: activePeerMessageUserId,
-          cursor: row.created_at,
-        });
-        setMessages((prev) => {
-          if (hiddenMessageIdsRef.current.has(row.id)) return prev;
-          if (prev.some((msg) => msg.id === row.id)) return prev;
-          return reconcileDeliveredFallback(linkReplies([...prev, incomingMessage]));
-        });
-        if (!hiddenMessageIdsRef.current.has(row.id)) {
-          void syncMessageReactions([row.id]);
-          if (row.is_view_once) {
-            void syncViewOnceStatus([row.id]);
-          }
-        }
-        void acknowledgeIncomingMessagesDelivered(user.id, row.id, activePeerMessageUserId);
-        void focusedThreadReadActionRef.current({ forceRemote: true });
-      },
-      onInboxUpdate: (row) => {
-        if (hiddenMessageIdsRef.current.has(row.id)) return;
-        setIsTyping(false);
-        const previous = messagesRef.current.find((msg) => msg.id === row.id);
-        const nextMessage = mergeOfflineMediaIntoMessage(mapRowToMessage(row as MessageRow), previous);
-        void ChatRepository.upsertMessages(user.id, activePeerMessageUserId, [
-          chatMessageToLocalRow(user.id, activePeerMessageUserId, nextMessage),
-        ]).catch((error) => console.log('[chat] inbox realtime update local persist error', error));
-        void ChatRepository.markSyncSucceeded(user.id, 'thread_messages', {
-          threadId: activePeerMessageUserId,
-          cursor: row.created_at,
-        });
-        setMessages((prev) =>
-          reconcileDeliveredFallback(
-            linkReplies(
-              prev.map((msg) =>
-                msg.id === row.id
-                  ? {
-                      ...nextMessage,
-                      reactions: msg.reactions,
-                      offlineImageUri: msg.offlineImageUri,
-                      offlineVideoUri: msg.offlineVideoUri,
-                    }
-                  : msg
-              ),
-            ),
-          ),
-        );
-      },
-      onSentInsert: (row) => {
-        const sentMessage = mapRowToMessage(row as MessageRow);
-        void ChatRepository.upsertMessages(user.id, activePeerMessageUserId, [
-          chatMessageToLocalRow(user.id, activePeerMessageUserId, sentMessage),
-        ]).catch((error) => console.log('[chat] sent realtime insert local persist error', error));
-        void ChatRepository.markSyncSucceeded(user.id, 'thread_messages', {
-          threadId: activePeerMessageUserId,
-          cursor: row.created_at,
-        });
-        setMessages((prev) => {
-          if (hiddenMessageIdsRef.current.has(row.id)) return prev;
-          if (prev.some((msg) => msg.id === row.id)) return prev;
-          const rowType = row.message_type ?? 'text';
-          const tempIndex = prev.findIndex((msg) => {
-            if (row.client_message_id && msg.clientMessageId === row.client_message_id) return true;
-            if ((msg.status !== 'sending' && msg.status !== 'queued') || msg.senderId !== user.id) return false;
-            if (rowType === 'voice') return msg.type === 'voice';
-            if (rowType === 'image' || rowType === 'video') return msg.type === rowType;
-            if (rowType === 'text' && row.text?.startsWith(DOCUMENT_TEXT_PREFIX)) return msg.type === 'document';
-            return msg.text === row.text;
-          });
-          const nextMessage = mergeOfflineMediaIntoMessage(sentMessage, prev[tempIndex]);
-          if (tempIndex >= 0) {
-            const previous = prev[tempIndex];
-            if (rowType === 'image' && previous?.offlineImageUri && nextMessage.imageUrl) {
-              setCachedImageUris((current) =>
-                current[nextMessage.imageUrl!] === previous.offlineImageUri
-                  ? current
-                  : { ...current, [nextMessage.imageUrl!]: previous.offlineImageUri! }
-              );
-              void rememberOfflineImageUri(nextMessage.imageUrl, previous.offlineImageUri, nextMessage.imageUrl);
-              nextMessage.offlineImageUri = previous.offlineImageUri;
+          setIsTyping(false);
+          void (async () => {
+            const canonicalRow = await fetchCanonicalRealtimeMessageRow(row as MessageRow);
+            const incomingMessage = mapRowToMessage(canonicalRow);
+            void ChatRepository.upsertMessages(user.id, activePeerMessageUserId, [
+              chatMessageToLocalRow(user.id, activePeerMessageUserId, incomingMessage),
+            ]).catch((error) => console.log('[chat] inbox realtime insert local persist error', error));
+            void ChatRepository.markSyncSucceeded(user.id, 'thread_messages', {
+              threadId: activePeerMessageUserId,
+              cursor: canonicalRow.created_at,
+            });
+            setMessages((prev) => {
+              if (hiddenMessageIdsRef.current.has(canonicalRow.id)) return prev;
+              if (prev.some((msg) => msg.id === canonicalRow.id)) return prev;
+              return reconcileDeliveredFallback(linkReplies([...prev, incomingMessage]));
+            });
+            if (!hiddenMessageIdsRef.current.has(canonicalRow.id)) {
+              void syncMessageReactions([canonicalRow.id]);
+              if (canonicalRow.is_view_once) {
+                void syncViewOnceStatus([canonicalRow.id]);
+              }
             }
-            if (rowType === 'video' && previous?.offlineVideoUri && nextMessage.videoUrl) {
-              setCachedVideoUris((current) =>
-                current[nextMessage.videoUrl!] === previous.offlineVideoUri
-                  ? current
-                  : { ...current, [nextMessage.videoUrl!]: previous.offlineVideoUri! }
-              );
-              void rememberOfflineVideoUri(nextMessage.videoUrl, previous.offlineVideoUri, nextMessage.videoUrl);
-              nextMessage.offlineVideoUri = previous.offlineVideoUri;
-            }
-            const next = [...prev];
-            next[tempIndex] = nextMessage;
-            return reconcileDeliveredFallback(linkReplies(next));
-          }
-          return reconcileDeliveredFallback(linkReplies([...prev, mergeOfflineMediaIntoMessage(nextMessage, undefined)]));
-        });
-        if (!hiddenMessageIdsRef.current.has(row.id)) {
-          void syncMessageReactions([row.id]);
-          if (row.is_view_once) {
-            void syncViewOnceStatus([row.id]);
-          }
-        }
-        if (!row.is_read && !row.delivered_at) {
-          scheduleOutgoingReceiptStateSync(row.id);
-        }
-      },
-      onSentUpdate: (row) => {
-        if (hiddenMessageIdsRef.current.has(row.id)) return;
-        const nextMessage = mapRowToMessage(row as MessageRow);
-        void ChatRepository.upsertMessages(user.id, activePeerMessageUserId, [
-          chatMessageToLocalRow(user.id, activePeerMessageUserId, nextMessage),
-        ]).catch((error) => console.log('[chat] sent realtime update local persist error', error));
-        void ChatRepository.markSyncSucceeded(user.id, 'thread_messages', {
-          threadId: activePeerMessageUserId,
-          cursor: row.created_at,
-        });
-        setMessages((prev) =>
-          reconcileDeliveredFallback(
-            linkReplies(
-              prev.map((msg) =>
-                msg.id === row.id
-                  ? {
-                      ...mergeMessageWithMonotonicReceipt(msg, nextMessage),
-                      reactions: msg.reactions,
-                    }
-                  : msg
+            void acknowledgeIncomingMessagesDelivered(user.id, canonicalRow.id, activePeerMessageUserId);
+            void focusedThreadReadActionRef.current({ forceRemote: true });
+          })();
+        },
+        onInboxUpdate: (row) => {
+          if (hiddenMessageIdsRef.current.has(row.id)) return;
+          setIsTyping(false);
+          void (async () => {
+            const canonicalRow = await fetchCanonicalRealtimeMessageRow(row as MessageRow);
+            const previous = messagesRef.current.find((msg) => msg.id === canonicalRow.id);
+            const nextMessage = mergeOfflineMediaIntoMessage(mapRowToMessage(canonicalRow), previous);
+            void ChatRepository.upsertMessages(user.id, activePeerMessageUserId, [
+              chatMessageToLocalRow(user.id, activePeerMessageUserId, nextMessage),
+            ]).catch((error) => console.log('[chat] inbox realtime update local persist error', error));
+            void ChatRepository.markSyncSucceeded(user.id, 'thread_messages', {
+              threadId: activePeerMessageUserId,
+              cursor: canonicalRow.created_at,
+            });
+            setMessages((prev) =>
+              reconcileDeliveredFallback(
+                linkReplies(
+                  prev.map((msg) =>
+                    msg.id === canonicalRow.id
+                      ? {
+                          ...nextMessage,
+                          reactions: msg.reactions,
+                          offlineImageUri: msg.offlineImageUri,
+                          offlineVideoUri: msg.offlineVideoUri,
+                        }
+                      : msg
+                  ),
+                ),
               ),
-            ),
-          ),
-        );
-      },
-      onSystemInsert: (row) => {
+            );
+          })();
+        },
+        onSentInsert: (row) => {
+          void (async () => {
+            const canonicalRow = await fetchCanonicalRealtimeMessageRow(row as MessageRow);
+            const sentMessage = mapRowToMessage(canonicalRow);
+            void ChatRepository.upsertMessages(user.id, activePeerMessageUserId, [
+              chatMessageToLocalRow(user.id, activePeerMessageUserId, sentMessage),
+            ]).catch((error) => console.log('[chat] sent realtime insert local persist error', error));
+            void ChatRepository.markSyncSucceeded(user.id, 'thread_messages', {
+              threadId: activePeerMessageUserId,
+              cursor: canonicalRow.created_at,
+            });
+            setMessages((prev) => {
+              if (hiddenMessageIdsRef.current.has(canonicalRow.id)) return prev;
+              if (prev.some((msg) => msg.id === canonicalRow.id)) return prev;
+              const rowType = canonicalRow.message_type ?? 'text';
+              const tempIndex = prev.findIndex((msg) => {
+                if (canonicalRow.client_message_id && msg.clientMessageId === canonicalRow.client_message_id) return true;
+                if ((msg.status !== 'sending' && msg.status !== 'queued') || msg.senderId !== user.id) return false;
+                if (rowType === 'voice') return msg.type === 'voice';
+                if (rowType === 'image' || rowType === 'video') return msg.type === rowType;
+                if (rowType === 'text' && canonicalRow.text?.startsWith(DOCUMENT_TEXT_PREFIX)) return msg.type === 'document';
+                return msg.text === canonicalRow.text;
+              });
+              const nextMessage = mergeOfflineMediaIntoMessage(sentMessage, prev[tempIndex]);
+              if (tempIndex >= 0) {
+                const previous = prev[tempIndex];
+                if (rowType === 'image' && previous?.offlineImageUri && nextMessage.imageUrl) {
+                  setCachedImageUris((current) =>
+                    current[nextMessage.imageUrl!] === previous.offlineImageUri
+                      ? current
+                      : { ...current, [nextMessage.imageUrl!]: previous.offlineImageUri! }
+                  );
+                  void rememberOfflineImageUri(nextMessage.imageUrl, previous.offlineImageUri, nextMessage.imageUrl);
+                  nextMessage.offlineImageUri = previous.offlineImageUri;
+                }
+                if (rowType === 'video' && previous?.offlineVideoUri && nextMessage.videoUrl) {
+                  setCachedVideoUris((current) =>
+                    current[nextMessage.videoUrl!] === previous.offlineVideoUri
+                      ? current
+                      : { ...current, [nextMessage.videoUrl!]: previous.offlineVideoUri! }
+                  );
+                  void rememberOfflineVideoUri(nextMessage.videoUrl, previous.offlineVideoUri, nextMessage.videoUrl);
+                  nextMessage.offlineVideoUri = previous.offlineVideoUri;
+                }
+                const next = [...prev];
+                next[tempIndex] = nextMessage;
+                return reconcileDeliveredFallback(linkReplies(next));
+              }
+              return reconcileDeliveredFallback(linkReplies([...prev, mergeOfflineMediaIntoMessage(nextMessage, undefined)]));
+            });
+            if (!hiddenMessageIdsRef.current.has(canonicalRow.id)) {
+              void syncMessageReactions([canonicalRow.id]);
+              if (canonicalRow.is_view_once) {
+                void syncViewOnceStatus([canonicalRow.id]);
+              }
+            }
+            if (!canonicalRow.is_read && !canonicalRow.delivered_at) {
+              scheduleOutgoingReceiptStateSync(canonicalRow.id);
+            }
+          })();
+        },
+        onSentUpdate: (row) => {
+          if (hiddenMessageIdsRef.current.has(row.id)) return;
+          void (async () => {
+            const canonicalRow = await fetchCanonicalRealtimeMessageRow(row as MessageRow);
+            const nextMessage = mapRowToMessage(canonicalRow);
+            void ChatRepository.upsertMessages(user.id, activePeerMessageUserId, [
+              chatMessageToLocalRow(user.id, activePeerMessageUserId, nextMessage),
+            ]).catch((error) => console.log('[chat] sent realtime update local persist error', error));
+            void ChatRepository.markSyncSucceeded(user.id, 'thread_messages', {
+              threadId: activePeerMessageUserId,
+              cursor: canonicalRow.created_at,
+            });
+            setMessages((prev) =>
+              reconcileDeliveredFallback(
+                linkReplies(
+                  prev.map((msg) =>
+                    msg.id === canonicalRow.id
+                      ? {
+                          ...mergeMessageWithMonotonicReceipt(msg, nextMessage),
+                          reactions: msg.reactions,
+                        }
+                      : msg
+                  ),
+                ),
+              ),
+            );
+          })();
+        },
+        onSystemInsert: (row) => {
         const nextMessage = mapSystemRowToMessage(row as SystemMessageRow);
         setMessages((prev) => {
           if (prev.some((msg) => msg.id === nextMessage.id)) return prev;
@@ -7963,6 +8302,7 @@ const resolveQueuedVideoUri = async (
     }, [
       activePeerMessageUserId,
       conversationId,
+      fetchCanonicalRealtimeMessageRow,
       fetchMessages,
       linkReplies,
       mapRowToMessage,
@@ -8116,10 +8456,45 @@ const resolveQueuedVideoUri = async (
       focusedThreadReadCompletedRef.current.delete(readKey);
     }
     const run = (async () => {
+      const startedAt = Date.now();
+      console.log('[chat][thread][read] start', {
+        currentUserId,
+        peerUserId,
+        forceRemote: Boolean(options?.forceRemote),
+      });
       try {
-        await ChatRepository.markThreadRead(currentUserId, peerUserId);
+        const { timedOut } = await withTimeoutFallback(
+          ChatRepository.markThreadRead(currentUserId, peerUserId),
+          LOCAL_CHAT_OPERATION_TIMEOUT_MS,
+          undefined,
+        );
+        if (timedOut) {
+          console.log('[chat][thread][read] local-timeout', {
+            currentUserId,
+            peerUserId,
+            durationMs: Date.now() - startedAt,
+            timeoutMs: LOCAL_CHAT_OPERATION_TIMEOUT_MS,
+          });
+        } else {
+          console.log('[chat][thread][read] local-success', {
+            currentUserId,
+            peerUserId,
+            durationMs: Date.now() - startedAt,
+          });
+        }
       } catch (localError) {
         console.log('[chat] local mark focused thread read error', localError);
+      }
+
+      try {
+        await patchChatConversationReadSnapshot(currentUserId, peerUserId);
+        console.log('[chat][thread][read] snapshot-success', {
+          currentUserId,
+          peerUserId,
+          durationMs: Date.now() - startedAt,
+        });
+      } catch (snapshotError) {
+        console.log('[chat][thread][read] snapshot-error', snapshotError);
       }
 
       try {
@@ -8133,6 +8508,11 @@ const resolveQueuedVideoUri = async (
           console.log('[chat] mark focused thread read error', error);
         } else {
           focusedThreadReadCompletedRef.current.add(readKey);
+          console.log('[chat][thread][read] remote-success', {
+            currentUserId,
+            peerUserId,
+            durationMs: Date.now() - startedAt,
+          });
         }
       } catch (error) {
         console.log('[chat] mark focused thread read exception', error);
@@ -9370,31 +9750,25 @@ const resolveQueuedVideoUri = async (
       const normalized =
         asset.type === 'image'
           ? await normalizeHeicImage(asset, fallbackName)
-          : { uri: asset.uri, fileName: fallbackName, contentType: baseContentType };
+          : await prepareChatVideo({
+              uri: asset.uri,
+              fileName: fallbackName,
+              contentType: baseContentType,
+              sizeBytes: asset.fileSize,
+              durationMs: asset.duration,
+              onProgress: (progress) => updateMediaUploadStatus(
+                uploadStatusId,
+                'Optimizing video…',
+                `${Math.max(1, Math.round(progress * 100))}% · Preparing smooth, secure playback`,
+                'auto-fix',
+              ),
+            });
       queueCandidate = {
         uri: normalized.uri,
         fileName: normalized.fileName,
         contentType: normalized.contentType,
         mediaType: asset.type === 'video' ? 'video' : 'image',
       };
-
-      const netState = await fetchNetInfo();
-      const canUseLiveNetwork = Boolean(netState.isConnected) && netState.isInternetReachable !== false;
-      if (!viewOnceMode && !canUseLiveNetwork) {
-        updateMediaUploadStatus(
-          uploadStatusId,
-          `Queueing ${mediaKind}...`,
-          'This will send automatically when connection returns.',
-          'clock-outline'
-        );
-        await queueMediaAttachment({
-          localUri: queueCandidate.uri,
-          fileName: queueCandidate.fileName,
-          contentType: queueCandidate.contentType,
-          mediaType: queueCandidate.mediaType,
-        });
-        return;
-      }
 
       if (viewOnceMode) {
         updateMediaUploadStatus(
@@ -9410,28 +9784,18 @@ const resolveQueuedVideoUri = async (
           kind: asset.type === 'video' ? 'video' : 'image',
         });
       } else {
-        updateMediaUploadStatus(
-          uploadStatusId,
-          `Uploading ${mediaKind}...`,
-          'This can take a moment on larger videos.',
-          'cloud-upload-outline'
-        );
-        const { signedUrl, filePath } = await uploadChatMedia({
-          uri: normalized.uri,
-          fileName: normalized.fileName,
-          contentType: normalized.contentType,
+        updateMediaUploadStatus(uploadStatusId, `Queueing ${mediaKind}...`,
+          'Betweener will upload, verify, and send it safely.', 'clock-outline');
+        await queueMediaAttachment({
+          localUri: queueCandidate.uri,
+          fileName: queueCandidate.fileName,
+          contentType: queueCandidate.contentType,
+          mediaType: queueCandidate.mediaType,
+          byteSize: asset.fileSize ?? null,
+          width: asset.width ?? null,
+          height: asset.height ?? null,
+          durationMs: asset.duration ?? null,
         });
-        updateMediaUploadStatus(
-          uploadStatusId,
-          `Sending ${mediaKind}...`,
-          'Almost done.',
-          'send-outline'
-        );
-        if (asset.type === 'image') {
-          await sendImageAttachment({ imageUrl: signedUrl, storagePath: filePath });
-        } else {
-          await sendVideoAttachment({ videoUrl: signedUrl, storagePath: filePath });
-        }
       }
     } catch (error) {
       if (!viewOnceMode && queueCandidate && (isLikelyNetworkError(error) || isRetryableUploadError(error))) {
@@ -9453,11 +9817,8 @@ const resolveQueuedVideoUri = async (
     closeAttachmentSheet,
     mediaUploadStatus,
     sendEncryptedMediaAttachment,
-    sendImageAttachment,
-    sendVideoAttachment,
     queueMediaAttachment,
     updateMediaUploadStatus,
-    uploadChatMedia,
     viewOnceMode,
   ]);
 
@@ -9519,31 +9880,25 @@ const resolveQueuedVideoUri = async (
       const normalized =
         asset.type === 'image'
           ? await normalizeHeicImage(asset, fallbackName)
-          : { uri: asset.uri, fileName: fallbackName, contentType: baseContentType };
+          : await prepareChatVideo({
+              uri: asset.uri,
+              fileName: fallbackName,
+              contentType: baseContentType,
+              sizeBytes: asset.fileSize,
+              durationMs: asset.duration,
+              onProgress: (progress) => updateMediaUploadStatus(
+                uploadStatusId,
+                'Optimizing video…',
+                `${Math.max(1, Math.round(progress * 100))}% · Preparing smooth, secure playback`,
+                'auto-fix',
+              ),
+            });
       queueCandidate = {
         uri: normalized.uri,
         fileName: normalized.fileName,
         contentType: normalized.contentType,
         mediaType: asset.type === 'video' ? 'video' : 'image',
       };
-
-      const netState = await fetchNetInfo();
-      const canUseLiveNetwork = Boolean(netState.isConnected) && netState.isInternetReachable !== false;
-      if (!viewOnceMode && !canUseLiveNetwork) {
-        updateMediaUploadStatus(
-          uploadStatusId,
-          `Queueing ${mediaKind}...`,
-          'This will send automatically when connection returns.',
-          'clock-outline'
-        );
-        await queueMediaAttachment({
-          localUri: queueCandidate.uri,
-          fileName: queueCandidate.fileName,
-          contentType: queueCandidate.contentType,
-          mediaType: queueCandidate.mediaType,
-        });
-        return;
-      }
 
       if (viewOnceMode) {
         updateMediaUploadStatus(
@@ -9559,28 +9914,18 @@ const resolveQueuedVideoUri = async (
           kind: asset.type === 'video' ? 'video' : 'image',
         });
       } else {
-        updateMediaUploadStatus(
-          uploadStatusId,
-          `Uploading ${mediaKind}...`,
-          'This can take a moment on larger videos.',
-          'cloud-upload-outline'
-        );
-        const { signedUrl, filePath } = await uploadChatMedia({
-          uri: normalized.uri,
-          fileName: normalized.fileName,
-          contentType: normalized.contentType,
+        updateMediaUploadStatus(uploadStatusId, `Queueing ${mediaKind}...`,
+          'Betweener will upload, verify, and send it safely.', 'clock-outline');
+        await queueMediaAttachment({
+          localUri: queueCandidate.uri,
+          fileName: queueCandidate.fileName,
+          contentType: queueCandidate.contentType,
+          mediaType: queueCandidate.mediaType,
+          byteSize: asset.fileSize ?? null,
+          width: asset.width ?? null,
+          height: asset.height ?? null,
+          durationMs: asset.duration ?? null,
         });
-        updateMediaUploadStatus(
-          uploadStatusId,
-          `Sending ${mediaKind}...`,
-          'Almost done.',
-          'send-outline'
-        );
-        if (asset.type === 'image') {
-          await sendImageAttachment({ imageUrl: signedUrl, storagePath: filePath });
-        } else {
-          await sendVideoAttachment({ videoUrl: signedUrl, storagePath: filePath });
-        }
       }
     } catch (error) {
       if (!viewOnceMode && queueCandidate && (isLikelyNetworkError(error) || isRetryableUploadError(error))) {
@@ -9602,11 +9947,8 @@ const resolveQueuedVideoUri = async (
     closeAttachmentSheet,
     mediaUploadStatus,
     sendEncryptedMediaAttachment,
-    sendImageAttachment,
-    sendVideoAttachment,
     queueMediaAttachment,
     updateMediaUploadStatus,
-    uploadChatMedia,
     viewOnceMode,
   ]);
 
@@ -9615,7 +9957,11 @@ const resolveQueuedVideoUri = async (
       Alert.alert('Upload in progress', 'Please wait for the current media upload to finish.');
       return;
     }
-    const result = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
+    const result = await DocumentPicker.getDocumentAsync({
+      copyToCacheDirectory: true,
+      multiple: false,
+      type: [...CHAT_DOCUMENT_PICKER_MIME_TYPES],
+    });
     if (result.canceled) return;
     closeAttachmentSheet();
     const asset = result.assets?.[0];
@@ -9649,6 +9995,7 @@ const resolveQueuedVideoUri = async (
         fileName,
         contentType,
         mediaType: 'document',
+        byteSize: asset.size ?? null,
         documentSizeLabel: formatFileSize(asset.size),
         documentTypeLabel: getFileTypeLabel(contentType, fileName),
       });
@@ -10055,42 +10402,172 @@ const resolveQueuedVideoUri = async (
     };
   }, [imageSizes, renderedMessages, responsive.width]);
 
-  const openVideoViewer = useCallback(async (url: string) => {
-    const resolved = cachedVideoUris[url] ?? await resolveQueuedVideoUri(url, networkReady);
-    if (resolved && resolved !== url) {
-      setCachedVideoUris((prev) => (prev[url] === resolved ? prev : { ...prev, [url]: resolved }));
+  const createFreshChatMediaUrl = useCallback(async (storagePath: string) => {
+    const { data, error } = await supabase.storage
+      .from(CHAT_MEDIA_BUCKET)
+      .createSignedUrl(storagePath, 3600);
+    if (error || !data?.signedUrl) {
+      signedChatMediaUrlsRef.current.delete(storagePath);
+      signedChatMediaExpiryRef.current.delete(storagePath);
+      return null;
     }
-    setVideoViewerUrl(resolved || url);
-  }, [cachedVideoUris, networkReady]);
+    signedChatMediaUrlsRef.current.set(storagePath, data.signedUrl);
+    signedChatMediaExpiryRef.current.set(storagePath, Date.now() + 50 * 60 * 1000);
+    return data.signedUrl;
+  }, []);
 
-  const openImageViewer = useCallback(async (url: string) => {
-    if (!url) return;
-    if (!url.startsWith('http')) {
-      setImageViewerUrl(url);
+  const refreshChatMediaMessage = useCallback(async (message: MessageType) => {
+    if (!networkReady || !message.storagePath || signingChatMediaPathsRef.current.has(message.storagePath)) {
       return;
     }
-    const cached = cachedImageUris[url] ?? await getOfflineImageUri(url);
-    if (cached) {
-      setCachedImageUris((prev) => (prev[url] === cached ? prev : { ...prev, [url]: cached }));
-      setImageViewerUrl(cached);
+    const path = message.storagePath;
+    signingChatMediaPathsRef.current.add(path);
+    try {
+      const signedUrl = await createFreshChatMediaUrl(path);
+      if (!signedUrl) {
+        setMediaSignatureEpoch((value) => value + 1);
+        return;
+      }
+      setMessages((current) => current.map((candidate) => {
+        if (candidate.id !== message.id) return candidate;
+        if (candidate.type === 'image') return { ...candidate, imageUrl: signedUrl, offlineImageUri: undefined };
+        if (candidate.type === 'video') return { ...candidate, videoUrl: signedUrl, offlineVideoUri: undefined };
+        if (candidate.type === 'document' && candidate.document) {
+          return { ...candidate, document: { ...candidate.document, url: signedUrl } };
+        }
+        return candidate;
+      }));
+    } finally {
+      signingChatMediaPathsRef.current.delete(path);
+    }
+  }, [createFreshChatMediaUrl, networkReady]);
+
+  const openVideoViewer = useCallback(async (message: MessageType, renderedUrl: string) => {
+    const localUri = message.offlineVideoUri
+      ?? (message.storagePath ? await getOfflineVideoUri(message.storagePath) : null)
+      ?? (renderedUrl ? cachedVideoUris[renderedUrl] : null);
+    if (localUri) {
+      setVideoViewerUrl(localUri);
       return;
     }
-    if (!networkReady) {
-      setImageViewerUrl(url);
+
+    let playableUrl = renderedUrl || message.videoUrl || '';
+    if (networkReady && message.storagePath) {
+      const refreshedUrl = await createFreshChatMediaUrl(message.storagePath);
+      if (refreshedUrl) {
+        playableUrl = refreshedUrl;
+        setMessages((current) => current.map((candidate) =>
+          candidate.id === message.id ? { ...candidate, videoUrl: refreshedUrl } : candidate,
+        ));
+        void cacheOfflineVideo(message.storagePath, refreshedUrl).then((cachedUri) => {
+          if (!cachedUri) return;
+          setCachedVideoUris((current) => ({
+            ...current,
+            [message.storagePath as string]: cachedUri,
+            [refreshedUrl]: cachedUri,
+          }));
+        });
+      }
+    }
+    if (!playableUrl) {
+      Alert.alert('Video unavailable', networkReady
+        ? 'This video could not be opened. Please try again.'
+        : 'Reconnect to load this video for the first time.');
       return;
     }
-    const downloaded = await cacheOfflineImage(url, url);
-    if (downloaded) {
-      setCachedImageUris((prev) => (prev[url] === downloaded ? prev : { ...prev, [url]: downloaded }));
-      setImageViewerUrl(downloaded);
+    const resolved = cachedVideoUris[playableUrl] ?? await resolveQueuedVideoUri(playableUrl, networkReady);
+    setVideoViewerUrl(resolved || playableUrl);
+  }, [cachedVideoUris, createFreshChatMediaUrl, networkReady]);
+
+  const openImageViewer = useCallback(async (message: MessageType, renderedUrl: string) => {
+    if (!renderedUrl && !message.storagePath) return;
+    const requestId = imageViewerRequestRef.current + 1;
+    imageViewerRequestRef.current = requestId;
+    imageViewerSourceRef.current = { message, renderedUrl };
+    setImageViewerError(false);
+    setImageViewerLoading(true);
+    setImageViewerVisible(true);
+    // Open immediately. TestFlight must never look unresponsive while a private URL is refreshed.
+    setImageViewerUrl(renderedUrl || null);
+
+    const resolution = await resolveChatImageViewerUri(message, renderedUrl, {
+      online: networkReady,
+      findCachedUri: async (sourceKey) => cachedImageUris[sourceKey] ?? await getOfflineImageUri(sourceKey),
+      localUriExists: async (uri) => {
+        if (!uri.startsWith('file://') && !uri.startsWith('content://')) return true;
+        try {
+          return (await FileSystem.getInfoAsync(uri)).exists;
+        } catch {
+          return false;
+        }
+      },
+      createSignedUrl: async (storagePath) => {
+        const { data, error } = await supabase.storage
+          .from(CHAT_MEDIA_BUCKET)
+          .createSignedUrl(storagePath, 3600);
+        if (error || !data?.signedUrl) return null;
+        signedChatMediaUrlsRef.current.set(storagePath, data.signedUrl);
+        signedChatMediaExpiryRef.current.set(storagePath, Date.now() + 50 * 60 * 1000);
+        return data.signedUrl;
+      },
+      cacheRemoteImage: cacheOfflineImage,
+    });
+
+    if (imageViewerRequestRef.current !== requestId) return;
+    if (resolution.cachedUri) {
+      setCachedImageUris((current) => {
+        const next = { ...current, [renderedUrl]: resolution.cachedUri! };
+        if (resolution.cacheKey) next[resolution.cacheKey] = resolution.cachedUri!;
+        if (resolution.refreshedRemoteUri) next[resolution.refreshedRemoteUri] = resolution.cachedUri!;
+        return next;
+      });
+    }
+    if (resolution.refreshedRemoteUri && message.storagePath) {
+      setMessages((current) => current.map((candidate) =>
+        candidate.id === message.id
+          ? { ...candidate, imageUrl: resolution.refreshedRemoteUri ?? candidate.imageUrl }
+          : candidate,
+      ));
+    }
+    if (!resolution.uri) {
+      setImageViewerLoading(false);
+      setImageViewerError(true);
       return;
     }
-    setImageViewerUrl(url);
+    if (resolution.uri !== renderedUrl) {
+      setImageViewerLoading(true);
+      setImageViewerError(false);
+    }
+    setImageViewerUrl(resolution.uri);
   }, [cachedImageUris, networkReady]);
 
-  const handleOpenDocument = useCallback((doc?: MessageType['document']) => {
-    if (!doc?.url) return;
-    const url = doc.url;
+  const retryImageViewer = useCallback(() => {
+    const source = imageViewerSourceRef.current;
+    if (!source) return;
+    void openImageViewer(source.message, source.renderedUrl);
+  }, [openImageViewer]);
+
+  const handleOpenDocument = useCallback(async (message: MessageType) => {
+    const doc = message.document;
+    if (!doc) return;
+    let url = doc.url;
+    if (networkReady && message.storagePath) {
+      const refreshedUrl = await createFreshChatMediaUrl(message.storagePath);
+      if (refreshedUrl) {
+        url = refreshedUrl;
+        setMessages((current) => current.map((candidate) =>
+          candidate.id === message.id && candidate.document
+            ? { ...candidate, document: { ...candidate.document, url: refreshedUrl } }
+            : candidate,
+        ));
+      }
+    }
+    if (!url) {
+      Alert.alert('Document unavailable', networkReady
+        ? 'This document could not be opened. Please try again.'
+        : 'Reconnect to open this document for the first time.');
+      return;
+    }
     const typeLabel = doc.typeLabel?.toLowerCase() ?? '';
     const ext = url.split('?')[0].split('.').pop()?.toLowerCase() ?? '';
     if (typeLabel === 'image' || ['jpg', 'jpeg', 'png', 'webp', 'heic', 'gif'].includes(ext)) {
@@ -10098,16 +10575,22 @@ const resolveQueuedVideoUri = async (
       return;
     }
     if (typeLabel === 'video' || ['mp4', 'mov', 'm4v', 'webm'].includes(ext)) {
-      void openVideoViewer(url);
+      void openVideoViewer(message, url);
       return;
     }
     const isPdf = typeLabel === 'pdf' || ext === 'pdf';
     const isText = typeLabel === 'txt' || ext === 'txt' || ext === 'text';
-    const previewUrl = isPdf || isText
-      ? url
-      : `https://docs.google.com/gview?embedded=true&url=${encodeURIComponent(url)}`;
-    setDocumentViewerUrl(previewUrl);
-  }, [openVideoViewer, setImageViewerUrl]);
+    if (isPdf || isText) {
+      setDocumentViewerUrl(url);
+      return;
+    }
+    // Keep private attachment URLs away from third-party document previewers.
+    // The system browser/download sheet handles office files using the short-lived URL.
+    await WebBrowser.openBrowserAsync(url, {
+      presentationStyle: WebBrowser.WebBrowserPresentationStyle.FORM_SHEET,
+      controlsColor: theme.tint,
+    });
+  }, [createFreshChatMediaUrl, networkReady, openVideoViewer, setImageViewerUrl, theme.tint]);
 
   const onViewableItemsChanged = useCallback(
     ({
@@ -10165,6 +10648,11 @@ const resolveQueuedVideoUri = async (
   );
 
   const closeImageViewer = useCallback(() => {
+    imageViewerRequestRef.current += 1;
+    imageViewerSourceRef.current = null;
+    setImageViewerVisible(false);
+    setImageViewerLoading(false);
+    setImageViewerError(false);
     resetImageScale();
     setImageViewerUrl(null);
   }, [resetImageScale]);
@@ -10398,6 +10886,11 @@ const resolveQueuedVideoUri = async (
       console.log('[chat] delete message error', error);
       Alert.alert('Delete message', 'Unable to delete this message for everyone.');
       await fetchMessages();
+      return;
+    }
+    if (message.storagePath) {
+      void removeOfflineImage(message.storagePath);
+      void removeOfflineVideo(message.storagePath);
     }
   }, [closeMessageActions, conversationId, fetchMessages, user?.id]);
 
@@ -10613,11 +11106,12 @@ const resolveQueuedVideoUri = async (
             isActionPinned={isActionPinned}
             onOpenReactionSheet={openReactionSheet}
             onOpenEditHistory={openEditHistory}
-            onViewImage={(url) => {
-              void openImageViewer(url);
+            onViewImage={(message, url) => {
+              void openImageViewer(message, url);
             }}
-            onViewVideo={(url) => { void openVideoViewer(url); }}
+            onViewVideo={(message, url) => { void openVideoViewer(message, url); }}
             onOpenDocument={handleOpenDocument}
+            onRefreshMedia={(message) => { void refreshChatMediaMessage(message); }}
             onOpenLocation={openLocationViewer}
             onStopLiveShare={stopLiveSharing}
             onOpenViewOnce={openViewOnceMessage}
@@ -10666,6 +11160,7 @@ const resolveQueuedVideoUri = async (
       handleCancelDatePlan,
       handleAddDatePlanToCalendar,
       handleOpenDocument,
+      refreshChatMediaMessage,
       handleSuggestAnotherTime,
       handleSuggestAnotherPlace,
       handleSuggestBoth,
@@ -10717,13 +11212,13 @@ const resolveQueuedVideoUri = async (
   };
 
   const handleOpenMediaItem = useCallback(
-    (item: { type: 'image' | 'video'; url?: string | null }) => {
-      if (!item.url) return;
+    (item: { type: 'image' | 'video'; url?: string | null; message: MessageType }) => {
       closeMediaHub();
       if (item.type === 'image') {
-        void openImageViewer(item.url);
+        if (!item.url) return;
+        void openImageViewer(item.message, item.url);
       } else {
-        void openVideoViewer(item.url);
+        void openVideoViewer(item.message, item.url || '');
       }
     },
     [closeMediaHub, openImageViewer, openVideoViewer]
@@ -11945,12 +12440,7 @@ const resolveQueuedVideoUri = async (
                       style={styles.mediaListItem}
                       onPress={() => {
                         closeMediaHub();
-                        handleOpenDocument({
-                          name: item.name,
-                          url: item.url,
-                          typeLabel: item.typeLabel ?? undefined,
-                          sizeLabel: item.sizeLabel ?? undefined,
-                        });
+                        void handleOpenDocument(item.message);
                       }}
                     >
                       <MaterialCommunityIcons name="file-document-outline" size={18} color={theme.tint} />
@@ -12273,7 +12763,10 @@ const resolveQueuedVideoUri = async (
 
       <Modal
         transparent
-        visible={Boolean(imageViewerUrl)}
+        visible={imageViewerVisible}
+        animationType="fade"
+        presentationStyle="overFullScreen"
+        statusBarTranslucent
         onRequestClose={closeImageViewer}
       >
         <View style={styles.imageViewerBackdrop}>
@@ -12286,16 +12779,46 @@ const resolveQueuedVideoUri = async (
               onGestureEvent={onImagePinchEvent}
               onHandlerStateChange={onImagePinchStateChange}
             >
-              <Animated.Image
-                source={{ uri: imageViewerUrl }}
+              <Animated.View
                 style={[
                   styles.imageViewerImage,
                   { transform: [{ scale: imageScale }] },
                 ]}
-                resizeMode="contain"
-              />
+              >
+                <ExpoImage
+                  source={{ uri: imageViewerUrl }}
+                  style={StyleSheet.absoluteFill}
+                  cachePolicy="disk"
+                  contentFit="contain"
+                  transition={120}
+                  onLoadStart={() => {
+                    setImageViewerLoading(true);
+                    setImageViewerError(false);
+                  }}
+                  onLoad={() => {
+                    setImageViewerLoading(false);
+                    setImageViewerError(false);
+                  }}
+                  onError={() => {
+                    setImageViewerLoading(false);
+                    setImageViewerError(true);
+                  }}
+                />
+              </Animated.View>
             </PinchGestureHandler>
           )}
+          {imageViewerLoading ? (
+            <View pointerEvents="none" style={styles.imageViewerStatus}>
+              <ActivityIndicator size="small" color={Colors.light.background} />
+              <Text style={styles.imageViewerStatusText}>Opening photo…</Text>
+            </View>
+          ) : null}
+          {imageViewerError ? (
+            <TouchableOpacity style={styles.imageViewerRetry} onPress={retryImageViewer}>
+              <MaterialCommunityIcons name="refresh" size={20} color={Colors.light.background} />
+              <Text style={styles.imageViewerRetryText}>Try again</Text>
+            </TouchableOpacity>
+          ) : null}
           <TouchableOpacity
             style={[styles.imageViewerClose, { top: Math.max(insets.top + 10, 18), right: 16 }]}
             onPress={closeImageViewer}
@@ -16282,6 +16805,32 @@ const createStyles = (
       borderRadius: 14,
       overflow: 'hidden',
     },
+    videoPreviewPlaceholder: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 7,
+      backgroundColor: isDark ? '#0B2729' : '#164F53',
+    },
+    videoPreviewPlaceholderIcon: {
+      width: 54,
+      height: 54,
+      borderRadius: 27,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.2)',
+      backgroundColor: 'rgba(255,255,255,0.1)',
+    },
+    videoPreviewPlaceholderTitle: {
+      color: Colors.light.background,
+      fontSize: 14,
+      fontFamily: 'Manrope_800ExtraBold',
+    },
+    videoPreviewPlaceholderCopy: {
+      color: 'rgba(255,255,255,0.72)',
+      fontSize: 11,
+      fontFamily: 'Manrope_500Medium',
+    },
     messageVideo: {
       width: Math.min(screenWidth * 0.72, 340),
       height: Math.min(screenWidth * 0.9, 420),
@@ -16880,6 +17429,33 @@ const createStyles = (
     imageViewerImage: {
       width: screenWidth,
       height: screenHeight * 0.8,
+    },
+    imageViewerStatus: {
+      position: 'absolute',
+      alignItems: 'center',
+      gap: 10,
+    },
+    imageViewerStatusText: {
+      color: Colors.light.background,
+      fontSize: 14,
+      fontWeight: '600',
+    },
+    imageViewerRetry: {
+      position: 'absolute',
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingHorizontal: 18,
+      paddingVertical: 12,
+      borderRadius: 22,
+      backgroundColor: 'rgba(255,255,255,0.14)',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.24)',
+    },
+    imageViewerRetryText: {
+      color: Colors.light.background,
+      fontSize: 15,
+      fontWeight: '700',
     },
     videoViewer: {
       width: screenWidth,

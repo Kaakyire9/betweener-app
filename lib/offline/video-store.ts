@@ -4,7 +4,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { readOfflineData, writeOfflineEnvelope } from '@/lib/offline/core';
 
 const VIDEO_CACHE_KEY = 'offline:video-store:v1';
-const VIDEO_CACHE_DIR = `${FileSystem.documentDirectory ?? FileSystem.cacheDirectory ?? ''}offline-videos/`;
+const VIDEO_CACHE_DIR = `${FileSystem.cacheDirectory ?? FileSystem.documentDirectory ?? ''}offline-videos/`;
 const VIDEO_CACHE_MAX_BYTES = 450 * 1024 * 1024;
 const VIDEO_CACHE_MAX_ENTRIES = 80;
 const VIDEO_CACHE_TOUCH_INTERVAL_MS = 60 * 60 * 1000;
@@ -155,6 +155,19 @@ export const getOfflineVideoUri = async (sourceKey?: string | null): Promise<str
   delete next[sourceKey];
   await writeVideoCacheMap(next);
   return null;
+};
+
+export const removeOfflineVideo = async (sourceKey?: string | null) => {
+  if (!sourceKey) return;
+  const map = await readVideoCacheMap();
+  const entry = map[sourceKey];
+  if (!entry) return;
+  try {
+    await FileSystem.deleteAsync(entry.localUri, { idempotent: true });
+  } catch {}
+  const next = { ...map };
+  delete next[sourceKey];
+  await writeVideoCacheMap(next);
 };
 
 export const cacheOfflineVideo = async (sourceKey: string, remoteUri?: string | null): Promise<string | null> => {

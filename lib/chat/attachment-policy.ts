@@ -1,11 +1,16 @@
 export const CHAT_ATTACHMENT_LIMITS = {
   imageBytes: 15 * 1024 * 1024,
-  videoBytes: 100 * 1024 * 1024,
+  /** Raw videos may be larger because they are optimized before upload. */
+  videoSourceBytes: 750 * 1024 * 1024,
+  /** Keep headroom below the chat-media bucket's 100 MB object limit. */
+  videoUploadBytes: 90 * 1024 * 1024,
+  /** Whole-file encryption is memory-bound; keep view-once videos conservative. */
+  viewOnceVideoBytes: 25 * 1024 * 1024,
   videoDurationMs: 2 * 60 * 1000,
-  documentBytes: 25 * 1024 * 1024,
+  documentBytes: 50 * 1024 * 1024,
 } as const;
 
-const SAFE_DOCUMENT_MIME_TYPES = new Set([
+export const CHAT_DOCUMENT_PICKER_MIME_TYPES = [
   'application/pdf',
   'application/msword',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -15,10 +20,18 @@ const SAFE_DOCUMENT_MIME_TYPES = new Set([
   'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   'text/plain',
   'text/csv',
-]);
+  'application/rtf',
+  'text/rtf',
+  'application/vnd.apple.pages',
+  'application/vnd.apple.numbers',
+  'application/vnd.apple.keynote',
+] as const;
+
+const SAFE_DOCUMENT_MIME_TYPES = new Set<string>(CHAT_DOCUMENT_PICKER_MIME_TYPES);
 
 const SAFE_DOCUMENT_EXTENSIONS = new Set([
   'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'csv',
+  'rtf', 'pages', 'numbers', 'key',
 ]);
 
 const extensionOf = (fileName?: string | null) =>
@@ -33,18 +46,29 @@ export type ChatAttachmentCandidate = {
   sizeBytes?: number | null;
   durationMs?: number | null;
 };
-export const validateChatAttachment = (candidate: ChatAttachmentCandidate): string | null => {
+
+export type ChatAttachmentValidationPhase = 'selection' | 'upload';
+
+export const validateChatAttachment = (
+  candidate: ChatAttachmentCandidate,
+  phase: ChatAttachmentValidationPhase = 'selection',
+): string | null => {
   const sizeBytes = Number(candidate.sizeBytes ?? 0);
   if (candidate.kind === 'image' && sizeBytes > CHAT_ATTACHMENT_LIMITS.imageBytes) {
     return `Choose an image smaller than ${formatLimit(CHAT_ATTACHMENT_LIMITS.imageBytes)}.`;
   }
 
   if (candidate.kind === 'video') {
-    if (sizeBytes > CHAT_ATTACHMENT_LIMITS.videoBytes) {
-      return `Choose a video smaller than ${formatLimit(CHAT_ATTACHMENT_LIMITS.videoBytes)}.`;
-    }
     if (Number(candidate.durationMs ?? 0) > CHAT_ATTACHMENT_LIMITS.videoDurationMs) {
       return 'Choose a video that is 2 minutes or shorter.';
+    }
+    const limit = phase === 'upload'
+      ? CHAT_ATTACHMENT_LIMITS.videoUploadBytes
+      : CHAT_ATTACHMENT_LIMITS.videoSourceBytes;
+    if (sizeBytes > limit) {
+      return phase === 'upload'
+        ? 'This video could not be reduced enough to send. Try trimming it, then send it again.'
+        : `Choose a video smaller than ${formatLimit(limit)}.`;
     }
   }
 
@@ -56,9 +80,9 @@ export const validateChatAttachment = (candidate: ChatAttachmentCandidate): stri
     const extension = extensionOf(candidate.fileName);
     const isSafeType =
       SAFE_DOCUMENT_MIME_TYPES.has(normalizedMime) ||
-      (normalizedMime === 'application/octet-stream' && SAFE_DOCUMENT_EXTENSIONS.has(extension));
+      SAFE_DOCUMENT_EXTENSIONS.has(extension);
     if (!isSafeType) {
-      return 'For safety, send a PDF, Word, Excel, PowerPoint, text, or CSV document.';
+      return 'For safety, send a PDF, Word, Excel, PowerPoint, Pages, Numbers, Keynote, RTF, text, or CSV document.';
     }
   }
 

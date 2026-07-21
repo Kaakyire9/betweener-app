@@ -22,7 +22,7 @@
     "lint:expo": "expo lint",
     "test:rn": "node --no-deprecation ./node_modules/jest/bin/jest.js --runInBand --config jest.config.js",
     "test:chat-logic": "node --no-warnings=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test __tests__/chat-thread-behavior.regression.test.ts __tests__/chat-message-state.regression.test.ts __tests__/chat-message-actions.regression.test.ts __tests__/chat-message-list-reconciliation.regression.test.ts __tests__/chat-list-message-merge.regression.test.ts __tests__/chat-presence.regression.test.ts",
-    "test:vibes-logic": "node --no-warnings=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test __tests__/location-display.regression.test.ts __tests__/profile-location-update.regression.test.ts __tests__/vibes-discovery.regression.test.ts",
+    "test:vibes-logic": "node --no-warnings=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test __tests__/location-display.regression.test.ts __tests__/profile-location-update.regression.test.ts __tests__/vibes-discovery.regression.test.ts __tests__/reanimated-animation-safety.regression.test.ts",
     "test:liveness-logic": "node --no-warnings=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test __tests__/liveness-engine.regression.test.ts",
     "test:logic": "npm run test:chat-logic && npm run test:vibes-logic && npm run test:liveness-logic",
     "test:all": "npm run test:rn && npm run test:logic",

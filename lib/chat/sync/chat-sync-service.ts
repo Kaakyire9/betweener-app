@@ -1,8 +1,10 @@
 import type { MessageType } from "@/components/chat/types";
 import { ChatRepository } from "@/lib/chat/local/chat-db";
 import { supabase } from "@/lib/supabase";
+import { Platform } from "react-native";
 
 import type { RemoteSystemMessageRow, RemoteThreadMessageRow } from "./chat-sync-types";
+import { shouldFetchThreadIncrementally } from './chat-sync-policy';
 
 type FetchRemoteThreadMessagesArgs = {
   currentUserId: string;
@@ -12,6 +14,22 @@ type FetchRemoteThreadMessagesArgs = {
   currentMessages: MessageType[];
 };
 
+const withTimeoutFallback = async <T,>(
+  task: Promise<T>,
+  timeoutMs: number,
+  fallback: T,
+): Promise<{ value: T; timedOut: boolean }> => {
+  let timedOut = false;
+  const timeoutTask = new Promise<T>((resolve) => {
+    setTimeout(() => {
+      timedOut = true;
+      resolve(fallback);
+    }, timeoutMs);
+  });
+  const value = await Promise.race([task, timeoutTask]);
+  return { value, timedOut };
+};
+
 export const fetchRemoteThreadMessages = async ({
   currentUserId,
   peerUserId,
@@ -19,17 +37,35 @@ export const fetchRemoteThreadMessages = async ({
   selectFields,
   currentMessages,
 }: FetchRemoteThreadMessagesArgs) => {
-  const syncState = await ChatRepository.getSyncState(currentUserId, 'thread_messages', peerUserId);
-  const syncCursor = syncState?.last_cursor ?? null;
-  const hasLocalRemoteMessages = currentMessages.some(
-    (message) =>
-      !message.isSystem &&
-      message.type !== 'system' &&
-      !String(message.id).startsWith('temp-') &&
-      message.status !== 'queued' &&
-      message.status !== 'sending',
+  const syncStateStartedAt = Date.now();
+  const syncStateTimeoutMs = Platform.OS === 'ios' ? 900 : 1800;
+  const { value: syncState, timedOut: syncStateTimedOut } = await withTimeoutFallback(
+    ChatRepository.getSyncState(currentUserId, 'thread_messages', peerUserId),
+    syncStateTimeoutMs,
+    null,
   );
-  const isIncrementalFetch = Boolean(syncCursor && hasLocalRemoteMessages);
+  if (syncStateTimedOut) {
+    console.log('[chat][thread][remote] sync-state-timeout', {
+      currentUserId,
+      peerUserId,
+      platform: Platform.OS,
+      durationMs: Date.now() - syncStateStartedAt,
+      timeoutMs: syncStateTimeoutMs,
+    });
+  } else {
+    console.log('[chat][thread][remote] sync-state-ready', {
+      currentUserId,
+      peerUserId,
+      platform: Platform.OS,
+      durationMs: Date.now() - syncStateStartedAt,
+      hasCursor: Boolean(syncState?.last_cursor),
+    });
+  }
+  const syncCursor = syncState?.last_cursor ?? null;
+  // A partial realtime cache row must never advance us past the canonical
+  // attachment record. Force one full page so its private-media metadata is
+  // repaired before returning to incremental sync.
+  const isIncrementalFetch = shouldFetchThreadIncrementally({ syncCursor, currentMessages });
 
   let messageQuery = supabase
     .from('messages')
@@ -44,7 +80,25 @@ export const fetchRemoteThreadMessages = async ({
     messageQuery = messageQuery.order('created_at', { ascending: false }).limit(pageSize);
   }
 
+  const remoteQueryStartedAt = Date.now();
+  console.log('[chat][thread][remote] query:start', {
+    currentUserId,
+    peerUserId,
+    pageSize,
+    platform: Platform.OS,
+    isIncrementalFetch,
+    hasSyncCursor: Boolean(syncCursor),
+  });
   const { data, error } = await messageQuery;
+  console.log('[chat][thread][remote] query:finish', {
+    currentUserId,
+    peerUserId,
+    platform: Platform.OS,
+    durationMs: Date.now() - remoteQueryStartedAt,
+    rowCount: Array.isArray(data) ? data.length : 0,
+    code: error?.code ?? null,
+    hasError: Boolean(error),
+  });
   const rows = ((data || []) as unknown) as RemoteThreadMessageRow[];
   const threadSyncCursor =
     rows.reduce<string | null>((latest, row) => {

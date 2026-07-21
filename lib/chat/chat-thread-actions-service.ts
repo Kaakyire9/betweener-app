@@ -38,16 +38,9 @@ export const ChatThreadActionsService = {
   },
 
   deleteMessageForEveryone(args: { messageId: string; currentUserId: string; deletedAtIso: string }) {
-    const { messageId, currentUserId, deletedAtIso } = args;
-    return supabase
-      .from('messages')
-      .update({
-        deleted_for_all: true,
-        deleted_at: deletedAtIso,
-        deleted_by: currentUserId,
-      })
-      .eq('id', messageId)
-      .eq('sender_id', currentUserId);
+    return supabase.rpc('rpc_delete_chat_message_for_everyone' as never, {
+      p_message_id: args.messageId,
+    } as never);
   },
 
   pinMessageForUser(args: { messageId: string; currentUserId: string; peerUserId: string }) {

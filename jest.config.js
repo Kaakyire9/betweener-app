@@ -8,7 +8,7 @@ module.exports = {
     platforms: ["android", "ios", "native"],
   },
   roots: ["<rootDir>/__tests__"],
-  testMatch: ["**/*.interaction.test.ts?(x)"],
+  testMatch: ["**/*.interaction.test.ts?(x)", "**/chat-attachment-policy.test.ts"],
   moduleNameMapper: {
     "^@/(.*)$": "<rootDir>/$1",
     "^react-native($|/.*)": `${path.dirname(require.resolve("react-native"))}/$1`,

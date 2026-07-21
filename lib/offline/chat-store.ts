@@ -125,6 +125,50 @@ export async function patchChatConversationPresenceSnapshot(
   await writeOfflineSnapshot(key, next);
 }
 
+export async function patchChatConversationReadSnapshot(
+  userId: string,
+  peerUserId: string,
+  options?: { readAt?: string | null },
+) {
+  const key = buildChatConversationListStoreKey(userId);
+  const cached = await readOfflineSnapshot<any[]>(key);
+  if (!Array.isArray(cached) || cached.length === 0) return;
+
+  let changed = false;
+  const readAt = options?.readAt ?? new Date().toISOString();
+  const next = cached.map((item) => {
+    if (!item || typeof item !== 'object' || item.id !== peerUserId) {
+      return item;
+    }
+
+    const unreadCount = Number(item.unreadCount) || 0;
+    const lastMessage = item.lastMessage && typeof item.lastMessage === 'object' ? item.lastMessage : null;
+    const isIncomingLastMessage = Boolean(lastMessage?.senderId) && lastMessage.senderId !== userId;
+    const nextLastMessage =
+      lastMessage && isIncomingLastMessage && lastMessage.isRead !== true
+        ? {
+            ...lastMessage,
+            isRead: true,
+            deliveredAt: lastMessage.deliveredAt ?? readAt,
+          }
+        : lastMessage;
+
+    if (unreadCount === 0 && nextLastMessage === lastMessage) {
+      return item;
+    }
+
+    changed = true;
+    return {
+      ...item,
+      unreadCount: 0,
+      lastMessage: nextLastMessage ?? item.lastMessage,
+    };
+  });
+
+  if (!changed) return;
+  await writeOfflineSnapshot(key, next);
+}
+
 export async function migrateLegacyChatThreadSnapshot<T>(
   userId: string,
   peerUserId: string,

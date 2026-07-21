@@ -171,6 +171,13 @@ jest.mock('@/lib/offline/circle-detail-store', () => ({
   writeCircleDetailSnapshot: jest.fn(async () => undefined),
 }));
 
+jest.mock('@react-native-community/netinfo', () => ({
+  fetch: jest.fn(async () => ({
+    isConnected: true,
+    isInternetReachable: true,
+  })),
+}));
+
 jest.mock('@/lib/circles/pulse/use-circle-pulse', () => ({
   useCirclePulse: () => ({
     items: mockPulseItems,

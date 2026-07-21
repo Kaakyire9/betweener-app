@@ -7,6 +7,7 @@ type MediaHubItem = {
   type: "image" | "video";
   url?: string | null;
   timestamp: Date;
+  message: MessageType;
 };
 
 type LinkHubItem = {
@@ -23,6 +24,7 @@ type DocHubItem = {
   typeLabel: string | null;
   sizeLabel: string | null;
   timestamp: Date;
+  message: MessageType;
 };
 
 type UseChatThreadBrowseUiArgs = {
@@ -79,8 +81,9 @@ export const useChatThreadBrowseUi = ({
         type: msg.type as "image" | "video",
         url: msg.type === "image" ? (msg.offlineImageUri ?? msg.imageUrl) : (msg.offlineVideoUri ?? msg.videoUrl),
         timestamp: msg.timestamp,
+        message: msg,
       }))
-      .filter((item) => Boolean(item.url));
+      .filter((item) => Boolean(item.url || item.message.storagePath));
   }, [renderedMessages]);
 
   const linkItems = useMemo<LinkHubItem[]>(() => {
@@ -104,7 +107,7 @@ export const useChatThreadBrowseUi = ({
 
   const docItems = useMemo<DocHubItem[]>(() => {
     return renderedMessages
-      .filter((msg) => !msg.deletedForAll && msg.type === "document" && msg.document?.url)
+      .filter((msg) => !msg.deletedForAll && msg.type === "document" && (msg.document?.url || msg.storagePath))
       .map((msg) => ({
         id: msg.id,
         name: msg.document?.name || "Document",
@@ -112,8 +115,8 @@ export const useChatThreadBrowseUi = ({
         typeLabel: msg.document?.typeLabel || null,
         sizeLabel: msg.document?.sizeLabel || null,
         timestamp: msg.timestamp,
+        message: msg,
       }))
-      .filter((item) => Boolean(item.url));
   }, [renderedMessages]);
 
   const jumpToNextMatch = useCallback(

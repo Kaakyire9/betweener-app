@@ -11,6 +11,7 @@ import Animated, {
     runOnJS,
     useAnimatedStyle,
     useSharedValue,
+    withSequence,
     withSpring,
     withTiming,
 } from "react-native-reanimated";
@@ -225,14 +226,16 @@ const ExploreStackReanimated = forwardRef<ExploreStackHandle, Props>(
             // special arc motion upwards
             cardOpacity.value = withTiming(0, { duration: 420 });
             // small curve: nudge left then return while moving up
-            translateX.value = withTiming(-screenWidth * 0.08, { duration: 220 }, () => {
-              translateX.value = withTiming(0, { duration: 320 });
-            });
+            translateX.value = withSequence(
+              withTiming(-screenWidth * 0.08, { duration: 220 }),
+              withTiming(0, { duration: 320 }),
+            );
             translateY.value = withTiming(-exitDistance, { duration: 520 }, () => runOnJS(completeSwipe)(dir));
             rotate.value = withTiming(-6, { duration: 420 });
-            superlikePulse.value = withTiming(1, { duration: 160 }, () => {
-              superlikePulse.value = withTiming(0, { duration: 300 });
-            });
+            superlikePulse.value = withSequence(
+              withTiming(1, { duration: 160 }),
+              withTiming(0, { duration: 300 }),
+            );
             return;
           }
 
@@ -326,9 +329,10 @@ const ExploreStackReanimated = forwardRef<ExploreStackHandle, Props>(
 
         if (shouldOpenIntent || shouldOpenIntentByVelocity) {
           translateX.value = withSpring(0, { damping: 14, stiffness: 150 });
-          translateY.value = withTiming(-Math.min(layoutMetrics.cardHeight * 0.12, 86), { duration: 130 }, () => {
-            translateY.value = withSpring(0, { damping: 14, stiffness: 150 });
-          });
+          translateY.value = withSequence(
+            withTiming(-Math.min(layoutMetrics.cardHeight * 0.12, 86), { duration: 130 }),
+            withSpring(0, { damping: 14, stiffness: 150 }),
+          );
           rotate.value = withSpring(0);
           scale.value = withSpring(1);
           cardOpacity.value = withTiming(1, { duration: 160 });

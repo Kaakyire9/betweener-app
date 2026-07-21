@@ -20,6 +20,7 @@ type MediaMessageContentProps = {
   theme: typeof Colors.light;
   isDark: boolean;
   receiptPulseStyle: any;
+  onMediaLoadError?: (message: MessageType) => void;
 };
 
 const MediaMessageContent = memo(
@@ -34,6 +35,7 @@ const MediaMessageContent = memo(
     theme: _theme,
     isDark,
     receiptPulseStyle,
+    onMediaLoadError,
   }: MediaMessageContentProps) => {
     const receiptIcon = isMyMessage ? getReceiptIconState(item.status, isDark) : null;
     const mediaReceiptToneStyle = useMemo(() => {
@@ -63,6 +65,7 @@ const MediaMessageContent = memo(
             cachePolicy="disk"
             contentFit="cover"
             transition={0}
+            onError={() => onMediaLoadError?.(item)}
           />
           <Animated.View
             style={[
@@ -115,13 +118,21 @@ const MediaMessageContent = memo(
       const resolvedVideoUri = resolveChatVideoUri(item, cachedVideoUrl);
       return (
         <View style={[styles.videoMessageContainer, styles.mediaSurface]}>
-          {item.videoUrl ? (
+          {resolvedVideoUri ? (
             <VideoPreview
               styles={styles}
-              url={item.videoUrl}
+              url={resolvedVideoUri}
               resolvedUrl={resolvedVideoUri ?? undefined}
             />
-          ) : null}
+          ) : (
+            <View style={[styles.messageVideo, styles.videoPreviewPlaceholder]}>
+              <View style={styles.videoPreviewPlaceholderIcon}>
+                <MaterialCommunityIcons name="video-outline" size={28} color={Colors.light.background} />
+              </View>
+              <Text style={styles.videoPreviewPlaceholderTitle}>Preparing video</Text>
+              <Text style={styles.videoPreviewPlaceholderCopy}>Secure media is loading…</Text>
+            </View>
+          )}
           <Animated.View
             style={[
               styles.mediaMetaOverlay,

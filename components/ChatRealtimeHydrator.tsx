@@ -88,6 +88,15 @@ export default function ChatRealtimeHydrator() {
       if (!threadId) return;
       if (isActiveChatThread(userId, threadId)) return;
 
+      // Attachment rows need canonical metadata (storage references, crypto
+      // state and view-once lifecycle data). The root subscription is only a
+      // notification signal; the focused thread fetch performs the complete
+      // hydration. Persisting a partial row here can otherwise hide the
+      // attachment when the conversation opens.
+      if (row.is_view_once || (row.message_type && row.message_type !== "text")) {
+        return;
+      }
+
       void ChatRepository.upsertMessages(userId, threadId, [
         toLocalChatMessage(userId, row),
       ]).catch((error) => {

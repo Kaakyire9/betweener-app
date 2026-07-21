@@ -4,7 +4,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { readOfflineData, writeOfflineEnvelope } from '@/lib/offline/core';
 
 const IMAGE_CACHE_KEY = 'offline:image-store:v1';
-const IMAGE_CACHE_DIR = `${FileSystem.documentDirectory ?? FileSystem.cacheDirectory ?? ''}offline-images/`;
+const IMAGE_CACHE_DIR = `${FileSystem.cacheDirectory ?? FileSystem.documentDirectory ?? ''}offline-images/`;
 const IMAGE_CACHE_MAX_BYTES = 120 * 1024 * 1024;
 const IMAGE_CACHE_MAX_ENTRIES = 250;
 const IMAGE_CACHE_TOUCH_INTERVAL_MS = 60 * 60 * 1000;
@@ -149,6 +149,19 @@ export const getOfflineImageUri = async (sourceKey?: string | null): Promise<str
   delete next[sourceKey];
   await writeImageCacheMap(next);
   return null;
+};
+
+export const removeOfflineImage = async (sourceKey?: string | null) => {
+  if (!sourceKey) return;
+  const map = await readImageCacheMap();
+  const entry = map[sourceKey];
+  if (!entry) return;
+  try {
+    await FileSystem.deleteAsync(entry.localUri, { idempotent: true });
+  } catch {}
+  const next = { ...map };
+  delete next[sourceKey];
+  await writeImageCacheMap(next);
 };
 
 export const cacheOfflineImage = async (sourceKey: string, remoteUri?: string | null): Promise<string | null> => {

@@ -1,5 +1,6 @@
 // @ts-nocheck
 import test from 'node:test';
+import { shouldFetchThreadIncrementally } from '../lib/chat/sync/chat-sync-policy.ts';
 import assert from 'node:assert/strict';
 
 import {
@@ -25,6 +26,43 @@ const baseMessage = {
 
 test('chat read receipt delay stays stable', () => {
   assert.equal(CHAT_READ_RECEIPT_DELAY_MS, 700);
+});
+
+test('thread sync repairs a partial realtime view-once placeholder with a full fetch', () => {
+  assert.equal(
+    shouldFetchThreadIncrementally({
+      syncCursor: '2026-07-20T10:00:00.000Z',
+      currentMessages: [
+        {
+          ...baseMessage,
+          id: 'view-once-1',
+          type: 'image',
+          isViewOnce: true,
+          encryptedMedia: false,
+          status: 'delivered',
+        },
+      ],
+    }),
+    false,
+  );
+});
+
+test('thread sync remains incremental when cached attachment metadata is complete', () => {
+  assert.equal(
+    shouldFetchThreadIncrementally({
+      syncCursor: '2026-07-20T10:00:00.000Z',
+      currentMessages: [
+        {
+          ...baseMessage,
+          id: 'image-1',
+          type: 'image',
+          storagePath: 'user/thread/image-1.jpg',
+          status: 'delivered',
+        },
+      ],
+    }),
+    true,
+  );
 });
 
 test('canRetryFailedTextMessage only allows my failed text messages', () => {

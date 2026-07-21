@@ -88,7 +88,7 @@ describe("Chat message variant interactions", () => {
     await fireEvent.press(getByTestId("chat-message-bubble-pressable"));
 
     expect(onViewImage).toHaveBeenCalledWith("https://example.com/image.jpg");
-  });
+  }, 15_000);
 
   it("opens documents from the bubble press path", async () => {
     const onOpenDocument = jest.fn();

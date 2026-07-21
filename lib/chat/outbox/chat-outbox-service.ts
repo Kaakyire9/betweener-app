@@ -1,5 +1,10 @@
 import type { ChatMessageRow, ChatPendingOutboxRow, ChatThreadRow } from '@/lib/chat/local/chat-db';
 import { ChatRepository } from '@/lib/chat/local/chat-db';
+import {
+  buildDeterministicChatAttachmentPath,
+  createLegacyChatAttachmentId,
+  finalizeChatAttachment,
+} from '@/lib/chat/attachment-lifecycle';
 import { removeStagedOfflineChatUpload } from '@/lib/offline/chat-store';
 import { supabase } from '@/lib/supabase';
 import { captureException, captureMessage } from '@/lib/telemetry/sentry';
@@ -26,6 +31,11 @@ type MediaOutboxPayload = {
   fileName?: string;
   contentType?: string;
   mediaType?: 'image' | 'video' | 'document';
+  attachmentId?: string | null;
+  byteSize?: number | null;
+  width?: number | null;
+  height?: number | null;
+  durationMs?: number | null;
   replyToMessageId?: string | null;
   documentName?: string | null;
   documentSizeLabel?: string | null;
@@ -43,6 +53,7 @@ type VoiceOutboxPayload = {
   durationSeconds?: number;
   waveform?: number[];
   replyToMessageId?: string | null;
+  attachmentId?: string | null;
 };
 
 type ChatOutboxPayload = TextOutboxPayload | MediaOutboxPayload | VoiceOutboxPayload;
@@ -222,7 +233,20 @@ const uploadQueuedPrivateChatMedia = async (payload: MediaOutboxPayload) => {
   const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
   if (!supabaseUrl || !supabaseAnonKey) throw new Error('missing_supabase_upload_config');
 
-  const filePath = `${payload.senderId}/${payload.receiverId}/${Date.now()}-${payload.fileName}`;
+  const clientMessageId = payload.clientMessageId?.trim();
+  if (!clientMessageId) throw new Error('missing_client_message_id');
+  const attachmentId = payload.attachmentId?.trim() || await createLegacyChatAttachmentId(
+    `${payload.senderId}:${payload.receiverId}:${clientMessageId}:${payload.mediaType || 'media'}`,
+  );
+  payload.attachmentId = attachmentId;
+  const filePath = buildDeterministicChatAttachmentPath({
+    senderId: payload.senderId,
+    receiverId: payload.receiverId,
+    clientMessageId,
+    attachmentId,
+    fileName: payload.fileName,
+    mimeType: payload.contentType,
+  });
   const uploadUrl = `${supabaseUrl}/storage/v1/object/${CHAT_MEDIA_BUCKET}/${encodeStoragePath(filePath)}?upsert=true`;
   const task = FileSystem.createUploadTask(uploadUrl, payload.localUri, {
     httpMethod: 'POST',
@@ -248,15 +272,40 @@ const uploadQueuedVoice = async (payload: VoiceOutboxPayload) => {
   if (!payload.senderId || !payload.receiverId || !payload.localUri || !payload.fileName || !payload.contentType) {
     throw new Error('invalid_voice_payload');
   }
-  const filePath = `${payload.senderId}/${payload.receiverId}/${Date.now()}-${payload.fileName}`;
-  const response = await fetch(payload.localUri);
-  const arrayBuffer = await response.arrayBuffer();
-  const bytes = new Uint8Array(arrayBuffer);
-  const { data, error } = await supabase.storage
-    .from(VOICE_MESSAGES_BUCKET)
-    .upload(filePath, bytes, { contentType: payload.contentType, upsert: true });
-  if (error) throw error;
-  return data?.path ?? filePath;
+  const clientMessageId = payload.clientMessageId?.trim();
+  if (!clientMessageId) throw new Error('missing_client_message_id');
+  const attachmentId = payload.attachmentId?.trim() || await createLegacyChatAttachmentId(
+    `${payload.senderId}:${payload.receiverId}:${clientMessageId}:audio`,
+  );
+  payload.attachmentId = attachmentId;
+  const filePath = buildDeterministicChatAttachmentPath({
+    senderId: payload.senderId,
+    receiverId: payload.receiverId,
+    clientMessageId,
+    attachmentId,
+    fileName: payload.fileName,
+    mimeType: payload.contentType,
+  });
+  const { data: sessionData } = await supabase.auth.getSession();
+  const accessToken = sessionData.session?.access_token;
+  const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
+  const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
+  if (!accessToken || !supabaseUrl || !supabaseAnonKey) throw new Error('unauthenticated_storage');
+  const uploadUrl = `${supabaseUrl}/storage/v1/object/${VOICE_MESSAGES_BUCKET}/${encodeStoragePath(filePath)}?upsert=true`;
+  const result = await FileSystem.createUploadTask(uploadUrl, payload.localUri, {
+    httpMethod: 'POST',
+    uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+    headers: {
+      'Content-Type': payload.contentType,
+      Authorization: `Bearer ${accessToken}`,
+      apikey: supabaseAnonKey,
+      'x-upsert': 'true',
+    },
+  }).uploadAsync();
+  if (!result || result.status < 200 || result.status >= 300) {
+    throw new Error(result?.body || 'voice_upload_failed');
+  }
+  return filePath;
 };
 
 const normalizeWaveform = (value: unknown): number[] => {
@@ -463,6 +512,11 @@ const scheduleOutboxRetry = async (
     errorCode === '42501' ||
     errorCode === '23514' ||
     errorCode === 'invalid_payload' ||
+    errorCode.includes('attachment_size_invalid') ||
+    errorCode.includes('attachment_content_mismatch') ||
+    errorCode.includes('unsupported_attachment') ||
+    errorMessage.includes('attachment_size_invalid') ||
+    errorMessage.includes('attachment_content_mismatch') ||
     errorMessage.includes('row-level security') ||
     errorMessage.includes('messaging unavailable') ||
     errorMessage.includes('not allowed');
@@ -532,36 +586,43 @@ const sendMediaOutboxItem = async (item: ChatPendingOutboxRow, payload: MediaOut
   const clientMessageId = payload.clientMessageId ?? item.local_message_id;
   await ChatRepository.markOutboxItemAttempting(item.owner_user_id, item.local_message_id);
   const storagePath = await uploadQueuedPrivateChatMedia(payload);
-  const documentText =
-    payload.mediaType === 'document'
-      ? `${DOCUMENT_TEXT_PREFIX} ${[
-          payload.documentName || payload.fileName,
-          payload.documentSizeLabel,
-          payload.documentTypeLabel,
-        ].filter(Boolean).join(' | ')}`
-      : '';
-
-  const { data, error } = await supabase
-    .from('messages')
-    .insert({
-      text: documentText,
-      client_message_id: clientMessageId,
-      sender_id: payload.senderId,
-      receiver_id: payload.receiverId,
-      is_read: false,
-      message_type: payload.mediaType === 'document' ? 'text' : payload.mediaType,
-      reply_to_message_id: payload.replyToMessageId ?? null,
-      storage_path: storagePath,
-    })
-    .select(REMOTE_MESSAGE_SELECT)
-    .single();
-
-  if (error && (error as { code?: string }).code !== '23505') {
-    await scheduleOutboxRetry(item, error, 'send_failed', 'Unable to send queued media');
-    return { sent: false, threadId: item.thread_id };
+  let remoteRow: RemoteMessageRow | null = null;
+  try {
+    const fileInfo = await FileSystem.getInfoAsync(payload.localUri);
+    const byteSize = payload.byteSize ?? (
+      fileInfo.exists && 'size' in fileInfo && typeof fileInfo.size === 'number' ? fileInfo.size : null
+    );
+    remoteRow = await finalizeChatAttachment({
+      receiverId: payload.receiverId,
+      clientMessageId,
+      attachmentId: payload.attachmentId!,
+      attachmentType: payload.mediaType,
+      bucketId: CHAT_MEDIA_BUCKET,
+      storagePath,
+      originalName: payload.documentName || payload.fileName,
+      mimeType: payload.contentType,
+      byteSize,
+      width: payload.width,
+      height: payload.height,
+      durationMs: payload.durationMs,
+      caption: payload.mediaType === 'document'
+        ? `${DOCUMENT_TEXT_PREFIX} ${[
+            payload.documentName || payload.fileName,
+            payload.documentSizeLabel,
+            payload.documentTypeLabel,
+          ].filter(Boolean).join(' | ')}`
+        : '',
+      replyToMessageId: payload.replyToMessageId ?? null,
+    }) as RemoteMessageRow;
+  } catch (error) {
+    const existing = await fetchExistingClientMessage(payload.senderId, clientMessageId).catch(() => null);
+    if (!existing) {
+      await scheduleOutboxRetry(item, error, 'send_failed', 'Unable to finalize queued media');
+      return { sent: false, threadId: item.thread_id };
+    }
+    remoteRow = existing;
   }
 
-  const remoteRow = (data as RemoteMessageRow | null) ?? (await fetchExistingClientMessage(payload.senderId, clientMessageId));
   if (remoteRow) {
     await ChatRepository.upsertMessages(item.owner_user_id, item.thread_id, [
       toLocalMessageRow(item.owner_user_id, item.thread_id, remoteRow, payload),
@@ -584,29 +645,32 @@ const sendVoiceOutboxItem = async (item: ChatPendingOutboxRow, payload: VoiceOut
   const clientMessageId = payload.clientMessageId ?? item.local_message_id;
   await ChatRepository.markOutboxItemAttempting(item.owner_user_id, item.local_message_id);
   const audioPath = await uploadQueuedVoice(payload);
-  const { data, error } = await supabase
-    .from('messages')
-    .insert({
-      text: '',
-      client_message_id: clientMessageId,
-      sender_id: payload.senderId,
-      receiver_id: payload.receiverId,
-      is_read: false,
-      message_type: 'voice',
-      audio_path: audioPath,
-      audio_duration: payload.durationSeconds ?? 0,
-      audio_waveform: payload.waveform ?? [],
-      reply_to_message_id: payload.replyToMessageId ?? null,
-    })
-    .select(REMOTE_MESSAGE_SELECT)
-    .single();
-
-  if (error && (error as { code?: string }).code !== '23505') {
-    await scheduleOutboxRetry(item, error, 'send_failed', 'Unable to send queued voice message');
-    return { sent: false, threadId: item.thread_id };
+  let remoteRow: RemoteMessageRow | null = null;
+  try {
+    const info = await FileSystem.getInfoAsync(payload.localUri);
+    const byteSize = info.exists && 'size' in info && typeof info.size === 'number' ? info.size : null;
+    remoteRow = await finalizeChatAttachment({
+      receiverId: payload.receiverId,
+      clientMessageId,
+      attachmentId: payload.attachmentId!,
+      attachmentType: 'audio',
+      bucketId: VOICE_MESSAGES_BUCKET,
+      storagePath: audioPath,
+      originalName: payload.fileName,
+      mimeType: payload.contentType,
+      byteSize,
+      durationMs: Math.max(0, Math.round((payload.durationSeconds ?? 0) * 1000)),
+      waveform: payload.waveform ?? [],
+      replyToMessageId: payload.replyToMessageId ?? null,
+    }) as RemoteMessageRow;
+  } catch (error) {
+    const existing = await fetchExistingClientMessage(payload.senderId, clientMessageId).catch(() => null);
+    if (!existing) {
+      await scheduleOutboxRetry(item, error, 'send_failed', 'Unable to finalize queued voice message');
+      return { sent: false, threadId: item.thread_id };
+    }
+    remoteRow = existing;
   }
-
-  const remoteRow = (data as RemoteMessageRow | null) ?? (await fetchExistingClientMessage(payload.senderId, clientMessageId));
   if (remoteRow) {
     await ChatRepository.upsertMessages(item.owner_user_id, item.thread_id, [
       toLocalMessageRow(item.owner_user_id, item.thread_id, remoteRow, payload),

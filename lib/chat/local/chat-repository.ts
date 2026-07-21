@@ -509,6 +509,31 @@ export const ChatRepository = {
     return row?.has_messages === 1;
   },
 
+  async getThreadIdsWithMessages(ownerUserId: string, threadIds: string[]): Promise<Set<string>> {
+    const ids = Array.from(new Set(threadIds.filter(Boolean)));
+    if (ids.length === 0) {
+      return new Set<string>();
+    }
+    const db = await getChatDb();
+    const placeholders = ids.map(() => '?').join(',');
+    const rows = await runSerializedRead(() => db.getAllAsync<{ thread_id: string | null }>(
+      `
+        select distinct thread_id
+        from chat_messages
+        where owner_user_id = ?
+          and thread_id in (${placeholders})
+          and status <> 'deleted'
+      `,
+      ownerUserId,
+      ...ids,
+    ));
+    return new Set(
+      rows
+        .map((row) => (typeof row?.thread_id === 'string' ? row.thread_id : null))
+        .filter((threadId): threadId is string => Boolean(threadId)),
+    );
+  },
+
   async updateThreadPreferences(
     ownerUserId: string,
     threadId: string,
