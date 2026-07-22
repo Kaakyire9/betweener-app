@@ -2479,6 +2479,13 @@ const MessageRowItem = memo(
       backgroundColor: withAlpha(accent, isMyMessage ? 0.12 : isDark ? 0.16 : 0.1),
     }) as const, [accent, isDark, isMyMessage]);
     const receiptIcon = isMyMessage ? getReceiptIconState(item.status, isDark) : null;
+    const viewOnceReceiptIcon = useMemo(() => {
+      if (!isMyMessage) return null;
+      if (viewOnceViewedByPeer) {
+        return getReceiptIconState('read', isDark);
+      }
+      return receiptIcon;
+    }, [isDark, isMyMessage, receiptIcon, viewOnceViewedByPeer]);
     const receiptBadgeToneStyle = useMemo(() => {
       if (!isMyMessage) return null;
       switch (item.status) {
@@ -2492,6 +2499,13 @@ const MessageRowItem = memo(
           return styles.receiptMetaBadgeSent;
       }
     }, [isMyMessage, item.status, styles.receiptMetaBadgeDelivered, styles.receiptMetaBadgeRead, styles.receiptMetaBadgeSent]);
+    const viewOnceReceiptBadgeToneStyle = useMemo(() => {
+      if (!isMyMessage) return null;
+      if (viewOnceViewedByPeer) {
+        return styles.receiptMetaBadgeRead;
+      }
+      return receiptBadgeToneStyle;
+    }, [isMyMessage, receiptBadgeToneStyle, styles.receiptMetaBadgeRead, viewOnceViewedByPeer]);
     const rowSpotlightStyle = useMemo(() => ({
       opacity: focusPulse,
     }) as const, [focusPulse]);
@@ -3230,6 +3244,33 @@ const MessageRowItem = memo(
                   >
                   {viewOnceTitle}
                 </Text>
+                <View
+                  style={[
+                    styles.viewOnceInlineMetaRow,
+                    isMyMessage ? styles.receiptMetaBadge : null,
+                    isMyMessage ? viewOnceReceiptBadgeToneStyle : null,
+                  ]}
+                  pointerEvents="none"
+                >
+                  <Text
+                    style={[
+                      styles.messageMetaText,
+                      isMyMessage ? styles.messageMetaTextInlineMy : styles.messageMetaTextInlineTheir,
+                    ]}
+                  >
+                    {metaLabel}
+                  </Text>
+                  {isMyMessage ? (
+                    <Animated.View style={receiptPulseStyle}>
+                      <MaterialCommunityIcons
+                        name={viewOnceReceiptIcon?.name || 'clock-outline'}
+                        size={inlineReceiptIconSize}
+                        color={viewOnceReceiptIcon?.color || inlineReceiptIconColor}
+                        style={styles.inlineMetaIconText}
+                      />
+                    </Animated.View>
+                  ) : null}
+                </View>
               </Pressable>
             ) : item.type === 'voice' ? (
               <VoiceMessageContent
@@ -16118,11 +16159,19 @@ const createStyles = (
       flexDirection: 'row',
       alignItems: 'center',
       gap: 10,
-      width: '100%',
+      alignSelf: 'flex-start',
+      maxWidth: '100%',
     },
     viewOnceInlineLabel: {
       flexShrink: 1,
       minWidth: 0,
+    },
+    viewOnceInlineMetaRow: {
+      marginLeft: 'auto',
+      flexDirection: 'row',
+      alignItems: 'center',
+      flexShrink: 0,
+      minHeight: 22,
     },
     viewOnceCard: {
       borderRadius: 18,

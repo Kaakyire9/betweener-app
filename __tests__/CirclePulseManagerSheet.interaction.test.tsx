@@ -1,18 +1,23 @@
 // @ts-nocheck
 import React from 'react';
+import { Alert } from 'react-native';
 import { fireEvent, render, waitFor } from '@testing-library/react-native';
 import CirclePulseManagerSheet from '@/components/circles/CirclePulseManagerSheet';
 
 const mockFeatureCirclePulseItem = jest.fn();
 const mockCreateCirclePulseEditorialMedia = jest.fn();
+const mockNominateCircleLoveSeat = jest.fn();
+const mockEndCircleLoveSeat = jest.fn();
+const mockFetchCircleLoveSeatsForHost = jest.fn();
 
 jest.mock('@/lib/circles/pulse/circle-pulse-service', () => ({
   archiveCirclePulseItem: jest.fn(),
   cancelCircleLoveSeatNomination: jest.fn(),
   createCirclePulseEditorialMedia: (...args: any[]) => mockCreateCirclePulseEditorialMedia(...args),
+  endCircleLoveSeat: (...args: any[]) => mockEndCircleLoveSeat(...args),
   featureCirclePulseItem: (...args: any[]) => mockFeatureCirclePulseItem(...args),
-  fetchCircleLoveSeatsForHost: jest.fn(async () => []),
-  nominateCircleLoveSeat: jest.fn(),
+  fetchCircleLoveSeatsForHost: (...args: any[]) => mockFetchCircleLoveSeatsForHost(...args),
+  nominateCircleLoveSeat: (...args: any[]) => mockNominateCircleLoveSeat(...args),
   reorderCirclePulseItems: jest.fn(),
 }));
 
@@ -63,10 +68,20 @@ const defaultProps = {
 };
 
 describe('CirclePulseManagerSheet', () => {
+  let alertSpy: jest.SpyInstance;
+
   beforeEach(() => {
     jest.clearAllMocks();
     mockFeatureCirclePulseItem.mockResolvedValue({ id: 'pulse-media' });
     mockCreateCirclePulseEditorialMedia.mockResolvedValue({ id: 'pulse-editorial-media' });
+    mockNominateCircleLoveSeat.mockResolvedValue({ id: 'love-seat-1' });
+    mockEndCircleLoveSeat.mockResolvedValue(true);
+    mockFetchCircleLoveSeatsForHost.mockResolvedValue([]);
+    alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    alertSpy.mockRestore();
   });
 
   it('keeps Circle Media visible when there are no member Moments', async () => {
@@ -150,6 +165,84 @@ describe('CirclePulseManagerSheet', () => {
       });
       expect(onFeatured).toHaveBeenCalledTimes(1);
       expect(onClose).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('surfaces the normalized Love Seat rejection reason from the service', async () => {
+    mockNominateCircleLoveSeat.mockRejectedValue(
+      new Error('This Circle already has an open Love Seat invitation or active Love Seat.'),
+    );
+
+    const { getByText } = await render(
+      <CirclePulseManagerSheet
+        {...defaultProps}
+        loveSeatCandidates={[
+          {
+            profileId: 'profile-2',
+            name: 'Akosua',
+            age: 28,
+            avatarUrl: null,
+            location: 'Accra, Ghana',
+          },
+        ]}
+      />,
+    );
+
+    await fireEvent.press(getByText('plus'));
+    await fireEvent.press(getByText('Send invitation'));
+
+    await waitFor(() => {
+      expect(mockNominateCircleLoveSeat).toHaveBeenCalledWith(
+        'circle-1',
+        'profile-1',
+        'profile-2',
+        '',
+      );
+      expect(alertSpy).toHaveBeenCalledWith(
+        'Love Seat',
+        'This Circle already has an open Love Seat invitation or active Love Seat.',
+      );
+    });
+  });
+
+  it('shows an actionable fallback when an active Love Seat is no longer visible on Pulse', async () => {
+    mockFetchCircleLoveSeatsForHost.mockResolvedValue([
+      {
+        id: 'love-seat-active-1',
+        circleId: 'circle-1',
+        featuredProfileId: 'profile-2',
+        featuredProfileName: 'Akosua',
+        featuredProfileAvatarUrl: null,
+        quote: 'A thoughtful connection.',
+        status: 'active',
+        createdAt: '2026-07-22T10:00:00.000Z',
+        respondedAt: '2026-07-22T10:05:00.000Z',
+      },
+    ]);
+
+    const onFeatured = jest.fn();
+    const { getByText } = await render(
+      <CirclePulseManagerSheet
+        {...defaultProps}
+        onFeatured={onFeatured}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(getByText('Active Love Seat')).toBeTruthy();
+      expect(getByText('Akosua')).toBeTruthy();
+      expect(getByText('End Love Seat')).toBeTruthy();
+    });
+
+    await fireEvent.press(getByText('End Love Seat'));
+
+    await waitFor(() => {
+      expect(mockEndCircleLoveSeat).toHaveBeenCalledWith('love-seat-active-1', 'profile-1');
+      expect(onFeatured).toHaveBeenCalledTimes(1);
+      expect(alertSpy).toHaveBeenCalledWith(
+        'Love Seat ended',
+        'This stale Love Seat has been cleared so you can nominate someone new.',
+      );
     });
   });
 });

@@ -7,11 +7,13 @@ import {
   archiveCirclePulseItem,
   cancelCircleLoveSeatNomination,
   createCirclePulseEditorialMedia,
+  endCircleLoveSeat,
   featureCirclePulseItem,
   fetchCircleLoveSeatsForHost,
   nominateCircleLoveSeat,
   reorderCirclePulseItems,
 } from '@/lib/circles/pulse/circle-pulse-service';
+import { logger } from '@/lib/telemetry/logger';
 import type {
   CircleLoveSeatCandidate,
   CircleLoveSeatHostItem,
@@ -70,6 +72,8 @@ export default function CirclePulseManagerSheet({
     [featuredItems],
   );
   const pendingLoveSeat = loveSeatHostItems.find((item) => item.status === 'pending_user_approval') ?? null;
+  const activeLoveSeat = loveSeatHostItems.find((item) => item.status === 'active') ?? null;
+  const hiddenActiveLoveSeat = activeLoveSeat && !featured.loveSeatActive ? activeLoveSeat : null;
 
   useEffect(() => {
     if (!visible || !circleId || !actorProfileId) return;
@@ -78,7 +82,12 @@ export default function CirclePulseManagerSheet({
       .then((items) => {
         if (!cancelled) setLoveSeatHostItems(items);
       })
-      .catch(() => {
+      .catch((error) => {
+        logger.warn('[circles] love_seat_host_items_load_failed', {
+          circleId,
+          actorProfileId,
+          error: error instanceof Error ? error.message : String(error),
+        });
         if (!cancelled) setLoveSeatHostItems([]);
       });
     return () => {
@@ -96,6 +105,12 @@ export default function CirclePulseManagerSheet({
       setLoveSeatQuote('');
       onClose();
     } catch (error) {
+      logger.warn('[circles] love_seat_nomination_failed', {
+        circleId,
+        actorProfileId,
+        featuredProfileId: loveSeatTarget.profileId,
+        error: error instanceof Error ? error.message : String(error),
+      });
       Alert.alert('Love Seat', error instanceof Error ? error.message : 'Could not send this invitation right now.');
     } finally {
       setSavingKey(null);
@@ -110,7 +125,34 @@ export default function CirclePulseManagerSheet({
       setLoveSeatHostItems((items) => items.filter((item) => item.id !== pendingLoveSeat.id));
       Alert.alert('Invitation withdrawn', 'This member will no longer see the Love Seat invitation.');
     } catch (error) {
+      logger.warn('[circles] love_seat_nomination_cancel_failed', {
+        circleId,
+        actorProfileId,
+        loveSeatId: pendingLoveSeat.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
       Alert.alert('Love Seat', error instanceof Error ? error.message : 'Could not withdraw this invitation right now.');
+    } finally {
+      setSavingKey(null);
+    }
+  };
+
+  const endHiddenActiveLoveSeat = async () => {
+    if (!hiddenActiveLoveSeat || !actorProfileId || savingKey) return;
+    setSavingKey(`love-seat-end:${hiddenActiveLoveSeat.id}`);
+    try {
+      await endCircleLoveSeat(hiddenActiveLoveSeat.id, actorProfileId);
+      setLoveSeatHostItems((items) => items.filter((item) => item.id !== hiddenActiveLoveSeat.id));
+      await onFeatured();
+      Alert.alert('Love Seat ended', 'This stale Love Seat has been cleared so you can nominate someone new.');
+    } catch (error) {
+      logger.warn('[circles] love_seat_active_end_failed', {
+        circleId,
+        actorProfileId,
+        loveSeatId: hiddenActiveLoveSeat.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      Alert.alert('Love Seat', error instanceof Error ? error.message : 'Could not end this Love Seat right now.');
     } finally {
       setSavingKey(null);
     }
@@ -278,6 +320,15 @@ export default function CirclePulseManagerSheet({
           </View>
           {featured.loveSeatActive ? (
             <Text style={styles.activeNote}>A Love Seat feature is already active in this Circle.</Text>
+          ) : hiddenActiveLoveSeat ? (
+            <View style={styles.pendingLoveSeat}>
+              <Text style={styles.composerLabel}>Active Love Seat</Text>
+              <Text style={styles.pendingLoveSeatName}>{hiddenActiveLoveSeat.featuredProfileName}</Text>
+              <Text style={styles.subtitle}>This Love Seat is still active in Circle records, but it is no longer surfacing on Pulse. End it to free the slot.</Text>
+              <TouchableOpacity style={styles.cancelPendingButton} disabled={!!savingKey} onPress={() => void endHiddenActiveLoveSeat()}>
+                <Text style={styles.cancelPendingText}>{savingKey ? 'Ending' : 'End Love Seat'}</Text>
+              </TouchableOpacity>
+            </View>
           ) : pendingLoveSeat ? (
             <View style={styles.pendingLoveSeat}>
               <Text style={styles.composerLabel}>Invitation pending</Text>

@@ -190,6 +190,51 @@ const toServiceError = (error: unknown, fallbackMessage: string) => {
   return new Error(fallbackMessage);
 };
 
+const toLoveSeatServiceError = (error: unknown, fallbackMessage: string) => {
+  const normalizedMessage = toServiceError(error, fallbackMessage).message.trim();
+  const normalized = normalizedMessage.toLowerCase();
+
+  if (
+    normalized.includes('host_required')
+    || normalized.includes('not_authorized')
+  ) {
+    return new Error('Only Circle hosts or moderators can send Love Seat invitations.');
+  }
+
+  if (normalized.includes('unauthenticated')) {
+    return new Error('Please sign in again and retry.');
+  }
+
+  if (
+    normalized.includes('circle_love_seat_active')
+    || normalized.includes('circle_love_seats_circle_open_unique_idx')
+    || normalized.includes('circle_love_seats_circle_active_unique_idx')
+  ) {
+    return new Error('This Circle already has an open Love Seat invitation or active Love Seat.');
+  }
+
+  if (
+    normalized.includes('featured_member_not_available')
+    || normalized.includes('circle_love_seats_profile_open_unique_idx')
+  ) {
+    return new Error('This member is no longer available for Love Seat nomination in this Circle.');
+  }
+
+  if (normalized.includes('quote_too_long')) {
+    return new Error('Love Seat quotes must be 320 characters or fewer.');
+  }
+
+  if (normalized.includes('reason_too_long')) {
+    return new Error('Love Seat notes must be 500 characters or fewer.');
+  }
+
+  if (normalized.includes('network') || normalized.includes('offline') || normalized.includes('fetch')) {
+    return new Error('Network issue. Reconnect and try the Love Seat invitation again.');
+  }
+
+  return new Error(normalizedMessage || fallbackMessage);
+};
+
 const toItem = (row: CirclePulseRpcRow): CirclePulseItem => ({
   id: String(row.id),
   circleId: String(row.circle_id),
@@ -697,7 +742,7 @@ export async function nominateCircleLoveSeat(
     p_featured_profile_id: featuredProfileId,
     p_quote: quote?.trim() || null,
   });
-  if (error) throw error;
+  if (error) throw toLoveSeatServiceError(error, 'Could not send this Love Seat invitation right now.');
   return data;
 }
 
@@ -706,7 +751,7 @@ export async function fetchMyCircleLoveSeatNominations(actorProfileId: string, c
     p_profile_id: actorProfileId,
     p_circle_id: circleId,
   });
-  if (error) throw error;
+  if (error) throw toLoveSeatServiceError(error, 'Could not load Love Seat invitations.');
   return ((data ?? []) as CircleLoveSeatNominationRpcRow[]).map(toLoveSeatNomination);
 }
 
@@ -720,7 +765,7 @@ export async function respondToCircleLoveSeatNomination(
     p_profile_id: actorProfileId,
     p_accept: accept,
   });
-  if (error) throw error;
+  if (error) throw toLoveSeatServiceError(error, 'Could not respond to this Love Seat invitation.');
   return data;
 }
 
@@ -729,7 +774,7 @@ export async function endCircleLoveSeat(loveSeatId: string, actorProfileId: stri
     p_love_seat_id: loveSeatId,
     p_actor_profile_id: actorProfileId,
   });
-  if (error) throw error;
+  if (error) throw toLoveSeatServiceError(error, 'Could not end this Love Seat right now.');
 }
 
 export async function fetchCircleLoveSeatsForHost(circleId: string, actorProfileId: string) {
@@ -737,7 +782,7 @@ export async function fetchCircleLoveSeatsForHost(circleId: string, actorProfile
     p_circle_id: circleId,
     p_actor_profile_id: actorProfileId,
   });
-  if (error) throw error;
+  if (error) throw toLoveSeatServiceError(error, 'Could not load Love Seat invitations.');
   return ((data ?? []) as CircleLoveSeatHostRpcRow[]).map(toLoveSeatHostItem);
 }
 
@@ -746,7 +791,7 @@ export async function cancelCircleLoveSeatNomination(loveSeatId: string, actorPr
     p_love_seat_id: loveSeatId,
     p_actor_profile_id: actorProfileId,
   });
-  if (error) throw error;
+  if (error) throw toLoveSeatServiceError(error, 'Could not withdraw this Love Seat invitation right now.');
 }
 
 export async function archiveCirclePulseItem(itemId: string, actorProfileId: string) {
