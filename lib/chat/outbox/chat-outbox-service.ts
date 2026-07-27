@@ -5,6 +5,10 @@ import {
   createLegacyChatAttachmentId,
   finalizeChatAttachment,
 } from '@/lib/chat/attachment-lifecycle';
+import {
+  normalizeAttachmentDurationMs,
+  resolveAuthoritativeAttachmentByteSize,
+} from '@/lib/chat/attachments/chat-attachment-metadata';
 import { removeStagedOfflineChatUpload } from '@/lib/offline/chat-store';
 import { supabase } from '@/lib/supabase';
 import { captureException, captureMessage } from '@/lib/telemetry/sentry';
@@ -40,6 +44,18 @@ type MediaOutboxPayload = {
   documentName?: string | null;
   documentSizeLabel?: string | null;
   documentTypeLabel?: string | null;
+  albumItems?: MediaOutboxFile[];
+};
+
+type MediaOutboxFile = {
+  localUri: string;
+  fileName: string;
+  contentType: string;
+  attachmentId: string;
+  byteSize?: number | null;
+  width?: number | null;
+  height?: number | null;
+  durationMs?: number | null;
 };
 
 type VoiceOutboxPayload = {
@@ -73,6 +89,8 @@ type RemoteMessageRow = {
   audio_duration?: number | null;
   audio_waveform?: unknown;
   storage_path?: string | null;
+  media_items?: unknown;
+  media_expected_count?: number | null;
 };
 
 type FlushResult = {
@@ -83,12 +101,16 @@ type FlushResult = {
 };
 
 const REMOTE_MESSAGE_SELECT =
-  'id,client_message_id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,reply_to_message_id,audio_path,audio_duration,audio_waveform,storage_path';
+  'id,client_message_id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,reply_to_message_id,audio_path,audio_duration,audio_waveform,storage_path,media_items,media_expected_count';
 const CHAT_MEDIA_BUCKET = 'chat-media';
 const VOICE_MESSAGES_BUCKET = 'voice-messages';
 const DOCUMENT_TEXT_PREFIX = '\u{1F4CE}';
 const RETRY_DELAYS_MS = [5_000, 15_000, 45_000, 120_000, 300_000, 900_000, 1_800_000, 3_600_000];
 const DURABLE_OUTBOX_MAX_ATTEMPTS = 48;
+const scheduledOwnerFlushes = new Map<string, {
+  timer: ReturnType<typeof setTimeout>;
+  dueAt: number;
+}>();
 
 const nowIso = () => new Date().toISOString();
 
@@ -221,8 +243,11 @@ const encodeStoragePath = (path: string) =>
     .map((segment) => encodeURIComponent(segment))
     .join('/');
 
-const uploadQueuedPrivateChatMedia = async (payload: MediaOutboxPayload) => {
-  if (!payload.senderId || !payload.receiverId || !payload.localUri || !payload.fileName || !payload.contentType) {
+const uploadQueuedPrivateChatMedia = async (
+  payload: MediaOutboxPayload,
+  file: Pick<MediaOutboxFile, 'localUri' | 'fileName' | 'contentType' | 'attachmentId'>,
+) => {
+  if (!payload.senderId || !payload.receiverId || !file.localUri || !file.fileName || !file.contentType) {
     throw new Error('invalid_media_payload');
   }
   const { data: sessionData } = await supabase.auth.getSession();
@@ -235,24 +260,23 @@ const uploadQueuedPrivateChatMedia = async (payload: MediaOutboxPayload) => {
 
   const clientMessageId = payload.clientMessageId?.trim();
   if (!clientMessageId) throw new Error('missing_client_message_id');
-  const attachmentId = payload.attachmentId?.trim() || await createLegacyChatAttachmentId(
+  const attachmentId = file.attachmentId?.trim() || await createLegacyChatAttachmentId(
     `${payload.senderId}:${payload.receiverId}:${clientMessageId}:${payload.mediaType || 'media'}`,
   );
-  payload.attachmentId = attachmentId;
   const filePath = buildDeterministicChatAttachmentPath({
     senderId: payload.senderId,
     receiverId: payload.receiverId,
     clientMessageId,
     attachmentId,
-    fileName: payload.fileName,
-    mimeType: payload.contentType,
+    fileName: file.fileName,
+    mimeType: file.contentType,
   });
   const uploadUrl = `${supabaseUrl}/storage/v1/object/${CHAT_MEDIA_BUCKET}/${encodeStoragePath(filePath)}?upsert=true`;
-  const task = FileSystem.createUploadTask(uploadUrl, payload.localUri, {
+  const task = FileSystem.createUploadTask(uploadUrl, file.localUri, {
     httpMethod: 'POST',
     uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
     headers: {
-      'Content-Type': payload.contentType,
+      'Content-Type': file.contentType,
       Authorization: `Bearer ${accessToken}`,
       apikey: supabaseAnonKey,
       'x-upsert': 'true',
@@ -321,6 +345,24 @@ const normalizeWaveform = (value: unknown): number[] => {
   return [];
 };
 
+const normalizeRemoteMediaItems = (value: unknown) => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
+    .map((item) => ({
+      attachmentId: String(item.attachmentId ?? ''),
+      index: Number(item.index ?? 0),
+      type: 'image' as const,
+      storagePath: String(item.storagePath ?? ''),
+      mimeType: typeof item.mimeType === 'string' ? item.mimeType : null,
+      width: typeof item.width === 'number' ? item.width : null,
+      height: typeof item.height === 'number' ? item.height : null,
+      byteSize: typeof item.byteSize === 'number' ? item.byteSize : null,
+    }))
+    .filter((item) => item.attachmentId && item.storagePath)
+    .sort((a, b) => a.index - b.index);
+};
+
 const withRemoteMessageIdentity = (
   metadataJson: string | null | undefined,
   row: RemoteMessageRow,
@@ -386,6 +428,8 @@ const buildMessageMetadataJson = (
     status,
     replyToId: row.reply_to_message_id ?? null,
     storagePath: row.storage_path ?? null,
+    mediaItems: normalizeRemoteMediaItems(row.media_items),
+    mediaExpectedCount: row.media_expected_count ?? null,
   };
 
   if (payload?.kind === 'chat_media_send' && payload.mediaType === 'image') {
@@ -497,6 +541,21 @@ const getRetryDelayMs = (attemptCount: number) => {
   return RETRY_DELAYS_MS[index];
 };
 
+const scheduleOwnerOutboxFlush = (ownerUserId: string, delayMs: number) => {
+  const dueAt = Date.now() + Math.max(250, delayMs);
+  const existing = scheduledOwnerFlushes.get(ownerUserId);
+  if (existing && existing.dueAt <= dueAt) return;
+  if (existing) clearTimeout(existing.timer);
+
+  const timer = setTimeout(() => {
+    scheduledOwnerFlushes.delete(ownerUserId);
+    void ChatOutboxService.flushPending(ownerUserId).catch((error) => {
+      captureException(error, { where: 'ChatOutboxService.scheduledFlush' });
+    });
+  }, Math.max(250, dueAt - Date.now()));
+  scheduledOwnerFlushes.set(ownerUserId, { timer, dueAt });
+};
+
 const scheduleOutboxRetry = async (
   item: ChatPendingOutboxRow,
   error: unknown,
@@ -523,12 +582,31 @@ const scheduleOutboxRetry = async (
 
   if (isPermanentFailure || attemptCount >= item.max_attempts) {
     await ChatRepository.markOutboxItemStatus(item.owner_user_id, item.local_message_id, 'failed', errorInfo);
+    if (__DEV__) {
+      console.log('[chat][outbox] permanently-failed', {
+        kind: parseOutboxPayload(item)?.kind ?? 'unknown',
+        attemptCount,
+        code: errorInfo.code,
+        message: errorInfo.message,
+      });
+    }
     return;
   }
 
+  const retryDelayMs = getRetryDelayMs(attemptCount);
   await ChatRepository.markOutboxItemStatus(item.owner_user_id, item.local_message_id, 'queued', errorInfo, {
-    nextRetryAt: new Date(Date.now() + getRetryDelayMs(attemptCount)).toISOString(),
+    nextRetryAt: new Date(Date.now() + retryDelayMs).toISOString(),
   });
+  scheduleOwnerOutboxFlush(item.owner_user_id, retryDelayMs + 100);
+  if (__DEV__) {
+    console.log('[chat][outbox] retry-scheduled', {
+      kind: parseOutboxPayload(item)?.kind ?? 'unknown',
+      attemptCount,
+      retryDelayMs,
+      code: errorInfo.code,
+      message: errorInfo.message,
+    });
+  }
 };
 
 const sendTextOutboxItem = async (item: ChatPendingOutboxRow) => {
@@ -585,36 +663,79 @@ const sendMediaOutboxItem = async (item: ChatPendingOutboxRow, payload: MediaOut
 
   const clientMessageId = payload.clientMessageId ?? item.local_message_id;
   await ChatRepository.markOutboxItemAttempting(item.owner_user_id, item.local_message_id);
-  const storagePath = await uploadQueuedPrivateChatMedia(payload);
+  const albumItems = payload.mediaType === 'image' && payload.albumItems && payload.albumItems.length > 1
+    ? payload.albumItems
+    : null;
+  const files: MediaOutboxFile[] = albumItems ?? [{
+    localUri: payload.localUri,
+    fileName: payload.fileName,
+    contentType: payload.contentType,
+    attachmentId: payload.attachmentId || await createLegacyChatAttachmentId(
+      `${payload.senderId}:${payload.receiverId}:${clientMessageId}:${payload.mediaType}`,
+    ),
+    byteSize: payload.byteSize,
+    width: payload.width,
+    height: payload.height,
+    durationMs: payload.durationMs,
+  }];
   let remoteRow: RemoteMessageRow | null = null;
   try {
-    const fileInfo = await FileSystem.getInfoAsync(payload.localUri);
-    const byteSize = payload.byteSize ?? (
-      fileInfo.exists && 'size' in fileInfo && typeof fileInfo.size === 'number' ? fileInfo.size : null
-    );
-    remoteRow = await finalizeChatAttachment({
-      receiverId: payload.receiverId,
-      clientMessageId,
-      attachmentId: payload.attachmentId!,
-      attachmentType: payload.mediaType,
-      bucketId: CHAT_MEDIA_BUCKET,
-      storagePath,
-      originalName: payload.documentName || payload.fileName,
-      mimeType: payload.contentType,
-      byteSize,
-      width: payload.width,
-      height: payload.height,
-      durationMs: payload.durationMs,
-      caption: payload.mediaType === 'document'
-        ? `${DOCUMENT_TEXT_PREFIX} ${[
-            payload.documentName || payload.fileName,
-            payload.documentSizeLabel,
-            payload.documentTypeLabel,
-          ].filter(Boolean).join(' | ')}`
-        : '',
-      replyToMessageId: payload.replyToMessageId ?? null,
-    }) as RemoteMessageRow;
+    for (let index = 0; index < files.length; index += 1) {
+      const file = files[index];
+      if (__DEV__) {
+        console.log('[chat][outbox] media-upload-started', {
+          mediaType: payload.mediaType,
+          attachmentIndex: index,
+          attachmentCount: files.length,
+          attemptCount: item.attempt_count + 1,
+        });
+      }
+      const storagePath = await uploadQueuedPrivateChatMedia(payload, file);
+      const fileInfo = await FileSystem.getInfoAsync(file.localUri);
+      const byteSize = resolveAuthoritativeAttachmentByteSize({
+        localFileInfo: fileInfo,
+        declaredByteSize: file.byteSize,
+      });
+      remoteRow = await finalizeChatAttachment({
+        receiverId: payload.receiverId,
+        clientMessageId,
+        attachmentId: file.attachmentId,
+        attachmentType: payload.mediaType,
+        bucketId: CHAT_MEDIA_BUCKET,
+        storagePath,
+        originalName: payload.documentName || file.fileName,
+        mimeType: file.contentType,
+        byteSize,
+        width: file.width,
+        height: file.height,
+        durationMs: normalizeAttachmentDurationMs(file.durationMs),
+        caption: payload.mediaType === 'document'
+          ? `${DOCUMENT_TEXT_PREFIX} ${[
+              payload.documentName || file.fileName,
+              payload.documentSizeLabel,
+              payload.documentTypeLabel,
+            ].filter(Boolean).join(' | ')}`
+          : '',
+        replyToMessageId: payload.replyToMessageId ?? null,
+        attachmentIndex: index,
+        expectedCount: files.length,
+      }) as RemoteMessageRow;
+      if (__DEV__) {
+        console.log('[chat][outbox] media-finalized', {
+          mediaType: payload.mediaType,
+          attachmentIndex: index,
+          attachmentCount: files.length,
+          byteSize,
+        });
+      }
+    }
   } catch (error) {
+    if (files.length > 1) {
+      // A partially uploaded album is not delivered. Retrying is safe because
+      // every object path and attachment index is deterministic/idempotent.
+      await scheduleOutboxRetry(item, error, 'album_send_incomplete', 'Unable to finish the photo album');
+      return { sent: false, threadId: item.thread_id };
+    }
     const existing = await fetchExistingClientMessage(payload.senderId, clientMessageId).catch(() => null);
     if (!existing) {
       await scheduleOutboxRetry(item, error, 'send_failed', 'Unable to finalize queued media');
@@ -624,12 +745,16 @@ const sendMediaOutboxItem = async (item: ChatPendingOutboxRow, payload: MediaOut
   }
 
   if (remoteRow) {
-    await ChatRepository.upsertMessages(item.owner_user_id, item.thread_id, [
+    await ChatRepository.settleOutboxMessage(
+      item.owner_user_id,
+      item.thread_id,
+      item.local_message_id,
       toLocalMessageRow(item.owner_user_id, item.thread_id, remoteRow, payload),
-    ]);
+    );
+  } else {
+    await ChatRepository.markOutboxItemStatus(item.owner_user_id, item.local_message_id, 'sent');
   }
-  await ChatRepository.markOutboxItemStatus(item.owner_user_id, item.local_message_id, 'sent');
-  await removeStagedOfflineChatUpload(payload.localUri);
+  await Promise.all(files.map((file) => removeStagedOfflineChatUpload(file.localUri)));
   return { sent: true, threadId: item.thread_id };
 };
 

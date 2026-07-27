@@ -55,6 +55,23 @@ test('same message preserves the most advanced local receipt', () => {
   assert.equal(merged.deliveredAt, local.deliveredAt);
 });
 
+test('same message preserves an authoritative local deletion over a stale media summary', () => {
+  const remote = message({
+    text: 'Video',
+    localStatus: 'delivered',
+  });
+  const local = message({
+    text: 'Message deleted',
+    localStatus: 'deleted',
+    deletedForAll: true,
+  });
+
+  const merged = selectChatListLastMessage(remote, local);
+  assert.equal(merged.text, 'Message deleted');
+  assert.equal(merged.localStatus, 'deleted');
+  assert.equal(merged.deletedForAll, true);
+});
+
 test('a new reaction to a previous message becomes latest activity', () => {
   const lastMessage = message();
   const activity = {

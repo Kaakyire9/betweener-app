@@ -1,4 +1,5 @@
 type ChatListMessageStatus =
+  | 'deleted'
   | 'queued'
   | 'sending'
   | 'sent'
@@ -14,6 +15,7 @@ type MergeableChatListMessage = {
   editedAt?: Date | null;
   reactionPreview?: unknown;
   localStatus?: ChatListMessageStatus;
+  deletedForAll?: boolean;
 };
 
 type MergeableChatListActivity = {
@@ -24,6 +26,8 @@ type MergeableChatListActivity = {
 
 const getStatusRank = (status?: ChatListMessageStatus) => {
   switch (status) {
+    case 'deleted':
+      return 7;
     case 'read':
       return 6;
     case 'delivered':
@@ -52,6 +56,19 @@ export const selectChatListLastMessage = <T extends MergeableChatListMessage>(
     return localMessage.timestamp.getTime() > remoteMessage.timestamp.getTime()
       ? localMessage
       : remoteMessage;
+  }
+
+  if (remoteMessage.deletedForAll || localMessage.deletedForAll) {
+    const deletedMessage = localMessage.deletedForAll
+      ? localMessage
+      : remoteMessage;
+    return {
+      ...remoteMessage,
+      ...deletedMessage,
+      deletedForAll: true,
+      localStatus: 'deleted',
+      reactionPreview: undefined,
+    };
   }
 
   const localStatusIsNewer =

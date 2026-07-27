@@ -1,4 +1,5 @@
-import { memo } from "react";
+import { memo, useEffect, useRef } from "react";
+import { useEvent } from "expo";
 import { View, Text, StyleSheet } from "react-native";
 import { VideoView, useVideoPlayer } from "expo-video";
 import { LinearGradient } from "expo-linear-gradient";
@@ -10,14 +11,26 @@ type VideoPreviewProps = {
   styles: ChatMessageStyles;
   url: string;
   resolvedUrl?: string;
+  onError?: () => void;
 };
 
-const VideoPreview = memo(({ styles, url, resolvedUrl }: VideoPreviewProps) => {
+const VideoPreview = memo(({ styles, url, resolvedUrl, onError }: VideoPreviewProps) => {
   const player = useVideoPlayer(resolvedUrl || url, (p) => {
     p.loop = false;
     p.muted = true;
     p.keepScreenOnWhilePlaying = false;
   });
+  const { status } = useEvent(player as any, 'statusChange', {
+    status: player.status,
+  });
+  const lastReportedUrlRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const activeUrl = resolvedUrl || url;
+    if (status !== 'error' || lastReportedUrlRef.current === activeUrl) return;
+    lastReportedUrlRef.current = activeUrl;
+    onError?.();
+  }, [onError, resolvedUrl, status, url]);
 
   return (
     <View style={styles.videoPreviewWrap}>

@@ -2,7 +2,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { preserveUnchangedMessageReferences } from '../lib/chat/message-list-reconciliation.ts';
+import {
+  getChatMessageRevisionKey,
+  preserveUnchangedMessageReferences,
+} from '../lib/chat/message-list-reconciliation.ts';
 
 const message = (id: string, status = 'sent') => ({
   id,
@@ -53,4 +56,69 @@ test('message reconciliation preserves stable rows when the list grows', () => {
   assert.equal(reconciled[0], current[0]);
   assert.equal(reconciled[1], current[1]);
   assert.equal(reconciled[2].id, 'three');
+});
+
+test('canonical attachment finalization replaces a partial realtime image row', () => {
+  const partial = {
+    ...message('image-one', 'delivered'),
+    type: 'image',
+    text: '',
+    storagePath: null,
+    mediaItems: [],
+    mediaExpectedCount: 1,
+  };
+  const finalized = {
+    ...partial,
+    storagePath: 'sender/receiver/client/attachment-image.jpg',
+    mediaItems: [
+      {
+        attachmentId: 'attachment-one',
+        index: 0,
+        type: 'image',
+        storagePath: 'sender/receiver/client/attachment-image.jpg',
+        mimeType: 'image/jpeg',
+        width: 1200,
+        height: 1600,
+        byteSize: 245000,
+      },
+    ],
+  };
+
+  const reconciled = preserveUnchangedMessageReferences(
+    [partial],
+    [finalized],
+    getChatMessageRevisionKey,
+  );
+
+  assert.notEqual(reconciled[0], partial);
+  assert.equal(reconciled[0].storagePath, finalized.storagePath);
+  assert.equal(reconciled[0].mediaItems[0].attachmentId, 'attachment-one');
+});
+
+test('identical finalized attachment metadata preserves the rendered row reference', () => {
+  const finalized = {
+    ...message('image-two', 'delivered'),
+    type: 'image',
+    text: '',
+    storagePath: 'sender/receiver/client/attachment-image.jpg',
+    mediaExpectedCount: 1,
+    mediaItems: [
+      {
+        attachmentId: 'attachment-two',
+        index: 0,
+        type: 'image',
+        storagePath: 'sender/receiver/client/attachment-image.jpg',
+        width: 900,
+        height: 900,
+      },
+    ],
+  };
+
+  const reconciled = preserveUnchangedMessageReferences(
+    [finalized],
+    [{ ...finalized, mediaItems: finalized.mediaItems.map((item) => ({ ...item })) }],
+    getChatMessageRevisionKey,
+  );
+
+  assert.equal(reconciled[0], finalized);
 });

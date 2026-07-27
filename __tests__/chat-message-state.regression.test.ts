@@ -229,16 +229,32 @@ test('applySyncedOutgoingReceiptState keeps failed messages failed when server h
   assert.equal(reconciled.items[0].status, 'failed');
 });
 
-test('chat image viewer opens the same offline or cached URI rendered by the bubble', () => {
+test('chat image bubble prioritizes validated runtime cache and ignores stale delivered local paths', () => {
   const message = {
     imageUrl: null,
     offlineImageUri: 'file:///local/chat-photo.jpg',
   };
 
-  assert.equal(resolveChatImageUri(message, 'file:///cache/chat-photo.jpg'), message.offlineImageUri);
+  assert.equal(resolveChatImageUri(message, 'file:///cache/chat-photo.jpg'), 'file:///cache/chat-photo.jpg');
   assert.equal(
     resolveChatImageUri({ imageUrl: null }, 'file:///cache/chat-photo.jpg'),
     'file:///cache/chat-photo.jpg',
+  );
+  assert.equal(
+    resolveChatImageUri({
+      storagePath: 'sender/peer/photo.jpg',
+      offlineImageUri: 'file:///stale/photo.jpg',
+      status: 'delivered',
+    }),
+    null,
+  );
+  assert.equal(
+    resolveChatImageUri({
+      storagePath: 'sender/peer/photo.jpg',
+      offlineImageUri: 'file:///fresh/photo.jpg',
+      status: 'sending',
+    }),
+    'file:///fresh/photo.jpg',
   );
 });
 

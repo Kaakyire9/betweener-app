@@ -13,7 +13,7 @@ type UseChatThreadLocalStateArgs = {
   mergeOfflineMediaIntoMessage: (nextMessage: MessageType, previous?: MessageType | null) => MessageType;
   linkReplies: (messages: MessageType[]) => MessageType[];
   reconcileDeliveredFallback: (messages: MessageType[]) => MessageType[];
-  getMessageLocalObserverKey: (message: MessageType) => string;
+  getMessageRevisionKey: (message: MessageType) => string;
 };
 
 export const useChatThreadLocalState = ({
@@ -25,7 +25,7 @@ export const useChatThreadLocalState = ({
   mergeOfflineMediaIntoMessage,
   linkReplies,
   reconcileDeliveredFallback,
-  getMessageLocalObserverKey,
+  getMessageRevisionKey,
 }: UseChatThreadLocalStateArgs) => {
   return useMemo(() => {
     if (!hasLoadedLocal || rows.length === 0) {
@@ -69,7 +69,7 @@ export const useChatThreadLocalState = ({
     const reconciledMessages = preserveUnchangedMessageReferences(
       currentMessages,
       mergedMessages,
-      getMessageLocalObserverKey,
+      getMessageRevisionKey,
     );
 
     return {
@@ -79,7 +79,7 @@ export const useChatThreadLocalState = ({
     };
   }, [
     currentMessages,
-    getMessageLocalObserverKey,
+    getMessageRevisionKey,
     hasLoadedLocal,
     linkReplies,
     mapRow,

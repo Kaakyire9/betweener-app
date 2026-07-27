@@ -716,6 +716,62 @@ export type Database = {
         }
         Relationships: []
       }
+      chat_attachment_cleanup_queue: {
+        Row: {
+          attachment_id: string | null
+          attempts: number
+          bucket_id: string
+          created_at: string
+          delete_after: string
+          deleted_at: string | null
+          id: number
+          last_error: string | null
+          processing_started_at: string | null
+          reason: string
+          status: string
+          storage_path: string
+          updated_at: string
+        }
+        Insert: {
+          attachment_id?: string | null
+          attempts?: number
+          bucket_id: string
+          created_at?: string
+          delete_after?: string
+          deleted_at?: string | null
+          id?: number
+          last_error?: string | null
+          processing_started_at?: string | null
+          reason: string
+          status?: string
+          storage_path: string
+          updated_at?: string
+        }
+        Update: {
+          attachment_id?: string | null
+          attempts?: number
+          bucket_id?: string
+          created_at?: string
+          delete_after?: string
+          deleted_at?: string | null
+          id?: number
+          last_error?: string | null
+          processing_started_at?: string | null
+          reason?: string
+          status?: string
+          storage_path?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chat_attachment_cleanup_queue_attachment_id_fkey"
+            columns: ["attachment_id"]
+            isOneToOne: false
+            referencedRelation: "message_attachments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       chat_conversation_summaries: {
         Row: {
           last_activity_at: string | null
@@ -3448,6 +3504,142 @@ export type Database = {
           },
         ]
       }
+      message_attachment_secrets: {
+        Row: {
+          attachment_id: string
+          created_at: string
+          encrypted_key_nonce: string
+          encrypted_key_receiver: string
+          encrypted_key_sender: string
+          encrypted_media_alg: string
+          encrypted_media_nonce: string
+          sender_public_key: string | null
+        }
+        Insert: {
+          attachment_id: string
+          created_at?: string
+          encrypted_key_nonce: string
+          encrypted_key_receiver: string
+          encrypted_key_sender: string
+          encrypted_media_alg?: string
+          encrypted_media_nonce: string
+          sender_public_key?: string | null
+        }
+        Update: {
+          attachment_id?: string
+          created_at?: string
+          encrypted_key_nonce?: string
+          encrypted_key_receiver?: string
+          encrypted_key_sender?: string
+          encrypted_media_alg?: string
+          encrypted_media_nonce?: string
+          sender_public_key?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "message_attachment_secrets_attachment_id_fkey"
+            columns: ["attachment_id"]
+            isOneToOne: true
+            referencedRelation: "message_attachments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      message_attachments: {
+        Row: {
+          attachment_index: number
+          attachment_type: string
+          bucket_id: string
+          byte_size: number | null
+          client_message_id: string
+          created_at: string
+          deleted_at: string | null
+          duration_ms: number | null
+          expires_at: string | null
+          height: number | null
+          id: string
+          is_view_once: boolean
+          lifecycle_status: string
+          message_id: string
+          mime_type: string
+          original_name: string | null
+          ready_at: string | null
+          receiver_id: string
+          sender_id: string
+          sha256: string | null
+          storage_path: string
+          thumbnail_storage_path: string | null
+          updated_at: string
+          validation_details: Json
+          validation_status: string
+          width: number | null
+        }
+        Insert: {
+          attachment_index?: number
+          attachment_type: string
+          bucket_id?: string
+          byte_size?: number | null
+          client_message_id: string
+          created_at?: string
+          deleted_at?: string | null
+          duration_ms?: number | null
+          expires_at?: string | null
+          height?: number | null
+          id?: string
+          is_view_once?: boolean
+          lifecycle_status?: string
+          message_id: string
+          mime_type: string
+          original_name?: string | null
+          ready_at?: string | null
+          receiver_id: string
+          sender_id: string
+          sha256?: string | null
+          storage_path: string
+          thumbnail_storage_path?: string | null
+          updated_at?: string
+          validation_details?: Json
+          validation_status?: string
+          width?: number | null
+        }
+        Update: {
+          attachment_index?: number
+          attachment_type?: string
+          bucket_id?: string
+          byte_size?: number | null
+          client_message_id?: string
+          created_at?: string
+          deleted_at?: string | null
+          duration_ms?: number | null
+          expires_at?: string | null
+          height?: number | null
+          id?: string
+          is_view_once?: boolean
+          lifecycle_status?: string
+          message_id?: string
+          mime_type?: string
+          original_name?: string | null
+          ready_at?: string | null
+          receiver_id?: string
+          sender_id?: string
+          sha256?: string | null
+          storage_path?: string
+          thumbnail_storage_path?: string | null
+          updated_at?: string
+          validation_details?: Json
+          validation_status?: string
+          width?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "message_attachments_message_id_fkey"
+            columns: ["message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       message_edits: {
         Row: {
           created_at: string
@@ -3631,6 +3823,8 @@ export type Database = {
           id: string
           is_read: boolean
           is_view_once: boolean
+          media_expected_count: number | null
+          media_items: Json
           media_kind: string | null
           message_type: string
           read_at: string | null
@@ -3669,6 +3863,8 @@ export type Database = {
           id?: string
           is_read?: boolean
           is_view_once?: boolean
+          media_expected_count?: number | null
+          media_items?: Json
           media_kind?: string | null
           message_type?: string
           read_at?: string | null
@@ -3707,6 +3903,8 @@ export type Database = {
           id?: string
           is_read?: boolean
           is_view_once?: boolean
+          media_expected_count?: number | null
+          media_items?: Json
           media_kind?: string | null
           message_type?: string
           read_at?: string | null
@@ -7373,6 +7571,10 @@ export type Database = {
       }
       clean_expired_distance_cache: { Args: never; Returns: number }
       cleanup_phone_verifications_orphans: { Args: never; Returns: undefined }
+      cleanup_stale_circle_love_seats: {
+        Args: { p_circle_id?: string }
+        Returns: number
+      }
       compute_location_affinities: {
         Args: { p_candidate_profile_ids: string[]; p_viewer_profile_id: string }
         Returns: {
@@ -7460,6 +7662,8 @@ export type Database = {
           id: string
           is_read: boolean
           is_view_once: boolean
+          media_expected_count: number | null
+          media_items: Json
           media_kind: string | null
           message_type: string
           read_at: string | null
@@ -8183,6 +8387,10 @@ export type Database = {
         Args: { p_owner_user_id: string; p_peer_user_id: string }
         Returns: undefined
       }
+      refresh_chat_message_media_items: {
+        Args: { p_message_id: string }
+        Returns: undefined
+      }
       refresh_profile_recommendation_quality_metrics: {
         Args: { p_profile_ids?: string[] }
         Returns: number
@@ -8689,6 +8897,71 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      rpc_append_chat_album_attachment: {
+        Args: {
+          p_attachment_id: string
+          p_attachment_index: number
+          p_bucket_id: string
+          p_byte_size?: number
+          p_client_message_id: string
+          p_expected_count: number
+          p_height?: number
+          p_mime_type: string
+          p_original_name: string
+          p_receiver_id: string
+          p_sender_id: string
+          p_sha256?: string
+          p_storage_path: string
+          p_validation_details?: Json
+          p_width?: number
+        }
+        Returns: {
+          audio_duration: number | null
+          audio_path: string | null
+          audio_waveform: Json | null
+          client_message_id: string | null
+          created_at: string
+          deleted_at: string | null
+          deleted_by: string | null
+          deleted_for_all: boolean
+          delivered_at: string | null
+          e2ee: boolean
+          edited_at: string | null
+          enc: Json | null
+          encrypted_key_nonce: string | null
+          encrypted_key_receiver: string | null
+          encrypted_key_sender: string | null
+          encrypted_media: boolean
+          encrypted_media_alg: string | null
+          encrypted_media_mime: string | null
+          encrypted_media_nonce: string | null
+          encrypted_media_path: string | null
+          encrypted_media_size: number | null
+          id: string
+          is_read: boolean
+          is_view_once: boolean
+          media_expected_count: number | null
+          media_items: Json
+          media_kind: string | null
+          message_type: string
+          read_at: string | null
+          receiver_id: string
+          reply_to_message_id: string | null
+          sender_id: string
+          status: string
+          storage_path: string | null
+          text: string
+          view_once: boolean
+          viewed_at: string | null
+          viewed_by: string | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "messages"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       rpc_approve_circle: {
         Args: { p_circle_id: string }
         Returns: {
@@ -8892,6 +9165,16 @@ export type Database = {
         Returns: boolean
       }
       rpc_cancel_signal: { Args: { p_signal_id: string }; Returns: string }
+      rpc_claim_chat_attachment_cleanup: {
+        Args: { p_limit?: number }
+        Returns: {
+          attachment_id: string
+          bucket_id: string
+          queue_id: number
+          reason: string
+          storage_path: string
+        }[]
+      }
       rpc_claim_verification_evidence_retention: {
         Args: { p_limit?: number }
         Returns: {
@@ -8901,9 +9184,32 @@ export type Database = {
           request_id: string
         }[]
       }
+      rpc_claim_view_once_attachment: {
+        Args: { p_message_id: string }
+        Returns: {
+          attachment_id: string
+          attachment_type: string
+          bucket_id: string
+          byte_size: number
+          encrypted_key_nonce: string
+          encrypted_key_receiver: string
+          encrypted_media_alg: string
+          encrypted_media_nonce: string
+          mime_type: string
+          sender_public_key: string
+          storage_path: string
+        }[]
+      }
       rpc_clear_signin_provider_disconnected: {
         Args: { p_provider: string }
         Returns: boolean
+      }
+      rpc_complete_view_once_attachment: {
+        Args: { p_message_id: string }
+        Returns: {
+          attachment_id: string
+          consumed_at: string
+        }[]
       }
       rpc_create_circle: {
         Args: {
@@ -9309,6 +9615,13 @@ export type Database = {
           status: string
         }[]
       }
+      rpc_delete_chat_message_for_everyone: {
+        Args: { p_message_id: string }
+        Returns: {
+          bucket_id: string
+          storage_path: string
+        }[]
+      }
       rpc_delete_circle_prompt: {
         Args: { p_circle_id: string; p_prompt_id: string }
         Returns: boolean
@@ -9344,6 +9657,81 @@ export type Database = {
       rpc_end_circle_love_seat: {
         Args: { p_actor_profile_id: string; p_love_seat_id: string }
         Returns: boolean
+      }
+      rpc_finalize_chat_attachment: {
+        Args: {
+          p_attachment_id: string
+          p_attachment_type: string
+          p_audio_waveform?: Json
+          p_bucket_id: string
+          p_byte_size?: number
+          p_caption?: string
+          p_client_message_id: string
+          p_duration_ms?: number
+          p_encrypted_key_nonce?: string
+          p_encrypted_key_receiver?: string
+          p_encrypted_key_sender?: string
+          p_encrypted_media_alg?: string
+          p_encrypted_media_nonce?: string
+          p_height?: number
+          p_is_view_once?: boolean
+          p_mime_type: string
+          p_original_name: string
+          p_receiver_id: string
+          p_reply_to_message_id?: string
+          p_sender_id: string
+          p_sender_public_key?: string
+          p_sha256?: string
+          p_storage_path: string
+          p_validation_details?: Json
+          p_width?: number
+        }
+        Returns: {
+          audio_duration: number | null
+          audio_path: string | null
+          audio_waveform: Json | null
+          client_message_id: string | null
+          created_at: string
+          deleted_at: string | null
+          deleted_by: string | null
+          deleted_for_all: boolean
+          delivered_at: string | null
+          e2ee: boolean
+          edited_at: string | null
+          enc: Json | null
+          encrypted_key_nonce: string | null
+          encrypted_key_receiver: string | null
+          encrypted_key_sender: string | null
+          encrypted_media: boolean
+          encrypted_media_alg: string | null
+          encrypted_media_mime: string | null
+          encrypted_media_nonce: string | null
+          encrypted_media_path: string | null
+          encrypted_media_size: number | null
+          id: string
+          is_read: boolean
+          is_view_once: boolean
+          media_expected_count: number | null
+          media_items: Json
+          media_kind: string | null
+          message_type: string
+          read_at: string | null
+          receiver_id: string
+          reply_to_message_id: string | null
+          sender_id: string
+          status: string
+          storage_path: string | null
+          text: string
+          view_once: boolean
+          viewed_at: string | null
+          viewed_by: string | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "messages"
+          isOneToOne: false
+          isSetofReturn: true
+        }
       }
       rpc_get_account_recovery_options: {
         Args: { p_recovery_token: string }
@@ -9987,6 +10375,22 @@ export type Database = {
         Args: { p_comment_id: string; p_pinned?: boolean; p_profile_id: string }
         Returns: boolean
       }
+      rpc_prepare_view_once_attachment: {
+        Args: { p_message_id: string }
+        Returns: {
+          attachment_id: string
+          attachment_type: string
+          bucket_id: string
+          byte_size: number
+          encrypted_key_nonce: string
+          encrypted_key_receiver: string
+          encrypted_media_alg: string
+          encrypted_media_nonce: string
+          mime_type: string
+          sender_public_key: string
+          storage_path: string
+        }[]
+      }
       rpc_process_intent_request_jobs: {
         Args: { p_remind_before?: string; p_window?: string }
         Returns: Json
@@ -10364,6 +10768,10 @@ export type Database = {
           p_target_profile_id: string
         }
         Returns: string[]
+      }
+      rpc_schedule_orphaned_chat_attachments: {
+        Args: { p_limit?: number }
+        Returns: number
       }
       rpc_search_circle_invite_candidates: {
         Args: {

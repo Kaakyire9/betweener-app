@@ -28,6 +28,8 @@ export type ChatAttachmentFinalizeInput = {
   encryptedMediaAlg?: 'nacl-secretbox' | null;
   senderPublicKey?: string | null;
   waveform?: number[] | null;
+  attachmentIndex?: number;
+  expectedCount?: number;
 };
 
 const SAFE_EXTENSION = /^[a-z0-9]{1,8}$/;

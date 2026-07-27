@@ -36,3 +36,35 @@ export const shouldFetchThreadIncrementally = ({
   Boolean(syncCursor) &&
   currentMessages.some(isPersistedRemoteMessage) &&
   !hasIncompleteCachedAttachment(currentMessages);
+
+export const resolveThreadSyncCursor = ({
+  storedCursor,
+  syncStateTimedOut,
+  currentMessages,
+}: {
+  storedCursor?: string | null;
+  syncStateTimedOut: boolean;
+  currentMessages: MessageType[];
+}): string | null => {
+  if (storedCursor) return storedCursor;
+  if (!syncStateTimedOut || hasIncompleteCachedAttachment(currentMessages)) return null;
+
+  const latestTimestamp = currentMessages.reduce<number | null>((latest, message) => {
+    if (!isPersistedRemoteMessage(message)) return latest;
+    const timestamp = message.timestamp?.getTime();
+    if (!Number.isFinite(timestamp) || timestamp > Date.now() + 5 * 60 * 1000) return latest;
+    return latest == null || timestamp > latest ? timestamp : latest;
+  }, null);
+
+  return latestTimestamp == null ? null : new Date(latestTimestamp).toISOString();
+};
+
+const OPTIONAL_CHAT_MEDIA_COLUMNS = ['media_items', 'media_expected_count'] as const;
+
+export const isMissingOptionalChatMediaColumnsError = (
+  error?: { code?: string | null; message?: string | null } | null,
+) => {
+  if (error?.code !== '42703') return false;
+  const message = String(error.message ?? '').toLowerCase();
+  return OPTIONAL_CHAT_MEDIA_COLUMNS.some((column) => message.includes(column));
+};

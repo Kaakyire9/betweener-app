@@ -119,6 +119,7 @@ export const useChatListSync = ({
 
   useEffect(() => {
     if (!userId || !realtimeActive) return;
+    let cancelled = false;
     const channel = supabase.channel(`messages:chatlist:${userId}`);
 
     channel
@@ -130,6 +131,7 @@ export const useChatListSync = ({
           table: 'messages',
         },
         (payload) => {
+          if (cancelled) return;
           if (payload.eventType === 'DELETE') {
             void fetchConversations();
             return;
@@ -146,12 +148,14 @@ export const useChatListSync = ({
         },
       )
       .subscribe((status) => {
+        if (cancelled) return;
         if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
           void fetchConversations();
         }
       });
 
     return () => {
+      cancelled = true;
       supabase.removeChannel(channel);
     };
   }, [
@@ -165,6 +169,7 @@ export const useChatListSync = ({
 
   useEffect(() => {
     if (!userId || !realtimeActive) return;
+    let cancelled = false;
     const channel = supabase.channel(`message_reactions:chatlist:${userId}`);
 
     channel
@@ -172,17 +177,20 @@ export const useChatListSync = ({
         'postgres_changes',
         { event: '*', schema: 'public', table: 'message_reactions' },
         (payload) => {
+          if (cancelled) return;
           const row = (payload.new || payload.old) as ChatListReactionRow;
           void onReactionChange(row);
         },
       )
       .subscribe((status) => {
+        if (cancelled) return;
         if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
           void fetchConversations();
         }
       });
 
     return () => {
+      cancelled = true;
       supabase.removeChannel(channel);
     };
   }, [fetchConversations, onReactionChange, realtimeActive, userId]);

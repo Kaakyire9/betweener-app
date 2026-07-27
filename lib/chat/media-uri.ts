@@ -4,6 +4,7 @@ type ChatMediaUriSource = {
   offlineImageUri?: string | null;
   offlineVideoUri?: string | null;
   storagePath?: string | null;
+  status?: 'queued' | 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
 };
 
 const firstAvailableUri = (...values: (string | null | undefined)[]) =>
@@ -12,18 +13,43 @@ const firstAvailableUri = (...values: (string | null | undefined)[]) =>
 export const resolveChatImageUri = (
   message: ChatMediaUriSource,
   cachedImageUri?: string | null,
-) => firstAvailableUri(message.offlineImageUri, cachedImageUri, message.imageUrl);
+) => {
+  if (message.storagePath) {
+    const optimisticLocalUri =
+      message.status === 'queued' || message.status === 'sending'
+        ? message.offlineImageUri
+        : null;
+    return firstAvailableUri(cachedImageUri, optimisticLocalUri);
+  }
+  return firstAvailableUri(cachedImageUri, message.offlineImageUri, message.imageUrl);
+};
 
 export const resolveChatVideoUri = (
   message: ChatMediaUriSource,
   cachedVideoUri?: string | null,
-) => firstAvailableUri(message.offlineVideoUri, cachedVideoUri, message.videoUrl);
+) => {
+  if (message.storagePath) {
+    const optimisticLocalUri =
+      message.status === 'queued' || message.status === 'sending'
+        ? message.offlineVideoUri
+        : null;
+    return firstAvailableUri(cachedVideoUri, optimisticLocalUri);
+  }
+  return firstAvailableUri(cachedVideoUri, message.offlineVideoUri, message.videoUrl);
+};
 
 export const resolveKnownSignedChatMediaUri = (
   storagePath: string | null | undefined,
   currentUri: string | null | undefined,
-  signedUris: ReadonlyMap<string, string>,
-) => firstAvailableUri(storagePath ? signedUris.get(storagePath) : null, currentUri);
+  signedUris: ReadonlyMap<string, string> | { getKnownUri: (path: string | null | undefined) => string | null },
+) => {
+  const signedUri = storagePath
+    ? 'getKnownUri' in signedUris
+      ? signedUris.getKnownUri(storagePath)
+      : signedUris.get(storagePath)
+    : null;
+  return firstAvailableUri(signedUri, currentUri);
+};
 
 type ChatImageViewerResolver = {
   online: boolean;

@@ -47,7 +47,11 @@ export const useChatThreads = ({
       const version = ++loadVersion;
       const timeoutMs = Platform.OS === 'ios' ? 1000 : 2200;
       const { value: nextRows, timedOut } = await withTimeoutFallback(
-        ChatRepository.getThreads(ownerUserId, { includeArchived, limit }),
+        ChatRepository.getThreads(ownerUserId, {
+          includeArchived,
+          limit,
+          operationPriority: 'normal',
+        }),
         timeoutMs,
         rows,
       );

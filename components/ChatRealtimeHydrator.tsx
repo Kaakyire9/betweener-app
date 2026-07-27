@@ -67,11 +67,14 @@ const toLocalChatMessage = (ownerUserId: string, row: RealtimeMessageRow): ChatM
 };
 
 export default function ChatRealtimeHydrator() {
-  const { user, isAuthenticated } = useAuth();
+  const { user, isAuthenticated, canPerformAuthenticatedWrites } = useAuth();
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
 
   useEffect(() => {
-    const userId = isAuthenticated ? user?.id ?? null : null;
+    const userId =
+      isAuthenticated && canPerformAuthenticatedWrites
+        ? user?.id ?? null
+        : null;
     if (!userId) return;
 
     const catchUpDelivered = () => {
@@ -154,7 +157,7 @@ export default function ChatRealtimeHydrator() {
       appStateSubscription.remove();
       supabase.removeChannel(channel);
     };
-  }, [isAuthenticated, user?.id]);
+  }, [canPerformAuthenticatedWrites, isAuthenticated, user?.id]);
 
   return null;
 }

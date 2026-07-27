@@ -22,6 +22,7 @@ import { canSendWebsocketBroadcast } from '../lib/chat/realtime-channel.ts';
 import {
   clearActiveChatThread,
   isActiveChatThread,
+  markChatThreadOptimisticallyRead,
   resolveThreadUnreadCount,
   setActiveChatThread,
 } from '../lib/chat/active-thread.ts';
@@ -185,6 +186,30 @@ test('active thread rejects stale remote unread counts', () => {
 
   clearActiveChatThread('me', 'peer-a', token);
   assert.equal(resolveThreadUnreadCount('me', 'peer-a', 3), 3);
+});
+
+test('recently read thread rejects stale summaries but accepts a newer message', () => {
+  const readThrough = new Date('2026-07-23T10:00:00.000Z');
+  markChatThreadOptimisticallyRead('reader', 'peer-read', readThrough);
+
+  assert.equal(
+    resolveThreadUnreadCount(
+      'reader',
+      'peer-read',
+      4,
+      new Date('2026-07-23T09:59:59.000Z'),
+    ),
+    0,
+  );
+  assert.equal(
+    resolveThreadUnreadCount(
+      'reader',
+      'peer-read',
+      1,
+      new Date('2026-07-23T10:00:01.000Z'),
+    ),
+    1,
+  );
 });
 
 test('auth recovery does not treat unknown or disconnected NetInfo state as online', () => {

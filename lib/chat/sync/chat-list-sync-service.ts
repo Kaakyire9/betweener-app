@@ -1,6 +1,10 @@
 import { fetchPeerVisibilityPrefs } from "@/lib/peer-visibility";
 import { supabase } from "@/lib/supabase";
 import { fetchUsersPresence, type UserPresenceRow } from "@/lib/user-presence";
+import {
+  buildChatListEnrichmentPlan,
+  getPeerUserIdsNeedingLocalHistory,
+} from "@/lib/chat/sync/chat-list-enrichment-plan";
 
 type RemoteConversationSummaryRow = {
   other_user_id: string;
@@ -187,20 +191,24 @@ export const fetchRemoteChatListNewMatches = async <TNewMatch>({
   );
   let cachedMessagedPeerUserIds = new Set<string>();
   let timedOutLocalHistoryChecks = 0;
-  if (peerUserIds.length > 0) {
+  const peerUserIdsNeedingLocalHistory = getPeerUserIdsNeedingLocalHistory(
+    peerUserIds,
+    messagedPeerUserIds,
+  );
+  if (peerUserIdsNeedingLocalHistory.length > 0) {
     const localCheckStartedAt = Date.now();
     const localThreadIdsWithMessages = await withTimeoutFallback(
-      getLocalThreadIdsWithMessages(peerUserIds),
+      getLocalThreadIdsWithMessages(peerUserIdsNeedingLocalHistory),
       1800,
       new Set<string>(),
     );
     cachedMessagedPeerUserIds = localThreadIdsWithMessages;
     if (cachedMessagedPeerUserIds.size === 0 && Date.now() - localCheckStartedAt >= 1750) {
-      timedOutLocalHistoryChecks = peerUserIds.length;
+      timedOutLocalHistoryChecks = peerUserIdsNeedingLocalHistory.length;
       console.log('[chat][new-matches][remote] local-history-batch-timeout', {
         currentProfileId,
         userId,
-        peerUserCount: peerUserIds.length,
+        peerUserCount: peerUserIdsNeedingLocalHistory.length,
         durationMs: Date.now() - localCheckStartedAt,
       });
     }
@@ -286,13 +294,23 @@ export const fetchRemoteChatListConversations = async <
     userId,
     currentConversationCount: currentConversationsByUserId.size,
   });
-  const { data: conversationSummaries, error } = await supabase.rpc(
-    'rpc_get_chat_conversation_summaries',
-    {
-      p_limit: 200,
-      p_offset: 0,
-    },
-  );
+  const summariesRequest = supabase.rpc('rpc_get_chat_conversation_summaries', {
+    p_limit: 200,
+    p_offset: 0,
+  });
+  const acceptedMatchesRequest = currentProfileId
+    ? supabase
+        .from('matches')
+        .select('user1_id,user2_id,updated_at,status')
+        .eq('status', 'ACCEPTED')
+        .or(`user1_id.eq.${currentProfileId},user2_id.eq.${currentProfileId}`)
+        .order('updated_at', { ascending: false })
+        .limit(60)
+    : Promise.resolve({ data: null, error: null });
+  const [
+    { data: conversationSummaries, error },
+    { data: acceptedMatches, error: acceptedMatchesError },
+  ] = await Promise.all([summariesRequest, acceptedMatchesRequest]);
 
   if (error) {
     console.log('[chat][conversations][remote] summaries-error', {
@@ -384,16 +402,9 @@ export const fetchRemoteChatListConversations = async <
   const fallbackPreviewByUser = new Map<string, TFallbackPreview>();
   const fallbackMatchedAtByUser = new Map<string, Date>();
   const fallbackProfileByUser = new Map<string, any>();
+  const acceptedProfileByUser = new Map<string, any>();
 
   if (currentProfileId) {
-    const { data: acceptedMatches, error: acceptedMatchesError } = await supabase
-      .from('matches')
-      .select('user1_id,user2_id,updated_at,status')
-      .eq('status', 'ACCEPTED')
-      .or(`user1_id.eq.${currentProfileId},user2_id.eq.${currentProfileId}`)
-      .order('updated_at', { ascending: false })
-      .limit(60);
-
     if (acceptedMatchesError) {
       console.log('[chat][conversations][remote] accepted-matches-fallback-error', {
         currentProfileId,
@@ -448,12 +459,14 @@ export const fetchRemoteChatListConversations = async <
             peerProfileCount: acceptedPeerProfiles?.length ?? 0,
             durationMs: Date.now() - startedAt,
           });
-          const mergedAcceptedPeerProfiles = mergePresenceIntoProfileRows(
-            ((acceptedPeerProfiles as any[] | null) ?? []),
-            (await fetchUsersPresence((((acceptedPeerProfiles as any[] | null) ?? []).map((row) => String(row?.user_id || ''))))).data,
-          );
+          const acceptedProfileRows = (acceptedPeerProfiles as any[] | null) ?? [];
+          acceptedProfileRows.forEach((profileRow) => {
+            if (typeof profileRow?.user_id === 'string' && profileRow.user_id.length > 0) {
+              acceptedProfileByUser.set(profileRow.user_id, profileRow);
+            }
+          });
           await Promise.all(
-            mergedAcceptedPeerProfiles.map(async (peerProfile) => {
+            acceptedProfileRows.map(async (peerProfile) => {
               if (!peerProfile?.id || !peerProfile?.user_id) return;
               const hasLeft =
                 Boolean(peerProfile?.deleted_at) ||
@@ -491,10 +504,43 @@ export const fetchRemoteChatListConversations = async <
     };
   }
 
-  const { data: profilesData, error: profilesError } = await supabase
-    .from('profiles')
-    .select('user_id,full_name,avatar_url,age,online,last_active,updated_at,account_state,deleted_at')
-    .in('user_id', combinedOtherUserIds);
+  const enrichmentPlan = buildChatListEnrichmentPlan(
+    combinedOtherUserIds,
+    acceptedProfileByUser.keys(),
+  );
+  const { missingProfileUserIds } = enrichmentPlan;
+  const profilesRequest =
+    missingProfileUserIds.length > 0
+      ? supabase
+          .from('profiles')
+          .select('user_id,full_name,avatar_url,age,online,last_active,updated_at,account_state,deleted_at')
+          .in('user_id', missingProfileUserIds)
+      : Promise.resolve({ data: [] as any[], error: null });
+  const blocksRequest = supabase
+    .from('blocks')
+    .select('blocker_id,blocked_id')
+    .or(`blocker_id.eq.${userId},blocked_id.eq.${userId}`);
+  const presenceRequest = fetchUsersPresence(enrichmentPlan.peerUserIds);
+  const peerVisibilityRequest = fetchPeerVisibilityPrefs(userId, enrichmentPlan.peerUserIds);
+  const chatPrefsRequest = supabase
+    .from('chat_prefs')
+    .select('peer_id,muted,pinned')
+    .eq('user_id', userId)
+    .in('peer_id', enrichmentPlan.peerUserIds);
+  const enrichmentStartedAt = Date.now();
+  const [
+    { data: profilesData, error: profilesError },
+    { data: blocksData, error: blocksError },
+    presenceResult,
+    peerVisibilityPrefs,
+    { data: prefsData, error: prefsError },
+  ] = await Promise.all([
+    profilesRequest,
+    blocksRequest,
+    presenceRequest,
+    peerVisibilityRequest,
+    chatPrefsRequest,
+  ]);
 
   if (profilesError) {
     console.log('[chat][conversations][remote] profiles-error', {
@@ -511,14 +557,11 @@ export const fetchRemoteChatListConversations = async <
     currentProfileId: currentProfileId ?? null,
     userId,
     combinedOtherUserCount: combinedOtherUserIds.length,
-    profileCount: profilesData?.length ?? 0,
+    fetchedProfileCount: profilesData?.length ?? 0,
+    reusedProfileCount: enrichmentPlan.reusedProfileCount,
+    parallelEnrichmentDurationMs: Date.now() - enrichmentStartedAt,
     durationMs: Date.now() - startedAt,
   });
-
-  const { data: blocksData, error: blocksError } = await supabase
-    .from('blocks')
-    .select('blocker_id,blocked_id')
-    .or(`blocker_id.eq.${userId},blocked_id.eq.${userId}`);
 
   if (blocksError) {
     console.log('[chat][conversations][remote] blocks-error', {
@@ -538,19 +581,25 @@ export const fetchRemoteChatListConversations = async <
     }
   });
 
+  const profileRowsByUser = new Map<string, any>(acceptedProfileByUser);
+  ((profilesData as any[] | null) ?? []).forEach((profile) => {
+    if (typeof profile?.user_id === 'string' && profile.user_id.length > 0) {
+      profileRowsByUser.set(profile.user_id, profile);
+    }
+  });
   const mergedProfilesData = mergePresenceIntoProfileRows(
-    ((profilesData as any[] | null) ?? []),
-    (await fetchUsersPresence(combinedOtherUserIds)).data,
+    Array.from(profileRowsByUser.values()),
+    presenceResult.data,
   );
-
-  const profileByUser = new Map(mergedProfilesData.map((profile: any) => [profile.user_id, profile]));
+  const profileByUser = new Map(
+    mergedProfilesData.map((profile: any) => [profile.user_id, profile]),
+  );
   fallbackProfileByUser.forEach((profile, otherUserId) => {
     if (!profileByUser.has(otherUserId)) {
       profileByUser.set(otherUserId, profile);
     }
   });
 
-  const peerVisibilityPrefs = await fetchPeerVisibilityPrefs(userId, combinedOtherUserIds);
   console.log('[chat][conversations][remote] peer-visibility-success', {
     userId,
     combinedOtherUserCount: combinedOtherUserIds.length,
@@ -576,11 +625,6 @@ export const fetchRemoteChatListConversations = async <
     .filter((conversation): conversation is TConversation => Boolean(conversation));
 
   const serverPrefs = new Map<string, { muted: boolean; pinned: boolean }>();
-  const { data: prefsData, error: prefsError } = await supabase
-    .from('chat_prefs')
-    .select('peer_id,muted,pinned')
-    .eq('user_id', userId)
-    .in('peer_id', combinedOtherUserIds);
   if (prefsError) {
     console.log('[chat][conversations][remote] chat-prefs-error', {
       userId,

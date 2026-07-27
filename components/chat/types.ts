@@ -1,6 +1,19 @@
 export type DatePlanStatus = 'pending' | 'accepted' | 'declined' | 'cancelled' | 'countered';
 export type DatePlanResponseKind = 'initial' | 'counter_time' | 'counter_place' | 'counter_both';
 
+export type ChatMediaItem = {
+  attachmentId: string;
+  index: number;
+  type: 'image';
+  storagePath: string;
+  mimeType?: string | null;
+  width?: number | null;
+  height?: number | null;
+  byteSize?: number | null;
+  localUri?: string;
+  signedUrl?: string;
+};
+
 export type MessageType = {
   id: string;
   clientMessageId?: string | null;
@@ -20,6 +33,8 @@ export type MessageType = {
   encryptedMediaSize?: number | null;
   /** Stable private object reference. Renderers resolve this to a short-lived signed URL. */
   storagePath?: string | null;
+  mediaItems?: ChatMediaItem[];
+  mediaExpectedCount?: number | null;
   reactions: { userId: string; emoji: string; }[];
   status?: 'queued' | 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
   readAt?: Date;

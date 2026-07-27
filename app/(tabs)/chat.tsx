@@ -20,6 +20,10 @@ import {
 } from "@/lib/chat/hooks/use-chat-list-sync";
 import { useChatThreads } from "@/lib/chat/hooks/use-chat-threads";
 import {
+  resolveThreadUnreadCount,
+  subscribeOptimisticThreadReads,
+} from "@/lib/chat/active-thread";
+import {
   ChatRepository,
   type ChatMessageRow,
   type ChatThreadRow,
@@ -95,7 +99,8 @@ type ConversationType = {
     isRead: boolean;
     deliveredAt: Date | null;
     editedAt?: Date | null;
-    localStatus?: 'queued' | 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
+    localStatus?: 'deleted' | 'queued' | 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
+    deletedForAll?: boolean;
     reactionPreview?: {
       emoji: string;
       userId: string;
@@ -145,7 +150,7 @@ const messageRowToLocalChatMessage = (ownerUserId: string, row: MessageRow): Cha
     owner_user_id: ownerUserId,
     sender_user_id: row.sender_id,
     receiver_user_id: row.receiver_id,
-    body: row.text ?? '',
+    body: row.deleted_for_all ? 'Message deleted' : row.text ?? '',
     message_type: row.message_type === 'voice' ? 'voice' : ((row.message_type ?? 'text') as ChatMessageRow['message_type']),
     status,
     direction: isMine ? 'outgoing' : 'incoming',
@@ -289,7 +294,10 @@ const localThreadToConversation = (row: ChatThreadRow): ConversationType => {
     coerceValidDate(row.created_at) ||
     coerceValidDate(row.local_updated_at) ||
     new Date();
-  const rawPreview = row.last_message_preview || '';
+  const rawPreview =
+    row.last_message_status === 'deleted'
+      ? 'Message deleted'
+      : row.last_message_preview || '';
   const previewLooksLikeRemoteMedia = /^https?:\/\//i.test(rawPreview);
   const preview = previewLooksLikeRemoteMedia ? 'Photo' : rawPreview;
   const previewType: ConversationType['lastMessage']['type'] =
@@ -305,7 +313,9 @@ const localThreadToConversation = (row: ChatThreadRow): ConversationType => {
       ? 'location'
       : 'text';
   const localStatus: ThreadPreviewMessage['localStatus'] =
-    row.last_message_status === 'pending'
+    row.last_message_status === 'deleted'
+      ? 'deleted'
+      : row.last_message_status === 'pending'
       ? 'queued'
       : row.last_message_status === 'sending' ||
         row.last_message_status === 'sent' ||
@@ -374,9 +384,15 @@ const localThreadToConversation = (row: ChatThreadRow): ConversationType => {
           : null,
       editedAt: coerceValidDate(row.last_message_edited_at),
       localStatus,
+      deletedForAll: row.last_message_status === 'deleted',
       reactionPreview,
     },
-    unreadCount: row.unread_count,
+    unreadCount: resolveThreadUnreadCount(
+      row.owner_user_id,
+      row.peer_user_id,
+      row.unread_count,
+      timestamp,
+    ),
     isMuted: row.is_muted === 1,
     isPinned: row.is_pinned === 1,
     matchedAt: coerceValidDate(row.created_at) || timestamp,
@@ -388,7 +404,9 @@ const conversationToLocalThread = (ownerUserId: string, conversation: Conversati
   const lastMessageAt = conversation.lastMessage.timestamp instanceof Date
     ? conversation.lastMessage.timestamp.toISOString()
     : localUpdatedAt;
-  const lastMessagePreview = conversation.lastMessage.isViewOnce && conversation.lastMessage.type === 'image'
+  const lastMessagePreview = conversation.lastMessage.deletedForAll
+    ? 'Message deleted'
+    : conversation.lastMessage.isViewOnce && conversation.lastMessage.type === 'image'
     ? 'View once photo'
     : conversation.lastMessage.isViewOnce && conversation.lastMessage.type === 'video'
     ? 'View once video'
@@ -406,7 +424,9 @@ const conversationToLocalThread = (ownerUserId: string, conversation: Conversati
   const localStatus = (conversation.lastMessage as ThreadPreviewMessage).localStatus;
   const reactionPreview = conversation.lastMessage.reactionPreview;
   const lastMessageStatus: ChatThreadRow['last_message_status'] =
-    localStatus === 'queued'
+    conversation.lastMessage.deletedForAll || localStatus === 'deleted'
+      ? 'deleted'
+      : localStatus === 'queued'
       ? 'pending'
       : localStatus ??
         (conversation.lastMessage.isRead
@@ -475,6 +495,7 @@ const getConversationLocalMergeKey = (conversation: ConversationType) =>
     conversation.lastMessage.isRead ? 'read' : 'unread',
     conversation.lastMessage.deliveredAt?.getTime() ?? 0,
     conversation.lastMessage.editedAt?.getTime() ?? 0,
+    conversation.lastMessage.deletedForAll ? 'deleted' : 'active',
     conversation.lastMessage.reactionPreview?.emoji ?? '',
     conversation.lastMessage.reactionPreview?.userId ?? '',
     conversation.lastMessage.reactionPreview?.createdAt.getTime() ?? 0,
@@ -521,7 +542,12 @@ const mergeLocalThreadsIntoConversations = (
       isArchived: localConversation.isArchived,
       isMuted: localConversation.isMuted,
       isPinned: localConversation.isPinned,
-      unreadCount: localConversation.unreadCount,
+      unreadCount: resolveThreadUnreadCount(
+        thread.owner_user_id,
+        thread.peer_user_id,
+        localConversation.unreadCount,
+        resolvedLastMessage.timestamp,
+      ),
       latestActivity: resolvedLatestActivity,
       matchedAt: existing.matchedAt ?? localConversation.matchedAt,
       matchedUser: hasUsefulLocalIdentity
@@ -561,7 +587,7 @@ const mergeLocalThreadsIntoConversations = (
 };
 
 type ThreadPreviewMessage = ConversationType['lastMessage'] & {
-  localStatus?: 'queued' | 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
+  localStatus?: 'deleted' | 'queued' | 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
 };
 
 const areNewMatchesEqual = (left: NewMatch[], right: NewMatch[]) => {
@@ -623,10 +649,19 @@ export default function ChatScreen() {
   );
   const conversationsRef = useRef<ConversationType[]>([]);
   const conversationsFetchInFlightRef = useRef(false);
+  const conversationsRequestGenerationRef = useRef(0);
+  const isChatListFocusedRef = useRef(false);
   const newMatchesFetchInFlightRef = useRef(false);
   const lastNewMatchesFetchAtRef = useRef(0);
   const newMatchesCountRef = useRef(0);
   const hasResolvedNewMatchesRef = useRef(false);
+  const pendingPresenceWritesRef = useRef(
+    new Map<
+      string,
+      { threadId: string; online?: boolean | null; lastActive?: string | null }
+    >(),
+  );
+  const presenceWriteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [typingExpiresAtByPeer, setTypingExpiresAtByPeer] = useState<Record<string, number>>({});
   const [presenceNow, setPresenceNow] = useState(() => Date.now());
   const {
@@ -686,6 +721,35 @@ export default function ChatScreen() {
   }, [conversations]);
 
   useEffect(() => {
+    if (!user?.id) return;
+    return subscribeOptimisticThreadReads((ownerUserId, peerUserId, readThroughMs) => {
+      if (ownerUserId !== user.id) return;
+      setConversations((current) =>
+        current.map((conversation) => {
+          if (
+            conversation.id !== peerUserId ||
+            conversation.unreadCount === 0 ||
+            conversation.lastMessage.timestamp.getTime() > readThroughMs
+          ) {
+            return conversation;
+          }
+          return {
+            ...conversation,
+            unreadCount: 0,
+            lastMessage: {
+              ...conversation.lastMessage,
+              isRead:
+                conversation.lastMessage.senderId === user.id
+                  ? conversation.lastMessage.isRead
+                  : true,
+            },
+          };
+        }),
+      );
+    });
+  }, [user?.id]);
+
+  useEffect(() => {
     newMatchesCountRef.current = newMatches.length;
   }, [newMatches.length]);
 
@@ -722,6 +786,7 @@ export default function ChatScreen() {
   }, [currentProfileId, user?.id]);
 
   useFocusEffect(useCallback(() => {
+    isChatListFocusedRef.current = true;
     console.log('[chat][screen] focus:presence-timer-start', {
       hasUserId: Boolean(user?.id),
       hasCurrentProfileId: Boolean(currentProfileId),
@@ -729,6 +794,9 @@ export default function ChatScreen() {
     setPresenceNow(Date.now());
     const interval = setInterval(() => setPresenceNow(Date.now()), 30_000);
     return () => {
+      isChatListFocusedRef.current = false;
+      conversationsRequestGenerationRef.current += 1;
+      conversationsFetchInFlightRef.current = false;
       clearInterval(interval);
       console.log('[chat][screen] blur:presence-timer-stop', {
         hasUserId: Boolean(user?.id),
@@ -908,6 +976,13 @@ export default function ChatScreen() {
       console.log('[chat][screen] fetch-conversations:skip-missing-user');
       return;
     }
+    if (!isMountedRef.current || !isChatListFocusedRef.current) {
+      console.log('[chat][screen] fetch-conversations:skip-inactive', {
+        userId: user.id,
+        currentProfileId,
+      });
+      return;
+    }
     if (conversationsFetchInFlightRef.current) {
       console.log('[chat][screen] fetch-conversations:skip-in-flight', {
         userId: user.id,
@@ -921,6 +996,12 @@ export default function ChatScreen() {
       existingConversationCount: conversationsRef.current.length,
     });
     conversationsFetchInFlightRef.current = true;
+    const requestGeneration = conversationsRequestGenerationRef.current + 1;
+    conversationsRequestGenerationRef.current = requestGeneration;
+    const isCurrentRequest = () =>
+      isMountedRef.current &&
+      isChatListFocusedRef.current &&
+      conversationsRequestGenerationRef.current === requestGeneration;
     const hadExistingConversations = conversationsRef.current.length > 0;
     if (!hadExistingConversations) {
       if (isMountedRef.current) {
@@ -970,6 +1051,9 @@ export default function ChatScreen() {
               ? ((last?.message_type ?? 'text') as ConversationType['lastMessage']['type'])
               : (fallbackPreview?.type ?? 'text');
             const lastIsViewOnce = last ? Boolean(last?.is_view_once) : Boolean(fallbackPreview?.isViewOnce);
+            const lastDeletedForAll = last
+              ? Boolean(last?.deleted_for_all)
+              : Boolean(fallbackPreview?.deletedForAll);
 
             return {
               id: otherUserId,
@@ -1018,6 +1102,8 @@ export default function ChatScreen() {
                 senderId: last?.sender_id || fallbackPreview?.senderId || '',
                 type: lastType,
                 isViewOnce: lastIsViewOnce,
+                deletedForAll: lastDeletedForAll,
+                localStatus: lastDeletedForAll ? 'deleted' : fallbackPreview?.localStatus,
                 isRead: last?.is_read ?? (fallbackPreview?.isRead ?? false),
                 deliveredAt: last?.delivered_at
                   ? new Date(last.delivered_at)
@@ -1032,7 +1118,12 @@ export default function ChatScreen() {
                     }
                   : undefined,
               },
-              unreadCount: entry?.unread || 0,
+              unreadCount: resolveThreadUnreadCount(
+                user.id,
+                otherUserId,
+                entry?.unread || 0,
+                lastTimestamp,
+              ),
               isMuted: false,
               isPinned: false,
               matchedAt: fallbackPreview ? matchedAt || fallbackPreview.timestamp : lastTimestamp,
@@ -1043,6 +1134,15 @@ export default function ChatScreen() {
             setTimeout(() => reject(new Error('chat_conversation_fetch_timeout')), 15_000);
           }),
         ]);
+
+      if (!isCurrentRequest()) {
+        console.log('[chat][screen] fetch-conversations:cancelled', {
+          userId: user.id,
+          currentProfileId,
+          phase: 'remote-ready',
+        });
+        return;
+      }
 
       if (combinedOtherUserIds.length === 0) {
         const hydrated = conversationsRef.current;
@@ -1103,6 +1203,15 @@ export default function ChatScreen() {
         }
       }
 
+      if (!isCurrentRequest()) {
+        console.log('[chat][screen] fetch-conversations:cancelled', {
+          userId: user.id,
+          currentProfileId,
+          phase: 'snapshot-ready',
+        });
+        return;
+      }
+
       const localThreads = hydrated.map((conversation) => conversationToLocalThread(user.id, conversation));
       const persistConversationCache = async () => {
         console.log('[chat][screen] local-cache-persist:start', {
@@ -1111,7 +1220,7 @@ export default function ChatScreen() {
           threadCount: localThreads.length,
           platform: Platform.OS,
         });
-        await ChatRepository.upsertThreads(user.id, localThreads);
+        await ChatRepository.upsertThreads(user.id, localThreads, { priority: 'background' });
         console.log('[chat][screen] local-cache-persist:threads-success', {
           userId: user.id,
           currentProfileId,
@@ -1127,13 +1236,13 @@ export default function ChatScreen() {
       };
 
       if (Platform.OS === 'ios') {
-        console.log('[chat][screen] local-cache-persist:skip-ios-foreground', {
+        console.log('[chat][screen] local-cache-persist:ios-background-start', {
           userId: user.id,
           currentProfileId,
           threadCount: localThreads.length,
         });
-        void ChatRepository.markSyncSucceeded(user.id, 'global_threads', { cursor: syncCursor }).catch((syncError) => {
-          console.log('[chat][screen] local-cache-persist:sync-error', syncError);
+        void persistConversationCache().catch((cacheError) => {
+          console.log('[chat][screen] local-cache-persist:ios-background-error', cacheError);
         });
       } else {
         try {
@@ -1145,15 +1254,13 @@ export default function ChatScreen() {
           ]);
         } catch (cacheError) {
           console.log('[chat][screen] local-cache-persist:error', cacheError);
-          void ChatRepository.markSyncSucceeded(user.id, 'global_threads', { cursor: syncCursor }).catch((syncError) => {
-            console.log('[chat][screen] local-cache-persist:sync-error', syncError);
-          });
         }
       }
 
       // New matches are accepted matches without any message history yet.
       void fetchNewMatches(new Set(combinedOtherUserIds));
     } catch (error) {
+      if (!isCurrentRequest()) return;
       void ChatRepository.markSyncFailed(user.id, 'global_threads', {
         code: (error as { code?: string })?.code ?? null,
         message: error instanceof Error ? error.message : 'Failed to load chats',
@@ -1169,8 +1276,10 @@ export default function ChatScreen() {
         setLoadError(error instanceof Error ? error.message : 'Failed to load chats');
       }
     } finally {
-      conversationsFetchInFlightRef.current = false;
-      if (isMountedRef.current) {
+      if (conversationsRequestGenerationRef.current === requestGeneration) {
+        conversationsFetchInFlightRef.current = false;
+      }
+      if (isCurrentRequest()) {
         setIsLoading(false);
       }
       console.log('[chat][screen] fetch-conversations:finish', {
@@ -1443,14 +1552,35 @@ export default function ChatScreen() {
         ),
       );
       if (user?.id) {
-        void ChatRepository.updateThreadPresence(user.id, row.user_id, {
+        pendingPresenceWritesRef.current.set(row.user_id, {
+          threadId: row.user_id,
           online: row.online,
           lastActive: row.last_active ?? null,
         });
+        if (!presenceWriteTimerRef.current) {
+          presenceWriteTimerRef.current = setTimeout(() => {
+            presenceWriteTimerRef.current = null;
+            const updates = [...pendingPresenceWritesRef.current.values()];
+            pendingPresenceWritesRef.current.clear();
+            if (updates.length > 0) {
+              void ChatRepository.updateThreadPresences(user.id, updates);
+            }
+          }, 100);
+        }
       }
     },
     [user?.id],
   );
+
+  useEffect(() => {
+    return () => {
+      if (presenceWriteTimerRef.current) {
+        clearTimeout(presenceWriteTimerRef.current);
+        presenceWriteTimerRef.current = null;
+      }
+      pendingPresenceWritesRef.current.clear();
+    };
+  }, [user?.id]);
 
   useChatListSync({
     userId: user?.id ?? null,

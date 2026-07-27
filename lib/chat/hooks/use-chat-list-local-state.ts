@@ -53,17 +53,32 @@ export const useChatListLocalState = <TConversation>({
     let cancelled = false;
 
     void (async () => {
-      await migrateAsyncChatSnapshotsToSQLite(ownerUserId);
       const localTimeoutMs = Platform.OS === 'ios' ? 1000 : 2200;
+      const localThreadsTask = ChatRepository.getThreads(ownerUserId, {
+        includeArchived: true,
+        operationPriority: 'normal',
+      });
+      const syncStateTask = ChatRepository.getSyncState(
+        ownerUserId,
+        'global_threads',
+        null,
+        { priority: 'normal' },
+      );
+
+      // Hydration must not wait behind a one-time legacy snapshot import. The
+      // foreground reads enter the scheduler first; migration then proceeds as
+      // yieldable background maintenance.
+      void migrateAsyncChatSnapshotsToSQLite(ownerUserId);
+
       const [{ value: localThreads, timedOut: localThreadsTimedOut }, { value: syncState, timedOut: syncStateTimedOut }] =
         await Promise.all([
           withTimeoutFallback(
-            ChatRepository.getThreads(ownerUserId, { includeArchived: true }),
+            localThreadsTask,
             localTimeoutMs,
             [] as ChatThreadRow[],
           ),
           withTimeoutFallback(
-            ChatRepository.getSyncState(ownerUserId, 'global_threads'),
+            syncStateTask,
             localTimeoutMs,
             null,
           ),

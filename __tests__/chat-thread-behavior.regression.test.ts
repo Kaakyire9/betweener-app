@@ -1,6 +1,19 @@
 // @ts-nocheck
 import test from 'node:test';
-import { shouldFetchThreadIncrementally } from '../lib/chat/sync/chat-sync-policy.ts';
+import {
+  isMissingOptionalChatMediaColumnsError,
+  resolveThreadSyncCursor,
+  shouldFetchThreadIncrementally,
+} from '../lib/chat/sync/chat-sync-policy.ts';
+import { createCoalescedAsyncRunner } from '../lib/chat/local/coalesced-async-runner.ts';
+import { createPriorityOperationScheduler } from '../lib/chat/local/priority-operation-scheduler.ts';
+import { shouldPersistThreadReadState } from '../lib/chat/read-state/thread-read-persistence-policy.ts';
+import {
+  buildCanonicalMessageCleanupPredicates,
+  buildChatMessageValueGroups,
+  CHAT_MESSAGE_WRITE_COLUMN_COUNT,
+  chunkChatMessageWrites,
+} from '../lib/chat/local/chat-message-write-batch.ts';
 import assert from 'node:assert/strict';
 
 import {
@@ -26,6 +39,161 @@ const baseMessage = {
 
 test('chat read receipt delay stays stable', () => {
   assert.equal(CHAT_READ_RECEIPT_DELAY_MS, 700);
+});
+
+test('thread read persistence skips an already durable read state', () => {
+  assert.equal(shouldPersistThreadReadState({
+    threadUnreadCount: 0,
+    hasUnreadIncoming: false,
+    hasReadState: true,
+  }), false);
+  assert.equal(shouldPersistThreadReadState({
+    threadUnreadCount: 1,
+    hasUnreadIncoming: false,
+    hasReadState: true,
+  }), true);
+  assert.equal(shouldPersistThreadReadState({
+    threadUnreadCount: 0,
+    hasUnreadIncoming: true,
+    hasReadState: true,
+  }), true);
+  assert.equal(shouldPersistThreadReadState(null), true);
+});
+
+test('chat database scheduler lets foreground reads overtake queued cache work', async () => {
+  const scheduler = createPriorityOperationScheduler();
+  const order = [];
+  let releaseRunning;
+
+  const running = scheduler.schedule(
+    async () => {
+      order.push('running');
+      await new Promise((resolve) => {
+        releaseRunning = resolve;
+      });
+    },
+    'normal',
+  );
+  await Promise.resolve();
+
+  const background = scheduler.schedule(async () => {
+    order.push('background');
+  }, 'background');
+  const normal = scheduler.schedule(async () => {
+    order.push('normal');
+  }, 'normal');
+  const foreground = scheduler.schedule(async () => {
+    order.push('foreground');
+  }, 'user-blocking');
+
+  releaseRunning();
+  await Promise.all([running, background, normal, foreground]);
+
+  assert.deepEqual(order, ['running', 'foreground', 'normal', 'background']);
+});
+
+test('chat database scheduler protects background work from starvation', async () => {
+  const scheduler = createPriorityOperationScheduler({ maxUserBlockingBurst: 3 });
+  const order = [];
+  let releaseRunning;
+
+  const running = scheduler.schedule(async () => {
+    await new Promise((resolve) => {
+      releaseRunning = resolve;
+    });
+  });
+  await Promise.resolve();
+
+  const foreground = Array.from({ length: 7 }, (_, index) =>
+    scheduler.schedule(async () => {
+      order.push(`foreground-${index}`);
+    }, 'user-blocking'),
+  );
+  const background = scheduler.schedule(async () => {
+    order.push('background');
+  }, 'background');
+
+  releaseRunning();
+  await Promise.all([running, ...foreground, background]);
+
+  assert.equal(order.indexOf('background'), 3);
+});
+
+test('chat database scheduler isolates operation failures and keeps draining', async () => {
+  const scheduler = createPriorityOperationScheduler();
+  const expectedError = new Error('expected failure');
+  const failed = scheduler.schedule(async () => {
+    throw expectedError;
+  });
+  const recovered = scheduler.schedule(async () => 'recovered');
+
+  await assert.rejects(failed, expectedError);
+  assert.equal(await recovered, 'recovered');
+  assert.equal(scheduler.getPendingCount(), 0);
+});
+
+test('local observer runner collapses notification bursts into one trailing read', async () => {
+  let releaseCurrent;
+  let runCount = 0;
+  const started = [];
+  const runner = createCoalescedAsyncRunner(async () => {
+    runCount += 1;
+    started.push(runCount);
+    await new Promise((resolve) => {
+      releaseCurrent = resolve;
+    });
+  });
+
+  runner.request();
+  await Promise.resolve();
+  runner.request();
+  runner.request();
+  runner.request();
+  assert.equal(runCount, 1);
+
+  releaseCurrent();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(runCount, 2);
+
+  releaseCurrent();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(started, [1, 2]);
+  runner.stop();
+});
+
+test('stopped local observer runner does not execute a queued trailing read', async () => {
+  let releaseCurrent;
+  let runCount = 0;
+  const runner = createCoalescedAsyncRunner(async () => {
+    runCount += 1;
+    await new Promise((resolve) => {
+      releaseCurrent = resolve;
+    });
+  });
+
+  runner.request();
+  await Promise.resolve();
+  runner.request();
+  runner.stop();
+  releaseCurrent();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(runCount, 1);
+});
+
+test('local message cache batches a full thread repair into bounded SQLite writes', () => {
+  const messages = Array.from({ length: 48 }, (_, index) => `message-${index}`);
+  const batches = chunkChatMessageWrites(messages);
+
+  assert.deepEqual(batches.map((batch) => batch.length), [20, 20, 8]);
+  assert.equal(
+    (buildChatMessageValueGroups(20).match(/\?/g) ?? []).length,
+    20 * CHAT_MESSAGE_WRITE_COLUMN_COUNT,
+  );
+  assert.equal(
+    (buildCanonicalMessageCleanupPredicates(48).match(/\?/g) ?? []).length,
+    96,
+  );
 });
 
 test('thread sync repairs a partial realtime view-once placeholder with a full fetch', () => {
@@ -62,6 +230,102 @@ test('thread sync remains incremental when cached attachment metadata is complet
       ],
     }),
     true,
+  );
+});
+
+test('thread sync preserves the stored cursor when local sync state is available', () => {
+  assert.equal(
+    resolveThreadSyncCursor({
+      storedCursor: '2026-07-20T10:00:00.000Z',
+      syncStateTimedOut: false,
+      currentMessages: [],
+    }),
+    '2026-07-20T10:00:00.000Z',
+  );
+});
+
+test('thread sync recovers a safe cursor from canonical cache after a sync-state timeout', () => {
+  assert.equal(
+    resolveThreadSyncCursor({
+      storedCursor: null,
+      syncStateTimedOut: true,
+      currentMessages: [
+        {
+          ...baseMessage,
+          id: 'message-older',
+          timestamp: new Date('2026-07-20T10:00:00.000Z'),
+          status: 'delivered',
+        },
+        {
+          ...baseMessage,
+          id: 'message-newer',
+          timestamp: new Date('2026-07-20T10:05:00.000Z'),
+          status: 'read',
+        },
+      ],
+    }),
+    '2026-07-20T10:05:00.000Z',
+  );
+});
+
+test('thread sync does not infer a cursor from incomplete attachment cache', () => {
+  assert.equal(
+    resolveThreadSyncCursor({
+      storedCursor: null,
+      syncStateTimedOut: true,
+      currentMessages: [
+        {
+          ...baseMessage,
+          id: 'partial-image',
+          type: 'image',
+          timestamp: new Date('2026-07-20T10:05:00.000Z'),
+          status: 'delivered',
+        },
+      ],
+    }),
+    null,
+  );
+});
+
+test('thread sync does not infer a cursor from optimistic messages', () => {
+  assert.equal(
+    resolveThreadSyncCursor({
+      storedCursor: null,
+      syncStateTimedOut: true,
+      currentMessages: [
+        {
+          ...baseMessage,
+          id: 'temp-message',
+          timestamp: new Date('2026-07-20T10:05:00.000Z'),
+          status: 'sending',
+        },
+      ],
+    }),
+    null,
+  );
+});
+
+test('thread sync only falls back for missing optional media album columns', () => {
+  assert.equal(
+    isMissingOptionalChatMediaColumnsError({
+      code: '42703',
+      message: 'column messages.media_items does not exist',
+    }),
+    true,
+  );
+  assert.equal(
+    isMissingOptionalChatMediaColumnsError({
+      code: '42703',
+      message: 'column messages.sender_id does not exist',
+    }),
+    false,
+  );
+  assert.equal(
+    isMissingOptionalChatMediaColumnsError({
+      code: '42501',
+      message: 'permission denied',
+    }),
+    false,
   );
 });
 

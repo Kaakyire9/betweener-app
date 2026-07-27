@@ -28,6 +28,12 @@ const startsWith = (bytes: Uint8Array, signature: number[]) =>
 const hasAscii = (bytes: Uint8Array, value: string, offset = 0) =>
   value.split('').every((character, index) => bytes[offset + index] === character.charCodeAt(0))
 
+const positiveIntegerOrNull = (value: unknown) => {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric) || numeric <= 0) return null
+  return Math.round(numeric)
+}
+
 const validateSignature = (kind: string, mime: string, bytes: Uint8Array, encrypted: boolean, fileName = '') => {
   if (encrypted) return true
   if (kind === 'image') {
@@ -85,6 +91,8 @@ serve(async (req) => {
     const clientMessageId = String(input.clientMessageId || '')
     const attachmentId = String(input.attachmentId || '')
     const isViewOnce = input.isViewOnce === true
+    const attachmentIndex = Number.isInteger(input.attachmentIndex) ? Number(input.attachmentIndex) : 0
+    const expectedCount = Number.isInteger(input.expectedCount) ? Number(input.expectedCount) : 1
     console.log('[chat-attachment-finalize] request', {
       userId: user.id,
       receiverId,
@@ -95,10 +103,20 @@ serve(async (req) => {
       path,
       mime,
       isViewOnce,
+      attachmentIndex,
+      expectedCount,
       hasSenderPublicKey: Boolean(input.senderPublicKey),
     })
     if (!(kind in LIMITS) || !mime || !path || !receiverId || !clientMessageId || !attachmentId) {
       return json(400, { error: 'invalid_attachment_request' })
+    }
+    if (
+      attachmentIndex < 0 || attachmentIndex > 9 ||
+      expectedCount < 1 || expectedCount > 10 ||
+      attachmentIndex >= expectedCount ||
+      (expectedCount > 1 && (kind !== 'image' || isViewOnce))
+    ) {
+      return json(400, { error: 'invalid_album_position' })
     }
 
     const service = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
@@ -145,7 +163,10 @@ serve(async (req) => {
       return json(415, { error: 'attachment_content_mismatch' })
     }
 
-    const { data, error } = await service.rpc('rpc_finalize_chat_attachment', {
+    const rpcName = attachmentIndex === 0
+      ? 'rpc_finalize_chat_attachment'
+      : 'rpc_append_chat_album_attachment'
+    const rpcInput = attachmentIndex === 0 ? {
       p_sender_id: user.id,
       p_receiver_id: receiverId,
       p_client_message_id: clientMessageId,
@@ -156,9 +177,9 @@ serve(async (req) => {
       p_original_name: input.originalName || null,
       p_mime_type: mime,
       p_byte_size: contentLength,
-      p_width: input.width || null,
-      p_height: input.height || null,
-      p_duration_ms: input.durationMs || null,
+      p_width: positiveIntegerOrNull(input.width),
+      p_height: positiveIntegerOrNull(input.height),
+      p_duration_ms: positiveIntegerOrNull(input.durationMs),
       p_caption: input.caption || '',
       p_reply_to_message_id: input.replyToMessageId || null,
       p_sha256: input.sha256 || null,
@@ -171,7 +192,24 @@ serve(async (req) => {
       p_encrypted_media_alg: input.encryptedMediaAlg || null,
       p_audio_waveform: Array.isArray(input.waveform) ? input.waveform : null,
       p_sender_public_key: input.senderPublicKey || null,
-    })
+    } : {
+      p_sender_id: user.id,
+      p_receiver_id: receiverId,
+      p_client_message_id: clientMessageId,
+      p_attachment_id: attachmentId,
+      p_attachment_index: attachmentIndex,
+      p_expected_count: expectedCount,
+      p_bucket_id: bucket,
+      p_storage_path: path,
+      p_original_name: input.originalName || null,
+      p_mime_type: mime,
+      p_byte_size: contentLength,
+      p_width: positiveIntegerOrNull(input.width),
+      p_height: positiveIntegerOrNull(input.height),
+      p_sha256: input.sha256 || null,
+      p_validation_details: { validator: 'signature-v1', sampled_bytes: sample.length },
+    }
+    const { data, error } = await service.rpc(rpcName, rpcInput)
     if (error) {
       console.log('[chat-attachment-finalize] rpc-error', {
         attachmentId,
