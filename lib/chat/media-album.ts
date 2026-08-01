@@ -18,12 +18,14 @@ export const normalizeChatMediaItems = (value: unknown): ChatMediaItem[] => {
       return {
         attachmentId,
         index,
-        type: 'image',
+        type: record.type === 'video' ? 'video' : 'image',
         storagePath,
         mimeType: typeof record.mimeType === 'string' ? record.mimeType : null,
         width: asFiniteNumber(record.width),
         height: asFiniteNumber(record.height),
         byteSize: asFiniteNumber(record.byteSize),
+        previewStoragePath:
+          typeof record.previewStoragePath === 'string' ? record.previewStoragePath : null,
       };
     })
     .filter((entry): entry is ChatMediaItem => Boolean(entry))

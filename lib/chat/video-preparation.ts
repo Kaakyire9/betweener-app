@@ -1,5 +1,5 @@
 import * as FileSystem from 'expo-file-system/legacy';
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import { Video as VideoCompressor, getRealPath } from 'react-native-compressor';
 
 import { validateChatAttachment } from '@/lib/chat/attachment-policy';
@@ -41,6 +41,36 @@ const mp4FileName = (fileName: string) => {
   return `${stem}.mp4`;
 };
 
+const waitForForeground = async () => {
+  if (AppState.currentState === 'active') return;
+  await new Promise<void>((resolve) => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') return;
+      subscription.remove();
+      resolve();
+    });
+    // Close the foreground transition race between the initial check and
+    // listener registration.
+    if (AppState.currentState === 'active') {
+      subscription.remove();
+      resolve();
+    }
+  });
+};
+
+const compressVideo = async (
+  sourceUri: string,
+  onProgress?: (progress: number) => void,
+) => VideoCompressor.compress(
+  sourceUri,
+  {
+    compressionMethod: 'auto',
+    maxSize: CHAT_VIDEO_MAX_DIMENSION,
+    minimumFileSizeForCompress: 0,
+  },
+  (progress) => onProgress?.(Math.max(0, Math.min(1, Number(progress) || 0))),
+);
+
 export const prepareChatVideo = async ({
   uri,
   fileName,
@@ -72,22 +102,28 @@ export const prepareChatVideo = async ({
   let uploadUri = sourceUri;
   let optimized = false;
   if (sourceSize == null || sourceSize > COMPRESS_WHEN_OVER_BYTES) {
+    let movedToBackground = false;
+    const appStateSubscription = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') movedToBackground = true;
+    });
     try {
-      const compressedUri = await VideoCompressor.compress(
-        sourceUri,
-        {
-          compressionMethod: 'auto',
-          maxSize: CHAT_VIDEO_MAX_DIMENSION,
-          minimumFileSizeForCompress: 0,
-        },
-        (progress) => onProgress?.(Math.max(0, Math.min(1, Number(progress) || 0))),
-      );
+      let compressedUri: string;
+      try {
+        compressedUri = await compressVideo(sourceUri, onProgress);
+      } catch (error) {
+        if (!movedToBackground && AppState.currentState === 'active') throw error;
+        await waitForForeground();
+        onProgress?.(0);
+        compressedUri = await compressVideo(sourceUri, onProgress);
+      }
       if (typeof compressedUri === 'string' && compressedUri.length > 0) {
         uploadUri = compressedUri;
         optimized = compressedUri !== sourceUri;
       }
     } catch (error) {
       console.warn('[chat] video optimization failed; validating original', error);
+    } finally {
+      appStateSubscription.remove();
     }
   }
 

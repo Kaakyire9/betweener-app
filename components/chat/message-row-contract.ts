@@ -19,9 +19,14 @@ export type MessageRowItemProps = {
   onCopyMessage: (message: MessageType) => void; onTogglePin: (message: MessageType, isPinned: boolean) => void;
   onDeleteMessage: (message: MessageType) => void; isActionPinned: boolean;
   onOpenReactionSheet: (message: MessageType) => void;
-  onViewImage: (message: MessageType, renderedUrl: string) => void;
+  onViewImage: (message: MessageType, renderedUrl: string, albumIndex?: number) => void;
   onViewVideo: (message: MessageType, renderedUrl: string) => void;
   onOpenDocument: (message: MessageType) => void; onRefreshMedia: (message: MessageType) => void;
+  onMediaLoadSuccess: (
+    message: MessageType,
+    renderedUri: string,
+    nativeCacheUri?: string | null,
+  ) => void;
   onRetryMedia: (message: MessageType) => void;
   onOpenLocation: (message: MessageType) => void; onStopLiveShare: (messageId: string) => void;
   onOpenViewOnce: (message: MessageType) => void; onAcceptDatePlan: (planId: string) => void;

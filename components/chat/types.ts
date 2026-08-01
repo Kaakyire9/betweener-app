@@ -4,7 +4,7 @@ export type DatePlanResponseKind = 'initial' | 'counter_time' | 'counter_place' 
 export type ChatMediaItem = {
   attachmentId: string;
   index: number;
-  type: 'image';
+  type: 'image' | 'video';
   storagePath: string;
   mimeType?: string | null;
   width?: number | null;
@@ -12,6 +12,9 @@ export type ChatMediaItem = {
   byteSize?: number | null;
   localUri?: string;
   signedUrl?: string;
+  previewStoragePath?: string | null;
+  localPreviewUri?: string | null;
+  previewSignedUrl?: string | null;
 };
 
 export type MessageType = {
@@ -58,6 +61,9 @@ export type MessageType = {
   videoUrl?: string;
   offlineImageUri?: string;
   offlineVideoUri?: string;
+  previewStoragePath?: string | null;
+  offlinePreviewUri?: string | null;
+  previewUrl?: string | null;
   document?: {
     name: string;
     url: string;

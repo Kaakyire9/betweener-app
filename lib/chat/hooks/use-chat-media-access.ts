@@ -20,6 +20,10 @@ type UseChatMediaAccessOptions = {
   messages: readonly MessageType[];
   online: boolean;
   signUrl: (storagePath: string) => Promise<string | null>;
+  /** Resolves a durable device copy before any network or signing work. */
+  findLocalUri?: (storagePath: string) => Promise<string | null>;
+  /** Reads an already-primed local manifest without delaying first render. */
+  peekLocalUri?: (storagePath: string) => string | null;
 };
 
 const resultToState = (
@@ -44,9 +48,12 @@ export const useChatMediaAccess = ({
   messages,
   online,
   signUrl,
+  findLocalUri,
+  peekLocalUri,
 }: UseChatMediaAccessOptions) => {
   const resolverRef = useRef<ChatMediaResolver>(new CachedChatMediaResolver());
   const [stateByPath, setStateByPath] = useState<Record<string, MediaAccessState>>({});
+  const [locallyHydratedPathKey, setLocallyHydratedPathKey] = useState('');
   const paths = useMemo(() => getChatVisualMediaPaths(messages), [messages]);
   const pathKey = paths.join('\u001f');
   const pathsRef = useRef(paths);
@@ -76,38 +83,79 @@ export const useChatMediaAccess = ({
       path: string,
       options?: { force?: boolean; bypassBackoff?: boolean },
     ) => {
-      if (!online || !path.trim()) return null;
+      if (!path.trim()) return null;
+      if (!options?.force && findLocalUri) {
+        const localUri = await findLocalUri(path).catch(() => null);
+        if (localUri) {
+          const result = { status: 'ready', uri: localUri, source: 'cache' } as const;
+          applyResult(path, result);
+          return result;
+        }
+      }
+      if (!online) return null;
       const result = await resolverRef.current.resolve(path, signUrl, options);
       applyResult(path, result);
       return result;
     },
-    [applyResult, online, signUrl],
+    [applyResult, findLocalUri, online, signUrl],
   );
 
   useEffect(() => {
-    if (!online || paths.length === 0) return;
     let cancelled = false;
 
-    void Promise.all(
-      paths.map(async (path) => {
-        const knownUri = resolverRef.current.getKnownUri(path);
-        if (knownUri) {
-          return {
-            path,
-            result: { status: 'ready', uri: knownUri, source: 'cache' } as const,
-          };
-        }
-        return { path, result: await resolverRef.current.resolve(path, signUrl) };
-      }),
-    ).then((entries) => {
+    const hydrate = async () => {
+      if (paths.length === 0) {
+        setLocallyHydratedPathKey(pathKey);
+        return;
+      }
+
+      // Resolve durable device copies before signing. This prevents cached
+      // media rows from briefly mounting without their thumbnail or poster.
+      const localEntries = await Promise.all(
+        paths.map(async (path) => {
+          const localUri = findLocalUri
+            ? await findLocalUri(path).catch(() => null)
+            : null;
+          const knownUri = localUri ? null : resolverRef.current.getKnownUri(path);
+          const uri = localUri ?? knownUri;
+          return uri
+            ? {
+                path,
+                result: { status: 'ready', uri, source: 'cache' } as const,
+              }
+            : null;
+        }),
+      );
       if (cancelled) return;
-      entries.forEach(({ path, result }) => applyResult(path, result));
-    });
+      localEntries.forEach((entry) => {
+        if (entry) applyResult(entry.path, entry.result);
+      });
+      setLocallyHydratedPathKey(pathKey);
+
+      if (!online) return;
+      const locallyReadyPaths = new Set(
+        localEntries
+          .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
+          .map((entry) => entry.path),
+      );
+      const remoteEntries = await Promise.all(
+        paths
+          .filter((path) => !locallyReadyPaths.has(path))
+          .map(async (path) => ({
+            path,
+            result: await resolverRef.current.resolve(path, signUrl),
+          })),
+      );
+      if (cancelled) return;
+      remoteEntries.forEach((entry) => applyResult(entry.path, entry.result));
+    };
+
+    void hydrate();
 
     return () => {
       cancelled = true;
     };
-  }, [applyResult, online, pathKey, signUrl]);
+  }, [applyResult, findLocalUri, online, pathKey, signUrl]);
 
   useEffect(() => {
     if (!online) return;
@@ -180,11 +228,17 @@ export const useChatMediaAccess = ({
 
   const urisByPath = useMemo(() => {
     const next: Record<string, string> = {};
+    if (peekLocalUri) {
+      paths.forEach((path) => {
+        const localUri = peekLocalUri(path);
+        if (localUri) next[path] = localUri;
+      });
+    }
     Object.entries(stateByPath).forEach(([path, state]) => {
       if (state.uri) next[path] = state.uri;
     });
     return next;
-  }, [stateByPath]);
+  }, [paths, peekLocalUri, stateByPath]);
 
   const failuresByPath = useMemo(() => {
     const next: Record<string, ChatMediaAccessFailure> = {};
@@ -197,6 +251,8 @@ export const useChatMediaAccess = ({
   return {
     urisByPath,
     failuresByPath,
+    localHydrationComplete: locallyHydratedPathKey === pathKey,
+    visualPathCount: paths.length,
     reportLoadError,
     retry,
     resolvePath,

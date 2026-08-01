@@ -48,7 +48,9 @@ const validateSignature = (kind: string, mime: string, bytes: Uint8Array, encryp
   }
   if (kind === 'audio') {
     return hasAscii(bytes, 'ID3') || hasAscii(bytes, 'RIFF') || hasAscii(bytes, 'OggS') ||
-      hasAscii(bytes, 'ftyp', 4) || startsWith(bytes, [0xff, 0xf1]) || startsWith(bytes, [0xff, 0xf9])
+      hasAscii(bytes, 'fLaC') || hasAscii(bytes, 'caff') || hasAscii(bytes, '#!AMR') ||
+      hasAscii(bytes, 'ftyp', 4) || startsWith(bytes, [0x1a, 0x45, 0xdf, 0xa3]) ||
+      startsWith(bytes, [0xff, 0xf1]) || startsWith(bytes, [0xff, 0xf9])
   }
   if (kind === 'document') {
     if (!DOCUMENT_MIMES.has(mime)) return false
@@ -83,6 +85,200 @@ serve(async (req) => {
     if (authError || !user) return json(401, { error: 'unauthorized' })
 
     const input = await req.json()
+    const service = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
+    const mode = String(input.mode || 'finalize_single')
+
+    if (mode === 'cancel') {
+      const receiverId = String(input.receiverId || '')
+      const clientMessageId = String(input.clientMessageId || '')
+      const attachments = Array.isArray(input.attachments) ? input.attachments : []
+      if (!receiverId || !clientMessageId || attachments.length < 1 || attachments.length > 10) {
+        return json(400, { error: 'invalid_cancel_request' })
+      }
+      const paths = new Map<string, string[]>()
+      for (const raw of attachments) {
+        const attachmentId = String(raw?.attachmentId || '')
+        const bucket = String(raw?.bucketId || '')
+        const expectedPrefix = `${user.id}/${receiverId}/${clientMessageId}/${attachmentId}-`
+        const candidates = [raw?.storagePath, raw?.previewStoragePath]
+          .map((value) => String(value || ''))
+          .filter((value) => value.startsWith(expectedPrefix))
+        if (!attachmentId || !['chat-media', 'voice-messages'].includes(bucket) || candidates.length === 0) {
+          return json(400, { error: 'invalid_cancel_attachment' })
+        }
+        for (const candidate of candidates) {
+          const targetBucket = candidate.endsWith('-preview.jpg') ? 'chat-media' : bucket
+          paths.set(targetBucket, [...(paths.get(targetBucket) || []), candidate])
+        }
+      }
+      const { error: cancellationError } = await service.rpc('rpc_cancel_chat_attachment_batch', {
+        p_sender_id: user.id,
+        p_receiver_id: receiverId,
+        p_client_message_id: clientMessageId,
+        p_attachments: attachments,
+      })
+      if (cancellationError) {
+        console.log('[chat-attachment-finalize] cancellation-rpc-error', {
+          clientMessageId,
+          code: cancellationError.code ?? null,
+          message: cancellationError.message,
+        })
+        return json(409, { error: cancellationError.message || 'attachment_cancel_rejected' })
+      }
+      for (const [bucket, bucketPaths] of paths) {
+        const { error } = await service.storage.from(bucket).remove([...new Set(bucketPaths)])
+        if (error) return json(503, { error: 'attachment_cancel_cleanup_failed' })
+      }
+      console.log('[chat-attachment-finalize] cancelled', {
+        userId: user.id,
+        receiverId,
+        clientMessageId,
+        objectCount: [...paths.values()].reduce((sum, values) => sum + values.length, 0),
+      })
+      return json(200, { cancelled: true })
+    }
+
+    if (mode === 'finalize_batch') {
+      const receiverId = String(input.receiverId || '')
+      const clientMessageId = String(input.clientMessageId || '')
+      const kind = String(input.attachmentType || '')
+      const attachments = Array.isArray(input.attachments) ? input.attachments : []
+      const expectedCount = Number(input.expectedCount || attachments.length)
+      if (
+        !receiverId || !clientMessageId || !['image', 'video', 'document', 'audio'].includes(kind) ||
+        expectedCount !== attachments.length || expectedCount < 1 || expectedCount > 10 ||
+        (expectedCount > 1 && kind !== 'image')
+      ) {
+        return json(400, { error: 'invalid_attachment_batch' })
+      }
+
+      const validated: Record<string, unknown>[] = []
+      for (let index = 0; index < attachments.length; index += 1) {
+        const raw = attachments[index] || {}
+        const attachmentId = String(raw.attachmentId || '')
+        const bucket = String(raw.bucketId || '')
+        const path = String(raw.storagePath || '')
+        const mime = String(raw.mimeType || '').split(';')[0].trim().toLowerCase()
+        const expectedPrefix = `${user.id}/${receiverId}/${clientMessageId}/${attachmentId}-`
+        if (
+          Number(raw.attachmentIndex) !== index || String(raw.attachmentType || '') !== kind ||
+          bucket !== (kind === 'audio' ? 'voice-messages' : 'chat-media') ||
+          !path.startsWith(expectedPrefix) || !mime
+        ) {
+          return json(400, { error: 'invalid_attachment_batch_item' })
+        }
+
+        const { data: signed, error: signedError } = await service.storage.from(bucket).createSignedUrl(path, 60)
+        if (signedError || !signed?.signedUrl) return json(404, { error: 'attachment_object_not_found' })
+        const sampleResponse = await fetch(signed.signedUrl, { headers: { Range: 'bytes=0-65535' } })
+        if (!sampleResponse.ok) return json(422, { error: 'attachment_unreadable' })
+        const contentRange = sampleResponse.headers.get('content-range') || ''
+        const contentLength = Number(contentRange.split('/').pop() || sampleResponse.headers.get('content-length') || raw.byteSize || 0)
+        const sample = new Uint8Array(await sampleResponse.arrayBuffer())
+        if (
+          !Number.isFinite(contentLength) || contentLength <= 0 || contentLength > LIMITS[kind] ||
+          !validateSignature(kind, mime, sample, false, String(raw.originalName || ''))
+        ) {
+          return json(415, { error: 'attachment_content_mismatch' })
+        }
+
+        const previewPath = String(raw.previewStoragePath || '')
+        let previewLength: number | null = null
+        if (kind === 'image' || kind === 'video') {
+          if (!previewPath.startsWith(expectedPrefix) || String(raw.previewMimeType || '') !== 'image/jpeg') {
+            return json(422, { error: 'attachment_preview_required' })
+          }
+          const { data: previewSigned, error: previewSignedError } =
+            await service.storage.from('chat-media').createSignedUrl(previewPath, 60)
+          if (previewSignedError || !previewSigned?.signedUrl) {
+            return json(404, { error: 'attachment_preview_not_found' })
+          }
+          const previewResponse = await fetch(previewSigned.signedUrl, { headers: { Range: 'bytes=0-1048576' } })
+          const previewBytes = new Uint8Array(await previewResponse.arrayBuffer())
+          previewLength = Number(
+            (previewResponse.headers.get('content-range') || '').split('/').pop() ||
+            previewResponse.headers.get('content-length') || raw.previewByteSize || 0,
+          )
+          if (
+            !previewResponse.ok || previewLength <= 0 || previewLength > 1048576 ||
+            !validateSignature('image', 'image/jpeg', previewBytes, false)
+          ) {
+            return json(415, { error: 'attachment_preview_invalid' })
+          }
+        }
+
+        validated.push({
+          attachmentId,
+          attachmentIndex: index,
+          attachmentType: kind,
+          bucketId: bucket,
+          storagePath: path,
+          originalName: raw.originalName || null,
+          mimeType: mime,
+          byteSize: contentLength,
+          width: positiveIntegerOrNull(raw.width),
+          height: positiveIntegerOrNull(raw.height),
+          durationMs: positiveIntegerOrNull(raw.durationMs),
+          sha256: raw.sha256 || null,
+          validationDetails: { validator: 'signature-v2', sampled_bytes: sample.length },
+          ...(previewPath ? {
+            previewStoragePath: previewPath,
+            previewMimeType: 'image/jpeg',
+            previewByteSize: previewLength,
+            previewWidth: positiveIntegerOrNull(raw.previewWidth),
+            previewHeight: positiveIntegerOrNull(raw.previewHeight),
+          } : {}),
+          waveform: kind === 'audio' && Array.isArray(raw.waveform) ? raw.waveform.slice(0, 240) : null,
+        })
+      }
+
+      const batchFinalizationPayload = {
+        protocol: 'attachment-finalization-v2', mode: 'batch', receiverId,
+        clientMessageId, attachmentType: kind, expectedCount,
+        caption: String(input.caption || ''),
+        replyToMessageId: input.replyToMessageId || null,
+        attachments: validated,
+      }
+      const { error: keyError } = await service.rpc('rpc_claim_chat_attachment_finalization', {
+        p_sender_id: user.id,
+        p_client_message_id: clientMessageId,
+        p_request_payload: batchFinalizationPayload,
+      })
+      if (keyError) return json(409, { error: keyError.message || 'attachment_idempotency_conflict' })
+
+      const { data, error } = await service.rpc('rpc_finalize_chat_attachment_batch', {
+        p_sender_id: user.id,
+        p_receiver_id: receiverId,
+        p_client_message_id: clientMessageId,
+        p_attachment_type: kind,
+        p_expected_count: expectedCount,
+        p_attachments: validated,
+        p_caption: input.caption || '',
+        p_reply_to_message_id: input.replyToMessageId || null,
+      })
+      if (error) {
+        const status = error.code === '42501' ? 403 : error.code === '22023' || error.code === '23514' ? 422 : 409
+        console.log('[chat-attachment-finalize] batch-rpc-error', {
+          clientMessageId,
+          code: error.code ?? null,
+          message: error.message,
+        })
+        return json(status, {
+          error: error.code === '23514'
+            ? 'attachment_metadata_invalid'
+            : error.message || 'attachment_finalize_rejected',
+          databaseCode: error.code ?? null,
+        })
+      }
+      const message = Array.isArray(data) ? data[0] : data
+      console.log('[chat-attachment-finalize] batch-success', {
+        clientMessageId,
+        messageId: message?.id ?? null,
+        attachmentCount: validated.length,
+      })
+      return json(200, { message })
+    }
+
     const kind = String(input.attachmentType || '')
     const mime = String(input.mimeType || '').split(';')[0].trim().toLowerCase()
     const bucket = String(input.bucketId || '')
@@ -118,8 +314,10 @@ serve(async (req) => {
     ) {
       return json(400, { error: 'invalid_album_position' })
     }
+    if (expectedCount > 1) {
+      return json(409, { error: 'album_requires_atomic_batch' })
+    }
 
-    const service = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
     const { data: signed, error: signedError } = await service.storage.from(bucket).createSignedUrl(path, 60)
     if (signedError || !signed?.signedUrl) {
       console.log('[chat-attachment-finalize] signed-url-error', {
@@ -162,6 +360,29 @@ serve(async (req) => {
       await service.storage.from(bucket).remove([path])
       return json(415, { error: 'attachment_content_mismatch' })
     }
+
+    const singleFinalizationPayload = {
+      protocol: 'attachment-finalization-v2', mode: 'single', receiverId,
+      clientMessageId, attachmentId, attachmentType: kind, bucketId: bucket,
+      storagePath: path, originalName: input.originalName || null, mimeType: mime,
+      byteSize: contentLength, width: positiveIntegerOrNull(input.width),
+      height: positiveIntegerOrNull(input.height), durationMs: positiveIntegerOrNull(input.durationMs),
+      caption: String(input.caption || ''), replyToMessageId: input.replyToMessageId || null,
+      sha256: input.sha256 || null, isViewOnce,
+      encryptedKeySender: input.encryptedKeySender || null,
+      encryptedKeyReceiver: input.encryptedKeyReceiver || null,
+      encryptedKeyNonce: input.encryptedKeyNonce || null,
+      encryptedMediaNonce: input.encryptedMediaNonce || null,
+      encryptedMediaAlg: input.encryptedMediaAlg || null,
+      senderPublicKey: input.senderPublicKey || null,
+      waveform: Array.isArray(input.waveform) ? input.waveform.slice(0, 240) : null,
+    }
+    const { error: keyError } = await service.rpc('rpc_claim_chat_attachment_finalization', {
+      p_sender_id: user.id,
+      p_client_message_id: clientMessageId,
+      p_request_payload: singleFinalizationPayload,
+    })
+    if (keyError) return json(409, { error: keyError.message || 'attachment_idempotency_conflict' })
 
     const rpcName = attachmentIndex === 0
       ? 'rpc_finalize_chat_attachment'

@@ -26,6 +26,7 @@ export const useChatListLocalState = <TConversation>({
 }: UseChatListLocalStateArgs<TConversation>) => {
   const [initialHydratedConversations, setInitialHydratedConversations] = useState<TConversation[] | null>(null);
   const [lastSyncedAtMs, setLastSyncedAtMs] = useState<number | null>(null);
+  const [hasCompletedInitialHydration, setHasCompletedInitialHydration] = useState(false);
 
   const withTimeoutFallback = async <T,>(
     task: Promise<T>,
@@ -47,23 +48,25 @@ export const useChatListLocalState = <TConversation>({
     if (!cacheKey || !ownerUserId) {
       setInitialHydratedConversations(null);
       setLastSyncedAtMs(null);
+      setHasCompletedInitialHydration(false);
       return;
     }
 
     let cancelled = false;
+    setHasCompletedInitialHydration(false);
 
     void (async () => {
       const localTimeoutMs = Platform.OS === 'ios' ? 1000 : 2200;
       const localThreadsTask = ChatRepository.getThreads(ownerUserId, {
         includeArchived: true,
         operationPriority: 'normal',
-      });
+      }).catch(() => [] as ChatThreadRow[]);
       const syncStateTask = ChatRepository.getSyncState(
         ownerUserId,
         'global_threads',
         null,
         { priority: 'normal' },
-      );
+      ).catch(() => null);
 
       // Hydration must not wait behind a one-time legacy snapshot import. The
       // foreground reads enter the scheduler first; migration then proceeds as
@@ -107,15 +110,19 @@ export const useChatListLocalState = <TConversation>({
         setLastSyncedAtMs(null);
       }
 
-      if (localThreads.length > 0) {
-        setInitialHydratedConversations(localThreads.map(threadToConversation));
-        return;
-      }
+      try {
+        if (localThreads.length > 0) {
+          setInitialHydratedConversations(localThreads.map(threadToConversation));
+          return;
+        }
 
-      const cached = await readOfflineSnapshot<unknown[]>(cacheKey);
-      if (cancelled || !cached) return;
-      const hydrated = deserializeCache(cached);
-      setInitialHydratedConversations(hydrated.length > 0 ? hydrated : null);
+        const cached = await readOfflineSnapshot<unknown[]>(cacheKey).catch(() => null);
+        if (cancelled) return;
+        const hydrated = cached ? deserializeCache(cached) : [];
+        setInitialHydratedConversations(hydrated.length > 0 ? hydrated : null);
+      } finally {
+        if (!cancelled) setHasCompletedInitialHydration(true);
+      }
     })();
 
     return () => {
@@ -130,6 +137,7 @@ export const useChatListLocalState = <TConversation>({
 
   return {
     initialHydratedConversations,
+    hasCompletedInitialHydration,
     mergedLocalConversations,
     lastSyncedAtMs,
   };

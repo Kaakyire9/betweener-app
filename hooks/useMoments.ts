@@ -16,6 +16,8 @@ import {
 import { normalizeProfilePhotoUri } from '@/lib/profile/media';
 import { supabase } from '@/lib/supabase';
 import type { MomentMetadata } from '@/lib/moment-text-style';
+import { isLikelyNetworkError } from '@/lib/network';
+import { addEventListener as addNetInfoListener } from '@react-native-community/netinfo';
 
 export type MomentType = 'video' | 'photo' | 'text';
 export type MomentVisibility = 'public' | 'matches' | 'vibe_check_approved' | 'private';
@@ -362,6 +364,7 @@ export function useMoments({ currentUserId, currentUserProfile }: UseMomentsPara
   const [loading, setLoading] = useState(false);
   const profilesByIdRef = useRef<Record<string, MomentProfile>>({});
   const lastPrimedVisibleMomentIdsKeyRef = useRef<string | null>(null);
+  const refreshAfterReconnectRef = useRef(false);
   const currentUserProfileId = currentUserProfile?.id ? String(currentUserProfile.id) : null;
   const currentUserProfileName = currentUserProfile?.full_name ?? null;
   const rawCurrentUserProfileAvatarUrl = currentUserProfile?.avatar_url ?? null;
@@ -481,7 +484,11 @@ export function useMoments({ currentUserId, currentUserProfile }: UseMomentsPara
         .order('created_at', { ascending: false });
 
       if (error || !data) {
-        console.log('[useMoments] fetch error', error);
+        if (isLikelyNetworkError(error)) {
+          refreshAfterReconnectRef.current = true;
+        } else if (typeof __DEV__ !== 'undefined' && __DEV__) {
+          console.log('[useMoments] fetch error', error);
+        }
         return;
       }
 
@@ -625,6 +632,17 @@ export function useMoments({ currentUserId, currentUserProfile }: UseMomentsPara
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    if (!currentUserId) return;
+    return addNetInfoListener((state) => {
+      const isReachable =
+        state.isConnected !== false && state.isInternetReachable !== false;
+      if (!isReachable || !refreshAfterReconnectRef.current) return;
+      refreshAfterReconnectRef.current = false;
+      void refresh();
+    });
+  }, [currentUserId, refresh]);
 
   useEffect(() => {
     if (!currentUserId) return;

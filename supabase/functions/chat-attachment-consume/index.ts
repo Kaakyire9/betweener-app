@@ -21,7 +21,7 @@ serve(async (req) => {
     const { data: { user }, error: authError } = await authClient.auth.getUser()
     if (authError || !user) return json(401, { error: 'unauthorized' })
     const { messageId, mode: rawMode } = await req.json()
-    const mode = rawMode === 'complete' ? 'complete' : 'prepare'
+    const mode = rawMode === 'prepare' || rawMode === 'consume' ? 'consume' : rawMode
     if (!messageId) return json(400, { error: 'message_id_required' })
     console.log('[chat-attachment-consume] request', {
       userId: user.id,
@@ -30,37 +30,11 @@ serve(async (req) => {
     })
     const service = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
 
-    if (mode === 'complete') {
-      const { data, error } = await authClient.rpc('rpc_complete_view_once_attachment', { p_message_id: messageId })
-      if (error) {
-        console.log('[chat-attachment-consume] complete-rpc-error', {
-          userId: user.id,
-          messageId,
-          code: error.code ?? null,
-          message: error.message || 'view_once_unavailable',
-        })
-        return json(409, { error: error.message || 'view_once_unavailable' })
-      }
-      const row = Array.isArray(data) ? data[0] : data
-      if (!row?.attachment_id) {
-        console.log('[chat-attachment-consume] complete-rpc-empty', {
-          userId: user.id,
-          messageId,
-        })
-        return json(404, { error: 'view_once_unavailable' })
-      }
-      console.log('[chat-attachment-consume] complete-success', {
-        userId: user.id,
-        messageId,
-        attachmentId: row.attachment_id,
-      })
-      return json(200, {
-        attachmentId: row.attachment_id,
-        consumedAt: row.consumed_at ?? null,
-      })
-    }
+    if (mode !== 'consume') return json(400, { error: 'invalid_consume_mode' })
 
-    const { data, error } = await authClient.rpc('rpc_prepare_view_once_attachment', { p_message_id: messageId })
+    // The database writes the unique view receipt before a signed URL is
+    // released. This intentionally fails closed if the response is lost.
+    const { data, error } = await authClient.rpc('rpc_claim_view_once_attachment', { p_message_id: messageId })
     if (error) {
       console.log('[chat-attachment-consume] prepare-rpc-error', {
         userId: user.id,

@@ -5,10 +5,7 @@ import { Alert, Keyboard } from "react-native";
 import { encodeBase64 } from "tweetnacl-util";
 
 import type { MessageType } from "@/components/chat/types";
-import {
-  completeViewOnceAttachment,
-  prepareViewOnceAttachment,
-} from "@/lib/chat/attachment-lifecycle";
+import { prepareViewOnceAttachment } from "@/lib/chat/attachment-lifecycle";
 import { decryptMediaBytes, getOrCreateDeviceKeypair } from "@/lib/e2ee";
 import { supabase } from "@/lib/supabase";
 
@@ -66,11 +63,15 @@ export const useChatThreadMessageUi = ({
   const [reactionSheetMessageId, setReactionSheetMessageId] = useState<string | null>(null);
   const [reactionSheetEmoji, setReactionSheetEmoji] = useState<string | null>(null);
   const isMountedRef = useRef(true);
+  const viewOnceMediaUriRef = useRef<string | null>(null);
 
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
+      const uri = viewOnceMediaUriRef.current;
+      viewOnceMediaUriRef.current = null;
+      if (uri) void FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => undefined);
     };
   }, []);
 
@@ -227,6 +228,7 @@ export const useChatThreadMessageUi = ({
         console.log("[chat] view-once cleanup error", error);
       }
     }
+    viewOnceMediaUriRef.current = null;
     setViewOnceMediaUri(null);
   }, [viewOnceMediaUri, viewOnceModalMessage]);
 
@@ -244,6 +246,7 @@ export const useChatThreadMessageUi = ({
     });
     setViewOnceModalMessage(message);
     setViewOnceDecrypting(true);
+    let writtenTempPath: string | null = null;
 
     try {
       const keypair = await ensureOwnKeypair();
@@ -307,16 +310,12 @@ export const useChatThreadMessageUi = ({
       await FileSystem.writeAsStringAsync(tempPath, base64, {
         encoding: FileSystem.EncodingType?.Base64 ?? "base64",
       });
+      writtenTempPath = tempPath;
 
       console.log("[chat][view-once-open] file-write-success", {
         messageId: message.id,
         tempPath,
         isVideo,
-      });
-      const completed = await completeViewOnceAttachment(message.id);
-      console.log("[chat][view-once-open] complete-success", {
-        messageId: message.id,
-        attachmentId: completed.attachmentId,
       });
       viewOnceStatusRef.current[message.id] = {
         viewedByMe: true,
@@ -324,9 +323,15 @@ export const useChatThreadMessageUi = ({
       };
       if (isMountedRef.current) {
         setViewOnceStatus((prev) => ({ ...prev, [message.id]: viewOnceStatusRef.current[message.id] }));
+        viewOnceMediaUriRef.current = tempPath;
         setViewOnceMediaUri(tempPath);
+      } else {
+        await FileSystem.deleteAsync(tempPath, { idempotent: true }).catch(() => undefined);
       }
     } catch (error) {
+      if (writtenTempPath) {
+        await FileSystem.deleteAsync(writtenTempPath, { idempotent: true }).catch(() => undefined);
+      }
       console.log("[chat][view-once-open] error", {
         messageId: message.id,
         code: (error as { code?: string })?.code ?? null,

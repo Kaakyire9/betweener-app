@@ -14,7 +14,11 @@ export const getChatVisualMediaPaths = (messages: readonly MessageType[]) =>
         )
         .flatMap((message) => [
           message.storagePath,
-          ...(message.mediaItems ?? []).map((item) => item.storagePath),
+          message.previewStoragePath,
+          ...(message.mediaItems ?? []).flatMap((item) => [
+            item.storagePath,
+            item.previewStoragePath,
+          ]),
         ])
         .filter((path): path is string => Boolean(path?.trim())),
     ),

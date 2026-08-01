@@ -50,6 +50,7 @@ export const startThreadSyncCoordinator = ({
   onUnexpectedError,
 }: StartThreadSyncCoordinatorArgs) => {
   let reconnectPending = false;
+  let hasSubscribed = false;
   let stopped = false;
   let chatOutboxFlushInFlight: Promise<void> | null = null;
 
@@ -82,17 +83,21 @@ export const startThreadSyncCoordinator = ({
     handleRealtimeStatus: (status: string) => {
       if (stopped) return;
       if (status === 'SUBSCRIBED') {
-        void fetchMessages();
+        hasSubscribed = true;
         if (reconnectPending) {
           reconnectPending = false;
+          // Focused hydration owns the initial catch-up query. Requery only
+          // after a genuine realtime gap; otherwise the first SUBSCRIBED
+          // event duplicates hydration and can race navigation teardown.
+          void fetchMessages();
           onReconnectRecovered?.();
         }
         return;
       }
       if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        if (!hasSubscribed) return;
         reconnectPending = true;
         onReconnectPending?.();
-        void fetchMessages();
       }
     },
     flushIfNeeded,

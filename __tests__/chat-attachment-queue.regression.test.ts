@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   createQueuedMediaMessage,
   createQueuedMediaOutboxRow,
+  createQueuedViewOnceOutboxRow,
 } from '../lib/chat/attachments/chat-attachment-queue.ts';
 import {
   buildPendingOutboxDueQueryParams,
@@ -28,8 +29,45 @@ test('creates a durable queued document message and outbox contract', () => {
     kind: 'chat_media_send', senderId: 'sender', receiverId: 'receiver', clientMessageId: 'temp-document-1',
     localUri: 'file://chat/report.pdf', fileName: 'report.pdf', contentType: 'application/pdf', mediaType: 'document',
     attachmentId: 'attachment-1', byteSize: null, width: null, height: null, durationMs: null,
+    previewLocalUri: null, previewContentType: null, previewByteSize: null, previewWidth: null, previewHeight: null,
     replyToMessageId: null, documentName: 'report.pdf', documentSizeLabel: '120 KB', documentTypeLabel: 'PDF',
   });
+});
+
+test('persists encrypted view-once delivery metadata in the durable outbox', () => {
+  const message = {
+    ...createQueuedMediaMessage({
+      id: 'temp-view-once-1', senderId: 'sender', mediaType: 'image',
+      stagedUri: '', fileName: 'photo.jpg.enc', now: new Date('2026-01-01T00:00:00.000Z'),
+    }),
+    isViewOnce: true,
+    encryptedMedia: true,
+  };
+  const row = createQueuedViewOnceOutboxRow({
+    ownerUserId: 'sender',
+    threadId: 'receiver',
+    message,
+    attachment: {
+      localUri: 'file://cipher/photo.jpg.enc',
+      fileName: 'photo.jpg.enc',
+      contentType: 'image/jpeg',
+      attachmentId: 'attachment-1',
+      byteSize: 128,
+      attachmentType: 'image',
+      encryptedKeySender: 'sender-key',
+      encryptedKeyReceiver: 'receiver-key',
+      encryptedKeyNonce: 'key-nonce',
+      encryptedMediaNonce: 'media-nonce',
+      senderPublicKey: 'sender-public-key',
+    },
+    now: new Date('2026-01-01T00:00:00.000Z'),
+  });
+  const payload = JSON.parse(row.payload_json);
+
+  assert.equal(payload.kind, 'chat_view_once_send');
+  assert.equal(payload.localUri, 'file://cipher/photo.jpg.enc');
+  assert.equal(payload.encryptedMediaAlg, 'nacl-secretbox');
+  assert.equal(payload.senderPublicKey, 'sender-public-key');
 });
 
 test('builds an index-friendly due outbox query without date wrappers or a cross-status OR scan', () => {

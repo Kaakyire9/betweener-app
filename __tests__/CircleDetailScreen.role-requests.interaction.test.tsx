@@ -226,6 +226,9 @@ jest.mock('react-native-safe-area-context', () => {
 
 jest.mock('@/lib/supabase', () => ({
   supabase: {
+    auth: {
+      getSession: jest.fn(async () => ({ data: { session: null }, error: null })),
+    },
     from: jest.fn((table: string) => mockCreateQuery(table)),
     rpc: (...args: any[]) => mockRpc(...args),
     storage: {

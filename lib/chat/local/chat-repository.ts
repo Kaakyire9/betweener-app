@@ -19,7 +19,9 @@ import {
   buildPendingOutboxDueQueryParams,
   CHAT_PENDING_OUTBOX_DUE_QUERY,
 } from '@/lib/chat/local/chat-outbox-query';
+import { CHAT_DB_DURABLE_ENQUEUE_LOCK_RETRY_DELAYS } from '@/lib/chat/local/chat-db-lock-policy';
 import { shouldPersistThreadReadState } from '@/lib/chat/read-state/thread-read-persistence-policy';
+import { buildThreadPresenceBatchWrite } from '@/lib/chat/local/chat-presence-write';
 import {
   type ChatDbOperationOptions,
   getChatDb,
@@ -135,6 +137,9 @@ export type ChatStorageDiagnosticsSnapshot = {
 };
 
 type ChatRepositoryOperationOptions = Pick<ChatDbOperationOptions, 'priority'>;
+type ChatTransactionOptions = ChatDbOperationOptions & {
+  preferSynchronous?: boolean;
+};
 
 const runSerializedWrite = <T>(
   task: () => Promise<T>,
@@ -200,10 +205,10 @@ const withBoundedSerializedTransaction = <T>(
   db: ChatDb,
   syncTask: (transactionDb: ChatDb) => T,
   asyncFallbackTask: (transactionDb: ChatDb) => Promise<T>,
-  options: ChatDbOperationOptions,
+  options: ChatTransactionOptions,
 ) =>
   runSerializedWrite(async () => {
-    if (Platform.OS === 'ios') {
+    if (Platform.OS === 'ios' && !options.preferSynchronous) {
       let result!: T;
       await db.withExclusiveTransactionAsync(async (transactionDb) => {
         result = await asyncFallbackTask(transactionDb);
@@ -911,39 +916,14 @@ export const ChatRepository = {
       lastActive?: string | null;
     }[],
   ): Promise<void> {
-    if (updates.length === 0) return;
+    const batch = buildThreadPresenceBatchWrite(ownerUserId, updates, nowIso());
+    if (!batch) return;
     const db = await getChatDb();
-    const query = `
-        update chat_threads
-        set peer_presence_status = ?,
-            peer_last_active = coalesce(?, peer_last_active),
-            local_updated_at = ?
-        where owner_user_id = ?
-          and id = ?
-      `;
-    const latestByThread = new Map(updates.map((update) => [update.threadId, update]));
-    const normalizedUpdates = [...latestByThread.values()];
-    const updatedAt = nowIso();
-    const toParams = (update: (typeof normalizedUpdates)[number]) => [
-      update.online === true ? 'online' : update.online === false ? 'offline' : null,
-      update.lastActive ?? null,
-      updatedAt,
-      ownerUserId,
-      update.threadId,
-    ] as const;
     try {
-      await withBoundedSerializedTransaction(
-        db,
-        (txn) => {
-          for (const update of normalizedUpdates) {
-            txn.runSync(query, ...toParams(update));
-          }
-        },
-        async (txn) => {
-          for (const update of normalizedUpdates) {
-            await txn.runAsync(query, ...toParams(update));
-          }
-        },
+      // One SQLite statement is atomic and avoids holding an exclusive iOS
+      // transaction while issuing one write for every visible conversation.
+      await runSerializedChatDbOperation(
+        () => db.runAsync(batch.query, ...batch.params),
         { priority: 'background', label: 'update-thread-presence-batch' },
       );
     } catch (error) {
@@ -951,7 +931,7 @@ export const ChatRepository = {
         if (typeof __DEV__ !== 'undefined' && __DEV__) {
           console.log('[chat][db] background-presence-write-dropped', {
             ownerUserId,
-            updateCount: normalizedUpdates.length,
+            updateCount: batch.updateCount,
           });
         }
         return;
@@ -1360,7 +1340,15 @@ export const ChatRepository = {
         await txn.runAsync(outboxQuery, ...outboxParams);
         await refreshThreadSummaryFromMessages(txn, ownerUserId, threadId);
       },
-      { priority: 'user-blocking', label: 'enqueue-message-with-outbox' },
+      {
+        priority: 'user-blocking',
+        label: 'enqueue-message-with-outbox',
+        lockRetryDelays: CHAT_DB_DURABLE_ENQUEUE_LOCK_RETRY_DELAYS,
+        // This transaction is deliberately tiny. On iOS a synchronous commit
+        // avoids Expo SQLite's async finaliser race while preserving the
+        // message + outbox all-or-nothing boundary.
+        preferSynchronous: true,
+      },
     );
     notify(threadListeners, ownerUserId);
     notify(messageListeners, threadMessageKey(ownerUserId, threadId));
@@ -1476,6 +1464,47 @@ export const ChatRepository = {
       () => db.getAllAsync<ChatPendingOutboxRow>(CHAT_PENDING_OUTBOX_DUE_QUERY, ...params),
       { priority: 'background', label: 'get-pending-outbox-items' },
     );
+  },
+
+  async getOutboxItem(
+    ownerUserId: string,
+    localMessageId: string,
+  ): Promise<ChatPendingOutboxRow | null> {
+    const db = await getChatDb();
+    return runBoundedSerializedRead(
+      () => db.getFirstSync<ChatPendingOutboxRow>(
+        `select * from chat_pending_outbox
+         where owner_user_id = ? and local_message_id = ? limit 1`,
+        ownerUserId,
+        localMessageId,
+      ),
+      () => db.getFirstAsync<ChatPendingOutboxRow>(
+        `select * from chat_pending_outbox
+         where owner_user_id = ? and local_message_id = ? limit 1`,
+        ownerUserId,
+        localMessageId,
+      ),
+      { priority: 'user-blocking', label: 'get-outbox-item' },
+    );
+  },
+
+  async purgeTerminalOutboxItems(
+    ownerUserId: string,
+    olderThanIso: string,
+  ): Promise<number> {
+    const db = await getChatDb();
+    const query = `
+      delete from chat_pending_outbox
+      where owner_user_id = ?
+        and status in ('sent', 'cancelled')
+        and updated_at < ?
+    `;
+    const result = await runBoundedSerializedWrite(
+      () => db.runSync(query, ownerUserId, olderThanIso),
+      () => db.runAsync(query, ownerUserId, olderThanIso),
+      { priority: 'background', label: 'purge-terminal-outbox-items' },
+    );
+    return result.changes;
   },
 
   async markOutboxItemStatus(

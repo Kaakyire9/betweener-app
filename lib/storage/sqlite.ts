@@ -18,6 +18,7 @@ export type ChatSQLiteDatabase = SQLite.SQLiteDatabase;
 export type ChatDbOperationOptions = {
   priority?: ChatOperationPriority;
   label?: string;
+  lockRetryDelays?: readonly number[];
 };
 
 type ChatDbRuntime = {
@@ -85,7 +86,8 @@ export async function runSerializedChatDbOperation<T>(
   const runWithRetry = async () => {
     executionStartedAt = Date.now();
     const priority = options.priority ?? 'normal';
-    const retryDelays = getChatDbLockRetryDelays(priority);
+    const retryDelays =
+      options.lockRetryDelays ?? getChatDbLockRetryDelays(priority);
     try {
       for (let attempt = 0; ; attempt += 1) {
         try {

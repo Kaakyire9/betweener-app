@@ -37,8 +37,13 @@ import { isLikelyNetworkError } from "@/lib/network";
 import { fetchViewedMomentIds } from "@/lib/moments-views";
 import {
   buildChatConversationListStoreKey,
+  buildChatThreadStoreKey,
+  peekOfflineSnapshot,
+  readOfflineSnapshot,
   writeOfflineSnapshot,
 } from "@/lib/offline/chat-store";
+import { primeOfflineImageStore } from "@/lib/offline/image-store";
+import { primeOfflineVideoStore } from "@/lib/offline/video-store";
 import { buildLocationDisplay } from "@/lib/location/location-display";
 import { getSafeRemoteImageUri, getUserFacingDisplayName } from "@/lib/profile/display-name";
 import { getAuthoritativePresenceDisplay } from "@/lib/presence";
@@ -51,7 +56,7 @@ import { getSupabaseNetEvents, supabase } from "@/lib/supabase";
 import { captureMessage } from "@/lib/telemetry/sentry";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router, useFocusEffect } from "expo-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   FlatList,
   Platform,
@@ -180,6 +185,9 @@ type NewMatch = {
 };
 
 const NEW_MATCHES_REFRESH_INTERVAL_MS = 45_000;
+const CHAT_LIST_FOCUS_REFRESH_INTERVAL_MS = 30_000;
+const chatListLastRemoteRefreshAtByUser = new Map<string, number>();
+const newMatchesCacheByUser = new Map<string, { items: NewMatch[]; fetchedAt: number }>();
 const BLOCKED_AVATAR_SOURCE = require('../../assets/images/circle-logo.png');
 const QUICK_REPORT_REASONS = [
   { id: 'spam', label: 'Spam' },
@@ -626,10 +634,26 @@ export default function ChatScreen() {
   const isDark = (colorScheme ?? 'light') === 'dark';
   const fabBottom = Math.max(insets.bottom + 108, 128);
   const styles = useMemo(() => createStyles(theme, isDark, fabBottom), [fabBottom, theme, isDark]);
+  useEffect(() => {
+    void Promise.all([
+      primeOfflineImageStore(),
+      primeOfflineVideoStore(),
+    ]).catch(() => undefined);
+  }, []);
   const internalToolsEnabled = canAccessInternalTools();
-  
-  const [conversations, setConversations] = useState<ConversationType[]>([]);
-  const [newMatches, setNewMatches] = useState<NewMatch[]>([]);
+
+  const chatCacheKey = useMemo(
+    () => (user?.id ? buildChatConversationListStoreKey(user.id) : null),
+    [user?.id],
+  );
+  const [conversations, setConversations] = useState<ConversationType[]>(() => {
+    if (!chatCacheKey) return [];
+    const cached = peekOfflineSnapshot<unknown[]>(chatCacheKey);
+    return cached ? deserializeConversations(cached) : [];
+  });
+  const [newMatches, setNewMatches] = useState<NewMatch[]>(() =>
+    user?.id ? newMatchesCacheByUser.get(user.id)?.items ?? [] : [],
+  );
   const [newMatchesLoading, setNewMatchesLoading] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -643,18 +667,16 @@ export default function ChatScreen() {
     currentUserProfile: profile,
   });
 
-  const chatCacheKey = useMemo(
-    () => (user?.id ? buildChatConversationListStoreKey(user.id) : null),
-    [user?.id],
-  );
-  const conversationsRef = useRef<ConversationType[]>([]);
+  const conversationsRef = useRef<ConversationType[]>(conversations);
+  const conversationsOwnerUserIdRef = useRef(user?.id ?? null);
   const conversationsFetchInFlightRef = useRef(false);
   const conversationsRequestGenerationRef = useRef(0);
   const isChatListFocusedRef = useRef(false);
   const newMatchesFetchInFlightRef = useRef(false);
-  const lastNewMatchesFetchAtRef = useRef(0);
-  const newMatchesCountRef = useRef(0);
-  const hasResolvedNewMatchesRef = useRef(false);
+  const initialNewMatchesCache = user?.id ? newMatchesCacheByUser.get(user.id) : undefined;
+  const lastNewMatchesFetchAtRef = useRef(initialNewMatchesCache?.fetchedAt ?? 0);
+  const newMatchesCountRef = useRef(initialNewMatchesCache?.items.length ?? 0);
+  const hasResolvedNewMatchesRef = useRef(Boolean(initialNewMatchesCache));
   const pendingPresenceWritesRef = useRef(
     new Map<
       string,
@@ -664,6 +686,16 @@ export default function ChatScreen() {
   const presenceWriteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [typingExpiresAtByPeer, setTypingExpiresAtByPeer] = useState<Record<string, number>>({});
   const [presenceNow, setPresenceNow] = useState(() => Date.now());
+  const prepareThreadOpen = useCallback(async (peerUserId: string) => {
+    if (!user?.id || !peerUserId) return;
+    const key = buildChatThreadStoreKey(user.id, peerUserId);
+    if (peekOfflineSnapshot(key) !== null) return;
+    try {
+      await readOfflineSnapshot(key);
+    } catch {
+      // Cache warming is an optimization; the route remains available if local storage is unavailable.
+    }
+  }, [user?.id]);
   const {
     searchQuery,
     setSearchQuery,
@@ -680,8 +712,19 @@ export default function ChatScreen() {
     openNewMatch,
     openExplore,
   } = useChatListScreenUi<ConversationType, NewMatch>({
+    prepareThreadOpen,
     onNewMatchOpened: (match) => {
-      setNewMatches((prev) => prev.filter((item) => item.userId !== match.userId));
+      setNewMatches((prev) => {
+        const next = prev.filter((item) => item.userId !== match.userId);
+        if (user?.id) {
+          const cached = newMatchesCacheByUser.get(user.id);
+          newMatchesCacheByUser.set(user.id, {
+            items: next,
+            fetchedAt: cached?.fetchedAt ?? Date.now(),
+          });
+        }
+        return next;
+      });
     },
   });
   const { rows: localObservedThreads, hasLoadedLocal: hasLoadedLocalThreads } = useChatThreads({
@@ -691,6 +734,7 @@ export default function ChatScreen() {
   const {
     initialHydratedConversations,
     mergedLocalConversations,
+    hasCompletedInitialHydration,
   } = useChatListLocalState({
     ownerUserId: user?.id ?? null,
     cacheKey: chatCacheKey,
@@ -703,13 +747,30 @@ export default function ChatScreen() {
   });
   const typingClearTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
+  useLayoutEffect(() => {
+    const nextOwnerUserId = user?.id ?? null;
+    if (conversationsOwnerUserIdRef.current === nextOwnerUserId) return;
+    conversationsOwnerUserIdRef.current = nextOwnerUserId;
+    const cached = chatCacheKey
+      ? peekOfflineSnapshot<unknown[]>(chatCacheKey)
+      : null;
+    const nextConversations = cached ? deserializeConversations(cached) : [];
+    conversationsRef.current = nextConversations;
+    setConversations(nextConversations);
+  }, [chatCacheKey, user?.id]);
+
   useEffect(() => {
     if (!initialHydratedConversations || initialHydratedConversations.length === 0) return;
-    setConversations((prev) => (prev.length === 0 ? initialHydratedConversations : prev));
+    setConversations((prev) => {
+      if (prev.length > 0) return prev;
+      conversationsRef.current = initialHydratedConversations;
+      return initialHydratedConversations;
+    });
   }, [initialHydratedConversations]);
 
   useEffect(() => {
     if (!mergedLocalConversations) return;
+    conversationsRef.current = mergedLocalConversations;
     setConversations((prev) => (prev === mergedLocalConversations ? prev : mergedLocalConversations));
   }, [mergedLocalConversations]);
 
@@ -754,9 +815,13 @@ export default function ChatScreen() {
   }, [newMatches.length]);
 
   useEffect(() => {
-    hasResolvedNewMatchesRef.current = false;
-    lastNewMatchesFetchAtRef.current = 0;
+    const cached = user?.id ? newMatchesCacheByUser.get(user.id) : undefined;
+    const next = cached?.items ?? [];
+    newMatchesCountRef.current = next.length;
+    hasResolvedNewMatchesRef.current = Boolean(cached);
+    lastNewMatchesFetchAtRef.current = cached?.fetchedAt ?? 0;
     newMatchesFetchInFlightRef.current = false;
+    setNewMatches(next);
   }, [currentProfileId, user?.id]);
 
   useEffect(() => {
@@ -940,6 +1005,7 @@ export default function ChatScreen() {
         if (isMountedRef.current) {
           setNewMatches((prev) => (areNewMatchesEqual(prev, sliced) ? prev : sliced));
         }
+        newMatchesCacheByUser.set(user.id, { items: sliced, fetchedAt: Date.now() });
       } catch (error) {
         console.log('[chat][new-matches] error', {
           currentProfileId,
@@ -950,6 +1016,7 @@ export default function ChatScreen() {
           isLikelyNetworkError: isLikelyNetworkError(error),
         });
         if (!isLikelyNetworkError(error)) {
+          newMatchesCacheByUser.set(user.id, { items: [], fetchedAt: Date.now() });
           if (isMountedRef.current) {
             setNewMatches([]);
           }
@@ -1177,6 +1244,7 @@ export default function ChatScreen() {
       if (isMountedRef.current) {
         setLoadError(null);
         setConversations(hydrated);
+        chatListLastRemoteRefreshAtByUser.set(user.id, Date.now());
         console.log('[chat][screen] fetch-conversations:state-applied', {
           userId: user.id,
           currentProfileId,
@@ -1291,12 +1359,22 @@ export default function ChatScreen() {
   }, [applyChatPrefs, chatCacheKey, currentProfileId, fetchNewMatches, user?.id]);
 
   const refreshConversationsOnFocus = useCallback(() => {
+    if (!user?.id) return;
+    if (!hasCompletedInitialHydration && conversationsRef.current.length === 0) return;
+    const lastRemoteRefreshAt = chatListLastRemoteRefreshAtByUser.get(user.id) ?? 0;
+    const hasWarmList = conversationsRef.current.length > 0;
+    if (
+      hasWarmList &&
+      Date.now() - lastRemoteRefreshAt < CHAT_LIST_FOCUS_REFRESH_INTERVAL_MS
+    ) {
+      return;
+    }
     console.log('[chat][screen] focus:refresh-conversations', {
       hasUserId: Boolean(user?.id),
       hasCurrentProfileId: Boolean(currentProfileId),
     });
     void fetchConversations();
-  }, [currentProfileId, fetchConversations, user?.id]);
+  }, [currentProfileId, fetchConversations, hasCompletedInitialHydration, user?.id]);
 
   const savePeerVisibilityPref = useCallback(
     async (peerUserId: string, next: { archived: boolean; hidden: boolean }) => {
@@ -1703,8 +1781,13 @@ export default function ChatScreen() {
     />
   );
 
+  const isLocalBootstrapLoading = !hasCompletedInitialHydration && conversations.length === 0;
   const showBlockingError = Boolean(loadError && conversations.length === 0);
-  const showEmptyState = filteredConversations.length === 0 && !showBlockingError && newMatches.length === 0;
+  const showEmptyState =
+    !isLocalBootstrapLoading &&
+    filteredConversations.length === 0 &&
+    !showBlockingError &&
+    newMatches.length === 0;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -1744,7 +1827,7 @@ export default function ChatScreen() {
         />
       ) : null}
 
-      {isLoading && conversations.length === 0 && newMatches.length === 0 ? (
+      {(isLoading || isLocalBootstrapLoading) && conversations.length === 0 && newMatches.length === 0 ? (
         <ChatListSkeleton />
       ) : showEmptyState ? (
         <ChatEmptyState

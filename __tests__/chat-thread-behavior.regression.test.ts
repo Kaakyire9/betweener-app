@@ -7,7 +7,13 @@ import {
 } from '../lib/chat/sync/chat-sync-policy.ts';
 import { createCoalescedAsyncRunner } from '../lib/chat/local/coalesced-async-runner.ts';
 import { createPriorityOperationScheduler } from '../lib/chat/local/priority-operation-scheduler.ts';
+import { buildChatThreadLocalRevision } from '../lib/chat/local/chat-thread-local-revision.ts';
 import { shouldPersistThreadReadState } from '../lib/chat/read-state/thread-read-persistence-policy.ts';
+import {
+  chronologicalIndexToInvertedIndex,
+  invertedIndexToChronologicalIndex,
+  toNewestFirstMessageOrder,
+} from '../lib/chat/message-list-order.ts';
 import {
   buildCanonicalMessageCleanupPredicates,
   buildChatMessageValueGroups,
@@ -39,6 +45,45 @@ const baseMessage = {
 
 test('chat read receipt delay stays stable', () => {
   assert.equal(CHAT_READ_RECEIPT_DELAY_MS, 700);
+});
+
+test('chat render order mounts the newest message first without mutating canonical history', () => {
+  const chronological = ['oldest', 'middle', 'newest'];
+  assert.deepEqual(toNewestFirstMessageOrder(chronological), ['newest', 'middle', 'oldest']);
+  assert.deepEqual(chronological, ['oldest', 'middle', 'newest']);
+});
+
+test('chat render indexes map safely between chronological and inverted order', () => {
+  assert.equal(chronologicalIndexToInvertedIndex(61, 60), 0);
+  assert.equal(chronologicalIndexToInvertedIndex(61, 0), 60);
+  assert.equal(invertedIndexToChronologicalIndex(61, 0), 60);
+  assert.equal(invertedIndexToChronologicalIndex(61, 60), 0);
+});
+
+test('local thread revisions ignore new array identities with unchanged content', () => {
+  const oldest = new Date('2026-07-31T08:00:00.000Z');
+  const getRevision = (message) => `${message.id}:${message.text}`;
+  const first = buildChatThreadLocalRevision(
+    [{ id: 'message-1', text: 'Hello' }],
+    true,
+    oldest,
+    getRevision,
+  );
+  const duplicate = buildChatThreadLocalRevision(
+    [{ id: 'message-1', text: 'Hello' }],
+    true,
+    new Date(oldest),
+    getRevision,
+  );
+  const changed = buildChatThreadLocalRevision(
+    [{ id: 'message-1', text: 'Edited' }],
+    true,
+    oldest,
+    getRevision,
+  );
+
+  assert.equal(duplicate, first);
+  assert.notEqual(changed, first);
 });
 
 test('thread read persistence skips an already durable read state', () => {

@@ -33,6 +33,73 @@ export type SendViewOnceAttachmentInput<TResult> = {
   finalize: (input: Record<string, unknown>) => Promise<TResult>;
 };
 
+export type PrepareDurableViewOnceAttachmentInput = Omit<
+  SendViewOnceAttachmentInput<never>,
+  'upload' | 'finalize' | 'receiverId' | 'clientMessageId' | 'attachmentId' | 'replyToMessageId' | 'senderPublicKey'
+> & {
+  persistCiphertext: (input: {
+    bytes: Uint8Array;
+    fileName: string;
+  }) => Promise<string>;
+};
+
+export type PreparedDurableViewOnceAttachment = EncryptedViewOncePayload & {
+  encryptedLocalUri: string;
+  encryptedFileName: string;
+  encryptedByteSize: number;
+};
+
+/**
+ * Encrypts view-once media and persists only ciphertext. The caller can then
+ * atomically enqueue the returned file and metadata in SQLite. Both in-memory
+ * buffers are wiped before this function settles.
+ */
+export const prepareDurableViewOnceAttachment = async (
+  input: PrepareDurableViewOnceAttachmentInput,
+): Promise<PreparedDurableViewOnceAttachment> => {
+  const byteSize = await input.getFileSize(input.uri);
+  const sizeError = getViewOnceSizeError({
+    kind: input.kind,
+    byteSize,
+    imageLimitBytes: input.imageLimitBytes,
+    videoLimitBytes: input.videoLimitBytes,
+  });
+  if (sizeError) throw new Error(sizeError);
+
+  const plainBytes = await input.readBytes(input.uri);
+  let payload: ViewOnceEncryptionResult;
+  try {
+    payload = await input.encrypt({
+      plainBytes,
+      receiverPublicKey: input.receiverPublicKey,
+    });
+  } finally {
+    plainBytes.fill(0);
+  }
+
+  const encryptedFileName = `${input.fileName}.enc`;
+  const encryptedByteSize = payload.cipherBytes.length;
+  let encryptedLocalUri: string;
+  try {
+    encryptedLocalUri = await input.persistCiphertext({
+      bytes: payload.cipherBytes,
+      fileName: encryptedFileName,
+    });
+  } finally {
+    payload.cipherBytes.fill(0);
+  }
+
+  return {
+    encryptedLocalUri,
+    encryptedFileName,
+    encryptedByteSize,
+    encryptedKeySenderB64: payload.encryptedKeySenderB64,
+    encryptedKeyReceiverB64: payload.encryptedKeyReceiverB64,
+    keyNonceB64: payload.keyNonceB64,
+    mediaNonceB64: payload.mediaNonceB64,
+  };
+};
+
 /**
  * Executes the sensitive view-once attachment sequence. Platform concerns are
  * injected so this module remains deterministic and testable. Both plaintext

@@ -60,6 +60,25 @@ jest.mock("expo-file-system/legacy", () => ({
   writeAsStringAsync: jest.fn(async () => undefined),
 }));
 
+jest.mock("expo-file-system", () => ({
+  File: class MockExpoFile {
+    exists = false;
+    uri: string;
+
+    constructor(uri: string) {
+      this.uri = uri;
+    }
+
+    write = jest.fn(() => {
+      this.exists = true;
+    });
+
+    delete = jest.fn(() => {
+      this.exists = false;
+    });
+  },
+}));
+
 jest.mock("expo-sqlite", () => {
   const database = {
     closeAsync: jest.fn(async () => undefined),

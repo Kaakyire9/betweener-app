@@ -2,6 +2,7 @@ import type { MessageType } from "@/components/chat/types";
 import type { ChatMessageRow } from "@/lib/chat/local/chat-db";
 import { preserveUnchangedMessageReferences } from "@/lib/chat/message-list-reconciliation";
 import { mergeMessageWithMonotonicReceipt } from "@/lib/chat/message-state";
+import { buildChatThreadLocalRevision } from '@/lib/chat/local/chat-thread-local-revision';
 import { useMemo } from "react";
 
 type UseChatThreadLocalStateArgs = {
@@ -33,6 +34,7 @@ export const useChatThreadLocalState = ({
         mergedMessages: null as MessageType[] | null,
         hasMore: false,
         oldestTimestamp: null as Date | null,
+        revision: null as string | null,
       };
     }
 
@@ -72,10 +74,20 @@ export const useChatThreadLocalState = ({
       getMessageRevisionKey,
     );
 
+    const hasMore = rows.length >= pageSize;
+    const oldestTimestamp = rows[0] ? new Date(rows[0].created_at) : null;
+    const revision = buildChatThreadLocalRevision(
+      reconciledMessages,
+      hasMore,
+      oldestTimestamp,
+      getMessageRevisionKey,
+    );
+
     return {
       mergedMessages: reconciledMessages,
-      hasMore: rows.length >= pageSize,
-      oldestTimestamp: rows[0] ? new Date(rows[0].created_at) : null,
+      hasMore,
+      oldestTimestamp,
+      revision,
     };
   }, [
     currentMessages,

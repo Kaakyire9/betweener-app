@@ -30,6 +30,20 @@ export type ChatAttachmentFinalizeInput = {
   waveform?: number[] | null;
   attachmentIndex?: number;
   expectedCount?: number;
+  previewStoragePath?: string | null;
+  previewMimeType?: string | null;
+  previewByteSize?: number | null;
+  previewWidth?: number | null;
+  previewHeight?: number | null;
+};
+
+export type ChatAttachmentBatchFinalizeInput = {
+  receiverId: string;
+  clientMessageId: string;
+  attachmentType: ChatAttachmentKind;
+  caption?: string | null;
+  replyToMessageId?: string | null;
+  attachments: ChatAttachmentFinalizeInput[];
 };
 
 const SAFE_EXTENSION = /^[a-z0-9]{1,8}$/;
@@ -73,6 +87,14 @@ export const buildDeterministicChatAttachmentPath = (args: {
   const extension = getSafeAttachmentExtension(args.fileName, args.mimeType);
   return `${args.senderId}/${args.receiverId}/${args.clientMessageId}/${args.attachmentId}-attachment.${extension}`;
 };
+
+export const buildDeterministicChatPreviewPath = (args: {
+  senderId: string;
+  receiverId: string;
+  clientMessageId: string;
+  attachmentId: string;
+}) =>
+  `${args.senderId}/${args.receiverId}/${args.clientMessageId}/${args.attachmentId}-preview.jpg`;
 
 export const finalizeChatAttachment = async (input: ChatAttachmentFinalizeInput) => {
   console.log('[chat][attachment-finalize] invoke:start', {
@@ -126,6 +148,36 @@ export const finalizeChatAttachment = async (input: ChatAttachmentFinalizeInput)
   return message;
 };
 
+export const finalizeChatAttachmentBatch = async (input: ChatAttachmentBatchFinalizeInput) => {
+  const { data, error } = await supabase.functions.invoke('chat-attachment-finalize', {
+    body: {
+      mode: 'finalize_batch',
+      ...input,
+      expectedCount: input.attachments.length,
+    },
+  });
+  if (error) {
+    const errorCode = await extractInvokeErrorCode(error);
+    const batchError = new Error(errorCode ?? error.message ?? 'attachment_batch_finalize_failed');
+    (batchError as Error & { code?: string }).code = errorCode ?? undefined;
+    throw batchError;
+  }
+  const message = (data as { message?: unknown } | null)?.message;
+  if (!message) throw new Error('attachment_batch_finalize_missing_message');
+  return message;
+};
+
+export const cancelChatAttachmentBatch = async (input: {
+  receiverId: string;
+  clientMessageId: string;
+  attachments: Pick<ChatAttachmentFinalizeInput, 'attachmentId' | 'bucketId' | 'storagePath' | 'previewStoragePath'>[];
+}) => {
+  const { error } = await supabase.functions.invoke('chat-attachment-finalize', {
+    body: { mode: 'cancel', ...input },
+  });
+  if (error) throw error;
+};
+
 const extractInvokeErrorCode = async (error: unknown) => {
   const context = (error as { context?: Response }).context;
   if (context && typeof context.clone === 'function') {
@@ -140,7 +192,7 @@ const extractInvokeErrorCode = async (error: unknown) => {
 export const prepareViewOnceAttachment = async (messageId: string) => {
   console.log('[chat][view-once-prepare] invoke:start', { messageId });
   const { data, error } = await supabase.functions.invoke('chat-attachment-consume', {
-    body: { messageId, mode: 'prepare' },
+    body: { messageId, mode: 'consume' },
   });
   if (error) {
     const errorCode = await extractInvokeErrorCode(error);
@@ -176,38 +228,6 @@ export const prepareViewOnceAttachment = async (messageId: string) => {
     encryptedMediaNonce: string;
     encryptedMediaAlg: 'nacl-secretbox';
     senderPublicKey: string;
-  };
-};
-
-export const completeViewOnceAttachment = async (messageId: string) => {
-  console.log('[chat][view-once-complete] invoke:start', { messageId });
-  const { data, error } = await supabase.functions.invoke('chat-attachment-consume', {
-    body: { messageId, mode: 'complete' },
-  });
-  if (error) {
-    const errorCode = await extractInvokeErrorCode(error);
-    if (errorCode) {
-      console.log('[chat][view-once-complete] invoke:error-code', {
-        messageId,
-        errorCode,
-      });
-      const completeError = new Error(errorCode);
-      (completeError as Error & { code?: string }).code = errorCode;
-      throw completeError;
-    }
-    console.log('[chat][view-once-complete] invoke:error', {
-      messageId,
-      message: (error as { message?: string })?.message ?? String(error),
-    });
-    throw error;
-  }
-  console.log('[chat][view-once-complete] invoke:success', {
-    messageId,
-    attachmentId: (data as { attachmentId?: string } | null)?.attachmentId ?? null,
-  });
-  return data as {
-    attachmentId: string;
-    consumedAt: string | null;
   };
 };
 

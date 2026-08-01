@@ -25,8 +25,13 @@ type MediaMessageContentProps = {
   isDark: boolean;
   receiptPulseStyle: any;
   onMediaLoadError?: (message: MessageType) => void;
+  onMediaLoadSuccess?: (
+    message: MessageType,
+    renderedUri: string,
+    nativeCacheUri?: string | null,
+  ) => void;
   onRetryMedia?: (message: MessageType) => void;
-  onViewImage?: (message: MessageType, renderedUrl: string) => void;
+  onViewImage?: (message: MessageType, renderedUrl: string, albumIndex?: number) => void;
 };
 
 const MediaMessageContent = memo(
@@ -44,9 +49,27 @@ const MediaMessageContent = memo(
     isDark,
     receiptPulseStyle,
     onMediaLoadError,
+    onMediaLoadSuccess,
     onRetryMedia,
     onViewImage,
   }: MediaMessageContentProps) => {
+    const reportLoadedImage = (
+      message: MessageType,
+      renderedUri: string,
+      cacheKey?: string | null,
+    ) => {
+      if (!cacheKey || !renderedUri.startsWith('http')) {
+        onMediaLoadSuccess?.(message, renderedUri);
+        return;
+      }
+      void ExpoImage.getCachePathAsync(cacheKey)
+        .then((nativeCacheUri) => {
+          onMediaLoadSuccess?.(message, renderedUri, nativeCacheUri);
+        })
+        .catch(() => {
+          onMediaLoadSuccess?.(message, renderedUri);
+        });
+    };
     const receiptIcon = isMyMessage ? getReceiptIconState(item.status, isDark) : null;
     const unavailableTitle = mediaFailure ? 'Media unavailable' : null;
     const unavailableCopy =
@@ -61,6 +84,36 @@ const MediaMessageContent = memo(
       item.type === 'video'
         ? resolveChatVideoUri(item, cachedVideoUrl)
         : null;
+    const deliveryLabel =
+      isMyMessage && item.status === 'queued'
+        ? 'Waiting to send'
+        : isMyMessage && item.status === 'sending'
+          ? 'Sending…'
+        : isMyMessage && item.status === 'failed'
+          ? 'Couldn’t send · Tap to retry'
+          : null;
+    const deliveryBadge = deliveryLabel ? (
+      <View
+        style={[
+          deliveryStyles.badge,
+          item.status === 'failed' && deliveryStyles.failedBadge,
+        ]}
+        pointerEvents="none"
+      >
+        <MaterialCommunityIcons
+          name={
+            item.status === 'failed'
+              ? 'alert-circle-outline'
+              : item.status === 'sending'
+                ? 'cloud-upload-outline'
+                : 'clock-outline'
+          }
+          size={13}
+          color="#FFFFFF"
+        />
+        <Text style={deliveryStyles.label}>{deliveryLabel}</Text>
+      </View>
+    ) : null;
     const mediaReceiptToneStyle = useMemo(() => {
       if (!isMyMessage) return null;
       switch (item.status) {
@@ -78,8 +131,14 @@ const MediaMessageContent = memo(
     if (item.type === 'image') {
       const resolvedImageUri = resolveChatImageUri(item, cachedImageUrl);
       const mediaItems = getMessageImageItems(item);
+      const primaryPreviewUri =
+        mediaItems[0]?.localPreviewUri ??
+        (mediaItems[0]?.previewStoragePath
+          ? mediaUrisByPath?.[mediaItems[0].previewStoragePath]
+          : mediaItems[0]?.previewSignedUrl);
       const primaryImageUri =
         resolvedImageUri ??
+        primaryPreviewUri ??
         (mediaItems[0]?.storagePath
           ? mediaUrisByPath?.[mediaItems[0].storagePath]
           : mediaItems[0]?.signedUrl) ??
@@ -90,51 +149,92 @@ const MediaMessageContent = memo(
       const isAlbum = mediaItems.length > 1;
       const frameWidth = imageSize?.width ?? 340;
       const frameHeight = isAlbum ? Math.round(frameWidth * 0.86) : (imageSize?.height ?? 340);
-      const openTile = (mediaItem: (typeof mediaItems)[number], uri?: string) => {
+      const resolveTileUri = (mediaItem: (typeof mediaItems)[number], tileIndex: number) => {
+        const optimisticLocalUri =
+          item.status === 'queued' || item.status === 'sending'
+            ? mediaItem.localUri
+            : undefined;
+        const previewUri = mediaItem.localPreviewUri
+          ?? (mediaItem.previewStoragePath
+            ? mediaUrisByPath?.[mediaItem.previewStoragePath]
+            : mediaItem.previewSignedUrl);
+        const originalUri = mediaUrisByPath?.[mediaItem.storagePath];
+        const cachedOriginalUri =
+          originalUri?.startsWith('file://') || originalUri?.startsWith('content://')
+            ? originalUri
+            : undefined;
+        return cachedOriginalUri
+          ?? previewUri
+          ?? originalUri
+          ?? optimisticLocalUri
+          ?? (!mediaItem.storagePath ? mediaItem.signedUrl : undefined)
+          ?? (tileIndex === 0 ? primaryImageUri : undefined);
+      };
+      const openTile = (
+        mediaItem: (typeof mediaItems)[number],
+        uri: string | undefined,
+        albumIndex: number,
+      ) => {
         if (!uri) {
           if (mediaItem.storagePath || item.storagePath) {
             onRetryMedia?.({ ...item, storagePath: mediaItem.storagePath || item.storagePath });
           }
           return;
         }
-        onViewImage?.({
-          ...item,
-          storagePath: mediaItem.storagePath || null,
-          imageUrl: mediaItem.signedUrl ?? uri,
-          offlineImageUri: mediaItem.localUri,
-        }, uri);
+        onViewImage?.(item, uri, albumIndex);
       };
       const renderTile = (mediaItem: (typeof mediaItems)[number], tileIndex: number) => {
-        const optimisticLocalUri =
-          item.status === 'queued' || item.status === 'sending'
-            ? mediaItem.localUri
-            : undefined;
-        const uri = mediaUrisByPath?.[mediaItem.storagePath]
-          ?? optimisticLocalUri
-          ?? (!mediaItem.storagePath ? mediaItem.signedUrl : undefined)
-          ?? (tileIndex === 0 ? primaryImageUri : undefined);
+        const previewUri = mediaItem.localPreviewUri
+          ?? (mediaItem.previewStoragePath
+            ? mediaUrisByPath?.[mediaItem.previewStoragePath]
+            : mediaItem.previewSignedUrl);
+        const uri = resolveTileUri(mediaItem, tileIndex);
         const remaining = tileIndex === 3 ? mediaItems.length - 4 : 0;
+        const openIndex = remaining > 0 ? 4 : tileIndex;
+        const openItem = mediaItems[openIndex] ?? mediaItem;
+        const openUri = resolveTileUri(openItem, openIndex);
         return (
           <Pressable
             key={mediaItem.attachmentId || `${item.id}-${tileIndex}`}
             style={({ pressed }) => [albumStyles.tile, pressed && albumStyles.tilePressed]}
-            onPress={() => openTile(mediaItem, uri)}
+            onPress={() => openTile(openItem, openUri, openIndex)}
             accessibilityRole="button"
-            accessibilityLabel={`Open photo ${tileIndex + 1} of ${mediaItems.length}`}
+            accessibilityLabel={
+              remaining > 0
+                ? `Open ${remaining} more ${remaining === 1 ? 'photo' : 'photos'}`
+                : `Open photo ${tileIndex + 1} of ${mediaItems.length}`
+            }
           >
             {uri ? (
               <ExpoImage
-                source={{ uri }}
+                source={{
+                  uri,
+                  cacheKey: previewUri
+                    ? mediaItem.previewStoragePath || undefined
+                    : mediaItem.storagePath || undefined,
+                }}
                 style={StyleSheet.absoluteFill}
                 cachePolicy="memory-disk"
                 contentFit="cover"
                 transition={100}
+                onLoad={() => reportLoadedImage(
+                  {
+                    ...item,
+                    storagePath: previewUri
+                      ? mediaItem.previewStoragePath || null
+                      : mediaItem.storagePath || item.storagePath,
+                  },
+                  uri,
+                  previewUri
+                    ? mediaItem.previewStoragePath
+                    : mediaItem.storagePath || item.storagePath,
+                )}
                 onError={() => onMediaLoadError?.({ ...item, storagePath: mediaItem.storagePath || item.storagePath })}
               />
             ) : (
               <View style={albumStyles.placeholder}>
                 <MaterialCommunityIcons name="image-outline" size={30} color="rgba(255,255,255,0.72)" />
-                <Text style={albumStyles.placeholderText}>{unavailableTitle ?? 'Preparing photo'}</Text>
+                {unavailableTitle ? <Text style={albumStyles.placeholderText}>{unavailableTitle}</Text> : null}
                 {unavailableCopy ? <Text style={albumStyles.placeholderCopy}>{unavailableCopy}</Text> : null}
               </View>
             )}
@@ -166,24 +266,41 @@ const MediaMessageContent = memo(
             </View>
           ) : mediaItems[0] ? (
             <Pressable
-              onPress={() => openTile(mediaItems[0], primaryImageUri)}
+              onPress={() => openTile(mediaItems[0], primaryImageUri, 0)}
               style={{ width: frameWidth, height: frameHeight }}
               accessibilityRole="button"
               accessibilityLabel="Open photo"
             >
               {primaryImageUri ? (
                 <ExpoImage
-                  source={{ uri: primaryImageUri }}
+                  source={{
+                    uri: primaryImageUri,
+                    cacheKey: primaryPreviewUri
+                      ? mediaItems[0].previewStoragePath || undefined
+                      : mediaItems[0].storagePath || item.storagePath || undefined,
+                  }}
                   style={StyleSheet.absoluteFill}
                   cachePolicy="memory-disk"
                   contentFit="cover"
                   transition={100}
+                  onLoad={() => reportLoadedImage(
+                    {
+                      ...item,
+                      storagePath: primaryPreviewUri
+                        ? mediaItems[0].previewStoragePath || null
+                        : mediaItems[0].storagePath || item.storagePath,
+                    },
+                    primaryImageUri,
+                    primaryPreviewUri
+                      ? mediaItems[0].previewStoragePath
+                      : mediaItems[0].storagePath || item.storagePath,
+                  )}
                   onError={() => onMediaLoadError?.(item)}
                 />
               ) : (
                 <View style={albumStyles.placeholder}>
                   <MaterialCommunityIcons name="image-outline" size={32} color="rgba(255,255,255,0.72)" />
-                  <Text style={albumStyles.placeholderText}>{unavailableTitle ?? 'Preparing photo'}</Text>
+                  {unavailableTitle ? <Text style={albumStyles.placeholderText}>{unavailableTitle}</Text> : null}
                   {unavailableCopy ? <Text style={albumStyles.placeholderCopy}>{unavailableCopy}</Text> : null}
                 </View>
               )}
@@ -191,10 +308,11 @@ const MediaMessageContent = memo(
           ) : (
             <View style={[albumStyles.placeholder, { width: frameWidth, height: frameHeight }]}>
               <MaterialCommunityIcons name="image-outline" size={32} color="rgba(255,255,255,0.72)" />
-              <Text style={albumStyles.placeholderText}>{unavailableTitle ?? 'Preparing photo'}</Text>
+              {unavailableTitle ? <Text style={albumStyles.placeholderText}>{unavailableTitle}</Text> : null}
               {unavailableCopy ? <Text style={albumStyles.placeholderCopy}>{unavailableCopy}</Text> : null}
             </View>
           )}
+          {deliveryBadge}
           <Animated.View
             style={[
               styles.mediaMetaOverlay,
@@ -243,13 +361,22 @@ const MediaMessageContent = memo(
     }
 
     if (item.type === 'video') {
+      const posterUri =
+        item.offlinePreviewUri ??
+        (item.previewStoragePath ? mediaUrisByPath?.[item.previewStoragePath] : undefined) ??
+        item.previewUrl ??
+        item.mediaItems?.[0]?.localPreviewUri ??
+        (item.mediaItems?.[0]?.previewStoragePath
+          ? mediaUrisByPath?.[item.mediaItems[0].previewStoragePath]
+          : item.mediaItems?.[0]?.previewSignedUrl);
       return (
         <View style={[styles.videoMessageContainer, styles.mediaSurface]}>
-          {resolvedVideoUri ? (
+          {resolvedVideoUri || posterUri ? (
             <VideoPreview
               styles={styles}
-              url={resolvedVideoUri}
+              url={resolvedVideoUri ?? ''}
               resolvedUrl={resolvedVideoUri ?? undefined}
+              posterUri={posterUri}
               onError={() => onMediaLoadError?.(item)}
             />
           ) : (
@@ -263,17 +390,15 @@ const MediaMessageContent = memo(
               <View style={styles.videoPreviewPlaceholderIcon}>
                 <MaterialCommunityIcons name="video-outline" size={28} color={Colors.light.background} />
               </View>
-              <Text style={styles.videoPreviewPlaceholderTitle}>
-                {unavailableTitle ?? 'Preparing video'}
-              </Text>
+              {unavailableTitle ? (
+                <Text style={styles.videoPreviewPlaceholderTitle}>{unavailableTitle}</Text>
+              ) : null}
               {unavailableCopy ? (
                 <Text style={styles.videoPreviewPlaceholderCopy}>{unavailableCopy}</Text>
               ) : null}
-              {!unavailableCopy ? (
-                <Text style={styles.videoPreviewPlaceholderCopy}>Secure media is loading…</Text>
-              ) : null}
             </Pressable>
           )}
+          {deliveryBadge}
           <Animated.View
             style={[
               styles.mediaMetaOverlay,
@@ -328,6 +453,30 @@ const MediaMessageContent = memo(
 MediaMessageContent.displayName = "MediaMessageContent";
 
 export default MediaMessageContent;
+
+const deliveryStyles = StyleSheet.create({
+  badge: {
+    position: 'absolute',
+    top: 10,
+    left: 10,
+    zIndex: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: 'rgba(8, 24, 25, 0.78)',
+  },
+  failedBadge: {
+    backgroundColor: 'rgba(132, 38, 45, 0.9)',
+  },
+  label: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontFamily: 'Manrope_700Bold',
+  },
+});
 
 const albumStyles = StyleSheet.create({
   album: { width: '100%', gap: 2, backgroundColor: '#0B2224' },

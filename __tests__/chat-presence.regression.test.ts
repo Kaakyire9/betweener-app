@@ -1,5 +1,7 @@
 // @ts-nocheck
 import test from 'node:test';
+import { buildThreadPresenceBatchWrite } from '../lib/chat/local/chat-presence-write.ts';
+import { createPresenceWriteCoordinator } from '../lib/presence-write-coordinator.ts';
 import assert from 'node:assert/strict';
 
 import {
@@ -32,6 +34,101 @@ import {
   isSupabaseAccessTokenUsable,
   isSupabaseSessionUsable,
 } from '../lib/auth/session-token.ts';
+
+test('presence persistence collapses duplicate peers into one atomic statement', () => {
+  const batch = buildThreadPresenceBatchWrite(
+    'owner-a',
+    [
+      { threadId: 'peer-a', online: false, lastActive: '2026-07-31T09:00:00.000Z' },
+      { threadId: 'peer-b', online: true, lastActive: '2026-07-31T09:01:00.000Z' },
+      { threadId: 'peer-a', online: true, lastActive: '2026-07-31T09:02:00.000Z' },
+    ],
+    '2026-07-31T09:03:00.000Z',
+  );
+
+  assert.ok(batch);
+  assert.equal(batch.updateCount, 2);
+  assert.match(batch.query, /update chat_threads/);
+  assert.match(batch.query, /owner_user_id = \?/);
+  assert.deepEqual(batch.params.slice(-4), [
+    '2026-07-31T09:03:00.000Z',
+    'owner-a',
+    'peer-a',
+    'peer-b',
+  ]);
+  assert.equal(batch.params[1], 'online');
+});
+
+test('presence persistence ignores an empty or invalid batch', () => {
+  assert.equal(buildThreadPresenceBatchWrite('owner-a', [], 'now'), null);
+  assert.equal(
+    buildThreadPresenceBatchWrite('owner-a', [{ threadId: '', online: true }], 'now'),
+    null,
+  );
+});
+
+test('presence writes collapse concurrent duplicate lifecycle signals', async () => {
+  let releaseFirstWrite;
+  const firstWrite = new Promise((resolve) => {
+    releaseFirstWrite = resolve;
+  });
+  const writes = [];
+  const coordinator = createPresenceWriteCoordinator();
+  const execute = async (_scopeKey, online) => {
+    writes.push(online);
+    if (writes.length === 1) await firstWrite;
+    return true;
+  };
+
+  const first = coordinator.request('user-a', true, execute);
+  const duplicate = coordinator.request('user-a', true, execute);
+  releaseFirstWrite();
+  await Promise.all([first, duplicate]);
+
+  assert.deepEqual(writes, [true]);
+});
+
+test('presence writes preserve the latest state requested during an active write', async () => {
+  let releaseFirstWrite;
+  const firstWrite = new Promise((resolve) => {
+    releaseFirstWrite = resolve;
+  });
+  const writes = [];
+  const coordinator = createPresenceWriteCoordinator();
+  const execute = async (_scopeKey, online) => {
+    writes.push(online);
+    if (writes.length === 1) await firstWrite;
+    return true;
+  };
+
+  const online = coordinator.request('user-a', true, execute);
+  const offline = coordinator.request('user-a', false, execute);
+  releaseFirstWrite();
+  await Promise.all([online, offline]);
+
+  assert.deepEqual(writes, [true, false]);
+});
+
+test('presence heartbeats refresh after the minimum interval', async () => {
+  let now = 1_000;
+  const writes = [];
+  const coordinator = createPresenceWriteCoordinator({
+    minimumOnlineRefreshMs: 5_000,
+    now: () => now,
+  });
+  const execute = async (_scopeKey, online) => {
+    writes.push(online);
+    return true;
+  };
+
+  await coordinator.request('user-a', true, execute);
+  now += 4_999;
+  await coordinator.request('user-a', true, execute);
+  now += 1;
+  await coordinator.request('user-a', true, execute);
+
+  assert.deepEqual(writes, [true, true]);
+});
 
 const now = Date.parse('2026-06-01T12:00:00.000Z');
 const ago = (ageMs: number) => new Date(now - ageMs).toISOString();
