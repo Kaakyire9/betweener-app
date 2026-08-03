@@ -1,5 +1,5 @@
 export const CHAT_DB_NAME = 'betweener_chat.db';
-export const CHAT_SCHEMA_VERSION = 7;
+export const CHAT_SCHEMA_VERSION = 8;
 
 export type ChatThreadLocalStatus = 'active' | 'hidden' | 'deleted';
 export type ChatThreadType = 'direct';
@@ -104,6 +104,15 @@ export type ChatSyncStateRow = {
   last_cursor: string | null;
   last_synced_at: string | null;
   last_error: string | null;
+  updated_at: string;
+};
+
+export type ChatViewOnceStatusRow = {
+  owner_user_id: string;
+  message_id: string;
+  thread_id: string;
+  viewed_by_me: number;
+  viewed_by_peer: number;
   updated_at: string;
 };
 
@@ -249,6 +258,16 @@ create table if not exists chat_sync_state (
   unique(owner_user_id, scope, thread_id)
 );
 
+create table if not exists chat_view_once_status (
+  owner_user_id text not null,
+  message_id text not null,
+  thread_id text not null,
+  viewed_by_me integer not null default 0,
+  viewed_by_peer integer not null default 0,
+  updated_at text not null,
+  primary key(owner_user_id, message_id)
+);
+
 create index if not exists idx_chat_threads_owner on chat_threads(owner_user_id);
 create index if not exists idx_chat_threads_last_message on chat_threads(owner_user_id, is_pinned desc, last_message_at desc);
 create index if not exists idx_chat_threads_unread on chat_threads(owner_user_id, unread_count);
@@ -304,4 +323,6 @@ create index if not exists idx_chat_pending_outbox_sending_due
   where status = 'sending';
 create index if not exists idx_chat_sync_state_owner_scope_thread
   on chat_sync_state(owner_user_id, scope, thread_id);
+create index if not exists idx_chat_view_once_status_thread
+  on chat_view_once_status(owner_user_id, thread_id);
 `;

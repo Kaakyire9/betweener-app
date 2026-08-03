@@ -12,7 +12,8 @@ import {
   reconcileMessageWithServer,
   removeMessageById,
   replaceMessageById,
-  setMessageStatus,
+  transitionMessageLifecycle,
+  transitionOutgoingMessageState,
 } from '../lib/chat/message-state.ts';
 import {
   resolveChatImageUri,
@@ -39,7 +40,7 @@ test('appendMessage and removeMessageById manage optimistic list edges', () => {
   assert.deepEqual(removed, []);
 });
 
-test('replaceMessageById and setMessageStatus preserve untouched items', () => {
+test('replacement and lifecycle transitions preserve untouched items', () => {
   const items = [
     { ...baseMessage, id: 'a', status: 'sending' },
     { ...baseMessage, id: 'b', senderId: 'user-b', status: 'sent' },
@@ -54,9 +55,23 @@ test('replaceMessageById and setMessageStatus preserve untouched items', () => {
   assert.equal(replaced[0].text, 'Server copy');
   assert.equal(replaced[1], items[1]);
 
-  const queued = setMessageStatus(replaced, 'a', 'queued');
-  assert.equal(queued[0].status, 'queued');
-  assert.equal(queued[1], replaced[1]);
+  const acknowledged = transitionMessageLifecycle({
+    items,
+    messageId: 'a',
+    event: 'finalize_succeeded',
+  });
+  assert.equal(acknowledged[0].status, 'sent');
+  assert.equal(acknowledged[1], items[1]);
+});
+
+test('message lifecycle adapter handles durable retry and rejects receipt regressions', () => {
+  assert.equal(transitionOutgoingMessageState('sending', 'send_deferred'), 'queued');
+  assert.equal(transitionOutgoingMessageState('retryable_failed', 'send_started'), 'sending');
+  assert.equal(transitionOutgoingMessageState('queued', 'finalize_succeeded'), 'sent');
+  assert.throws(
+    () => transitionOutgoingMessageState('read', 'delivery_confirmed'),
+    /invalid_chat_lifecycle_transition/,
+  );
 });
 
 test('reconcileMessageWithServer keeps local reply metadata when server copy lacks it', () => {

@@ -10,6 +10,11 @@ cancel_definition as (
   select pg_get_functiondef(
     'public.rpc_cancel_chat_attachment_batch(uuid,uuid,text,jsonb)'::regprocedure
   ) as body
+),
+atomic_finalize_definition as (
+  select pg_get_functiondef(
+    'public.rpc_finalize_chat_attachment_batch_v3(uuid,uuid,text,text,smallint,jsonb,text,uuid,jsonb)'::regprocedure
+  ) as body
 )
 select
   to_regclass('public.chat_attachment_lifecycle_events') is not null
@@ -46,7 +51,10 @@ select
   ) as database_idempotency_key_unique,
   finalize_definition.body like '%pg_advisory_xact_lock%'
     as duplicate_finalizers_serialized,
-  finalize_definition.body like '%insert into public.message_attachments%'
+  position(
+    concat('insert into public.message_', 'attachments')
+    in finalize_definition.body
+  ) > 0
     and finalize_definition.body like '%attachment_state = ''ready''%'
     as atomic_batch_publication_active,
   finalize_definition.body like '%attachment_set_hash%'
@@ -98,4 +106,35 @@ select
       and tablename = 'objects'
       and policyname = 'Chat senders can delete media'
   ) as direct_client_media_delete_revoked
-from finalize_definition, cancel_definition;
+  ,to_regprocedure(
+    'public.rpc_finalize_chat_attachment_batch_v3(uuid,uuid,text,text,smallint,jsonb,text,uuid,jsonb)'
+  ) is not null as atomic_batch_finalizer_present
+  ,to_regprocedure(
+    'public.rpc_finalize_chat_attachment_v3(uuid,uuid,text,uuid,text,text,text,text,text,bigint,integer,integer,integer,text,uuid,text,jsonb,boolean,text,text,text,text,text,jsonb,text,jsonb)'
+  ) is not null as atomic_single_finalizer_present
+  ,atomic_finalize_definition.body like '%rpc_claim_chat_attachment_finalization%'
+    and atomic_finalize_definition.body like '%rpc_finalize_chat_attachment_batch%'
+    and atomic_finalize_definition.body like '%canonical_message_id = v_message.id%'
+    as claim_publish_and_result_binding_are_atomic
+  ,exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'chat_attachment_finalization_keys'
+      and column_name = 'canonical_message_id'
+  ) as canonical_result_binding_present
+  ,exists (
+    select 1 from pg_trigger
+    where tgrelid = 'public.message_attachments'::regclass
+      and tgname = 'enforce_chat_attachment_canonical_identity'
+      and not tgisinternal
+  ) as canonical_attachment_identity_guard_active
+  ,to_regprocedure(
+    'public.rpc_abandon_stale_chat_attachment_finalizations(integer)'
+  ) is not null as stale_finalization_abandonment_present
+  ,exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'chat_attachment_retention_runs'
+      and column_name = 'abandoned_finalization_count'
+  ) as abandonment_observability_present
+from finalize_definition, cancel_definition, atomic_finalize_definition;

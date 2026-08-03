@@ -1,8 +1,10 @@
 import * as Crypto from 'expo-crypto';
 
 import { supabase } from '@/lib/supabase';
+import type { Database } from '@/supabase/types/database';
 
 export type ChatAttachmentKind = 'image' | 'video' | 'document' | 'audio';
+export type CanonicalChatAttachmentMessage = Database['public']['Tables']['messages']['Row'];
 
 export type ChatAttachmentFinalizeInput = {
   receiverId: string;
@@ -96,7 +98,9 @@ export const buildDeterministicChatPreviewPath = (args: {
 }) =>
   `${args.senderId}/${args.receiverId}/${args.clientMessageId}/${args.attachmentId}-preview.jpg`;
 
-export const finalizeChatAttachment = async (input: ChatAttachmentFinalizeInput) => {
+export const finalizeChatAttachment = async (
+  input: ChatAttachmentFinalizeInput,
+): Promise<CanonicalChatAttachmentMessage> => {
   console.log('[chat][attachment-finalize] invoke:start', {
     receiverId: input.receiverId,
     clientMessageId: input.clientMessageId,
@@ -138,7 +142,7 @@ export const finalizeChatAttachment = async (input: ChatAttachmentFinalizeInput)
     });
     throw error;
   }
-  const message = (data as { message?: unknown } | null)?.message;
+  const message = (data as { message?: CanonicalChatAttachmentMessage } | null)?.message;
   if (!message) throw new Error('attachment_finalize_missing_message');
   console.log('[chat][attachment-finalize] invoke:success', {
     clientMessageId: input.clientMessageId,
@@ -148,7 +152,9 @@ export const finalizeChatAttachment = async (input: ChatAttachmentFinalizeInput)
   return message;
 };
 
-export const finalizeChatAttachmentBatch = async (input: ChatAttachmentBatchFinalizeInput) => {
+export const finalizeChatAttachmentBatch = async (
+  input: ChatAttachmentBatchFinalizeInput,
+): Promise<CanonicalChatAttachmentMessage> => {
   const { data, error } = await supabase.functions.invoke('chat-attachment-finalize', {
     body: {
       mode: 'finalize_batch',
@@ -162,7 +168,7 @@ export const finalizeChatAttachmentBatch = async (input: ChatAttachmentBatchFina
     (batchError as Error & { code?: string }).code = errorCode ?? undefined;
     throw batchError;
   }
-  const message = (data as { message?: unknown } | null)?.message;
+  const message = (data as { message?: CanonicalChatAttachmentMessage } | null)?.message;
   if (!message) throw new Error('attachment_batch_finalize_missing_message');
   return message;
 };

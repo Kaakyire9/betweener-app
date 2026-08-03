@@ -4,6 +4,7 @@ import type {
   ChatSyncScope,
   ChatSyncStateRow,
   ChatThreadRow,
+  ChatViewOnceStatusRow,
 } from '@/lib/chat/local/chat-schema';
 import { resolveThreadUnreadCount } from '@/lib/chat/active-thread';
 import { CHAT_DB_NAME, CHAT_SCHEMA_VERSION } from '@/lib/chat/local/chat-schema';
@@ -2075,6 +2076,17 @@ export const ChatRepository = {
         threadId,
         ...ids,
       );
+      await txn.runAsync(
+        `
+          delete from chat_view_once_status
+          where owner_user_id = ?
+            and thread_id = ?
+            and message_id in (${placeholders})
+        `,
+        ownerUserId,
+        threadId,
+        ...ids,
+      );
       await refreshThreadSummaryFromMessages(txn, ownerUserId, threadId);
     }, { label: 'delete-messages' });
     notify(threadListeners, ownerUserId);
@@ -2091,6 +2103,11 @@ export const ChatRepository = {
       );
       await txn.runAsync(
         'delete from chat_messages where owner_user_id = ? and thread_id = ?',
+        ownerUserId,
+        threadId,
+      );
+      await txn.runAsync(
+        'delete from chat_view_once_status where owner_user_id = ? and thread_id = ?',
         ownerUserId,
         threadId,
       );
@@ -2115,6 +2132,11 @@ export const ChatRepository = {
       );
       await txn.runAsync(
         'delete from chat_pending_outbox where owner_user_id = ? and thread_id = ?',
+        ownerUserId,
+        threadId,
+      );
+      await txn.runAsync(
+        'delete from chat_view_once_status where owner_user_id = ? and thread_id = ?',
         ownerUserId,
         threadId,
       );
@@ -2165,6 +2187,79 @@ export const ChatRepository = {
       {
         priority: operationOptions.priority ?? 'normal',
         label: scope === 'thread_messages' ? 'get-thread-sync-state' : 'get-list-sync-state',
+      },
+    );
+  },
+
+  async getViewOnceStatuses(
+    ownerUserId: string,
+    messageIds: string[],
+    operationOptions: ChatRepositoryOperationOptions = {},
+  ): Promise<ChatViewOnceStatusRow[]> {
+    const uniqueIds = Array.from(new Set(messageIds.filter(Boolean)));
+    if (uniqueIds.length === 0) return [];
+    const db = await getChatDb();
+    const placeholders = uniqueIds.map(() => '?').join(',');
+    const query = `
+      select owner_user_id, message_id, thread_id, viewed_by_me, viewed_by_peer, updated_at
+      from chat_view_once_status
+      where owner_user_id = ? and message_id in (${placeholders})
+    `;
+    const params = [ownerUserId, ...uniqueIds];
+    return runBoundedSerializedRead(
+      () => db.getAllSync<ChatViewOnceStatusRow>(query, ...params),
+      () => db.getAllAsync<ChatViewOnceStatusRow>(query, ...params),
+      {
+        priority: operationOptions.priority ?? 'user-blocking',
+        label: 'get-view-once-statuses',
+      },
+    );
+  },
+
+  async upsertViewOnceStatuses(
+    ownerUserId: string,
+    threadId: string,
+    statuses: { messageId: string; viewedByMe: boolean; viewedByPeer: boolean }[],
+    operationOptions: ChatRepositoryOperationOptions = {},
+  ): Promise<void> {
+    const unique = new Map<string, { viewedByMe: boolean; viewedByPeer: boolean }>();
+    statuses.forEach((status) => {
+      if (!status.messageId) return;
+      const current = unique.get(status.messageId);
+      unique.set(status.messageId, {
+        viewedByMe: Boolean(current?.viewedByMe || status.viewedByMe),
+        viewedByPeer: Boolean(current?.viewedByPeer || status.viewedByPeer),
+      });
+    });
+    if (unique.size === 0) return;
+
+    const db = await getChatDb();
+    const updatedAt = nowIso();
+    const valueGroups = Array.from(unique.keys()).map(() => '(?, ?, ?, ?, ?, ?)').join(',');
+    const params = Array.from(unique.entries()).flatMap(([messageId, status]) => [
+      ownerUserId,
+      messageId,
+      threadId,
+      status.viewedByMe ? 1 : 0,
+      status.viewedByPeer ? 1 : 0,
+      updatedAt,
+    ]);
+    const query = `
+      insert into chat_view_once_status (
+        owner_user_id, message_id, thread_id, viewed_by_me, viewed_by_peer, updated_at
+      ) values ${valueGroups}
+      on conflict(owner_user_id, message_id) do update set
+        thread_id = excluded.thread_id,
+        viewed_by_me = max(chat_view_once_status.viewed_by_me, excluded.viewed_by_me),
+        viewed_by_peer = max(chat_view_once_status.viewed_by_peer, excluded.viewed_by_peer),
+        updated_at = excluded.updated_at
+    `;
+    await runBoundedSerializedWrite(
+      () => db.runSync(query, ...params),
+      () => db.runAsync(query, ...params),
+      {
+        priority: operationOptions.priority ?? 'normal',
+        label: 'upsert-view-once-statuses',
       },
     );
   },

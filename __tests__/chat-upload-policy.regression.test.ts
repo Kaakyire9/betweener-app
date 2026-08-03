@@ -6,6 +6,7 @@ import {
   CHAT_TUS_CHECKPOINT_MAX_AGE_MS,
   createDirectStorageOrigin,
   isFreshChatUploadCheckpoint,
+  resolveChatUploadByteSize,
 } from '../lib/chat/transfer/chat-upload-policy.ts';
 
 test('chat upload fingerprints remain deterministic across retries', () => {
@@ -48,5 +49,26 @@ test('expired or future resumable checkpoints are rejected', () => {
   assert.equal(
     isFreshChatUploadCheckpoint(new Date(now + 1).toISOString(), now),
     false,
+  );
+});
+
+test('resumable uploads trust the durable staged file over stale picker metadata', () => {
+  assert.equal(
+    resolveChatUploadByteSize({
+      stagedFileSize: 1_290_299,
+      declaredByteSize: 2_130_238,
+    }),
+    1_290_299,
+  );
+});
+
+test('resumable uploads only fall back to declared size when the staged URI cannot be inspected', () => {
+  assert.equal(
+    resolveChatUploadByteSize({ stagedFileSize: null, declaredByteSize: 2_130_238 }),
+    2_130_238,
+  );
+  assert.equal(
+    resolveChatUploadByteSize({ stagedFileSize: 0, declaredByteSize: null }),
+    null,
   );
 });

@@ -795,27 +795,53 @@ export type Database = {
       }
       chat_attachment_finalization_keys: {
         Row: {
+          canonical_message_id: string | null
           client_message_id: string
+          completed_at: string | null
           created_at: string
+          finalization_key: string
           last_replayed_at: string | null
+          replay_count: number
+          request_hash: string
           request_payload: Json
           sender_id: string
+          status: string
         }
         Insert: {
+          canonical_message_id?: string | null
           client_message_id: string
+          completed_at?: string | null
           created_at?: string
+          finalization_key?: string
           last_replayed_at?: string | null
+          replay_count?: number
+          request_hash: string
           request_payload: Json
           sender_id: string
+          status?: string
         }
         Update: {
+          canonical_message_id?: string | null
           client_message_id?: string
+          completed_at?: string | null
           created_at?: string
+          finalization_key?: string
           last_replayed_at?: string | null
+          replay_count?: number
+          request_hash?: string
           request_payload?: Json
           sender_id?: string
+          status?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "chat_attachment_finalization_keys_canonical_message_id_fkey"
+            columns: ["canonical_message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       chat_attachment_lifecycle_events: {
         Row: {
@@ -900,6 +926,7 @@ export type Database = {
       }
       chat_attachment_retention_runs: {
         Row: {
+          abandoned_finalization_count: number
           claimed_count: number
           completed_at: string | null
           dead_letter_count: number
@@ -912,6 +939,7 @@ export type Database = {
           status: string
         }
         Insert: {
+          abandoned_finalization_count?: number
           claimed_count?: number
           completed_at?: string | null
           dead_letter_count?: number
@@ -924,6 +952,7 @@ export type Database = {
           status?: string
         }
         Update: {
+          abandoned_finalization_count?: number
           claimed_count?: number
           completed_at?: string | null
           dead_letter_count?: number
@@ -3817,6 +3846,23 @@ export type Database = {
           width?: number | null
         }
         Relationships: [
+          {
+            foreignKeyName: "message_attachments_canonical_identity_fkey"
+            columns: [
+              "message_id",
+              "sender_id",
+              "receiver_id",
+              "client_message_id",
+            ]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: [
+              "id",
+              "sender_id",
+              "receiver_id",
+              "client_message_id",
+            ]
+          },
           {
             foreignKeyName: "message_attachments_message_id_fkey"
             columns: ["message_id"]
@@ -8619,6 +8665,10 @@ export type Database = {
         Returns: number
       }
       reset_daily_superlikes: { Args: never; Returns: undefined }
+      rpc_abandon_stale_chat_attachment_finalizations: {
+        Args: { p_limit?: number }
+        Returns: number
+      }
       rpc_accept_date_plan: {
         Args: { p_plan_id: string }
         Returns: {
@@ -9981,6 +10031,147 @@ export type Database = {
           p_receiver_id: string
           p_reply_to_message_id?: string
           p_sender_id: string
+        }
+        Returns: {
+          attachment_set_hash: string | null
+          attachment_state: string
+          attachment_state_version: number
+          audio_duration: number | null
+          audio_path: string | null
+          audio_waveform: Json | null
+          client_message_id: string | null
+          created_at: string
+          deleted_at: string | null
+          deleted_by: string | null
+          deleted_for_all: boolean
+          delivered_at: string | null
+          e2ee: boolean
+          edited_at: string | null
+          enc: Json | null
+          encrypted_key_nonce: string | null
+          encrypted_key_receiver: string | null
+          encrypted_key_sender: string | null
+          encrypted_media: boolean
+          encrypted_media_alg: string | null
+          encrypted_media_mime: string | null
+          encrypted_media_nonce: string | null
+          encrypted_media_path: string | null
+          encrypted_media_size: number | null
+          id: string
+          is_read: boolean
+          is_view_once: boolean
+          media_expected_count: number | null
+          media_items: Json
+          media_kind: string | null
+          message_type: string
+          read_at: string | null
+          receiver_id: string
+          reply_to_message_id: string | null
+          sender_id: string
+          status: string
+          storage_path: string | null
+          text: string
+          view_once: boolean
+          viewed_at: string | null
+          viewed_by: string | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "messages"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      rpc_finalize_chat_attachment_batch_v3: {
+        Args: {
+          p_attachment_type: string
+          p_attachments: Json
+          p_caption: string
+          p_client_message_id: string
+          p_expected_count: number
+          p_receiver_id: string
+          p_reply_to_message_id: string
+          p_request_payload: Json
+          p_sender_id: string
+        }
+        Returns: {
+          attachment_set_hash: string | null
+          attachment_state: string
+          attachment_state_version: number
+          audio_duration: number | null
+          audio_path: string | null
+          audio_waveform: Json | null
+          client_message_id: string | null
+          created_at: string
+          deleted_at: string | null
+          deleted_by: string | null
+          deleted_for_all: boolean
+          delivered_at: string | null
+          e2ee: boolean
+          edited_at: string | null
+          enc: Json | null
+          encrypted_key_nonce: string | null
+          encrypted_key_receiver: string | null
+          encrypted_key_sender: string | null
+          encrypted_media: boolean
+          encrypted_media_alg: string | null
+          encrypted_media_mime: string | null
+          encrypted_media_nonce: string | null
+          encrypted_media_path: string | null
+          encrypted_media_size: number | null
+          id: string
+          is_read: boolean
+          is_view_once: boolean
+          media_expected_count: number | null
+          media_items: Json
+          media_kind: string | null
+          message_type: string
+          read_at: string | null
+          receiver_id: string
+          reply_to_message_id: string | null
+          sender_id: string
+          status: string
+          storage_path: string | null
+          text: string
+          view_once: boolean
+          viewed_at: string | null
+          viewed_by: string | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "messages"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      rpc_finalize_chat_attachment_v3: {
+        Args: {
+          p_attachment_id: string
+          p_attachment_type: string
+          p_audio_waveform: Json
+          p_bucket_id: string
+          p_byte_size: number
+          p_caption: string
+          p_client_message_id: string
+          p_duration_ms: number
+          p_encrypted_key_nonce: string
+          p_encrypted_key_receiver: string
+          p_encrypted_key_sender: string
+          p_encrypted_media_alg: string
+          p_encrypted_media_nonce: string
+          p_height: number
+          p_is_view_once: boolean
+          p_mime_type: string
+          p_original_name: string
+          p_receiver_id: string
+          p_reply_to_message_id: string
+          p_request_payload: Json
+          p_sender_id: string
+          p_sender_public_key: string
+          p_sha256: string
+          p_storage_path: string
+          p_validation_details: Json
+          p_width: number
         }
         Returns: {
           attachment_set_hash: string | null

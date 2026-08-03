@@ -34,6 +34,44 @@ const positiveIntegerOrNull = (value: unknown) => {
   return Math.round(numeric)
 }
 
+const authoritativeResponseSize = (response: Response) => {
+  const rangeTotal = (response.headers.get('content-range') || '').split('/').pop() || ''
+  if (/^[0-9]+$/.test(rangeTotal)) return Number(rangeTotal)
+  const contentLength = response.headers.get('content-length') || ''
+  if (response.status === 200 && /^[0-9]+$/.test(contentLength)) return Number(contentLength)
+  return null
+}
+
+type RpcError = { code?: string | null; message?: string | null }
+
+const isMissingAtomicFinalizationRpc = (error: RpcError | null) =>
+  Boolean(
+    error && (
+      error.code === 'PGRST202' ||
+      error.code === '42883' ||
+      String(error.message || '').includes('rpc_finalize_chat_attachment_batch_v3') ||
+      String(error.message || '').includes('rpc_finalize_chat_attachment_v3')
+    )
+  )
+
+const buildValidationDetails = (args: {
+  sampleBytes: number
+  encrypted?: boolean
+  hasDimensions?: boolean
+  hasDuration?: boolean
+  previewVerified?: boolean
+}) => ({
+  validator: 'signature-v3',
+  sampled_bytes: args.sampleBytes,
+  byte_size_verified: true,
+  signature_verified: args.encrypted !== true,
+  ciphertext_verified: args.encrypted === true,
+  mime_signature_verified: args.encrypted !== true,
+  dimensions_source: args.hasDimensions ? 'client_provisional' : 'absent',
+  duration_source: args.hasDuration ? 'client_provisional' : 'absent',
+  preview_verified: args.previewVerified === true,
+})
+
 const validateSignature = (kind: string, mime: string, bytes: Uint8Array, encrypted: boolean, fileName = '') => {
   if (encrypted) return true
   if (kind === 'image') {
@@ -69,6 +107,47 @@ const validateSignature = (kind: string, mime: string, bytes: Uint8Array, encryp
   return false
 }
 
+const signatureMatchesDeclaredMime = (
+  kind: string,
+  mime: string,
+  bytes: Uint8Array,
+  encrypted: boolean,
+) => {
+  if (encrypted) return true
+  if (kind === 'image') {
+    if (startsWith(bytes, [0xff, 0xd8, 0xff])) return ['image/jpeg', 'image/jpg'].includes(mime)
+    if (startsWith(bytes, [0x89, 0x50, 0x4e, 0x47])) return mime === 'image/png'
+    if (hasAscii(bytes, 'GIF8')) return mime === 'image/gif'
+    if (hasAscii(bytes, 'RIFF') && hasAscii(bytes, 'WEBP', 8)) return mime === 'image/webp'
+    if (hasAscii(bytes, 'ftyp', 4)) {
+      if (hasAscii(bytes, 'avif', 8)) return mime === 'image/avif'
+      return ['image/heic', 'image/heif'].includes(mime)
+    }
+  }
+  if (kind === 'video') {
+    if (startsWith(bytes, [0x1a, 0x45, 0xdf, 0xa3])) {
+      return ['video/webm', 'video/x-matroska'].includes(mime)
+    }
+    if (hasAscii(bytes, 'ftyp', 4)) {
+      return ['video/mp4', 'video/quicktime', 'video/x-m4v', 'video/3gpp'].includes(mime)
+    }
+  }
+  if (kind === 'audio') {
+    if (hasAscii(bytes, 'ID3') || startsWith(bytes, [0xff, 0xf1]) || startsWith(bytes, [0xff, 0xf9])) {
+      return ['audio/mpeg', 'audio/mp3', 'audio/aac'].includes(mime)
+    }
+    if (hasAscii(bytes, 'RIFF')) return ['audio/wav', 'audio/x-wav', 'audio/wave'].includes(mime)
+    if (hasAscii(bytes, 'OggS')) return ['audio/ogg', 'audio/opus'].includes(mime)
+    if (hasAscii(bytes, 'fLaC')) return ['audio/flac', 'audio/x-flac'].includes(mime)
+    if (hasAscii(bytes, 'caff')) return ['audio/x-caf', 'audio/caf'].includes(mime)
+    if (hasAscii(bytes, '#!AMR')) return ['audio/amr', 'audio/amr-wb'].includes(mime)
+    if (hasAscii(bytes, 'ftyp', 4)) return ['audio/mp4', 'audio/m4a', 'audio/x-m4a'].includes(mime)
+    if (startsWith(bytes, [0x1a, 0x45, 0xdf, 0xa3])) return ['audio/webm', 'audio/x-matroska'].includes(mime)
+  }
+  if (kind === 'document') return true
+  return false
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
   if (req.method !== 'POST') return json(405, { error: 'method_not_allowed' })
@@ -87,6 +166,8 @@ serve(async (req) => {
     const input = await req.json()
     const service = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
     const mode = String(input.mode || 'finalize_single')
+    const atomicFinalizationEnabled =
+      String(Deno.env.get('CHAT_ATTACHMENT_ATOMIC_FINALIZATION_ENABLED') || 'true').toLowerCase() !== 'false'
 
     if (mode === 'cancel') {
       const receiverId = String(input.receiverId || '')
@@ -172,12 +253,12 @@ serve(async (req) => {
         if (signedError || !signed?.signedUrl) return json(404, { error: 'attachment_object_not_found' })
         const sampleResponse = await fetch(signed.signedUrl, { headers: { Range: 'bytes=0-65535' } })
         if (!sampleResponse.ok) return json(422, { error: 'attachment_unreadable' })
-        const contentRange = sampleResponse.headers.get('content-range') || ''
-        const contentLength = Number(contentRange.split('/').pop() || sampleResponse.headers.get('content-length') || raw.byteSize || 0)
+        const contentLength = authoritativeResponseSize(sampleResponse)
         const sample = new Uint8Array(await sampleResponse.arrayBuffer())
         if (
-          !Number.isFinite(contentLength) || contentLength <= 0 || contentLength > LIMITS[kind] ||
-          !validateSignature(kind, mime, sample, false, String(raw.originalName || ''))
+          contentLength === null || contentLength <= 0 || contentLength > LIMITS[kind] ||
+          !validateSignature(kind, mime, sample, false, String(raw.originalName || '')) ||
+          !signatureMatchesDeclaredMime(kind, mime, sample, false)
         ) {
           return json(415, { error: 'attachment_content_mismatch' })
         }
@@ -195,12 +276,9 @@ serve(async (req) => {
           }
           const previewResponse = await fetch(previewSigned.signedUrl, { headers: { Range: 'bytes=0-1048576' } })
           const previewBytes = new Uint8Array(await previewResponse.arrayBuffer())
-          previewLength = Number(
-            (previewResponse.headers.get('content-range') || '').split('/').pop() ||
-            previewResponse.headers.get('content-length') || raw.previewByteSize || 0,
-          )
+          previewLength = authoritativeResponseSize(previewResponse)
           if (
-            !previewResponse.ok || previewLength <= 0 || previewLength > 1048576 ||
+            !previewResponse.ok || previewLength === null || previewLength <= 0 || previewLength > 1048576 ||
             !validateSignature('image', 'image/jpeg', previewBytes, false)
           ) {
             return json(415, { error: 'attachment_preview_invalid' })
@@ -220,7 +298,12 @@ serve(async (req) => {
           height: positiveIntegerOrNull(raw.height),
           durationMs: positiveIntegerOrNull(raw.durationMs),
           sha256: raw.sha256 || null,
-          validationDetails: { validator: 'signature-v2', sampled_bytes: sample.length },
+          validationDetails: buildValidationDetails({
+            sampleBytes: sample.length,
+            hasDimensions: positiveIntegerOrNull(raw.width) !== null && positiveIntegerOrNull(raw.height) !== null,
+            hasDuration: positiveIntegerOrNull(raw.durationMs) !== null,
+            previewVerified: previewLength !== null,
+          }),
           ...(previewPath ? {
             previewStoragePath: previewPath,
             previewMimeType: 'image/jpeg',
@@ -237,16 +320,18 @@ serve(async (req) => {
         clientMessageId, attachmentType: kind, expectedCount,
         caption: String(input.caption || ''),
         replyToMessageId: input.replyToMessageId || null,
-        attachments: validated,
+        // Keep the idempotency payload byte-for-byte compatible with the v2
+        // server contract. Verification evidence is authoritative server data
+        // and is persisted separately on message_attachments.
+        attachments: validated.map((item) => ({
+          ...item,
+          validationDetails: {
+            validator: 'signature-v2',
+            sampled_bytes: (item.validationDetails as { sampled_bytes?: number })?.sampled_bytes ?? 0,
+          },
+        })),
       }
-      const { error: keyError } = await service.rpc('rpc_claim_chat_attachment_finalization', {
-        p_sender_id: user.id,
-        p_client_message_id: clientMessageId,
-        p_request_payload: batchFinalizationPayload,
-      })
-      if (keyError) return json(409, { error: keyError.message || 'attachment_idempotency_conflict' })
-
-      const { data, error } = await service.rpc('rpc_finalize_chat_attachment_batch', {
+      const batchRpcInput = {
         p_sender_id: user.id,
         p_receiver_id: receiverId,
         p_client_message_id: clientMessageId,
@@ -255,7 +340,28 @@ serve(async (req) => {
         p_attachments: validated,
         p_caption: input.caption || '',
         p_reply_to_message_id: input.replyToMessageId || null,
-      })
+      }
+      let data = null
+      let error: RpcError | null = null
+      if (atomicFinalizationEnabled) {
+        const atomicResult = await service.rpc('rpc_finalize_chat_attachment_batch_v3', {
+          ...batchRpcInput,
+          p_request_payload: batchFinalizationPayload,
+        })
+        data = atomicResult.data
+        error = atomicResult.error
+      }
+      if (!atomicFinalizationEnabled || isMissingAtomicFinalizationRpc(error)) {
+        const { error: keyError } = await service.rpc('rpc_claim_chat_attachment_finalization', {
+          p_sender_id: user.id,
+          p_client_message_id: clientMessageId,
+          p_request_payload: batchFinalizationPayload,
+        })
+        if (keyError) return json(409, { error: keyError.message || 'attachment_idempotency_conflict' })
+        const legacyResult = await service.rpc('rpc_finalize_chat_attachment_batch', batchRpcInput)
+        data = legacyResult.data
+        error = legacyResult.error
+      }
       if (error) {
         const status = error.code === '42501' ? 403 : error.code === '22023' || error.code === '23514' ? 422 : 409
         console.log('[chat-attachment-finalize] batch-rpc-error', {
@@ -337,9 +443,8 @@ serve(async (req) => {
       })
       return json(422, { error: 'attachment_unreadable' })
     }
-    const contentRange = sampleResponse.headers.get('content-range') || ''
-    const contentLength = Number(contentRange.split('/').pop() || sampleResponse.headers.get('content-length') || input.byteSize || 0)
-    if (!Number.isFinite(contentLength) || contentLength <= 0 || contentLength > LIMITS[kind]) {
+    const contentLength = authoritativeResponseSize(sampleResponse)
+    if (contentLength === null || contentLength <= 0 || contentLength > LIMITS[kind]) {
       console.log('[chat-attachment-finalize] size-invalid', {
         attachmentId,
         clientMessageId,
@@ -349,7 +454,10 @@ serve(async (req) => {
       return json(413, { error: 'attachment_size_invalid' })
     }
     const sample = new Uint8Array(await sampleResponse.arrayBuffer())
-    if (!validateSignature(kind, mime, sample, isViewOnce, String(input.originalName || ''))) {
+    if (
+      !validateSignature(kind, mime, sample, isViewOnce, String(input.originalName || '')) ||
+      !signatureMatchesDeclaredMime(kind, mime, sample, isViewOnce)
+    ) {
       console.log('[chat-attachment-finalize] signature-mismatch', {
         attachmentId,
         clientMessageId,
@@ -377,16 +485,12 @@ serve(async (req) => {
       senderPublicKey: input.senderPublicKey || null,
       waveform: Array.isArray(input.waveform) ? input.waveform.slice(0, 240) : null,
     }
-    const { error: keyError } = await service.rpc('rpc_claim_chat_attachment_finalization', {
-      p_sender_id: user.id,
-      p_client_message_id: clientMessageId,
-      p_request_payload: singleFinalizationPayload,
+    const validationDetails = buildValidationDetails({
+      sampleBytes: sample.length,
+      encrypted: isViewOnce,
+      hasDimensions: positiveIntegerOrNull(input.width) !== null && positiveIntegerOrNull(input.height) !== null,
+      hasDuration: positiveIntegerOrNull(input.durationMs) !== null,
     })
-    if (keyError) return json(409, { error: keyError.message || 'attachment_idempotency_conflict' })
-
-    const rpcName = attachmentIndex === 0
-      ? 'rpc_finalize_chat_attachment'
-      : 'rpc_append_chat_album_attachment'
     const rpcInput = attachmentIndex === 0 ? {
       p_sender_id: user.id,
       p_receiver_id: receiverId,
@@ -404,7 +508,7 @@ serve(async (req) => {
       p_caption: input.caption || '',
       p_reply_to_message_id: input.replyToMessageId || null,
       p_sha256: input.sha256 || null,
-      p_validation_details: { validator: 'signature-v1', sampled_bytes: sample.length },
+      p_validation_details: validationDetails,
       p_is_view_once: isViewOnce,
       p_encrypted_key_sender: input.encryptedKeySender || null,
       p_encrypted_key_receiver: input.encryptedKeyReceiver || null,
@@ -428,9 +532,34 @@ serve(async (req) => {
       p_width: positiveIntegerOrNull(input.width),
       p_height: positiveIntegerOrNull(input.height),
       p_sha256: input.sha256 || null,
-      p_validation_details: { validator: 'signature-v1', sampled_bytes: sample.length },
+      p_validation_details: validationDetails,
     }
-    const { data, error } = await service.rpc(rpcName, rpcInput)
+    let data = null
+    let error: RpcError | null = null
+    if (attachmentIndex === 0 && atomicFinalizationEnabled) {
+      const atomicResult = await service.rpc('rpc_finalize_chat_attachment_v3', {
+          ...rpcInput,
+          p_request_payload: singleFinalizationPayload,
+        })
+      data = atomicResult.data
+      error = atomicResult.error
+    } else if (attachmentIndex !== 0) {
+      error = { code: '22023', message: 'album_requires_atomic_batch' }
+    }
+    if (
+      attachmentIndex === 0 &&
+      (!atomicFinalizationEnabled || isMissingAtomicFinalizationRpc(error))
+    ) {
+      const { error: keyError } = await service.rpc('rpc_claim_chat_attachment_finalization', {
+        p_sender_id: user.id,
+        p_client_message_id: clientMessageId,
+        p_request_payload: singleFinalizationPayload,
+      })
+      if (keyError) return json(409, { error: keyError.message || 'attachment_idempotency_conflict' })
+      const legacyResult = await service.rpc('rpc_finalize_chat_attachment', rpcInput)
+      data = legacyResult.data
+      error = legacyResult.error
+    }
     if (error) {
       console.log('[chat-attachment-finalize] rpc-error', {
         attachmentId,

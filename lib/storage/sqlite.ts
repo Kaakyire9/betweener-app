@@ -148,6 +148,7 @@ const CHAT_TABLES_SCOPED_BY_OWNER = [
   'chat_participants',
   'chat_threads',
   'chat_sync_state',
+  'chat_view_once_status',
 ] as const;
 
 export async function initLocalChatDb(): Promise<SQLite.SQLiteDatabase> {

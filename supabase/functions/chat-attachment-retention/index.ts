@@ -30,6 +30,11 @@ serve(async (req) => {
     }).eq('id', run.id)
   }
   try {
+    const { data: abandonedData, error: abandonError } = await service.rpc(
+      'rpc_abandon_stale_chat_attachment_finalizations',
+      { p_limit: 250 },
+    )
+    if (abandonError) throw abandonError
     const { data: scheduledData, error: scheduleError } = await service.rpc('rpc_schedule_orphaned_chat_attachments', { p_limit: 250 })
     if (scheduleError) throw scheduleError
     const { data: rows, error } = await service.rpc('rpc_claim_chat_attachment_cleanup', { p_limit: 100 })
@@ -65,9 +70,16 @@ serve(async (req) => {
       status: 'succeeded', completed_at: new Date().toISOString(),
       scheduled_count: Number(scheduledData || 0), claimed_count: (rows || []).length,
       deleted_count: deleted, failed_count: failed, dead_letter_count: deadLetter,
+      abandoned_finalization_count: Number(abandonedData || 0),
     }).eq('id', run.id)
     if (runUpdateError) throw runUpdateError
-    return json({ processed: (rows || []).length, deleted, failed, deadLetter })
+    return json({
+      processed: (rows || []).length,
+      deleted,
+      failed,
+      deadLetter,
+      abandonedFinalizations: Number(abandonedData || 0),
+    })
   } catch (error) {
     await failRun(error)
     return json({ error: 'retention_worker_failed' }, 500)

@@ -10,9 +10,8 @@ import { createPriorityOperationScheduler } from '../lib/chat/local/priority-ope
 import { buildChatThreadLocalRevision } from '../lib/chat/local/chat-thread-local-revision.ts';
 import { shouldPersistThreadReadState } from '../lib/chat/read-state/thread-read-persistence-policy.ts';
 import {
-  chronologicalIndexToInvertedIndex,
-  invertedIndexToChronologicalIndex,
-  toNewestFirstMessageOrder,
+  chronologicalIndexToListIndex,
+  getChronologicalListDistanceToBottom,
 } from '../lib/chat/message-list-order.ts';
 import {
   buildCanonicalMessageCleanupPredicates,
@@ -47,17 +46,27 @@ test('chat read receipt delay stays stable', () => {
   assert.equal(CHAT_READ_RECEIPT_DELAY_MS, 700);
 });
 
-test('chat render order mounts the newest message first without mutating canonical history', () => {
-  const chronological = ['oldest', 'middle', 'newest'];
-  assert.deepEqual(toNewestFirstMessageOrder(chronological), ['newest', 'middle', 'oldest']);
-  assert.deepEqual(chronological, ['oldest', 'middle', 'newest']);
+test('chat render indexes remain chronological in FlashList', () => {
+  assert.equal(chronologicalIndexToListIndex(0), 0);
+  assert.equal(chronologicalIndexToListIndex(60), 60);
 });
 
-test('chat render indexes map safely between chronological and inverted order', () => {
-  assert.equal(chronologicalIndexToInvertedIndex(61, 60), 0);
-  assert.equal(chronologicalIndexToInvertedIndex(61, 0), 60);
-  assert.equal(invertedIndexToChronologicalIndex(61, 0), 60);
-  assert.equal(invertedIndexToChronologicalIndex(61, 60), 0);
+test('chat list distance uses the chronological bottom edge', () => {
+  assert.equal(getChronologicalListDistanceToBottom({
+    contentHeight: 3_600,
+    layoutHeight: 800,
+    offsetY: 2_800,
+  }), 0);
+  assert.equal(getChronologicalListDistanceToBottom({
+    contentHeight: 3_600,
+    layoutHeight: 800,
+    offsetY: 2_300,
+  }), 500);
+  assert.equal(getChronologicalListDistanceToBottom({
+    contentHeight: 400,
+    layoutHeight: 800,
+    offsetY: 0,
+  }), 0);
 });
 
 test('local thread revisions ignore new array identities with unchanged content', () => {

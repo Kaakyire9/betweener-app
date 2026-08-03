@@ -6,6 +6,8 @@ import { createChatScreenStyles } from '@/components/chat/styles/chat-screen.sty
 import { MessageRow } from "@/components/chat/MessageRow";
 import { MessageRowItem } from '@/components/chat/MessageRowItem';
 import { ChatVideoViewer } from "@/components/chat/media/ChatVideoViewer";
+import { ChatDocumentViewer } from '@/components/chat/media/ChatDocumentViewer';
+import { ChatImmersiveVideoViewer } from '@/components/chat/media/ChatImmersiveVideoViewer';
 import ChatMessageActionsSheet from "@/components/chat/ChatMessageActionsSheet";
 import ChatReactionSummarySheet from "@/components/chat/ChatReactionSummarySheet";
 import ChatSafetyModal from "@/components/chat/ChatSafetyModal";
@@ -96,6 +98,7 @@ import { useChatThreadController } from "@/lib/chat/hooks/use-chat-thread-contro
 import { useChatMediaAccess } from "@/lib/chat/hooks/use-chat-media-access";
 import { ChatRepository, type ChatMessageRow, type ChatPendingOutboxRow } from "@/lib/chat/local/chat-db";
 import { ChatThreadRemoteService } from "@/lib/chat/chat-thread-remote-service";
+import { mergeViewOnceStatus } from '@/lib/chat/view-once-status';
 import {
   addPinnedMessageId,
   applyDeleteMessageForEveryone,
@@ -113,7 +116,8 @@ import {
   markOutgoingMessageDelivered,
   mergeMessageWithMonotonicReceipt,
   reconcileMessageWithServer,
-  setMessageStatus,
+  transitionMessageLifecycle,
+  transitionMessageLifecycleRecord,
 } from "@/lib/chat/message-state";
 import {
   getChatMessageRevisionKey,
@@ -126,13 +130,15 @@ import {
   CHAT_READ_RECEIPT_DELAY_MS,
   createDatePlanDraftFromInvite,
   type DatePlannerMode,
-  getRetryFailedTextFailureStatus,
   markLoadedIncomingMessagesRead,
   resolveDatePlanResponseKind,
   shouldScheduleMessageRead,
 } from "@/lib/chat/thread-behavior";
 import { ChatOutboxService } from "@/lib/chat/outbox/chat-outbox-service";
-import { chronologicalIndexToInvertedIndex } from "@/lib/chat/message-list-order";
+import {
+  chronologicalIndexToListIndex,
+  getChronologicalListDistanceToBottom,
+} from '@/lib/chat/message-list-order';
 import { resolveChatVoiceRecordingMetadata } from "@/lib/chat/attachments/chat-voice-recording";
 import {
   ChatThreadReadCoordinator,
@@ -142,13 +148,16 @@ import { ChatReadReceiptBatcher } from "@/lib/chat/read-state/chat-read-receipt-
 import { processThreadRealtimeMessage } from "@/lib/chat/realtime/thread-realtime-message-processor";
 import {
   createTextRetryPlan,
-  getAttachmentRetryStatus,
   shouldShowAttachmentRetryFailure,
 } from "@/lib/chat/retry/chat-retry-service";
 import { createOptimisticTextMessage } from "@/lib/chat/messages/chat-message-service";
 import { withLocalOperationTimeout } from "@/lib/chat/local/local-operation-timeout";
 import { withAlpha } from "@/lib/chat/ui/color-utils";
 import { getDateBadgeMeta, getDateBadgePalette } from '@/lib/chat/ui/date-badge-presentation';
+import {
+  prepareChatDocumentPreview,
+  type PreparedChatDocumentPreview,
+} from '@/lib/chat/media/chat-document-preview';
 import {
   formatFileSize,
   formatDateInviteWhen,
@@ -255,6 +264,7 @@ import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Location from "expo-location";
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
+import type { FlashListRef } from "@shopify/flash-list";
 import type { ComponentProps } from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
@@ -263,7 +273,6 @@ import {
     AppState,
     Animated,
     Easing,
-    FlatList,
     Image,
     Keyboard,
     KeyboardAvoidingView,
@@ -292,7 +301,6 @@ import {
 import MapView, { Marker, PROVIDER_GOOGLE, Region } from "react-native-maps";
 import { Image as NativeImageCompressor } from 'react-native-compressor';
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { WebView } from "react-native-webview";
 
 // Message type definition
 type BetweenerVenueRow = Database["public"]["Tables"]["betweener_venues"]["Row"];
@@ -1515,7 +1523,12 @@ export default function ConversationScreen() {
   const [videoViewerUrl, setVideoViewerUrl] = useState<string | null>(null);
   const [cachedImageUris, setCachedImageUris] = useState<Record<string, string>>({});
   const [cachedVideoUris, setCachedVideoUris] = useState<Record<string, string>>({});
-  const [documentViewerUrl, setDocumentViewerUrl] = useState<string | null>(null);
+  const [documentViewer, setDocumentViewer] = useState<
+    (PreparedChatDocumentPreview & { title: string }) | null
+  >(null);
+  const documentViewerRef = useRef<
+    (PreparedChatDocumentPreview & { title: string }) | null
+  >(null);
   const [locationModalVisible, setLocationModalVisible] = useState(false);
   const [locationViewerMessageId, setLocationViewerMessageId] = useState<string | null>(null);
   const [locationSearchQuery, setLocationSearchQuery] = useState('');
@@ -2182,7 +2195,7 @@ export default function ConversationScreen() {
   const activeThreadTokenRef = useRef<symbol | null>(null);
   const fetchMessagesInFlightRef = useRef<{ key: string; promise: Promise<void> } | null>(null);
   const isScreenFocusedRef = useRef(false);
-  const flatListRef = useRef<FlatList<MessageType>>(null);
+  const flatListRef = useRef<FlashListRef<MessageType>>(null);
   const messageListViewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 }).current;
   const animatedMessageIdsRef = useRef<Set<string>>(new Set());
   const seededMessageAnimationsRef = useRef(false);
@@ -2255,7 +2268,7 @@ export default function ConversationScreen() {
   const forceScrollToBottom = useCallback(() => {
     if (!flatListRef.current || !initialAutoScrollDoneRef.current) return;
     scheduleIdleTask(() => {
-      flatListRef.current?.scrollToOffset({ offset: 0, animated: false });
+      flatListRef.current?.scrollToEnd({ animated: false });
     });
   }, []);
 
@@ -2300,6 +2313,7 @@ export default function ConversationScreen() {
     refreshLocalChatPrefs,
     fetchHiddenMessages,
     syncMessageReactions,
+    hydrateLocalViewOnceStatus,
     syncViewOnceStatus,
     applyReactionUpdate,
     fetchBlockStatus,
@@ -2318,6 +2332,7 @@ export default function ConversationScreen() {
     updateHiddenMessageIds,
     setMessages,
     setViewOnceStatus,
+    viewOnceStatusRef,
   });
 
   const {
@@ -2833,7 +2848,10 @@ const resolveQueuedVideoUri = async (
           latestPeerMessageAt !== null &&
           item.timestamp.getTime() <= latestPeerMessageAt
         ) {
-          return { ...item, status: 'delivered' as const };
+          return transitionMessageLifecycleRecord({
+            message: item,
+            event: 'delivery_confirmed',
+          });
         }
         return item;
       });
@@ -2942,6 +2960,12 @@ const resolveQueuedVideoUri = async (
         return prevKey === nextKey ? prev : localThreadState.mergedMessages!;
       });
     }
+    const localViewOnceIds = localThreadState.mergedMessages
+      .filter((message) => message.isViewOnce)
+      .map((message) => message.id);
+    if (localViewOnceIds.length > 0) {
+      void hydrateLocalViewOnceStatus(localViewOnceIds);
+    }
     setMessagesLoaded((prev) => (prev ? prev : true));
     setThreadBootstrapSettled((prev) => (prev ? prev : true));
     if (!remoteMessagesChecked) {
@@ -2956,6 +2980,7 @@ const resolveQueuedVideoUri = async (
     activePeerMessageUserId,
     localThreadState,
     remoteMessagesChecked,
+    hydrateLocalViewOnceStatus,
     user?.id,
   ]);
 
@@ -2997,7 +3022,11 @@ const resolveQueuedVideoUri = async (
   // caching; eager full-thread downloads waste bandwidth and duplicate signed URLs.
 
   const markLocalMessageFailed = useCallback((messageId: string) => {
-    setMessages((prev) => setMessageStatus(prev, messageId, 'failed'));
+    setMessages((prev) => transitionMessageLifecycle({
+      items: prev,
+      messageId,
+      event: 'retryable_failure',
+    }));
   }, []);
 
   const fetchPinnedMessages = useCallback(async () => {
@@ -3902,15 +3931,17 @@ const resolveQueuedVideoUri = async (
       void persistLocalTextOutboxState({
         ownerUserId: user.id,
         threadId: activePeerMessageUserId,
-        message: {
-          ...optimisticImageMessage,
-          status: 'queued',
-        },
+        message: transitionMessageLifecycleRecord({
+          message: optimisticImageMessage,
+          event: 'send_deferred',
+        }),
         outboxStatus: 'queued',
       }).catch((persistError) => console.log('[chat] persist queued image outbox error', persistError));
-      setMessages((prev) =>
-        prev.map((msg) => (msg.id === tempId ? { ...msg, status: 'queued' as const } : msg))
-      );
+      setMessages((prev) => transitionMessageLifecycle({
+        items: prev,
+        messageId: tempId,
+        event: 'send_deferred',
+      }));
       return;
     }
     await flushLocalTextOutbox(user.id).catch((error) => {
@@ -4149,15 +4180,17 @@ const resolveQueuedVideoUri = async (
       void persistLocalTextOutboxState({
         ownerUserId: user.id,
         threadId: activePeerMessageUserId,
-        message: {
-          ...optimisticVideoMessage,
-          status: 'queued',
-        },
+        message: transitionMessageLifecycleRecord({
+          message: optimisticVideoMessage,
+          event: 'send_deferred',
+        }),
         outboxStatus: 'queued',
       }).catch((persistError) => console.log('[chat] persist queued video outbox error', persistError));
-      setMessages((prev) =>
-        prev.map((msg) => (msg.id === tempId ? { ...msg, status: 'queued' as const } : msg))
-      );
+      setMessages((prev) => transitionMessageLifecycle({
+        items: prev,
+        messageId: tempId,
+        event: 'send_deferred',
+      }));
       return;
     }
     await flushLocalTextOutbox(user.id).catch((error) => {
@@ -4269,7 +4302,7 @@ const resolveQueuedVideoUri = async (
     });
 
     setTimeout(() => {
-      flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
+      flatListRef.current?.scrollToEnd({ animated: true });
     }, 100);
   }, [activePeerMessageUserId, replyingTo, user?.id]);
 
@@ -4401,7 +4434,7 @@ const resolveQueuedVideoUri = async (
     void ChatOutboxService.flushPending(user.id).catch((error) => {
       if (!isLikelyNetworkError(error)) console.log('[chat] flush queued photo album error', error);
     });
-    setTimeout(() => flatListRef.current?.scrollToOffset({ offset: 0, animated: true }), 100);
+    setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
   }, [activePeerMessageUserId, replyingTo, user?.id]);
 
   const sendLocationMessage = useCallback(async ({
@@ -4530,14 +4563,21 @@ const resolveQueuedVideoUri = async (
     }).catch((persistError) => console.log('[chat] persist location outbox error', persistError));
 
     if (!networkReady) {
-      const queuedMessage: MessageType = { ...optimisticLocationMessage, status: 'queued' };
+      const queuedMessage = transitionMessageLifecycleRecord({
+        message: optimisticLocationMessage,
+        event: 'send_deferred',
+      });
       void persistLocalTextOutboxState({
         ownerUserId: user.id,
         threadId: activePeerMessageUserId,
         message: queuedMessage,
         outboxStatus: 'queued',
       }).catch((persistError) => console.log('[chat] persist queued location outbox error', persistError));
-      setMessages((prev) => setMessageStatus(prev, tempId, 'queued'));
+      setMessages((prev) => transitionMessageLifecycle({
+        items: prev,
+        messageId: tempId,
+        event: 'send_deferred',
+      }));
       return null;
     }
 
@@ -5469,13 +5509,11 @@ const resolveQueuedVideoUri = async (
 
     Haptics.selectionAsync().catch(() => {});
 
-    setMessages((prev) =>
-      setMessageStatus(
-        prev.map((msg) => (msg.id === messageId ? { ...msg, clientMessageId } : msg)),
-        messageId,
-        'sending',
-      )
-    );
+    setMessages((prev) => transitionMessageLifecycle({
+      items: prev.map((msg) => (msg.id === messageId ? { ...msg, clientMessageId } : msg)),
+      messageId,
+      event: 'send_started',
+    }));
     await persistLocalTextOutboxState({
       ownerUserId: user.id,
       threadId: activePeerMessageUserId,
@@ -5484,30 +5522,21 @@ const resolveQueuedVideoUri = async (
     }).catch((persistError) => console.log('[chat] persist retry text outbox error', persistError));
 
     if (!networkReady) {
-      const queuedRetryMessage: MessageType = {
-        ...sendingRetryMessage,
-        status: getRetryFailedTextFailureStatus({
-          isNetworkFailure: true,
-        }),
-      };
+      const queuedRetryMessage = transitionMessageLifecycleRecord({
+        message: sendingRetryMessage,
+        event: 'send_deferred',
+      });
       void persistLocalTextOutboxState({
         ownerUserId: user.id,
         threadId: activePeerMessageUserId,
         message: queuedRetryMessage,
         outboxStatus: 'queued',
       }).catch((persistError) => console.log('[chat] persist queued retry text outbox error', persistError));
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === messageId
-            ? {
-                ...msg,
-                status: getRetryFailedTextFailureStatus({
-                  isNetworkFailure: true,
-                }),
-              }
-            : msg
-        )
-      );
+      setMessages((prev) => transitionMessageLifecycle({
+        items: prev,
+        messageId,
+        event: 'send_deferred',
+      }));
       return;
     }
 
@@ -5527,39 +5556,28 @@ const resolveQueuedVideoUri = async (
 
     if (error || !data) {
       if (isLikelyNetworkError(error)) {
-        const queuedRetryMessage: MessageType = {
-          ...sendingRetryMessage,
-          status: getRetryFailedTextFailureStatus({
-            isNetworkFailure: true,
-          }),
-        };
+        const queuedRetryMessage = transitionMessageLifecycleRecord({
+          message: sendingRetryMessage,
+          event: 'send_deferred',
+        });
         void persistLocalTextOutboxState({
           ownerUserId: user.id,
           threadId: activePeerMessageUserId,
           message: queuedRetryMessage,
           outboxStatus: 'queued',
         }).catch((persistError) => console.log('[chat] persist queued retry text outbox error', persistError));
-        setMessages((prev) =>
-          prev.map((msg) =>
-            msg.id === messageId
-              ? {
-                  ...msg,
-                status: getRetryFailedTextFailureStatus({
-                  isNetworkFailure: true,
-                }),
-              }
-            : msg
-        )
-        );
+        setMessages((prev) => transitionMessageLifecycle({
+          items: prev,
+          messageId,
+          event: 'send_deferred',
+        }));
         return;
       }
       console.log('[chat] retry failed message error', error);
-      const failedRetryMessage: MessageType = {
-        ...sendingRetryMessage,
-        status: getRetryFailedTextFailureStatus({
-          isNetworkFailure: false,
-        }),
-      };
+      const failedRetryMessage = transitionMessageLifecycleRecord({
+        message: sendingRetryMessage,
+        event: 'retryable_failure',
+      });
       void persistLocalTextOutboxState({
         ownerUserId: user.id,
         threadId: activePeerMessageUserId,
@@ -5570,18 +5588,11 @@ const resolveQueuedVideoUri = async (
           message: (error as { message?: string } | null)?.message ?? 'Unable to retry message',
         },
       }).catch((persistError) => console.log('[chat] persist failed retry text outbox error', persistError));
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === messageId
-              ? {
-                  ...msg,
-                  status: getRetryFailedTextFailureStatus({
-                    isNetworkFailure: false,
-                  }),
-                }
-              : msg
-        )
-      );
+      setMessages((prev) => transitionMessageLifecycle({
+        items: prev,
+        messageId,
+        event: 'retryable_failure',
+      }));
       Alert.alert('Retry failed', 'Unable to resend this message right now.');
       return;
     }
@@ -5617,15 +5628,27 @@ const resolveQueuedVideoUri = async (
       return;
     }
     const localMessageId = message.clientMessageId ?? message.id;
-    setMessages((current) => setMessageStatus(current, message.id, getAttachmentRetryStatus(networkReady)));
+    setMessages((current) => transitionMessageLifecycle({
+      items: current,
+      messageId: message.id,
+      event: networkReady ? 'send_started' : 'retry_requested',
+    }));
     try {
       const result = await ChatOutboxService.retryMessage(user.id, localMessageId);
       if (!result.requeued) {
-        setMessages((current) => setMessageStatus(current, message.id, 'failed'));
+        setMessages((current) => transitionMessageLifecycle({
+          items: current,
+          messageId: message.id,
+          event: 'retryable_failure',
+        }));
         Alert.alert('Retry unavailable', 'This attachment is no longer available on this device.');
       }
     } catch (error) {
-      setMessages((current) => setMessageStatus(current, message.id, 'failed'));
+      setMessages((current) => transitionMessageLifecycle({
+        items: current,
+        messageId: message.id,
+        event: 'retryable_failure',
+      }));
       if (shouldShowAttachmentRetryFailure(isLikelyNetworkError(error))) {
         Alert.alert('Retry failed', 'Unable to resend this attachment right now.');
       }
@@ -6060,13 +6083,24 @@ const resolveQueuedVideoUri = async (
       onMessageViewInsert: (row) => {
         if (!row?.message_id || !row?.viewer_id) return;
         if (!messagesRef.current.some((msg) => msg.id === row.message_id)) return;
+        const nextStatus = mergeViewOnceStatus(viewOnceStatusRef.current[row.message_id], {
+          viewedByMe: row.viewer_id === user.id,
+          viewedByPeer: row.viewer_id === conversationId,
+        });
+        viewOnceStatusRef.current[row.message_id] = nextStatus;
         setViewOnceStatus((prev) => {
-          const current = prev[row.message_id] ?? { viewedByMe: false, viewedByPeer: false };
-          const next = {
-            viewedByMe: current.viewedByMe || row.viewer_id === user.id,
-            viewedByPeer: current.viewedByPeer || row.viewer_id === conversationId,
+          return {
+            ...prev,
+            [row.message_id]: mergeViewOnceStatus(prev[row.message_id], nextStatus),
           };
-          return { ...prev, [row.message_id]: next };
+        });
+        void ChatRepository.upsertViewOnceStatuses(
+          user.id,
+          conversationId,
+          [{ messageId: row.message_id, ...nextStatus }],
+          { priority: 'background' },
+        ).catch((error) => {
+          console.log('[chat] persist realtime view-once status error', error);
         });
         },
       });
@@ -6468,10 +6502,10 @@ const resolveQueuedVideoUri = async (
         clearTimeout(jumpSettleRef.current);
         jumpSettleRef.current = null;
       }
-      const invertedIndex = chronologicalIndexToInvertedIndex(renderedMessages.length, index);
-      flatListRef.current?.scrollToIndex({ index: invertedIndex, animated: true, viewPosition: 0.58 });
+      const listIndex = chronologicalIndexToListIndex(index);
+      flatListRef.current?.scrollToIndex({ index: listIndex, animated: true, viewPosition: 0.58 });
       jumpSettleRef.current = setTimeout(() => {
-        flatListRef.current?.scrollToIndex({ index: invertedIndex, animated: true, viewPosition: 0.5 });
+        flatListRef.current?.scrollToIndex({ index: listIndex, animated: true, viewPosition: 0.5 });
       }, 320);
       focusMessage(messageId);
     },
@@ -6783,16 +6817,23 @@ const resolveQueuedVideoUri = async (
     setEditingMessage(null);
 
     if (!networkReady) {
-      const queuedMessage: MessageType = { ...optimistic, status: 'queued' };
+      const queuedMessage = transitionMessageLifecycleRecord({
+        message: optimistic,
+        event: 'send_deferred',
+      });
       void persistLocalTextOutboxState({
         ownerUserId: user.id,
         threadId: activePeerMessageUserId,
         message: queuedMessage,
         outboxStatus: 'queued',
       }).catch((persistError) => console.log('[chat] persist queued text outbox error', persistError));
-      setMessages((prev) => setMessageStatus(prev, tempId, 'queued'));
+      setMessages((prev) => transitionMessageLifecycle({
+        items: prev,
+        messageId: tempId,
+        event: 'send_deferred',
+      }));
       setTimeout(() => {
-        flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
+        flatListRef.current?.scrollToEnd({ animated: true });
       }, 100);
       textSendInFlightRef.current = false;
       return;
@@ -6808,7 +6849,7 @@ const resolveQueuedVideoUri = async (
       });
 
     setTimeout(() => {
-      flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
+      flatListRef.current?.scrollToEnd({ animated: true });
     }, 100);
   };
 
@@ -6855,14 +6896,21 @@ const resolveQueuedVideoUri = async (
     setViewOnceMode(false);
 
     if (!networkReady) {
-      const queuedMessage: MessageType = { ...optimisticStickerMessage, status: 'queued' };
+      const queuedMessage = transitionMessageLifecycleRecord({
+        message: optimisticStickerMessage,
+        event: 'send_deferred',
+      });
       void persistLocalTextOutboxState({
         ownerUserId: user.id,
         threadId: activePeerMessageUserId,
         message: queuedMessage,
         outboxStatus: 'queued',
       }).catch((persistError) => console.log('[chat] persist queued sticker outbox error', persistError));
-      setMessages((prev) => setMessageStatus(prev, tempId, 'queued'));
+      setMessages((prev) => transitionMessageLifecycle({
+        items: prev,
+        messageId: tempId,
+        event: 'send_deferred',
+      }));
       return;
     }
 
@@ -7221,9 +7269,12 @@ const resolveQueuedVideoUri = async (
     try {
       const stagedUri = await stageOfflineChatUpload(uri, fileName);
       recoverableUri = stagedUri;
+      const transitionedVoiceMessage = transitionMessageLifecycleRecord({
+        message: optimistic,
+        event: networkReady ? 'send_started' : 'send_deferred',
+      });
       const localVoiceMessage: MessageType = {
-        ...optimistic,
-        status: networkReady ? 'sending' : 'queued',
+        ...transitionedVoiceMessage,
         voiceMessage: optimistic.voiceMessage
           ? { ...optimistic.voiceMessage, audioPath: stagedUri }
           : optimistic.voiceMessage,
@@ -7247,8 +7298,10 @@ const resolveQueuedVideoUri = async (
         prev.map((msg) =>
           msg.id === tempId
             ? {
-                ...msg,
-                status: networkReady ? ('sending' as const) : ('queued' as const),
+                ...transitionMessageLifecycleRecord({
+                  message: msg,
+                  event: networkReady ? 'send_started' : 'send_deferred',
+                }),
                 voiceMessage: msg.voiceMessage
                   ? { ...msg.voiceMessage, audioPath: stagedUri }
                   : msg.voiceMessage,
@@ -7833,7 +7886,7 @@ const resolveQueuedVideoUri = async (
   };
 
   const getDistanceToBottom = useCallback(() => {
-    return Math.max(0, listMetricsRef.current.offsetY);
+    return getChronologicalListDistanceToBottom(listMetricsRef.current);
   }, []);
 
   const ensureInitialScrollToBottom = useCallback(() => {
@@ -7864,7 +7917,11 @@ const resolveQueuedVideoUri = async (
       updateJumpToBottomVisibility(0);
       return;
     }
-    const distanceToBottom = Math.max(0, contentOffset.y);
+    const distanceToBottom = getChronologicalListDistanceToBottom({
+      contentHeight: contentSize.height,
+      layoutHeight: layoutMeasurement.height,
+      offsetY: contentOffset.y,
+    });
     const paddingToBottom = keyboardVisibleRef.current ? 200 : 60;
     shouldAutoScrollRef.current =
       distanceToBottom <= paddingToBottom;
@@ -7901,7 +7958,7 @@ const resolveQueuedVideoUri = async (
     }
     if (!shouldAutoScrollRef.current) return;
     scheduleIdleTask(() => {
-      flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
+      flatListRef.current?.scrollToEnd({ animated: true });
     });
   }, [messages.length, threadBootstrapSettled, updateJumpToBottomVisibility]);
 
@@ -7917,7 +7974,7 @@ const resolveQueuedVideoUri = async (
       if (getDistanceToBottom() <= 200) {
         shouldAutoScrollRef.current = true;
         scheduleIdleTask(() => {
-          flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
+          flatListRef.current?.scrollToEnd({ animated: true });
         });
       }
     };
@@ -7927,7 +7984,7 @@ const resolveQueuedVideoUri = async (
       if (getDistanceToBottom() <= 60) {
         shouldAutoScrollRef.current = true;
         scheduleIdleTask(() => {
-          flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
+          flatListRef.current?.scrollToEnd({ animated: true });
         });
       }
     };
@@ -8009,7 +8066,7 @@ const resolveQueuedVideoUri = async (
     }
     scrollRequestRef.current = requestAnimationFrame(() => {
       scrollRequestRef.current = null;
-      flatListRef.current?.scrollToOffset({ offset: 0, animated });
+      flatListRef.current?.scrollToEnd({ animated });
     });
     if (jumpVisibleRef.current) {
       jumpVisibleRef.current = false;
@@ -8264,9 +8321,10 @@ const resolveQueuedVideoUri = async (
     const documentCacheKey = message.storagePath
       ? `document:${message.storagePath}`
       : `document:${doc.url}`;
+    let remoteUrl = doc.url?.startsWith('http') ? doc.url : '';
     let url = await findOfflineAttachment(documentCacheKey) ?? doc.url;
     if (!url?.startsWith('file://') && networkReady) {
-      const remoteUrl = message.storagePath
+      remoteUrl = message.storagePath
         ? await createFreshChatMediaUrl(message.storagePath)
         : url;
       if (remoteUrl) {
@@ -8286,9 +8344,12 @@ const resolveQueuedVideoUri = async (
       return;
     }
     const typeLabel = doc.typeLabel?.toLowerCase() ?? '';
-    const ext = url.split('?')[0].split('.').pop()?.toLowerCase() ?? '';
+    const ext = doc.name.split('?')[0].split('.').pop()?.toLowerCase()
+      ?? url.split('?')[0].split('.').pop()?.toLowerCase()
+      ?? '';
     if (typeLabel === 'image' || ['jpg', 'jpeg', 'png', 'webp', 'heic', 'gif'].includes(ext)) {
       setImageViewerUrl(url);
+      setImageViewerVisible(true);
       return;
     }
     if (typeLabel === 'video' || ['mp4', 'mov', 'm4v', 'webm'].includes(ext)) {
@@ -8297,17 +8358,86 @@ const resolveQueuedVideoUri = async (
     }
     const isPdf = typeLabel === 'pdf' || ext === 'pdf';
     const isText = typeLabel === 'txt' || ext === 'txt' || ext === 'text';
+    if (isPdf && Platform.OS === 'android') {
+      try {
+        if (url.startsWith('file://')) {
+          const contentUri = await FileSystem.getContentUriAsync(url);
+          const IntentLauncher = await import('expo-intent-launcher');
+          await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+            data: contentUri,
+            flags: 1, // FLAG_GRANT_READ_URI_PERMISSION
+            type: 'application/pdf',
+          });
+          return;
+        }
+        await WebBrowser.openBrowserAsync(url, {
+          presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN,
+          controlsColor: theme.tint,
+        });
+        return;
+      } catch {
+        if (networkReady) {
+          const fallbackUrl = message.storagePath
+            ? await createFreshChatMediaUrl(message.storagePath)
+            : remoteUrl;
+          if (fallbackUrl) {
+            await WebBrowser.openBrowserAsync(fallbackUrl, {
+              presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN,
+              controlsColor: theme.tint,
+            });
+            return;
+          }
+        }
+        Alert.alert(
+          'PDF viewer unavailable',
+          networkReady
+            ? 'No compatible PDF viewer was found on this device.'
+            : 'Reconnect to open this PDF, or install a PDF viewer for offline access.',
+        );
+        return;
+      }
+    }
     if (isPdf || isText) {
-      setDocumentViewerUrl(url);
+      try {
+        const prepared = await prepareChatDocumentPreview({
+          sourceUri: url,
+          fileName: doc.name,
+        });
+        const nextViewer = { ...prepared, title: doc.name };
+        const previousViewer = documentViewerRef.current;
+        documentViewerRef.current = nextViewer;
+        setDocumentViewer(nextViewer);
+        if (previousViewer) void previousViewer.cleanup().catch(() => {});
+      } catch {
+        Alert.alert(
+          'Document unavailable',
+          'The downloaded copy could not be prepared for viewing. Please try again.',
+        );
+      }
       return;
     }
-    // Keep private attachment URLs away from third-party document previewers.
-    // The system browser/download sheet handles office files using the short-lived URL.
-    await WebBrowser.openBrowserAsync(url, {
-      presentationStyle: WebBrowser.WebBrowserPresentationStyle.FORM_SHEET,
+
+    // Office formats need the platform document renderer. Never hand it a
+    // sandboxed file:// URL: iOS cannot grant Safari access to the app cache.
+    if (!networkReady) {
+      Alert.alert(
+        'Reconnect to open this document',
+        'This file format needs a secure online preview. PDFs remain available offline.',
+      );
+      return;
+    }
+    if (message.storagePath) {
+      remoteUrl = await createFreshChatMediaUrl(message.storagePath);
+    }
+    if (!remoteUrl) {
+      Alert.alert('Document unavailable', 'A secure preview link could not be created. Please try again.');
+      return;
+    }
+    await WebBrowser.openBrowserAsync(remoteUrl, {
+      presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN,
       controlsColor: theme.tint,
     });
-  }, [createFreshChatMediaUrl, networkReady, openVideoViewer, setImageViewerUrl, theme.tint]);
+  }, [createFreshChatMediaUrl, networkReady, openVideoViewer, theme.tint]);
 
   const onViewableItemsChanged = useCallback(
     ({
@@ -8381,7 +8511,16 @@ const resolveQueuedVideoUri = async (
   }, []);
 
   const closeDocumentViewer = useCallback(() => {
-    setDocumentViewerUrl(null);
+    const current = documentViewerRef.current;
+    documentViewerRef.current = null;
+    setDocumentViewer(null);
+    if (current) void current.cleanup().catch(() => {});
+  }, []);
+
+  useEffect(() => () => {
+    const current = documentViewerRef.current;
+    documentViewerRef.current = null;
+    if (current) void current.cleanup().catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -10595,57 +10734,19 @@ const resolveQueuedVideoUri = async (
         </View>
       </Modal>
 
-      <Modal
-        transparent
+      <ChatImmersiveVideoViewer
         visible={Boolean(videoViewerUrl)}
-        onRequestClose={closeVideoViewer}
-      >
-        <View style={styles.imageViewerBackdrop}>
-          <Pressable
-            style={StyleSheet.absoluteFill}
-            onPress={closeVideoViewer}
-          />
-          {videoViewerUrl && (
-            <ChatVideoViewer
-              url={videoViewerUrl}
-              visible={Boolean(videoViewerUrl)}
-              styles={styles}
-            />
-          )}
-          <TouchableOpacity
-            style={[styles.imageViewerClose, { top: Math.max(insets.top + 10, 18), right: 16 }]}
-            onPress={closeVideoViewer}
-          >
-            <MaterialCommunityIcons name="close" size={20} color={Colors.light.background} />
-          </TouchableOpacity>
-        </View>
-      </Modal>
+        uri={videoViewerUrl}
+        onClose={closeVideoViewer}
+      />
 
-      <Modal
-        transparent
-        visible={Boolean(documentViewerUrl)}
-        onRequestClose={closeDocumentViewer}
-      >
-        <View style={styles.imageViewerBackdrop}>
-          <Pressable
-            style={StyleSheet.absoluteFill}
-            onPress={closeDocumentViewer}
-          />
-          {documentViewerUrl && (
-            <WebView
-              source={{ uri: documentViewerUrl }}
-              style={styles.documentViewer}
-              startInLoadingState
-            />
-          )}
-          <TouchableOpacity
-            style={[styles.imageViewerClose, { top: Math.max(insets.top + 10, 18), right: 16 }]}
-            onPress={closeDocumentViewer}
-          >
-            <MaterialCommunityIcons name="close" size={20} color={Colors.light.background} />
-          </TouchableOpacity>
-        </View>
-      </Modal>
+      <ChatDocumentViewer
+        visible={Boolean(documentViewer)}
+        uri={documentViewer?.uri ?? null}
+        title={documentViewer?.title ?? 'Document'}
+        readAccessRoot={documentViewer?.readAccessRoot}
+        onClose={closeDocumentViewer}
+      />
 
       <Modal
         visible={Boolean(locationViewerMessage?.location)}

@@ -613,6 +613,12 @@ export const MessageRowItem = memo(
           onRetryFailedMessage={onRetryFailedMessage}
           onLongPress={() => onLongPress(item.id)}
           onPressContent={() => {
+            // View-once media is exclusively controlled by the guarded inner
+            // action below. Never let a consumed/disabled bubble fall through
+            // to the ordinary image or video viewer.
+            if (isEncryptedViewOnce) {
+              return;
+            }
             if (item.type === 'voice') {
               return;
             }

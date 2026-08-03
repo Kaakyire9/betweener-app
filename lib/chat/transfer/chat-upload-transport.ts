@@ -7,6 +7,7 @@ import {
   CHAT_RESUMABLE_UPLOAD_CHUNK_BYTES,
   createDirectStorageOrigin,
   isFreshChatUploadCheckpoint,
+  resolveChatUploadByteSize,
 } from '@/lib/chat/transfer/chat-upload-policy';
 
 const TUS_URL_STORAGE_KEY = 'chat:tus-upload-urls:v1';
@@ -129,15 +130,14 @@ class ChatTusUrlStorage implements UrlStorage {
 const tusUrlStorage = new ChatTusUrlStorage();
 
 const resolveByteSize = async (request: ChatUploadRequest) => {
-  if (
-    typeof request.byteSize === 'number' &&
-    Number.isFinite(request.byteSize) &&
-    request.byteSize > 0
-  ) {
-    return Math.round(request.byteSize);
-  }
   const info = await FileSystem.getInfoAsync(request.localUri);
-  return info.exists && 'size' in info && typeof info.size === 'number' ? info.size : null;
+  return resolveChatUploadByteSize({
+    stagedFileSize:
+      info.exists && 'size' in info && typeof info.size === 'number'
+        ? info.size
+        : null,
+    declaredByteSize: request.byteSize,
+  });
 };
 
 const uploadTus = async (

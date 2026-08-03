@@ -31,4 +31,5 @@ export {
   type ChatThreadLocalStatus,
   type ChatThreadRow,
   type ChatThreadType,
+  type ChatViewOnceStatusRow,
 } from '@/lib/chat/local/chat-schema';

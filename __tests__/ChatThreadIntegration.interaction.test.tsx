@@ -9,7 +9,7 @@ import ChatQuickReactionsBar from "@/components/chat/ChatQuickReactionsBar";
 import ChatReactionSummarySheet from "@/components/chat/ChatReactionSummarySheet";
 import { Colors } from "@/constants/theme";
 import { applyLocalReactionToggle } from "@/lib/chat/message-actions";
-import { reconcileMessageWithServer, setMessageStatus } from "@/lib/chat/message-state";
+import { reconcileMessageWithServer, transitionMessageLifecycle } from "@/lib/chat/message-state";
 import { canRetryFailedTextMessage } from "@/lib/chat/thread-behavior";
 
 const styles = new Proxy(
@@ -46,7 +46,11 @@ function RetryAndReconcileHarness() {
         isMyMessage
         onFocus={() => {}}
         onRetryFailedMessage={(messageId) => {
-          setMessages((prev) => setMessageStatus(prev, messageId, "sending"));
+          setMessages((prev) => transitionMessageLifecycle({
+            items: prev,
+            messageId,
+            event: "send_started",
+          }));
         }}
         onPressContent={() => {}}
         onLongPress={() => {}}

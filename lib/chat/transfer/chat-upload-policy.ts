@@ -13,6 +13,35 @@ export const buildChatUploadFingerprint = ({
   contentType: string;
 }) => `chat:${bucket}:${objectPath}:${Math.max(0, Math.round(byteSize))}:${contentType}`;
 
+/**
+ * The durable staged file is the upload source, so its current size owns the
+ * TUS contract. Picker metadata can describe the pre-normalized asset and is
+ * only a fallback for URI types that cannot be inspected locally.
+ */
+export const resolveChatUploadByteSize = ({
+  stagedFileSize,
+  declaredByteSize,
+}: {
+  stagedFileSize?: number | null;
+  declaredByteSize?: number | null;
+}) => {
+  if (
+    typeof stagedFileSize === 'number' &&
+    Number.isFinite(stagedFileSize) &&
+    stagedFileSize > 0
+  ) {
+    return Math.round(stagedFileSize);
+  }
+  if (
+    typeof declaredByteSize === 'number' &&
+    Number.isFinite(declaredByteSize) &&
+    declaredByteSize > 0
+  ) {
+    return Math.round(declaredByteSize);
+  }
+  return null;
+};
+
 export const createDirectStorageOrigin = (supabaseUrl: string) => {
   try {
     const url = new URL(supabaseUrl);

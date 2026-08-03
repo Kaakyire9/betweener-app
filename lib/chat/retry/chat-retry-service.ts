@@ -1,4 +1,5 @@
 import type { MessageType } from '@/components/chat/types';
+import { transitionMessageLifecycleRecord } from '../message-state.ts';
 
 export type TextRetryPlan = {
   clientMessageId: string;
@@ -20,15 +21,14 @@ export const createTextRetryPlan = ({
   return {
     clientMessageId,
     sendingMessage: {
-      ...message,
+      ...transitionMessageLifecycleRecord({
+        message,
+        event: 'send_started',
+      }),
       clientMessageId,
-      status: 'sending',
     },
   };
 };
-
-export const getAttachmentRetryStatus = (networkReady: boolean) =>
-  networkReady ? 'sending' as const : 'queued' as const;
 
 /** Network failures remain retryable and should not show a terminal alert. */
 export const shouldShowAttachmentRetryFailure = (isNetworkFailure: boolean) => !isNetworkFailure;

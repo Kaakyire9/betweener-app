@@ -1,4 +1,5 @@
 import type { DatePlanResponseKind, MessageType } from "@/components/chat/types";
+import { transitionMessageLifecycleRecord } from './message-state.ts';
 
 export const CHAT_READ_RECEIPT_DELAY_MS = 700;
 
@@ -115,7 +116,10 @@ export const markLoadedIncomingMessagesRead = ({
   const nextItems = items.map((item) => {
     if (!shouldScheduleMessageRead({ item, currentUserId })) return item;
     changed = true;
-    return { ...item, status: 'read' as const };
+    return transitionMessageLifecycleRecord({
+      message: item,
+      event: 'read_confirmed',
+    });
   });
   return changed ? nextItems : items;
 };

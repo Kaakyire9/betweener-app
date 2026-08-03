@@ -1,14 +1,14 @@
-import { useMemo, type ReactElement, type ReactNode, type RefObject } from 'react';
-import { FlatList, Platform } from 'react-native';
 import {
-  invertedIndexToChronologicalIndex,
-  toNewestFirstMessageOrder,
-} from '@/lib/chat/message-list-order';
+  FlashList,
+  type FlashListRef,
+  type ListRenderItemInfo,
+} from '@shopify/flash-list';
+import { useCallback, type ReactElement, type ReactNode, type RefObject } from 'react';
 import type { MessageType } from './types';
 
 type ChatMessageListProps = {
   routeKey: string;
-  listRef: RefObject<FlatList<MessageType> | null>;
+  listRef: RefObject<FlashListRef<MessageType> | null>;
   messages: MessageType[];
   renderItem: (info: { item: MessageType; index: number }) => ReactElement | null;
   getItemType: (item: MessageType) => string;
@@ -31,53 +31,44 @@ type ChatMessageListProps = {
 /**
  * Presentational virtualized message list.
  *
- * Newest-first data plus an inverted native list makes the newest message the
- * first deterministic render. This avoids waiting for an attachment-heavy
- * thread to measure every older row before the latest messages become visible.
- * The render adapter preserves chronological indexes for grouping metadata.
+ * FlashList owns cell recycling while messages remain in chronological order.
+ * Starting from the bottom avoids measuring every older attachment before the
+ * latest messages become visible, and item types prevent incompatible media
+ * rows from sharing a recycle pool.
  */
 export const ChatMessageList = ({
-  routeKey, listRef, messages, renderItem, getItemType: _getItemType, keyExtractor,
+  routeKey, listRef, messages, renderItem, getItemType, keyExtractor,
   contentContainerStyle, header, empty, onScroll, onStartReached,
   onContentSizeChange, onLayout, onScrollBeginDrag, onScrollEndDrag,
   onMomentumScrollBegin, onMomentumScrollEnd, onViewableItemsChanged,
   viewabilityConfig,
 }: ChatMessageListProps) => {
-  const invertedMessages = useMemo(
-    () => toNewestFirstMessageOrder(messages),
-    [messages],
+  const renderMessageItem = useCallback(
+    ({ item, index }: ListRenderItemInfo<MessageType>) =>
+      renderItem({ item, index }),
+    [renderItem],
   );
 
   return (
-    <FlatList
+    <FlashList
       key={routeKey}
       ref={listRef}
-      data={invertedMessages}
-      inverted
-      renderItem={({ item, index }) =>
-        renderItem({
-          item,
-          index: invertedIndexToChronologicalIndex(messages.length, index),
-        })
-      }
+      data={messages}
+      renderItem={renderMessageItem}
+      getItemType={getItemType}
       keyExtractor={keyExtractor}
       contentContainerStyle={contentContainerStyle}
-      ListFooterComponent={header as any}
+      ListHeaderComponent={header as any}
       ListEmptyComponent={empty as any}
-      initialNumToRender={8}
-      maxToRenderPerBatch={8}
-      updateCellsBatchingPeriod={16}
-      windowSize={7}
-      removeClippedSubviews={Platform.OS === 'android'}
       showsVerticalScrollIndicator={false}
       bounces={false}
       alwaysBounceVertical={false}
       overScrollMode="never"
-      maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+      maintainVisibleContentPosition={{ startRenderingFromBottom: true }}
       onScroll={onScroll}
       scrollEventThrottle={16}
-      onEndReached={onStartReached}
-      onEndReachedThreshold={0.08}
+      onStartReached={onStartReached}
+      onStartReachedThreshold={0.08}
       onContentSizeChange={onContentSizeChange}
       onLayout={onLayout}
       onScrollBeginDrag={onScrollBeginDrag}

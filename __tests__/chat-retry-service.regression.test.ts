@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   createTextRetryPlan,
-  getAttachmentRetryStatus,
   shouldShowAttachmentRetryFailure,
 } from '../lib/chat/retry/chat-retry-service.ts';
 
@@ -25,9 +24,7 @@ test('derives a durable retry id for a server-owned failed text message', () => 
   assert.equal(plan.clientMessageId, 'retry-server-1-100');
 });
 
-test('keeps attachment retries queued offline without a terminal failure alert', () => {
-  assert.equal(getAttachmentRetryStatus(false), 'queued');
-  assert.equal(getAttachmentRetryStatus(true), 'sending');
+test('keeps network attachment retry failures quiet while surfacing terminal failures', () => {
   assert.equal(shouldShowAttachmentRetryFailure(false), true);
   assert.equal(shouldShowAttachmentRetryFailure(true), false);
 });

@@ -7,6 +7,11 @@ import {
   getViewOnceSizeError,
   getViewOnceUploadErrorMessage,
 } from '../lib/chat/attachments/view-once-attachment.ts';
+import {
+  buildViewOnceStatusFromReceipts,
+  isViewOnceAlreadyConsumedError,
+  mergeViewOnceStatusMaps,
+} from '../lib/chat/view-once-status.ts';
 
 test('creates an encrypted, one-time optimistic video message', () => {
   const message = createViewOnceOptimisticMessage({
@@ -29,4 +34,36 @@ test('keeps view-once size and finalize metadata rules outside the screen', () =
     isViewOnce: true, encryptedKeySender: 'sender', encryptedKeyReceiver: 'receiver', encryptedKeyNonce: 'key',
     encryptedMediaNonce: 'media', encryptedMediaAlg: 'nacl-secretbox', senderPublicKey: 'public',
   });
+});
+
+test('view-once status is monotonic when stale receipts arrive', () => {
+  const current = {
+    'message-1': { viewedByMe: true, viewedByPeer: false },
+    'message-2': { viewedByMe: false, viewedByPeer: true },
+  };
+
+  assert.deepEqual(mergeViewOnceStatusMaps(current, {
+    'message-1': { viewedByMe: false, viewedByPeer: false },
+    'message-2': { viewedByMe: false, viewedByPeer: false },
+  }), current);
+});
+
+test('builds participant-specific status without inventing negative receipts', () => {
+  assert.deepEqual(buildViewOnceStatusFromReceipts({
+    receipts: [
+      { message_id: 'incoming', viewer_id: 'me' },
+      { message_id: 'outgoing', viewer_id: 'peer' },
+    ],
+    currentUserId: 'me',
+    peerUserId: 'peer',
+  }), {
+    incoming: { viewedByMe: true, viewedByPeer: false },
+    outgoing: { viewedByMe: false, viewedByPeer: true },
+  });
+});
+
+test('recognises an already-consumed response as canonical viewed state', () => {
+  assert.equal(isViewOnceAlreadyConsumedError(new Error('view_once_already_consumed')), true);
+  assert.equal(isViewOnceAlreadyConsumedError({ code: '22023', message: 'view_once_already_consumed' }), true);
+  assert.equal(isViewOnceAlreadyConsumedError(new Error('network_error')), false);
 });

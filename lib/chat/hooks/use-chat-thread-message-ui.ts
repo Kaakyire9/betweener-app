@@ -6,6 +6,11 @@ import { encodeBase64 } from "tweetnacl-util";
 
 import type { MessageType } from "@/components/chat/types";
 import { prepareViewOnceAttachment } from "@/lib/chat/attachment-lifecycle";
+import { ChatRepository } from "@/lib/chat/local/chat-db";
+import {
+  isViewOnceAlreadyConsumedError,
+  mergeViewOnceStatus,
+} from "@/lib/chat/view-once-status";
 import { decryptMediaBytes, getOrCreateDeviceKeypair } from "@/lib/e2ee";
 import { supabase } from "@/lib/supabase";
 
@@ -232,6 +237,31 @@ export const useChatThreadMessageUi = ({
     setViewOnceMediaUri(null);
   }, [viewOnceMediaUri, viewOnceModalMessage]);
 
+  const markViewOnceViewedByMe = useCallback((message: MessageType) => {
+    if (!currentUserId) return;
+    const next = mergeViewOnceStatus(viewOnceStatusRef.current[message.id], {
+      viewedByMe: true,
+    });
+    viewOnceStatusRef.current[message.id] = next;
+    if (isMountedRef.current) {
+      setViewOnceStatus((prev) => ({
+        ...prev,
+        [message.id]: mergeViewOnceStatus(prev[message.id], next),
+      }));
+    }
+    const threadId = conversationId || message.senderId;
+    if (threadId) {
+      void ChatRepository.upsertViewOnceStatuses(
+        currentUserId,
+        threadId,
+        [{ messageId: message.id, ...next }],
+        { priority: 'user-blocking' },
+      ).catch((error) => {
+        console.log('[chat] persist consumed view-once status error', error);
+      });
+    }
+  }, [conversationId, currentUserId, setViewOnceStatus, viewOnceStatusRef]);
+
   const openViewOnceMessage = useCallback(async (message: MessageType) => {
     if (!currentUserId) return;
     if (!message.isViewOnce || !message.encryptedMedia) return;
@@ -257,6 +287,10 @@ export const useChatThreadMessageUi = ({
         messageId: message.id,
       });
       const prepared = await prepareViewOnceAttachment(message.id);
+      // The claim RPC creates the irreversible receipt before returning the
+      // signed URL. From this point onward the UI must remain consumed even if
+      // download, decryption, or the temporary-file write later fails.
+      markViewOnceViewedByMe(message);
       console.log("[chat][view-once-open] prepare-success", {
         messageId: message.id,
         attachmentId: prepared.attachmentId,
@@ -317,12 +351,7 @@ export const useChatThreadMessageUi = ({
         tempPath,
         isVideo,
       });
-      viewOnceStatusRef.current[message.id] = {
-        viewedByMe: true,
-        viewedByPeer: viewOnceStatusRef.current[message.id]?.viewedByPeer ?? false,
-      };
       if (isMountedRef.current) {
-        setViewOnceStatus((prev) => ({ ...prev, [message.id]: viewOnceStatusRef.current[message.id] }));
         viewOnceMediaUriRef.current = tempPath;
         setViewOnceMediaUri(tempPath);
       } else {
@@ -340,15 +369,9 @@ export const useChatThreadMessageUi = ({
       const errorCode = String(
         (error as { code?: string })?.code || (error as { message?: string })?.message || "",
       ).toLowerCase();
-      const alreadyConsumed = errorCode.includes("already_consumed");
+      const alreadyConsumed = isViewOnceAlreadyConsumedError(error);
       if (alreadyConsumed) {
-        viewOnceStatusRef.current[message.id] = {
-          viewedByMe: true,
-          viewedByPeer: viewOnceStatusRef.current[message.id]?.viewedByPeer ?? false,
-        };
-        if (isMountedRef.current) {
-          setViewOnceStatus((prev) => ({ ...prev, [message.id]: viewOnceStatusRef.current[message.id] }));
-        }
+        markViewOnceViewedByMe(message);
       }
       Alert.alert(
         "View once",
@@ -369,7 +392,14 @@ export const useChatThreadMessageUi = ({
         setViewOnceDecrypting(false);
       }
     }
-  }, [conversationId, currentUserId, ensureOwnKeypair, fetchPeerPublicKey, setViewOnceStatus, viewOnceStatusRef]);
+  }, [
+    conversationId,
+    currentUserId,
+    ensureOwnKeypair,
+    fetchPeerPublicKey,
+    markViewOnceViewedByMe,
+    viewOnceStatusRef,
+  ]);
 
   const closeMessageActions = useCallback(() => {
     setMessageActionsVisible(false);

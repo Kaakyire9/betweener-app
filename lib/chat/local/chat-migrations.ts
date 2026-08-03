@@ -139,6 +139,25 @@ async function runV7Migration(db: SQLiteDatabase): Promise<void> {
   });
 }
 
+async function runV8Migration(db: SQLiteDatabase): Promise<void> {
+  await db.withTransactionAsync(async () => {
+    await db.execAsync(`
+      create table if not exists chat_view_once_status (
+        owner_user_id text not null,
+        message_id text not null,
+        thread_id text not null,
+        viewed_by_me integer not null default 0,
+        viewed_by_peer integer not null default 0,
+        updated_at text not null,
+        primary key(owner_user_id, message_id)
+      );
+      create index if not exists idx_chat_view_once_status_thread
+        on chat_view_once_status(owner_user_id, thread_id);
+    `);
+    await setChatSchemaVersion(db, 8);
+  });
+}
+
 export async function runChatMigrations(db: SQLiteDatabase): Promise<void> {
   try {
     const currentVersion = await getChatSchemaVersion(db);
@@ -169,6 +188,9 @@ export async function runChatMigrations(db: SQLiteDatabase): Promise<void> {
     }
     if (currentVersion < 7) {
       await runV7Migration(db);
+    }
+    if (currentVersion < 8) {
+      await runV8Migration(db);
     }
 
     captureMessage('chat_db_migration_succeeded', {
