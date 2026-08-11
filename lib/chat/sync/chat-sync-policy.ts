@@ -59,7 +59,7 @@ export const resolveThreadSyncCursor = ({
   return latestTimestamp == null ? null : new Date(latestTimestamp).toISOString();
 };
 
-const OPTIONAL_CHAT_MEDIA_COLUMNS = ['media_items', 'media_expected_count'] as const;
+const OPTIONAL_CHAT_MEDIA_COLUMNS = ['media_items', 'media_expected_count', 'media_group_id', 'media_caption'] as const;
 
 export const isMissingOptionalChatMediaColumnsError = (
   error?: { code?: string | null; message?: string | null } | null,

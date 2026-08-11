@@ -6,6 +6,7 @@ import {
 } from 'react-native-compressor';
 
 import type { ChatAttachmentKind } from '@/lib/chat/attachment-lifecycle';
+import { normalizeChatPreviewDimensions } from '@/lib/chat/attachments/chat-attachment-metadata';
 import {
   getOfflineCacheOwnerDirectory,
   getOfflineCacheOwnerDirectoryForId,
@@ -70,10 +71,14 @@ const createJpegPreview = async (
     returnableOutputType: 'uri',
   });
   const metadata = await getImageMetaData(localUri).catch(() => null);
+  const dimensions = normalizeChatPreviewDimensions({
+    width: metadata?.ImageWidth ?? fallbackWidth,
+    height: metadata?.ImageHeight ?? fallbackHeight,
+    maxEdge: PREVIEW_EDGE,
+  });
   return {
     localUri,
-    width: metadata?.ImageWidth ?? fallbackWidth ?? PREVIEW_EDGE,
-    height: metadata?.ImageHeight ?? fallbackHeight ?? PREVIEW_EDGE,
+    ...dimensions,
   };
 };
 

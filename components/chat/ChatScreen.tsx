@@ -82,7 +82,7 @@ import {
 import { prepareDurableViewOnceAttachment } from "@/lib/chat/attachments/view-once-send-service";
 import { prepareChatVideo } from "@/lib/chat/video-preparation";
 import {
-  getMessageImageItems,
+  getMessageMediaItems,
   getStableChatImageFrame,
   normalizeChatMediaItems,
 } from "@/lib/chat/media-album";
@@ -2203,6 +2203,7 @@ export default function ConversationScreen() {
   const imagePinchScale = useRef(new Animated.Value(1)).current;
   const imageScaleRef = useRef(1);
   const imageViewerRequestRef = useRef(0);
+  const imageViewerSwipeStartXRef = useRef<number | null>(null);
   const imageViewerSourceRef = useRef<{
     message: MessageType;
     renderedUrl: string;
@@ -2799,6 +2800,8 @@ const resolveQueuedVideoUri = async (
         storagePath,
         mediaItems,
         mediaExpectedCount: row.media_expected_count ?? null,
+        mediaGroupId: row.media_group_id ?? null,
+        mediaCaption: row.media_caption ?? null,
         previewStoragePath: mediaItems[0]?.previewStoragePath ?? null,
         imageUrl,
         videoUrl,
@@ -4306,14 +4309,16 @@ const resolveQueuedVideoUri = async (
     }, 100);
   }, [activePeerMessageUserId, replyingTo, user?.id]);
 
-  const queueImageAlbum = useCallback(async (items: {
+  const queueMediaAlbum = useCallback(async (items: {
     localUri: string;
     fileName: string;
     contentType: string;
+    mediaType: 'image' | 'video';
     byteSize?: number | null;
     width?: number | null;
     height?: number | null;
-  }[]) => {
+    durationMs?: number | null;
+  }[], caption = '') => {
     if (!user?.id || !activePeerMessageUserId || items.length < 2) return;
     const selectedItems = items.slice(0, 10);
     const stagedItems: {
@@ -4329,6 +4334,8 @@ const resolveQueuedVideoUri = async (
       previewByteSize: number | null;
       previewWidth: number | null;
       previewHeight: number | null;
+      mediaType: 'image' | 'video';
+      durationMs?: number | null;
     }[] = [];
     try {
       for (let index = 0; index < selectedItems.length; index += 1) {
@@ -4338,7 +4345,7 @@ const resolveQueuedVideoUri = async (
         try {
           const preview = await createChatAttachmentPreview({
             attachmentId,
-            kind: 'image',
+            kind: mediaItem.mediaType,
             localUri,
             width: mediaItem.width,
             height: mediaItem.height,
@@ -4365,11 +4372,12 @@ const resolveQueuedVideoUri = async (
       ]));
       throw error;
     }
-    const clientMessageId = `temp-image-${createChatAttachmentId()}`;
+    const mediaGroupId = createChatAttachmentId();
+    const clientMessageId = `temp-album-${mediaGroupId}`;
     const mediaItems: ChatMediaItem[] = stagedItems.map((mediaItem, index) => ({
       attachmentId: mediaItem.attachmentId,
       index,
-      type: 'image',
+      type: mediaItem.mediaType,
       storagePath: '',
       mimeType: mediaItem.contentType,
       width: mediaItem.width ?? null,
@@ -4377,13 +4385,17 @@ const resolveQueuedVideoUri = async (
       byteSize: mediaItem.byteSize ?? null,
       localUri: mediaItem.localUri,
       localPreviewUri: mediaItem.previewLocalUri,
+      transferState: 'queued',
+      uploadProgress: 0,
     }));
     const optimistic: MessageType = {
       id: clientMessageId,
       clientMessageId,
-      text: '',
+      text: caption.trim(),
       senderId: user.id,
       timestamp: new Date(),
+      // Album bubbles use the image container while each tile retains its own
+      // image/video type and opens the correct viewer.
       type: 'image',
       reactions: [],
       status: 'queued',
@@ -4391,6 +4403,8 @@ const resolveQueuedVideoUri = async (
       offlineImageUri: stagedItems[0].localUri,
       mediaItems,
       mediaExpectedCount: stagedItems.length,
+      mediaGroupId,
+      mediaCaption: caption.trim() || null,
       replyToId: replyingTo?.id ?? null,
       replyTo: replyingTo || undefined,
     };
@@ -4416,9 +4430,13 @@ const resolveQueuedVideoUri = async (
             byteSize: stagedItems[0].byteSize ?? null,
             width: stagedItems[0].width ?? null,
             height: stagedItems[0].height ?? null,
+            durationMs: stagedItems[0].durationMs ?? null,
+            mediaType: stagedItems[0].mediaType,
           },
-          mediaType: 'image',
+          mediaType: stagedItems[0].mediaType,
           albumItems: stagedItems,
+          mediaGroupId,
+          albumCaption: caption.trim() || null,
         }),
       );
     } catch (error) {
@@ -4432,7 +4450,7 @@ const resolveQueuedVideoUri = async (
       throw error;
     }
     void ChatOutboxService.flushPending(user.id).catch((error) => {
-      if (!isLikelyNetworkError(error)) console.log('[chat] flush queued photo album error', error);
+      if (!isLikelyNetworkError(error)) console.log('[chat] flush queued media album error', error);
     });
     setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
   }, [activePeerMessageUserId, replyingTo, user?.id]);
@@ -5628,6 +5646,51 @@ const resolveQueuedVideoUri = async (
       return;
     }
     const localMessageId = message.clientMessageId ?? message.id;
+    if ((message.mediaItems?.length ?? 0) > 1) {
+      Alert.alert(
+        'Finish this album',
+        'Retry only the unfinished items, send the items that are ready, or cancel the album.',
+        [
+          { text: 'Not now', style: 'cancel' },
+          {
+            text: 'Cancel album',
+            style: 'destructive',
+            onPress: () => {
+              void ChatOutboxService.cancelMessage(user.id, localMessageId).then(() => {
+                setMessages((current) => current.filter((entry) => entry.id !== message.id));
+              });
+            },
+          },
+          {
+            text: 'Send ready items',
+            onPress: () => {
+              setMessages((current) => transitionMessageLifecycle({
+                items: current,
+                messageId: message.id,
+                event: 'retry_requested',
+              }));
+              void ChatOutboxService.sendRemainingAlbumItems(user.id, localMessageId).then((sent) => {
+                if (!sent) Alert.alert('Album unchanged', 'At least one unfinished item must be retried or removed first.');
+              });
+            },
+          },
+          {
+            text: 'Retry unfinished',
+            onPress: () => {
+              setMessages((current) => transitionMessageLifecycle({
+                items: current,
+                messageId: message.id,
+                event: networkReady ? 'send_started' : 'retry_requested',
+              }));
+              void ChatOutboxService.retryMessage(user.id, localMessageId).then((result) => {
+                if (!result.requeued) Alert.alert('Retry unavailable', 'The unfinished media is no longer on this device.');
+              });
+            },
+          },
+        ],
+      );
+      return;
+    }
     setMessages((current) => transitionMessageLifecycle({
       items: current,
       messageId: message.id,
@@ -5660,6 +5723,59 @@ const resolveQueuedVideoUri = async (
     if (!message) return;
     await retryFailedMessage(message);
   }, [retryFailedMessage]);
+
+  const manageFailedAlbumItem = useCallback((message: MessageType, albumIndex: number) => {
+    if (!user?.id || message.status !== 'failed') return;
+    const mediaItem = message.mediaItems?.find((entry) => entry.index === albumIndex);
+    if (!mediaItem) return;
+    const localMessageId = message.clientMessageId ?? message.id;
+    Alert.alert(
+      'Album item',
+      `Choose what to do with item ${albumIndex + 1} of ${message.mediaItems?.length ?? 1}.`,
+      [
+        { text: 'Not now', style: 'cancel' },
+        {
+          text: 'Remove item',
+          style: 'destructive',
+          onPress: () => {
+            void ChatOutboxService.removeAlbumItem(user.id, localMessageId, mediaItem.attachmentId)
+              .then((result) => {
+                if (!result.changed) {
+                  Alert.alert('Album locked', 'This album is already being finalised and can no longer be changed.');
+                  return;
+                }
+                setMessages((current) => current.map((entry) => entry.id === message.id
+                  ? {
+                      ...entry,
+                      mediaExpectedCount: result.remainingCount,
+                      mediaItems: entry.mediaItems
+                        ?.filter((candidate) => candidate.attachmentId !== mediaItem.attachmentId)
+                        .map((candidate, index) => ({ ...candidate, index })),
+                    }
+                  : entry));
+              });
+          },
+        },
+        {
+          text: 'Retry this item',
+          onPress: () => {
+            setMessages((current) => current.map((entry) => entry.id === message.id
+              ? {
+                  ...transitionMessageLifecycleRecord({ message: entry, event: networkReady ? 'send_started' : 'retry_requested' }),
+                  mediaItems: entry.mediaItems?.map((candidate) => candidate.attachmentId === mediaItem.attachmentId
+                    ? { ...candidate, transferState: 'queued', transferError: null }
+                    : candidate),
+                }
+              : entry));
+            void ChatOutboxService.retryAlbumItem(user.id, localMessageId, mediaItem.attachmentId)
+              .then((requeued) => {
+                if (!requeued) Alert.alert('Retry unavailable', 'This item can no longer be retried from this device.');
+              });
+          },
+        },
+      ],
+    );
+  }, [networkReady, user?.id]);
 
   useEffect(() => {
     if (!messagesLoaded) return;
@@ -7590,47 +7706,61 @@ const resolveQueuedVideoUri = async (
     closeAttachmentSheet();
     const selectedAssets = (result.assets ?? []).filter((selectedAsset) => Boolean(selectedAsset.uri));
     if (!viewOnceMode && selectedAssets.length > 1) {
-      if (selectedAssets.some((selectedAsset) => selectedAsset.type === 'video')) {
-        Alert.alert('Select photos together', 'Photo albums can contain up to 10 photos. Send videos separately for dependable playback.');
-        return;
-      }
       const invalidAsset = selectedAssets.find((selectedAsset) => validateChatAttachment({
-        kind: 'image',
+        kind: selectedAsset.type === 'video' ? 'video' : 'image',
         fileName: selectedAsset.fileName,
         mimeType: selectedAsset.mimeType,
         sizeBytes: selectedAsset.fileSize,
+        durationMs: selectedAsset.duration,
       }));
       if (invalidAsset) {
-        Alert.alert('Photo unavailable', validateChatAttachment({
-          kind: 'image',
+        Alert.alert('Media unavailable', validateChatAttachment({
+          kind: invalidAsset.type === 'video' ? 'video' : 'image',
           fileName: invalidAsset.fileName,
           mimeType: invalidAsset.mimeType,
           sizeBytes: invalidAsset.fileSize,
-        }) ?? 'One of these photos could not be prepared.');
+          durationMs: invalidAsset.duration,
+        }) ?? 'One of these items could not be prepared.');
         return;
       }
       const uploadStatusId = beginMediaUploadStatus(
-        `Preparing ${selectedAssets.length} photos...`,
-        'Building one polished, secure photo album.',
+        `Preparing ${selectedAssets.length} items...`,
+        'Building one ordered, secure media album.',
         'image-multiple-outline',
       );
       try {
         const normalizedAssets = await Promise.all(selectedAssets.map(async (selectedAsset, index) => {
-          const fallbackName = selectedAsset.fileName ?? selectedAsset.uri.split('/').pop() ?? `photo-${index + 1}.jpg`;
-          const normalized = await normalizeHeicImage(selectedAsset, fallbackName);
+          const isVideo = selectedAsset.type === 'video';
+          const fallbackName = selectedAsset.fileName ?? selectedAsset.uri.split('/').pop()
+            ?? `${isVideo ? 'video' : 'photo'}-${index + 1}.${isVideo ? 'mp4' : 'jpg'}`;
+          const normalized = isVideo
+            ? await prepareChatVideo({
+                uri: selectedAsset.uri,
+                fileName: fallbackName,
+                contentType: selectedAsset.mimeType ?? 'video/mp4',
+                sizeBytes: selectedAsset.fileSize,
+                durationMs: selectedAsset.duration,
+              })
+            : await normalizeHeicImage(selectedAsset, fallbackName);
           return {
             localUri: normalized.uri,
             fileName: normalized.fileName,
             contentType: normalized.contentType,
-            byteSize: selectedAsset.fileSize ?? null,
+            mediaType: isVideo ? 'video' as const : 'image' as const,
+            byteSize: 'sizeBytes' in normalized && typeof normalized.sizeBytes === 'number'
+              ? normalized.sizeBytes
+              : selectedAsset.fileSize ?? null,
             width: selectedAsset.width ?? null,
             height: selectedAsset.height ?? null,
+            durationMs: selectedAsset.duration ?? null,
           };
         }));
-        updateMediaUploadStatus(uploadStatusId, 'Queueing photo album...', 'Photos will appear together in one message.', 'clock-outline');
-        await queueImageAlbum(normalizedAssets);
+        updateMediaUploadStatus(uploadStatusId, 'Queueing media album...', 'Everything will appear together in one message.', 'clock-outline');
+        const albumCaption = inputText.trim();
+        await queueMediaAlbum(normalizedAssets, albumCaption);
+        if (albumCaption) setInputText('');
       } catch (error) {
-        Alert.alert('Photo album', getAttachmentUploadErrorMessage(error));
+        Alert.alert('Media album', getAttachmentUploadErrorMessage(error));
       } finally {
         clearMediaUploadStatus(uploadStatusId);
       }
@@ -7738,9 +7868,10 @@ const resolveQueuedVideoUri = async (
     clearMediaUploadStatus,
     closeAttachmentSheet,
     mediaUploadStatus,
+    inputText,
     sendEncryptedMediaAttachment,
     queueMediaAttachment,
-    queueImageAlbum,
+    queueMediaAlbum,
     updateMediaUploadStatus,
     viewOnceMode,
   ]);
@@ -8181,28 +8312,56 @@ const resolveQueuedVideoUri = async (
     void retryChatMediaPath(message.storagePath);
   }, [networkReady, retryChatMediaPath]);
 
-  const openVideoViewer = useCallback(async (message: MessageType, renderedUrl: string) => {
-    const localUri = message.offlineVideoUri
-      ?? (message.storagePath ? await getOfflineVideoUri(message.storagePath) : null)
-      ?? (renderedUrl ? cachedVideoUris[renderedUrl] : null);
+  const openVideoViewer = useCallback(async (
+    message: MessageType,
+    renderedUrl: string,
+    albumIndex = 0,
+  ) => {
+    const selection = selectChatImageGalleryItem(
+      message,
+      albumIndex,
+      chatMediaUrisByPath,
+      renderedUrl,
+    );
+    const mediaItem = selection.mediaItem;
+    const selectedMessage: MessageType = {
+      ...selection.message,
+      type: 'video',
+      storagePath: mediaItem?.storagePath || message.storagePath || null,
+      videoUrl: mediaItem?.signedUrl ?? selection.renderedUri ?? renderedUrl,
+      offlineVideoUri: mediaItem?.localUri,
+      previewStoragePath: mediaItem?.previewStoragePath ?? message.previewStoragePath,
+    };
+    const selectedRenderedUrl = selection.renderedUri ?? renderedUrl;
+    imageViewerSourceRef.current = {
+      message,
+      renderedUrl: selectedRenderedUrl,
+      albumIndex: selection.index,
+    };
+    setImageViewerAlbumIndex(selection.index);
+    setImageViewerAlbumCount(selection.count);
+    setImageViewerVisible(false);
+    const localUri = selectedMessage.offlineVideoUri
+      ?? (selectedMessage.storagePath ? await getOfflineVideoUri(selectedMessage.storagePath) : null)
+      ?? (selectedRenderedUrl ? cachedVideoUris[selectedRenderedUrl] : null);
     if (localUri) {
       setVideoViewerUrl(localUri);
       return;
     }
 
-    let playableUrl = renderedUrl || message.videoUrl || '';
-    if (networkReady && message.storagePath) {
-      const refreshedUrl = await createFreshChatMediaUrl(message.storagePath);
+    let playableUrl = selectedRenderedUrl || selectedMessage.videoUrl || '';
+    if (networkReady && selectedMessage.storagePath) {
+      const refreshedUrl = await createFreshChatMediaUrl(selectedMessage.storagePath);
       if (refreshedUrl) {
         playableUrl = refreshedUrl;
         setMessages((current) => current.map((candidate) =>
           candidate.id === message.id ? { ...candidate, videoUrl: refreshedUrl } : candidate,
         ));
-        void cacheOfflineVideo(message.storagePath, refreshedUrl).then((cachedUri) => {
+        void cacheOfflineVideo(selectedMessage.storagePath, refreshedUrl).then((cachedUri) => {
           if (!cachedUri) return;
           setCachedVideoUris((current) => ({
             ...current,
-            [message.storagePath as string]: cachedUri,
+            [selectedMessage.storagePath as string]: cachedUri,
             [refreshedUrl]: cachedUri,
           }));
         });
@@ -8216,7 +8375,7 @@ const resolveQueuedVideoUri = async (
     }
     const resolved = cachedVideoUris[playableUrl] ?? await resolveQueuedVideoUri(playableUrl, networkReady);
     setVideoViewerUrl(resolved || playableUrl);
-  }, [cachedVideoUris, createFreshChatMediaUrl, networkReady]);
+  }, [cachedVideoUris, chatMediaUrisByPath, createFreshChatMediaUrl, networkReady]);
 
   const openImageViewer = useCallback(async (
     message: MessageType,
@@ -8296,10 +8455,11 @@ const resolveQueuedVideoUri = async (
     void openImageViewer(source.message, source.renderedUrl, source.albumIndex);
   }, [openImageViewer]);
 
-  const moveImageViewer = useCallback((direction: -1 | 1) => {
+  const moveMediaViewer = useCallback((direction: -1 | 1) => {
     const source = imageViewerSourceRef.current;
     if (!source) return;
-    const mediaCount = getMessageImageItems(source.message).length;
+    const mediaItems = getMessageMediaItems(source.message);
+    const mediaCount = mediaItems.length;
     if (mediaCount <= 1) return;
     const nextIndex = source.albumIndex + direction;
     if (nextIndex < 0 || nextIndex >= mediaCount) return;
@@ -8308,12 +8468,24 @@ const resolveQueuedVideoUri = async (
       nextIndex,
       chatMediaUrisByPath,
     );
-    void openImageViewer(
-      source.message,
-      nextSelection.renderedUri ?? '',
-      nextIndex,
-    );
-  }, [chatMediaUrisByPath, openImageViewer]);
+    if (mediaItems[nextIndex]?.type === 'video') {
+      void openVideoViewer(source.message, nextSelection.renderedUri ?? '', nextIndex);
+      return;
+    }
+    setVideoViewerUrl(null);
+    void openImageViewer(source.message, nextSelection.renderedUri ?? '', nextIndex);
+  }, [chatMediaUrisByPath, openImageViewer, openVideoViewer]);
+
+  const retryCurrentAlbumViewerItem = useCallback(() => {
+    const source = imageViewerSourceRef.current;
+    if (!source) return;
+    const mediaItem = getMessageMediaItems(source.message)[source.albumIndex];
+    if (mediaItem?.type === 'video') {
+      void openVideoViewer(source.message, source.renderedUrl, source.albumIndex);
+      return;
+    }
+    void openImageViewer(source.message, source.renderedUrl, source.albumIndex);
+  }, [openImageViewer, openVideoViewer]);
 
   const handleOpenDocument = useCallback(async (message: MessageType) => {
     const doc = message.document;
@@ -8507,6 +8679,9 @@ const resolveQueuedVideoUri = async (
   }, [resetImageScale]);
 
   const closeVideoViewer = useCallback(() => {
+    imageViewerSourceRef.current = null;
+    setImageViewerAlbumIndex(0);
+    setImageViewerAlbumCount(1);
     setVideoViewerUrl(null);
   }, []);
 
@@ -8971,7 +9146,10 @@ const resolveQueuedVideoUri = async (
             onViewImage={(message, url, albumIndex) => {
               void openImageViewer(message, url, albumIndex);
             }}
-            onViewVideo={(message, url) => { void openVideoViewer(message, url); }}
+            onViewVideo={(message, url, albumIndex) => {
+              void openVideoViewer(message, url, albumIndex);
+            }}
+            onManageAlbumItem={manageFailedAlbumItem}
             onOpenDocument={handleOpenDocument}
             onRefreshMedia={refreshChatMediaMessage}
             onMediaLoadSuccess={persistRenderedChatMedia}
@@ -9026,6 +9204,7 @@ const resolveQueuedVideoUri = async (
       handleOpenDocument,
       refreshChatMediaMessage,
       retryChatMediaMessage,
+      manageFailedAlbumItem,
       handleSuggestAnotherTime,
       handleSuggestAnotherPlace,
       handleSuggestBoth,
@@ -10650,6 +10829,19 @@ const resolveQueuedVideoUri = async (
                   styles.imageViewerImage,
                   { transform: [{ scale: imageScale }] },
                 ]}
+                onTouchStart={(event) => {
+                  imageViewerSwipeStartXRef.current = imageViewerAlbumCount > 1
+                    ? event.nativeEvent.pageX
+                    : null;
+                }}
+                onTouchEnd={(event) => {
+                  const startX = imageViewerSwipeStartXRef.current;
+                  imageViewerSwipeStartXRef.current = null;
+                  if (startX === null) return;
+                  const delta = event.nativeEvent.pageX - startX;
+                  if (Math.abs(delta) < 56) return;
+                  moveMediaViewer(delta < 0 ? 1 : -1);
+                }}
               >
                 <ExpoImage
                   source={{ uri: imageViewerUrl }}
@@ -10691,7 +10883,7 @@ const resolveQueuedVideoUri = async (
                   styles.imageViewerPrevious,
                   imageViewerAlbumIndex === 0 && styles.imageViewerNavigationDisabled,
                 ]}
-                onPress={() => moveImageViewer(-1)}
+                onPress={() => moveMediaViewer(-1)}
                 disabled={imageViewerAlbumIndex === 0}
                 accessibilityRole="button"
                 accessibilityLabel="Previous photo"
@@ -10704,7 +10896,7 @@ const resolveQueuedVideoUri = async (
                   imageViewerAlbumIndex >= imageViewerAlbumCount - 1 &&
                     styles.imageViewerNavigationDisabled,
                 ]}
-                onPress={() => moveImageViewer(1)}
+                onPress={() => moveMediaViewer(1)}
                 disabled={imageViewerAlbumIndex >= imageViewerAlbumCount - 1}
                 accessibilityRole="button"
                 accessibilityLabel="Next photo"
@@ -10725,6 +10917,17 @@ const resolveQueuedVideoUri = async (
               <Text style={styles.imageViewerRetryText}>Try again</Text>
             </TouchableOpacity>
           ) : null}
+          {imageViewerSourceRef.current?.message.mediaCaption || imageViewerSourceRef.current?.message.text ? (
+            <View
+              pointerEvents="none"
+              style={[styles.imageViewerCaption, { bottom: Math.max(insets.bottom + 18, 26) }]}
+            >
+              <Text style={styles.imageViewerCaptionText}>
+                {imageViewerSourceRef.current.message.mediaCaption
+                  ?? imageViewerSourceRef.current.message.text}
+              </Text>
+            </View>
+          ) : null}
           <TouchableOpacity
             style={[styles.imageViewerClose, { top: Math.max(insets.top + 10, 18), right: 16 }]}
             onPress={closeImageViewer}
@@ -10738,6 +10941,14 @@ const resolveQueuedVideoUri = async (
         visible={Boolean(videoViewerUrl)}
         uri={videoViewerUrl}
         onClose={closeVideoViewer}
+        currentIndex={imageViewerAlbumIndex}
+        itemCount={imageViewerAlbumCount}
+        caption={imageViewerSourceRef.current?.message.mediaCaption
+          ?? imageViewerSourceRef.current?.message.text
+          ?? null}
+        onPrevious={() => moveMediaViewer(-1)}
+        onNext={() => moveMediaViewer(1)}
+        onRetry={retryCurrentAlbumViewerItem}
       />
 
       <ChatDocumentViewer

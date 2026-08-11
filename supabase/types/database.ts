@@ -1059,6 +1059,30 @@ export type Database = {
           },
         ]
       }
+      chat_media_album_item_cancellations: {
+        Row: {
+          attachment_id: string
+          cancelled_at: string
+          client_message_id: string
+          receiver_id: string
+          sender_id: string
+        }
+        Insert: {
+          attachment_id: string
+          cancelled_at?: string
+          client_message_id: string
+          receiver_id: string
+          sender_id: string
+        }
+        Update: {
+          attachment_id?: string
+          cancelled_at?: string
+          client_message_id?: string
+          receiver_id?: string
+          sender_id?: string
+        }
+        Relationships: []
+      }
       chat_prefs: {
         Row: {
           id: string
@@ -3754,6 +3778,7 @@ export type Database = {
           id: string
           is_view_once: boolean
           lifecycle_status: string
+          media_group_id: string | null
           message_id: string
           mime_type: string
           original_name: string | null
@@ -3789,6 +3814,7 @@ export type Database = {
           id?: string
           is_view_once?: boolean
           lifecycle_status?: string
+          media_group_id?: string | null
           message_id: string
           mime_type: string
           original_name?: string | null
@@ -3824,6 +3850,7 @@ export type Database = {
           id?: string
           is_view_once?: boolean
           lifecycle_status?: string
+          media_group_id?: string | null
           message_id?: string
           mime_type?: string
           original_name?: string | null
@@ -4058,7 +4085,9 @@ export type Database = {
           id: string
           is_read: boolean
           is_view_once: boolean
+          media_caption: string | null
           media_expected_count: number | null
+          media_group_id: string | null
           media_items: Json
           media_kind: string | null
           message_type: string
@@ -4101,7 +4130,9 @@ export type Database = {
           id?: string
           is_read?: boolean
           is_view_once?: boolean
+          media_caption?: string | null
           media_expected_count?: number | null
+          media_group_id?: string | null
           media_items?: Json
           media_kind?: string | null
           message_type?: string
@@ -4144,7 +4175,9 @@ export type Database = {
           id?: string
           is_read?: boolean
           is_view_once?: boolean
+          media_caption?: string | null
           media_expected_count?: number | null
+          media_group_id?: string | null
           media_items?: Json
           media_kind?: string | null
           message_type?: string
@@ -7910,7 +7943,9 @@ export type Database = {
           id: string
           is_read: boolean
           is_view_once: boolean
+          media_caption: string | null
           media_expected_count: number | null
+          media_group_id: string | null
           media_items: Json
           media_kind: string | null
           message_type: string
@@ -9204,7 +9239,9 @@ export type Database = {
           id: string
           is_read: boolean
           is_view_once: boolean
+          media_caption: string | null
           media_expected_count: number | null
+          media_group_id: string | null
           media_items: Json
           media_kind: string | null
           message_type: string
@@ -9388,6 +9425,15 @@ export type Database = {
           p_sender_id: string
         }
         Returns: boolean
+      }
+      rpc_cancel_chat_media_album_item: {
+        Args: {
+          p_attachment_id: string
+          p_client_message_id: string
+          p_receiver_id: string
+          p_sender_id: string
+        }
+        Returns: Json
       }
       rpc_cancel_circle_invitation: {
         Args: { p_actor_profile_id: string; p_invitation_id: string }
@@ -9999,7 +10045,9 @@ export type Database = {
           id: string
           is_read: boolean
           is_view_once: boolean
+          media_caption: string | null
           media_expected_count: number | null
+          media_group_id: string | null
           media_items: Json
           media_kind: string | null
           message_type: string
@@ -10060,7 +10108,9 @@ export type Database = {
           id: string
           is_read: boolean
           is_view_once: boolean
+          media_caption: string | null
           media_expected_count: number | null
+          media_group_id: string | null
           media_items: Json
           media_kind: string | null
           message_type: string
@@ -10122,7 +10172,9 @@ export type Database = {
           id: string
           is_read: boolean
           is_view_once: boolean
+          media_caption: string | null
           media_expected_count: number | null
+          media_group_id: string | null
           media_items: Json
           media_kind: string | null
           message_type: string
@@ -10201,7 +10253,73 @@ export type Database = {
           id: string
           is_read: boolean
           is_view_once: boolean
+          media_caption: string | null
           media_expected_count: number | null
+          media_group_id: string | null
+          media_items: Json
+          media_kind: string | null
+          message_type: string
+          read_at: string | null
+          receiver_id: string
+          reply_to_message_id: string | null
+          sender_id: string
+          status: string
+          storage_path: string | null
+          text: string
+          view_once: boolean
+          viewed_at: string | null
+          viewed_by: string | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "messages"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      rpc_finalize_chat_media_album_v4: {
+        Args: {
+          p_attachments: Json
+          p_caption: string
+          p_client_message_id: string
+          p_expected_count: number
+          p_media_group_id: string
+          p_receiver_id: string
+          p_reply_to_message_id: string
+          p_request_payload: Json
+          p_sender_id: string
+        }
+        Returns: {
+          attachment_set_hash: string | null
+          attachment_state: string
+          attachment_state_version: number
+          audio_duration: number | null
+          audio_path: string | null
+          audio_waveform: Json | null
+          client_message_id: string | null
+          created_at: string
+          deleted_at: string | null
+          deleted_by: string | null
+          deleted_for_all: boolean
+          delivered_at: string | null
+          e2ee: boolean
+          edited_at: string | null
+          enc: Json | null
+          encrypted_key_nonce: string | null
+          encrypted_key_receiver: string | null
+          encrypted_key_sender: string | null
+          encrypted_media: boolean
+          encrypted_media_alg: string | null
+          encrypted_media_mime: string | null
+          encrypted_media_nonce: string | null
+          encrypted_media_path: string | null
+          encrypted_media_size: number | null
+          id: string
+          is_read: boolean
+          is_view_once: boolean
+          media_caption: string | null
+          media_expected_count: number | null
+          media_group_id: string | null
           media_items: Json
           media_kind: string | null
           message_type: string

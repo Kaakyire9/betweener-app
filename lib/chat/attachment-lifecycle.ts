@@ -46,6 +46,7 @@ export type ChatAttachmentBatchFinalizeInput = {
   caption?: string | null;
   replyToMessageId?: string | null;
   attachments: ChatAttachmentFinalizeInput[];
+  mediaGroupId?: string | null;
 };
 
 const SAFE_EXTENSION = /^[a-z0-9]{1,8}$/;
@@ -160,6 +161,7 @@ export const finalizeChatAttachmentBatch = async (
       mode: 'finalize_batch',
       ...input,
       expectedCount: input.attachments.length,
+      mediaGroupId: input.mediaGroupId ?? null,
     },
   });
   if (error) {
@@ -180,6 +182,17 @@ export const cancelChatAttachmentBatch = async (input: {
 }) => {
   const { error } = await supabase.functions.invoke('chat-attachment-finalize', {
     body: { mode: 'cancel', ...input },
+  });
+  if (error) throw error;
+};
+
+export const cancelChatAttachmentItem = async (input: {
+  receiverId: string;
+  clientMessageId: string;
+  attachment: Pick<ChatAttachmentFinalizeInput, 'attachmentId' | 'bucketId' | 'storagePath' | 'previewStoragePath'>;
+}) => {
+  const { error } = await supabase.functions.invoke('chat-attachment-finalize', {
+    body: { mode: 'cancel_item', ...input },
   });
   if (error) throw error;
 };

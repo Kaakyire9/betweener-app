@@ -28,3 +28,33 @@ export const normalizeAttachmentDurationMs = (value?: number | null): number | n
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return null;
   return Math.round(value);
 };
+
+const usableDimension = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value) && value > 0;
+
+/**
+ * Preview files are generated inside a bounded square. Some Android codecs do
+ * not expose the compressed JPEG dimensions, so picker dimensions can leak in
+ * here even though they describe the original multi-megapixel asset. Keep the
+ * aspect ratio while canonicalising the metadata to the preview's real bound.
+ */
+export const normalizeChatPreviewDimensions = ({
+  width,
+  height,
+  maxEdge = 640,
+}: {
+  width?: number | null;
+  height?: number | null;
+  maxEdge?: number;
+}): { width: number; height: number } => {
+  const safeMaxEdge = usableDimension(maxEdge) ? Math.max(1, Math.round(maxEdge)) : 640;
+  if (!usableDimension(width) || !usableDimension(height)) {
+    return { width: safeMaxEdge, height: safeMaxEdge };
+  }
+
+  const scale = Math.min(1, safeMaxEdge / Math.max(width, height));
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+  };
+};

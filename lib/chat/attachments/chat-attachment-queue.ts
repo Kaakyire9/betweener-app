@@ -20,6 +20,11 @@ export type QueuedAttachmentFile = {
   previewByteSize?: number | null;
   previewWidth?: number | null;
   previewHeight?: number | null;
+  index?: number;
+  mediaType?: 'image' | 'video';
+  transferState?: 'queued' | 'preparing' | 'uploading' | 'uploaded' | 'retryable_failed' | 'terminal_failed' | 'cancelled';
+  attemptCount?: number;
+  lastError?: string | null;
 };
 
 export type QueuedViewOnceAttachment = {
@@ -98,6 +103,8 @@ export const createQueuedMediaOutboxRow = ({
   documentSizeLabel,
   documentTypeLabel,
   albumItems,
+  mediaGroupId,
+  albumCaption,
   now = new Date(),
   maxAttempts = DEFAULT_MAX_ATTEMPTS,
 }: {
@@ -109,6 +116,9 @@ export const createQueuedMediaOutboxRow = ({
   documentSizeLabel?: string | null;
   documentTypeLabel?: string | null;
   albumItems?: QueuedAttachmentFile[];
+  mediaGroupId?: string | null;
+  albumCaption?: string | null;
+  retryAttachmentIds?: string[];
   now?: Date;
   maxAttempts?: number;
 }): ChatPendingOutboxRow => {
@@ -128,6 +138,8 @@ export const createQueuedMediaOutboxRow = ({
       fileName: file.fileName,
       contentType: file.contentType,
       mediaType,
+      ...(mediaGroupId ? { mediaGroupId } : {}),
+      ...(albumCaption ? { albumCaption } : {}),
       attachmentId: file.attachmentId,
       byteSize: file.byteSize ?? null,
       width: file.width ?? null,
@@ -142,7 +154,16 @@ export const createQueuedMediaOutboxRow = ({
       documentName: mediaType === 'document' ? file.fileName : null,
       documentSizeLabel: documentSizeLabel ?? null,
       documentTypeLabel: documentTypeLabel ?? null,
-      albumItems: albumItems?.length ? albumItems : undefined,
+      albumItems: albumItems?.length
+        ? albumItems.map((item, index) => ({
+            ...item,
+            index,
+            mediaType: item.mediaType ?? (item.contentType.startsWith('video/') ? 'video' : 'image'),
+            transferState: item.transferState ?? 'queued',
+            attemptCount: item.attemptCount ?? 0,
+            lastError: item.lastError ?? null,
+          }))
+        : undefined,
     }),
     attempt_count: 0,
     max_attempts: maxAttempts,

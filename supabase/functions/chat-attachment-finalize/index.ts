@@ -42,7 +42,40 @@ const authoritativeResponseSize = (response: Response) => {
   return null
 }
 
-type RpcError = { code?: string | null; message?: string | null }
+type RpcError = {
+  code?: string | null
+  message?: string | null
+  details?: string | null
+  hint?: string | null
+}
+
+const normalizePreviewDimensions = (width: unknown, height: unknown, maxEdge = 640) => {
+  const numericWidth = Number(width)
+  const numericHeight = Number(height)
+  if (!Number.isFinite(numericWidth) || numericWidth <= 0 ||
+      !Number.isFinite(numericHeight) || numericHeight <= 0) {
+    return { width: maxEdge, height: maxEdge }
+  }
+  const scale = Math.min(1, maxEdge / Math.max(numericWidth, numericHeight))
+  return {
+    width: Math.max(1, Math.round(numericWidth * scale)),
+    height: Math.max(1, Math.round(numericHeight * scale)),
+  }
+}
+
+const classifyAttachmentConstraintError = (error: RpcError) => {
+  const diagnostic = `${error.message || ''} ${error.details || ''} ${error.hint || ''}`
+  const knownConstraints: Array<[string, string]> = [
+    ['chat_attachment_event_type_valid', 'attachment_lifecycle_event_invalid'],
+    ['message_attachments_preview_valid', 'attachment_preview_metadata_invalid'],
+    ['message_attachments_validation_evidence_v3_valid', 'attachment_validation_evidence_invalid'],
+    ['message_attachments_dimensions_valid', 'attachment_dimensions_invalid'],
+    ['message_attachments_duration_valid', 'attachment_duration_invalid'],
+    ['message_attachments_byte_size_valid', 'attachment_byte_size_invalid'],
+    ['message_attachments_mime_length', 'attachment_mime_invalid'],
+  ]
+  return knownConstraints.find(([constraint]) => diagnostic.includes(constraint))?.[1] ?? null
+}
 
 const isMissingAtomicFinalizationRpc = (error: RpcError | null) =>
   Boolean(
@@ -169,6 +202,33 @@ serve(async (req) => {
     const atomicFinalizationEnabled =
       String(Deno.env.get('CHAT_ATTACHMENT_ATOMIC_FINALIZATION_ENABLED') || 'true').toLowerCase() !== 'false'
 
+    if (mode === 'cancel_item') {
+      const receiverId = String(input.receiverId || '')
+      const clientMessageId = String(input.clientMessageId || '')
+      const raw = input.attachment || {}
+      const attachmentId = String(raw.attachmentId || '')
+      const bucket = String(raw.bucketId || '')
+      const prefix = `${user.id}/${receiverId}/${clientMessageId}/${attachmentId}-`
+      const paths = [raw.storagePath, raw.previewStoragePath]
+        .map((value) => String(value || ''))
+        .filter((value) => value.startsWith(prefix))
+      if (!receiverId || !clientMessageId || !attachmentId || bucket !== 'chat-media' || paths.length < 1) {
+        return json(400, { error: 'invalid_cancel_item_request' })
+      }
+      const { error: cancellationError } = await service.rpc('rpc_cancel_chat_media_album_item', {
+        p_sender_id: user.id,
+        p_receiver_id: receiverId,
+        p_client_message_id: clientMessageId,
+        p_attachment_id: attachmentId,
+      })
+      if (cancellationError) {
+        return json(409, { error: cancellationError.message || 'attachment_item_cancel_rejected' })
+      }
+      const { error: cleanupError } = await service.storage.from('chat-media').remove([...new Set(paths)])
+      if (cleanupError) return json(503, { error: 'attachment_item_cleanup_failed' })
+      return json(200, { cancelled: true, attachmentId })
+    }
+
     if (mode === 'cancel') {
       const receiverId = String(input.receiverId || '')
       const clientMessageId = String(input.clientMessageId || '')
@@ -223,12 +283,14 @@ serve(async (req) => {
       const receiverId = String(input.receiverId || '')
       const clientMessageId = String(input.clientMessageId || '')
       const kind = String(input.attachmentType || '')
+      const mediaGroupId = String(input.mediaGroupId || '')
       const attachments = Array.isArray(input.attachments) ? input.attachments : []
       const expectedCount = Number(input.expectedCount || attachments.length)
+      const isMediaAlbum = expectedCount > 1 && Boolean(mediaGroupId)
       if (
         !receiverId || !clientMessageId || !['image', 'video', 'document', 'audio'].includes(kind) ||
         expectedCount !== attachments.length || expectedCount < 1 || expectedCount > 10 ||
-        (expectedCount > 1 && kind !== 'image')
+        (expectedCount > 1 && !isMediaAlbum)
       ) {
         return json(400, { error: 'invalid_attachment_batch' })
       }
@@ -237,13 +299,17 @@ serve(async (req) => {
       for (let index = 0; index < attachments.length; index += 1) {
         const raw = attachments[index] || {}
         const attachmentId = String(raw.attachmentId || '')
+        const itemKind = String(raw.attachmentType || kind)
         const bucket = String(raw.bucketId || '')
         const path = String(raw.storagePath || '')
         const mime = String(raw.mimeType || '').split(';')[0].trim().toLowerCase()
         const expectedPrefix = `${user.id}/${receiverId}/${clientMessageId}/${attachmentId}-`
         if (
-          Number(raw.attachmentIndex) !== index || String(raw.attachmentType || '') !== kind ||
-          bucket !== (kind === 'audio' ? 'voice-messages' : 'chat-media') ||
+          Number(raw.attachmentIndex) !== index ||
+          !['image', 'video', 'document', 'audio'].includes(itemKind) ||
+          (isMediaAlbum && !['image', 'video'].includes(itemKind)) ||
+          (!isMediaAlbum && itemKind !== kind) ||
+          bucket !== (itemKind === 'audio' ? 'voice-messages' : 'chat-media') ||
           !path.startsWith(expectedPrefix) || !mime
         ) {
           return json(400, { error: 'invalid_attachment_batch_item' })
@@ -256,16 +322,17 @@ serve(async (req) => {
         const contentLength = authoritativeResponseSize(sampleResponse)
         const sample = new Uint8Array(await sampleResponse.arrayBuffer())
         if (
-          contentLength === null || contentLength <= 0 || contentLength > LIMITS[kind] ||
-          !validateSignature(kind, mime, sample, false, String(raw.originalName || '')) ||
-          !signatureMatchesDeclaredMime(kind, mime, sample, false)
+          contentLength === null || contentLength <= 0 || contentLength > LIMITS[itemKind] ||
+          !validateSignature(itemKind, mime, sample, false, String(raw.originalName || '')) ||
+          !signatureMatchesDeclaredMime(itemKind, mime, sample, false)
         ) {
           return json(415, { error: 'attachment_content_mismatch' })
         }
 
         const previewPath = String(raw.previewStoragePath || '')
         let previewLength: number | null = null
-        if (kind === 'image' || kind === 'video') {
+        const previewDimensions = normalizePreviewDimensions(raw.previewWidth, raw.previewHeight)
+        if (itemKind === 'image' || itemKind === 'video') {
           if (!previewPath.startsWith(expectedPrefix) || String(raw.previewMimeType || '') !== 'image/jpeg') {
             return json(422, { error: 'attachment_preview_required' })
           }
@@ -288,7 +355,7 @@ serve(async (req) => {
         validated.push({
           attachmentId,
           attachmentIndex: index,
-          attachmentType: kind,
+          attachmentType: itemKind,
           bucketId: bucket,
           storagePath: path,
           originalName: raw.originalName || null,
@@ -308,16 +375,16 @@ serve(async (req) => {
             previewStoragePath: previewPath,
             previewMimeType: 'image/jpeg',
             previewByteSize: previewLength,
-            previewWidth: positiveIntegerOrNull(raw.previewWidth),
-            previewHeight: positiveIntegerOrNull(raw.previewHeight),
+            previewWidth: previewDimensions.width,
+            previewHeight: previewDimensions.height,
           } : {}),
-          waveform: kind === 'audio' && Array.isArray(raw.waveform) ? raw.waveform.slice(0, 240) : null,
+          waveform: itemKind === 'audio' && Array.isArray(raw.waveform) ? raw.waveform.slice(0, 240) : null,
         })
       }
 
       const batchFinalizationPayload = {
         protocol: 'attachment-finalization-v2', mode: 'batch', receiverId,
-        clientMessageId, attachmentType: kind, expectedCount,
+        clientMessageId, attachmentType: isMediaAlbum ? 'album' : kind, mediaGroupId: mediaGroupId || null, expectedCount,
         caption: String(input.caption || ''),
         replyToMessageId: input.replyToMessageId || null,
         // Keep the idempotency payload byte-for-byte compatible with the v2
@@ -343,7 +410,21 @@ serve(async (req) => {
       }
       let data = null
       let error: RpcError | null = null
-      if (atomicFinalizationEnabled) {
+      if (atomicFinalizationEnabled && isMediaAlbum) {
+        const albumResult = await service.rpc('rpc_finalize_chat_media_album_v4', {
+          p_sender_id: user.id,
+          p_receiver_id: receiverId,
+          p_client_message_id: clientMessageId,
+          p_media_group_id: mediaGroupId,
+          p_expected_count: expectedCount,
+          p_attachments: validated,
+          p_caption: input.caption || '',
+          p_reply_to_message_id: input.replyToMessageId || null,
+          p_request_payload: batchFinalizationPayload,
+        })
+        data = albumResult.data
+        error = albumResult.error
+      } else if (atomicFinalizationEnabled) {
         const atomicResult = await service.rpc('rpc_finalize_chat_attachment_batch_v3', {
           ...batchRpcInput,
           p_request_payload: batchFinalizationPayload,
@@ -351,7 +432,7 @@ serve(async (req) => {
         data = atomicResult.data
         error = atomicResult.error
       }
-      if (!atomicFinalizationEnabled || isMissingAtomicFinalizationRpc(error)) {
+      if ((!atomicFinalizationEnabled || isMissingAtomicFinalizationRpc(error)) && !isMediaAlbum) {
         const { error: keyError } = await service.rpc('rpc_claim_chat_attachment_finalization', {
           p_sender_id: user.id,
           p_client_message_id: clientMessageId,
@@ -364,14 +445,18 @@ serve(async (req) => {
       }
       if (error) {
         const status = error.code === '42501' ? 403 : error.code === '22023' || error.code === '23514' ? 422 : 409
+        const databaseMessage = String(error.message || '').trim()
+        const safeDatabaseError = /^(attachment_|chat_media_|invalid_|messaging_|service_role_)/.test(databaseMessage)
+          ? databaseMessage
+          : classifyAttachmentConstraintError(error)
         console.log('[chat-attachment-finalize] batch-rpc-error', {
           clientMessageId,
           code: error.code ?? null,
-          message: error.message,
+          message: databaseMessage,
         })
         return json(status, {
           error: error.code === '23514'
-            ? 'attachment_metadata_invalid'
+            ? safeDatabaseError || 'attachment_metadata_invalid'
             : error.message || 'attachment_finalize_rejected',
           databaseCode: error.code ?? null,
         })

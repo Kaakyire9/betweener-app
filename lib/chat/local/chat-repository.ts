@@ -1489,6 +1489,197 @@ export const ChatRepository = {
     );
   },
 
+  async updateOutboxPayloadAndMessageMetadata(
+    ownerUserId: string,
+    localMessageId: string,
+    payloadJson: string,
+    metadataJson: string,
+  ): Promise<boolean> {
+    const db = await getChatDb();
+    const updatedAt = nowIso();
+    const outcome = await withBoundedSerializedTransaction(
+      db,
+      (txn) => {
+        const outbox = txn.runSync(
+          `update chat_pending_outbox
+           set payload_json = ?, status = 'queued', next_retry_at = null,
+               error_code = null, error_message = null, updated_at = ?
+           where owner_user_id = ? and local_message_id = ?
+             and status in ('queued', 'failed')`,
+          payloadJson, updatedAt, ownerUserId, localMessageId,
+        );
+        if (outbox.changes > 0) {
+          txn.runSync(
+            `update chat_messages
+             set metadata_json = ?, status = 'pending', error_code = null,
+                 local_only = 1, local_updated_at = ?
+             where owner_user_id = ? and (local_id = ? or id = ?)`,
+            metadataJson, updatedAt, ownerUserId, localMessageId, localMessageId,
+          );
+        }
+        return outbox.changes > 0;
+      },
+      async (txn) => {
+        const outbox = await txn.runAsync(
+          `update chat_pending_outbox
+           set payload_json = ?, status = 'queued', next_retry_at = null,
+               error_code = null, error_message = null, updated_at = ?
+           where owner_user_id = ? and local_message_id = ?
+             and status in ('queued', 'failed')`,
+          payloadJson, updatedAt, ownerUserId, localMessageId,
+        );
+        if (outbox.changes > 0) {
+          await txn.runAsync(
+            `update chat_messages
+             set metadata_json = ?, status = 'pending', error_code = null,
+                 local_only = 1, local_updated_at = ?
+             where owner_user_id = ? and (local_id = ? or id = ?)`,
+            metadataJson, updatedAt, ownerUserId, localMessageId, localMessageId,
+          );
+        }
+        return outbox.changes > 0;
+      },
+      { label: 'update-outbox-album-composition' },
+    );
+    return outcome;
+  },
+
+  async updateOutboxPayload(
+    ownerUserId: string,
+    localMessageId: string,
+    payloadJson: string,
+  ): Promise<boolean> {
+    const db = await getChatDb();
+    const result = await runBoundedSerializedWrite(
+      () => db.runSync(
+        `update chat_pending_outbox set payload_json = ?, updated_at = ?
+         where owner_user_id = ? and local_message_id = ?
+           and status not in ('sent', 'cancelled')`,
+        payloadJson, nowIso(), ownerUserId, localMessageId,
+      ),
+      () => db.runAsync(
+        `update chat_pending_outbox set payload_json = ?, updated_at = ?
+         where owner_user_id = ? and local_message_id = ?
+           and status not in ('sent', 'cancelled')`,
+        payloadJson, nowIso(), ownerUserId, localMessageId,
+      ),
+      { priority: 'user-blocking', label: 'update-outbox-payload' },
+    );
+    return result.changes > 0;
+  },
+
+  async updateAlbumTransferSnapshot(
+    ownerUserId: string,
+    localMessageId: string,
+    payloadJson: string,
+    mediaItemsJson: string,
+  ): Promise<boolean> {
+    const db = await getChatDb();
+    const updatedAt = nowIso();
+    const outcome = await withBoundedSerializedTransaction(
+      db,
+      (txn) => {
+        const outbox = txn.runSync(
+          `update chat_pending_outbox set payload_json = ?, updated_at = ?
+           where owner_user_id = ? and local_message_id = ?
+             and status not in ('sent', 'cancelled')`,
+          payloadJson, updatedAt, ownerUserId, localMessageId,
+        );
+        if (outbox.changes > 0) {
+          txn.runSync(
+            `update chat_messages
+             set metadata_json = json_set(metadata_json, '$.mediaItems', json(?)),
+                 local_updated_at = ?
+             where owner_user_id = ? and (local_id = ? or id = ?)`,
+            mediaItemsJson, updatedAt, ownerUserId, localMessageId, localMessageId,
+          );
+        }
+        return outbox.changes > 0;
+      },
+      async (txn) => {
+        const outbox = await txn.runAsync(
+          `update chat_pending_outbox set payload_json = ?, updated_at = ?
+           where owner_user_id = ? and local_message_id = ?
+             and status not in ('sent', 'cancelled')`,
+          payloadJson, updatedAt, ownerUserId, localMessageId,
+        );
+        if (outbox.changes > 0) {
+          await txn.runAsync(
+            `update chat_messages
+             set metadata_json = json_set(metadata_json, '$.mediaItems', json(?)),
+                 local_updated_at = ?
+             where owner_user_id = ? and (local_id = ? or id = ?)`,
+            mediaItemsJson, updatedAt, ownerUserId, localMessageId, localMessageId,
+          );
+        }
+        return outbox.changes > 0;
+      },
+      { label: 'update-album-transfer-snapshot' },
+    );
+    return outcome;
+  },
+
+  async updateQueuedAlbumComposition(
+    ownerUserId: string,
+    localMessageId: string,
+    payloadJson: string,
+    mediaItemsJson: string,
+    expectedCount: number,
+  ): Promise<boolean> {
+    const db = await getChatDb();
+    const updatedAt = nowIso();
+    const outcome = await withBoundedSerializedTransaction(
+      db,
+      (txn) => {
+        const outbox = txn.runSync(
+          `update chat_pending_outbox
+           set payload_json = ?, status = 'queued', next_retry_at = null,
+               error_code = null, error_message = null, updated_at = ?
+           where owner_user_id = ? and local_message_id = ?
+             and status in ('queued', 'failed')`,
+          payloadJson, updatedAt, ownerUserId, localMessageId,
+        );
+        if (outbox.changes > 0) {
+          txn.runSync(
+            `update chat_messages
+             set metadata_json = json_set(metadata_json,
+                   '$.mediaItems', json(?), '$.mediaExpectedCount', ?),
+                 status = 'pending', error_code = null, local_only = 1,
+                 local_updated_at = ?
+             where owner_user_id = ? and (local_id = ? or id = ?)`,
+            mediaItemsJson, expectedCount, updatedAt, ownerUserId, localMessageId, localMessageId,
+          );
+        }
+        return outbox.changes > 0;
+      },
+      async (txn) => {
+        const outbox = await txn.runAsync(
+          `update chat_pending_outbox
+           set payload_json = ?, status = 'queued', next_retry_at = null,
+               error_code = null, error_message = null, updated_at = ?
+           where owner_user_id = ? and local_message_id = ?
+             and status in ('queued', 'failed')`,
+          payloadJson, updatedAt, ownerUserId, localMessageId,
+        );
+        if (outbox.changes > 0) {
+          await txn.runAsync(
+            `update chat_messages
+             set metadata_json = json_set(metadata_json,
+                   '$.mediaItems', json(?), '$.mediaExpectedCount', ?),
+                 status = 'pending', error_code = null, local_only = 1,
+                 local_updated_at = ?
+             where owner_user_id = ? and (local_id = ? or id = ?)`,
+            mediaItemsJson, expectedCount, updatedAt, ownerUserId, localMessageId, localMessageId,
+          );
+        }
+        return outbox.changes > 0;
+      },
+      { label: 'update-queued-album-composition' },
+    );
+    if (outcome) notify(threadListeners, ownerUserId);
+    return outcome;
+  },
+
   async purgeTerminalOutboxItems(
     ownerUserId: string,
     olderThanIso: string,

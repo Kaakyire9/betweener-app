@@ -7,7 +7,7 @@ const packageJson = JSON.parse(readFileSync('package.json', 'utf8')) as {
   scripts?: Record<string, string>;
 };
 const expoRouterPatch = readFileSync(
-  'patches/expo-router+57.0.9.patch',
+  'patches/expo-router+57.0.12.patch',
   'utf8',
 );
 

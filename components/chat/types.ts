@@ -10,11 +10,22 @@ export type ChatMediaItem = {
   width?: number | null;
   height?: number | null;
   byteSize?: number | null;
+  durationMs?: number | null;
   localUri?: string;
   signedUrl?: string;
   previewStoragePath?: string | null;
   localPreviewUri?: string | null;
   previewSignedUrl?: string | null;
+  transferState?:
+    | 'queued'
+    | 'preparing'
+    | 'uploading'
+    | 'uploaded'
+    | 'retryable_failed'
+    | 'terminal_failed'
+    | 'cancelled';
+  uploadProgress?: number | null;
+  transferError?: string | null;
 };
 
 export type MessageType = {
@@ -38,6 +49,10 @@ export type MessageType = {
   storagePath?: string | null;
   mediaItems?: ChatMediaItem[];
   mediaExpectedCount?: number | null;
+  /** Stable identity for an ordered multi-item media send. */
+  mediaGroupId?: string | null;
+  /** Captions are message/album scoped. Per-item captions are intentionally unsupported. */
+  mediaCaption?: string | null;
   reactions: { userId: string; emoji: string; }[];
   status?: 'queued' | 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
   readAt?: Date;

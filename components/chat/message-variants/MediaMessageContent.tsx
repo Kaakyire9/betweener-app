@@ -31,7 +31,10 @@ type MediaMessageContentProps = {
     nativeCacheUri?: string | null,
   ) => void;
   onRetryMedia?: (message: MessageType) => void;
+  onRetryFailedMessage?: (messageId: string) => void;
   onViewImage?: (message: MessageType, renderedUrl: string, albumIndex?: number) => void;
+  onViewVideo?: (message: MessageType, renderedUrl: string, albumIndex?: number) => void;
+  onManageAlbumItem?: (message: MessageType, albumIndex: number) => void;
 };
 
 const MediaMessageContent = memo(
@@ -51,7 +54,10 @@ const MediaMessageContent = memo(
     onMediaLoadError,
     onMediaLoadSuccess,
     onRetryMedia,
+    onRetryFailedMessage,
     onViewImage,
+    onViewVideo,
+    onManageAlbumItem,
   }: MediaMessageContentProps) => {
     const reportLoadedImage = (
       message: MessageType,
@@ -175,10 +181,36 @@ const MediaMessageContent = memo(
         uri: string | undefined,
         albumIndex: number,
       ) => {
+        if (
+          mediaItem.transferState === 'retryable_failed' ||
+          mediaItem.transferState === 'terminal_failed'
+        ) {
+          onManageAlbumItem?.(item, albumIndex);
+          return;
+        }
+        // A fully uploaded album can still fail atomic server finalisation.
+        // In that state the media remains locally viewable, but tapping the
+        // failed bubble must retry the durable command rather than opening the
+        // viewer and making the visible retry affordance ineffective.
+        if (isMyMessage && item.status === 'failed') {
+          onRetryFailedMessage?.(item.id);
+          return;
+        }
         if (!uri) {
           if (mediaItem.storagePath || item.storagePath) {
             onRetryMedia?.({ ...item, storagePath: mediaItem.storagePath || item.storagePath });
           }
+          return;
+        }
+        if (mediaItem.type === 'video') {
+          onViewVideo?.({
+            ...item,
+            type: 'video',
+            storagePath: mediaItem.storagePath,
+            videoUrl: mediaItem.signedUrl,
+            offlineVideoUri: mediaItem.localUri,
+            previewStoragePath: mediaItem.previewStoragePath,
+          }, uri, albumIndex);
           return;
         }
         onViewImage?.(item, uri, albumIndex);
@@ -197,7 +229,10 @@ const MediaMessageContent = memo(
           <Pressable
             key={mediaItem.attachmentId || `${item.id}-${tileIndex}`}
             style={({ pressed }) => [albumStyles.tile, pressed && albumStyles.tilePressed]}
-            onPress={() => openTile(openItem, openUri, openIndex)}
+            onPress={(event) => {
+              if (isMyMessage && item.status === 'failed') event.stopPropagation();
+              openTile(openItem, openUri, openIndex);
+            }}
             accessibilityRole="button"
             accessibilityLabel={
               remaining > 0
@@ -243,6 +278,26 @@ const MediaMessageContent = memo(
                 <Text style={albumStyles.moreText}>+{remaining}</Text>
               </View>
             ) : null}
+            {mediaItem.type === 'video' && remaining <= 0 ? (
+              <View pointerEvents="none" style={albumStyles.videoBadge}>
+                <MaterialCommunityIcons name="play" size={18} color="#FFFFFF" />
+              </View>
+            ) : null}
+            {mediaItem.transferState === 'retryable_failed' || mediaItem.transferState === 'terminal_failed' ? (
+              <View pointerEvents="none" style={albumStyles.itemStateBadge}>
+                <MaterialCommunityIcons name="alert-circle-outline" size={15} color="#FFFFFF" />
+                <Text style={albumStyles.itemStateText}>Tap to retry</Text>
+              </View>
+            ) : mediaItem.transferState === 'uploading' ? (
+              <View pointerEvents="none" style={albumStyles.itemStateBadge}>
+                <MaterialCommunityIcons name="cloud-upload-outline" size={15} color="#FFFFFF" />
+                <Text style={albumStyles.itemStateText}>
+                  {typeof mediaItem.uploadProgress === 'number'
+                    ? `${Math.round(mediaItem.uploadProgress * 100)}%`
+                    : 'Uploading'}
+                </Text>
+              </View>
+            ) : null}
           </Pressable>
         );
       };
@@ -266,7 +321,10 @@ const MediaMessageContent = memo(
             </View>
           ) : mediaItems[0] ? (
             <Pressable
-              onPress={() => openTile(mediaItems[0], primaryImageUri, 0)}
+              onPress={(event) => {
+                if (isMyMessage && item.status === 'failed') event.stopPropagation();
+                openTile(mediaItems[0], primaryImageUri, 0);
+              }}
               style={{ width: frameWidth, height: frameHeight }}
               accessibilityRole="button"
               accessibilityLabel="Open photo"
@@ -399,6 +457,17 @@ const MediaMessageContent = memo(
             </Pressable>
           )}
           {deliveryBadge}
+          {isMyMessage && item.status === 'failed' ? (
+            <Pressable
+              style={deliveryStyles.retryHitTarget}
+              onPress={(event) => {
+                event.stopPropagation();
+                onRetryFailedMessage?.(item.id);
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Retry sending video"
+            />
+          ) : null}
           <Animated.View
             style={[
               styles.mediaMetaOverlay,
@@ -471,6 +540,14 @@ const deliveryStyles = StyleSheet.create({
   failedBadge: {
     backgroundColor: 'rgba(132, 38, 45, 0.9)',
   },
+  retryHitTarget: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    zIndex: 5,
+  },
   label: {
     color: '#FFFFFF',
     fontSize: 11,
@@ -490,4 +567,33 @@ const albumStyles = StyleSheet.create({
   placeholderCopy: { color: 'rgba(255,255,255,0.62)', fontSize: 11, fontFamily: 'Manrope_600SemiBold', textAlign: 'center', paddingHorizontal: 12 },
   moreOverlay: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(3,17,19,0.62)' },
   moreText: { color: '#FFFFFF', fontSize: 28, fontFamily: 'Manrope_800ExtraBold' },
+  videoBadge: {
+    position: 'absolute',
+    left: '50%',
+    top: '50%',
+    width: 38,
+    height: 38,
+    marginLeft: -19,
+    marginTop: -19,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(3,17,19,0.68)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.62)',
+  },
+  itemStateBadge: {
+    position: 'absolute',
+    left: 8,
+    bottom: 8,
+    maxWidth: '82%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 999,
+    backgroundColor: 'rgba(8,24,25,0.82)',
+  },
+  itemStateText: { color: '#FFFFFF', fontSize: 10, fontFamily: 'Manrope_700Bold' },
 });

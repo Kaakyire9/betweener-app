@@ -74,6 +74,7 @@ export const MessageRowItem = memo(
     onOpenReactionSheet,
     onViewImage,
     onViewVideo,
+    onManageAlbumItem,
     onOpenDocument,
     onRefreshMedia,
     onMediaLoadSuccess,
@@ -962,7 +963,10 @@ export const MessageRowItem = memo(
                   onMediaLoadError={onRefreshMedia}
                   onMediaLoadSuccess={onMediaLoadSuccess}
                   onRetryMedia={onRetryMedia}
+                  onRetryFailedMessage={onRetryFailedMessage}
                   onViewImage={onViewImage}
+                  onViewVideo={onViewVideo}
+                  onManageAlbumItem={onManageAlbumItem}
                 />
               ) : item.type === 'date_plan' ? (
                 <DatePlanMessageContent

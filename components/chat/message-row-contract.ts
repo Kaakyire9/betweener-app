@@ -20,7 +20,8 @@ export type MessageRowItemProps = {
   onDeleteMessage: (message: MessageType) => void; isActionPinned: boolean;
   onOpenReactionSheet: (message: MessageType) => void;
   onViewImage: (message: MessageType, renderedUrl: string, albumIndex?: number) => void;
-  onViewVideo: (message: MessageType, renderedUrl: string) => void;
+  onViewVideo: (message: MessageType, renderedUrl: string, albumIndex?: number) => void;
+  onManageAlbumItem: (message: MessageType, albumIndex: number) => void;
   onOpenDocument: (message: MessageType) => void; onRefreshMedia: (message: MessageType) => void;
   onMediaLoadSuccess: (
     message: MessageType,

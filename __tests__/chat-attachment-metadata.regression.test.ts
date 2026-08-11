@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   normalizeAttachmentDurationMs,
+  normalizeChatPreviewDimensions,
   resolveAuthoritativeAttachmentByteSize,
 } from '../lib/chat/attachments/chat-attachment-metadata.ts';
 
@@ -40,4 +41,15 @@ test('rounds fractional iOS video duration metadata for the integer RPC contract
   assert.equal(normalizeAttachmentDurationMs(27_956.666666666668), 27_957);
   assert.equal(normalizeAttachmentDurationMs(Number.NaN), null);
   assert.equal(normalizeAttachmentDurationMs(0), null);
+});
+
+test('canonicalizes original Android dimensions to the generated preview bound', () => {
+  assert.deepEqual(
+    normalizeChatPreviewDimensions({ width: 4032, height: 3024 }),
+    { width: 640, height: 480 },
+  );
+  assert.deepEqual(
+    normalizeChatPreviewDimensions({ width: null, height: null }),
+    { width: 640, height: 640 },
+  );
 });

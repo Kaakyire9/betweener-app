@@ -29,6 +29,8 @@ export type RemoteThreadMessageRow = {
   storage_path?: string | null;
   media_items?: unknown;
   media_expected_count?: number | null;
+  media_group_id?: string | null;
+  media_caption?: string | null;
 };
 
 export type RemoteSystemMessageRow = {

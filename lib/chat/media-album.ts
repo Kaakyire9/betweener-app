@@ -24,6 +24,7 @@ export const normalizeChatMediaItems = (value: unknown): ChatMediaItem[] => {
         width: asFiniteNumber(record.width),
         height: asFiniteNumber(record.height),
         byteSize: asFiniteNumber(record.byteSize),
+        durationMs: asFiniteNumber(record.durationMs),
         previewStoragePath:
           typeof record.previewStoragePath === 'string' ? record.previewStoragePath : null,
       };
@@ -33,7 +34,7 @@ export const normalizeChatMediaItems = (value: unknown): ChatMediaItem[] => {
     .slice(0, 10);
 };
 
-export const getMessageImageItems = (message: MessageType): ChatMediaItem[] => {
+export const getMessageMediaItems = (message: MessageType): ChatMediaItem[] => {
   if (message.mediaItems?.length) {
     const ordered = [...message.mediaItems].sort((a, b) => a.index - b.index);
     const expectedCount = Math.max(ordered.length, Math.min(message.mediaExpectedCount ?? ordered.length, 10));
@@ -42,21 +43,27 @@ export const getMessageImageItems = (message: MessageType): ChatMediaItem[] => {
     return Array.from({ length: expectedCount }, (_, index) => byIndex.get(index) ?? {
       attachmentId: `pending-${message.id}-${index}`,
       index,
-      type: 'image' as const,
+      type: message.type === 'video' ? 'video' as const : 'image' as const,
       storagePath: '',
     });
   }
-  const uri = message.offlineImageUri ?? message.imageUrl;
+  const mediaType = message.type === 'video' ? 'video' as const : 'image' as const;
+  const uri = mediaType === 'video'
+    ? message.offlineVideoUri ?? message.videoUrl
+    : message.offlineImageUri ?? message.imageUrl;
   if (!message.storagePath && !uri) return [];
   return [{
     attachmentId: message.id,
     index: 0,
-    type: 'image',
+    type: mediaType,
     storagePath: message.storagePath ?? '',
-    localUri: message.offlineImageUri,
-    signedUrl: message.imageUrl,
+    localUri: mediaType === 'video' ? message.offlineVideoUri : message.offlineImageUri,
+    signedUrl: mediaType === 'video' ? message.videoUrl : message.imageUrl,
   }];
 };
+
+/** @deprecated Prefer getMessageMediaItems; retained for existing callers. */
+export const getMessageImageItems = getMessageMediaItems;
 
 export const getStableChatImageFrame = (
   width?: number | null,

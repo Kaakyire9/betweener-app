@@ -3935,6 +3935,21 @@ export const createChatScreenStyles = (
       fontSize: 15,
       fontWeight: '700',
     },
+    imageViewerCaption: {
+      position: 'absolute',
+      left: 24,
+      right: 24,
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      borderRadius: 18,
+      backgroundColor: 'rgba(5,9,13,0.72)',
+    },
+    imageViewerCaptionText: {
+      color: '#FFFFFF',
+      fontSize: 14,
+      lineHeight: 20,
+      fontFamily: 'Manrope_600SemiBold',
+    },
     videoViewer: {
       width: screenWidth,
       height: screenHeight * 0.8,

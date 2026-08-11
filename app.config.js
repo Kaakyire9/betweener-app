@@ -72,7 +72,14 @@ module.exports = ({ config }) => {
       'expo-web-browser',
       'expo-sqlite',
       'expo-secure-store',
-      'expo-audio',
+      [
+        'expo-audio',
+        {
+          recordAudioAndroid: true,
+          enableBackgroundRecording: false,
+          enableBackgroundPlayback: false,
+        },
+      ],
       'expo-apple-authentication',
       // Note: Sentry is configured via the Expo config plugin in app.json:
       // ["@sentry/react-native/expo", { organization, project }]

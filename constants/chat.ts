@@ -89,7 +89,7 @@ export const CHAT_PREFS_STORAGE_KEY = 'chat_header_prefs_v1';
 export const CHAT_SAFETY_SEEN_KEY = 'chat_safety_seen_v2';
 export const LEGACY_MESSAGE_SELECT_FIELDS =
   'id,client_message_id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform,deleted_for_all,deleted_at,deleted_by,edited_at,reply_to_message_id,is_view_once,encrypted_media,encrypted_media_path,encrypted_key_sender,encrypted_key_receiver,encrypted_key_nonce,encrypted_media_nonce,encrypted_media_alg,encrypted_media_mime,encrypted_media_size,storage_path';
-export const MESSAGE_SELECT_FIELDS = `${LEGACY_MESSAGE_SELECT_FIELDS},media_items,media_expected_count`;
+export const MESSAGE_SELECT_FIELDS = `${LEGACY_MESSAGE_SELECT_FIELDS},media_items,media_expected_count,media_group_id,media_caption`;
 
 export const MAP_STYLE_LIGHT = [
   { elementType: 'geometry', stylers: [{ color: '#F3E5D8' }] },
