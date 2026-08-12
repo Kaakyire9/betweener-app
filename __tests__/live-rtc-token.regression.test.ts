@@ -47,6 +47,8 @@ test('Live RTC tokens are call-scoped, short-lived, rate-limited and no-store', 
 
 test('Live RTC endpoint rejects private spark and controls publisher permissions server-side', () => {
   assert.match(source, /participant_state === 'private_spark'/);
+  assert.match(source, /\['backstage', 'live', 'ending'\]\.includes\(admission\.session_status\)/);
+  assert.match(source, /Array\.isArray\(admission\.capabilities\)/);
   assert.match(source, /updateUserPermissions/);
   assert.match(source, /capabilities\.includes\('live\.publish'\)/);
   assert.match(source, /revoke_permissions/);

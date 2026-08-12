@@ -99,6 +99,11 @@ Deno.serve(async (request) => {
       || admission.session_id !== sessionId
       || admission.user_id !== userId
       || admission.provider !== 'stream'
+      || !UUID_PATTERN.test(admission.profile_id)
+      || !Array.isArray(admission.roles)
+      || admission.roles.length === 0
+      || !Array.isArray(admission.capabilities)
+      || !['backstage', 'live', 'ending'].includes(admission.session_status)
       || !admission.capabilities.includes('live.join')
       || admission.participant_state === 'private_spark'
     ) {

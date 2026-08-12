@@ -82,8 +82,11 @@ export interface LiveMediaProvider {
   setAudioEnabled(enabled: boolean): Promise<void>;
   setVideoEnabled(enabled: boolean): Promise<void>;
 
+  /** Requests promotion through the Betweener authority layer, never Stream directly. */
   requestPublishPermission(): Promise<void>;
+  /** Immediately stops local publication; durable revocation remains server-owned. */
   revokePublishPermission(): Promise<void>;
+  /** Terminates through the Betweener authority layer, never Stream directly. */
   terminateCall(): Promise<void>;
 
   getConnectionQuality(): LiveConnectionQuality;

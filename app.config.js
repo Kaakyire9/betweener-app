@@ -81,6 +81,22 @@ module.exports = ({ config }) => {
         },
       ],
       'expo-apple-authentication',
+      // Expo composes native mods inside-out. Register Betweener's compliance
+      // guard before Stream so its Info.plist cleanup executes last.
+      './plugins/with-betweener-live-webrtc.js',
+      [
+        '@stream-io/video-react-native-sdk',
+        {
+          ringing: false,
+          androidKeepCallAlive: false,
+          iosKeepCallAlive: false,
+          enableScreenshare: false,
+          enableNonRingingPushNotifications: false,
+          iOSEnableMultitaskingCameraAccess: false,
+          androidPictureInPicture: false,
+          addNoiseCancellation: false,
+        },
+      ],
       // Note: Sentry is configured via the Expo config plugin in app.json:
       // ["@sentry/react-native/expo", { organization, project }]
       // Avoid adding '@sentry/react-native' here to prevent duplicate/competing config plugins.
