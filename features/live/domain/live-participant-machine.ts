@@ -13,6 +13,7 @@ export const LIVE_PARTICIPANT_EVENTS = [
   'connection_lost',
   'reconnect_to_audience',
   'reconnect_to_stage',
+  'rejoin_after_leave',
   'leave',
   'remove',
   'ban',
@@ -35,7 +36,7 @@ const PARTICIPANT_TRANSITIONS: Readonly<
   on_stage: { promote_to_stage: 'on_stage', demote_to_audience: 'audience', enter_private_spark: 'private_spark', connection_lost: 'temporarily_disconnected', leave: 'left', remove: 'removed', ban: 'banned' },
   private_spark: { enter_private_spark: 'private_spark', return_from_private_spark: 'on_stage', demote_to_audience: 'audience', connection_lost: 'temporarily_disconnected', leave: 'left', remove: 'removed', ban: 'banned' },
   temporarily_disconnected: { connection_lost: 'temporarily_disconnected', reconnect_to_audience: 'audience', reconnect_to_stage: 'on_stage', leave: 'left', remove: 'removed', ban: 'banned' },
-  left: { leave: 'left', ban: 'banned' },
+  left: { leave: 'left', rejoin_after_leave: 'audience', ban: 'banned' },
   removed: { remove: 'removed', ban: 'banned' },
   banned: { ban: 'banned' },
 };

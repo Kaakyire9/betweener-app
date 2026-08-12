@@ -22,7 +22,7 @@ type StreamCallPort = {
   leave(): Promise<void>;
 };
 
-type StreamClientPort = {
+export type StreamClientPort = {
   call(type: string, id: string): StreamCallPort;
   disconnectUser(): Promise<void>;
 };
@@ -116,6 +116,14 @@ export class StreamLiveMediaProvider implements LiveMediaProvider {
 
   get state(): LiveMediaProviderState {
     return this.currentState;
+  }
+
+  /**
+   * Read-only native bindings used by the Stream-specific presentation layer.
+   * Product authority and mutations remain behind the provider contract.
+   */
+  getPresentationBindings(): StreamLiveMediaBindings | null {
+    return this.bindings;
   }
 
   initialize(

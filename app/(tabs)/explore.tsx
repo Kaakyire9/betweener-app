@@ -11,6 +11,7 @@ import Notice from '@/components/ui/Notice';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/lib/auth-context';
+import { useLiveSessions } from '@/features/live/hooks/index.ts';
 import { getCirclePulsePalette } from '@/lib/circles/pulse/circle-pulse-theme';
 import { canCreateCircle, canCreateGathering, type CircleAccessEntitlements } from '@/lib/circles/circle-access';
 import {
@@ -378,6 +379,8 @@ const CIRCLE_SECTION_PREVIEW_LIMIT = 8;
 
 export default function CirclesScreen() {
   const { profile, user } = useAuth();
+  const { sessions: liveSessions } = useLiveSessions();
+  const featuredLiveSession = liveSessions[0] ?? null;
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = (colorScheme ?? 'light') === 'dark';
@@ -1791,6 +1794,31 @@ export default function CirclesScreen() {
           </View>
         </View>
 
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Open Betweener Live"
+          onPress={() => featuredLiveSession
+            ? router.push({ pathname: '/live/[sessionId]', params: { sessionId: featuredLiveSession.id } })
+            : router.push('/live')}
+          style={styles.liveEntry}
+        >
+          <View style={styles.liveEntryMark}>
+            <MaterialCommunityIcons name="broadcast" size={20} color={theme.backgroundSubtle} />
+          </View>
+          <View style={styles.liveEntryCopy}>
+            <Text style={styles.liveEntryEyebrow}>
+              {featuredLiveSession?.status === 'live' ? 'LIVE NOW' : 'BETWEENER LIVE'}
+            </Text>
+            <Text style={styles.liveEntryTitle} numberOfLines={1}>
+              {featuredLiveSession?.title ?? 'Hosted rooms with intention'}
+            </Text>
+            <Text style={styles.liveEntryBody} numberOfLines={2}>
+              {featuredLiveSession?.description ?? 'Curated stages, protected conversation, warmer introductions.'}
+            </Text>
+          </View>
+          <MaterialCommunityIcons name="arrow-top-right" size={20} color={circlePalette.tealStrong} />
+        </Pressable>
+
         {false ? <View style={styles.heroStage}>
           <View style={styles.heroCommandDeck}>
             <View style={styles.heroCommandHeader}>
@@ -2811,6 +2839,39 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
       shadowOffset: { width: 0, height: 8 },
       elevation: 8,
     },
+    liveEntry: {
+      minHeight: 128,
+      borderRadius: 26,
+      borderWidth: 1,
+      borderColor: isDark ? '#36514B' : '#C9B889',
+      backgroundColor: isDark ? '#122724' : '#FFF7E9',
+      padding: 17,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 14,
+      shadowColor: '#0A302B',
+      shadowOpacity: isDark ? 0.22 : 0.1,
+      shadowRadius: 18,
+      shadowOffset: { width: 0, height: 9 },
+      elevation: 6,
+    },
+    liveEntryMark: {
+      width: 48,
+      height: 48,
+      borderRadius: 24,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: palette.tealStrong,
+    },
+    liveEntryCopy: { flex: 1, gap: 4 },
+    liveEntryEyebrow: {
+      color: isDark ? '#D7B56D' : '#8B6C27',
+      fontSize: 9,
+      letterSpacing: 1.5,
+      fontFamily: 'Manrope_800ExtraBold',
+    },
+    liveEntryTitle: { color: palette.text, fontSize: 17, fontFamily: 'Archivo_700Bold' },
+    liveEntryBody: { color: palette.textSoft, fontSize: 11, lineHeight: 17, fontFamily: 'Manrope_500Medium' },
     heroStage: { gap: 14 },
     heroCommandDeck: {
       padding: 16,
