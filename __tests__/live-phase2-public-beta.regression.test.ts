@@ -10,6 +10,14 @@ const liveControl = readFileSync(
   new URL('../supabase/functions/live-control/index.ts', import.meta.url),
   'utf8',
 );
+const backstageScreen = readFileSync(
+  new URL('../app/live/backstage/[sessionId].tsx', import.meta.url),
+  'utf8',
+);
+const backstagePreview = readFileSync(
+  new URL('../features/live/components/StreamLiveBackstagePreview.tsx', import.meta.url),
+  'utf8',
+);
 
 test('Phase 2 enables RLS and reserves durable conversation writes for RPCs', () => {
   ['live_comments', 'live_reactions', 'live_reports'].forEach((table) => {
@@ -79,4 +87,11 @@ test('host lifecycle reserves the first stage seat and reaches on-stage atomical
   assert.match(hostSync, /state='backstage',stage_slot=1/i);
   assert.match(hostSync, /new\.status = 'live'/i);
   assert.match(hostSync, /state='on_stage',stage_slot=1/i);
+});
+
+test('private backstage previews devices locally and only joins after stage authority changes', () => {
+  assert.match(backstageScreen, /preparePreview/);
+  assert.doesNotMatch(backstageScreen, /media\.join\(/);
+  assert.match(backstagePreview, /This component never joins the public RTC call/);
+  assert.doesNotMatch(backstagePreview, /\.join\(/);
 });

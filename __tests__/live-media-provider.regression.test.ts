@@ -72,6 +72,7 @@ test('Live media admission rejects missing authoritative join capability', () =>
 test('provider abstraction exposes transport controls without Stream-specific types', () => {
   const providerMethods: readonly (keyof LiveMediaProvider)[] = [
     'initialize',
+    'preparePreview',
     'joinSession',
     'leaveSession',
     'setAudioEnabled',

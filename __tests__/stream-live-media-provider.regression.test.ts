@@ -46,6 +46,7 @@ const bindings = () => {
         disable: async () => { events.push('microphone:disable'); },
       },
       state: { localParticipant: { connectionQuality: 3 } },
+      get: async () => { events.push('get'); },
       join: async ({ create }) => {
         assert.equal(create, false);
         events.push('join');
@@ -99,6 +100,33 @@ test('Stream adapter allows authorized backstage publication and serializes dupl
   assert.equal(fake.events.filter((event) => event === 'join').length, 1);
   assert.equal(fake.events.filter((event) => event === 'camera:enable').length, 1);
   assert.equal(fake.events.filter((event) => event === 'microphone:enable').length, 1);
+});
+
+test('Stream adapter prepares a private device preview without joining the public call', async () => {
+  const fake = bindings();
+  const provider = new StreamLiveMediaProvider(async () => fake.result);
+  const scope = admission(true);
+  await provider.initialize(scope, async () => scope);
+
+  await provider.preparePreview({ mode: 'backstage', audioEnabled: true, videoEnabled: true });
+
+  assert.equal(provider.state, 'previewing');
+  assert.deepEqual(fake.events, ['get', 'microphone:enable', 'camera:enable']);
+  await provider.setVideoEnabled(false);
+  assert.equal(fake.events.includes('join'), false);
+});
+
+test('Stream adapter leaves a private preview without contacting the public call', async () => {
+  const fake = bindings();
+  const provider = new StreamLiveMediaProvider(async () => fake.result);
+  const scope = admission(true);
+  await provider.initialize(scope, async () => scope);
+  await provider.preparePreview({ mode: 'backstage', audioEnabled: true, videoEnabled: true });
+
+  await provider.leaveSession();
+
+  assert.equal(provider.state, 'ready');
+  assert.equal(fake.events.filter((event) => event === 'leave').length, 0);
 });
 
 test('Stream adapter rejects token refresh identity drift and disposes account state', async () => {
