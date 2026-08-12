@@ -23,7 +23,6 @@ module.exports = defineConfig([
       '**/supabase/functions/**',
       'supabase/migrations/**',
       '**/supabase/migrations/**',
-      'metro.config.js',
     ],
   },
   ...compatibleExpoConfig,

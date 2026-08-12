@@ -8,7 +8,7 @@ module.exports = (async () => {
   try {
     // Preferred path for Expo-managed projects.
     config = getSentryExpoConfig(__dirname);
-  } catch (e) {
+  } catch (_error) {
     // Fallback for environments where `expo/metro-config` can't be required (version skew, offline, etc).
     // This keeps Metro usable while still enabling the Sentry Metro plugins.
     const { getDefaultConfig } = require("metro-config");
