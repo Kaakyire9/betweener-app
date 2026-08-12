@@ -82,6 +82,82 @@ async function runV4Migration(db: SQLiteDatabase): Promise<void> {
   });
 }
 
+async function runV5Migration(db: SQLiteDatabase): Promise<void> {
+  await db.withTransactionAsync(async () => {
+    await db.execAsync(`
+      create index if not exists idx_chat_threads_active_list
+        on chat_threads(
+          owner_user_id,
+          local_status,
+          is_pinned desc,
+          coalesce(last_message_at, created_at, local_updated_at) desc
+        );
+      create index if not exists idx_chat_threads_active_archived_list
+        on chat_threads(
+          owner_user_id,
+          local_status,
+          is_archived,
+          is_pinned desc,
+          coalesce(last_message_at, created_at, local_updated_at) desc
+        );
+      create index if not exists idx_chat_sync_state_owner_scope_thread
+        on chat_sync_state(owner_user_id, scope, thread_id);
+    `);
+    await setChatSchemaVersion(db, 5);
+  });
+}
+
+async function runV6Migration(db: SQLiteDatabase): Promise<void> {
+  await db.withTransactionAsync(async () => {
+    await db.execAsync(`
+      create index if not exists idx_chat_messages_thread_incoming_created
+        on chat_messages(
+          owner_user_id,
+          thread_id,
+          direction,
+          created_at desc,
+          local_updated_at desc
+        );
+    `);
+    await setChatSchemaVersion(db, 6);
+  });
+}
+
+async function runV7Migration(db: SQLiteDatabase): Promise<void> {
+  await db.withTransactionAsync(async () => {
+    await db.execAsync(`
+      create index if not exists idx_chat_pending_outbox_owner_local_message
+        on chat_pending_outbox(owner_user_id, local_message_id);
+      create index if not exists idx_chat_pending_outbox_queued_due
+        on chat_pending_outbox(owner_user_id, next_retry_at, created_at)
+        where status = 'queued';
+      create index if not exists idx_chat_pending_outbox_sending_due
+        on chat_pending_outbox(owner_user_id, updated_at, next_retry_at, created_at)
+        where status = 'sending';
+    `);
+    await setChatSchemaVersion(db, 7);
+  });
+}
+
+async function runV8Migration(db: SQLiteDatabase): Promise<void> {
+  await db.withTransactionAsync(async () => {
+    await db.execAsync(`
+      create table if not exists chat_view_once_status (
+        owner_user_id text not null,
+        message_id text not null,
+        thread_id text not null,
+        viewed_by_me integer not null default 0,
+        viewed_by_peer integer not null default 0,
+        updated_at text not null,
+        primary key(owner_user_id, message_id)
+      );
+      create index if not exists idx_chat_view_once_status_thread
+        on chat_view_once_status(owner_user_id, thread_id);
+    `);
+    await setChatSchemaVersion(db, 8);
+  });
+}
+
 export async function runChatMigrations(db: SQLiteDatabase): Promise<void> {
   try {
     const currentVersion = await getChatSchemaVersion(db);
@@ -103,6 +179,18 @@ export async function runChatMigrations(db: SQLiteDatabase): Promise<void> {
     }
     if (currentVersion < 4) {
       await runV4Migration(db);
+    }
+    if (currentVersion < 5) {
+      await runV5Migration(db);
+    }
+    if (currentVersion < 6) {
+      await runV6Migration(db);
+    }
+    if (currentVersion < 7) {
+      await runV7Migration(db);
+    }
+    if (currentVersion < 8) {
+      await runV8Migration(db);
     }
 
     captureMessage('chat_db_migration_succeeded', {

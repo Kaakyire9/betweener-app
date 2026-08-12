@@ -171,6 +171,13 @@ jest.mock('@/lib/offline/circle-detail-store', () => ({
   writeCircleDetailSnapshot: jest.fn(async () => undefined),
 }));
 
+jest.mock('@react-native-community/netinfo', () => ({
+  fetch: jest.fn(async () => ({
+    isConnected: true,
+    isInternetReachable: true,
+  })),
+}));
+
 jest.mock('@/lib/circles/pulse/use-circle-pulse', () => ({
   useCirclePulse: () => ({
     items: mockPulseItems,
@@ -219,6 +226,9 @@ jest.mock('react-native-safe-area-context', () => {
 
 jest.mock('@/lib/supabase', () => ({
   supabase: {
+    auth: {
+      getSession: jest.fn(async () => ({ data: { session: null }, error: null })),
+    },
     from: jest.fn((table: string) => mockCreateQuery(table)),
     rpc: (...args: any[]) => mockRpc(...args),
     storage: {

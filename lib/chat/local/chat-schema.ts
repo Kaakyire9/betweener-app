@@ -1,5 +1,5 @@
 export const CHAT_DB_NAME = 'betweener_chat.db';
-export const CHAT_SCHEMA_VERSION = 4;
+export const CHAT_SCHEMA_VERSION = 8;
 
 export type ChatThreadLocalStatus = 'active' | 'hidden' | 'deleted';
 export type ChatThreadType = 'direct';
@@ -104,6 +104,15 @@ export type ChatSyncStateRow = {
   last_cursor: string | null;
   last_synced_at: string | null;
   last_error: string | null;
+  updated_at: string;
+};
+
+export type ChatViewOnceStatusRow = {
+  owner_user_id: string;
+  message_id: string;
+  thread_id: string;
+  viewed_by_me: number;
+  viewed_by_peer: number;
   updated_at: string;
 };
 
@@ -249,12 +258,37 @@ create table if not exists chat_sync_state (
   unique(owner_user_id, scope, thread_id)
 );
 
+create table if not exists chat_view_once_status (
+  owner_user_id text not null,
+  message_id text not null,
+  thread_id text not null,
+  viewed_by_me integer not null default 0,
+  viewed_by_peer integer not null default 0,
+  updated_at text not null,
+  primary key(owner_user_id, message_id)
+);
+
 create index if not exists idx_chat_threads_owner on chat_threads(owner_user_id);
 create index if not exists idx_chat_threads_last_message on chat_threads(owner_user_id, is_pinned desc, last_message_at desc);
 create index if not exists idx_chat_threads_unread on chat_threads(owner_user_id, unread_count);
 create index if not exists idx_chat_threads_peer_profile on chat_threads(owner_user_id, peer_profile_id);
 create index if not exists idx_chat_threads_archived on chat_threads(owner_user_id, is_archived);
 create index if not exists idx_chat_threads_pinned on chat_threads(owner_user_id, is_pinned);
+create index if not exists idx_chat_threads_active_list
+  on chat_threads(
+    owner_user_id,
+    local_status,
+    is_pinned desc,
+    coalesce(last_message_at, created_at, local_updated_at) desc
+  );
+create index if not exists idx_chat_threads_active_archived_list
+  on chat_threads(
+    owner_user_id,
+    local_status,
+    is_archived,
+    is_pinned desc,
+    coalesce(last_message_at, created_at, local_updated_at) desc
+  );
 
 create index if not exists idx_chat_participants_thread on chat_participants(thread_id);
 create index if not exists idx_chat_participants_owner on chat_participants(owner_user_id);
@@ -262,6 +296,8 @@ create index if not exists idx_chat_participants_user on chat_participants(user_
 create index if not exists idx_chat_participants_profile on chat_participants(profile_id);
 
 create index if not exists idx_chat_messages_thread_created on chat_messages(owner_user_id, thread_id, created_at desc);
+create index if not exists idx_chat_messages_thread_incoming_created
+  on chat_messages(owner_user_id, thread_id, direction, created_at desc, local_updated_at desc);
 create index if not exists idx_chat_messages_owner on chat_messages(owner_user_id);
 create index if not exists idx_chat_messages_status on chat_messages(owner_user_id, status);
 create index if not exists idx_chat_messages_sender on chat_messages(sender_user_id);
@@ -277,4 +313,16 @@ create index if not exists idx_chat_pending_outbox_owner on chat_pending_outbox(
 create index if not exists idx_chat_pending_outbox_status on chat_pending_outbox(status);
 create index if not exists idx_chat_pending_outbox_retry on chat_pending_outbox(next_retry_at);
 create index if not exists idx_chat_pending_outbox_thread on chat_pending_outbox(thread_id);
+create index if not exists idx_chat_pending_outbox_owner_local_message
+  on chat_pending_outbox(owner_user_id, local_message_id);
+create index if not exists idx_chat_pending_outbox_queued_due
+  on chat_pending_outbox(owner_user_id, next_retry_at, created_at)
+  where status = 'queued';
+create index if not exists idx_chat_pending_outbox_sending_due
+  on chat_pending_outbox(owner_user_id, updated_at, next_retry_at, created_at)
+  where status = 'sending';
+create index if not exists idx_chat_sync_state_owner_scope_thread
+  on chat_sync_state(owner_user_id, scope, thread_id);
+create index if not exists idx_chat_view_once_status_thread
+  on chat_view_once_status(owner_user_id, thread_id);
 `;

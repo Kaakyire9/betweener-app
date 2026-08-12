@@ -76,9 +76,10 @@ function DockButton({
   }, [highlightPulse, highlighted]);
 
   const handlePress = () => {
-    scale.value = withTiming(0.94, vibesMotion.pressIn, () => {
-      scale.value = withTiming(1, vibesMotion.pressOut);
-    });
+    scale.value = withSequence(
+      withTiming(0.94, vibesMotion.pressIn),
+      withTiming(1, vibesMotion.pressOut),
+    );
     try {
       Haptics.selectionAsync();
     } catch {}

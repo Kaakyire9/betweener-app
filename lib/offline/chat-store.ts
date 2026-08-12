@@ -6,12 +6,21 @@ import {
   writeOfflineEnvelope,
 } from "@/lib/offline/core";
 import { removeCache } from "@/lib/persisted-cache";
+import {
+  getOfflineCacheOwnerDirectory,
+  getOfflineCacheOwnerDirectoryForId,
+} from "@/lib/offline/cache-scope";
+import { assertLocalStorageCapacity } from "@/lib/offline/storage-capacity";
+import { File } from "expo-file-system";
 import * as FileSystem from "expo-file-system/legacy";
 
 export type OfflineEnvelope<T> = CoreOfflineEnvelope<T>;
 
 const OFFLINE_VERSION = 1;
-const OFFLINE_CHAT_UPLOAD_DIR = `${FileSystem.documentDirectory ?? ''}offline-chat-uploads/`;
+// Regenerable/upload-pending media must never enter iCloud/Auto Backup.
+// The cache directory is backup-excluded on both platforms; missing-file
+// recovery turns an OS eviction into an explicit resumable-send failure.
+const OFFLINE_CHAT_UPLOAD_DIR = `${FileSystem.cacheDirectory ?? ''}offline-chat-uploads/`;
 const offlineSnapshotMemory = new Map<string, unknown>();
 const offlineSnapshotListeners = new Map<string, Set<() => void>>();
 
@@ -125,6 +134,50 @@ export async function patchChatConversationPresenceSnapshot(
   await writeOfflineSnapshot(key, next);
 }
 
+export async function patchChatConversationReadSnapshot(
+  userId: string,
+  peerUserId: string,
+  options?: { readAt?: string | null },
+) {
+  const key = buildChatConversationListStoreKey(userId);
+  const cached = await readOfflineSnapshot<any[]>(key);
+  if (!Array.isArray(cached) || cached.length === 0) return;
+
+  let changed = false;
+  const readAt = options?.readAt ?? new Date().toISOString();
+  const next = cached.map((item) => {
+    if (!item || typeof item !== 'object' || item.id !== peerUserId) {
+      return item;
+    }
+
+    const unreadCount = Number(item.unreadCount) || 0;
+    const lastMessage = item.lastMessage && typeof item.lastMessage === 'object' ? item.lastMessage : null;
+    const isIncomingLastMessage = Boolean(lastMessage?.senderId) && lastMessage.senderId !== userId;
+    const nextLastMessage =
+      lastMessage && isIncomingLastMessage && lastMessage.isRead !== true
+        ? {
+            ...lastMessage,
+            isRead: true,
+            deliveredAt: lastMessage.deliveredAt ?? readAt,
+          }
+        : lastMessage;
+
+    if (unreadCount === 0 && nextLastMessage === lastMessage) {
+      return item;
+    }
+
+    changed = true;
+    return {
+      ...item,
+      unreadCount: 0,
+      lastMessage: nextLastMessage ?? item.lastMessage,
+    };
+  });
+
+  if (!changed) return;
+  await writeOfflineSnapshot(key, next);
+}
+
 export async function migrateLegacyChatThreadSnapshot<T>(
   userId: string,
   peerUserId: string,
@@ -150,12 +203,14 @@ const sanitizeFileName = (fileName: string) =>
     .slice(0, 120) || `upload-${Date.now()}`;
 
 async function ensureOfflineChatUploadDir() {
-  if (!FileSystem.documentDirectory) return null;
-  const info = await FileSystem.getInfoAsync(OFFLINE_CHAT_UPLOAD_DIR);
+  if (!FileSystem.cacheDirectory) return null;
+  const ownerDirectory = await getOfflineCacheOwnerDirectory();
+  const directory = `${OFFLINE_CHAT_UPLOAD_DIR}${ownerDirectory}/`;
+  const info = await FileSystem.getInfoAsync(directory);
   if (!info.exists) {
-    await FileSystem.makeDirectoryAsync(OFFLINE_CHAT_UPLOAD_DIR, { intermediates: true });
+    await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
   }
-  return OFFLINE_CHAT_UPLOAD_DIR;
+  return directory;
 }
 
 export async function stageOfflineChatUpload(sourceUri: string, fileName: string) {
@@ -163,10 +218,46 @@ export async function stageOfflineChatUpload(sourceUri: string, fileName: string
   if (!dir) return sourceUri;
   if (sourceUri.startsWith(dir)) return sourceUri;
 
+  const sourceInfo = await FileSystem.getInfoAsync(sourceUri);
+  if (!sourceInfo.exists) throw new Error('chat_upload_source_unavailable');
+  const sourceSize = 'size' in sourceInfo && typeof sourceInfo.size === 'number'
+    ? sourceInfo.size
+    : 0;
+  await assertLocalStorageCapacity(sourceSize);
+
   const safeName = sanitizeFileName(fileName);
   const stagedUri = `${dir}${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${safeName}`;
   await FileSystem.copyAsync({ from: sourceUri, to: stagedUri });
   return stagedUri;
+}
+
+/**
+ * Persists already-encrypted bytes in the account-scoped, backup-excluded
+ * staging area. Plaintext view-once media must never use this helper.
+ */
+export async function stageEncryptedOfflineChatUpload(
+  bytes: Uint8Array,
+  fileName: string,
+) {
+  const dir = await ensureOfflineChatUploadDir();
+  if (!dir) throw new Error('chat_upload_staging_unavailable');
+  if (bytes.byteLength <= 0) throw new Error('chat_upload_source_unavailable');
+  await assertLocalStorageCapacity(bytes.byteLength);
+
+  const safeName = sanitizeFileName(fileName);
+  const stagedUri = `${dir}${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${safeName}`;
+  const file = new File(stagedUri);
+  try {
+    file.write(bytes);
+    return stagedUri;
+  } catch (error) {
+    if (file.exists) {
+      try {
+        file.delete();
+      } catch {}
+    }
+    throw error;
+  }
 }
 
 export async function removeStagedOfflineChatUpload(uri?: string | null) {
@@ -176,4 +267,12 @@ export async function removeStagedOfflineChatUpload(uri?: string | null) {
   } catch {
     // Best effort cleanup; queued sends must not fail because cleanup failed.
   }
+}
+
+export async function clearStagedOfflineChatUploadsForOwner(ownerUserId: string) {
+  if (!FileSystem.cacheDirectory || !ownerUserId) return;
+  const ownerDirectory = await getOfflineCacheOwnerDirectoryForId(ownerUserId);
+  await FileSystem.deleteAsync(`${OFFLINE_CHAT_UPLOAD_DIR}${ownerDirectory}/`, {
+    idempotent: true,
+  }).catch(() => undefined);
 }

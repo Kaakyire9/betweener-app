@@ -87,7 +87,7 @@ export function ChatConversationRow({
     <ExpoImage
       source={{ uri: avatarUri }}
       style={styles.conversationAvatar}
-      cachePolicy="disk"
+      cachePolicy="memory-disk"
       contentFit="cover"
       transition={0}
       onError={() => onMarkAvatarFailed(item.id, avatarUri)}

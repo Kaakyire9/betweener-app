@@ -37,10 +37,15 @@ export const subscribeThreadMessageRealtime = ({
   onSentUpdate,
   onSystemInsert,
 }: SubscribeThreadMessageRealtimeArgs) => {
+  let stopped = false;
   const channelStates = new Map<string, ChatRealtimeStatus>();
   let reportedSubscribed = false;
   let reportedFailure: ChatRealtimeStatus | null = null;
   const reportStatus = (channelName: string, status: ChatRealtimeStatus) => {
+    // Removing a Supabase channel emits CLOSED. That is an intentional
+    // teardown, not a connectivity failure, and must never start recovery
+    // work while the user is navigating away from the thread.
+    if (stopped) return;
     channelStates.set(channelName, status);
     if (status === 'SUBSCRIBED') {
       reportedFailure = null;
@@ -129,6 +134,7 @@ export const subscribeThreadMessageRealtime = ({
     .subscribe((status) => reportStatus('system', status));
 
   return () => {
+    stopped = true;
     supabase.removeChannel(inboxChannel);
     supabase.removeChannel(sentChannel);
     supabase.removeChannel(systemChannel);

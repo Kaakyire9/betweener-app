@@ -94,13 +94,16 @@ export const encryptMediaBytes = async ({
     senderKeypair.secretKey
   );
 
-  return {
+  const payload = {
     cipherBytes,
     mediaNonceB64: encodeBase64(mediaNonce),
     keyNonceB64: encodeBase64(keyNonce),
     encryptedKeySenderB64: encodeBase64(encryptedKeySender),
     encryptedKeyReceiverB64: encodeBase64(encryptedKeyReceiver),
   };
+  mediaKey.fill(0);
+
+  return payload;
 };
 
 export const decryptMediaBytes = async ({
@@ -129,6 +132,7 @@ export const decryptMediaBytes = async ({
   if (!mediaKey) return null;
 
   const plainBytes = nacl.secretbox.open(cipherBytes, mediaNonce, mediaKey);
+  mediaKey.fill(0);
   if (!plainBytes) return null;
 
   return plainBytes;

@@ -2,9 +2,14 @@ import * as Crypto from 'expo-crypto';
 import * as FileSystem from 'expo-file-system/legacy';
 
 import { readOfflineData, writeOfflineEnvelope } from '@/lib/offline/core';
+import {
+  buildScopedOfflineCacheKey,
+  scopeOfflineCacheKey,
+} from '@/lib/offline/cache-scope';
 
 const VIDEO_CACHE_KEY = 'offline:video-store:v1';
-const VIDEO_CACHE_DIR = `${FileSystem.documentDirectory ?? FileSystem.cacheDirectory ?? ''}offline-videos/`;
+// Videos are intentionally durable after download, but remain LRU bounded.
+const VIDEO_CACHE_DIR = `${FileSystem.cacheDirectory ?? ''}offline-videos/`;
 const VIDEO_CACHE_MAX_BYTES = 450 * 1024 * 1024;
 const VIDEO_CACHE_MAX_ENTRIES = 80;
 const VIDEO_CACHE_TOUCH_INTERVAL_MS = 60 * 60 * 1000;
@@ -18,6 +23,22 @@ type VideoCacheEntry = {
 };
 
 type VideoCacheMap = Record<string, VideoCacheEntry>;
+const videoDownloads = new Map<string, Promise<string | null>>();
+let videoManifestMutationQueue: Promise<void> = Promise.resolve();
+let videoManifestCache: VideoCacheMap | null = null;
+let videoManifestLoad: Promise<VideoCacheMap> | null = null;
+
+const normalizeLocalFileUri = (value: string) =>
+  value.startsWith('/') ? `file://${value}` : value;
+
+const queueVideoManifestMutation = <T>(mutation: () => Promise<T>): Promise<T> => {
+  const operation = videoManifestMutationQueue.then(mutation, mutation);
+  videoManifestMutationQueue = operation.then(
+    () => undefined,
+    () => undefined,
+  );
+  return operation;
+};
 
 const normalizeVideoCacheMap = (raw: unknown): VideoCacheMap => {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
@@ -45,12 +66,36 @@ const normalizeVideoCacheMap = (raw: unknown): VideoCacheMap => {
 };
 
 const readVideoCacheMap = async (): Promise<VideoCacheMap> => {
-  const raw = await readOfflineData<unknown>(VIDEO_CACHE_KEY);
-  return normalizeVideoCacheMap(raw);
+  if (videoManifestCache) return { ...videoManifestCache };
+  if (!videoManifestLoad) {
+    videoManifestLoad = readOfflineData<unknown>(VIDEO_CACHE_KEY)
+      .then(normalizeVideoCacheMap)
+      .then((map) => {
+        videoManifestCache = map;
+        return map;
+      })
+      .finally(() => {
+        videoManifestLoad = null;
+      });
+  }
+  return { ...(await videoManifestLoad) };
 };
 
 const writeVideoCacheMap = async (next: VideoCacheMap) => {
   await writeOfflineEnvelope(VIDEO_CACHE_KEY, next, { kind: 'video-manifest' });
+  videoManifestCache = { ...next };
+};
+
+export const primeOfflineVideoStore = async () => {
+  await readVideoCacheMap();
+};
+
+export const peekOfflineVideoUri = (
+  ownerUserId: string | null | undefined,
+  sourceKey: string | null | undefined,
+) => {
+  if (!ownerUserId || !sourceKey || !videoManifestCache) return null;
+  return videoManifestCache[buildScopedOfflineCacheKey(ownerUserId, sourceKey)]?.localUri ?? null;
 };
 
 const ensureVideoCacheDir = async () => {
@@ -132,6 +177,7 @@ const writePrunedVideoCacheMap = async (map: VideoCacheMap) => {
 
 export const getOfflineVideoUri = async (sourceKey?: string | null): Promise<string | null> => {
   if (!sourceKey) return null;
+  sourceKey = await scopeOfflineCacheKey(sourceKey);
   const map = await readVideoCacheMap();
   const cached = map[sourceKey];
   if (!cached?.localUri) return null;
@@ -140,25 +186,54 @@ export const getOfflineVideoUri = async (sourceKey?: string | null): Promise<str
     if (info.exists) {
       const lastTouchedAt = typeof cached.savedAt === 'number' ? cached.savedAt : 0;
       if (Date.now() - lastTouchedAt >= VIDEO_CACHE_TOUCH_INTERVAL_MS) {
-        await writeVideoCacheMap({
-          ...map,
-          [sourceKey]: {
-            ...cached,
-            savedAt: Date.now(),
-          },
+        await queueVideoManifestMutation(async () => {
+          const current = await readVideoCacheMap();
+          const latest = current[sourceKey];
+          if (!latest) return;
+          await writeVideoCacheMap({
+            ...current,
+            [sourceKey]: {
+              ...latest,
+              savedAt: Date.now(),
+            },
+          });
         });
       }
       return cached.localUri;
     }
   } catch {}
-  const next = { ...map };
-  delete next[sourceKey];
-  await writeVideoCacheMap(next);
+  await queueVideoManifestMutation(async () => {
+    const current = await readVideoCacheMap();
+    if (!current[sourceKey]) return;
+    const next = { ...current };
+    delete next[sourceKey];
+    await writeVideoCacheMap(next);
+  });
   return null;
 };
 
-export const cacheOfflineVideo = async (sourceKey: string, remoteUri?: string | null): Promise<string | null> => {
+export const removeOfflineVideo = async (sourceKey?: string | null) => {
+  if (!sourceKey) return;
+  sourceKey = await scopeOfflineCacheKey(sourceKey);
+  await queueVideoManifestMutation(async () => {
+    const map = await readVideoCacheMap();
+    const entry = map[sourceKey];
+    if (!entry) return;
+    try {
+      await FileSystem.deleteAsync(entry.localUri, { idempotent: true });
+    } catch {}
+    const next = { ...map };
+    delete next[sourceKey];
+    await writeVideoCacheMap(next);
+  });
+};
+
+const downloadOfflineVideo = async (
+  sourceKey: string,
+  remoteUri: string,
+): Promise<string | null> => {
   if (!sourceKey || !remoteUri) return null;
+  sourceKey = await scopeOfflineCacheKey(sourceKey);
   if (!remoteUri.startsWith('http')) return remoteUri;
   try {
     await ensureVideoCacheDir();
@@ -168,18 +243,38 @@ export const cacheOfflineVideo = async (sourceKey: string, remoteUri?: string | 
     if (!existing.exists) {
       await FileSystem.downloadAsync(remoteUri, targetUri);
     }
-    const next = await readVideoCacheMap();
-    next[sourceKey] = {
-      localUri: targetUri,
-      sourceKey,
-      remoteUri,
-      extension,
-      savedAt: Date.now(),
-    };
-    await writePrunedVideoCacheMap(next);
+    await queueVideoManifestMutation(async () => {
+      const next = await readVideoCacheMap();
+      next[sourceKey] = {
+        localUri: targetUri,
+        sourceKey,
+        remoteUri,
+        extension,
+        savedAt: Date.now(),
+      };
+      await writePrunedVideoCacheMap(next);
+    });
     return targetUri;
   } catch {
     return null;
+  }
+};
+
+export const cacheOfflineVideo = async (
+  sourceKey: string,
+  remoteUri?: string | null,
+): Promise<string | null> => {
+  if (!sourceKey || !remoteUri) return null;
+  sourceKey = await scopeOfflineCacheKey(sourceKey);
+  if (!remoteUri.startsWith('http')) return remoteUri;
+  const existing = videoDownloads.get(sourceKey);
+  if (existing) return existing;
+  const request = downloadOfflineVideo(sourceKey, remoteUri);
+  videoDownloads.set(sourceKey, request);
+  try {
+    return await request;
+  } finally {
+    videoDownloads.delete(sourceKey);
   }
 };
 
@@ -187,22 +282,58 @@ export const rememberOfflineVideoUri = async (
   sourceKey: string,
   localUri?: string | null,
   remoteUri?: string | null,
+): Promise<string | null> =>
+  persistOfflineVideoCopy(sourceKey, localUri, remoteUri);
+
+export const persistOfflineVideoCopy = async (
+  sourceKey: string,
+  localUri?: string | null,
+  remoteUri?: string | null,
 ): Promise<string | null> => {
   if (!sourceKey || !localUri) return null;
+  sourceKey = await scopeOfflineCacheKey(sourceKey);
   try {
-    const info = await FileSystem.getInfoAsync(localUri);
+    const normalizedLocalUri = normalizeLocalFileUri(localUri);
+    const info = await FileSystem.getInfoAsync(normalizedLocalUri);
     if (!info.exists) return null;
-    const next = await readVideoCacheMap();
-    next[sourceKey] = {
-      localUri,
-      sourceKey,
-      remoteUri,
-      extension: guessVideoExtension(remoteUri) || guessVideoExtension(localUri),
-      savedAt: Date.now(),
-    };
-    await writePrunedVideoCacheMap(next);
-    return localUri;
+    await ensureVideoCacheDir();
+    const extension = guessVideoExtension(remoteUri) || guessVideoExtension(localUri);
+    const targetUri = await buildCachePath(sourceKey, extension);
+    if (targetUri !== normalizedLocalUri) {
+      await FileSystem.deleteAsync(targetUri, { idempotent: true });
+      await FileSystem.copyAsync({ from: normalizedLocalUri, to: targetUri });
+    }
+    await queueVideoManifestMutation(async () => {
+      const next = await readVideoCacheMap();
+      next[sourceKey] = {
+        localUri: targetUri,
+        sourceKey,
+        remoteUri,
+        extension,
+        savedAt: Date.now(),
+      };
+      await writePrunedVideoCacheMap(next);
+    });
+    return targetUri;
   } catch {
     return null;
   }
+};
+
+export const clearOfflineVideosForOwner = async (ownerUserId: string) => {
+  if (!ownerUserId) return;
+  const ownerPrefix = `owner/${ownerUserId}/`;
+  await queueVideoManifestMutation(async () => {
+    const entries = await readVideoCacheMap();
+    const retained: VideoCacheMap = {};
+    await Promise.all(Object.entries(entries).map(async ([key, entry]) => {
+      if (!key.startsWith(ownerPrefix)) {
+        retained[key] = entry;
+        return;
+      }
+      videoDownloads.delete(key);
+      await FileSystem.deleteAsync(entry.localUri, { idempotent: true }).catch(() => undefined);
+    }));
+    await writeVideoCacheMap(retained);
+  });
 };

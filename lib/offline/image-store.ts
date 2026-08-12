@@ -2,9 +2,16 @@ import * as Crypto from 'expo-crypto';
 import * as FileSystem from 'expo-file-system/legacy';
 
 import { readOfflineData, writeOfflineEnvelope } from '@/lib/offline/core';
+import {
+  buildScopedOfflineCacheKey,
+  scopeOfflineCacheKey,
+} from '@/lib/offline/cache-scope';
 
 const IMAGE_CACHE_KEY = 'offline:image-store:v1';
-const IMAGE_CACHE_DIR = `${FileSystem.documentDirectory ?? FileSystem.cacheDirectory ?? ''}offline-images/`;
+// Chat/profile media that a person has already viewed should survive OS cache
+// pressure. The manifest remains bounded below, so durable storage cannot grow
+// without limit.
+const IMAGE_CACHE_DIR = `${FileSystem.cacheDirectory ?? ''}offline-images/`;
 const IMAGE_CACHE_MAX_BYTES = 120 * 1024 * 1024;
 const IMAGE_CACHE_MAX_ENTRIES = 250;
 const IMAGE_CACHE_TOUCH_INTERVAL_MS = 60 * 60 * 1000;
@@ -18,6 +25,22 @@ type ImageCacheEntry = {
 };
 
 type ImageCacheMap = Record<string, ImageCacheEntry>;
+const imageDownloads = new Map<string, Promise<string | null>>();
+let imageManifestMutationQueue: Promise<void> = Promise.resolve();
+let imageManifestCache: ImageCacheMap | null = null;
+let imageManifestLoad: Promise<ImageCacheMap> | null = null;
+
+const normalizeLocalFileUri = (value: string) =>
+  value.startsWith('/') ? `file://${value}` : value;
+
+const queueImageManifestMutation = <T>(mutation: () => Promise<T>): Promise<T> => {
+  const operation = imageManifestMutationQueue.then(mutation, mutation);
+  imageManifestMutationQueue = operation.then(
+    () => undefined,
+    () => undefined,
+  );
+  return operation;
+};
 
 const normalizeImageCacheMap = (raw: unknown): ImageCacheMap => {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
@@ -38,12 +61,36 @@ const normalizeImageCacheMap = (raw: unknown): ImageCacheMap => {
 };
 
 const readImageCacheMap = async (): Promise<ImageCacheMap> => {
-  const raw = await readOfflineData<unknown>(IMAGE_CACHE_KEY);
-  return normalizeImageCacheMap(raw);
+  if (imageManifestCache) return { ...imageManifestCache };
+  if (!imageManifestLoad) {
+    imageManifestLoad = readOfflineData<unknown>(IMAGE_CACHE_KEY)
+      .then(normalizeImageCacheMap)
+      .then((map) => {
+        imageManifestCache = map;
+        return map;
+      })
+      .finally(() => {
+        imageManifestLoad = null;
+      });
+  }
+  return { ...(await imageManifestLoad) };
 };
 
 const writeImageCacheMap = async (next: ImageCacheMap) => {
   await writeOfflineEnvelope(IMAGE_CACHE_KEY, next, { kind: 'image-manifest' });
+  imageManifestCache = { ...next };
+};
+
+export const primeOfflineImageStore = async () => {
+  await readImageCacheMap();
+};
+
+export const peekOfflineImageUri = (
+  ownerUserId: string | null | undefined,
+  sourceKey: string | null | undefined,
+) => {
+  if (!ownerUserId || !sourceKey || !imageManifestCache) return null;
+  return imageManifestCache[buildScopedOfflineCacheKey(ownerUserId, sourceKey)]?.localUri ?? null;
 };
 
 const ensureImageCacheDir = async () => {
@@ -126,6 +173,7 @@ const writePrunedImageCacheMap = async (map: ImageCacheMap) => {
 export const getOfflineImageUri = async (sourceKey?: string | null): Promise<string | null> => {
   if (!sourceKey) return null;
   if (sourceKey.startsWith('file://')) return sourceKey;
+  sourceKey = await scopeOfflineCacheKey(sourceKey);
   const map = await readImageCacheMap();
   const cached = map[sourceKey];
   if (!cached?.localUri) return null;
@@ -134,25 +182,54 @@ export const getOfflineImageUri = async (sourceKey?: string | null): Promise<str
     if (info.exists) {
       const lastTouchedAt = typeof cached.savedAt === 'number' ? cached.savedAt : 0;
       if (Date.now() - lastTouchedAt >= IMAGE_CACHE_TOUCH_INTERVAL_MS) {
-        await writeImageCacheMap({
-          ...map,
-          [sourceKey]: {
-            ...cached,
-            savedAt: Date.now(),
-          },
+        await queueImageManifestMutation(async () => {
+          const current = await readImageCacheMap();
+          const latest = current[sourceKey];
+          if (!latest) return;
+          await writeImageCacheMap({
+            ...current,
+            [sourceKey]: {
+              ...latest,
+              savedAt: Date.now(),
+            },
+          });
         });
       }
       return cached.localUri;
     }
   } catch {}
-  const next = { ...map };
-  delete next[sourceKey];
-  await writeImageCacheMap(next);
+  await queueImageManifestMutation(async () => {
+    const current = await readImageCacheMap();
+    if (!current[sourceKey]) return;
+    const next = { ...current };
+    delete next[sourceKey];
+    await writeImageCacheMap(next);
+  });
   return null;
 };
 
-export const cacheOfflineImage = async (sourceKey: string, remoteUri?: string | null): Promise<string | null> => {
+export const removeOfflineImage = async (sourceKey?: string | null) => {
+  if (!sourceKey) return;
+  sourceKey = await scopeOfflineCacheKey(sourceKey);
+  await queueImageManifestMutation(async () => {
+    const map = await readImageCacheMap();
+    const entry = map[sourceKey];
+    if (!entry) return;
+    try {
+      await FileSystem.deleteAsync(entry.localUri, { idempotent: true });
+    } catch {}
+    const next = { ...map };
+    delete next[sourceKey];
+    await writeImageCacheMap(next);
+  });
+};
+
+const downloadOfflineImage = async (
+  sourceKey: string,
+  remoteUri: string,
+): Promise<string | null> => {
   if (!sourceKey || !remoteUri) return null;
+  sourceKey = await scopeOfflineCacheKey(sourceKey);
   if (!remoteUri.startsWith('http')) return remoteUri;
   try {
     await ensureImageCacheDir();
@@ -162,18 +239,38 @@ export const cacheOfflineImage = async (sourceKey: string, remoteUri?: string | 
     if (!existing.exists) {
       await FileSystem.downloadAsync(remoteUri, targetUri);
     }
-    const next = await readImageCacheMap();
-    next[sourceKey] = {
-      localUri: targetUri,
-      sourceKey,
-      remoteUri,
-      extension,
-      savedAt: Date.now(),
-    };
-    await writePrunedImageCacheMap(next);
+    await queueImageManifestMutation(async () => {
+      const next = await readImageCacheMap();
+      next[sourceKey] = {
+        localUri: targetUri,
+        sourceKey,
+        remoteUri,
+        extension,
+        savedAt: Date.now(),
+      };
+      await writePrunedImageCacheMap(next);
+    });
     return targetUri;
   } catch {
     return null;
+  }
+};
+
+export const cacheOfflineImage = async (
+  sourceKey: string,
+  remoteUri?: string | null,
+): Promise<string | null> => {
+  if (!sourceKey || !remoteUri) return null;
+  sourceKey = await scopeOfflineCacheKey(sourceKey);
+  if (!remoteUri.startsWith('http')) return remoteUri;
+  const existing = imageDownloads.get(sourceKey);
+  if (existing) return existing;
+  const request = downloadOfflineImage(sourceKey, remoteUri);
+  imageDownloads.set(sourceKey, request);
+  try {
+    return await request;
+  } finally {
+    imageDownloads.delete(sourceKey);
   }
 };
 
@@ -193,25 +290,8 @@ export const rememberOfflineImageUri = async (
   sourceKey: string,
   localUri?: string | null,
   remoteUri?: string | null,
-): Promise<string | null> => {
-  if (!sourceKey || !localUri) return null;
-  try {
-    const info = await FileSystem.getInfoAsync(localUri);
-    if (!info.exists) return null;
-    const next = await readImageCacheMap();
-    next[sourceKey] = {
-      localUri,
-      sourceKey,
-      remoteUri,
-      extension: guessImageExtension(remoteUri) || guessImageExtension(localUri),
-      savedAt: Date.now(),
-    };
-    await writePrunedImageCacheMap(next);
-    return localUri;
-  } catch {
-    return null;
-  }
-};
+): Promise<string | null> =>
+  persistOfflineImageCopy(sourceKey, localUri, remoteUri);
 
 export const persistOfflineImageCopy = async (
   sourceKey: string,
@@ -219,27 +299,49 @@ export const persistOfflineImageCopy = async (
   remoteUri?: string | null,
 ): Promise<string | null> => {
   if (!sourceKey || !localUri) return null;
+  sourceKey = await scopeOfflineCacheKey(sourceKey);
   try {
-    const info = await FileSystem.getInfoAsync(localUri);
+    const normalizedLocalUri = normalizeLocalFileUri(localUri);
+    const info = await FileSystem.getInfoAsync(normalizedLocalUri);
     if (!info.exists) return null;
     await ensureImageCacheDir();
     const extension = guessImageExtension(remoteUri) || guessImageExtension(localUri);
     const targetUri = await buildCachePath(sourceKey, extension);
-    if (targetUri !== localUri) {
+    if (targetUri !== normalizedLocalUri) {
       await FileSystem.deleteAsync(targetUri, { idempotent: true });
-      await FileSystem.copyAsync({ from: localUri, to: targetUri });
+      await FileSystem.copyAsync({ from: normalizedLocalUri, to: targetUri });
     }
-    const next = await readImageCacheMap();
-    next[sourceKey] = {
-      localUri: targetUri,
-      sourceKey,
-      remoteUri,
-      extension,
-      savedAt: Date.now(),
-    };
-    await writePrunedImageCacheMap(next);
+    await queueImageManifestMutation(async () => {
+      const next = await readImageCacheMap();
+      next[sourceKey] = {
+        localUri: targetUri,
+        sourceKey,
+        remoteUri,
+        extension,
+        savedAt: Date.now(),
+      };
+      await writePrunedImageCacheMap(next);
+    });
     return targetUri;
   } catch {
     return null;
   }
+};
+
+export const clearOfflineImagesForOwner = async (ownerUserId: string) => {
+  if (!ownerUserId) return;
+  const ownerPrefix = `owner/${ownerUserId}/`;
+  await queueImageManifestMutation(async () => {
+    const entries = await readImageCacheMap();
+    const retained: ImageCacheMap = {};
+    await Promise.all(Object.entries(entries).map(async ([key, entry]) => {
+      if (!key.startsWith(ownerPrefix)) {
+        retained[key] = entry;
+        return;
+      }
+      imageDownloads.delete(key);
+      await FileSystem.deleteAsync(entry.localUri, { idempotent: true }).catch(() => undefined);
+    }));
+    await writeImageCacheMap(retained);
+  });
 };

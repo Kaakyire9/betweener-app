@@ -186,7 +186,7 @@ export async function migrateAsyncChatSnapshotsToSQLite(ownerUserId: string): Pr
       .map((thread) => cachedConversationToThread(ownerUserId, thread))
       .filter((thread): thread is ChatThreadRow => Boolean(thread));
 
-    await ChatRepository.upsertThreads(ownerUserId, threadRows);
+    await ChatRepository.upsertThreads(ownerUserId, threadRows, { priority: 'background' });
 
     let messageCount = 0;
     for (const thread of threadRows) {
@@ -198,7 +198,9 @@ export async function migrateAsyncChatSnapshotsToSQLite(ownerUserId: string): Pr
         .map((message) => cachedMessageToRow(ownerUserId, thread.id, message))
         .filter((message): message is ChatMessageRow => Boolean(message));
       if (messageRows.length === 0) continue;
-      await ChatRepository.upsertMessages(ownerUserId, thread.id, messageRows);
+      await ChatRepository.upsertMessages(ownerUserId, thread.id, messageRows, {
+        priority: 'background',
+      });
       messageCount += messageRows.length;
     }
 

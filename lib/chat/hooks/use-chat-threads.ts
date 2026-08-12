@@ -1,4 +1,5 @@
 import { ChatRepository, type ChatThreadRow } from "@/lib/chat/local/chat-db";
+import { Platform } from "react-native";
 import { useEffect, useState } from "react";
 
 type UseChatThreadsArgs = {
@@ -26,10 +27,44 @@ export const useChatThreads = ({
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
     let loadVersion = 0;
 
+    const withTimeoutFallback = async <T,>(
+      task: Promise<T>,
+      timeoutMs: number,
+      fallback: T,
+    ): Promise<{ value: T; timedOut: boolean }> => {
+      let timedOut = false;
+      const timeoutTask = new Promise<T>((resolve) => {
+        setTimeout(() => {
+          timedOut = true;
+          resolve(fallback);
+        }, timeoutMs);
+      });
+      const value = await Promise.race([task, timeoutTask]);
+      return { value, timedOut };
+    };
+
     const load = async () => {
       const version = ++loadVersion;
-      const nextRows = await ChatRepository.getThreads(ownerUserId, { includeArchived, limit });
+      const timeoutMs = Platform.OS === 'ios' ? 1000 : 2200;
+      const { value: nextRows, timedOut } = await withTimeoutFallback(
+        ChatRepository.getThreads(ownerUserId, {
+          includeArchived,
+          limit,
+          operationPriority: 'normal',
+        }),
+        timeoutMs,
+        rows,
+      );
       if (cancelled || version !== loadVersion) return;
+      if (timedOut) {
+        console.log('[chat][list][local] observe-threads-timeout', {
+          ownerUserId,
+          platform: Platform.OS,
+          timeoutMs,
+          includeArchived,
+          limit,
+        });
+      }
       setRows(nextRows);
       setHasLoadedLocal(true);
     };

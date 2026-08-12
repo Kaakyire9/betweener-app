@@ -1,12 +1,13 @@
 module.exports = function (api) {
   api.cache(true);
+  const isProduction = process.env.NODE_ENV === "production";
+
   return {
-    // Use the Expo preset (recommended for SDK 50+). The expo-router plugin
-    // is deprecated in favor of this preset. Keep the Worklets plugin last.
+    // Expo 57 configures Router, Reanimated, and Worklets through this preset.
+    // Adding the Worklets plugin again causes the same transforms to run twice.
     presets: ["babel-preset-expo"],
-    plugins: [
-      // Reanimated 4 moved its Babel plugin to react-native-worklets.
-      "react-native-worklets/plugin",
-    ],
+    // Development diagnostics stay available locally, but production bundles
+    // must not expose identifiers, storage paths, or internal state.
+    plugins: isProduction ? ["transform-remove-console"] : [],
   };
 };

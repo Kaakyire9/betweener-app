@@ -1,5 +1,4 @@
 import { addEventListener, fetch as fetchNetInfo } from '@react-native-community/netinfo';
-import * as FileSystem from 'expo-file-system/legacy';
 import { AppState, type AppStateStatus } from 'react-native';
 
 import { ChatRepository, type ChatMessageRow, type ChatPendingOutboxRow } from '@/lib/chat/local/chat-db';
@@ -15,6 +14,7 @@ import {
 } from '@/lib/circles/pulse/circle-pulse-service';
 import type { CirclePulseCommentReaction } from '@/lib/circles/pulse/circle-pulse-types';
 import type { MomentMetadata } from '@/lib/moment-text-style';
+import { ChatUploadTransport } from '@/lib/chat/transfer/chat-upload-transport';
 import {
   createMomentFromMediaStrict,
   createTextMomentStrict,
@@ -1693,12 +1693,6 @@ async function processProfileImageReactionSync(payload: ProfileImageReactionSync
   if (error) throw error;
 }
 
-const encodeStoragePath = (path: string) =>
-  path
-    .split('/')
-    .map((segment) => encodeURIComponent(segment))
-    .join('/');
-
 async function processChatReactionSync(payload: ChatReactionSyncPayload) {
   if (!payload.emoji) {
     const { error } = await supabase
@@ -1819,27 +1813,17 @@ async function uploadQueuedStorageObject(params: {
     throw new Error('missing_supabase_upload_config');
   }
 
-  const uploadUrl = `${supabaseUrl}/storage/v1/object/${params.bucket}/${encodeStoragePath(params.filePath)}?upsert=${params.upsert ? 'true' : 'false'}`;
-  const task = FileSystem.createUploadTask(uploadUrl, params.localUri, {
-    httpMethod: 'POST',
-    uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
-    headers: {
-      'Content-Type': params.contentType,
-      Authorization: `Bearer ${accessToken}`,
-      apikey: supabaseAnonKey,
-      'x-upsert': params.upsert ? 'true' : 'false',
-    },
+  await ChatUploadTransport.upload({
+    bucket: params.bucket,
+    objectPath: params.filePath,
+    localUri: params.localUri,
+    fileName: params.filePath.split('/').pop() || 'upload.bin',
+    contentType: params.contentType,
+    accessToken,
+    anonKey: supabaseAnonKey,
+    supabaseUrl,
+    upsert: params.upsert ?? false,
   });
-
-  const result = await task.uploadAsync();
-  if (!result) {
-    throw new Error('Upload failed (no response)');
-  }
-  if (result.status < 200 || result.status >= 300) {
-    const uploadError = new Error(result.body || `Upload failed (HTTP ${result.status})`);
-    (uploadError as any).status = result.status;
-    throw uploadError;
-  }
 }
 
 async function uploadQueuedProfilePhoto(userId: string, item: LocalProfileMediaUpload) {

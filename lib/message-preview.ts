@@ -79,6 +79,8 @@ export const getChatMessagePreviewText = ({
   const normalizedText = String(text || '').trim();
   const normalizedType = String(messageType || 'text');
 
+  if (status === 'deleted') return 'Message deleted';
+
   if (status === 'pending' || status === 'queued' || status === 'sending') {
     if (normalizedType === 'image') return 'Queued photo';
     if (normalizedType === 'video') return 'Queued video';

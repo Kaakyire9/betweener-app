@@ -67,11 +67,14 @@ const toLocalChatMessage = (ownerUserId: string, row: RealtimeMessageRow): ChatM
 };
 
 export default function ChatRealtimeHydrator() {
-  const { user, isAuthenticated } = useAuth();
+  const { user, isAuthenticated, canPerformAuthenticatedWrites } = useAuth();
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
 
   useEffect(() => {
-    const userId = isAuthenticated ? user?.id ?? null : null;
+    const userId =
+      isAuthenticated && canPerformAuthenticatedWrites
+        ? user?.id ?? null
+        : null;
     if (!userId) return;
 
     const catchUpDelivered = () => {
@@ -87,6 +90,15 @@ export default function ChatRealtimeHydrator() {
       const threadId = row.sender_id === userId ? row.receiver_id : row.sender_id;
       if (!threadId) return;
       if (isActiveChatThread(userId, threadId)) return;
+
+      // Attachment rows need canonical metadata (storage references, crypto
+      // state and view-once lifecycle data). The root subscription is only a
+      // notification signal; the focused thread fetch performs the complete
+      // hydration. Persisting a partial row here can otherwise hide the
+      // attachment when the conversation opens.
+      if (row.is_view_once || (row.message_type && row.message_type !== "text")) {
+        return;
+      }
 
       void ChatRepository.upsertMessages(userId, threadId, [
         toLocalChatMessage(userId, row),
@@ -145,7 +157,7 @@ export default function ChatRealtimeHydrator() {
       appStateSubscription.remove();
       supabase.removeChannel(channel);
     };
-  }, [isAuthenticated, user?.id]);
+  }, [canPerformAuthenticatedWrites, isAuthenticated, user?.id]);
 
   return null;
 }

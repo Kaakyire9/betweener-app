@@ -9,7 +9,7 @@ import {
 } from "@/lib/chat/chat-list-preview";
 
 type MessageType = 'text' | 'voice' | 'image' | 'mood_sticker' | 'video' | 'document' | 'location';
-type LocalStatus = 'queued' | 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
+type LocalStatus = 'deleted' | 'queued' | 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
 
 type ThemePalette = {
   tint: string;
@@ -49,6 +49,7 @@ export type ChatConversationRowItem = {
     deliveredAt: Date | null;
     editedAt?: Date | null;
     localStatus?: LocalStatus;
+    deletedForAll?: boolean;
     reactionPreview?: {
       emoji: string;
       userId: string;
@@ -164,6 +165,9 @@ export const useChatListRowPresentation = ({
     const isUnread = item.unreadCount > 0;
     const hasActiveMoment = activeMomentPeerUserIds.has(String(item.id));
     const isMyLastMessage = item.lastMessage.senderId === (userId || '');
+    const isLastMessageDeleted =
+      item.lastMessage.deletedForAll ||
+      item.lastMessage.localStatus === 'deleted';
     const peerPresence = getAuthoritativePresenceDisplay(
       item.matchedUser.isOnline,
       item.matchedUser.lastSeen?.toISOString?.() ?? null,
@@ -171,7 +175,9 @@ export const useChatListRowPresentation = ({
     );
     const isOnline = !isBlocked && peerPresence.online;
     const receiptIcon = isMyLastMessage ? getConversationReceiptIconState(item.lastMessage, theme, isDark) : null;
-    const reactionPreview = getLastMessageReactionPreview(item.lastMessage, item.matchedUser.name, userId || '');
+    const reactionPreview = isLastMessageDeleted
+      ? null
+      : getLastMessageReactionPreview(item.lastMessage, item.matchedUser.name, userId || '');
     const isTyping =
       !isBlocked &&
       !isLeftBetweener &&
@@ -179,7 +185,7 @@ export const useChatListRowPresentation = ({
     const messagePreview = getLastMessagePreview(item.lastMessage);
     const { previewText: normalPreviewText } = resolveChatListPreview({
       messagePreview,
-      editedAt: item.lastMessage.editedAt,
+      editedAt: isLastMessageDeleted ? null : item.lastMessage.editedAt,
       reactionPreview:
         reactionPreview && item.lastMessage.reactionPreview
           ? {
@@ -193,7 +199,7 @@ export const useChatListRowPresentation = ({
       ? 'Typing...'
       : formatConversationPreview({
           messagePreview: normalPreviewText,
-          latestActivity: item.latestActivity,
+          latestActivity: isLastMessageDeleted ? null : item.latestActivity,
           reactionEmoji: item.lastMessage.reactionPreview?.emoji,
           reactionUserId: item.lastMessage.reactionPreview?.userId,
           currentUserId: userId,

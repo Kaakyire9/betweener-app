@@ -7,6 +7,11 @@ import type { MessageType } from "@/components/chat/types";
 import { subscribeChatOptionsPrefsPreview } from "@/lib/chat-options-bus";
 import { ChatRepository } from "@/lib/chat/local/chat-db";
 import { ChatThreadRemoteService } from "@/lib/chat/chat-thread-remote-service";
+import {
+  buildViewOnceStatusFromReceipts,
+  mergeViewOnceStatusMaps,
+  type ViewOnceStatusMap,
+} from "@/lib/chat/view-once-status";
 import { supabase } from "@/lib/supabase";
 
 type ReactionRow = {
@@ -31,6 +36,9 @@ type UseChatThreadStateSyncArgs = {
   setMessages: Dispatch<SetStateAction<MessageType[]>>;
   setViewOnceStatus: Dispatch<
     SetStateAction<Record<string, { viewedByMe: boolean; viewedByPeer: boolean }>>
+  >;
+  viewOnceStatusRef: MutableRefObject<
+    Record<string, { viewedByMe: boolean; viewedByPeer: boolean }>
   >;
 };
 
@@ -67,6 +75,7 @@ export const useChatThreadStateSync = ({
   updateHiddenMessageIds,
   setMessages,
   setViewOnceStatus,
+  viewOnceStatusRef,
 }: UseChatThreadStateSyncArgs) => {
   const [isChatMuted, setIsChatMuted] = useState(false);
   const [isChatPinned, setIsChatPinned] = useState(false);
@@ -76,6 +85,11 @@ export const useChatThreadStateSync = ({
   const chatPrefsStateRef = useRef({ muted: false, pinned: false });
   const pendingChatPrefsOverrideRef = useRef<{ muted: boolean; pinned: boolean } | null>(null);
   const chatPrefsSignatureRef = useRef("");
+
+  const applyViewOnceStatuses = useCallback((incoming: ViewOnceStatusMap) => {
+    viewOnceStatusRef.current = mergeViewOnceStatusMaps(viewOnceStatusRef.current, incoming);
+    setViewOnceStatus((prev) => mergeViewOnceStatusMaps(prev, incoming));
+  }, [setViewOnceStatus, viewOnceStatusRef]);
 
   const persistChatPrefsLocalSnapshot = useCallback(
     async (nextMuted: boolean, nextPinned: boolean) => {
@@ -185,34 +199,59 @@ export const useChatThreadStateSync = ({
     });
   }, [setMessages, userId]);
 
+  const hydrateLocalViewOnceStatus = useCallback(async (messageIds: string[]) => {
+    if (!userId || messageIds.length === 0) return;
+    const uniqueIds = Array.from(new Set(messageIds)).filter(Boolean);
+    if (uniqueIds.length === 0) return;
+    try {
+      const localRows = await ChatRepository.getViewOnceStatuses(userId, uniqueIds, {
+        priority: 'user-blocking',
+      });
+      const localStatuses: ViewOnceStatusMap = Object.fromEntries(
+        localRows.map((row) => [
+          row.message_id,
+          {
+            viewedByMe: row.viewed_by_me === 1,
+            viewedByPeer: row.viewed_by_peer === 1,
+          },
+        ]),
+      );
+      applyViewOnceStatuses(localStatuses);
+    } catch (error) {
+      console.log("[chat] fetch local view-once status error", error);
+    }
+  }, [applyViewOnceStatuses, userId]);
+
   const syncViewOnceStatus = useCallback(async (messageIds: string[]) => {
     if (!userId || !conversationId || messageIds.length === 0) return;
     const uniqueIds = Array.from(new Set(messageIds)).filter(Boolean);
     if (uniqueIds.length === 0) return;
+
+    await hydrateLocalViewOnceStatus(uniqueIds);
+
     const { data, error } = await ChatThreadRemoteService.fetchViewOnceStatus({ messageIds: uniqueIds });
     if (error) {
       console.log("[chat] fetch view-once status error", error);
       return;
     }
-    setViewOnceStatus((prev) => {
-      const next = { ...prev };
-      uniqueIds.forEach((id) => {
-        next[id] = { viewedByMe: false, viewedByPeer: false };
-      });
-      (data || []).forEach((row: any) => {
-        if (!row?.message_id || !row?.viewer_id) return;
-        const current = next[row.message_id] ?? { viewedByMe: false, viewedByPeer: false };
-        if (row.viewer_id === userId) {
-          current.viewedByMe = true;
-        }
-        if (row.viewer_id === conversationId) {
-          current.viewedByPeer = true;
-        }
-        next[row.message_id] = current;
-      });
-      return next;
+    const remoteStatuses = buildViewOnceStatusFromReceipts({
+      receipts: data ?? [],
+      currentUserId: userId,
+      peerUserId: conversationId,
     });
-  }, [conversationId, setViewOnceStatus, userId]);
+    applyViewOnceStatuses(remoteStatuses);
+    const durableStatuses = Object.entries(remoteStatuses).map(([messageId, status]) => ({
+      messageId,
+      ...status,
+    }));
+    if (durableStatuses.length > 0) {
+      void ChatRepository.upsertViewOnceStatuses(userId, conversationId, durableStatuses, {
+        priority: 'background',
+      }).catch((localError) => {
+        console.log("[chat] persist view-once status error", localError);
+      });
+    }
+  }, [applyViewOnceStatuses, conversationId, hydrateLocalViewOnceStatus, userId]);
 
   const applyReactionUpdate = useCallback((row: ReactionRow, mode: "upsert" | "delete") => {
     if (!row?.message_id || !row.user_id) return;
@@ -570,6 +609,7 @@ export const useChatThreadStateSync = ({
     refreshLocalChatPrefs,
     fetchHiddenMessages,
     syncMessageReactions,
+    hydrateLocalViewOnceStatus,
     syncViewOnceStatus,
     applyReactionUpdate,
     fetchBlockStatus,

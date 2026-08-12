@@ -20,6 +20,10 @@ import {
 } from "@/lib/chat/hooks/use-chat-list-sync";
 import { useChatThreads } from "@/lib/chat/hooks/use-chat-threads";
 import {
+  resolveThreadUnreadCount,
+  subscribeOptimisticThreadReads,
+} from "@/lib/chat/active-thread";
+import {
   ChatRepository,
   type ChatMessageRow,
   type ChatThreadRow,
@@ -33,7 +37,13 @@ import { isLikelyNetworkError } from "@/lib/network";
 import { fetchViewedMomentIds } from "@/lib/moments-views";
 import {
   buildChatConversationListStoreKey,
+  buildChatThreadStoreKey,
+  peekOfflineSnapshot,
+  readOfflineSnapshot,
+  writeOfflineSnapshot,
 } from "@/lib/offline/chat-store";
+import { primeOfflineImageStore } from "@/lib/offline/image-store";
+import { primeOfflineVideoStore } from "@/lib/offline/video-store";
 import { buildLocationDisplay } from "@/lib/location/location-display";
 import { getSafeRemoteImageUri, getUserFacingDisplayName } from "@/lib/profile/display-name";
 import { getAuthoritativePresenceDisplay } from "@/lib/presence";
@@ -46,9 +56,10 @@ import { getSupabaseNetEvents, supabase } from "@/lib/supabase";
 import { captureMessage } from "@/lib/telemetry/sentry";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router, useFocusEffect } from "expo-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   FlatList,
+  Platform,
   StyleSheet,
   TouchableOpacity,
 } from "react-native";
@@ -93,7 +104,8 @@ type ConversationType = {
     isRead: boolean;
     deliveredAt: Date | null;
     editedAt?: Date | null;
-    localStatus?: 'queued' | 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
+    localStatus?: 'deleted' | 'queued' | 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
+    deletedForAll?: boolean;
     reactionPreview?: {
       emoji: string;
       userId: string;
@@ -143,7 +155,7 @@ const messageRowToLocalChatMessage = (ownerUserId: string, row: MessageRow): Cha
     owner_user_id: ownerUserId,
     sender_user_id: row.sender_id,
     receiver_user_id: row.receiver_id,
-    body: row.text ?? '',
+    body: row.deleted_for_all ? 'Message deleted' : row.text ?? '',
     message_type: row.message_type === 'voice' ? 'voice' : ((row.message_type ?? 'text') as ChatMessageRow['message_type']),
     status,
     direction: isMine ? 'outgoing' : 'incoming',
@@ -173,6 +185,9 @@ type NewMatch = {
 };
 
 const NEW_MATCHES_REFRESH_INTERVAL_MS = 45_000;
+const CHAT_LIST_FOCUS_REFRESH_INTERVAL_MS = 30_000;
+const chatListLastRemoteRefreshAtByUser = new Map<string, number>();
+const newMatchesCacheByUser = new Map<string, { items: NewMatch[]; fetchedAt: number }>();
 const BLOCKED_AVATAR_SOURCE = require('../../assets/images/circle-logo.png');
 const QUICK_REPORT_REASONS = [
   { id: 'spam', label: 'Spam' },
@@ -225,6 +240,35 @@ const deserializeConversations = (raw: unknown): ConversationType[] => {
   });
 };
 
+const serializeConversations = (conversations: ConversationType[]) =>
+  conversations.map((conversation) => ({
+    ...conversation,
+    matchedUser: {
+      ...conversation.matchedUser,
+      lastSeen: conversation.matchedUser.lastSeen.toISOString(),
+      typingExpiresAt: conversation.matchedUser.typingExpiresAt?.toISOString() ?? null,
+    },
+    lastMessage: {
+      ...conversation.lastMessage,
+      timestamp: conversation.lastMessage.timestamp.toISOString(),
+      deliveredAt: conversation.lastMessage.deliveredAt?.toISOString() ?? null,
+      editedAt: conversation.lastMessage.editedAt?.toISOString() ?? null,
+      reactionPreview: conversation.lastMessage.reactionPreview
+        ? {
+            ...conversation.lastMessage.reactionPreview,
+            createdAt: conversation.lastMessage.reactionPreview.createdAt.toISOString(),
+          }
+        : undefined,
+    },
+    latestActivity: conversation.latestActivity
+      ? {
+          ...conversation.latestActivity,
+          createdAt: conversation.latestActivity.createdAt.toISOString(),
+        }
+      : null,
+    matchedAt: conversation.matchedAt.toISOString(),
+  }));
+
 const coerceValidDate = (value?: string | Date | null) => {
   if (!value) return null;
   const date = value instanceof Date ? value : new Date(value);
@@ -258,7 +302,10 @@ const localThreadToConversation = (row: ChatThreadRow): ConversationType => {
     coerceValidDate(row.created_at) ||
     coerceValidDate(row.local_updated_at) ||
     new Date();
-  const rawPreview = row.last_message_preview || '';
+  const rawPreview =
+    row.last_message_status === 'deleted'
+      ? 'Message deleted'
+      : row.last_message_preview || '';
   const previewLooksLikeRemoteMedia = /^https?:\/\//i.test(rawPreview);
   const preview = previewLooksLikeRemoteMedia ? 'Photo' : rawPreview;
   const previewType: ConversationType['lastMessage']['type'] =
@@ -274,7 +321,9 @@ const localThreadToConversation = (row: ChatThreadRow): ConversationType => {
       ? 'location'
       : 'text';
   const localStatus: ThreadPreviewMessage['localStatus'] =
-    row.last_message_status === 'pending'
+    row.last_message_status === 'deleted'
+      ? 'deleted'
+      : row.last_message_status === 'pending'
       ? 'queued'
       : row.last_message_status === 'sending' ||
         row.last_message_status === 'sent' ||
@@ -343,9 +392,15 @@ const localThreadToConversation = (row: ChatThreadRow): ConversationType => {
           : null,
       editedAt: coerceValidDate(row.last_message_edited_at),
       localStatus,
+      deletedForAll: row.last_message_status === 'deleted',
       reactionPreview,
     },
-    unreadCount: row.unread_count,
+    unreadCount: resolveThreadUnreadCount(
+      row.owner_user_id,
+      row.peer_user_id,
+      row.unread_count,
+      timestamp,
+    ),
     isMuted: row.is_muted === 1,
     isPinned: row.is_pinned === 1,
     matchedAt: coerceValidDate(row.created_at) || timestamp,
@@ -357,7 +412,9 @@ const conversationToLocalThread = (ownerUserId: string, conversation: Conversati
   const lastMessageAt = conversation.lastMessage.timestamp instanceof Date
     ? conversation.lastMessage.timestamp.toISOString()
     : localUpdatedAt;
-  const lastMessagePreview = conversation.lastMessage.isViewOnce && conversation.lastMessage.type === 'image'
+  const lastMessagePreview = conversation.lastMessage.deletedForAll
+    ? 'Message deleted'
+    : conversation.lastMessage.isViewOnce && conversation.lastMessage.type === 'image'
     ? 'View once photo'
     : conversation.lastMessage.isViewOnce && conversation.lastMessage.type === 'video'
     ? 'View once video'
@@ -375,7 +432,9 @@ const conversationToLocalThread = (ownerUserId: string, conversation: Conversati
   const localStatus = (conversation.lastMessage as ThreadPreviewMessage).localStatus;
   const reactionPreview = conversation.lastMessage.reactionPreview;
   const lastMessageStatus: ChatThreadRow['last_message_status'] =
-    localStatus === 'queued'
+    conversation.lastMessage.deletedForAll || localStatus === 'deleted'
+      ? 'deleted'
+      : localStatus === 'queued'
       ? 'pending'
       : localStatus ??
         (conversation.lastMessage.isRead
@@ -444,6 +503,7 @@ const getConversationLocalMergeKey = (conversation: ConversationType) =>
     conversation.lastMessage.isRead ? 'read' : 'unread',
     conversation.lastMessage.deliveredAt?.getTime() ?? 0,
     conversation.lastMessage.editedAt?.getTime() ?? 0,
+    conversation.lastMessage.deletedForAll ? 'deleted' : 'active',
     conversation.lastMessage.reactionPreview?.emoji ?? '',
     conversation.lastMessage.reactionPreview?.userId ?? '',
     conversation.lastMessage.reactionPreview?.createdAt.getTime() ?? 0,
@@ -490,7 +550,12 @@ const mergeLocalThreadsIntoConversations = (
       isArchived: localConversation.isArchived,
       isMuted: localConversation.isMuted,
       isPinned: localConversation.isPinned,
-      unreadCount: localConversation.unreadCount,
+      unreadCount: resolveThreadUnreadCount(
+        thread.owner_user_id,
+        thread.peer_user_id,
+        localConversation.unreadCount,
+        resolvedLastMessage.timestamp,
+      ),
       latestActivity: resolvedLatestActivity,
       matchedAt: existing.matchedAt ?? localConversation.matchedAt,
       matchedUser: hasUsefulLocalIdentity
@@ -530,7 +595,7 @@ const mergeLocalThreadsIntoConversations = (
 };
 
 type ThreadPreviewMessage = ConversationType['lastMessage'] & {
-  localStatus?: 'queued' | 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
+  localStatus?: 'deleted' | 'queued' | 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
 };
 
 const areNewMatchesEqual = (left: NewMatch[], right: NewMatch[]) => {
@@ -569,14 +634,31 @@ export default function ChatScreen() {
   const isDark = (colorScheme ?? 'light') === 'dark';
   const fabBottom = Math.max(insets.bottom + 108, 128);
   const styles = useMemo(() => createStyles(theme, isDark, fabBottom), [fabBottom, theme, isDark]);
+  useEffect(() => {
+    void Promise.all([
+      primeOfflineImageStore(),
+      primeOfflineVideoStore(),
+    ]).catch(() => undefined);
+  }, []);
   const internalToolsEnabled = canAccessInternalTools();
-  
-  const [conversations, setConversations] = useState<ConversationType[]>([]);
-  const [newMatches, setNewMatches] = useState<NewMatch[]>([]);
+
+  const chatCacheKey = useMemo(
+    () => (user?.id ? buildChatConversationListStoreKey(user.id) : null),
+    [user?.id],
+  );
+  const [conversations, setConversations] = useState<ConversationType[]>(() => {
+    if (!chatCacheKey) return [];
+    const cached = peekOfflineSnapshot<unknown[]>(chatCacheKey);
+    return cached ? deserializeConversations(cached) : [];
+  });
+  const [newMatches, setNewMatches] = useState<NewMatch[]>(() =>
+    user?.id ? newMatchesCacheByUser.get(user.id)?.items ?? [] : [],
+  );
   const [newMatchesLoading, setNewMatchesLoading] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const lastWatchdogLogAtRef = useRef(0);
+  const isMountedRef = useRef(true);
   const messagedPeerUserIdsRef = useRef<Set<string>>(new Set());
   const [viewedMomentIds, setViewedMomentIds] = useState<Set<string>>(new Set());
   const [viewedMomentIdsReady, setViewedMomentIdsReady] = useState(false);
@@ -585,17 +667,35 @@ export default function ChatScreen() {
     currentUserProfile: profile,
   });
 
-  const chatCacheKey = useMemo(
-    () => (user?.id ? buildChatConversationListStoreKey(user.id) : null),
-    [user?.id],
-  );
-  const conversationsRef = useRef<ConversationType[]>([]);
+  const conversationsRef = useRef<ConversationType[]>(conversations);
+  const conversationsOwnerUserIdRef = useRef(user?.id ?? null);
   const conversationsFetchInFlightRef = useRef(false);
+  const conversationsRequestGenerationRef = useRef(0);
+  const isChatListFocusedRef = useRef(false);
   const newMatchesFetchInFlightRef = useRef(false);
-  const lastNewMatchesFetchAtRef = useRef(0);
-  const newMatchesCountRef = useRef(0);
+  const initialNewMatchesCache = user?.id ? newMatchesCacheByUser.get(user.id) : undefined;
+  const lastNewMatchesFetchAtRef = useRef(initialNewMatchesCache?.fetchedAt ?? 0);
+  const newMatchesCountRef = useRef(initialNewMatchesCache?.items.length ?? 0);
+  const hasResolvedNewMatchesRef = useRef(Boolean(initialNewMatchesCache));
+  const pendingPresenceWritesRef = useRef(
+    new Map<
+      string,
+      { threadId: string; online?: boolean | null; lastActive?: string | null }
+    >(),
+  );
+  const presenceWriteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [typingExpiresAtByPeer, setTypingExpiresAtByPeer] = useState<Record<string, number>>({});
   const [presenceNow, setPresenceNow] = useState(() => Date.now());
+  const prepareThreadOpen = useCallback(async (peerUserId: string) => {
+    if (!user?.id || !peerUserId) return;
+    const key = buildChatThreadStoreKey(user.id, peerUserId);
+    if (peekOfflineSnapshot(key) !== null) return;
+    try {
+      await readOfflineSnapshot(key);
+    } catch {
+      // Cache warming is an optimization; the route remains available if local storage is unavailable.
+    }
+  }, [user?.id]);
   const {
     searchQuery,
     setSearchQuery,
@@ -612,8 +712,19 @@ export default function ChatScreen() {
     openNewMatch,
     openExplore,
   } = useChatListScreenUi<ConversationType, NewMatch>({
+    prepareThreadOpen,
     onNewMatchOpened: (match) => {
-      setNewMatches((prev) => prev.filter((item) => item.userId !== match.userId));
+      setNewMatches((prev) => {
+        const next = prev.filter((item) => item.userId !== match.userId);
+        if (user?.id) {
+          const cached = newMatchesCacheByUser.get(user.id);
+          newMatchesCacheByUser.set(user.id, {
+            items: next,
+            fetchedAt: cached?.fetchedAt ?? Date.now(),
+          });
+        }
+        return next;
+      });
     },
   });
   const { rows: localObservedThreads, hasLoadedLocal: hasLoadedLocalThreads } = useChatThreads({
@@ -623,6 +734,7 @@ export default function ChatScreen() {
   const {
     initialHydratedConversations,
     mergedLocalConversations,
+    hasCompletedInitialHydration,
   } = useChatListLocalState({
     ownerUserId: user?.id ?? null,
     cacheKey: chatCacheKey,
@@ -635,13 +747,30 @@ export default function ChatScreen() {
   });
   const typingClearTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
+  useLayoutEffect(() => {
+    const nextOwnerUserId = user?.id ?? null;
+    if (conversationsOwnerUserIdRef.current === nextOwnerUserId) return;
+    conversationsOwnerUserIdRef.current = nextOwnerUserId;
+    const cached = chatCacheKey
+      ? peekOfflineSnapshot<unknown[]>(chatCacheKey)
+      : null;
+    const nextConversations = cached ? deserializeConversations(cached) : [];
+    conversationsRef.current = nextConversations;
+    setConversations(nextConversations);
+  }, [chatCacheKey, user?.id]);
+
   useEffect(() => {
     if (!initialHydratedConversations || initialHydratedConversations.length === 0) return;
-    setConversations((prev) => (prev.length === 0 ? initialHydratedConversations : prev));
+    setConversations((prev) => {
+      if (prev.length > 0) return prev;
+      conversationsRef.current = initialHydratedConversations;
+      return initialHydratedConversations;
+    });
   }, [initialHydratedConversations]);
 
   useEffect(() => {
     if (!mergedLocalConversations) return;
+    conversationsRef.current = mergedLocalConversations;
     setConversations((prev) => (prev === mergedLocalConversations ? prev : mergedLocalConversations));
   }, [mergedLocalConversations]);
 
@@ -653,8 +782,47 @@ export default function ChatScreen() {
   }, [conversations]);
 
   useEffect(() => {
+    if (!user?.id) return;
+    return subscribeOptimisticThreadReads((ownerUserId, peerUserId, readThroughMs) => {
+      if (ownerUserId !== user.id) return;
+      setConversations((current) =>
+        current.map((conversation) => {
+          if (
+            conversation.id !== peerUserId ||
+            conversation.unreadCount === 0 ||
+            conversation.lastMessage.timestamp.getTime() > readThroughMs
+          ) {
+            return conversation;
+          }
+          return {
+            ...conversation,
+            unreadCount: 0,
+            lastMessage: {
+              ...conversation.lastMessage,
+              isRead:
+                conversation.lastMessage.senderId === user.id
+                  ? conversation.lastMessage.isRead
+                  : true,
+            },
+          };
+        }),
+      );
+    });
+  }, [user?.id]);
+
+  useEffect(() => {
     newMatchesCountRef.current = newMatches.length;
   }, [newMatches.length]);
+
+  useEffect(() => {
+    const cached = user?.id ? newMatchesCacheByUser.get(user.id) : undefined;
+    const next = cached?.items ?? [];
+    newMatchesCountRef.current = next.length;
+    hasResolvedNewMatchesRef.current = Boolean(cached);
+    lastNewMatchesFetchAtRef.current = cached?.fetchedAt ?? 0;
+    newMatchesFetchInFlightRef.current = false;
+    setNewMatches(next);
+  }, [currentProfileId, user?.id]);
 
   useEffect(() => {
     pruneFailedAvatarUris(conversations);
@@ -667,11 +835,40 @@ export default function ChatScreen() {
     };
   }, []);
 
+  useEffect(() => {
+    isMountedRef.current = true;
+    console.log('[chat][screen] mount', {
+      hasUserId: Boolean(user?.id),
+      hasCurrentProfileId: Boolean(currentProfileId),
+    });
+    return () => {
+      isMountedRef.current = false;
+      console.log('[chat][screen] unmount', {
+        hasUserId: Boolean(user?.id),
+        hasCurrentProfileId: Boolean(currentProfileId),
+      });
+    };
+  }, [currentProfileId, user?.id]);
+
   useFocusEffect(useCallback(() => {
+    isChatListFocusedRef.current = true;
+    console.log('[chat][screen] focus:presence-timer-start', {
+      hasUserId: Boolean(user?.id),
+      hasCurrentProfileId: Boolean(currentProfileId),
+    });
     setPresenceNow(Date.now());
     const interval = setInterval(() => setPresenceNow(Date.now()), 30_000);
-    return () => clearInterval(interval);
-  }, []));
+    return () => {
+      isChatListFocusedRef.current = false;
+      conversationsRequestGenerationRef.current += 1;
+      conversationsFetchInFlightRef.current = false;
+      clearInterval(interval);
+      console.log('[chat][screen] blur:presence-timer-stop', {
+        hasUserId: Boolean(user?.id),
+        hasCurrentProfileId: Boolean(currentProfileId),
+      });
+    };
+  }, [currentProfileId, user?.id]));
 
   const applyChatPrefs = useCallback(async (
     items: ConversationType[],
@@ -720,65 +917,168 @@ export default function ChatScreen() {
   const fetchNewMatches = useCallback(
     async (messagedPeerUserIds?: Set<string>, options?: { force?: boolean }) => {
       if (!user?.id || !currentProfileId) {
-        setNewMatches([]);
+        console.log('[chat][new-matches] skip:missing-user-or-profile', {
+          hasUserId: Boolean(user?.id),
+          hasCurrentProfileId: Boolean(currentProfileId),
+        });
+        if (isMountedRef.current) {
+          setNewMatches([]);
+          setNewMatchesLoading(false);
+        }
+        hasResolvedNewMatchesRef.current = false;
         return;
       }
-      if (newMatchesFetchInFlightRef.current) return;
-      if (!options?.force && Date.now() - lastNewMatchesFetchAtRef.current < NEW_MATCHES_REFRESH_INTERVAL_MS) return;
+      if (newMatchesFetchInFlightRef.current) {
+        console.log('[chat][new-matches] skip:in-flight', {
+          currentProfileId,
+          userId: user.id,
+        });
+        return;
+      }
+      if (!options?.force && Date.now() - lastNewMatchesFetchAtRef.current < NEW_MATCHES_REFRESH_INTERVAL_MS) {
+        console.log('[chat][new-matches] skip:throttled', {
+          currentProfileId,
+          userId: user.id,
+          elapsedMs: Date.now() - lastNewMatchesFetchAtRef.current,
+          thresholdMs: NEW_MATCHES_REFRESH_INTERVAL_MS,
+        });
+        return;
+      }
 
       newMatchesFetchInFlightRef.current = true;
       lastNewMatchesFetchAtRef.current = Date.now();
-      if (newMatchesCountRef.current === 0) {
-        setNewMatchesLoading(true);
+      const startedAt = Date.now();
+      const effectiveMessagedPeerUserIds = messagedPeerUserIds ?? messagedPeerUserIdsRef.current ?? new Set();
+      console.log('[chat][new-matches] start', {
+        currentProfileId,
+        userId: user.id,
+        force: Boolean(options?.force),
+        hasResolvedBefore: hasResolvedNewMatchesRef.current,
+        previousCount: newMatchesCountRef.current,
+        messagedPeerCount: effectiveMessagedPeerUserIds.size,
+      });
+      if (!hasResolvedNewMatchesRef.current && newMatchesCountRef.current === 0) {
+        if (isMountedRef.current) {
+          setNewMatchesLoading(true);
+        }
+        console.log('[chat][new-matches] loading:true', {
+          reason: 'initial-or-empty',
+          currentProfileId,
+        });
       }
       try {
-        const sliced = await fetchRemoteChatListNewMatches<NewMatch>({
+        const sliced = await Promise.race([
+          fetchRemoteChatListNewMatches<NewMatch>({
+            currentProfileId,
+            userId: user.id,
+            messagedPeerUserIds: effectiveMessagedPeerUserIds,
+            getLocalThreadIdsWithMessages: (peerUserIds) =>
+              ChatRepository.getThreadIdsWithMessages(user.id, peerUserIds),
+            buildMatch: ({ profileRow, lastSeen }) => {
+              const loc = buildLocationDisplay(profileRow as Record<string, any>, {
+                surface: 'vibes',
+              }).withFlag || null;
+
+              return {
+                userId: String(profileRow.user_id),
+                profileId: String(profileRow.id),
+                name: String(profileRow.full_name || 'New match'),
+                avatar_url: getSafeRemoteImageUri(profileRow.avatar_url),
+                isOnline: getAuthoritativePresenceDisplay(profileRow?.online, lastSeen.toISOString(), Date.now()).online,
+                lastSeen,
+                age: typeof profileRow.age === 'number' ? profileRow.age : null,
+                location: loc,
+              };
+            },
+            getMatchProfileId: (match) => match.profileId,
+          }),
+          new Promise<never>((_, reject) => {
+            setTimeout(() => reject(new Error('New matches request timed out')), 15_000);
+          }),
+        ]);
+        console.log('[chat][new-matches] success', {
           currentProfileId,
           userId: user.id,
-          messagedPeerUserIds: messagedPeerUserIds ?? messagedPeerUserIdsRef.current ?? new Set(),
-          hasLocalThreadMessages: (peerUserId) => ChatRepository.hasThreadMessages(user.id, peerUserId),
-          buildMatch: ({ profileRow, lastSeen }) => {
-            const loc = buildLocationDisplay(profileRow as Record<string, any>, {
-              surface: 'vibes',
-            }).withFlag || null;
-
-            return {
-              userId: String(profileRow.user_id),
-              profileId: String(profileRow.id),
-              name: String(profileRow.full_name || 'New match'),
-              avatar_url: getSafeRemoteImageUri(profileRow.avatar_url),
-              isOnline: getAuthoritativePresenceDisplay(profileRow?.online, lastSeen.toISOString(), Date.now()).online,
-              lastSeen,
-              age: typeof profileRow.age === 'number' ? profileRow.age : null,
-              location: loc,
-            };
-          },
-          getMatchProfileId: (match) => match.profileId,
+          nextCount: sliced.length,
+          durationMs: Date.now() - startedAt,
         });
-        setNewMatches((prev) => (areNewMatchesEqual(prev, sliced) ? prev : sliced));
+        if (isMountedRef.current) {
+          setNewMatches((prev) => (areNewMatchesEqual(prev, sliced) ? prev : sliced));
+        }
+        newMatchesCacheByUser.set(user.id, { items: sliced, fetchedAt: Date.now() });
       } catch (error) {
+        console.log('[chat][new-matches] error', {
+          currentProfileId,
+          userId: user.id,
+          durationMs: Date.now() - startedAt,
+          code: (error as { code?: string })?.code ?? null,
+          message: error instanceof Error ? error.message : String(error),
+          isLikelyNetworkError: isLikelyNetworkError(error),
+        });
         if (!isLikelyNetworkError(error)) {
-          setNewMatches([]);
+          newMatchesCacheByUser.set(user.id, { items: [], fetchedAt: Date.now() });
+          if (isMountedRef.current) {
+            setNewMatches([]);
+          }
         }
       } finally {
         newMatchesFetchInFlightRef.current = false;
-        setNewMatchesLoading(false);
+        hasResolvedNewMatchesRef.current = true;
+        if (isMountedRef.current) {
+          setNewMatchesLoading(false);
+        }
+        console.log('[chat][new-matches] loading:false', {
+          currentProfileId,
+          userId: user.id,
+          durationMs: Date.now() - startedAt,
+          finalCountRef: newMatchesCountRef.current,
+        });
       }
     },
     [currentProfileId, user?.id],
   );
 
   const fetchConversations = useCallback(async () => {
-    if (!user?.id) return;
-    if (conversationsFetchInFlightRef.current) return;
+    if (!user?.id) {
+      console.log('[chat][screen] fetch-conversations:skip-missing-user');
+      return;
+    }
+    if (!isMountedRef.current || !isChatListFocusedRef.current) {
+      console.log('[chat][screen] fetch-conversations:skip-inactive', {
+        userId: user.id,
+        currentProfileId,
+      });
+      return;
+    }
+    if (conversationsFetchInFlightRef.current) {
+      console.log('[chat][screen] fetch-conversations:skip-in-flight', {
+        userId: user.id,
+        currentProfileId,
+      });
+      return;
+    }
+    console.log('[chat][screen] fetch-conversations:start', {
+      userId: user.id,
+      currentProfileId,
+      existingConversationCount: conversationsRef.current.length,
+    });
     conversationsFetchInFlightRef.current = true;
+    const requestGeneration = conversationsRequestGenerationRef.current + 1;
+    conversationsRequestGenerationRef.current = requestGeneration;
+    const isCurrentRequest = () =>
+      isMountedRef.current &&
+      isChatListFocusedRef.current &&
+      conversationsRequestGenerationRef.current === requestGeneration;
     const hadExistingConversations = conversationsRef.current.length > 0;
     if (!hadExistingConversations) {
-      setIsLoading(true);
+      if (isMountedRef.current) {
+        setIsLoading(true);
+      }
     }
     try {
       const { conversations: hydrated, combinedOtherUserIds, syncCursor } =
-        await fetchRemoteChatListConversations<ConversationType, ThreadPreviewMessage, ConversationType>({
+        await Promise.race([
+          fetchRemoteChatListConversations<ConversationType, ThreadPreviewMessage, ConversationType>({
           currentProfileId,
           userId: user.id,
           currentConversationsByUserId: new Map(
@@ -818,6 +1118,9 @@ export default function ChatScreen() {
               ? ((last?.message_type ?? 'text') as ConversationType['lastMessage']['type'])
               : (fallbackPreview?.type ?? 'text');
             const lastIsViewOnce = last ? Boolean(last?.is_view_once) : Boolean(fallbackPreview?.isViewOnce);
+            const lastDeletedForAll = last
+              ? Boolean(last?.deleted_for_all)
+              : Boolean(fallbackPreview?.deletedForAll);
 
             return {
               id: otherUserId,
@@ -866,6 +1169,8 @@ export default function ChatScreen() {
                 senderId: last?.sender_id || fallbackPreview?.senderId || '',
                 type: lastType,
                 isViewOnce: lastIsViewOnce,
+                deletedForAll: lastDeletedForAll,
+                localStatus: lastDeletedForAll ? 'deleted' : fallbackPreview?.localStatus,
                 isRead: last?.is_read ?? (fallbackPreview?.isRead ?? false),
                 deliveredAt: last?.delivered_at
                   ? new Date(last.delivered_at)
@@ -880,64 +1185,196 @@ export default function ChatScreen() {
                     }
                   : undefined,
               },
-              unreadCount: entry?.unread || 0,
+              unreadCount: resolveThreadUnreadCount(
+                user.id,
+                otherUserId,
+                entry?.unread || 0,
+                lastTimestamp,
+              ),
               isMuted: false,
               isPinned: false,
               matchedAt: fallbackPreview ? matchedAt || fallbackPreview.timestamp : lastTimestamp,
             };
           },
+        }),
+          new Promise<never>((_, reject) => {
+            setTimeout(() => reject(new Error('chat_conversation_fetch_timeout')), 15_000);
+          }),
+        ]);
+
+      if (!isCurrentRequest()) {
+        console.log('[chat][screen] fetch-conversations:cancelled', {
+          userId: user.id,
+          currentProfileId,
+          phase: 'remote-ready',
         });
+        return;
+      }
 
       if (combinedOtherUserIds.length === 0) {
         const hydrated = conversationsRef.current;
         const shouldPreserveExisting = hadExistingConversations || hydrated.length > 0;
         if (shouldPreserveExisting) {
-          setLoadError(null);
+          if (isMountedRef.current) {
+            setLoadError(null);
+          }
           void ChatRepository.markSyncSucceeded(user.id, 'global_threads', { cursor: syncCursor });
           void fetchNewMatches(new Set(hydrated.map((conversation) => conversation.id)));
           return;
         }
-        setConversations([]);
-        setLoadError(null);
+        if (isMountedRef.current) {
+          setConversations([]);
+          setLoadError(null);
+        }
+        if (chatCacheKey) {
+          void writeOfflineSnapshot(chatCacheKey, []);
+        }
         void ChatRepository.markSyncSucceeded(user.id, 'global_threads', { cursor: syncCursor });
         // Still load matches, even if there are no prior chats.
         void fetchNewMatches(new Set());
         return;
       }
-      setLoadError(null);
-      setConversations(hydrated);
-      try {
-        await ChatRepository.upsertThreads(
-          user.id,
-          hydrated.map((conversation) => conversationToLocalThread(user.id, conversation)),
-        );
-        void ChatRepository.markSyncSucceeded(user.id, 'global_threads', { cursor: syncCursor });
-      } catch (cacheError) {
-        console.log('[chat] conversation cache persist error', cacheError);
+      console.log('[chat][screen] fetch-conversations:remote-ready', {
+        userId: user.id,
+        currentProfileId,
+        hydratedCount: hydrated.length,
+        combinedOtherUserCount: combinedOtherUserIds.length,
+        platform: Platform.OS,
+      });
+      if (isMountedRef.current) {
+        setLoadError(null);
+        setConversations(hydrated);
+        chatListLastRemoteRefreshAtByUser.set(user.id, Date.now());
+        console.log('[chat][screen] fetch-conversations:state-applied', {
+          userId: user.id,
+          currentProfileId,
+          hydratedCount: hydrated.length,
+          platform: Platform.OS,
+        });
+      }
+      if (chatCacheKey) {
+        try {
+          await writeOfflineSnapshot(chatCacheKey, serializeConversations(hydrated));
+          console.log('[chat][screen] list-snapshot:success', {
+            userId: user.id,
+            currentProfileId,
+            conversationCount: hydrated.length,
+            platform: Platform.OS,
+          });
+        } catch (snapshotError) {
+          console.log('[chat][screen] list-snapshot:error', {
+            userId: user.id,
+            currentProfileId,
+            platform: Platform.OS,
+            message: snapshotError instanceof Error ? snapshotError.message : String(snapshotError),
+          });
+        }
+      }
+
+      if (!isCurrentRequest()) {
+        console.log('[chat][screen] fetch-conversations:cancelled', {
+          userId: user.id,
+          currentProfileId,
+          phase: 'snapshot-ready',
+        });
+        return;
+      }
+
+      const localThreads = hydrated.map((conversation) => conversationToLocalThread(user.id, conversation));
+      const persistConversationCache = async () => {
+        console.log('[chat][screen] local-cache-persist:start', {
+          userId: user.id,
+          currentProfileId,
+          threadCount: localThreads.length,
+          platform: Platform.OS,
+        });
+        await ChatRepository.upsertThreads(user.id, localThreads, { priority: 'background' });
+        console.log('[chat][screen] local-cache-persist:threads-success', {
+          userId: user.id,
+          currentProfileId,
+          threadCount: localThreads.length,
+          platform: Platform.OS,
+        });
+        await ChatRepository.markSyncSucceeded(user.id, 'global_threads', { cursor: syncCursor });
+        console.log('[chat][screen] local-cache-persist:sync-success', {
+          userId: user.id,
+          currentProfileId,
+          platform: Platform.OS,
+        });
+      };
+
+      if (Platform.OS === 'ios') {
+        console.log('[chat][screen] local-cache-persist:ios-background-start', {
+          userId: user.id,
+          currentProfileId,
+          threadCount: localThreads.length,
+        });
+        void persistConversationCache().catch((cacheError) => {
+          console.log('[chat][screen] local-cache-persist:ios-background-error', cacheError);
+        });
+      } else {
+        try {
+          await Promise.race([
+            persistConversationCache(),
+            new Promise<never>((_, reject) => {
+              setTimeout(() => reject(new Error('chat_local_cache_persist_timeout')), 2_500);
+            }),
+          ]);
+        } catch (cacheError) {
+          console.log('[chat][screen] local-cache-persist:error', cacheError);
+        }
       }
 
       // New matches are accepted matches without any message history yet.
       void fetchNewMatches(new Set(combinedOtherUserIds));
     } catch (error) {
+      if (!isCurrentRequest()) return;
       void ChatRepository.markSyncFailed(user.id, 'global_threads', {
         code: (error as { code?: string })?.code ?? null,
         message: error instanceof Error ? error.message : 'Failed to load chats',
       });
       if (isLikelyNetworkError(error)) {
-        setLoadError(null);
+        if (isMountedRef.current) {
+          setLoadError(null);
+        }
         return;
       }
       console.log('[chat] conversation summaries fetch error', error);
-      setLoadError(error instanceof Error ? error.message : 'Failed to load chats');
+      if (isMountedRef.current) {
+        setLoadError(error instanceof Error ? error.message : 'Failed to load chats');
+      }
     } finally {
-      conversationsFetchInFlightRef.current = false;
-      setIsLoading(false);
+      if (conversationsRequestGenerationRef.current === requestGeneration) {
+        conversationsFetchInFlightRef.current = false;
+      }
+      if (isCurrentRequest()) {
+        setIsLoading(false);
+      }
+      console.log('[chat][screen] fetch-conversations:finish', {
+        userId: user.id,
+        currentProfileId,
+        finalConversationCount: conversationsRef.current.length,
+      });
     }
-  }, [applyChatPrefs, currentProfileId, fetchNewMatches, user?.id]);
+  }, [applyChatPrefs, chatCacheKey, currentProfileId, fetchNewMatches, user?.id]);
 
   const refreshConversationsOnFocus = useCallback(() => {
+    if (!user?.id) return;
+    if (!hasCompletedInitialHydration && conversationsRef.current.length === 0) return;
+    const lastRemoteRefreshAt = chatListLastRemoteRefreshAtByUser.get(user.id) ?? 0;
+    const hasWarmList = conversationsRef.current.length > 0;
+    if (
+      hasWarmList &&
+      Date.now() - lastRemoteRefreshAt < CHAT_LIST_FOCUS_REFRESH_INTERVAL_MS
+    ) {
+      return;
+    }
+    console.log('[chat][screen] focus:refresh-conversations', {
+      hasUserId: Boolean(user?.id),
+      hasCurrentProfileId: Boolean(currentProfileId),
+    });
     void fetchConversations();
-  }, [fetchConversations]);
+  }, [currentProfileId, fetchConversations, hasCompletedInitialHydration, user?.id]);
 
   const savePeerVisibilityPref = useCallback(
     async (peerUserId: string, next: { archived: boolean; hidden: boolean }) => {
@@ -1193,14 +1630,35 @@ export default function ChatScreen() {
         ),
       );
       if (user?.id) {
-        void ChatRepository.updateThreadPresence(user.id, row.user_id, {
+        pendingPresenceWritesRef.current.set(row.user_id, {
+          threadId: row.user_id,
           online: row.online,
           lastActive: row.last_active ?? null,
         });
+        if (!presenceWriteTimerRef.current) {
+          presenceWriteTimerRef.current = setTimeout(() => {
+            presenceWriteTimerRef.current = null;
+            const updates = [...pendingPresenceWritesRef.current.values()];
+            pendingPresenceWritesRef.current.clear();
+            if (updates.length > 0) {
+              void ChatRepository.updateThreadPresences(user.id, updates);
+            }
+          }, 100);
+        }
       }
     },
     [user?.id],
   );
+
+  useEffect(() => {
+    return () => {
+      if (presenceWriteTimerRef.current) {
+        clearTimeout(presenceWriteTimerRef.current);
+        presenceWriteTimerRef.current = null;
+      }
+      pendingPresenceWritesRef.current.clear();
+    };
+  }, [user?.id]);
 
   useChatListSync({
     userId: user?.id ?? null,
@@ -1323,8 +1781,13 @@ export default function ChatScreen() {
     />
   );
 
+  const isLocalBootstrapLoading = !hasCompletedInitialHydration && conversations.length === 0;
   const showBlockingError = Boolean(loadError && conversations.length === 0);
-  const showEmptyState = filteredConversations.length === 0 && !showBlockingError && newMatches.length === 0;
+  const showEmptyState =
+    !isLocalBootstrapLoading &&
+    filteredConversations.length === 0 &&
+    !showBlockingError &&
+    newMatches.length === 0;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -1364,7 +1827,7 @@ export default function ChatScreen() {
         />
       ) : null}
 
-      {isLoading && conversations.length === 0 && newMatches.length === 0 ? (
+      {(isLoading || isLocalBootstrapLoading) && conversations.length === 0 && newMatches.length === 0 ? (
         <ChatListSkeleton />
       ) : showEmptyState ? (
         <ChatEmptyState

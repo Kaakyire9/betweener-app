@@ -12,9 +12,15 @@ import {
   reconcileMessageWithServer,
   removeMessageById,
   replaceMessageById,
-  setMessageStatus,
+  transitionMessageLifecycle,
+  transitionOutgoingMessageState,
 } from '../lib/chat/message-state.ts';
-import { resolveChatImageUri, resolveChatVideoUri } from '../lib/chat/media-uri.ts';
+import {
+  resolveChatImageUri,
+  resolveChatImageViewerUri,
+  resolveKnownSignedChatMediaUri,
+  resolveChatVideoUri,
+} from '../lib/chat/media-uri.ts';
 
 const baseMessage = {
   id: 'msg-1',
@@ -34,7 +40,7 @@ test('appendMessage and removeMessageById manage optimistic list edges', () => {
   assert.deepEqual(removed, []);
 });
 
-test('replaceMessageById and setMessageStatus preserve untouched items', () => {
+test('replacement and lifecycle transitions preserve untouched items', () => {
   const items = [
     { ...baseMessage, id: 'a', status: 'sending' },
     { ...baseMessage, id: 'b', senderId: 'user-b', status: 'sent' },
@@ -49,9 +55,23 @@ test('replaceMessageById and setMessageStatus preserve untouched items', () => {
   assert.equal(replaced[0].text, 'Server copy');
   assert.equal(replaced[1], items[1]);
 
-  const queued = setMessageStatus(replaced, 'a', 'queued');
-  assert.equal(queued[0].status, 'queued');
-  assert.equal(queued[1], replaced[1]);
+  const acknowledged = transitionMessageLifecycle({
+    items,
+    messageId: 'a',
+    event: 'finalize_succeeded',
+  });
+  assert.equal(acknowledged[0].status, 'sent');
+  assert.equal(acknowledged[1], items[1]);
+});
+
+test('message lifecycle adapter handles durable retry and rejects receipt regressions', () => {
+  assert.equal(transitionOutgoingMessageState('sending', 'send_deferred'), 'queued');
+  assert.equal(transitionOutgoingMessageState('retryable_failed', 'send_started'), 'sending');
+  assert.equal(transitionOutgoingMessageState('queued', 'finalize_succeeded'), 'sent');
+  assert.throws(
+    () => transitionOutgoingMessageState('read', 'delivery_confirmed'),
+    /invalid_chat_lifecycle_transition/,
+  );
 });
 
 test('reconcileMessageWithServer keeps local reply metadata when server copy lacks it', () => {
@@ -224,22 +244,120 @@ test('applySyncedOutgoingReceiptState keeps failed messages failed when server h
   assert.equal(reconciled.items[0].status, 'failed');
 });
 
-test('chat image viewer opens the same offline or cached URI rendered by the bubble', () => {
+test('chat image bubble prioritizes validated runtime cache and ignores stale delivered local paths', () => {
   const message = {
     imageUrl: null,
     offlineImageUri: 'file:///local/chat-photo.jpg',
   };
 
-  assert.equal(resolveChatImageUri(message, 'file:///cache/chat-photo.jpg'), message.offlineImageUri);
+  assert.equal(resolveChatImageUri(message, 'file:///cache/chat-photo.jpg'), 'file:///cache/chat-photo.jpg');
   assert.equal(
     resolveChatImageUri({ imageUrl: null }, 'file:///cache/chat-photo.jpg'),
     'file:///cache/chat-photo.jpg',
   );
+  assert.equal(
+    resolveChatImageUri({
+      storagePath: 'sender/peer/photo.jpg',
+      offlineImageUri: 'file:///stale/photo.jpg',
+      status: 'delivered',
+    }),
+    null,
+  );
+  assert.equal(
+    resolveChatImageUri({
+      storagePath: 'sender/peer/photo.jpg',
+      offlineImageUri: 'file:///fresh/photo.jpg',
+      status: 'sending',
+    }),
+    'file:///fresh/photo.jpg',
+  );
+});
+
+test('chat image viewer refreshes an expired signed URL from the stable storage path', async () => {
+  const signedPaths: string[] = [];
+  const cachedInputs: [string, string][] = [];
+  const resolution = await resolveChatImageViewerUri(
+    {
+      imageUrl: 'https://old.example/photo.jpg?token=expired',
+      storagePath: 'user-a/user-b/photo.jpg',
+    },
+    'https://old.example/photo.jpg?token=expired',
+    {
+      online: true,
+      findCachedUri: async () => null,
+      localUriExists: async (uri) => uri === 'file:///offline/photo.jpg',
+      createSignedUrl: async (path) => {
+        signedPaths.push(path);
+        return 'https://fresh.example/photo.jpg?token=valid';
+      },
+      cacheRemoteImage: async (key, uri) => {
+        cachedInputs.push([key, uri]);
+        return 'file:///offline/photo.jpg';
+      },
+    },
+  );
+
+  assert.deepEqual(signedPaths, ['user-a/user-b/photo.jpg']);
+  assert.deepEqual(cachedInputs, [[
+    'user-a/user-b/photo.jpg',
+    'https://fresh.example/photo.jpg?token=valid',
+  ]]);
+  assert.equal(resolution.uri, 'file:///offline/photo.jpg');
+  assert.equal(resolution.refreshedRemoteUri, 'https://fresh.example/photo.jpg?token=valid');
+});
+
+test('chat image viewer reuses a valid local copy without requesting another signature', async () => {
+  let signed = false;
+  const resolution = await resolveChatImageViewerUri(
+    {
+      imageUrl: 'https://old.example/photo.jpg?token=expired',
+      offlineImageUri: 'file:///offline/photo.jpg',
+      storagePath: 'user-a/user-b/photo.jpg',
+    },
+    'https://old.example/photo.jpg?token=expired',
+    {
+      online: true,
+      findCachedUri: async () => null,
+      localUriExists: async (uri) => uri === 'file:///offline/photo.jpg',
+      createSignedUrl: async () => {
+        signed = true;
+        return null;
+      },
+      cacheRemoteImage: async () => null,
+    },
+  );
+
+  assert.equal(resolution.uri, 'file:///offline/photo.jpg');
+  assert.equal(signed, false);
 });
 
 test('chat video viewer falls back to the signed remote URI', () => {
   assert.equal(
     resolveChatVideoUri({ videoUrl: 'https://signed.example/video.mp4' }),
     'https://signed.example/video.mp4',
+  );
+});
+
+test('server acknowledgement reapplies an already-signed private video URL', () => {
+  const signedUris = new Map([
+    ['sender/receiver/video.mp4', 'https://signed.example/video.mp4'],
+  ]);
+  assert.equal(
+    resolveKnownSignedChatMediaUri('sender/receiver/video.mp4', undefined, signedUris),
+    'https://signed.example/video.mp4',
+  );
+});
+
+test('server reconciliation prefers the refreshed signed media URL over an expired current one', () => {
+  const signedUris = new Map([
+    ['sender/receiver/photo.jpg', 'https://signed.example/photo.jpg?token=fresh'],
+  ]);
+  assert.equal(
+    resolveKnownSignedChatMediaUri(
+      'sender/receiver/photo.jpg',
+      'https://signed.example/photo.jpg?token=expired',
+      signedUris,
+    ),
+    'https://signed.example/photo.jpg?token=fresh',
   );
 });

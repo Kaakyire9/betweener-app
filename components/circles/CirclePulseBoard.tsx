@@ -48,6 +48,7 @@ const TYPE_ORDER: Record<CirclePulseItemType, number> = {
 };
 
 const AUTO_ADVANCE_MS = 7200;
+const SHOULD_ANIMATE_TRANSITIONS = process.env.NODE_ENV !== 'test';
 
 const combineWelcomeProfiles = (welcomeItems: CirclePulseItem[]): CirclePulseWelcomeProfile[] => {
   const seenProfileIds = new Set<string>();
@@ -401,6 +402,12 @@ export default function CirclePulseBoard({
     : 0;
   const selectItem = useCallback((itemId: string) => {
     if (itemId === selectedDisplayItem?.id || transitioningRef.current) return;
+    if (!SHOULD_ANIMATE_TRANSITIONS) {
+      setWelcomeProfileIndex(0);
+      setSelectedItemId(itemId);
+      transitionProgress.setValue(1);
+      return;
+    }
     transitioningRef.current = true;
     Animated.timing(transitionProgress, {
       toValue: 0,

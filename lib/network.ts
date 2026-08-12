@@ -24,8 +24,12 @@ export const isLikelyNetworkError = (error: unknown) => {
   // React Native fetch/network patterns
   if (lower.includes("network request failed")) return true;
   if (lower.includes("network error")) return true;
+  if (lower.includes("network_error")) return true;
   if (lower.includes("networkerror")) return true;
   if (lower.includes("failed to fetch")) return true;
+  if (lower.includes("fetch failed")) return true;
+  if (lower.includes("network connection was lost")) return true;
+  if (lower.includes("fetchrequestcanceledexception")) return true;
   if (lower.includes("load failed")) return true;
   if (lower.includes("fetch_failed")) return true;
   if (lower.includes("typeerror: network")) return true;

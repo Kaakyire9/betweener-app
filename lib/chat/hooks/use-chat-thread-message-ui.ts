@@ -1,11 +1,16 @@
 import * as FileSystem from "expo-file-system/legacy";
 import * as Haptics from "expo-haptics";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Keyboard } from "react-native";
 import { encodeBase64 } from "tweetnacl-util";
 
 import type { MessageType } from "@/components/chat/types";
-import { ChatThreadRemoteService } from "@/lib/chat/chat-thread-remote-service";
+import { prepareViewOnceAttachment } from "@/lib/chat/attachment-lifecycle";
+import { ChatRepository } from "@/lib/chat/local/chat-db";
+import {
+  isViewOnceAlreadyConsumedError,
+  mergeViewOnceStatus,
+} from "@/lib/chat/view-once-status";
 import { decryptMediaBytes, getOrCreateDeviceKeypair } from "@/lib/e2ee";
 import { supabase } from "@/lib/supabase";
 
@@ -37,7 +42,7 @@ type UseChatThreadMessageUiArgs = {
   setViewOnceStatus: React.Dispatch<
     React.SetStateAction<Record<string, { viewedByMe: boolean; viewedByPeer: boolean }>>
   >;
-  chatMediaBucket: string;
+  _chatMediaBucket: string;
 };
 
 export const useChatThreadMessageUi = ({
@@ -48,7 +53,7 @@ export const useChatThreadMessageUi = ({
   setShowReactions,
   viewOnceStatusRef,
   setViewOnceStatus,
-  chatMediaBucket,
+  _chatMediaBucket,
 }: UseChatThreadMessageUiArgs) => {
   const [messageActionsVisible, setMessageActionsVisible] = useState(false);
   const [actionMessageId, setActionMessageId] = useState<string | null>(null);
@@ -62,6 +67,18 @@ export const useChatThreadMessageUi = ({
   const [reactionSheetVisible, setReactionSheetVisible] = useState(false);
   const [reactionSheetMessageId, setReactionSheetMessageId] = useState<string | null>(null);
   const [reactionSheetEmoji, setReactionSheetEmoji] = useState<string | null>(null);
+  const isMountedRef = useRef(true);
+  const viewOnceMediaUriRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      const uri = viewOnceMediaUriRef.current;
+      viewOnceMediaUriRef.current = null;
+      if (uri) void FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => undefined);
+    };
+  }, []);
 
   const actionMessage = useMemo(() => {
     if (!actionMessageId) return null;
@@ -205,31 +222,8 @@ export const useChatThreadMessageUi = ({
     setEditHistoryEntries([]);
   }, []);
 
-  const markViewOnceSeen = useCallback(async (message: MessageType) => {
-    if (!currentUserId) return;
-    if (message.senderId === currentUserId) return;
-    if (!message.isViewOnce) return;
-    const current = viewOnceStatusRef.current[message.id];
-    if (current?.viewedByMe) return;
-    setViewOnceStatus((prev) => ({
-      ...prev,
-      [message.id]: {
-        viewedByMe: true,
-        viewedByPeer: prev[message.id]?.viewedByPeer ?? false,
-      },
-    }));
-    const { error } = await ChatThreadRemoteService.markViewOnceSeen({
-      messageId: message.id,
-      currentUserId,
-    });
-    if (error) {
-      console.log("[chat] mark view-once error", error);
-    }
-  }, [currentUserId, setViewOnceStatus, viewOnceStatusRef]);
-
   const closeViewOnceMessage = useCallback(async () => {
     if (!viewOnceModalMessage) return;
-    const message = viewOnceModalMessage;
     setViewOnceModalMessage(null);
     setViewOnceDecrypting(false);
     if (viewOnceMediaUri) {
@@ -239,51 +233,97 @@ export const useChatThreadMessageUi = ({
         console.log("[chat] view-once cleanup error", error);
       }
     }
+    viewOnceMediaUriRef.current = null;
     setViewOnceMediaUri(null);
-    await markViewOnceSeen(message);
-  }, [markViewOnceSeen, viewOnceMediaUri, viewOnceModalMessage]);
+  }, [viewOnceMediaUri, viewOnceModalMessage]);
+
+  const markViewOnceViewedByMe = useCallback((message: MessageType) => {
+    if (!currentUserId) return;
+    const next = mergeViewOnceStatus(viewOnceStatusRef.current[message.id], {
+      viewedByMe: true,
+    });
+    viewOnceStatusRef.current[message.id] = next;
+    if (isMountedRef.current) {
+      setViewOnceStatus((prev) => ({
+        ...prev,
+        [message.id]: mergeViewOnceStatus(prev[message.id], next),
+      }));
+    }
+    const threadId = conversationId || message.senderId;
+    if (threadId) {
+      void ChatRepository.upsertViewOnceStatuses(
+        currentUserId,
+        threadId,
+        [{ messageId: message.id, ...next }],
+        { priority: 'user-blocking' },
+      ).catch((error) => {
+        console.log('[chat] persist consumed view-once status error', error);
+      });
+    }
+  }, [conversationId, currentUserId, setViewOnceStatus, viewOnceStatusRef]);
 
   const openViewOnceMessage = useCallback(async (message: MessageType) => {
     if (!currentUserId) return;
     if (!message.isViewOnce || !message.encryptedMedia) return;
     if (message.senderId === currentUserId) return;
     if (viewOnceStatusRef.current[message.id]?.viewedByMe) return;
-    if (
-      !message.encryptedMediaPath ||
-      !message.encryptedKeyReceiver ||
-      !message.encryptedKeyNonce ||
-      !message.encryptedMediaNonce
-    ) {
-      Alert.alert("View once", "Missing decryption info.");
-      return;
-    }
+    console.log("[chat][view-once-open] start", {
+      messageId: message.id,
+      currentUserId,
+      conversationId: conversationId ?? null,
+      senderId: message.senderId,
+      type: message.type,
+    });
     setViewOnceModalMessage(message);
     setViewOnceDecrypting(true);
+    let writtenTempPath: string | null = null;
 
     try {
       const keypair = await ensureOwnKeypair();
       if (!keypair) {
         throw new Error("missing_keypair");
       }
-      const senderPublicKey = await fetchPeerPublicKey();
+      console.log("[chat][view-once-open] own-keypair-ready", {
+        messageId: message.id,
+      });
+      const prepared = await prepareViewOnceAttachment(message.id);
+      // The claim RPC creates the irreversible receipt before returning the
+      // signed URL. From this point onward the UI must remain consumed even if
+      // download, decryption, or the temporary-file write later fails.
+      markViewOnceViewedByMe(message);
+      console.log("[chat][view-once-open] prepare-success", {
+        messageId: message.id,
+        attachmentId: prepared.attachmentId,
+        mimeType: prepared.mimeType,
+        byteSize: prepared.byteSize,
+        hasSenderPublicKey: Boolean(prepared.senderPublicKey),
+      });
+      const signedUrl = prepared.signedUrl;
+      const encryptedKeyReceiver = prepared.encryptedKeyReceiver;
+      const encryptedKeyNonce = prepared.encryptedKeyNonce;
+      const encryptedMediaNonce = prepared.encryptedMediaNonce;
+      const encryptedMediaMime = prepared.mimeType;
+      const senderPublicKey = prepared.senderPublicKey || await fetchPeerPublicKey();
       if (!senderPublicKey) {
         throw new Error("missing_sender_key");
       }
-      const { data: signed, error: signedError } = await supabase.storage
-        .from(chatMediaBucket)
-        .createSignedUrl(message.encryptedMediaPath, 120);
-      if (signedError || !signed?.signedUrl) {
-        console.log("[view-once] signed url error", signedError);
-        throw new Error("signed_url");
-      }
-      const res = await fetch(signed.signedUrl);
+      console.log("[chat][view-once-open] sender-key-ready", {
+        messageId: message.id,
+        usedClaimedSenderKey: Boolean(prepared.senderPublicKey),
+      });
+      const res = await fetch(signedUrl);
+      if (!res.ok) throw new Error("view_once_download_failed");
+      console.log("[chat][view-once-open] download-success", {
+        messageId: message.id,
+        status: res.status,
+      });
       const buf = await res.arrayBuffer();
       const cipherBytes = new Uint8Array(buf);
       const plaintext = await decryptMediaBytes({
         cipherBytes,
-        mediaNonceB64: message.encryptedMediaNonce,
-        keyNonceB64: message.encryptedKeyNonce,
-        encryptedKeyB64: message.encryptedKeyReceiver,
+        mediaNonceB64: encryptedMediaNonce,
+        keyNonceB64: encryptedKeyNonce,
+        encryptedKeyB64: encryptedKeyReceiver,
         senderPublicKeyB64: senderPublicKey,
         receiverSecretKeyB64: keypair.secretKeyB64,
       });
@@ -291,8 +331,12 @@ export const useChatThreadMessageUi = ({
       if (!plaintext) {
         throw new Error("decrypt_failed");
       }
+      console.log("[chat][view-once-open] decrypt-success", {
+        messageId: message.id,
+        plaintextByteSize: plaintext.length,
+      });
 
-      const isVideo = message.type === "video" || (message.encryptedMediaMime || "").includes("video");
+      const isVideo = message.type === "video" || (encryptedMediaMime || "").includes("video");
       const ext = isVideo ? "mp4" : "jpg";
       const tempPath = `${FileSystem.cacheDirectory ?? ""}viewonce-${message.id}.${ext}`;
       const base64 = encodeBase64(plaintext);
@@ -300,17 +344,62 @@ export const useChatThreadMessageUi = ({
       await FileSystem.writeAsStringAsync(tempPath, base64, {
         encoding: FileSystem.EncodingType?.Base64 ?? "base64",
       });
+      writtenTempPath = tempPath;
 
-      setViewOnceMediaUri(tempPath);
+      console.log("[chat][view-once-open] file-write-success", {
+        messageId: message.id,
+        tempPath,
+        isVideo,
+      });
+      if (isMountedRef.current) {
+        viewOnceMediaUriRef.current = tempPath;
+        setViewOnceMediaUri(tempPath);
+      } else {
+        await FileSystem.deleteAsync(tempPath, { idempotent: true }).catch(() => undefined);
+      }
     } catch (error) {
-      console.log("[view-once] open error", error);
-      Alert.alert("View once", "Unable to open media.");
-      setViewOnceModalMessage(null);
-      setViewOnceMediaUri(null);
+      if (writtenTempPath) {
+        await FileSystem.deleteAsync(writtenTempPath, { idempotent: true }).catch(() => undefined);
+      }
+      console.log("[chat][view-once-open] error", {
+        messageId: message.id,
+        code: (error as { code?: string })?.code ?? null,
+        message: error instanceof Error ? error.message : String(error),
+      }, error);
+      const errorCode = String(
+        (error as { code?: string })?.code || (error as { message?: string })?.message || "",
+      ).toLowerCase();
+      const alreadyConsumed = isViewOnceAlreadyConsumedError(error);
+      if (alreadyConsumed) {
+        markViewOnceViewedByMe(message);
+      }
+      Alert.alert(
+        "View once",
+        alreadyConsumed
+          ? "This media has already been viewed."
+          : errorCode.includes("not_found") || errorCode.includes("unavailable")
+            ? "This media is no longer available."
+            : errorCode.includes("access_denied")
+              ? "Only the recipient can open this media."
+              : "Unable to open media. Please try again.",
+      );
+      if (isMountedRef.current) {
+        setViewOnceModalMessage(null);
+        setViewOnceMediaUri(null);
+      }
     } finally {
-      setViewOnceDecrypting(false);
+      if (isMountedRef.current) {
+        setViewOnceDecrypting(false);
+      }
     }
-  }, [chatMediaBucket, currentUserId, ensureOwnKeypair, fetchPeerPublicKey, viewOnceStatusRef]);
+  }, [
+    conversationId,
+    currentUserId,
+    ensureOwnKeypair,
+    fetchPeerPublicKey,
+    markViewOnceViewedByMe,
+    viewOnceStatusRef,
+  ]);
 
   const closeMessageActions = useCallback(() => {
     setMessageActionsVisible(false);

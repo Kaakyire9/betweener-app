@@ -27,6 +27,7 @@ type ChatListNewMatch = {
 
 type UseChatListScreenUiArgs<TNewMatch extends ChatListNewMatch> = {
   onNewMatchOpened?: (match: TNewMatch) => void;
+  prepareThreadOpen?: (peerUserId: string) => Promise<void>;
 };
 
 export const useChatListScreenUi = <
@@ -34,6 +35,7 @@ export const useChatListScreenUi = <
   TNewMatch extends ChatListNewMatch,
 >({
   onNewMatchOpened,
+  prepareThreadOpen,
 }: UseChatListScreenUiArgs<TNewMatch> = {}) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearch, setShowSearch] = useState(false);
@@ -98,7 +100,7 @@ export const useChatListScreenUi = <
     });
   }, []);
 
-  const openConversation = useCallback((conversation: TConversation) => {
+  const openConversation = useCallback(async (conversation: TConversation) => {
     const presence = getAuthoritativePresenceDisplay(
       conversation.matchedUser.isOnline,
       conversation.matchedUser.lastSeen.toISOString(),
@@ -106,6 +108,7 @@ export const useChatListScreenUi = <
     );
     const peerUserId = conversation.matchedUser.userId || conversation.id;
     const peerProfileId = conversation.matchedUser.profileId || '';
+    await prepareThreadOpen?.(peerUserId);
     router.push({
       pathname: '/chat/[id]',
       params: {
@@ -118,11 +121,12 @@ export const useChatListScreenUi = <
         lastSeen: conversation.matchedUser.lastSeen.toISOString(),
       },
     });
-  }, []);
+  }, [prepareThreadOpen]);
 
-  const openNewMatch = useCallback((match: TNewMatch) => {
+  const openNewMatch = useCallback(async (match: TNewMatch) => {
     const presence = getAuthoritativePresenceDisplay(match.isOnline, match.lastSeen.toISOString(), Date.now());
     onNewMatchOpened?.(match);
+    await prepareThreadOpen?.(match.userId);
     router.push({
       pathname: '/chat/[id]',
       params: {
@@ -135,7 +139,7 @@ export const useChatListScreenUi = <
         lastSeen: match.lastSeen.toISOString(),
       },
     });
-  }, [onNewMatchOpened]);
+  }, [onNewMatchOpened, prepareThreadOpen]);
 
   const openExplore = useCallback(() => {
     router.push('/(tabs)/vibes');

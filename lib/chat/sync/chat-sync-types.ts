@@ -27,6 +27,10 @@ export type RemoteThreadMessageRow = {
   encrypted_media_mime?: string | null;
   encrypted_media_size?: number | null;
   storage_path?: string | null;
+  media_items?: unknown;
+  media_expected_count?: number | null;
+  media_group_id?: string | null;
+  media_caption?: string | null;
 };
 
 export type RemoteSystemMessageRow = {

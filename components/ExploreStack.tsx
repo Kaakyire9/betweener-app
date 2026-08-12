@@ -11,6 +11,7 @@ import Animated, {
     runOnJS,
     useAnimatedStyle,
     useSharedValue,
+    withSequence,
     withSpring,
     withTiming,
 } from "react-native-reanimated";
@@ -53,9 +54,10 @@ const ExploreStack = forwardRef<ExploreStackHandle, Props>(
         try {
           if (dir === "superlike") {
             cardOpacity.value = withTiming(0, { duration: 420 });
-            translateX.value = withTiming(-screenWidth * 0.08, { duration: 220 }, () => {
-              translateX.value = withTiming(0, { duration: 320 });
-            });
+            translateX.value = withSequence(
+              withTiming(-screenWidth * 0.08, { duration: 220 }),
+              withTiming(0, { duration: 320 }),
+            );
             translateY.value = withTiming(-exitDistance, { duration: 520 }, () => runOnJS(completeSwipe)(dir));
             rotate.value = withTiming(-6, { duration: 420 });
             return;

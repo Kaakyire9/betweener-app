@@ -5,6 +5,12 @@ import { clearSignupSession, consumeSignupMetadata, finalizeSignupPhoneVerificat
 import { persistSessionExpiredReason } from '@/lib/auth-session-reason';
 import { resetChatDbForUserSignOut } from '@/lib/chat/local/chat-db';
 import { clearChatBootCacheForUser } from '@/lib/chat/local/chat-boot-cache';
+import { clearChatAttachmentPreviewsForOwner } from '@/lib/chat/attachments/chat-attachment-preview';
+import { ChatUploadTransport } from '@/lib/chat/transfer/chat-upload-transport';
+import { clearOfflineAttachmentsForOwner } from '@/lib/offline/attachment-file-store';
+import { clearStagedOfflineChatUploadsForOwner } from '@/lib/offline/chat-store';
+import { clearOfflineImagesForOwner } from '@/lib/offline/image-store';
+import { clearOfflineVideosForOwner } from '@/lib/offline/video-store';
 import {
   ensureFreshSession,
   initSupabaseAuthLifecycle,
@@ -23,6 +29,7 @@ import { addEventListener as addNetInfoListener, fetch as fetchNetInfo } from '@
 import type { Database } from '@/supabase/types/database';
 import { addBreadcrumb, setSentryUser } from '@/lib/telemetry/sentry';
 import { isSupabaseAccessTokenUsable } from '@/lib/auth/session-token';
+import { createPresenceWriteCoordinator } from '@/lib/presence-write-coordinator';
 
 type Profile = Database['public']['Tables']['profiles']['Row'];
 type FetchProfileOptions = { force?: boolean };
@@ -201,10 +208,18 @@ const diagnoseProfileFetch = async (userId: string) => {
   }
 };
 
-const fetchProfileViaRest = async (userId: string, accessToken?: string | null) => {
+type ProfileRestResult =
+  | { status: "found"; profile: Profile }
+  | { status: "missing" }
+  | { status: "unavailable"; error?: unknown };
+
+const fetchProfileViaRest = async (
+  userId: string,
+  accessToken?: string | null
+): Promise<ProfileRestResult> => {
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
   const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
-  if (!supabaseUrl || !anonKey) return null;
+  if (!supabaseUrl || !anonKey) return { status: "unavailable" };
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), PROFILE_DIAG_TIMEOUT_MS);
   const url = `${supabaseUrl}/rest/v1/profiles?select=*&user_id=eq.${userId}&limit=1`;
@@ -230,13 +245,20 @@ const fetchProfileViaRest = async (userId: string, accessToken?: string | null) 
         bodyText = "<unreadable body>";
       }
       console.warn("[auth] fetchProfileViaRest: http error", { status: res.status, body: bodyText });
-      return null;
+      return { status: "unavailable", error: { status: res.status, body: bodyText } };
     }
     const data = (await res.json()) as Profile[];
-    return data?.[0] ?? null;
+    const profile = data?.[0] ?? null;
+    return profile ? { status: "found", profile } : { status: "missing" };
   } catch (error) {
-    console.warn("[auth] fetchProfileViaRest: fetch error", error);
-    return null;
+    if (
+      typeof __DEV__ !== "undefined" &&
+      __DEV__ &&
+      !isLikelyNetworkError(error)
+    ) {
+      console.warn("[auth] fetchProfileViaRest: fetch error", error);
+    }
+    return { status: "unavailable", error };
   } finally {
     clearTimeout(timeout);
   }
@@ -352,8 +374,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [usingPersistedSessionFallback, setUsingPersistedSessionFallback] = useState(false);
   const userRef = useRef<User | null>(null);
   const profileRef = useRef<Profile | null>(null);
-  const presenceUpdateAtRef = useRef(0);
-  const lastPresenceOnlineRef = useRef<boolean | null>(null);
+  const presenceWriteCoordinatorRef = useRef<ReturnType<typeof createPresenceWriteCoordinator> | null>(null);
+  if (!presenceWriteCoordinatorRef.current) {
+    presenceWriteCoordinatorRef.current = createPresenceWriteCoordinator();
+  }
   const authRecoveryPendingRef = useRef(authRecoveryPending);
   const usingPersistedSessionFallbackRef = useRef(usingPersistedSessionFallback);
   const resumeRefreshAtRef = useRef(0);
@@ -730,8 +754,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
         if (initialSession?.user) {
-          // Warm profile state on cold launch so screens don't wait on a later auth event.
-          void ensureProfileExists(initialSession.user.id);
+          // Profile creation is performed by fetchProfile only after a successful
+          // server response confirms that the row is genuinely absent.
           let initialProfile = await fetchProfile(initialSession.user.id);
           if (!initialProfile) {
             initialProfile = await restoreProfileFromPersistedSnapshot(
@@ -796,6 +820,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           lastUnrequestedSignedOutHandledAtRef.current = 0;
           setAuthStatus('authenticated');
           const nextUserId = session.user.id;
+          const previousUserId = currentSessionUserIdRef.current;
+          if (previousUserId && previousUserId !== nextUserId) {
+            await Promise.all([
+              resetChatDbForUserSignOut(previousUserId),
+              clearOfflineImagesForOwner(previousUserId),
+              clearOfflineVideosForOwner(previousUserId),
+              clearOfflineAttachmentsForOwner(previousUserId),
+              clearChatAttachmentPreviewsForOwner(previousUserId),
+              clearStagedOfflineChatUploadsForOwner(previousUserId),
+              ChatUploadTransport.clearForOwner(previousUserId),
+            ]).catch((clearError) => {
+              console.warn('[chat] clear local data on account switch failed', clearError);
+            });
+            clearChatBootCacheForUser(previousUserId);
+          }
           const isRedundantInitialSession =
             _event === "INITIAL_SESSION" &&
             currentSessionUserIdRef.current === nextUserId &&
@@ -810,9 +849,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             return;
           }
 
-          // Don't block auth state changes on a network write; profile fetching already
-          // has its own "ensure then retry" logic.
-          void ensureProfileExists(session.user.id);
+          // Do not issue an unconditional profile write here. A transient network
+          // failure must not be treated as proof that the profile is missing.
           const profileData = await fetchProfile(session.user.id);
           const metadata = await consumeSignupMetadata();
           await updateSignupEventForUser(session.user.id, metadata);
@@ -1000,16 +1038,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       const accessToken = await getAccessToken();
-      let restProfile = await fetchProfileViaRest(userId, accessToken);
-      if (!restProfile) {
-        // create minimal row then retry once
+      let restResult = await fetchProfileViaRest(userId, accessToken);
+      if (restResult.status === "missing") {
+        // A successful empty read is the only safe signal to create the minimal row.
         await ensureProfileExists(userId);
-        restProfile = await fetchProfileViaRest(userId, accessToken);
+        restResult = await fetchProfileViaRest(userId, accessToken);
       }
-      if (!restProfile) {
-        void diagnoseProfileFetch(userId);
-        if (typeof __DEV__ !== "undefined" && __DEV__) {
-          console.log("[auth] fetchProfile: rest fetch failed");
+      if (restResult.status !== "found") {
+        if (restResult.status === "missing") {
+          void diagnoseProfileFetch(userId);
+        }
+        if (
+          typeof __DEV__ !== "undefined" &&
+          __DEV__ &&
+          (restResult.status === "missing" ||
+            !isLikelyNetworkError(restResult.error))
+        ) {
+          console.log("[auth] fetchProfile: rest unavailable", {
+            status: restResult.status,
+          });
         }
         const staleCachedProfile =
           profileCacheRef.current?.userId === userId ? profileCacheRef.current.profile : null;
@@ -1031,7 +1078,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       const presenceResult = await fetchUserPresence(userId);
-      const mergedProfile = overlayPresence(restProfile as any, (presenceResult.data as any) ?? null);
+      const mergedProfile = overlayPresence(
+        restResult.profile as any,
+        (presenceResult.data as any) ?? null
+      );
       profileCacheRef.current = { userId, profile: mergedProfile, fetchedAt: Date.now() };
       profileRef.current = mergedProfile;
       setProfile(mergedProfile);
@@ -1230,88 +1280,72 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const updatePresence = async (nextOnline: boolean) => {
     if (!user?.id) return;
     if (authRecoveryPendingRef.current || usingPersistedSessionFallbackRef.current) return;
-    const now = Date.now();
-    const isStateChange = lastPresenceOnlineRef.current !== nextOnline;
-    const shouldThrottle = nextOnline && !isStateChange && now - presenceUpdateAtRef.current < 5_000;
-    if (shouldThrottle) return;
-    presenceUpdateAtRef.current = now;
-    try {
-      const sessionStatus = await ensureFreshSession();
-      if (sessionStatus === 'failed' || sessionStatus === 'no_session') {
-        await restoreProfileFromPersistedSnapshot(user.id, `presence_skip_${sessionStatus}`);
-        return;
-      }
-      const presenceAt = new Date().toISOString();
-      const { error } = await setCurrentUserPresence(nextOnline);
-      if (error) {
-        if (isLikelyNetworkError(error) || isExpiredJwtError(error)) {
-          if (isExpiredJwtError(error)) {
-            await restoreProfileFromPersistedSnapshot(user.id, 'presence_expired_jwt');
+    const requestedUserId = user.id;
+    await presenceWriteCoordinatorRef.current!.request(
+      requestedUserId,
+      nextOnline,
+      async (ownerUserId, requestedOnline) => {
+        try {
+          const sessionStatus = await ensureFreshSession();
+          if (sessionStatus === 'failed' || sessionStatus === 'no_session') {
+            await restoreProfileFromPersistedSnapshot(ownerUserId, `presence_skip_${sessionStatus}`);
+            return false;
+          }
+          const presenceAt = new Date().toISOString();
+          const { error } = await setCurrentUserPresence(requestedOnline);
+          if (error) {
+            if (isLikelyNetworkError(error) || isExpiredJwtError(error)) {
+              if (isExpiredJwtError(error)) {
+                await restoreProfileFromPersistedSnapshot(ownerUserId, 'presence_expired_jwt');
+              }
+              if (typeof __DEV__ !== 'undefined' && __DEV__) {
+                console.warn('[presence] update warning', error);
+              }
+            } else {
+              console.error('[presence] update error', error);
+            }
+            return false;
+          }
+
+          setProfile((prev) =>
+            prev
+              ? overlayPresence(prev as any, {
+                  user_id: ownerUserId,
+                  online: requestedOnline,
+                  last_active: presenceAt,
+                })
+              : prev,
+          );
+          if (profileCacheRef.current?.userId === ownerUserId && profileCacheRef.current.profile) {
+            profileCacheRef.current = {
+              ...profileCacheRef.current,
+              profile: overlayPresence(profileCacheRef.current.profile as any, {
+                user_id: ownerUserId,
+                online: requestedOnline,
+                last_active: presenceAt,
+              }),
+              fetchedAt: Date.now(),
+            };
           }
           if (typeof __DEV__ !== 'undefined' && __DEV__) {
-            console.warn('[presence] update warning', error);
+            console.log('[presence] set', { online: requestedOnline });
           }
-        } else {
-          console.error('[presence] update error', error);
+          return true;
+        } catch (error) {
+          if (isLikelyNetworkError(error) || isExpiredJwtError(error)) {
+            if (isExpiredJwtError(error)) {
+              await restoreProfileFromPersistedSnapshot(ownerUserId, 'presence_exception_expired_jwt');
+            }
+            if (typeof __DEV__ !== 'undefined' && __DEV__) {
+              console.warn('[presence] update warning', error);
+            }
+          } else {
+            console.error('[presence] update error', error);
+          }
+          return false;
         }
-      } else if (typeof __DEV__ !== 'undefined' && __DEV__) {
-        lastPresenceOnlineRef.current = nextOnline;
-        setProfile((prev) =>
-          prev
-            ? overlayPresence(prev as any, {
-                user_id: user.id,
-                online: nextOnline,
-                last_active: presenceAt,
-              })
-            : prev,
-        );
-        if (profileCacheRef.current?.userId === user.id && profileCacheRef.current.profile) {
-          profileCacheRef.current = {
-            ...profileCacheRef.current,
-            profile: overlayPresence(profileCacheRef.current.profile as any, {
-              user_id: user.id,
-              online: nextOnline,
-              last_active: presenceAt,
-            }),
-            fetchedAt: Date.now(),
-          };
-        }
-        console.log('[presence] set', { online: nextOnline });
-      } else {
-        lastPresenceOnlineRef.current = nextOnline;
-        setProfile((prev) =>
-          prev
-            ? overlayPresence(prev as any, {
-                user_id: user.id,
-                online: nextOnline,
-                last_active: presenceAt,
-              })
-            : prev,
-        );
-        if (profileCacheRef.current?.userId === user.id && profileCacheRef.current.profile) {
-          profileCacheRef.current = {
-            ...profileCacheRef.current,
-            profile: overlayPresence(profileCacheRef.current.profile as any, {
-              user_id: user.id,
-              online: nextOnline,
-              last_active: presenceAt,
-            }),
-            fetchedAt: Date.now(),
-          };
-        }
-      }
-    } catch (error) {
-      if (isLikelyNetworkError(error) || isExpiredJwtError(error)) {
-        if (isExpiredJwtError(error)) {
-          await restoreProfileFromPersistedSnapshot(user.id, 'presence_exception_expired_jwt');
-        }
-        if (typeof __DEV__ !== 'undefined' && __DEV__) {
-          console.warn('[presence] update warning', error);
-        }
-      } else {
-        console.error('[presence] update error', error);
-      }
-    }
+      },
+    );
   };
 
   const refreshSessionOnResume = async () => {
@@ -1577,7 +1611,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     if (signedOutUserId) {
       try {
-        await resetChatDbForUserSignOut(signedOutUserId);
+        await Promise.all([
+          resetChatDbForUserSignOut(signedOutUserId),
+          clearOfflineImagesForOwner(signedOutUserId),
+          clearOfflineVideosForOwner(signedOutUserId),
+          clearOfflineAttachmentsForOwner(signedOutUserId),
+          clearChatAttachmentPreviewsForOwner(signedOutUserId),
+          clearStagedOfflineChatUploadsForOwner(signedOutUserId),
+          ChatUploadTransport.clearForOwner(signedOutUserId),
+        ]);
         clearChatBootCacheForUser(signedOutUserId);
         await clearAppIconBadgeCount();
       } catch (clearError) {

@@ -6,11 +6,14 @@ import { useAuth } from '@/lib/auth-context';
 import { supabase } from '@/lib/supabase';
 
 export default function ChatDeliveryReceiptAcknowledger() {
-  const { user, isAuthenticated } = useAuth();
+  const { user, isAuthenticated, canPerformAuthenticatedWrites } = useAuth();
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
 
   useEffect(() => {
-    const userId = isAuthenticated ? user?.id ?? null : null;
+    const userId =
+      isAuthenticated && canPerformAuthenticatedWrites
+        ? user?.id ?? null
+        : null;
     if (!userId) return;
 
     const catchUpDelivered = () => {
@@ -54,7 +57,7 @@ export default function ChatDeliveryReceiptAcknowledger() {
       appStateSubscription.remove();
       supabase.removeChannel(channel);
     };
-  }, [isAuthenticated, user?.id]);
+  }, [canPerformAuthenticatedWrites, isAuthenticated, user?.id]);
 
   return null;
 }

@@ -1,7 +1,12 @@
 import { useAuth } from '@/lib/auth-context';
 import { getChatBootCacheSnapshot } from '@/lib/chat/local/chat-boot-cache';
 import { ChatRepository, type ChatStorageDiagnosticsSnapshot } from '@/lib/chat/local/chat-repository';
+import {
+  getChatMediaDownloadPolicy,
+  type ChatMediaDownloadPolicy,
+} from '@/lib/chat/media/chat-media-download-policy';
 import { canAccessInternalTools } from '@/lib/internal-tools';
+import { getOfflineAttachmentUsage } from '@/lib/offline/attachment-file-store';
 import * as Clipboard from 'expo-clipboard';
 import { Redirect, router } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
@@ -9,6 +14,7 @@ import { RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } 
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 type BootSnapshot = ReturnType<typeof getChatBootCacheSnapshot>;
+type AttachmentUsage = Awaited<ReturnType<typeof getOfflineAttachmentUsage>>;
 
 const formatValue = (value: unknown) => {
   if (value == null) return 'null';
@@ -31,6 +37,8 @@ export default function ChatStorageDiagnosticsScreen() {
   const [error, setError] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<ChatStorageDiagnosticsSnapshot | null>(null);
   const [bootSnapshot, setBootSnapshot] = useState<BootSnapshot | null>(null);
+  const [attachmentUsage, setAttachmentUsage] = useState<AttachmentUsage | null>(null);
+  const [downloadPolicy, setDownloadPolicy] = useState<ChatMediaDownloadPolicy | null>(null);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
 
   const goBackSafe = () => {
@@ -43,10 +51,14 @@ export default function ChatStorageDiagnosticsScreen() {
     setError(null);
     setCopyStatus(null);
     try {
-      const [dbSnapshot] = await Promise.all([
+      const [dbSnapshot, nextAttachmentUsage, nextDownloadPolicy] = await Promise.all([
         ChatRepository.getStorageDiagnostics(user?.id ?? null),
+        getOfflineAttachmentUsage(),
+        getChatMediaDownloadPolicy(),
       ]);
       setSnapshot(dbSnapshot);
+      setAttachmentUsage(nextAttachmentUsage);
+      setDownloadPolicy(nextDownloadPolicy);
       setBootSnapshot(getChatBootCacheSnapshot(user?.id ?? null));
     } catch (nextError) {
       setError(String((nextError as { message?: unknown })?.message ?? nextError ?? 'chat_storage_diagnostics_failed'));
@@ -67,6 +79,8 @@ export default function ChatStorageDiagnosticsScreen() {
           currentUserId: user?.id ?? null,
           sqlite: snapshot,
           bootCache: bootSnapshot,
+          attachmentCache: attachmentUsage,
+          mediaDownloadPolicy: downloadPolicy,
         },
         null,
         2,
@@ -78,7 +92,7 @@ export default function ChatStorageDiagnosticsScreen() {
         `Copy failed: ${String((nextError as { message?: unknown })?.message ?? nextError ?? 'unknown_error')}`,
       );
     }
-  }, [bootSnapshot, snapshot, user?.id]);
+  }, [attachmentUsage, bootSnapshot, downloadPolicy, snapshot, user?.id]);
 
   useEffect(() => {
     void load();
@@ -150,6 +164,22 @@ export default function ChatStorageDiagnosticsScreen() {
           <Text style={styles.row}>lastSyncCursorGlobal: {bootSnapshot?.lastSyncCursorGlobal ?? 'null'}</Text>
           <Text style={styles.row}>asyncSnapshotMigratedV1: {formatValue(bootSnapshot?.asyncSnapshotMigratedV1)}</Text>
           <Text style={styles.row}>chatKeys: {(bootSnapshot?.allChatKeys.length ?? 0).toString()}</Text>
+        </View>
+
+        <View style={styles.card}>
+          <Text style={styles.h2}>Offline Attachments</Text>
+          <Text style={styles.row}>entries: {attachmentUsage?.entries ?? 'null'}</Text>
+          <Text style={styles.row}>bytes: {attachmentUsage?.bytes ?? 'null'}</Text>
+          <Text style={styles.row}>voice notes: {attachmentUsage?.audioEntries ?? 'null'}</Text>
+          <Text style={styles.row}>documents: {attachmentUsage?.documentEntries ?? 'null'}</Text>
+        </View>
+
+        <View style={styles.card}>
+          <Text style={styles.h2}>Media Download Policy</Text>
+          <Text style={styles.row}>photos: {downloadPolicy?.photo ?? 'null'}</Text>
+          <Text style={styles.row}>videos: {downloadPolicy?.video ?? 'null'}</Text>
+          <Text style={styles.row}>voice notes: {downloadPolicy?.audio ?? 'null'}</Text>
+          <Text style={styles.row}>documents: {downloadPolicy?.document ?? 'null'}</Text>
         </View>
 
         <View style={styles.card}>
