@@ -1,17 +1,19 @@
 export const LIVE_SESSION_FORMATS = [
-  'conversation',
-  'hosted_matchmaking',
-  'chemistry_first',
+  'hosted_match_night',
   'quick_connect',
+  'circle_live',
   'special_event',
+  'invite_only',
 ] as const;
 
 export type LiveSessionFormat = (typeof LIVE_SESSION_FORMATS)[number];
 
 export const LIVE_SESSION_ORIGINS = [
-  'platform',
+  'global',
   'circle',
   'gathering',
+  'match_night',
+  'diaspora',
   'special_event',
   'invite_only',
 ] as const;
@@ -21,8 +23,11 @@ export type LiveSessionOrigin = (typeof LIVE_SESSION_ORIGINS)[number];
 export const LIVE_SESSION_STATUSES = [
   'draft',
   'scheduled',
+  'waiting_for_quorum',
+  'confirmed',
   'backstage',
   'live',
+  'ending',
   'ended',
   'cancelled',
 ] as const;
@@ -42,11 +47,14 @@ export type LiveParticipantRole = (typeof LIVE_PARTICIPANT_ROLES)[number];
 
 export const LIVE_PARTICIPANT_STATES = [
   'invited',
-  'rsvped',
+  'confirmed',
+  'waitlisted',
   'backstage',
   'audience',
-  'stage',
-  'disconnected',
+  'stage_requested',
+  'on_stage',
+  'private_spark',
+  'temporarily_disconnected',
   'left',
   'removed',
   'banned',
@@ -71,4 +79,3 @@ export type LiveSessionIdentity = {
   providerCallType: string;
   version: number;
 };
-

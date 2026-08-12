@@ -36,6 +36,8 @@ test('Live sessions reject skipped stages, resurrection and cancellation after g
   const invalid: readonly [LiveSessionStatus, LiveSessionEvent][] = [
     ['draft', 'start'],
     ['scheduled', 'start'],
+    ['scheduled', 'open_backstage'],
+    ['live', 'end'],
     ['live', 'cancel'],
     ['ended', 'start'],
     ['cancelled', 'open_backstage'],
@@ -74,11 +76,11 @@ test('removed, left and banned participants cannot silently rejoin or publish', 
 test('matchmaker and moderator authorities stay deliberately separate', () => {
   const matchmaker = resolveLiveCapabilities(['matchmaker']);
   assert.equal(hasLiveCapability(matchmaker, 'live.suggest_match'), true);
-  assert.equal(hasLiveCapability(matchmaker, 'live.mute_participant'), false);
-  assert.equal(hasLiveCapability(matchmaker, 'live.ban_participant'), false);
+  assert.equal(hasLiveCapability(matchmaker, 'live.mute_public_participant'), false);
+  assert.equal(hasLiveCapability(matchmaker, 'live.suspend_participant'), false);
 
   const moderator = resolveLiveCapabilities(['moderator']);
-  assert.equal(hasLiveCapability(moderator, 'live.mute_participant'), true);
+  assert.equal(hasLiveCapability(moderator, 'live.mute_public_participant'), true);
   assert.equal(hasLiveCapability(moderator, 'live.suggest_match'), false);
 });
 
@@ -89,7 +91,7 @@ test('multi-role capability resolution is deterministic and supports explicit re
     ['live.comment'],
   );
   assert.deepEqual(resolution.roles, ['moderator', 'matchmaker']);
-  assert.equal(hasLiveCapability(resolution, 'live.mute_participant'), true);
+  assert.equal(hasLiveCapability(resolution, 'live.mute_public_participant'), true);
   assert.equal(hasLiveCapability(resolution, 'live.suggest_match'), true);
   assert.equal(hasLiveCapability(resolution, 'live.publish'), true);
   assert.equal(hasLiveCapability(resolution, 'live.comment'), false);

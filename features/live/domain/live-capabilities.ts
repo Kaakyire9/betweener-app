@@ -1,6 +1,7 @@
 import type { LiveParticipantRole } from './live-types.ts';
 
 export const LIVE_CAPABILITIES = [
+  'live.create_session',
   'live.join',
   'live.react',
   'live.comment',
@@ -8,15 +9,19 @@ export const LIVE_CAPABILITIES = [
   'live.block',
   'live.request_seat',
   'live.publish',
-  'live.manage_seats',
+  'live.manage_stage',
+  'live.approve_seat_request',
   'live.moderate_comments',
-  'live.mute_participant',
+  'live.mute_public_participant',
   'live.remove_participant',
-  'live.ban_participant',
+  'live.suspend_participant',
   'live.suggest_match',
-  'live.manage_match_round',
+  'live.create_match_round',
   'live.start_session',
   'live.end_session',
+  'live.terminate_private_spark',
+  'live.view_host_console',
+  'live.view_safety_console',
   'live.emergency_terminate',
 ] as const;
 
@@ -33,9 +38,11 @@ const AUDIENCE_CAPABILITIES: readonly LiveCapability[] = [
 
 const MODERATION_CAPABILITIES: readonly LiveCapability[] = [
   'live.moderate_comments',
-  'live.mute_participant',
+  'live.mute_public_participant',
   'live.remove_participant',
-  'live.ban_participant',
+  'live.suspend_participant',
+  'live.terminate_private_spark',
+  'live.view_safety_console',
 ];
 
 export const LIVE_ROLE_CAPABILITIES: Readonly<
@@ -46,16 +53,20 @@ export const LIVE_ROLE_CAPABILITIES: Readonly<
   matchmaker: [
     ...AUDIENCE_CAPABILITIES,
     'live.suggest_match',
-    'live.manage_match_round',
+    'live.create_match_round',
+    'live.view_host_console',
   ],
   moderator: [...AUDIENCE_CAPABILITIES, ...MODERATION_CAPABILITIES],
   host: [
     ...AUDIENCE_CAPABILITIES,
     ...MODERATION_CAPABILITIES,
+    'live.create_session',
     'live.publish',
-    'live.manage_seats',
+    'live.manage_stage',
+    'live.approve_seat_request',
     'live.start_session',
     'live.end_session',
+    'live.view_host_console',
   ],
   internal_admin: [
     'live.join',
@@ -90,4 +101,3 @@ export const hasLiveCapability = (
   resolution: LiveCapabilityResolution,
   capability: LiveCapability,
 ) => resolution.capabilities.has(capability);
-

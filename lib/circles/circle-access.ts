@@ -47,7 +47,7 @@ export const canModerateCircle = (
   if (circle?.created_by_profile_id && circle.created_by_profile_id === profile.id) return true;
   if (circle?.created_by_user_id && circle.created_by_user_id === profile.user_id) return true;
   const role = String(membership?.role ?? '').toLowerCase();
-  return ['admin', 'host', 'moderator', 'leader', 'matchmaker'].includes(role);
+  return ['admin', 'host', 'moderator', 'leader'].includes(role);
 };
 
 export const canApproveCircle = (_user?: unknown, profile?: CircleAccessProfile | null) =>

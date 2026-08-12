@@ -2,10 +2,14 @@ import type { LiveParticipantState } from './live-types.ts';
 
 export const LIVE_PARTICIPANT_EVENTS = [
   'rsvp',
+  'waitlist',
   'enter_backstage',
   'join_audience',
+  'request_stage',
   'promote_to_stage',
   'demote_to_audience',
+  'enter_private_spark',
+  'return_from_private_spark',
   'connection_lost',
   'reconnect_to_audience',
   'reconnect_to_stage',
@@ -22,12 +26,15 @@ const PARTICIPANT_TRANSITIONS: Readonly<
     Readonly<Partial<Record<LiveParticipantEvent, LiveParticipantState>>>
   >
 > = {
-  invited: { rsvp: 'rsvped', enter_backstage: 'backstage', remove: 'removed', ban: 'banned' },
-  rsvped: { rsvp: 'rsvped', enter_backstage: 'backstage', join_audience: 'audience', leave: 'left', remove: 'removed', ban: 'banned' },
-  backstage: { enter_backstage: 'backstage', join_audience: 'audience', promote_to_stage: 'stage', connection_lost: 'disconnected', leave: 'left', remove: 'removed', ban: 'banned' },
-  audience: { join_audience: 'audience', promote_to_stage: 'stage', connection_lost: 'disconnected', leave: 'left', remove: 'removed', ban: 'banned' },
-  stage: { promote_to_stage: 'stage', demote_to_audience: 'audience', connection_lost: 'disconnected', leave: 'left', remove: 'removed', ban: 'banned' },
-  disconnected: { connection_lost: 'disconnected', reconnect_to_audience: 'audience', reconnect_to_stage: 'stage', leave: 'left', remove: 'removed', ban: 'banned' },
+  invited: { rsvp: 'confirmed', waitlist: 'waitlisted', enter_backstage: 'backstage', remove: 'removed', ban: 'banned' },
+  confirmed: { rsvp: 'confirmed', waitlist: 'waitlisted', enter_backstage: 'backstage', join_audience: 'audience', leave: 'left', remove: 'removed', ban: 'banned' },
+  waitlisted: { waitlist: 'waitlisted', rsvp: 'confirmed', enter_backstage: 'backstage', join_audience: 'audience', leave: 'left', remove: 'removed', ban: 'banned' },
+  backstage: { enter_backstage: 'backstage', join_audience: 'audience', promote_to_stage: 'on_stage', connection_lost: 'temporarily_disconnected', leave: 'left', remove: 'removed', ban: 'banned' },
+  audience: { join_audience: 'audience', request_stage: 'stage_requested', promote_to_stage: 'on_stage', connection_lost: 'temporarily_disconnected', leave: 'left', remove: 'removed', ban: 'banned' },
+  stage_requested: { request_stage: 'stage_requested', demote_to_audience: 'audience', promote_to_stage: 'on_stage', connection_lost: 'temporarily_disconnected', leave: 'left', remove: 'removed', ban: 'banned' },
+  on_stage: { promote_to_stage: 'on_stage', demote_to_audience: 'audience', enter_private_spark: 'private_spark', connection_lost: 'temporarily_disconnected', leave: 'left', remove: 'removed', ban: 'banned' },
+  private_spark: { enter_private_spark: 'private_spark', return_from_private_spark: 'on_stage', demote_to_audience: 'audience', connection_lost: 'temporarily_disconnected', leave: 'left', remove: 'removed', ban: 'banned' },
+  temporarily_disconnected: { connection_lost: 'temporarily_disconnected', reconnect_to_audience: 'audience', reconnect_to_stage: 'on_stage', leave: 'left', remove: 'removed', ban: 'banned' },
   left: { leave: 'left', ban: 'banned' },
   removed: { remove: 'removed', ban: 'banned' },
   banned: { ban: 'banned' },
@@ -62,4 +69,3 @@ export const transitionLiveParticipant = (args: {
 
 export const getLiveParticipantTransitions = (state: LiveParticipantState) =>
   PARTICIPANT_TRANSITIONS[state];
-
