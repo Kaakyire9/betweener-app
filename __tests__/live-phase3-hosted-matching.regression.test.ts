@@ -36,7 +36,8 @@ test('Phase 3 persists one active, idempotent and non-repeating proposal per ses
 test('double consent is private and can only resolve from two immutable participant responses', () => {
   assert.match(migration, /live_match_response_one_per_user unique \(match_round_id, user_id\)/i);
   assert.match(migration, /live_match_response_participant_guard/i);
-  assert.match(migration, /if v_existing <> case when p_accept then 'accepted' else 'declined' end/i);
+  assert.match(migration, /v_decision text := case when p_accept then 'accepted' else 'declined' end/i);
+  assert.match(migration, /if v_existing <> v_decision then/i);
   assert.match(migration, /if v_accepted=2 then v_next := 'both_accepted'/i);
   assert.doesNotMatch(migration, /create policy[^;]+live_match_round_responses[^;]+for select/is);
 });

@@ -523,6 +523,7 @@ declare
   v_existing text;
   v_accepted integer;
   v_next text;
+  v_decision text := case when p_accept then 'accepted' else 'declined' end;
 begin
   if auth.uid() is null then raise exception 'authentication_required' using errcode='42501'; end if;
   select * into v_round from public.live_match_rounds where id=p_match_round_id for update;
@@ -533,7 +534,7 @@ begin
   select decision into v_existing from public.live_match_round_responses
   where match_round_id=v_round.id and user_id=auth.uid();
   if v_existing is not null then
-    if v_existing <> case when p_accept then 'accepted' else 'declined' end then
+    if v_existing <> v_decision then
       raise exception 'live_match_response_already_recorded' using errcode='23505';
     end if;
     return public.live_hosted_matching_snapshot(v_round.session_id);
@@ -546,7 +547,7 @@ begin
     return public.live_hosted_matching_snapshot(v_round.session_id);
   end if;
   insert into public.live_match_round_responses(match_round_id,session_id,user_id,decision)
-  values(v_round.id,v_round.session_id,auth.uid(),case when p_accept then 'accepted' else 'declined' end);
+  values(v_round.id,v_round.session_id,auth.uid(),v_decision);
   if not p_accept then
     v_next := 'declined';
   else
