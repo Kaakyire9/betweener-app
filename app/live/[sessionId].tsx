@@ -1,5 +1,5 @@
 import { router, useLocalSearchParams } from 'expo-router';
-import { Camera, CameraOff, ChevronLeft, Mic, MicOff, MoreHorizontal, Radio, UserRoundPlus, X } from 'lucide-react-native';
+import { Camera, CameraOff, ChevronLeft, Mic, MicOff, MoreHorizontal, Radio, UserRoundPlus, UsersRound, X } from 'lucide-react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -16,9 +16,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   LiveConnectionBanner,
   LiveConversationPanel,
+  LiveHostedMatchingModal,
+  LiveHostedMatchingPanel,
+  LivePublicIntroductionCard,
   StreamLiveStage,
 } from '@/features/live/components/index.ts';
-import { useLiveMediaSession, useLiveSessionController } from '@/features/live/hooks/index.ts';
+import { useLiveHostedMatching, useLiveMediaSession, useLiveSessionController } from '@/features/live/hooks/index.ts';
 import { useAuth } from '@/lib/auth-context';
 
 export default function LiveSessionScreen() {
@@ -30,11 +33,16 @@ export default function LiveSessionScreen() {
   const authorityExpectationRef = useRef<string | null>(null);
   const [connectedParticipantCount, setConnectedParticipantCount] = useState<number | null>(null);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [hostedMatchingOpen, setHostedMatchingOpen] = useState(false);
   const joinSession = controller.join;
   const busyAction = controller.busyAction;
   const mediaState = media.state;
   const joinMedia = media.join;
   const snapshot = controller.snapshot;
+  const hostedMatching = useLiveHostedMatching(
+    sessionId,
+    snapshot?.session.format === 'hosted_match_night' && snapshot.session.status === 'live',
+  );
   const me = snapshot?.me ?? null;
   const canPublish = snapshot?.capabilities.includes('live.publish') === true;
   const canManageStage = snapshot?.capabilities.includes('live.manage_stage') === true;
@@ -333,6 +341,31 @@ export default function LiveSessionScreen() {
           </View>
         ) : null}
 
+        {!keyboardVisible
+          && snapshot.session.format === 'hosted_match_night'
+          && hostedMatching.snapshot
+          && !hostedMatching.snapshot.canManage ? (
+          <LiveHostedMatchingPanel
+            snapshot={hostedMatching.snapshot}
+            currentUserId={user?.id ?? null}
+            openToIntroductions={me?.openToIntroductions === true}
+            busyAction={hostedMatching.busyAction}
+            error={hostedMatching.error}
+            onSetAvailability={(open) => void hostedMatching.setAvailability(open).then((saved) => {
+              if (saved) void controller.refresh();
+            })}
+            onPropose={(userA, userB) => void hostedMatching.proposePair(userA, userB)}
+            onRespond={(roundId, accept) => void hostedMatching.respond(roundId, accept)}
+            onTransition={(roundId, targetState) => void hostedMatching.transition(roundId, targetState).then((saved) => {
+              if (saved) void controller.refresh();
+            })}
+          />
+        ) : null}
+
+        {hostedMatching.snapshot?.activeRound?.state === 'public_introduction' ? (
+          <LivePublicIntroductionCard round={hostedMatching.snapshot.activeRound} />
+        ) : null}
+
         <LiveConversationPanel
           comments={controller.comments}
           commentCount={controller.commentCount}
@@ -348,6 +381,17 @@ export default function LiveSessionScreen() {
         />
 
         {!keyboardVisible ? <View style={styles.controls}>
+          {hostedMatching.snapshot?.canManage ? (
+            <Pressable
+              accessibilityLabel="Open private Match Desk"
+              accessibilityRole="button"
+              onPress={() => setHostedMatchingOpen(true)}
+              style={styles.matchDeskButton}
+            >
+              <UsersRound size={18} color="#D7B56D" />
+              <Text style={styles.matchDeskText}>Match Desk</Text>
+            </Pressable>
+          ) : null}
           {canPublish ? (
             <>
               <Pressable disabled={!publicationReady} onPress={() => void media.setAudioEnabled(!media.audioEnabled)} style={[styles.control, !media.audioEnabled && styles.controlOff, !publicationReady && styles.controlDisabled]}>
@@ -373,6 +417,21 @@ export default function LiveSessionScreen() {
             <Pressable onPress={() => void controller.transitionSession('ending')} style={styles.endButton}><Text style={styles.endText}>End room</Text></Pressable>
           ) : null}
         </View> : null}
+        <LiveHostedMatchingModal
+          visible={hostedMatchingOpen && hostedMatching.snapshot?.canManage === true}
+          onClose={() => setHostedMatchingOpen(false)}
+          snapshot={hostedMatching.snapshot}
+          currentUserId={user?.id ?? null}
+          openToIntroductions={me?.openToIntroductions === true}
+          busyAction={hostedMatching.busyAction}
+          error={hostedMatching.error}
+          onSetAvailability={(open) => void hostedMatching.setAvailability(open)}
+          onPropose={(userA, userB) => void hostedMatching.proposePair(userA, userB)}
+          onRespond={(roundId, accept) => void hostedMatching.respond(roundId, accept)}
+          onTransition={(roundId, targetState) => void hostedMatching.transition(roundId, targetState).then((saved) => {
+            if (saved) void controller.refresh();
+          })}
+        />
         </SafeAreaView>
       </KeyboardAvoidingView>
     </View>
@@ -447,6 +506,8 @@ const styles = StyleSheet.create({
   approveButton: { paddingHorizontal: 11, height: 28, borderRadius: 14, justifyContent: 'center', backgroundColor: '#D7B56D' },
   approveText: { color: '#102522', fontSize: 10, fontFamily: 'Manrope_800ExtraBold' },
   controls: { minHeight: 70, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, backgroundColor: '#091614', borderTopWidth: 1, borderTopColor: '#263A36' },
+  matchDeskButton: { height: 46, borderRadius: 23, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#172A25', borderWidth: 1, borderColor: '#766842' },
+  matchDeskText: { color: '#E9D8B4', fontSize: 11, fontFamily: 'Manrope_800ExtraBold' },
   control: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: '#D7B56D' },
   controlOff: { backgroundColor: '#59302F' },
   controlDisabled: { opacity: 0.45 },

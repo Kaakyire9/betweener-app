@@ -1,9 +1,10 @@
 import * as Crypto from 'expo-crypto';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
-import type { LiveComment, LiveReactionKind, LiveSessionSnapshot, LiveSessionSummary, ScheduleLiveSessionInput } from './live-models.ts';
+import type { LiveComment, LiveHostedMatchingSnapshot, LiveReactionKind, LiveSessionSnapshot, LiveSessionSummary, ScheduleLiveSessionInput } from './live-models.ts';
 import {
   parseLiveComment,
+  parseLiveHostedMatchingSnapshot,
   parseLiveSessionSnapshot,
   parseLiveSessionSummary,
 } from './live-parsers.ts';
@@ -65,6 +66,50 @@ export const liveRepository = {
 
   async heartbeat(sessionId: string): Promise<void> {
     await invoke('rpc_heartbeat_live_session', { p_session_id: sessionId });
+  },
+
+  async getHostedMatching(sessionId: string): Promise<LiveHostedMatchingSnapshot> {
+    return parseLiveHostedMatchingSnapshot(
+      await invoke('live_hosted_matching_snapshot', { p_session_id: sessionId }),
+    );
+  },
+
+  async setIntroductionAvailability(sessionId: string, open: boolean): Promise<void> {
+    await invoke('rpc_set_live_introduction_availability', {
+      p_session_id: sessionId,
+      p_open: open,
+    });
+  },
+
+  async createMatchRound(
+    sessionId: string,
+    participantAUserId: string,
+    participantBUserId: string,
+    clientProposalId: string,
+  ): Promise<LiveHostedMatchingSnapshot> {
+    return parseLiveHostedMatchingSnapshot(await invoke('rpc_create_live_match_round', {
+      p_session_id: sessionId,
+      p_participant_a_user_id: participantAUserId,
+      p_participant_b_user_id: participantBUserId,
+      p_client_proposal_id: clientProposalId,
+    }));
+  },
+
+  async respondMatchRound(matchRoundId: string, accept: boolean): Promise<LiveHostedMatchingSnapshot> {
+    return parseLiveHostedMatchingSnapshot(await invoke('rpc_respond_live_match_round', {
+      p_match_round_id: matchRoundId,
+      p_accept: accept,
+    }));
+  },
+
+  async transitionMatchRound(
+    matchRoundId: string,
+    targetState: 'public_introduction' | 'completed' | 'cancelled',
+  ): Promise<LiveHostedMatchingSnapshot> {
+    return parseLiveHostedMatchingSnapshot(await invoke('rpc_transition_live_match_round', {
+      p_match_round_id: matchRoundId,
+      p_target_state: targetState,
+    }));
   },
 
   async requestSeat(sessionId: string): Promise<void> {
@@ -162,7 +207,9 @@ export const liveRepository = {
 
   subscribe(sessionId: string, onChange: () => void): () => void {
     const channel: RealtimeChannel = supabase.channel(`live-session:${sessionId}:${Crypto.randomUUID()}`);
-    const tables = ['live_participants', 'live_seat_requests', 'live_comments', 'live_reactions'];
+    const tables = [
+      'live_participants','live_seat_requests','live_comments','live_reactions',
+    ];
     tables.forEach((table) => {
       channel.on(
         'postgres_changes',
@@ -175,4 +222,20 @@ export const liveRepository = {
       void supabase.removeChannel(channel);
     };
   },
+
+  subscribeHostedMatching(sessionId: string, onChange: () => void): () => void {
+    const channel: RealtimeChannel = supabase.channel(
+      `live-hosted-matching:${sessionId}:${Crypto.randomUUID()}`,
+    );
+    channel.on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'live_match_round_updates', filter: `session_id=eq.${sessionId}` },
+      onChange,
+    );
+    channel.subscribe();
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  },
+
 };

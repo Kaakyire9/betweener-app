@@ -1,4 +1,5 @@
 import type { LiveCapability } from '../domain/live-capabilities.ts';
+import type { LiveMatchRoundState } from '../domain/live-match-round-machine.ts';
 import type {
   LiveParticipantState,
   LiveSessionFormat,
@@ -101,4 +102,53 @@ export type ScheduleLiveSessionInput = {
   title: string;
   description: string;
   scheduledStart: string;
+};
+
+export type { LiveMatchRoundState } from '../domain/live-match-round-machine.ts';
+
+export type LiveHostedCandidate = {
+  userId: string;
+  profileId: string;
+  fullName: string | null;
+  avatarUrl: string | null;
+  age: number | null;
+  city: string | null;
+  verified: boolean;
+  lookingFor: string | null;
+  originContextType: string;
+  pairedWithUserIds: readonly string[];
+};
+
+export type LiveMatchRoundPerson = Pick<
+  LiveHostedCandidate,
+  'userId' | 'profileId' | 'fullName' | 'avatarUrl' | 'age' | 'city'
+>;
+
+export type LiveConnectionSignal = {
+  code: string;
+  text: string;
+};
+
+export type LiveConversationSpark = {
+  context: string;
+  question: string;
+};
+
+export type LiveMatchRound = {
+  id: string;
+  sessionId: string;
+  state: LiveMatchRoundState;
+  participantA: LiveMatchRoundPerson;
+  participantB: LiveMatchRoundPerson;
+  connectionSignals: readonly LiveConnectionSignal[];
+  conversationSpark: LiveConversationSpark | null;
+  myResponse: 'accepted' | 'declined' | null;
+  isParticipant: boolean;
+  expiresAt: string;
+};
+
+export type LiveHostedMatchingSnapshot = {
+  canManage: boolean;
+  candidates: readonly LiveHostedCandidate[];
+  activeRound: LiveMatchRound | null;
 };

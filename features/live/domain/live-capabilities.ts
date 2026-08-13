@@ -64,6 +64,8 @@ export const LIVE_ROLE_CAPABILITIES: Readonly<
     'live.publish',
     'live.manage_stage',
     'live.approve_seat_request',
+    'live.suggest_match',
+    'live.create_match_round',
     'live.start_session',
     'live.end_session',
     'live.view_host_console',

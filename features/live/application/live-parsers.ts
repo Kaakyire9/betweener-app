@@ -12,6 +12,13 @@ import {
 } from '../domain/live-types.ts';
 import type {
   LiveComment,
+  LiveConnectionSignal,
+  LiveConversationSpark,
+  LiveHostedCandidate,
+  LiveHostedMatchingSnapshot,
+  LiveMatchRound,
+  LiveMatchRoundPerson,
+  LiveMatchRoundState,
   LiveParticipant,
   LiveRsvpStatus,
   LiveSeatRequest,
@@ -33,6 +40,10 @@ const includes = <T extends string>(values: readonly T[], value: unknown): value
   typeof value === 'string' && values.includes(value as T);
 
 const RSVP_VALUES = ['none', 'invited', 'going', 'waitlisted', 'declined'] as const;
+const MATCH_ROUND_STATES = [
+  'proposed','awaiting_consent','both_accepted','public_introduction',
+  'declined','expired','completed','cancelled',
+] as const satisfies readonly LiveMatchRoundState[];
 
 const parseRsvp = (value: unknown): LiveRsvpStatus =>
   includes(RSVP_VALUES, value) ? value : 'none';
@@ -156,5 +167,75 @@ export const parseLiveSessionSnapshot = (value: unknown): LiveSessionSnapshot =>
       : [],
     comments,
     commentCount: Math.max(asNumber(value.commentCount), comments.length),
+  };
+};
+
+const parseHostedCandidate = (value: unknown): LiveHostedCandidate => {
+  if (!isRecord(value)) throw new Error('live_hosted_candidate_invalid');
+  return {
+    userId: asString(value.user_id),
+    profileId: asString(value.profile_id),
+    fullName: asNullableString(value.full_name),
+    avatarUrl: asNullableString(value.avatar_url),
+    age: value.age == null ? null : asNumber(value.age),
+    city: asNullableString(value.city),
+    verified: value.verified === true,
+    lookingFor: asNullableString(value.looking_for),
+    originContextType: asString(value.origin_context_type, 'global'),
+    pairedWithUserIds: Array.isArray(value.paired_with_user_ids)
+      ? value.paired_with_user_ids.filter((item): item is string => typeof item === 'string')
+      : [],
+  };
+};
+
+const parseMatchPerson = (value: unknown): LiveMatchRoundPerson => {
+  if (!isRecord(value)) throw new Error('live_match_person_invalid');
+  return {
+    userId: asString(value.user_id),
+    profileId: asString(value.profile_id),
+    fullName: asNullableString(value.full_name),
+    avatarUrl: asNullableString(value.avatar_url),
+    age: value.age == null ? null : asNumber(value.age),
+    city: asNullableString(value.city),
+  };
+};
+
+const parseConnectionSignals = (value: unknown): LiveConnectionSignal[] =>
+  Array.isArray(value)
+    ? value.flatMap((item) => isRecord(item) && typeof item.text === 'string'
+      ? [{ code: asString(item.code, 'alignment'), text: item.text }]
+      : [])
+    : [];
+
+const parseConversationSpark = (value: unknown): LiveConversationSpark | null =>
+  isRecord(value) && typeof value.context === 'string' && typeof value.question === 'string'
+    ? { context: value.context, question: value.question }
+    : null;
+
+const parseMatchRound = (value: unknown): LiveMatchRound => {
+  if (!isRecord(value)) throw new Error('live_match_round_invalid');
+  if (!includes(MATCH_ROUND_STATES, value.state)) throw new Error('live_match_round_state_invalid');
+  return {
+    id: asString(value.id),
+    sessionId: asString(value.session_id),
+    state: value.state,
+    participantA: parseMatchPerson(value.participant_a),
+    participantB: parseMatchPerson(value.participant_b),
+    connectionSignals: parseConnectionSignals(value.connection_signals),
+    conversationSpark: parseConversationSpark(value.conversation_spark),
+    myResponse: value.my_response === 'accepted' || value.my_response === 'declined'
+      ? value.my_response
+      : null,
+    isParticipant: value.is_participant === true,
+    expiresAt: asString(value.expires_at),
+  };
+};
+
+export const parseLiveHostedMatchingSnapshot = (value: unknown): LiveHostedMatchingSnapshot => {
+  if (!isRecord(value)) throw new Error('live_hosted_matching_snapshot_invalid');
+  return {
+    canManage: value.canManage === true,
+    candidates: Array.isArray(value.candidates) ? value.candidates.map(parseHostedCandidate) : [],
+    activeRound: value.activeRound == null ? null : parseMatchRound(value.activeRound),
   };
 };
