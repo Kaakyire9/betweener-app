@@ -9,7 +9,6 @@ import type { LiveMediaJoinMode } from '../media/live-media-provider.ts';
 export type LiveMediaControllerState =
   | 'idle'
   | 'preparing'
-  | 'previewing'
   | 'joined'
   | 'reconnecting'
   | 'failed';
@@ -49,31 +48,6 @@ export const useLiveMediaSession = (sessionId: string) => {
     }
   }, [sessionId]);
 
-  const preparePreview = useCallback(async (options: {
-    mode: LiveMediaJoinMode;
-    audioEnabled: boolean;
-    videoEnabled: boolean;
-  }) => {
-    const provider = providerRef.current;
-    if (!provider) return;
-    setState('preparing');
-    setError(null);
-    try {
-      const admission = await requestLiveMediaAdmission({ sessionId });
-      const renew = () => requestLiveMediaAdmission({ sessionId });
-      await provider.initialize(admission, renew);
-      setBindings(provider.getPresentationBindings());
-      await provider.preparePreview(options);
-      setAudioState(options.audioEnabled);
-      setVideoState(options.videoEnabled);
-      setState('previewing');
-    } catch (nextError) {
-      setBindings(null);
-      setError(nextError instanceof Error ? nextError.message : 'live_media_preview_failed');
-      setState('failed');
-    }
-  }, [sessionId]);
-
   const leave = useCallback(async () => {
     await providerRef.current?.leaveSession().catch(() => undefined);
     setAudioState(false);
@@ -105,7 +79,6 @@ export const useLiveMediaSession = (sessionId: string) => {
     videoEnabled,
     connectionQuality: providerRef.current?.getConnectionQuality() ?? 'unknown',
     join,
-    preparePreview,
     leave,
     setAudioEnabled,
     setVideoEnabled,

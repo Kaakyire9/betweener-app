@@ -58,7 +58,6 @@ export type LiveMediaProviderState =
   | 'idle'
   | 'initializing'
   | 'ready'
-  | 'previewing'
   | 'joining'
   | 'joined'
   | 'leaving'
@@ -77,8 +76,6 @@ export interface LiveMediaProvider {
     tokenProvider: LiveMediaTokenProvider,
   ): Promise<void>;
 
-  /** Starts a device-only preview without joining or publishing to the RTC call. */
-  preparePreview(options: LiveMediaSessionOptions): Promise<void>;
   joinSession(options: LiveMediaSessionOptions): Promise<void>;
   leaveSession(): Promise<void>;
 

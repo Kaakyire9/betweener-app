@@ -15,7 +15,7 @@ const backstageScreen = readFileSync(
   'utf8',
 );
 const backstagePreview = readFileSync(
-  new URL('../features/live/components/StreamLiveBackstagePreview.tsx', import.meta.url),
+  new URL('../features/live/components/LiveBackstagePreview.tsx', import.meta.url),
   'utf8',
 );
 
@@ -90,8 +90,18 @@ test('host lifecycle reserves the first stage seat and reaches on-stage atomical
 });
 
 test('private backstage previews devices locally and only joins after stage authority changes', () => {
-  assert.match(backstageScreen, /preparePreview/);
+  assert.match(backstageScreen, /LiveBackstagePreview/);
   assert.doesNotMatch(backstageScreen, /media\.join\(/);
-  assert.match(backstagePreview, /This component never joins the public RTC call/);
+  assert.match(backstagePreview, /no RTC client, token or network path/i);
   assert.doesNotMatch(backstagePreview, /\.join\(/);
+});
+
+test('RSVP remains available while the host prepares backstage', () => {
+  const repair = readFileSync(
+    new URL('../supabase/migrations/20260813100000_fix_live_rsvp_backstage.sql', import.meta.url),
+    'utf8',
+  );
+  assert.match(repair, /status not in \('scheduled','waiting_for_quorum','confirmed','backstage'\)/i);
+  assert.match(repair, /live_rsvp_forbidden/i);
+  assert.match(repair, /grant execute on function public\.rpc_rsvp_live_session/i);
 });

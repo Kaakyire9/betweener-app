@@ -18,7 +18,6 @@ type StreamCallPort = {
   state: {
     localParticipant?: { connectionQuality?: number };
   };
-  get(): Promise<unknown>;
   join(options: { create: false }): Promise<void>;
   leave(): Promise<void>;
 };
@@ -138,7 +137,7 @@ export class StreamLiveMediaProvider implements LiveMediaProvider {
         this.bindings
         && this.admission
         && sameAdmission(this.admission, admission)
-        && ['ready', 'previewing', 'joined'].includes(this.currentState)
+        && ['ready', 'joined'].includes(this.currentState)
       ) {
         return;
       }
@@ -158,34 +157,6 @@ export class StreamLiveMediaProvider implements LiveMediaProvider {
         this.currentState = 'ready';
       } catch (error) {
         this.bindings = null;
-        this.currentState = 'failed';
-        throw error;
-      }
-    });
-  }
-
-  preparePreview(options: LiveMediaSessionOptions): Promise<void> {
-    return this.runExclusive(async () => {
-      this.assertNotDisposed();
-      if (this.currentState === 'previewing') return;
-      if (this.currentState !== 'ready' || !this.bindings || !this.admission) {
-        throw new StreamLiveMediaProviderError('live_media_not_ready');
-      }
-      this.validateJoinOptions(options, this.admission);
-      try {
-        // Fetch call settings for the SDK's local preview, but deliberately do
-        // not join the RTC call. Backstage video must remain device-local.
-        await this.bindings.call.get();
-        await Promise.all([
-          this.setDeviceEnabled(this.bindings.call.microphone, options.audioEnabled),
-          this.setDeviceEnabled(this.bindings.call.camera, options.videoEnabled),
-        ]);
-        this.currentState = 'previewing';
-      } catch (error) {
-        await Promise.allSettled([
-          this.bindings.call.microphone.disable(true),
-          this.bindings.call.camera.disable(true),
-        ]);
         this.currentState = 'failed';
         throw error;
       }
@@ -250,7 +221,7 @@ export class StreamLiveMediaProvider implements LiveMediaProvider {
 
   setAudioEnabled(enabled: boolean): Promise<void> {
     return this.runExclusive(async () => {
-      const { call } = this.requireMediaActive();
+      const { call } = this.requireJoined();
       this.assertCanPublish(enabled);
       await this.setDeviceEnabled(call.microphone, enabled);
     });
@@ -258,7 +229,7 @@ export class StreamLiveMediaProvider implements LiveMediaProvider {
 
   setVideoEnabled(enabled: boolean): Promise<void> {
     return this.runExclusive(async () => {
-      const { call } = this.requireMediaActive();
+      const { call } = this.requireJoined();
       this.assertCanPublish(enabled);
       await this.setDeviceEnabled(call.camera, enabled);
     });
@@ -324,14 +295,6 @@ export class StreamLiveMediaProvider implements LiveMediaProvider {
     this.assertNotDisposed();
     if (this.currentState !== 'joined' || !this.bindings) {
       throw new StreamLiveMediaProviderError('live_media_not_joined');
-    }
-    return this.bindings;
-  }
-
-  private requireMediaActive(): StreamLiveMediaBindings {
-    this.assertNotDisposed();
-    if (!['previewing', 'joined'].includes(this.currentState) || !this.bindings) {
-      throw new StreamLiveMediaProviderError('live_media_not_active');
     }
     return this.bindings;
   }

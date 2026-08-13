@@ -12,7 +12,7 @@ import { useLiveMediaSession, useLiveSessionController } from '@/features/live/h
 import { useAuth } from '@/lib/auth-context';
 
 export default function LiveSessionScreen() {
-  const params = useLocalSearchParams<{ sessionId?: string }>();
+  const params = useLocalSearchParams<{ sessionId?: string; startAudio?: string; startVideo?: string }>();
   const sessionId = typeof params.sessionId === 'string' ? params.sessionId : '';
   const { user } = useAuth();
   const controller = useLiveSessionController(sessionId);
@@ -28,6 +28,8 @@ export default function LiveSessionScreen() {
   const isLive = snapshot?.session.status === 'live';
   const hasRequestedSeat = me?.state === 'stage_requested';
   const isOnStage = me?.state === 'on_stage' || me?.role === 'host';
+  const requestedStartAudio = params.startAudio === '1';
+  const requestedStartVideo = params.startVideo === '1';
 
   useEffect(() => {
     if (!isLive || busyAction !== null) return;
@@ -40,10 +42,10 @@ export default function LiveSessionScreen() {
     if (!['audience', 'stage_requested', 'on_stage'].includes(me.state) && me.role !== 'host') return;
     void joinMedia({
       mode: isOnStage ? 'backstage' : 'audience',
-      audioEnabled: false,
-      videoEnabled: false,
+      audioEnabled: isOnStage && requestedStartAudio,
+      videoEnabled: isOnStage && requestedStartVideo,
     });
-  }, [isLive, isOnStage, joinMedia, me, mediaState, snapshot]);
+  }, [isLive, isOnStage, joinMedia, me, mediaState, requestedStartAudio, requestedStartVideo, snapshot]);
 
   const attendeeCount = useMemo(() => {
     if (!snapshot) return 0;
@@ -114,10 +116,19 @@ export default function LiveSessionScreen() {
                 <Text style={styles.primaryText}>{hostActionLabel}</Text>
               </Pressable>
             ) : (
-              <Pressable onPress={() => void controller.rsvp(!going)} style={[styles.primaryButton, going && styles.goingButton]}>
-                <Text style={styles.primaryText}>{going ? 'You’re going' : 'Save my place'}</Text>
+              <Pressable
+                disabled={controller.busyAction !== null}
+                onPress={() => void controller.rsvp(!going)}
+                style={[styles.primaryButton, going && styles.goingButton, controller.busyAction !== null && styles.primaryButtonDisabled]}
+              >
+                <Text style={styles.primaryText}>{controller.busyAction === 'rsvp' ? 'Saving your place…' : going ? 'You’re going' : 'Save my place'}</Text>
               </Pressable>
             )}
+            {controller.error ? (
+              <Text accessibilityLiveRegion="polite" style={styles.actionError}>
+                We couldn’t save that yet. Check your connection and try again.
+              </Text>
+            ) : null}
           </View>
         </SafeAreaView>
       </View>
@@ -310,6 +321,8 @@ const styles = StyleSheet.create({
   promiseBody: { color: '#94A6A1', fontSize: 12, lineHeight: 19, fontFamily: 'Manrope_500Medium', marginTop: 7 },
   invitationActions: { padding: 20 },
   primaryButton: { height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center', backgroundColor: '#D7B56D' },
+  primaryButtonDisabled: { opacity: 0.55 },
   goingButton: { backgroundColor: '#82B5A5' },
   primaryText: { color: '#0E2723', fontSize: 14, fontFamily: 'Manrope_800ExtraBold' },
+  actionError: { color: '#F2AAA3', fontSize: 11, lineHeight: 17, textAlign: 'center', fontFamily: 'Manrope_600SemiBold', marginTop: 10 },
 });

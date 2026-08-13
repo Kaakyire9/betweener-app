@@ -3,73 +3,60 @@ import { Camera, CameraOff, ChevronLeft, Mic, MicOff, ShieldCheck, Wifi } from '
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { StreamLiveBackstagePreview } from '@/features/live/components/index.ts';
-import { useLiveDeviceReadiness, useLiveMediaSession, useLiveSessionController } from '@/features/live/hooks/index.ts';
+import { LiveBackstagePreview } from '@/features/live/components/index.ts';
+import { useLiveDeviceReadiness, useLiveSessionController } from '@/features/live/hooks/index.ts';
 
 export default function LiveBackstageScreen() {
   const params = useLocalSearchParams<{ sessionId?: string }>();
   const sessionId = typeof params.sessionId === 'string' ? params.sessionId : '';
-  const media = useLiveMediaSession(sessionId);
   const controller = useLiveSessionController(sessionId);
   const devices = useLiveDeviceReadiness();
-  const preparePreview = media.preparePreview;
-  const leavePreview = media.leave;
   const [cameraReady, setCameraReady] = useState(true);
   const [microphoneReady, setMicrophoneReady] = useState(true);
   const [guestReady, setGuestReady] = useState(false);
   const canOpenStage = controller.snapshot?.capabilities.includes('live.start_session') === true;
 
-  useEffect(() => {
-    if (!sessionId || devices.state !== 'ready' || guestReady) return;
-    if (media.state !== 'idle') return;
-    void preparePreview({ mode: 'backstage', audioEnabled: true, videoEnabled: true });
-  }, [devices.state, guestReady, media.state, preparePreview, sessionId]);
-
   const enterRoom = async () => {
     if (canOpenStage) {
       const transitioned = await controller.transitionSession('live');
       if (!transitioned) return;
-      await leavePreview();
-      router.replace({ pathname: '/live/[sessionId]', params: { sessionId } });
+      router.replace({
+        pathname: '/live/[sessionId]',
+        params: {
+          sessionId,
+          startAudio: microphoneReady ? '1' : '0',
+          startVideo: cameraReady ? '1' : '0',
+        },
+      });
       return;
     }
     setGuestReady(true);
-    await leavePreview();
   };
 
   useEffect(() => {
     if (canOpenStage || controller.snapshot?.me?.state !== 'on_stage') return;
-    void leavePreview().then(() => {
-      router.replace({ pathname: '/live/[sessionId]', params: { sessionId } });
+    router.replace({
+      pathname: '/live/[sessionId]',
+      params: {
+        sessionId,
+        startAudio: microphoneReady ? '1' : '0',
+        startVideo: cameraReady ? '1' : '0',
+      },
     });
-  }, [canOpenStage, controller.snapshot?.me?.state, leavePreview, sessionId]);
+  }, [cameraReady, canOpenStage, controller.snapshot?.me?.state, microphoneReady, sessionId]);
 
   const toggleCamera = async () => {
     const next = !cameraReady;
     setCameraReady(next);
-    if (media.state === 'previewing') await media.setVideoEnabled(next);
   };
   const toggleMicrophone = async () => {
     const next = !microphoneReady;
     setMicrophoneReady(next);
-    if (media.state === 'previewing') await media.setAudioEnabled(next);
-  };
-
-  const retryPreview = () => {
-    if (devices.state !== 'ready') {
-      void devices.request();
-      return;
-    }
-    void preparePreview({
-      mode: 'backstage',
-      audioEnabled: microphoneReady,
-      videoEnabled: cameraReady,
-    });
   };
 
   return (
     <View style={styles.root}>
-      {media.bindings && media.state === 'previewing' ? <StreamLiveBackstagePreview bindings={media.bindings} /> : (
+      {devices.state === 'ready' ? <LiveBackstagePreview active={cameraReady && !guestReady} /> : (
         <View style={styles.previewPlaceholder}>
           {devices.state === 'denied' || devices.state === 'failed' ? (
             <>
@@ -80,13 +67,6 @@ export default function LiveBackstageScreen() {
                 <Pressable onPress={() => void devices.request()} style={styles.permissionButton}><Text style={styles.permissionButtonText}>Try again</Text></Pressable>
                 <Pressable onPress={() => void Linking.openSettings()}><Text style={styles.settingsText}>Open settings</Text></Pressable>
               </View>
-            </>
-          ) : media.state === 'failed' ? (
-            <>
-              <CameraOff size={34} color="#D7B56D" />
-              <Text style={styles.permissionTitle}>Your private preview could not start.</Text>
-              <Text style={styles.previewText}>Check your connection, then try again. You have not joined the public stage.</Text>
-              <Pressable onPress={retryPreview} style={styles.permissionButton}><Text style={styles.permissionButtonText}>Retry private preview</Text></Pressable>
             </>
           ) : (
             <>
@@ -100,7 +80,7 @@ export default function LiveBackstageScreen() {
         <View style={styles.header}>
           <Pressable onPress={() => router.back()} style={styles.icon}><ChevronLeft size={24} color="#FFF7EC" /></Pressable>
           <View style={styles.privatePill}><ShieldCheck size={14} color="#D7B56D" /><Text style={styles.privateText}>PRIVATE BACKSTAGE</Text></View>
-          <View style={styles.icon}><Wifi size={18} color={media.connectionQuality === 'poor' ? '#E7A46B' : '#BFE0D7'} /></View>
+          <View style={styles.icon}><Wifi size={18} color={controller.state === 'offline' || controller.state === 'error' ? '#E7A46B' : '#BFE0D7'} /></View>
         </View>
         <View style={styles.bottom}>
           <View style={styles.copy}>
@@ -116,9 +96,9 @@ export default function LiveBackstageScreen() {
             </Pressable>
           </View>
           <Pressable
-            disabled={media.state !== 'previewing' || guestReady}
+            disabled={devices.state !== 'ready' || guestReady}
             onPress={() => void enterRoom()}
-            style={[styles.ready, (media.state !== 'previewing' || guestReady) && styles.readyDisabled]}
+            style={[styles.ready, (devices.state !== 'ready' || guestReady) && styles.readyDisabled]}
           >
             <Text style={styles.readyText}>{canOpenStage ? 'Open the public stage' : guestReady ? 'Ready · waiting for the host' : 'I’m ready for the room'}</Text>
           </Pressable>
