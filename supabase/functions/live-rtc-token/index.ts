@@ -18,6 +18,7 @@ type RtcAdmission = {
   provider_call_type: string;
   provider_call_id: string;
   capabilities: string[];
+  maximum_participants: number;
 };
 
 type RequestBody = {
@@ -49,10 +50,31 @@ const safeLog = (event: string, details: Record<string, unknown> = {}) => {
   console.info('[live-rtc-token]', event, details);
 };
 
+const providerErrorMetadata = (error: unknown): Record<string, unknown> => {
+  if (!error || typeof error !== 'object') return {};
+  const value = error as Record<string, unknown>;
+  const code = typeof value.code === 'string' || typeof value.code === 'number'
+    ? value.code
+    : null;
+  const status = typeof value.status === 'number'
+    ? value.status
+    : typeof value.statusCode === 'number'
+      ? value.statusCode
+      : null;
+  return { code, status };
+};
+
+const providerErrorCode = (error: unknown): string | number | null => {
+  if (!error || typeof error !== 'object') return null;
+  const code = (error as Record<string, unknown>).code;
+  return typeof code === 'string' || typeof code === 'number' ? code : null;
+};
+
 Deno.serve(async (request) => {
   if (request.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (request.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
 
+  let providerStep = 'request_validation';
   try {
     const authHeader = request.headers.get('Authorization')?.trim() ?? '';
     if (!authHeader.startsWith('Bearer ')) return json({ error: 'unauthorized' }, 401);
@@ -85,7 +107,7 @@ Deno.serve(async (request) => {
       return json({ error: 'rate_limited' }, 429);
     }
 
-    const { data, error } = await authClient.rpc('rpc_get_live_rtc_admission', {
+    const { data, error } = await authClient.rpc('rpc_get_live_rtc_admission_v2', {
       p_session_id: sessionId,
     });
     if (error) {
@@ -103,6 +125,9 @@ Deno.serve(async (request) => {
       || !Array.isArray(admission.roles)
       || admission.roles.length === 0
       || !Array.isArray(admission.capabilities)
+      || !Number.isInteger(admission.maximum_participants)
+      || admission.maximum_participants < 2
+      || admission.maximum_participants > 100
       || !['backstage', 'live', 'ending'].includes(admission.session_status)
       || !admission.capabilities.includes('live.join')
       || admission.participant_state === 'private_spark'
@@ -111,37 +136,52 @@ Deno.serve(async (request) => {
       return json({ error: 'live_admission_denied' }, 403);
     }
 
+    providerStep = 'provider_initialization';
     const callCid = `${admission.provider_call_type}:${admission.provider_call_id}`;
     const stream = new StreamClient(streamApiKey, streamSecret);
     const call = stream.video.call(admission.provider_call_type, admission.provider_call_id);
 
     // Membership is authoritative at issuance time and idempotent in Stream.
-    await stream.upsertUsers([{
-      id: 'betweener-live-system',
-      name: 'Betweener Live',
-      role: 'admin',
-    }]);
+    providerStep = 'system_user_upsert';
+    await stream.upsertUsers([
+      {
+        id: 'betweener-live-system',
+        name: 'Betweener Live',
+        role: 'admin',
+      },
+      {
+        // Call members must already exist in Stream. This upsert is
+        // idempotent and intentionally contains no profile PII.
+        id: userId,
+        role: 'user',
+      },
+    ]);
+    providerStep = 'call_get_or_create';
     await call.getOrCreate({
       notify: false,
       ring: false,
       data: {
-        created_by: {
-          id: 'betweener-live-system',
-          name: 'Betweener Live',
+        // The server SDK accepts the authoritative creator by ID. The user is
+        // upserted above, so repeated get-or-create requests remain idempotent.
+        created_by_id: 'betweener-live-system',
+        members: [{ user_id: userId, role: 'call_member' }],
+        settings_override: {
+          limits: { max_participants: admission.maximum_participants },
         },
-        members: [{ user_id: userId, role: 'user' }],
         custom: {
           betweener_session_id: sessionId,
           recording_allowed: false,
         },
       },
     });
+    providerStep = 'call_member_update';
     await call.updateCallMembers({
-      update_members: [{ user_id: userId, role: 'user' }],
+      update_members: [{ user_id: userId, role: 'call_member' }],
     });
 
     // Publisher permissions are call-scoped and derived from Betweener capability.
     const publishPermissions = ['send-audio', 'send-video'];
+    providerStep = 'call_permission_update';
     await call.updateUserPermissions({
       user_id: userId,
       grant_permissions: admission.capabilities.includes('live.publish')
@@ -152,6 +192,7 @@ Deno.serve(async (request) => {
         : publishPermissions,
     });
 
+    providerStep = 'token_generation';
     const token = stream.generateCallToken({
       user_id: userId,
       call_cids: [callCid],
@@ -185,9 +226,17 @@ Deno.serve(async (request) => {
       sessionStatus: admission.session_status,
     });
   } catch (error) {
+    const code = providerErrorCode(error);
     safeLog('unexpected-error', {
+      step: providerStep,
       name: error instanceof Error ? error.name : 'UnknownError',
+      ...providerErrorMetadata(error),
     });
+    // Stream code 16 is DoesNotExistError. At call creation this means the
+    // configured call type has not been created in the Stream application.
+    if (providerStep === 'call_get_or_create' && Number(code) === 16) {
+      return json({ error: 'live_provider_call_type_missing' }, 503);
+    }
     return json({ error: 'live_token_temporarily_unavailable' }, 500);
   }
 });

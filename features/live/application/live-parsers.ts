@@ -79,7 +79,7 @@ const parseLiveSeatRequest = (value: unknown): LiveSeatRequest => {
   };
 };
 
-const parseLiveComment = (value: unknown): LiveComment => {
+export const parseLiveComment = (value: unknown): LiveComment => {
   if (!isRecord(value)) throw new Error('live_comment_invalid');
   return {
     id: asString(value.id),
@@ -91,6 +91,7 @@ const parseLiveComment = (value: unknown): LiveComment => {
     createdAt: asString(value.created_at),
     fullName: asNullableString(value.full_name),
     avatarUrl: asNullableString(value.avatar_url),
+    role: asString(value.role, 'audience'),
   };
 };
 
@@ -139,6 +140,7 @@ export const parseLiveSessionSummary = (value: unknown): LiveSessionSummary => {
 
 export const parseLiveSessionSnapshot = (value: unknown): LiveSessionSnapshot => {
   if (!isRecord(value)) throw new Error('live_session_snapshot_invalid');
+  const comments = Array.isArray(value.comments) ? value.comments.map(parseLiveComment) : [];
   const capabilities = Array.isArray(value.capabilities)
     ? value.capabilities.filter((item): item is LiveCapability => includes(LIVE_CAPABILITIES, item))
     : [];
@@ -152,6 +154,7 @@ export const parseLiveSessionSnapshot = (value: unknown): LiveSessionSnapshot =>
     seatRequests: Array.isArray(value.seatRequests)
       ? value.seatRequests.map(parseLiveSeatRequest)
       : [],
-    comments: Array.isArray(value.comments) ? value.comments.map(parseLiveComment) : [],
+    comments,
+    commentCount: Math.max(asNumber(value.commentCount), comments.length),
   };
 };

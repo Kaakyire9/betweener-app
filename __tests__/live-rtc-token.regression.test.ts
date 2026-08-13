@@ -34,7 +34,7 @@ test('Live RTC token function requires platform JWT verification and pins depend
 });
 
 test('Live RTC tokens are call-scoped, short-lived, rate-limited and no-store', () => {
-  assert.match(source, /rpc_get_live_rtc_admission/);
+  assert.match(source, /rpc_get_live_rtc_admission_v2/);
   assert.match(source, /generateCallToken/);
   assert.match(source, /call_cids:\s*\[callCid\]/);
   assert.match(source, /PUBLIC_TOKEN_TTL_SECONDS\s*=\s*10\s*\*\s*60/);
@@ -43,6 +43,12 @@ test('Live RTC tokens are call-scoped, short-lived, rate-limited and no-store', 
   assert.match(rateLimitMigration, /auth\.uid\(\)::text/);
   assert.match(rateLimitMigration, /revoke all on function public\.rpc_bump_live_rtc_token_rate_limit/);
   assert.match(rateLimitMigration, /grant execute[\s\S]*to authenticated/);
+});
+
+test('Live RTC calls mirror the database participant ceiling at Stream', () => {
+  assert.match(source, /maximum_participants:\s*number/);
+  assert.match(source, /admission\.maximum_participants > 100/);
+  assert.match(source, /settings_override:[\s\S]+max_participants: admission\.maximum_participants/);
 });
 
 test('Live RTC endpoint rejects private spark and controls publisher permissions server-side', () => {
@@ -60,5 +66,16 @@ test('Live RTC endpoint rejects private spark and controls publisher permissions
 
 test('an audience member can never become the provider call creator', () => {
   assert.match(source, /id:\s*'betweener-live-system'/);
+  assert.match(source, /id:\s*userId,\s*\n\s*role:\s*'user'/);
+  assert.ok(source.indexOf('id: userId') < source.indexOf('call.getOrCreate'));
+  assert.match(source, /created_by_id:\s*'betweener-live-system'/);
+  assert.match(source, /members:\s*\[\{ user_id:\s*userId, role:\s*'call_member' \}\]/);
+  assert.match(source, /update_members:\s*\[\{ user_id:\s*userId, role:\s*'call_member' \}\]/);
   assert.doesNotMatch(source, /created_by_id:\s*userId/);
+});
+
+test('a missing provider call type is diagnosed without leaking provider details', () => {
+  assert.match(source, /providerStep === 'call_get_or_create'/);
+  assert.match(source, /Number\(code\) === 16/);
+  assert.match(source, /live_provider_call_type_missing/);
 });

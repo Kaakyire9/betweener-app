@@ -64,6 +64,7 @@ export type LiveComment = {
   createdAt: string;
   fullName: string | null;
   avatarUrl: string | null;
+  role: string;
 };
 
 export type LiveSessionRecord = {
@@ -93,6 +94,7 @@ export type LiveSessionSnapshot = {
   audienceCount: number;
   seatRequests: readonly LiveSeatRequest[];
   comments: readonly LiveComment[];
+  commentCount: number;
 };
 
 export type ScheduleLiveSessionInput = {

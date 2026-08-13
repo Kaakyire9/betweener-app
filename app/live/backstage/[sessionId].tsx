@@ -14,12 +14,20 @@ export default function LiveBackstageScreen() {
   const [cameraReady, setCameraReady] = useState(true);
   const [microphoneReady, setMicrophoneReady] = useState(true);
   const [guestReady, setGuestReady] = useState(false);
+  const [cameraHandoff, setCameraHandoff] = useState(false);
   const canOpenStage = controller.snapshot?.capabilities.includes('live.start_session') === true;
 
   const enterRoom = async () => {
     if (canOpenStage) {
+      // Release Vision Camera before Stream requests the native capture
+      // session. iOS otherwise intermittently rejects the immediate handoff.
+      setCameraHandoff(true);
+      await new Promise((resolve) => setTimeout(resolve, 250));
       const transitioned = await controller.transitionSession('live');
-      if (!transitioned) return;
+      if (!transitioned) {
+        setCameraHandoff(false);
+        return;
+      }
       router.replace({
         pathname: '/live/[sessionId]',
         params: {
@@ -56,7 +64,7 @@ export default function LiveBackstageScreen() {
 
   return (
     <View style={styles.root}>
-      {devices.state === 'ready' ? <LiveBackstagePreview active={cameraReady && !guestReady} /> : (
+      {devices.state === 'ready' ? <LiveBackstagePreview active={cameraReady && !guestReady && !cameraHandoff} /> : (
         <View style={styles.previewPlaceholder}>
           {devices.state === 'denied' || devices.state === 'failed' ? (
             <>

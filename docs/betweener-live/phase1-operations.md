@@ -7,7 +7,21 @@ a public Live route or enable Live for production users.
 
 Create a Stream Video call type named `betweener_live` before device testing.
 
+This name is case-sensitive. In the Stream dashboard, open **Video > Types**
+and confirm `betweener_live` exists in the same Stream application as
+`STREAM_VIDEO_API_KEY`. Stream error code `16` during `call_get_or_create`
+means that this call type does not exist in that application.
+
+- Base it on a normal group-call type, not Stream's managed `livestream`
+  lifecycle. Supabase owns Betweener's backstage/live state.
+- Grant the `user` role `join-call`, but do not grant `send-audio` or
+  `send-video` globally. The token function grants publication per call only
+  after the authoritative `live.publish` capability is present.
+- Keep camera and microphone defaults off. The member's explicit backstage
+  choices control whether publication starts after joining.
 - Disable recording and HLS for the beta foundation.
+- Disable Stream backstage/go-live gating, ringing, screen sharing and
+  transcription for this beta call type.
 - Do not configure ringing, CallKit, persistent background audio, screen share,
   or picture-in-picture.
 - Treat Stream roles as transport defaults only. Supabase capabilities remain

@@ -1,22 +1,76 @@
-import type { Call, StreamVideoClient, StreamVideoParticipant } from '@stream-io/video-client';
 import {
-  ParticipantView,
-  StreamCall,
-  StreamVideo,
-  useCallStateHooks,
-} from '@stream-io/video-react-native-sdk';
-import { memo } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+  hasAudio,
+  hasVideo,
+  type Call,
+  type StreamVideoClient,
+  type StreamVideoParticipant,
+} from '@stream-io/video-client';
+import { StreamCall, StreamVideo, useCallStateHooks } from '@stream-io/video-react-native-sdk';
+import { memo, useEffect, useMemo } from 'react';
+import { StyleSheet, Text, View, type ViewStyle } from 'react-native';
+import type { LiveParticipant } from '../application/live-models.ts';
 import type { StreamLiveMediaBindings } from '../media/stream-live-media-provider.ts';
+import {
+  composeLiveStageSeats,
+  countConnectedLiveParticipants,
+  liveStageTilePlacement,
+  type LiveStageTilePlacement,
+} from '../stage/live-stage-layout.ts';
+import { LiveStageParticipantTile } from './LiveStageParticipantTile.tsx';
 
 type StreamLiveStageProps = {
   bindings: StreamLiveMediaBindings;
+  stageParticipants: readonly LiveParticipant[];
+  localPublisherUserId: string | null;
+  onConnectedParticipantCountChange?: (count: number) => void;
 };
 
-const StageGrid = memo(function StageGrid() {
-  const { useParticipants } = useCallStateHooks();
-  const participants = useParticipants().slice(0, 4);
+const PLACEMENT_STYLES: Record<LiveStageTilePlacement, ViewStyle> = {
+  single: { left: 0, top: 0, width: '100%', height: '100%' },
+  'dual-left': { left: 0, top: 0, width: '50%', height: '100%' },
+  'dual-right': { right: 0, top: 0, width: '50%', height: '100%' },
+  'trio-lead': { left: 0, top: 0, width: '100%', height: '56%' },
+  'trio-bottom-left': { left: 0, bottom: 0, width: '50%', height: '44%' },
+  'trio-bottom-right': { right: 0, bottom: 0, width: '50%', height: '44%' },
+  'quad-top-left': { left: 0, top: 0, width: '50%', height: '50%' },
+  'quad-top-right': { right: 0, top: 0, width: '50%', height: '50%' },
+  'quad-bottom-left': { left: 0, bottom: 0, width: '50%', height: '50%' },
+  'quad-bottom-right': { right: 0, bottom: 0, width: '50%', height: '50%' },
+};
 
+const StageGrid = memo(function StageGrid({
+  stageParticipants,
+  localPublisherUserId,
+  onConnectedParticipantCountChange,
+}: Pick<StreamLiveStageProps, 'stageParticipants' | 'localPublisherUserId' | 'onConnectedParticipantCountChange'>) {
+  const { useParticipants } = useCallStateHooks();
+  const rtcParticipants = useParticipants();
+  const candidates = useMemo(() => (
+    rtcParticipants.map((participant: StreamVideoParticipant) => ({
+      participant,
+      userId: participant.userId,
+      sessionId: participant.sessionId,
+      isLocalParticipant: participant.isLocalParticipant === true,
+      isSpeaking: participant.isSpeaking,
+      hasVideo: hasVideo(participant),
+      hasAudio: hasAudio(participant),
+    }))
+  ), [rtcParticipants]);
+  const connectedParticipantCount = useMemo(
+    () => countConnectedLiveParticipants(candidates),
+    [candidates],
+  );
+  const participants = useMemo(() => {
+    return composeLiveStageSeats(
+      candidates,
+      stageParticipants,
+      localPublisherUserId,
+    );
+  }, [candidates, localPublisherUserId, stageParticipants]);
+
+  useEffect(() => {
+    onConnectedParticipantCountChange?.(connectedParticipantCount);
+  }, [connectedParticipantCount, onConnectedParticipantCountChange]);
   if (!participants.length) {
     return (
       <View style={styles.emptyStage}>
@@ -28,57 +82,55 @@ const StageGrid = memo(function StageGrid() {
   }
 
   return (
-    <View style={[styles.grid, participants.length === 1 && styles.singleGrid]}>
-      {participants.map((participant: StreamVideoParticipant, index: number) => (
-        <View
-          key={participant.sessionId}
-          style={[
-            styles.tile,
-            participants.length === 1 && styles.singleTile,
-            participants.length === 3 && index === 0 && styles.leadTile,
-          ]}
-        >
-          <ParticipantView
-            participant={participant}
-            objectFit="cover"
-            style={styles.participant}
-          />
-        </View>
-      ))}
+    <View style={styles.grid}>
+      {participants.map(({ candidate, identity, userId }, index) => {
+        const placement = liveStageTilePlacement(participants.length, index);
+        return (
+          <View
+            key={userId}
+            style={[styles.tile, PLACEMENT_STYLES[placement]]}
+          >
+            <LiveStageParticipantTile
+              participant={candidate?.participant ?? null}
+              identity={identity}
+              fit={participants.length === 1 ? 'cover' : 'contain'}
+            />
+          </View>
+        );
+      })}
     </View>
   );
 });
 
-export const StreamLiveStage = memo(function StreamLiveStage({ bindings }: StreamLiveStageProps) {
+export const StreamLiveStage = memo(function StreamLiveStage({
+  bindings,
+  stageParticipants,
+  localPublisherUserId,
+  onConnectedParticipantCountChange,
+}: StreamLiveStageProps) {
   const client = bindings.client as unknown as StreamVideoClient;
   const call = bindings.call as unknown as Call;
   return (
     <StreamVideo client={client}>
       <StreamCall call={call}>
-        <StageGrid />
+        <StageGrid
+          stageParticipants={stageParticipants}
+          localPublisherUserId={localPublisherUserId}
+          onConnectedParticipantCountChange={onConnectedParticipantCountChange}
+        />
       </StreamCall>
     </StreamVideo>
   );
 });
 
 const styles = StyleSheet.create({
-  grid: {
-    flex: 1,
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 2,
-    backgroundColor: '#091413',
-  },
-  singleGrid: { flexWrap: 'nowrap' },
+  grid: { flex: 1, backgroundColor: '#091413' },
   tile: {
-    width: '49.7%',
-    minHeight: '49.7%',
+    position: 'absolute',
+    padding: 1,
     overflow: 'hidden',
-    backgroundColor: '#152423',
+    backgroundColor: '#12211F',
   },
-  singleTile: { width: '100%', height: '100%' },
-  leadTile: { width: '100%', minHeight: '55%' },
-  participant: { flex: 1 },
   emptyStage: {
     flex: 1,
     alignItems: 'center',
@@ -110,4 +162,3 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
 });
-

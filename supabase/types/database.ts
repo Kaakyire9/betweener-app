@@ -3525,6 +3525,770 @@ export type Database = {
         }
         Relationships: []
       }
+      live_comments: {
+        Row: {
+          body: string
+          client_comment_id: string
+          created_at: string
+          id: string
+          moderated_at: string | null
+          moderated_by_user_id: string | null
+          profile_id: string
+          session_id: string
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          body: string
+          client_comment_id: string
+          created_at?: string
+          id?: string
+          moderated_at?: string | null
+          moderated_by_user_id?: string | null
+          profile_id: string
+          session_id: string
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          body?: string
+          client_comment_id?: string
+          created_at?: string
+          id?: string
+          moderated_at?: string | null
+          moderated_by_user_id?: string | null
+          profile_id?: string
+          session_id?: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_comments_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "live_comments_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_comments_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_creator_eligibility: {
+        Row: {
+          allowed_context_types: string[]
+          created_at: string
+          enabled: boolean
+          expires_at: string | null
+          granted_by_user_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          allowed_context_types?: string[]
+          created_at?: string
+          enabled?: boolean
+          expires_at?: string | null
+          granted_by_user_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          allowed_context_types?: string[]
+          created_at?: string
+          enabled?: boolean
+          expires_at?: string | null
+          granted_by_user_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      live_moderation_actions: {
+        Row: {
+          action: string
+          actor_user_id: string
+          client_action_id: string | null
+          created_at: string
+          id: string
+          metadata: Json
+          reason: string | null
+          session_id: string
+          target_user_id: string | null
+        }
+        Insert: {
+          action: string
+          actor_user_id: string
+          client_action_id?: string | null
+          created_at?: string
+          id?: string
+          metadata?: Json
+          reason?: string | null
+          session_id: string
+          target_user_id?: string | null
+        }
+        Update: {
+          action?: string
+          actor_user_id?: string
+          client_action_id?: string | null
+          created_at?: string
+          id?: string
+          metadata?: Json
+          reason?: string | null
+          session_id?: string
+          target_user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_moderation_actions_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_participant_roles: {
+        Row: {
+          assigned_by_user_id: string
+          created_at: string
+          id: string
+          role: string
+          session_id: string
+          user_id: string
+        }
+        Insert: {
+          assigned_by_user_id: string
+          created_at?: string
+          id?: string
+          role: string
+          session_id: string
+          user_id: string
+        }
+        Update: {
+          assigned_by_user_id?: string
+          created_at?: string
+          id?: string
+          role?: string
+          session_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_participant_roles_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_participants: {
+        Row: {
+          connection_quality_state: string
+          created_at: string
+          id: string
+          invited_at: string
+          joined_at: string | null
+          last_connection_change_at: string | null
+          last_seen_at: string | null
+          left_at: string | null
+          microphone_muted_by_moderator: boolean
+          open_to_introductions: boolean
+          origin_context_id: string | null
+          origin_context_type: string
+          profile_id: string
+          reconnect_state: string | null
+          role: string
+          rsvp_status: string
+          session_id: string
+          stage_joined_at: string | null
+          stage_left_at: string | null
+          stage_slot: number | null
+          state: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          connection_quality_state?: string
+          created_at?: string
+          id?: string
+          invited_at?: string
+          joined_at?: string | null
+          last_connection_change_at?: string | null
+          last_seen_at?: string | null
+          left_at?: string | null
+          microphone_muted_by_moderator?: boolean
+          open_to_introductions?: boolean
+          origin_context_id?: string | null
+          origin_context_type: string
+          profile_id: string
+          reconnect_state?: string | null
+          role?: string
+          rsvp_status?: string
+          session_id: string
+          stage_joined_at?: string | null
+          stage_left_at?: string | null
+          stage_slot?: number | null
+          state?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          connection_quality_state?: string
+          created_at?: string
+          id?: string
+          invited_at?: string
+          joined_at?: string | null
+          last_connection_change_at?: string | null
+          last_seen_at?: string | null
+          left_at?: string | null
+          microphone_muted_by_moderator?: boolean
+          open_to_introductions?: boolean
+          origin_context_id?: string | null
+          origin_context_type?: string
+          profile_id?: string
+          reconnect_state?: string | null
+          role?: string
+          rsvp_status?: string
+          session_id?: string
+          stage_joined_at?: string | null
+          stage_left_at?: string | null
+          stage_slot?: number | null
+          state?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_participants_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "live_participants_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_participants_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_provider_control_jobs: {
+        Row: {
+          action: string
+          attempt_count: number
+          created_at: string
+          id: number
+          last_error: string | null
+          moderation_action_id: string
+          processed_at: string | null
+          session_id: string
+          status: string
+          target_user_id: string
+        }
+        Insert: {
+          action: string
+          attempt_count?: number
+          created_at?: string
+          id?: never
+          last_error?: string | null
+          moderation_action_id: string
+          processed_at?: string | null
+          session_id: string
+          status?: string
+          target_user_id: string
+        }
+        Update: {
+          action?: string
+          attempt_count?: number
+          created_at?: string
+          id?: never
+          last_error?: string | null
+          moderation_action_id?: string
+          processed_at?: string | null
+          session_id?: string
+          status?: string
+          target_user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_provider_control_jobs_moderation_action_id_fkey"
+            columns: ["moderation_action_id"]
+            isOneToOne: true
+            referencedRelation: "live_moderation_actions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_provider_control_jobs_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_provider_webhook_events: {
+        Row: {
+          attempt_count: number
+          event_type: string
+          id: number
+          last_error: string | null
+          payload_digest: string
+          processed_at: string | null
+          provider: string
+          provider_event_id: string
+          received_at: string
+          status: string
+        }
+        Insert: {
+          attempt_count?: number
+          event_type: string
+          id?: never
+          last_error?: string | null
+          payload_digest: string
+          processed_at?: string | null
+          provider: string
+          provider_event_id: string
+          received_at?: string
+          status?: string
+        }
+        Update: {
+          attempt_count?: number
+          event_type?: string
+          id?: never
+          last_error?: string | null
+          payload_digest?: string
+          processed_at?: string | null
+          provider?: string
+          provider_event_id?: string
+          received_at?: string
+          status?: string
+        }
+        Relationships: []
+      }
+      live_reactions: {
+        Row: {
+          client_event_id: string
+          created_at: string
+          id: number
+          profile_id: string
+          reaction: string
+          session_id: string
+          user_id: string
+        }
+        Insert: {
+          client_event_id: string
+          created_at?: string
+          id?: never
+          profile_id: string
+          reaction: string
+          session_id: string
+          user_id: string
+        }
+        Update: {
+          client_event_id?: string
+          created_at?: string
+          id?: never
+          profile_id?: string
+          reaction?: string
+          session_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_reactions_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "live_reactions_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_reactions_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_reports: {
+        Row: {
+          client_report_id: string
+          created_at: string
+          details: string | null
+          id: string
+          reason: string
+          reporter_profile_id: string
+          reporter_user_id: string
+          resolved_at: string | null
+          session_id: string
+          status: string
+          target_comment_id: string | null
+          target_user_id: string | null
+        }
+        Insert: {
+          client_report_id: string
+          created_at?: string
+          details?: string | null
+          id?: string
+          reason: string
+          reporter_profile_id: string
+          reporter_user_id: string
+          resolved_at?: string | null
+          session_id: string
+          status?: string
+          target_comment_id?: string | null
+          target_user_id?: string | null
+        }
+        Update: {
+          client_report_id?: string
+          created_at?: string
+          details?: string | null
+          id?: string
+          reason?: string
+          reporter_profile_id?: string
+          reporter_user_id?: string
+          resolved_at?: string | null
+          session_id?: string
+          status?: string
+          target_comment_id?: string | null
+          target_user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_reports_reporter_profile_id_fkey"
+            columns: ["reporter_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "live_reports_reporter_profile_id_fkey"
+            columns: ["reporter_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_reports_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_reports_target_comment_id_fkey"
+            columns: ["target_comment_id"]
+            isOneToOne: false
+            referencedRelation: "live_comments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_seat_requests: {
+        Row: {
+          id: string
+          profile_id: string
+          requested_at: string
+          resolved_at: string | null
+          resolved_by_user_id: string | null
+          session_id: string
+          status: string
+          user_id: string
+        }
+        Insert: {
+          id?: string
+          profile_id: string
+          requested_at?: string
+          resolved_at?: string | null
+          resolved_by_user_id?: string | null
+          session_id: string
+          status?: string
+          user_id: string
+        }
+        Update: {
+          id?: string
+          profile_id?: string
+          requested_at?: string
+          resolved_at?: string | null
+          resolved_by_user_id?: string | null
+          session_id?: string
+          status?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_seat_requests_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "live_seat_requests_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_seat_requests_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_session_capability_assignments: {
+        Row: {
+          assigned_by_user_id: string
+          capability: string
+          created_at: string
+          effect: string
+          id: string
+          session_id: string
+          user_id: string
+        }
+        Insert: {
+          assigned_by_user_id: string
+          capability: string
+          created_at?: string
+          effect?: string
+          id?: string
+          session_id: string
+          user_id: string
+        }
+        Update: {
+          assigned_by_user_id?: string
+          capability?: string
+          created_at?: string
+          effect?: string
+          id?: string
+          session_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_session_capability_assignments_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_session_events: {
+        Row: {
+          actor_user_id: string | null
+          created_at: string
+          event_type: string
+          from_state: string | null
+          id: number
+          metadata: Json
+          session_id: string
+          to_state: string | null
+        }
+        Insert: {
+          actor_user_id?: string | null
+          created_at?: string
+          event_type: string
+          from_state?: string | null
+          id?: never
+          metadata?: Json
+          session_id: string
+          to_state?: string | null
+        }
+        Update: {
+          actor_user_id?: string | null
+          created_at?: string
+          event_type?: string
+          from_state?: string | null
+          id?: never
+          metadata?: Json
+          session_id?: string
+          to_state?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_session_events_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_sessions: {
+        Row: {
+          backstage_opened_at: string | null
+          cancelled_at: string | null
+          captions_enabled: boolean
+          chemistry_first_enabled: boolean
+          circle_id: string | null
+          configuration: Json
+          context_id: string | null
+          context_type: string
+          created_at: string
+          created_by_profile_id: string
+          created_by_user_id: string
+          description: string | null
+          ended_at: string | null
+          format: string
+          gathering_id: string | null
+          id: string
+          maximum_participants: number
+          maximum_publishers: number
+          minimum_participants: number
+          provider: string
+          provider_call_id: string
+          provider_call_type: string
+          quorum_reached_at: string | null
+          recording_enabled: boolean
+          scheduled_end: string | null
+          scheduled_start: string | null
+          started_at: string | null
+          status: string
+          title: string
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          backstage_opened_at?: string | null
+          cancelled_at?: string | null
+          captions_enabled?: boolean
+          chemistry_first_enabled?: boolean
+          circle_id?: string | null
+          configuration?: Json
+          context_id?: string | null
+          context_type?: string
+          created_at?: string
+          created_by_profile_id: string
+          created_by_user_id: string
+          description?: string | null
+          ended_at?: string | null
+          format?: string
+          gathering_id?: string | null
+          id?: string
+          maximum_participants?: number
+          maximum_publishers?: number
+          minimum_participants?: number
+          provider?: string
+          provider_call_id: string
+          provider_call_type?: string
+          quorum_reached_at?: string | null
+          recording_enabled?: boolean
+          scheduled_end?: string | null
+          scheduled_start?: string | null
+          started_at?: string | null
+          status?: string
+          title: string
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          backstage_opened_at?: string | null
+          cancelled_at?: string | null
+          captions_enabled?: boolean
+          chemistry_first_enabled?: boolean
+          circle_id?: string | null
+          configuration?: Json
+          context_id?: string | null
+          context_type?: string
+          created_at?: string
+          created_by_profile_id?: string
+          created_by_user_id?: string
+          description?: string | null
+          ended_at?: string | null
+          format?: string
+          gathering_id?: string | null
+          id?: string
+          maximum_participants?: number
+          maximum_publishers?: number
+          minimum_participants?: number
+          provider?: string
+          provider_call_id?: string
+          provider_call_type?: string
+          quorum_reached_at?: string | null
+          recording_enabled?: boolean
+          scheduled_end?: string | null
+          scheduled_start?: string | null
+          started_at?: string | null
+          status?: string
+          title?: string
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_sessions_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circle_location_features"
+            referencedColumns: ["circle_id"]
+          },
+          {
+            foreignKeyName: "live_sessions_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_sessions_created_by_profile_id_fkey"
+            columns: ["created_by_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "live_sessions_created_by_profile_id_fkey"
+            columns: ["created_by_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_sessions_gathering_id_fkey"
+            columns: ["gathering_id"]
+            isOneToOne: false
+            referencedRelation: "gatherings"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       match_celebration_events: {
         Row: {
           created_at: string
@@ -4404,6 +5168,9 @@ export type Database = {
           id: string
           inapp_enabled: boolean
           likes: boolean
+          live_invitations: boolean
+          live_reminders: boolean
+          live_started: boolean
           matches: boolean
           message_reactions: boolean
           messages: boolean
@@ -4430,6 +5197,9 @@ export type Database = {
           id?: string
           inapp_enabled?: boolean
           likes?: boolean
+          live_invitations?: boolean
+          live_reminders?: boolean
+          live_started?: boolean
           matches?: boolean
           message_reactions?: boolean
           messages?: boolean
@@ -4456,6 +5226,9 @@ export type Database = {
           id?: string
           inapp_enabled?: boolean
           likes?: boolean
+          live_invitations?: boolean
+          live_reminders?: boolean
+          live_started?: boolean
           matches?: boolean
           message_reactions?: boolean
           messages?: boolean
@@ -7825,6 +8598,15 @@ export type Database = {
         Args: { p_bucket_id: string; p_object_name: string; p_user_id?: string }
         Returns: boolean
       }
+      can_create_live_context: {
+        Args: {
+          p_circle_id?: string
+          p_context_type: string
+          p_gathering_id?: string
+          p_user_id?: string
+        }
+        Returns: boolean
+      }
       can_invite_to_circle: {
         Args: { p_circle_id: string; p_user_id: string }
         Returns: boolean
@@ -7838,12 +8620,18 @@ export type Database = {
         Args: { p_receiver_user_id: string; p_sender_user_id: string }
         Returns: boolean
       }
+      can_view_live_session: {
+        Args: { p_session_id: string; p_user_id?: string }
+        Returns: boolean
+      }
       can_view_moment: { Args: { p_moment_id: string }; Returns: boolean }
       circle_pulse_comment_reaction_summary_json: {
         Args: { p_comment_id: string }
         Returns: Json
       }
       clean_expired_distance_cache: { Args: never; Returns: number }
+      cleanup_live_ephemeral_activity: { Args: never; Returns: Json }
+      cleanup_live_stale_participants: { Args: never; Returns: Json }
       cleanup_phone_verifications_orphans: { Args: never; Returns: undefined }
       cleanup_stale_circle_love_seats: {
         Args: { p_circle_id?: string }
@@ -8528,6 +9316,10 @@ export type Database = {
         Args: { p_profile_id?: string; p_user_id?: string }
         Returns: boolean
       }
+      has_live_capability: {
+        Args: { p_capability: string; p_session_id: string; p_user_id?: string }
+        Returns: boolean
+      }
       has_usable_vibes_coordinates: {
         Args: { p_latitude: number; p_longitude: number }
         Returns: boolean
@@ -8573,6 +9365,127 @@ export type Database = {
         Args: { p_target_profile_id?: string; p_viewer_profile_id: string }
         Returns: boolean
       }
+      live_active_profile: {
+        Args: { p_user_id?: string }
+        Returns: {
+          account_state: string
+          account_state_updated_at: string
+          age: number | null
+          age_preference_confirmed_at: string | null
+          ai_score: number | null
+          ai_score_updated_at: string | null
+          avatar_url: string | null
+          bio: string | null
+          city: string | null
+          country_lock_policy: string
+          country_verification_started_at: string | null
+          country_verification_target_code: string | null
+          country_verified_at: string | null
+          created_at: string
+          created_via_provider: string | null
+          current_country: string | null
+          current_country_code: string | null
+          deleted_at: string | null
+          discoverable_in_vibes: boolean
+          drinking: string | null
+          duplicate_of_user_id: string | null
+          education: string | null
+          exercise_frequency: string | null
+          full_name: string | null
+          future_ghana_plans: string | null
+          gender: Database["public"]["Enums"]["gender"] | null
+          has_children: string | null
+          height: string | null
+          hero_image_url: string | null
+          id: string
+          identity_disabled_at: string | null
+          identity_finalized_at: string | null
+          identity_resolution_reason: string | null
+          identity_status: string
+          identity_status_updated_at: string
+          is_active: boolean
+          languages_spoken: string[] | null
+          last_active: string | null
+          last_ghana_visit: string | null
+          last_successful_auth_provider: string | null
+          latitude: number | null
+          living_situation: string | null
+          locality_admin1_code: string | null
+          locality_district: string | null
+          locality_geoname_id: number | null
+          locality_provider: string | null
+          location: string | null
+          location_precision: Database["public"]["Enums"]["location_precision"]
+          location_updated_at: string | null
+          longitude: number | null
+          looking_for: string | null
+          love_language: string | null
+          matchmaking_mode: boolean
+          max_age_interest: number | null
+          min_age_interest: number | null
+          occupation: string | null
+          onboarding_completed_at: string | null
+          onboarding_step: number
+          onboarding_variant: string | null
+          online: boolean
+          origin_country: string | null
+          origin_country_code: string | null
+          origin_country_source: string
+          pause_reason: string | null
+          paused_at: string | null
+          personality_type: string | null
+          pets: string | null
+          phone_number: string | null
+          phone_verification_score: number | null
+          phone_verified: boolean | null
+          phone_verified_at: string | null
+          photos: string[] | null
+          profile_completed: boolean
+          profile_video: string | null
+          public_key: string | null
+          recovered_to_user_id: string | null
+          region: string | null
+          relationship_compass: Json
+          religion: Database["public"]["Enums"]["religion"] | null
+          roots: string[] | null
+          roots_locality: string | null
+          roots_locality_geoname_id: number | null
+          roots_note: string | null
+          roots_region: string | null
+          roots_visibility: string
+          search_name: string | null
+          smoking: string | null
+          superlikes_left: number
+          superlikes_reset_at: string | null
+          tribe: string | null
+          updated_at: string
+          user_id: string
+          username: string | null
+          verification_level: number | null
+          verification_refresh_reason: string | null
+          verification_refresh_requested_at: string | null
+          verification_refresh_requested_by: string | null
+          verification_refresh_required: boolean
+          verification_refresh_resolved_at: string | null
+          verification_refresh_target_level: number | null
+          verification_refresh_user_notified: boolean
+          vibes_practice_completed_at: string | null
+          vibes_practice_completed_version: number
+          wants_children: string | null
+          years_in_diaspora: number | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "profiles"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      live_profile_avatar: {
+        Args: { p_profile: Database["public"]["Tables"]["profiles"]["Row"] }
+        Returns: string
+      }
+      live_role_capabilities: { Args: { p_role: string }; Returns: string[] }
       longtransactionsenabled: { Args: never; Returns: boolean }
       normalize_location_key: { Args: { p_value: string }; Returns: string }
       normalize_vibes_country_code: {
@@ -8700,6 +9613,10 @@ export type Database = {
         Returns: number
       }
       reset_daily_superlikes: { Args: never; Returns: undefined }
+      resolve_live_capabilities: {
+        Args: { p_session_id: string; p_user_id?: string }
+        Returns: string[]
+      }
       rpc_abandon_stale_chat_attachment_finalizations: {
         Args: { p_limit?: number }
         Returns: number
@@ -9417,6 +10334,15 @@ export type Database = {
         Args: { p_days?: number; p_limit?: number }
         Returns: number
       }
+      rpc_bump_live_rtc_token_rate_limit: {
+        Args: { p_session_id: string }
+        Returns: {
+          allowed: boolean
+          current_count: number
+          window_bucket_out: number
+        }[]
+      }
+      rpc_can_schedule_live_session: { Args: never; Returns: boolean }
       rpc_cancel_chat_attachment_batch: {
         Args: {
           p_attachments: Json
@@ -9808,6 +10734,104 @@ export type Database = {
           p_type: string
         }
         Returns: string
+      }
+      rpc_create_live_comment: {
+        Args: {
+          p_body: string
+          p_client_comment_id: string
+          p_session_id: string
+        }
+        Returns: {
+          body: string
+          client_comment_id: string
+          created_at: string
+          id: string
+          moderated_at: string | null
+          moderated_by_user_id: string | null
+          profile_id: string
+          session_id: string
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "live_comments"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      rpc_create_live_reaction: {
+        Args: {
+          p_client_event_id: string
+          p_reaction: string
+          p_session_id: string
+        }
+        Returns: {
+          client_event_id: string
+          created_at: string
+          id: number
+          profile_id: string
+          reaction: string
+          session_id: string
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "live_reactions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      rpc_create_live_session: {
+        Args: {
+          p_circle_id?: string
+          p_context_id?: string
+          p_context_type?: string
+          p_format?: string
+          p_gathering_id?: string
+          p_scheduled_start?: string
+          p_title: string
+        }
+        Returns: {
+          backstage_opened_at: string | null
+          cancelled_at: string | null
+          captions_enabled: boolean
+          chemistry_first_enabled: boolean
+          circle_id: string | null
+          configuration: Json
+          context_id: string | null
+          context_type: string
+          created_at: string
+          created_by_profile_id: string
+          created_by_user_id: string
+          description: string | null
+          ended_at: string | null
+          format: string
+          gathering_id: string | null
+          id: string
+          maximum_participants: number
+          maximum_publishers: number
+          minimum_participants: number
+          provider: string
+          provider_call_id: string
+          provider_call_type: string
+          quorum_reached_at: string | null
+          recording_enabled: boolean
+          scheduled_end: string | null
+          scheduled_start: string | null
+          started_at: string | null
+          status: string
+          title: string
+          updated_at: string
+          version: number
+        }
+        SetofOptions: {
+          from: "*"
+          to: "live_sessions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       rpc_create_media_moment: {
         Args: {
@@ -10617,6 +11641,43 @@ export type Database = {
         Args: { p_intent_request_id: string }
         Returns: string[]
       }
+      rpc_get_live_rtc_admission: {
+        Args: { p_session_id: string }
+        Returns: {
+          capabilities: string[]
+          participant_state: string
+          primary_role: string
+          profile_id: string
+          provider: string
+          provider_call_id: string
+          provider_call_type: string
+          roles: string[]
+          session_id: string
+          session_status: string
+          user_id: string
+        }[]
+      }
+      rpc_get_live_rtc_admission_v2: {
+        Args: { p_session_id: string }
+        Returns: {
+          capabilities: string[]
+          maximum_participants: number
+          participant_state: string
+          primary_role: string
+          profile_id: string
+          provider: string
+          provider_call_id: string
+          provider_call_type: string
+          roles: string[]
+          session_id: string
+          session_status: string
+          user_id: string
+        }[]
+      }
+      rpc_get_live_session_snapshot: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
       rpc_get_merged_account_redirect: { Args: never; Returns: Json }
       rpc_get_my_circle_invitation_count: {
         Args: { p_profile_id: string }
@@ -10759,6 +11820,40 @@ export type Database = {
           moment_id: string
         }[]
       }
+      rpc_heartbeat_live_session: {
+        Args: { p_session_id: string }
+        Returns: {
+          connection_quality_state: string
+          created_at: string
+          id: string
+          invited_at: string
+          joined_at: string | null
+          last_connection_change_at: string | null
+          last_seen_at: string | null
+          left_at: string | null
+          microphone_muted_by_moderator: boolean
+          open_to_introductions: boolean
+          origin_context_id: string | null
+          origin_context_type: string
+          profile_id: string
+          reconnect_state: string | null
+          role: string
+          rsvp_status: string
+          session_id: string
+          stage_joined_at: string | null
+          stage_left_at: string | null
+          stage_slot: number | null
+          state: string
+          updated_at: string
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "live_participants"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       rpc_insert_request_acceptance_system_messages: {
         Args: { p_request_id: string }
         Returns: undefined
@@ -10810,9 +11905,77 @@ export type Database = {
         Args: { p_circle_id: string; p_profile_id: string }
         Returns: string
       }
+      rpc_join_live_session: {
+        Args: { p_session_id: string }
+        Returns: {
+          connection_quality_state: string
+          created_at: string
+          id: string
+          invited_at: string
+          joined_at: string | null
+          last_connection_change_at: string | null
+          last_seen_at: string | null
+          left_at: string | null
+          microphone_muted_by_moderator: boolean
+          open_to_introductions: boolean
+          origin_context_id: string | null
+          origin_context_type: string
+          profile_id: string
+          reconnect_state: string | null
+          role: string
+          rsvp_status: string
+          session_id: string
+          stage_joined_at: string | null
+          stage_left_at: string | null
+          stage_slot: number | null
+          state: string
+          updated_at: string
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "live_participants"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       rpc_leave_circle: {
         Args: { p_circle_id: string; p_profile_id: string }
         Returns: boolean
+      }
+      rpc_leave_live_session: {
+        Args: { p_session_id: string }
+        Returns: {
+          connection_quality_state: string
+          created_at: string
+          id: string
+          invited_at: string
+          joined_at: string | null
+          last_connection_change_at: string | null
+          last_seen_at: string | null
+          left_at: string | null
+          microphone_muted_by_moderator: boolean
+          open_to_introductions: boolean
+          origin_context_id: string | null
+          origin_context_type: string
+          profile_id: string
+          reconnect_state: string | null
+          role: string
+          rsvp_status: string
+          session_id: string
+          stage_joined_at: string | null
+          stage_left_at: string | null
+          stage_slot: number | null
+          state: string
+          updated_at: string
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "live_participants"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       rpc_link_phone_verification: {
         Args: { p_signup_session_id: string }
@@ -10863,6 +12026,31 @@ export type Database = {
           reason: string
           reporter_profile_id: string
           status: string
+        }[]
+      }
+      rpc_list_live_comments: {
+        Args: { p_before?: string; p_limit?: number; p_session_id: string }
+        Returns: Json
+      }
+      rpc_list_live_sessions: {
+        Args: { p_before?: string; p_limit?: number }
+        Returns: {
+          audience_count: number
+          circle_id: string
+          context_id: string
+          context_type: string
+          created_by_profile_id: string
+          description: string
+          format: string
+          id: string
+          maximum_publishers: number
+          participant_state: string
+          rsvp_status: string
+          scheduled_start: string
+          stage_count: number
+          started_at: string
+          status: string
+          title: string
         }[]
       }
       rpc_list_my_circle_invitations: {
@@ -10948,6 +12136,68 @@ export type Database = {
       rpc_mark_signin_provider_disconnected: {
         Args: { p_provider: string }
         Returns: boolean
+      }
+      rpc_moderate_live_comment: {
+        Args: { p_comment_id: string }
+        Returns: {
+          body: string
+          client_comment_id: string
+          created_at: string
+          id: string
+          moderated_at: string | null
+          moderated_by_user_id: string | null
+          profile_id: string
+          session_id: string
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "live_comments"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      rpc_moderate_live_participant: {
+        Args: {
+          p_action: string
+          p_client_action_id: string
+          p_reason?: string
+          p_session_id: string
+          p_target_user_id: string
+        }
+        Returns: {
+          connection_quality_state: string
+          created_at: string
+          id: string
+          invited_at: string
+          joined_at: string | null
+          last_connection_change_at: string | null
+          last_seen_at: string | null
+          left_at: string | null
+          microphone_muted_by_moderator: boolean
+          open_to_introductions: boolean
+          origin_context_id: string | null
+          origin_context_type: string
+          profile_id: string
+          reconnect_state: string | null
+          role: string
+          rsvp_status: string
+          session_id: string
+          stage_joined_at: string | null
+          stage_left_at: string | null
+          stage_slot: number | null
+          state: string
+          updated_at: string
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "live_participants"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       rpc_nominate_circle_love_seat: {
         Args: {
@@ -11197,6 +12447,36 @@ export type Database = {
         Args: { p_comment_id: string; p_profile_id: string; p_reason?: string }
         Returns: boolean
       }
+      rpc_report_live_content: {
+        Args: {
+          p_client_report_id: string
+          p_details?: string
+          p_reason: string
+          p_session_id: string
+          p_target_comment_id?: string
+          p_target_user_id?: string
+        }
+        Returns: {
+          client_report_id: string
+          created_at: string
+          details: string | null
+          id: string
+          reason: string
+          reporter_profile_id: string
+          reporter_user_id: string
+          resolved_at: string | null
+          session_id: string
+          status: string
+          target_comment_id: string | null
+          target_user_id: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "live_reports"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       rpc_request_account_recovery: {
         Args: {
           p_contact_email?: string
@@ -11244,6 +12524,59 @@ export type Database = {
           plan_id: string
           request_id: string
         }[]
+      }
+      rpc_request_live_seat: {
+        Args: { p_session_id: string }
+        Returns: {
+          id: string
+          profile_id: string
+          requested_at: string
+          resolved_at: string | null
+          resolved_by_user_id: string | null
+          session_id: string
+          status: string
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "live_seat_requests"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      rpc_resolve_live_seat_request: {
+        Args: { p_approve: boolean; p_request_id: string }
+        Returns: {
+          connection_quality_state: string
+          created_at: string
+          id: string
+          invited_at: string
+          joined_at: string | null
+          last_connection_change_at: string | null
+          last_seen_at: string | null
+          left_at: string | null
+          microphone_muted_by_moderator: boolean
+          open_to_introductions: boolean
+          origin_context_id: string | null
+          origin_context_type: string
+          profile_id: string
+          reconnect_state: string | null
+          role: string
+          rsvp_status: string
+          session_id: string
+          stage_joined_at: string | null
+          stage_left_at: string | null
+          stage_slot: number | null
+          state: string
+          updated_at: string
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "live_participants"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       rpc_resolve_recovered_duplicate_shell: {
         Args: { p_recovery_token: string }
@@ -11368,6 +12701,44 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      rpc_rsvp_live_session: {
+        Args: {
+          p_attending: boolean
+          p_open_to_introductions?: boolean
+          p_session_id: string
+        }
+        Returns: {
+          connection_quality_state: string
+          created_at: string
+          id: string
+          invited_at: string
+          joined_at: string | null
+          last_connection_change_at: string | null
+          last_seen_at: string | null
+          left_at: string | null
+          microphone_muted_by_moderator: boolean
+          open_to_introductions: boolean
+          origin_context_id: string | null
+          origin_context_type: string
+          profile_id: string
+          reconnect_state: string | null
+          role: string
+          rsvp_status: string
+          session_id: string
+          stage_joined_at: string | null
+          stage_left_at: string | null
+          stage_slot: number | null
+          state: string
+          updated_at: string
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "live_participants"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       rpc_save_intent_reflection: {
         Args: {
           p_intent_request_id: string
@@ -11376,6 +12747,52 @@ export type Database = {
           p_target_profile_id: string
         }
         Returns: string[]
+      }
+      rpc_schedule_live_session: {
+        Args: {
+          p_description: string
+          p_scheduled_start: string
+          p_title: string
+        }
+        Returns: {
+          backstage_opened_at: string | null
+          cancelled_at: string | null
+          captions_enabled: boolean
+          chemistry_first_enabled: boolean
+          circle_id: string | null
+          configuration: Json
+          context_id: string | null
+          context_type: string
+          created_at: string
+          created_by_profile_id: string
+          created_by_user_id: string
+          description: string | null
+          ended_at: string | null
+          format: string
+          gathering_id: string | null
+          id: string
+          maximum_participants: number
+          maximum_publishers: number
+          minimum_participants: number
+          provider: string
+          provider_call_id: string
+          provider_call_type: string
+          quorum_reached_at: string | null
+          recording_enabled: boolean
+          scheduled_end: string | null
+          scheduled_start: string | null
+          started_at: string | null
+          status: string
+          title: string
+          updated_at: string
+          version: number
+        }
+        SetofOptions: {
+          from: "*"
+          to: "live_sessions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       rpc_schedule_orphaned_chat_attachments: {
         Args: { p_limit?: number }
@@ -11539,6 +12956,44 @@ export type Database = {
         }
         Returns: boolean
       }
+      rpc_set_live_stage_participant: {
+        Args: {
+          p_on_stage: boolean
+          p_session_id: string
+          p_target_user_id: string
+        }
+        Returns: {
+          connection_quality_state: string
+          created_at: string
+          id: string
+          invited_at: string
+          joined_at: string | null
+          last_connection_change_at: string | null
+          last_seen_at: string | null
+          left_at: string | null
+          microphone_muted_by_moderator: boolean
+          open_to_introductions: boolean
+          origin_context_id: string | null
+          origin_context_type: string
+          profile_id: string
+          reconnect_state: string | null
+          role: string
+          rsvp_status: string
+          session_id: string
+          stage_joined_at: string | null
+          stage_left_at: string | null
+          stage_slot: number | null
+          state: string
+          updated_at: string
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "live_participants"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       rpc_set_profile_saved: {
         Args: {
           p_saved: boolean
@@ -11620,6 +13075,52 @@ export type Database = {
           p_reaction?: string
         }
         Returns: boolean
+      }
+      rpc_transition_live_session: {
+        Args: {
+          p_expected_version: number
+          p_session_id: string
+          p_target_status: string
+        }
+        Returns: {
+          backstage_opened_at: string | null
+          cancelled_at: string | null
+          captions_enabled: boolean
+          chemistry_first_enabled: boolean
+          circle_id: string | null
+          configuration: Json
+          context_id: string | null
+          context_type: string
+          created_at: string
+          created_by_profile_id: string
+          created_by_user_id: string
+          description: string | null
+          ended_at: string | null
+          format: string
+          gathering_id: string | null
+          id: string
+          maximum_participants: number
+          maximum_publishers: number
+          minimum_participants: number
+          provider: string
+          provider_call_id: string
+          provider_call_type: string
+          quorum_reached_at: string | null
+          recording_enabled: boolean
+          scheduled_end: string | null
+          scheduled_start: string | null
+          started_at: string | null
+          status: string
+          title: string
+          updated_at: string
+          version: number
+        }
+        SetofOptions: {
+          from: "*"
+          to: "live_sessions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       rpc_update_circle_image: {
         Args: {
@@ -12109,6 +13610,25 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "relationship_gists"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      rpc_withdraw_live_seat_request: {
+        Args: { p_session_id: string }
+        Returns: {
+          id: string
+          profile_id: string
+          requested_at: string
+          resolved_at: string | null
+          resolved_by_user_id: string | null
+          session_id: string
+          status: string
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "live_seat_requests"
           isOneToOne: true
           isSetofReturn: false
         }

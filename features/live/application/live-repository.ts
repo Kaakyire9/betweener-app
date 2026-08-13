@@ -1,8 +1,9 @@
 import * as Crypto from 'expo-crypto';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
-import type { LiveReactionKind, LiveSessionSnapshot, LiveSessionSummary, ScheduleLiveSessionInput } from './live-models.ts';
+import type { LiveComment, LiveReactionKind, LiveSessionSnapshot, LiveSessionSummary, ScheduleLiveSessionInput } from './live-models.ts';
 import {
+  parseLiveComment,
   parseLiveSessionSnapshot,
   parseLiveSessionSummary,
 } from './live-parsers.ts';
@@ -62,6 +63,10 @@ export const liveRepository = {
     await invoke('rpc_leave_live_session', { p_session_id: sessionId });
   },
 
+  async heartbeat(sessionId: string): Promise<void> {
+    await invoke('rpc_heartbeat_live_session', { p_session_id: sessionId });
+  },
+
   async requestSeat(sessionId: string): Promise<void> {
     await invoke('rpc_request_live_seat', { p_session_id: sessionId });
   },
@@ -85,11 +90,39 @@ export const liveRepository = {
     });
   },
 
-  async createComment(sessionId: string, body: string): Promise<void> {
-    await invoke('rpc_create_live_comment', {
+  async createComment(sessionId: string, clientCommentId: string, body: string): Promise<LiveComment> {
+    return parseLiveComment(await invoke('rpc_create_live_comment', {
       p_session_id: sessionId,
-      p_client_comment_id: Crypto.randomUUID(),
+      p_client_comment_id: clientCommentId,
       p_body: body,
+    }));
+  },
+
+  async listComments(sessionId: string, before: string | null, limit = 40): Promise<LiveComment[]> {
+    const value = await invoke('rpc_list_live_comments', {
+      p_session_id: sessionId,
+      p_limit: limit,
+      p_before: before,
+    });
+    return Array.isArray(value) ? value.map(parseLiveComment) : [];
+  },
+
+  async moderateComment(commentId: string): Promise<void> {
+    await invoke('rpc_moderate_live_comment', { p_comment_id: commentId });
+  },
+
+  async reportComment(
+    sessionId: string,
+    comment: Pick<LiveComment, 'id' | 'userId'>,
+    reason: 'harassment' | 'hate' | 'sexual_content' | 'spam' | 'impersonation' | 'unsafe_behaviour' | 'other' = 'other',
+  ): Promise<void> {
+    await invoke('rpc_report_live_content', {
+      p_session_id: sessionId,
+      p_client_report_id: Crypto.randomUUID(),
+      p_reason: reason,
+      p_details: null,
+      p_target_user_id: comment.userId,
+      p_target_comment_id: comment.id,
     });
   },
 

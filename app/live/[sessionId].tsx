@@ -1,7 +1,17 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { Camera, CameraOff, ChevronLeft, Mic, MicOff, MoreHorizontal, Radio, UserRoundPlus, X } from 'lucide-react-native';
-import { useEffect, useMemo } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   LiveConnectionBanner,
@@ -17,6 +27,9 @@ export default function LiveSessionScreen() {
   const { user } = useAuth();
   const controller = useLiveSessionController(sessionId);
   const media = useLiveMediaSession(sessionId);
+  const authorityExpectationRef = useRef<string | null>(null);
+  const [connectedParticipantCount, setConnectedParticipantCount] = useState<number | null>(null);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
   const joinSession = controller.join;
   const busyAction = controller.busyAction;
   const mediaState = media.state;
@@ -25,11 +38,16 @@ export default function LiveSessionScreen() {
   const me = snapshot?.me ?? null;
   const canPublish = snapshot?.capabilities.includes('live.publish') === true;
   const canManageStage = snapshot?.capabilities.includes('live.manage_stage') === true;
+  const canModerateComments = snapshot?.capabilities.includes('live.moderate_comments') === true;
   const isLive = snapshot?.session.status === 'live';
   const hasRequestedSeat = me?.state === 'stage_requested';
   const isOnStage = me?.state === 'on_stage' || me?.role === 'host';
   const requestedStartAudio = params.startAudio === '1';
   const requestedStartVideo = params.startVideo === '1';
+  const deviceNeedsAttention = media.state === 'joined' && media.error?.includes('_needs_attention') === true;
+  const publicationReady = canPublish
+    && media.publishAuthorized
+    && media.authorityState === 'ready';
 
   useEffect(() => {
     if (!isLive || busyAction !== null) return;
@@ -47,10 +65,49 @@ export default function LiveSessionScreen() {
     });
   }, [isLive, isOnStage, joinMedia, me, mediaState, requestedStartAudio, requestedStartVideo, snapshot]);
 
-  const attendeeCount = useMemo(() => {
-    if (!snapshot) return 0;
-    return snapshot.audienceCount + snapshot.stage.length;
-  }, [snapshot]);
+  useEffect(() => {
+    if (mediaState !== 'joined') {
+      authorityExpectationRef.current = null;
+      return;
+    }
+    if (media.publishAuthorized === canPublish || media.authorityState === 'syncing') return;
+    const expectationKey = `${sessionId}:${canPublish ? 'publisher' : 'audience'}`;
+    if (authorityExpectationRef.current === expectationKey) return;
+    authorityExpectationRef.current = expectationKey;
+    void media.reconcileAuthority(canPublish);
+  }, [
+    canPublish,
+    media.authorityState,
+    media.publishAuthorized,
+    media.reconcileAuthority,
+    mediaState,
+    sessionId,
+  ]);
+
+  useEffect(() => {
+    if (!media.bindings) setConnectedParticipantCount(null);
+  }, [media.bindings]);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const show = Keyboard.addListener(showEvent, () => setKeyboardVisible(true));
+    const hide = Keyboard.addListener(hideEvent, () => setKeyboardVisible(false));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+
+  const handleConnectedParticipantCountChange = useCallback((count: number) => {
+    setConnectedParticipantCount(count);
+  }, []);
+
+  // The Supabase roster is durable admission state and may outlive an abrupt
+  // disconnect. The public room count therefore comes from current Stream
+  // transport presence. While the first presence snapshot arrives, the local
+  // joined member is the only connection we can assert safely.
+  const attendeeCount = connectedParticipantCount ?? (mediaState === 'joined' ? 1 : 0);
 
   const close = async () => {
     await media.leave();
@@ -162,7 +219,12 @@ export default function LiveSessionScreen() {
 
   return (
     <View style={styles.root}>
-      <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={0}
+        style={styles.keyboardAvoider}
+      >
+        <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
         <View style={styles.header}>
           <Pressable onPress={() => void close()} style={styles.iconButton}><X size={22} color="#FFF7EC" /></Pressable>
           <View style={styles.roomCopy}>
@@ -173,8 +235,15 @@ export default function LiveSessionScreen() {
         </View>
         <LiveConnectionBanner state={controller.state} />
 
-        <View style={styles.stage}>
-          {media.bindings ? <StreamLiveStage bindings={media.bindings} /> : (
+        <View style={[styles.stage, keyboardVisible && styles.stageKeyboard]}>
+          {media.bindings ? (
+            <StreamLiveStage
+              bindings={media.bindings}
+              stageParticipants={snapshot.stage}
+              localPublisherUserId={canPublish ? user?.id ?? null : null}
+              onConnectedParticipantCountChange={handleConnectedParticipantCountChange}
+            />
+          ) : (
             <View style={styles.stageLoading}>
               <ActivityIndicator color="#D7B56D" />
               <Text style={styles.stageLoadingText}>{media.state === 'failed' ? 'Tap refresh to rejoin the room.' : 'Entering quietly…'}</Text>
@@ -182,13 +251,46 @@ export default function LiveSessionScreen() {
           )}
           {media.state === 'failed' ? (
             <Pressable
-              onPress={() => void media.join({ mode: isOnStage ? 'backstage' : 'audience', audioEnabled: false, videoEnabled: false })}
+              onPress={() => void media.join({
+                mode: isOnStage ? 'backstage' : 'audience',
+                audioEnabled: isOnStage && requestedStartAudio,
+                videoEnabled: isOnStage && requestedStartVideo,
+              })}
               style={styles.mediaRetry}
             ><Text style={styles.mediaRetryText}>Rejoin</Text></Pressable>
           ) : null}
+          {deviceNeedsAttention ? (
+            <View style={styles.deviceNotice}>
+              <Text style={styles.deviceNoticeText}>
+                You’re in the room. {media.error?.includes('camera') ? 'Camera' : 'Microphone'} needs attention.
+              </Text>
+              <Pressable
+                onPress={() => void (media.error?.includes('camera')
+                  ? media.setVideoEnabled(true)
+                  : media.setAudioEnabled(true))}
+              >
+                <Text style={styles.deviceRetryText}>Try again</Text>
+              </Pressable>
+            </View>
+          ) : null}
+          {canPublish && !publicationReady ? (
+            <View style={styles.authorityNotice}>
+              {media.authorityState === 'syncing' ? <ActivityIndicator color="#D7B56D" size="small" /> : null}
+              <Text style={styles.authorityNoticeText}>
+                {media.authorityState === 'failed'
+                  ? 'Stage controls need a quick refresh.'
+                  : 'Preparing your stage controls\u2026'}
+              </Text>
+              {media.authorityState === 'failed' ? (
+                <Pressable onPress={() => void media.reconcileAuthority(true)}>
+                  <Text style={styles.deviceRetryText}>Try again</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          ) : null}
         </View>
 
-        {canManageStage && (snapshot.seatRequests.length > 0 || snapshot.backstage.length > 0) ? (
+        {!keyboardVisible && canManageStage && (snapshot.seatRequests.length > 0 || snapshot.backstage.length > 0) ? (
           <View style={styles.hostRail}>
             <Text style={styles.hostRailTitle}>STAGE DESK</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.hostRailContent}>
@@ -232,19 +334,26 @@ export default function LiveSessionScreen() {
         ) : null}
 
         <LiveConversationPanel
-          comments={snapshot.comments}
-          disabled={controller.busyAction !== null || controller.state === 'offline'}
+          comments={controller.comments}
+          commentCount={controller.commentCount}
+          currentUserId={user?.id ?? null}
+          canModerate={canModerateComments}
+          disabled={controller.state === 'offline'}
+          loadingEarlier={controller.loadingEarlierComments}
+          onLoadEarlier={controller.loadEarlierComments}
           onComment={controller.createComment}
+          onModerate={controller.moderateComment}
+          onReport={controller.reportComment}
           onReaction={controller.createReaction}
         />
 
-        <View style={styles.controls}>
+        {!keyboardVisible ? <View style={styles.controls}>
           {canPublish ? (
             <>
-              <Pressable onPress={() => void media.setAudioEnabled(!media.audioEnabled)} style={[styles.control, !media.audioEnabled && styles.controlOff]}>
+              <Pressable disabled={!publicationReady} onPress={() => void media.setAudioEnabled(!media.audioEnabled)} style={[styles.control, !media.audioEnabled && styles.controlOff, !publicationReady && styles.controlDisabled]}>
                 {media.audioEnabled ? <Mic size={20} color="#102522" /> : <MicOff size={20} color="#F9ECE1" />}
               </Pressable>
-              <Pressable onPress={() => void media.setVideoEnabled(!media.videoEnabled)} style={[styles.control, !media.videoEnabled && styles.controlOff]}>
+              <Pressable disabled={!publicationReady} onPress={() => void media.setVideoEnabled(!media.videoEnabled)} style={[styles.control, !media.videoEnabled && styles.controlOff, !publicationReady && styles.controlDisabled]}>
                 {media.videoEnabled ? <Camera size={20} color="#102522" /> : <CameraOff size={20} color="#F9ECE1" />}
               </Pressable>
             </>
@@ -263,14 +372,16 @@ export default function LiveSessionScreen() {
           {canManageStage && snapshot.session.createdByUserId === user?.id ? (
             <Pressable onPress={() => void controller.transitionSession('ending')} style={styles.endButton}><Text style={styles.endText}>End room</Text></Pressable>
           ) : null}
-        </View>
-      </SafeAreaView>
+        </View> : null}
+        </SafeAreaView>
+      </KeyboardAvoidingView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#071310' },
+  keyboardAvoider: { flex: 1 },
   safe: { flex: 1 },
   loading: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#071310', gap: 18 },
   errorTitle: { color: '#FFF7EC', fontSize: 21, fontFamily: 'PlayfairDisplay_700Bold' },
@@ -285,10 +396,46 @@ const styles = StyleSheet.create({
   viewerText: { color: '#839692', fontSize: 10, fontFamily: 'Manrope_600SemiBold' },
   roomTitle: { color: '#FFF6EB', fontSize: 16, fontFamily: 'Archivo_700Bold', marginTop: 3 },
   stage: { height: '42%', minHeight: 250, position: 'relative', backgroundColor: '#091413' },
+  stageKeyboard: { height: 128, minHeight: 128 },
   stageLoading: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
   stageLoadingText: { color: '#A7B7B3', fontSize: 12, fontFamily: 'Manrope_600SemiBold' },
   mediaRetry: { position: 'absolute', alignSelf: 'center', bottom: 18, paddingHorizontal: 18, height: 40, justifyContent: 'center', borderRadius: 20, backgroundColor: '#D7B56D' },
   mediaRetryText: { color: '#102522', fontFamily: 'Manrope_700Bold' },
+  deviceNotice: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    bottom: 12,
+    minHeight: 44,
+    borderRadius: 22,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    backgroundColor: '#172A27F2',
+    borderWidth: 1,
+    borderColor: '#7C6B45',
+  },
+  deviceNoticeText: { flex: 1, color: '#E9E2D8', fontSize: 11, fontFamily: 'Manrope_600SemiBold' },
+  deviceRetryText: { color: '#D7B56D', fontSize: 11, fontFamily: 'Manrope_800ExtraBold' },
+  authorityNotice: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    bottom: 12,
+    minHeight: 44,
+    borderRadius: 22,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    backgroundColor: '#172A27F2',
+    borderWidth: 1,
+    borderColor: '#7C6B45',
+  },
+  authorityNoticeText: { color: '#E9E2D8', fontSize: 11, fontFamily: 'Manrope_600SemiBold' },
   hostRail: { backgroundColor: '#12211E', paddingVertical: 11 },
   hostRailTitle: { color: '#D7B56D', fontSize: 10, letterSpacing: 1.3, fontFamily: 'Manrope_800ExtraBold', paddingHorizontal: 16 },
   hostRailContent: { paddingHorizontal: 16, paddingTop: 8, gap: 10 },
@@ -302,6 +449,7 @@ const styles = StyleSheet.create({
   controls: { minHeight: 70, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, backgroundColor: '#091614', borderTopWidth: 1, borderTopColor: '#263A36' },
   control: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: '#D7B56D' },
   controlOff: { backgroundColor: '#59302F' },
+  controlDisabled: { opacity: 0.45 },
   seatRequest: { height: 46, borderRadius: 23, paddingHorizontal: 18, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#D7B56D' },
   seatRequestActive: { backgroundColor: '#172A27', borderWidth: 1, borderColor: '#8F7A50' },
   seatRequestText: { color: '#102522', fontSize: 12, fontFamily: 'Manrope_800ExtraBold' },

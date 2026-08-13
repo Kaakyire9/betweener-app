@@ -3,8 +3,11 @@ import type {
   LiveMediaAdmission,
   LiveMediaProvider,
   LiveMediaProviderState,
+  LiveMediaJoinResult,
   LiveMediaSessionOptions,
   LiveMediaTokenProvider,
+  LiveMediaTransportListener,
+  LiveMediaTransportState,
 } from './live-media-provider.ts';
 
 type StreamDevicePort = {
@@ -17,6 +20,10 @@ type StreamCallPort = {
   microphone: StreamDevicePort;
   state: {
     localParticipant?: { connectionQuality?: number };
+    callingState?: string;
+    callingState$?: {
+      subscribe(listener: (state: string) => void): { unsubscribe(): void };
+    };
   };
   join(options: { create: false }): Promise<void>;
   leave(): Promise<void>;
@@ -46,6 +53,12 @@ export class StreamLiveMediaProviderError extends Error {
     this.name = 'StreamLiveMediaProviderError';
   }
 }
+
+const providerErrorCode = (error: unknown, fallback: string): string => {
+  if (error instanceof StreamLiveMediaProviderError) return error.code;
+  if (error instanceof Error && error.message.trim()) return error.message.trim().slice(0, 160);
+  return fallback;
+};
 
 const assertRefreshedAdmission = (
   initial: LiveMediaAdmission,
@@ -86,6 +99,16 @@ const qualityFromStream = (
   return 'unknown';
 };
 
+export const transportStateFromStreamCallingState = (
+  state: string | undefined,
+): LiveMediaTransportState => {
+  if (state === 'joined') return 'connected';
+  if (state === 'joining') return 'connecting';
+  if (['reconnecting', 'migrating', 'offline'].includes(state ?? '')) return 'reconnecting';
+  if (['left', 'reconnecting-failed'].includes(state ?? '')) return 'failed';
+  return 'idle';
+};
+
 const sameAdmission = (
   current: LiveMediaAdmission,
   incoming: LiveMediaAdmission,
@@ -108,7 +131,11 @@ export class StreamLiveMediaProvider implements LiveMediaProvider {
   private admission: LiveMediaAdmission | null = null;
   private bindings: StreamLiveMediaBindings | null = null;
   private hasJoinedCall = false;
+  private currentAudioEnabled = false;
+  private currentVideoEnabled = false;
   private operation: Promise<void> = Promise.resolve();
+  private transportSubscription: { unsubscribe(): void } | null = null;
+  private readonly transportListeners = new Set<LiveMediaTransportListener>();
   private readonly createBindings: StreamLiveMediaBindingsFactory;
 
   constructor(createBindings: StreamLiveMediaBindingsFactory = createStreamBindings) {
@@ -154,6 +181,7 @@ export class StreamLiveMediaProvider implements LiveMediaProvider {
             return refreshed.token;
           },
         });
+        this.attachTransportObserver();
         this.currentState = 'ready';
       } catch (error) {
         this.bindings = null;
@@ -163,10 +191,37 @@ export class StreamLiveMediaProvider implements LiveMediaProvider {
     });
   }
 
-  joinSession(options: LiveMediaSessionOptions): Promise<void> {
+  resetConnection(): Promise<void> {
     return this.runExclusive(async () => {
       this.assertNotDisposed();
-      if (this.currentState === 'joined') return;
+      await this.releaseBindings();
+      this.admission = null;
+      this.currentState = 'idle';
+      this.emitTransportState('idle');
+    });
+  }
+
+  reconcileAdmission(admission: LiveMediaAdmission): Promise<void> {
+    return this.runExclusive(async () => {
+      this.assertNotDisposed();
+      if (!this.admission || !this.bindings || !['ready', 'joined'].includes(this.currentState)) {
+        throw new StreamLiveMediaProviderError('live_media_not_ready');
+      }
+      assertRefreshedAdmission(this.admission, admission);
+      this.admission = admission;
+    });
+  }
+
+  joinSession(options: LiveMediaSessionOptions): Promise<LiveMediaJoinResult> {
+    return this.runExclusive(async () => {
+      this.assertNotDisposed();
+      if (this.currentState === 'joined') {
+        return {
+          audioEnabled: this.currentAudioEnabled,
+          videoEnabled: this.currentVideoEnabled,
+          deviceIssues: [],
+        };
+      }
       if (this.currentState !== 'ready' || !this.bindings || !this.admission) {
         throw new StreamLiveMediaProviderError('live_media_not_ready');
       }
@@ -179,10 +234,6 @@ export class StreamLiveMediaProvider implements LiveMediaProvider {
         ]);
         await this.bindings.call.join({ create: false });
         this.hasJoinedCall = true;
-        await Promise.all([
-          this.setDeviceEnabled(this.bindings.call.microphone, options.audioEnabled),
-          this.setDeviceEnabled(this.bindings.call.camera, options.videoEnabled),
-        ]);
         this.currentState = 'joined';
       } catch (error) {
         await this.bindings.call.leave().catch(() => undefined);
@@ -190,6 +241,35 @@ export class StreamLiveMediaProvider implements LiveMediaProvider {
         this.currentState = 'failed';
         throw error;
       }
+
+      let audioEnabled = false;
+      let videoEnabled = false;
+      const deviceIssues: LiveMediaJoinResult['deviceIssues'][number][] = [];
+      if (options.audioEnabled) {
+        try {
+          await this.bindings.call.microphone.enable();
+          audioEnabled = true;
+        } catch (error) {
+          deviceIssues.push({
+            device: 'microphone',
+            code: providerErrorCode(error, 'live_microphone_start_failed'),
+          });
+        }
+      }
+      if (options.videoEnabled) {
+        try {
+          await this.bindings.call.camera.enable();
+          videoEnabled = true;
+        } catch (error) {
+          deviceIssues.push({
+            device: 'camera',
+            code: providerErrorCode(error, 'live_camera_start_failed'),
+          });
+        }
+      }
+      this.currentAudioEnabled = audioEnabled;
+      this.currentVideoEnabled = videoEnabled;
+      return { audioEnabled, videoEnabled, deviceIssues };
     });
   }
 
@@ -211,6 +291,8 @@ export class StreamLiveMediaProvider implements LiveMediaProvider {
           await this.bindings.call.leave();
           this.hasJoinedCall = false;
         }
+        this.currentAudioEnabled = false;
+        this.currentVideoEnabled = false;
         this.currentState = 'ready';
       } catch (error) {
         this.currentState = 'failed';
@@ -224,6 +306,7 @@ export class StreamLiveMediaProvider implements LiveMediaProvider {
       const { call } = this.requireJoined();
       this.assertCanPublish(enabled);
       await this.setDeviceEnabled(call.microphone, enabled);
+      this.currentAudioEnabled = enabled;
     });
   }
 
@@ -232,6 +315,7 @@ export class StreamLiveMediaProvider implements LiveMediaProvider {
       const { call } = this.requireJoined();
       this.assertCanPublish(enabled);
       await this.setDeviceEnabled(call.camera, enabled);
+      this.currentVideoEnabled = enabled;
     });
   }
 
@@ -248,6 +332,8 @@ export class StreamLiveMediaProvider implements LiveMediaProvider {
         call.microphone.disable(true),
         call.camera.disable(true),
       ]);
+      this.currentAudioEnabled = false;
+      this.currentVideoEnabled = false;
     });
   }
 
@@ -262,6 +348,19 @@ export class StreamLiveMediaProvider implements LiveMediaProvider {
       this.bindings?.call.state.localParticipant?.connectionQuality,
       this.currentState,
     );
+  }
+
+  getTransportState(): LiveMediaTransportState {
+    if (!this.bindings) return 'idle';
+    return transportStateFromStreamCallingState(this.bindings.call.state.callingState);
+  }
+
+  subscribeTransportState(listener: LiveMediaTransportListener): () => void {
+    this.transportListeners.add(listener);
+    listener(this.getTransportState());
+    return () => {
+      this.transportListeners.delete(listener);
+    };
   }
 
   dispose(): Promise<void> {
@@ -304,15 +403,25 @@ export class StreamLiveMediaProvider implements LiveMediaProvider {
     admission: LiveMediaAdmission,
   ): void {
     const wantsToPublish = options.audioEnabled || options.videoEnabled;
+    const canPublish = admission.capabilities.includes('live.publish');
     if (wantsToPublish && !admission.capabilities.includes('live.publish')) {
       throw new StreamLiveMediaProviderError('live_publish_not_authorized');
     }
-    if (options.mode === 'audience' && admission.participantState !== 'audience') {
+    if (
+      options.mode === 'audience'
+      && !['audience', 'stage_requested', 'temporarily_disconnected'].includes(
+        admission.participantState,
+      )
+    ) {
       throw new StreamLiveMediaProviderError('live_audience_state_invalid');
     }
+    const isAuthorizedHostHandoff = admission.primaryRole === 'host'
+      && canPublish
+      && ['backstage', 'live', 'ending'].includes(admission.sessionStatus);
     if (
       options.mode === 'backstage'
       && !['backstage', 'on_stage'].includes(admission.participantState)
+      && !isAuthorizedHostHandoff
     ) {
       throw new StreamLiveMediaProviderError('live_backstage_state_invalid');
     }
@@ -324,6 +433,8 @@ export class StreamLiveMediaProvider implements LiveMediaProvider {
   }
 
   private async releaseBindings(): Promise<void> {
+    this.transportSubscription?.unsubscribe();
+    this.transportSubscription = null;
     const bindings = this.bindings;
     this.bindings = null;
     if (!bindings) return;
@@ -334,6 +445,22 @@ export class StreamLiveMediaProvider implements LiveMediaProvider {
     if (this.hasJoinedCall) releases.push(bindings.call.leave());
     await Promise.allSettled(releases);
     this.hasJoinedCall = false;
+    this.currentAudioEnabled = false;
+    this.currentVideoEnabled = false;
     await bindings.client.disconnectUser().catch(() => undefined);
+  }
+
+  private attachTransportObserver(): void {
+    this.transportSubscription?.unsubscribe();
+    this.transportSubscription = null;
+    const observable = this.bindings?.call.state.callingState$;
+    if (!observable) return;
+    this.transportSubscription = observable.subscribe((callingState) => {
+      this.emitTransportState(transportStateFromStreamCallingState(callingState));
+    });
+  }
+
+  private emitTransportState(state: LiveMediaTransportState): void {
+    for (const listener of this.transportListeners) listener(state);
   }
 }

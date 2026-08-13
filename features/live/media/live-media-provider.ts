@@ -52,6 +52,24 @@ export type LiveMediaSessionOptions = {
   videoEnabled: boolean;
 };
 
+export type LiveMediaDeviceKind = 'microphone' | 'camera';
+
+export type LiveMediaDeviceIssue = {
+  device: LiveMediaDeviceKind;
+  code: string;
+};
+
+/**
+ * Transport admission and local device publication are deliberately reported
+ * separately. A camera handoff failure must not eject an otherwise admitted
+ * participant from the room.
+ */
+export type LiveMediaJoinResult = {
+  audioEnabled: boolean;
+  videoEnabled: boolean;
+  deviceIssues: readonly LiveMediaDeviceIssue[];
+};
+
 export type LiveMediaTokenProvider = () => Promise<LiveMediaAdmission>;
 
 export type LiveMediaProviderState =
@@ -63,6 +81,15 @@ export type LiveMediaProviderState =
   | 'leaving'
   | 'failed'
   | 'disposed';
+
+export type LiveMediaTransportState =
+  | 'idle'
+  | 'connecting'
+  | 'connected'
+  | 'reconnecting'
+  | 'failed';
+
+export type LiveMediaTransportListener = (state: LiveMediaTransportState) => void;
 
 /**
  * Provider-neutral media transport contract. Supabase remains authoritative
@@ -76,7 +103,13 @@ export interface LiveMediaProvider {
     tokenProvider: LiveMediaTokenProvider,
   ): Promise<void>;
 
-  joinSession(options: LiveMediaSessionOptions): Promise<void>;
+  /** Discards stale native transport state before a fresh admission/rejoin. */
+  resetConnection(): Promise<void>;
+
+  /** Reconciles a fresh server-signed authority grant without leaving the call. */
+  reconcileAdmission(admission: LiveMediaAdmission): Promise<void>;
+
+  joinSession(options: LiveMediaSessionOptions): Promise<LiveMediaJoinResult>;
   leaveSession(): Promise<void>;
 
   setAudioEnabled(enabled: boolean): Promise<void>;
@@ -90,5 +123,7 @@ export interface LiveMediaProvider {
   terminateCall(): Promise<void>;
 
   getConnectionQuality(): LiveConnectionQuality;
+  getTransportState(): LiveMediaTransportState;
+  subscribeTransportState(listener: LiveMediaTransportListener): () => void;
   dispose(): Promise<void>;
 }
