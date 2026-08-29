@@ -7,9 +7,27 @@ import {
   transitionLiveMatchRound,
 } from '../features/live/domain/live-match-round-machine.ts';
 import { parseLiveHostedMatchingSnapshot } from '../features/live/application/live-parsers.ts';
+import {
+  canProposeLivePair,
+  getLivePairAvailability,
+  getLiveHostedMatchingErrorCopy,
+  hasProposableLivePair,
+} from '../features/live/domain/live-hosted-pairability.ts';
 
 const migration = readFileSync(
   new URL('../supabase/migrations/20260813203000_live_phase3_hosted_matching.sql', import.meta.url),
+  'utf8',
+);
+const availabilityInvalidationMigration = readFileSync(
+  new URL('../supabase/migrations/20260815060000_live_match_availability_invalidation.sql', import.meta.url),
+  'utf8',
+);
+const pairabilityMigration = readFileSync(
+  new URL('../supabase/migrations/20260815234500_live_hosted_match_pairability.sql', import.meta.url),
+  'utf8',
+);
+const pairabilityAlignmentMigration = readFileSync(
+  new URL('../supabase/migrations/20260816090000_live_pairability_discovery_alignment.sql', import.meta.url),
   'utf8',
 );
 const repository = readFileSync(
@@ -23,6 +41,10 @@ const modal = readFileSync(
 );
 const publicIntroduction = readFileSync(
   new URL('../features/live/components/LivePublicIntroductionCard.tsx', import.meta.url),
+  'utf8',
+);
+const navigation = readFileSync(
+  new URL('../features/live/navigation/live-navigation.ts', import.meta.url),
   'utf8',
 );
 
@@ -52,6 +74,31 @@ test('pair eligibility enforces mutual age, blocking, active profiles and introd
   assert.match(functionBody, /pa\.profile_completed and pb\.profile_completed/i);
 });
 
+test('hosted pair eligibility follows the existing discovery gender pool without guessing unknown identities', () => {
+  const functionBody = pairabilityMigration.match(
+    /create or replace function public\.live_match_pair_is_eligible[\s\S]+?\n\$\$;/i,
+  )?.[0] ?? '';
+  assert.match(functionBody, /pa\.gender::text not in \('MALE', 'FEMALE'\)/i);
+  assert.match(functionBody, /pb\.gender::text not in \('MALE', 'FEMALE'\)/i);
+  assert.match(functionBody, /pa\.gender <> pb\.gender/i);
+});
+
+test('host snapshot exposes opaque reciprocal pairability without private rejection reasons', () => {
+  const functionBody = pairabilityMigration.match(
+    /create or replace function public\.live_hosted_matching_snapshot[\s\S]+?\n\$\$;/i,
+  )?.[0] ?? '';
+  assert.match(functionBody, /'pairable_with_user_ids'/i);
+  assert.match(functionBody, /live_match_pair_is_eligible/i);
+  assert.doesNotMatch(functionBody, /'pairability_reason'|'rejection_reason'/i);
+});
+
+test('Live pairability only hard-gates explicitly confirmed age preferences', () => {
+  assert.match(pairabilityAlignmentMigration, /pa\.age_preference_confirmed_at is null/i);
+  assert.match(pairabilityAlignmentMigration, /pb\.age_preference_confirmed_at is null/i);
+  assert.match(pairabilityAlignmentMigration, /pb\.age >= pa\.min_age_interest/i);
+  assert.match(pairabilityAlignmentMigration, /pa\.age <= pb\.max_age_interest/i);
+});
+
 test('public introduction requires both consent and a complete two-seat capacity reservation', () => {
   const transition = migration.match(/create or replace function public\.rpc_transition_live_match_round[\s\S]+?\n\$\$;/i)?.[0] ?? '';
   assert.match(transition, /v_round\.state <> 'both_accepted'/i);
@@ -68,11 +115,30 @@ test('hosted matching realtime carries invalidation only, never consent payloads
   assert.doesNotMatch(mainSubscription, /live_match_rounds/i);
 });
 
+test('introduction availability invalidates every host snapshot without exposing candidate data', () => {
+  assert.match(availabilityInvalidationMigration, /after insert on public\.live_participants/i);
+  assert.match(availabilityInvalidationMigration, /after update of open_to_introductions on public\.live_participants/i);
+  assert.match(availabilityInvalidationMigration, /execute function public\.bump_live_match_round_update\(\)/i);
+  assert.doesNotMatch(availabilityInvalidationMigration, /full_name|profile_id|decision/i);
+  assert.match(route, /const openLiveStudio = useCallback/i);
+  assert.match(route, /hostedMatching\.refresh\(\)/i);
+  assert.match(route, /onPress=\{openLiveStudio\}/i);
+});
+
 test('host Match Desk is a dedicated full-screen private console', () => {
-  assert.match(route, /LiveHostedMatchingModal/i);
-  assert.match(route, /Open private Match Desk/i);
+  assert.match(route, /LiveStudioModal/i);
+  assert.match(route, /Live Studio/i);
   assert.match(modal, /presentationStyle="fullScreen"/i);
   assert.match(modal, /PRIVATE HOST CONSOLE/i);
+  assert.match(modal, /initialWindowMetrics/i);
+  assert.match(modal, /paddingTop: topInset/i);
+});
+
+test('Live exits are deterministic and never depend on missing navigation history', () => {
+  assert.match(route, /getLiveExitDestination/i);
+  assert.doesNotMatch(route, /router\.back\(\)/i);
+  assert.match(navigation, /LiveExitDestination = '\/live'/i);
+  assert.match(navigation, /LiveExitDestination => '\/live'/i);
 });
 
 test('double consent resolves into a restrained public introduction and Conversation Spark', () => {
@@ -104,5 +170,48 @@ test('client parser keeps host pairing history but does not require raw peer con
     activeRound: null,
   });
   assert.deepEqual(parsed.candidates[0].pairedWithUserIds, ['user-b']);
+  assert.equal(parsed.candidates[0].pairableWithUserIds, null);
   assert.equal(parsed.activeRound, null);
+});
+
+test('Match Desk prevents incompatible and repeated pairs before proposal', () => {
+  const candidateA = {
+    userId: 'user-a',
+    pairedWithUserIds: [] as string[],
+    pairableWithUserIds: ['user-b'] as string[] | null,
+  };
+  const candidateB = {
+    userId: 'user-b',
+    pairedWithUserIds: [] as string[],
+    pairableWithUserIds: ['user-a'] as string[] | null,
+  };
+  const candidateC = {
+    userId: 'user-c',
+    pairedWithUserIds: [] as string[],
+    pairableWithUserIds: [] as string[] | null,
+  };
+
+  assert.equal(canProposeLivePair(candidateA, candidateB), true);
+  assert.equal(getLivePairAvailability(candidateA, candidateB), 'available');
+  assert.equal(canProposeLivePair(candidateA, candidateC), false);
+  assert.equal(hasProposableLivePair([candidateA, candidateB, candidateC]), true);
+  assert.equal(canProposeLivePair(
+    { ...candidateA, pairedWithUserIds: ['user-b'] },
+    candidateB,
+  ), false);
+  assert.equal(getLivePairAvailability(
+    { ...candidateA, pairedWithUserIds: ['user-b'] },
+    candidateB,
+  ), 'already_introduced');
+  assert.equal(getLivePairAvailability(candidateA, candidateC), 'not_available');
+});
+
+test('Match Desk keeps rolling deployments safe and maps pair rejection without leaking why', () => {
+  const legacyA = { userId: 'user-a', pairedWithUserIds: [], pairableWithUserIds: null };
+  const legacyB = { userId: 'user-b', pairedWithUserIds: [], pairableWithUserIds: null };
+  assert.equal(canProposeLivePair(legacyA, legacyB), true);
+  assert.equal(
+    getLiveHostedMatchingErrorCopy('live_match_pair_ineligible'),
+    'This pairing is not available. Choose another two members.',
+  );
 });

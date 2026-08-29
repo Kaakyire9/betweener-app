@@ -64,6 +64,15 @@ test('Live RTC endpoint rejects private spark and controls publisher permissions
   assert.doesNotMatch(source, /service_role/i);
 });
 
+test('Live RTC admission exposes only safe actionable denial codes', () => {
+  assert.match(source, /const SAFE_ADMISSION_ERRORS = new Set/);
+  assert.match(source, /live_admission_account_ineligible/);
+  assert.match(source, /live_admission_session_unavailable/);
+  assert.match(source, /live_admission_forbidden/);
+  assert.match(source, /const denialCode = admissionErrorCode\(error\)/);
+  assert.match(source, /return json\(\{ error: denialCode \}, 403\)/);
+});
+
 test('an audience member can never become the provider call creator', () => {
   assert.match(source, /id:\s*'betweener-live-system'/);
   assert.match(source, /id:\s*userId,\s*\n\s*role:\s*'user'/);

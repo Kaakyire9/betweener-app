@@ -31,6 +31,18 @@ type DailyBriefCache = {
 const REMINDER_CACHE_MS = 90 * 60 * 1000;
 const DAILY_BRIEF_CACHE_MS = 26 * 60 * 60 * 1000;
 
+export const isIntentReminderSuppressedPath = (pathname?: string | null) => {
+  if (!pathname) return false;
+  return (
+    pathname.startsWith('/live') ||
+    pathname.includes('/intent') ||
+    pathname.startsWith('/login') ||
+    pathname.startsWith('/signup') ||
+    pathname.startsWith('/onboarding') ||
+    pathname.startsWith('/verify')
+  );
+};
+
 const hoursUntil = (iso?: string | null) => {
   if (!iso) return null;
   const ts = Date.parse(iso);
@@ -56,14 +68,7 @@ export default function IntentResponseReminder() {
 
   const shouldSuppress = useMemo(() => {
     if (!profile?.id) return true;
-    if (!pathname) return false;
-    return (
-      pathname.includes('/intent') ||
-      pathname.startsWith('/login') ||
-      pathname.startsWith('/signup') ||
-      pathname.startsWith('/onboarding') ||
-      pathname.startsWith('/verify')
-    );
+    return isIntentReminderSuppressedPath(pathname);
   }, [pathname, profile?.id]);
 
   const animateVisible = useCallback(
@@ -186,7 +191,13 @@ export default function IntentResponseReminder() {
     };
   }, [loadReminder]);
 
-  if (!visible || !reminder) return null;
+  useEffect(() => {
+    if (!shouldSuppress || !visible) return;
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    animateVisible(false);
+  }, [animateVisible, shouldSuppress, visible]);
+
+  if (shouldSuppress || !visible || !reminder) return null;
 
   const title =
     reminder.mode === 'brief'

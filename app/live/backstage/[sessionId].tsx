@@ -1,6 +1,6 @@
 import { useLocalSearchParams, router } from 'expo-router';
 import { Camera, CameraOff, ChevronLeft, Mic, MicOff, ShieldCheck, Wifi } from 'lucide-react-native';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LiveBackstagePreview } from '@/features/live/components/index.ts';
@@ -15,10 +15,33 @@ export default function LiveBackstageScreen() {
   const [microphoneReady, setMicrophoneReady] = useState(true);
   const [guestReady, setGuestReady] = useState(false);
   const [cameraHandoff, setCameraHandoff] = useState(false);
+  const [clock, setClock] = useState(() => Date.now());
   const canOpenStage = controller.snapshot?.capabilities.includes('live.start_session') === true;
+  const scheduledStartMs = controller.snapshot?.session.scheduledStart
+    ? Date.parse(controller.snapshot.session.scheduledStart)
+    : 0;
+  const stageIsDue = !scheduledStartMs || scheduledStartMs <= clock;
+  const startsIn = useMemo(() => {
+    const remainingMinutes = Math.max(1, Math.ceil((scheduledStartMs - clock) / 60_000));
+    if (remainingMinutes < 60) return `Available in ${remainingMinutes} min`;
+    const hours = Math.floor(remainingMinutes / 60);
+    const minutes = remainingMinutes % 60;
+    return `Available in ${hours}h${minutes ? ` ${minutes}m` : ''}`;
+  }, [clock, scheduledStartMs]);
+
+  useEffect(() => {
+    if (!canOpenStage || stageIsDue) return;
+    const timer = setInterval(() => setClock(Date.now()), 30_000);
+    return () => clearInterval(timer);
+  }, [canOpenStage, stageIsDue]);
+
+  const returnToRoom = () => {
+    router.replace({ pathname: '/live/[sessionId]', params: { sessionId } });
+  };
 
   const enterRoom = async () => {
     if (canOpenStage) {
+      if (!stageIsDue) return;
       // Release Vision Camera before Stream requests the native capture
       // session. iOS otherwise intermittently rejects the immediate handoff.
       setCameraHandoff(true);
@@ -86,7 +109,7 @@ export default function LiveBackstageScreen() {
       )}
       <SafeAreaView style={StyleSheet.absoluteFill} edges={['top', 'bottom']} pointerEvents="box-none">
         <View style={styles.header}>
-          <Pressable onPress={() => router.back()} style={styles.icon}><ChevronLeft size={24} color="#FFF7EC" /></Pressable>
+          <Pressable onPress={returnToRoom} style={styles.icon}><ChevronLeft size={24} color="#FFF7EC" /></Pressable>
           <View style={styles.privatePill}><ShieldCheck size={14} color="#D7B56D" /><Text style={styles.privateText}>PRIVATE BACKSTAGE</Text></View>
           <View style={styles.icon}><Wifi size={18} color={controller.state === 'offline' || controller.state === 'error' ? '#E7A46B' : '#BFE0D7'} /></View>
         </View>
@@ -104,12 +127,13 @@ export default function LiveBackstageScreen() {
             </Pressable>
           </View>
           <Pressable
-            disabled={devices.state !== 'ready' || guestReady}
+            disabled={devices.state !== 'ready' || guestReady || (canOpenStage && !stageIsDue)}
             onPress={() => void enterRoom()}
-            style={[styles.ready, (devices.state !== 'ready' || guestReady) && styles.readyDisabled]}
+            style={[styles.ready, (devices.state !== 'ready' || guestReady || (canOpenStage && !stageIsDue)) && styles.readyDisabled]}
           >
-            <Text style={styles.readyText}>{canOpenStage ? 'Open the public stage' : guestReady ? 'Ready · waiting for the host' : 'I’m ready for the room'}</Text>
+            <Text style={styles.readyText}>{canOpenStage ? (stageIsDue ? 'Open the public stage' : startsIn) : guestReady ? 'Ready · waiting for the host' : 'I’m ready for the room'}</Text>
           </Pressable>
+          {controller.error ? <Text accessibilityLiveRegion="polite" style={styles.errorText}>{controller.error.includes('live_session_not_due') ? 'This event is not due yet. The public stage will unlock at its scheduled time.' : 'That could not be completed yet. Check your connection and try again.'}</Text> : null}
         </View>
       </SafeAreaView>
     </View>
@@ -139,4 +163,5 @@ const styles = StyleSheet.create({
   ready: { height: 54, borderRadius: 27, alignItems: 'center', justifyContent: 'center', backgroundColor: '#D7B56D' },
   readyDisabled: { opacity: 0.45 },
   readyText: { color: '#102522', fontSize: 14, fontFamily: 'Manrope_800ExtraBold' },
+  errorText: { marginTop: 10, color: '#F0AAA5', fontSize: 11, lineHeight: 16, textAlign: 'center', fontFamily: 'Manrope_600SemiBold' },
 });

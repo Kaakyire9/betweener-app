@@ -1509,7 +1509,10 @@ export default function CircleDetailScreen() {
   );
 
   useEffect(() => {
-    if (!circleId || circlePresenceUserIds.length === 0 || typeof db.channel !== 'function') return;
+    if (!circleId || activeTab !== 'members' || circlePresenceUserIds.length === 0) return;
+
+    let cancelled = false;
+    let inFlight = false;
 
     const applyPresenceRow = (row?: { user_id?: string | null; online?: boolean | null; last_active?: string | null } | null) => {
       const targetUserId = String(row?.user_id ?? '').trim();
@@ -1531,20 +1534,30 @@ export default function CircleDetailScreen() {
       setPendingMembers((current) => patchCollection(current));
     };
 
-    const channel = db.channel(`circle-member-presence:${circleId}`);
-    circlePresenceUserIds.forEach((memberUserId) => {
-      channel.on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'user_presence', filter: `user_id=eq.${memberUserId}` },
-        (payload: any) => applyPresenceRow((payload?.new || payload?.old) as { user_id?: string | null; online?: boolean | null; last_active?: string | null } | null),
-      );
-    });
-    channel.subscribe();
+    // A Circle can show dozens of members. Registering one Postgres Changes
+    // filter per member made every screen-open create up to 60 database-backed
+    // Realtime subscriptions. Presence is soft state, so one bounded batch read
+    // per minute is both cheaper and more predictable than a subscription fanout.
+    const refreshPresence = async () => {
+      if (cancelled || inFlight) return;
+      inFlight = true;
+      try {
+        const result = await fetchUsersPresence(circlePresenceUserIds);
+        if (cancelled || result.error) return;
+        result.data.forEach((row) => applyPresenceRow(row));
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    void refreshPresence();
+    const interval = setInterval(() => void refreshPresence(), 60_000);
 
     return () => {
-      if (typeof db.removeChannel === 'function') void db.removeChannel(channel);
+      cancelled = true;
+      clearInterval(interval);
     };
-  }, [circleId, circlePresenceUserIdsKey]);
+  }, [activeTab, circleId, circlePresenceUserIdsKey]);
 
   const canEditCircle = isOwner;
   const canReviewMembers = isOwner || ['host', 'admin', 'moderator'].includes(membershipRole);
@@ -1818,13 +1831,19 @@ export default function CircleDetailScreen() {
       refreshTimer = setTimeout(() => void refreshCircleMomentsPersisted(), 240);
     };
     const channel = db.channel(`circle-moments:${circleId}`);
-    scopedMemberIds.forEach((memberUserId) => {
-      channel.on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'moments', filter: `user_id=eq.${memberUserId}` },
-        queueRefresh,
-      );
-    });
+    // Realtime supports a bounded `in` filter. One filtered subscription keeps
+    // Circle moments responsive without multiplying database-backed
+    // subscriptions by the number of members in the Circle.
+    channel.on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'moments',
+        filter: `user_id=in.(${scopedMemberIds.join(',')})`,
+      },
+      queueRefresh,
+    );
     channel.subscribe();
 
     return () => {

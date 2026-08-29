@@ -5,25 +5,92 @@ import {
   type StreamVideoClient,
   type StreamVideoParticipant,
 } from '@stream-io/video-client';
-import { StreamCall, StreamVideo, useCallStateHooks } from '@stream-io/video-react-native-sdk';
 import { memo, useEffect, useMemo } from 'react';
-import { StyleSheet, Text, View, type ViewStyle } from 'react-native';
+import { Platform, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import type { LiveParticipant } from '../application/live-models.ts';
 import type { StreamLiveMediaBindings } from '../media/stream-live-media-provider.ts';
+import type { StreamVideoSdkModule } from '../media/load-stream-video-sdk.ts';
+import {
+  clearAndroidLivePictureInPictureActions,
+  setAndroidLivePictureInPictureActions,
+  subscribeToAndroidLivePictureInPictureActions,
+} from '../media/live-picture-in-picture-actions.ts';
 import {
   composeLiveStageSeats,
   countConnectedLiveParticipants,
   liveStageTilePlacement,
+  selectLivePictureInPictureCandidate,
   type LiveStageTilePlacement,
 } from '../stage/live-stage-layout.ts';
 import { LiveStageParticipantTile } from './LiveStageParticipantTile.tsx';
+import { LiveStageRequestTile, type LiveStageRequestSeat } from './LiveStageRequestTile.tsx';
+import { PrivateSparkParticipantSurface } from './PrivateSparkParticipantSurface.tsx';
 
-type StreamLiveStageProps = {
+export type StreamLiveStageProps = {
   bindings: StreamLiveMediaBindings;
+  sdk: StreamVideoSdkModule;
   stageParticipants: readonly LiveParticipant[];
   localPublisherUserId: string | null;
   onConnectedParticipantCountChange?: (count: number) => void;
+  constrainMultiStage?: boolean;
+  presentation?: 'public' | 'private_spark';
+  tileFooterInset?: number;
+  onPictureInPictureModeChange?: (active: boolean) => void;
+  requestSeat?: LiveStageRequestSeat | null;
 };
+
+const LivePictureInPictureBridge = memo(function LivePictureInPictureBridge({
+  sdk,
+  canControlMedia,
+  onModeChange,
+}: {
+  sdk: StreamVideoSdkModule;
+  canControlMedia: boolean;
+  onModeChange?: (active: boolean) => void;
+}) {
+  sdk.useAutoEnterPiPEffect(false);
+  const isInPictureInPicture = sdk.useIsInPiPMode();
+  const { useCameraState, useMicrophoneState } = sdk.useCallStateHooks();
+  const { camera, optimisticIsMute: isCameraMuted } = useCameraState();
+  const { microphone, optimisticIsMute: isMicrophoneMuted } = useMicrophoneState();
+
+  useEffect(() => {
+    onModeChange?.(isInPictureInPicture);
+  }, [isInPictureInPicture, onModeChange]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') return undefined;
+    if (!isInPictureInPicture || !canControlMedia) {
+      clearAndroidLivePictureInPictureActions();
+      return undefined;
+    }
+    setAndroidLivePictureInPictureActions({
+      cameraEnabled: !isCameraMuted,
+      microphoneEnabled: !isMicrophoneMuted,
+    });
+    return () => clearAndroidLivePictureInPictureActions();
+  }, [canControlMedia, isCameraMuted, isInPictureInPicture, isMicrophoneMuted]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android' || !canControlMedia) return undefined;
+    return subscribeToAndroidLivePictureInPictureActions((action) => {
+      if (action === 'toggle_camera') {
+        void camera.toggle();
+        return;
+      }
+      if (action === 'toggle_microphone') void microphone.toggle();
+    });
+  }, [camera, canControlMedia, microphone]);
+
+  if (Platform.OS !== 'ios') return null;
+  const RTCViewPipIOS = sdk.RTCViewPipIOS;
+  return (
+    <RTCViewPipIOS
+      includeLocalParticipantVideo
+      onPiPChange={onModeChange}
+    />
+  );
+});
 
 const PLACEMENT_STYLES: Record<LiveStageTilePlacement, ViewStyle> = {
   single: { left: 0, top: 0, width: '100%', height: '100%' },
@@ -39,11 +106,19 @@ const PLACEMENT_STYLES: Record<LiveStageTilePlacement, ViewStyle> = {
 };
 
 const StageGrid = memo(function StageGrid({
+  sdk,
   stageParticipants,
   localPublisherUserId,
   onConnectedParticipantCountChange,
-}: Pick<StreamLiveStageProps, 'stageParticipants' | 'localPublisherUserId' | 'onConnectedParticipantCountChange'>) {
-  const { useParticipants } = useCallStateHooks();
+  constrainMultiStage,
+  presentation,
+  tileFooterInset,
+  isInPictureInPicture,
+  requestSeat,
+}: Pick<StreamLiveStageProps, 'sdk' | 'stageParticipants' | 'localPublisherUserId' | 'onConnectedParticipantCountChange' | 'constrainMultiStage' | 'presentation' | 'tileFooterInset' | 'requestSeat'> & {
+  isInPictureInPicture: boolean;
+}) {
+  const { useParticipants } = sdk.useCallStateHooks();
   const rtcParticipants = useParticipants();
   const candidates = useMemo(() => (
     rtcParticipants.map((participant: StreamVideoParticipant) => ({
@@ -67,11 +142,23 @@ const StageGrid = memo(function StageGrid({
       localPublisherUserId,
     );
   }, [candidates, localPublisherUserId, stageParticipants]);
+  const pictureInPictureCandidate = useMemo(
+    () => selectLivePictureInPictureCandidate(
+      participants.flatMap((seat) => seat.candidate ? [seat.candidate] : []),
+    ),
+    [participants],
+  );
+  const visibleRequestSeat = presentation === 'public' && !isInPictureInPicture
+    ? requestSeat ?? null
+    : null;
+  const visibleRequestSeats = visibleRequestSeat
+    ? Math.max(1, Math.min(visibleRequestSeat.seatCount, 3))
+    : 0;
 
   useEffect(() => {
     onConnectedParticipantCountChange?.(connectedParticipantCount);
   }, [connectedParticipantCount, onConnectedParticipantCountChange]);
-  if (!participants.length) {
+  if (!participants.length && !visibleRequestSeat) {
     return (
       <View style={styles.emptyStage}>
         <View style={styles.orbit} />
@@ -81,42 +168,130 @@ const StageGrid = memo(function StageGrid({
     );
   }
 
-  return (
-    <View style={styles.grid}>
+  if (Platform.OS === 'android' && isInPictureInPicture) {
+    const pictureInPictureSeat = participants.find(
+      (seat) => seat.userId === pictureInPictureCandidate?.userId,
+    ) ?? participants[0];
+    return (
+      <View style={styles.pictureInPictureStage}>
+        <LiveStageParticipantTile
+          participant={pictureInPictureSeat.candidate?.participant ?? null}
+          identity={pictureInPictureSeat.identity}
+          fit="cover"
+          ParticipantViewComponent={sdk.ParticipantView}
+        />
+      </View>
+    );
+  }
+
+  const visualTileCount = Math.min(4, participants.length + visibleRequestSeats);
+  const isContainedMultiStage = visualTileCount > 1 && constrainMultiStage !== false;
+  const stageGrid = (
+    <View style={[styles.grid, presentation === 'private_spark' && styles.privateGrid]}>
       {participants.map(({ candidate, identity, userId }, index) => {
-        const placement = liveStageTilePlacement(participants.length, index);
+        const placement = liveStageTilePlacement(visualTileCount, index);
+        const displayName = candidate?.isLocalParticipant
+          ? 'You'
+          : identity?.fullName?.trim() || candidate?.participant.name?.trim() || 'Your connection';
+        const tile = (
+          <LiveStageParticipantTile
+            participant={candidate?.participant ?? null}
+            identity={identity}
+            fit="cover"
+            ParticipantViewComponent={sdk.ParticipantView}
+            footerInset={tileFooterInset}
+          />
+        );
         return (
           <View
             key={userId}
-            style={[styles.tile, PLACEMENT_STYLES[placement]]}
+            style={[
+              styles.tile,
+              presentation === 'private_spark' && styles.privateTile,
+              PLACEMENT_STYLES[placement],
+            ]}
           >
-            <LiveStageParticipantTile
-              participant={candidate?.participant ?? null}
-              identity={identity}
-              fit={participants.length === 1 ? 'cover' : 'contain'}
-            />
+            {presentation === 'private_spark' ? (
+              <PrivateSparkParticipantSurface
+                displayName={displayName}
+                state={!candidate ? 'reconnecting' : candidate.hasVideo ? 'normal' : 'camera_off'}
+              >
+                {tile}
+              </PrivateSparkParticipantSurface>
+            ) : tile}
           </View>
         );
       })}
+      {visibleRequestSeat ? Array.from({ length: visibleRequestSeats }, (_, seatIndex) => (
+          <View
+            key={`request-seat-${seatIndex}`}
+            style={[
+              styles.tile,
+              styles.requestTile,
+              PLACEMENT_STYLES[liveStageTilePlacement(visualTileCount, participants.length + seatIndex)],
+            ]}
+          >
+            <LiveStageRequestTile request={visibleRequestSeat} seatIndex={seatIndex} />
+          </View>
+        )) : null}
+      {presentation === 'private_spark' && participants.length === 2
+        ? <View pointerEvents="none" style={styles.privateDivider} />
+        : null}
+    </View>
+  );
+
+  if (!isContainedMultiStage) return stageGrid;
+
+  return (
+    <View style={[
+      styles.multiStageShell,
+      visualTileCount === 2 && styles.dualStageShell,
+      presentation === 'private_spark' && styles.privateMultiStageShell,
+      presentation === 'private_spark'
+        && participants.length === 2
+        && styles.privateDualStageShell,
+    ]}>
+      <View style={styles.multiStageClip}>
+        {stageGrid}
+      </View>
     </View>
   );
 });
 
 export const StreamLiveStage = memo(function StreamLiveStage({
   bindings,
+  sdk,
   stageParticipants,
   localPublisherUserId,
   onConnectedParticipantCountChange,
+  constrainMultiStage,
+  presentation = 'public',
+  tileFooterInset,
+  onPictureInPictureModeChange,
+  requestSeat,
 }: StreamLiveStageProps) {
   const client = bindings.client as unknown as StreamVideoClient;
   const call = bindings.call as unknown as Call;
+  const { StreamCall, StreamVideo } = sdk;
+  const isInPictureInPicture = sdk.useIsInPiPMode();
   return (
     <StreamVideo client={client}>
       <StreamCall call={call}>
+        <LivePictureInPictureBridge
+          sdk={sdk}
+          canControlMedia={Boolean(localPublisherUserId)}
+          onModeChange={onPictureInPictureModeChange}
+        />
         <StageGrid
+          sdk={sdk}
           stageParticipants={stageParticipants}
           localPublisherUserId={localPublisherUserId}
           onConnectedParticipantCountChange={onConnectedParticipantCountChange}
+          constrainMultiStage={constrainMultiStage}
+          presentation={presentation}
+          tileFooterInset={tileFooterInset}
+          isInPictureInPicture={isInPictureInPicture}
+          requestSeat={requestSeat}
         />
       </StreamCall>
     </StreamVideo>
@@ -124,13 +299,80 @@ export const StreamLiveStage = memo(function StreamLiveStage({
 });
 
 const styles = StyleSheet.create({
-  grid: { flex: 1, backgroundColor: '#091413' },
+  grid: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: '#091413',
+  },
+  pictureInPictureStage: {
+    flex: 1,
+    overflow: 'hidden',
+    backgroundColor: '#06110F',
+  },
+  // A solo host remains cinematic and edge-to-edge. Multi-person rooms sit in
+  // one centered, rounded stage window so portrait cameras keep intentional
+  // framing instead of looking like a full-screen technical grid.
+  multiStageShell: {
+    position: 'absolute',
+    top: '13%',
+    right: 12,
+    bottom: '34%',
+    left: 12,
+    borderRadius: 28,
+    padding: 2,
+    backgroundColor: '#07110F',
+    borderWidth: 1,
+    borderColor: '#E5CC8A42',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 14 },
+    shadowOpacity: 0.32,
+    shadowRadius: 22,
+    elevation: 12,
+  },
+  privateMultiStageShell: {
+    top: '18%',
+    right: 14,
+    bottom: '20%',
+    left: 14,
+    borderColor: '#D7B56D52',
+  },
+  dualStageShell: {
+    top: '18%',
+    bottom: '38%',
+  },
+  privateDualStageShell: {
+    top: '27%',
+    bottom: '31%',
+  },
+  multiStageClip: {
+    flex: 1,
+    overflow: 'hidden',
+    borderRadius: 24,
+    backgroundColor: '#06110F',
+  },
+  privateGrid: { backgroundColor: '#06110F' },
+  privateTile: { borderColor: '#12332C99' },
+  privateDivider: {
+    position: 'absolute',
+    top: '8%',
+    bottom: '8%',
+    left: '50%',
+    width: 1,
+    backgroundColor: '#3A746A66',
+    shadowColor: '#806CA8',
+    shadowOpacity: 0.18,
+    shadowRadius: 5,
+  },
   tile: {
     position: 'absolute',
     padding: 1,
     overflow: 'hidden',
     backgroundColor: '#12211F',
   },
+  requestTile: { padding: 0 },
   emptyStage: {
     flex: 1,
     alignItems: 'center',

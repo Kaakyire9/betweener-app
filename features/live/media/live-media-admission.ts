@@ -34,7 +34,10 @@ export class LiveMediaAdmissionError extends Error {
   }
 }
 
-export const parseLiveMediaAdmission = (value: unknown): LiveMediaAdmission => {
+export const parseLiveMediaAdmission = (
+  value: unknown,
+  options: { allowPrivateSpark?: boolean } = {},
+): LiveMediaAdmission => {
   if (!isRecord(value)) throw new LiveMediaAdmissionError('live_media_admission_invalid');
 
   const user = value.user;
@@ -87,7 +90,7 @@ export const parseLiveMediaAdmission = (value: unknown): LiveMediaAdmission => {
     || !value.capabilities.every((capability) => includes(LIVE_CAPABILITIES, capability))
     || !value.capabilities.includes('live.join')
     || !includes(LIVE_PARTICIPANT_STATES, value.participantState)
-    || value.participantState === 'private_spark'
+    || (value.participantState === 'private_spark' && options.allowPrivateSpark !== true)
     || !includes(LIVE_SESSION_STATUSES, value.sessionStatus)
     || !['backstage', 'live', 'ending'].includes(value.sessionStatus)
   ) {

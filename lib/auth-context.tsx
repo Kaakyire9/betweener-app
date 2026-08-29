@@ -83,6 +83,7 @@ type AuthContextType = {
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<Profile | null>;
   refreshPhoneState: () => Promise<boolean>;
+  retrySessionRecovery: (reason?: string) => Promise<boolean>;
   
   // Profile Actions
   updateProfile: (updates: ProfileUpdateInput) => Promise<{ error: Error | null; queued?: boolean }>;
@@ -96,7 +97,6 @@ const PHONE_VERIFIED_CACHE_TTL_MS = 60_000;
 const PROFILE_DIAG_TIMEOUT_MS = 8000;
 const PROFILE_CACHE_TTL_MS = 60_000;
 const RESUME_REFRESH_THROTTLE_MS = 10_000;
-const RESUME_REFRESH_TIMEOUT_MS = 6_000;
 const AUTH_SNAPSHOT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const NETINFO_TIMEOUT_MS = 1200;
 const UNREQUESTED_SIGNED_OUT_THROTTLE_MS = 15_000;
@@ -645,7 +645,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setAuthStatus('reconnecting_session');
 
       const recovery = await recoverSupabaseConnectivity(reason, {
-        maxRefreshAttempts: 3,
+        maxRefreshAttempts: 2,
         fallbackSession: snapshot?.session ?? session ?? null,
         onStateChange: (state) => {
           if (state === 'session_refreshing') {
@@ -1366,10 +1366,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      const status = await Promise.race([
-        ensureFreshSession(),
-        new Promise<'failed'>((resolve) => setTimeout(() => resolve('failed'), RESUME_REFRESH_TIMEOUT_MS)),
-      ]);
+      // ensureFreshSession owns its timeout. Racing it with a shorter timer leaves
+      // the native refresh alive and can start a second refresh on top of it.
+      const status = await ensureFreshSession();
 
       if (status === 'failed' || status === 'no_session') {
         setAuthRecoveryPending(true);
@@ -1722,9 +1721,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     usingPersistedSessionFallback,
     isSessionRecoveryActive,
     canPerformAuthenticatedWrites:
-      authStatus !== 'offline_authenticated' &&
-      authStatus !== 'reconnecting_session' &&
-      authStatus !== 'session_refreshing',
+      authStatus === 'authenticated' && !!session?.user,
     
     // Actions
     signIn,
@@ -1732,6 +1729,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     signOut,
     refreshProfile,
     refreshPhoneState,
+    retrySessionRecovery: (reason = 'manual_retry') =>
+      attemptSilentSessionRecovery(reason, {
+        allowWithoutSnapshot: true,
+        force: true,
+      }),
     updateProfile,
   };
 

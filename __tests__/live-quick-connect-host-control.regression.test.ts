@@ -1,0 +1,237 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import test from 'node:test';
+
+import { parseLiveQuickConnectHostSnapshot } from '../features/live/application/live-parsers.ts';
+import { paginateLiveQuickConnectPool } from '../features/live/domain/live-quick-connect-pool-layout.ts';
+
+const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8');
+
+const migration = read('../supabase/migrations/20260828160000_live_quick_connect_host_control_room.sql');
+const publicPoolMigration = read('../supabase/migrations/20260828190000_live_quick_connect_public_pool.sql');
+const hostPoolEnrollmentMigration = read('../supabase/migrations/20260829100000_live_quick_connect_host_pool_enrollment.sql');
+const repository = read('../features/live/application/live-repository.ts');
+const participantHook = read('../features/live/hooks/use-live-quick-connect.ts');
+const hook = read('../features/live/hooks/use-live-quick-connect-host-control.ts');
+const poolHook = read('../features/live/hooks/use-live-quick-connect-pool.ts');
+const panel = read('../features/live/components/LiveQuickConnectHostPanel.tsx');
+const pool = read('../features/live/components/LiveQuickConnectPool.tsx');
+const studio = read('../features/live/components/LiveStudioModal.tsx');
+const route = read('../app/live/[sessionId].tsx');
+
+test('Quick Connect host controls are private, constrained and server authoritative', () => {
+  assert.match(migration, /create table public\.live_quick_connect_controls/i);
+  assert.match(migration, /state in \('closed', 'open', 'paused', 'draining', 'ended'\)/i);
+  assert.match(migration, /creator_mode in \('facilitator', 'participant'\)/i);
+  assert.match(migration, /round_seconds in \(120, 180, 300\)/i);
+  assert.match(migration, /enable row level security/i);
+  assert.match(
+    migration,
+    /revoke all on table public\.live_quick_connect_controls from public, anon, authenticated/i,
+  );
+});
+
+test('existing rotations stay compatible while new events start closed and facilitator-led', () => {
+  assert.match(
+    migration,
+    /when session\.status in \('live', 'backstage'\) then 'open'/i,
+  );
+  assert.match(
+    migration,
+    /if new\.format = 'quick_connect'[\s\S]*?'closed'[\s\S]*?'facilitator'/i,
+  );
+  assert.match(
+    migration,
+    /when \(new\.configuration ->> 'quick_connect_round_seconds'\) in \('120', '180', '300'\)[\s\S]*?else 180/i,
+  );
+});
+
+test('pairing is fail-closed and uses the host-configured round duration', () => {
+  assert.match(
+    migration,
+    /when v_session\.status in \('ended', 'cancelled'\) then 'ended'[\s\S]*?else 'closed'/i,
+  );
+  assert.match(migration, /live_quick_connect_control_missing/i);
+  assert.match(migration, /make_interval\(secs => v_control\.round_seconds\)/i);
+  assert.match(migration, /if v_control\.state <> 'open' then[\s\S]*?return;/i);
+  assert.match(migration, /for update skip locked/i);
+});
+
+test('host actions have explicit transitions and draining preserves active rounds', () => {
+  assert.match(migration, /p_action not in \('open', 'close', 'pause', 'resume', 'drain', 'end'\)/i);
+  assert.match(migration, /live_quick_connect_control_transition_invalid/i);
+  assert.match(
+    migration,
+    /if v_control\.state = 'draining' and v_active_pair_count = 0 then[\s\S]*?set state = 'ended'/i,
+  );
+  assert.match(
+    migration,
+    /if p_action = 'end' then[\s\S]*?pairing\.state in \('active', 'reconnect_grace'\)/i,
+  );
+  assert.match(migration, /pg_advisory_xact_lock\(hashtextextended\('quick:' \|\| p_session_id::text, 0\)\)/i);
+});
+
+test('admission preserves reconnects but blocks new entrants while closed', () => {
+  assert.match(
+    migration,
+    /rename to rpc_join_live_quick_connect_uncontrolled/i,
+  );
+  assert.match(
+    migration,
+    /revoke all on function public\.rpc_join_live_quick_connect_uncontrolled\(uuid\)[\s\S]*?from public, anon, authenticated/i,
+  );
+  assert.match(migration, /live_quick_connect_host_facilitator/i);
+  assert.match(
+    migration,
+    /v_control\.state <> 'open'[\s\S]*?v_existing\.state, 'left'\) not in \('waiting', 'paired', 'disconnected'\)/i,
+  );
+  assert.match(migration, /live_quick_connect_not_open/i);
+});
+
+test('host snapshot exposes operational metrics without direct table access', () => {
+  for (const metric of [
+    'waiting_people',
+    'eligible_people',
+    'active_pairs',
+    'reconnecting_people',
+    'completed_rounds',
+  ]) {
+    assert.match(migration, new RegExp(`'${metric}'`, 'i'));
+  }
+  assert.match(migration, /v_session\.created_by_user_id <> p_requesting_user_id/i);
+  assert.match(migration, /live_quick_connect_control_forbidden/i);
+});
+
+test('host snapshot parser rejects invalid state and normalizes safe values', () => {
+  const snapshot = parseLiveQuickConnectHostSnapshot({
+    session_id: 'session-1',
+    state: 'paused',
+    creator_mode: 'unexpected',
+    round_seconds: 180,
+    version: -2,
+    server_now: '2026-08-28T12:00:00.000Z',
+    can_manage: true,
+    metrics: {
+      waiting_people: -2,
+      eligible_people: 5.9,
+      active_pairs: 2,
+      reconnecting_people: 1,
+      completed_rounds: 9,
+    },
+  });
+
+  assert.equal(snapshot.creatorMode, 'facilitator');
+  assert.equal(snapshot.version, 1);
+  assert.equal(snapshot.metrics.waitingPeople, 0);
+  assert.equal(snapshot.metrics.eligiblePeople, 5);
+  assert.throws(
+    () => parseLiveQuickConnectHostSnapshot({ state: 'running', round_seconds: 180 }),
+    /live_quick_connect_host_snapshot_invalid/,
+  );
+  assert.throws(
+    () => parseLiveQuickConnectHostSnapshot({ state: 'open', round_seconds: 240 }),
+    /live_quick_connect_round_duration_invalid/,
+  );
+});
+
+test('Live Studio and repository expose one host-control path', () => {
+  assert.match(repository, /rpc_get_live_quick_connect_host_control/i);
+  assert.match(repository, /rpc_configure_live_quick_connect/i);
+  assert.match(repository, /rpc_control_live_quick_connect/i);
+  assert.match(hook, /subscribeQuickConnect\(sessionId, \(\) => void refresh\(\)\)/i);
+  assert.match(hook, /actionInFlightRef\.current/i);
+  assert.match(studio, /rotation: \{ label: 'Rotation'/i);
+  assert.match(studio, /LiveQuickConnectHostPanel/i);
+  assert.match(panel, />\{seconds \/ 60\} min</i);
+  assert.match(panel, /roundOptions = \[120, 180, 300\] as const/i);
+  assert.match(panel, /Facilitate/i);
+  assert.match(panel, /Join rotations/i);
+  assert.match(panel, /Open rotation/i);
+  assert.match(panel, /Close entry/i);
+});
+
+test('Quick Connect is public-first and only a canonical pairing opens a private round', () => {
+  assert.match(route, /useLiveQuickConnectPool\([\s\S]*?isQuickConnectLive && participantAdmissionReady/i);
+  assert.doesNotMatch(route, /isQuickConnectParticipantExperience/i);
+  assert.match(route, /onOptIn=\{\(\) => void quickConnectPool\.optIn\(\)\}/i);
+  assert.match(route, /quickConnectPairingId = quickConnectPool\.snapshot\?\.queue\?\.pairing\?\.id/i);
+  assert.match(
+    route,
+    /if \(!isQuickConnectLive \|\| !quickConnectPairingId\) return;[\s\S]*?pathname: '\/live\/quick-connect\/\[sessionId\]'/i,
+  );
+  assert.match(route, /<LiveQuickConnectPool/i);
+  assert.match(route, /quickConnectProps=\{isQuickConnectLive && isRoomHost/i);
+});
+
+test('public pool enrolment is explicit, private and server-authoritative', () => {
+  assert.match(publicPoolMigration, /create table if not exists public\.live_quick_connect_interests/i);
+  assert.match(publicPoolMigration, /alter table public\.live_quick_connect_interests enable row level security/i);
+  assert.match(
+    publicPoolMigration,
+    /revoke all on table public\.live_quick_connect_interests from public, anon, authenticated/i,
+  );
+  assert.match(publicPoolMigration, /create or replace function public\.rpc_get_live_quick_connect_pool/i);
+  assert.match(publicPoolMigration, /create or replace function public\.rpc_signal_live_quick_connect_interest/i);
+  assert.match(publicPoolMigration, /live_quick_connect_pool_membership_required/i);
+  assert.match(publicPoolMigration, /live_quick_connect_pair_is_eligible/i);
+  assert.match(publicPoolMigration, /least\(v_user_id, v_target_user_id\)/i);
+  assert.match(publicPoolMigration, /greatest\(v_user_id, v_target_user_id\)/i);
+});
+
+test('pool enrolment is explicit for guests and hosts', () => {
+  assert.match(poolHook, /const optIn = useCallback/i);
+  assert.doesNotMatch(poolHook, /useEffect\([\s\S]{0,300}?joinQuickConnect/i);
+  assert.match(poolHook, /subscribeQuickConnect\(sessionId/i);
+  assert.match(hostPoolEnrollmentMigration, /Hosting a Quick Connect Live and consenting to join its matchmaking pool are[\s\S]*?independent roles/i);
+  assert.match(hostPoolEnrollmentMigration, /return public\.rpc_join_live_quick_connect_uncontrolled\(p_session_id\)/i);
+  assert.match(hostPoolEnrollmentMigration, /'is_host', v_session\.created_by_user_id = v_user_id/i);
+  assert.match(hostPoolEnrollmentMigration, /'is_opted_in', coalesce\(v_me\.state in \('waiting', 'paired', 'disconnected'\), false\)/i);
+  assert.match(pool, /snapshot\.isHost \? 'Join your guests, if you choose\.'/i);
+  assert.match(pool, /canSignal=\{snapshot\.isOptedIn\}/i);
+});
+
+test('pool grid displays eight compact members and paginates deterministically', () => {
+  const members = Array.from({ length: 10 }, (_, index) => ({ id: index }));
+  const firstPage = paginateLiveQuickConnectPool(members, 0);
+  const secondPage = paginateLiveQuickConnectPool(members, 1);
+
+  assert.equal(firstPage.members.length, 8);
+  assert.equal(firstPage.remainingCount, 2);
+  assert.equal(firstPage.hasNext, true);
+  assert.deepEqual(secondPage.members.map((member) => member.id), [8, 9]);
+  assert.equal(secondPage.hasPrevious, true);
+  assert.match(pool, /Leave pool/i);
+});
+
+test('Quick Connect supports equal stacked and side-by-side host and pool stages', () => {
+  const stageSpacer = route.indexOf('styles.quickConnectStageSpacer');
+  const poolPanel = route.indexOf('<LiveQuickConnectPool');
+
+  assert.ok(stageSpacer >= 0);
+  assert.ok(poolPanel > stageSpacer);
+  assert.match(
+    route,
+    /quickConnectLayout === 'side-by-side'[\s\S]*?styles\.quickConnectStageSideBySide[\s\S]*?styles\.quickConnectStageBackground/i,
+  );
+  assert.match(route, /quickConnectStageBackground:\s*\{[\s\S]*?height:\s*'43%'/i);
+  assert.match(route, /quickConnectStageSideBySide:\s*\{[\s\S]*?width:\s*'46%'[\s\S]*?height:\s*'40%'/i);
+  assert.match(route, /quickConnectPoolSidePane:\s*\{[\s\S]*?right:\s*12[\s\S]*?width:\s*'46%'[\s\S]*?height:\s*'40%'/i);
+  assert.match(route, /layout=\{quickConnectLayout\}/i);
+  assert.match(route, /onLayoutChange=\{setQuickConnectLayout\}/i);
+  assert.match(route, /isQuickConnectLive && !keyboardVisible/i);
+});
+
+test('opening a host-controlled rotation wakes waiting guests without a polling loop', () => {
+  assert.match(
+    repository,
+    /subscribeQuickConnect[\s\S]*?status === 'SUBSCRIBED'\) onChange\(\)/i,
+  );
+  assert.match(
+    participantHook,
+    /quickConnectIsWaitingForHost\(errorRef\.current\)[\s\S]*?void retryJoin\(\)/i,
+  );
+  assert.match(
+    participantHook,
+    /if \(quickConnectIsWaitingForHost\(errorRef\.current\)\) return;/i,
+  );
+});

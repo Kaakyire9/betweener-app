@@ -5,13 +5,14 @@ import {
   type StreamVideoParticipant,
 } from '@stream-io/video-client';
 import {
-  ParticipantView,
   type ParticipantVideoFallbackProps,
 } from '@stream-io/video-react-native-sdk';
 import { Image } from 'expo-image';
 import { CameraOff, MicOff } from 'lucide-react-native';
-import { memo, useCallback } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { AccessibilityInfo, Animated, StyleSheet, Text, View } from 'react-native';
+import type { StreamVideoSdkModule } from '../media/load-stream-video-sdk.ts';
+import { LIVE_VISUAL } from './live-visual-tokens.ts';
 
 export type LiveStageParticipantIdentity = {
   fullName: string | null;
@@ -22,6 +23,8 @@ type LiveStageParticipantTileProps = {
   participant: StreamVideoParticipant | null;
   identity: LiveStageParticipantIdentity | null;
   fit: 'contain' | 'cover';
+  ParticipantViewComponent: StreamVideoSdkModule['ParticipantView'];
+  footerInset?: number;
 };
 
 const initialsFor = (name: string): string => {
@@ -71,6 +74,8 @@ export const LiveStageParticipantTile = memo(function LiveStageParticipantTile({
   participant,
   identity,
   fit,
+  ParticipantViewComponent,
+  footerInset = 0,
 }: LiveStageParticipantTileProps) {
   const cameraOn = participant ? hasVideo(participant) : false;
   const microphoneOn = participant ? hasAudio(participant) : false;
@@ -81,18 +86,47 @@ export const LiveStageParticipantTile = memo(function LiveStageParticipantTile({
   const connectionQuality = participant?.connectionQuality ?? SfuModels.ConnectionQuality.UNSPECIFIED;
   const qualityLabel = connectionLabel(connectionQuality);
   const activeBars = connectionBars(connectionQuality);
+  const focusOpacity = useRef(new Animated.Value(participant?.isSpeaking ? 1 : 0)).current;
+  const [reduceMotion, setReduceMotion] = useState(false);
   const VideoFallback = useCallback((_props: ParticipantVideoFallbackProps) => (
     <CameraOffFallback avatarUrl={avatarUrl} displayName={displayName} />
   ), [avatarUrl, displayName]);
+
+  useEffect(() => {
+    let mounted = true;
+    void AccessibilityInfo.isReduceMotionEnabled().then((enabled) => {
+      if (mounted) setReduceMotion(enabled);
+    });
+    const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
+    return () => {
+      mounted = false;
+      subscription.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    const target = participant?.isSpeaking ? 1 : 0;
+    if (reduceMotion) {
+      focusOpacity.setValue(target);
+      return;
+    }
+    const animation = Animated.timing(focusOpacity, {
+      toValue: target,
+      duration: 180,
+      useNativeDriver: true,
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [focusOpacity, participant?.isSpeaking, reduceMotion]);
 
   return (
     <View
       accessible
       accessibilityLabel={`${displayName}. ${cameraOn ? 'Camera on' : 'Camera off'}. ${microphoneOn ? 'Microphone on' : 'Microphone muted'}. ${qualityLabel}.`}
-      style={[styles.root, participant?.isSpeaking && styles.speaking]}
+      style={styles.root}
     >
       {participant ? (
-        <ParticipantView
+        <ParticipantViewComponent
           participant={participant}
           objectFit={fit}
           style={styles.participant}
@@ -102,7 +136,8 @@ export const LiveStageParticipantTile = memo(function LiveStageParticipantTile({
           ParticipantVideoFallback={VideoFallback}
         />
       ) : <CameraOffFallback avatarUrl={avatarUrl} displayName={displayName} />}
-      <View pointerEvents="none" style={styles.footer}>
+      <Animated.View pointerEvents="none" style={[styles.focusFrame, { opacity: focusOpacity }]} />
+      <View pointerEvents="none" style={[styles.footer, { bottom: 8 + footerInset }]}>
         <View style={styles.namePill}>
           <Text numberOfLines={1} style={styles.name}>{displayName}</Text>
           {!microphoneOn ? <MicOff size={13} color="#F3E6D2" /> : null}
@@ -136,7 +171,19 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#FFFFFF14',
   },
-  speaking: { borderColor: '#D7B56D', borderWidth: 2 },
+  focusFrame: {
+    position: 'absolute',
+    top: 2,
+    right: 2,
+    bottom: 2,
+    left: 2,
+    borderRadius: 4,
+    borderWidth: 2,
+    borderColor: LIVE_VISUAL.color.teal,
+    shadowColor: LIVE_VISUAL.color.teal,
+    shadowOpacity: 0.32,
+    shadowRadius: 9,
+  },
   participant: { flex: 1, borderRadius: 0, borderWidth: 0 },
   fallback: {
     position: 'absolute',
@@ -154,14 +201,16 @@ const styles = StyleSheet.create({
     width: 210,
     height: 210,
     borderRadius: 105,
-    backgroundColor: '#1A6B6038',
+    backgroundColor: '#6C56A838',
+    borderWidth: 1,
+    borderColor: '#8B73D633',
   },
   avatar: {
     width: 82,
     height: 82,
     borderRadius: 41,
     borderWidth: 2,
-    borderColor: '#D7B56D88',
+    borderColor: '#6CCFBC99',
   },
   initialsCircle: {
     width: 82,
@@ -170,7 +219,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#D7B56D99',
+    borderColor: '#8B73D699',
     backgroundColor: '#173A35',
   },
   initials: { color: '#F8E9CC', fontSize: 25, fontFamily: 'Archivo_700Bold' },

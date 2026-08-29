@@ -8,6 +8,7 @@ import {
 export const useLiveHostedMatching = (sessionId: string, enabled: boolean) => {
   const [snapshot, setSnapshot] = useState<LiveHostedMatchingSnapshot | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const mountedRef = useRef(true);
   const inFlightRef = useRef<Promise<void> | null>(null);
@@ -20,6 +21,7 @@ export const useLiveHostedMatching = (sessionId: string, enabled: boolean) => {
   const refresh = useCallback(async () => {
     if (!sessionId || !enabled) return;
     if (inFlightRef.current) return inFlightRef.current;
+    if (mountedRef.current) setRefreshing(true);
     const operation = liveRepository.getHostedMatching(sessionId)
       .then((next) => {
         if (!mountedRef.current) return;
@@ -32,6 +34,7 @@ export const useLiveHostedMatching = (sessionId: string, enabled: boolean) => {
       })
       .finally(() => {
         inFlightRef.current = null;
+        if (mountedRef.current) setRefreshing(false);
       });
     inFlightRef.current = operation;
     return operation;
@@ -77,6 +80,7 @@ export const useLiveHostedMatching = (sessionId: string, enabled: boolean) => {
     snapshot,
     busyAction,
     error,
+    refreshing,
     refresh,
     setAvailability: (open: boolean) => run(
       'availability',
@@ -100,7 +104,21 @@ export const useLiveHostedMatching = (sessionId: string, enabled: boolean) => {
       targetState: 'public_introduction' | 'completed' | 'cancelled',
     ) => run(
       `transition:${targetState}`,
-      () => liveRepository.transitionMatchRound(matchRoundId, targetState),
+      () => liveRepository.transitionMatchRound(matchRoundId, targetState, sessionId),
+    ),
+    respondPrivateSpark: (privateSparkId: string, accept: boolean) => run(
+      `private-spark:${accept ? 'accept' : 'decline'}`,
+      async () => {
+        await liveRepository.respondPrivateSpark(privateSparkId, accept);
+        return liveRepository.getHostedMatching(sessionId);
+      },
+    ),
+    endPrivateSpark: (privateSparkId: string, reason = 'left') => run(
+      'private-spark:end',
+      async () => {
+        await liveRepository.endPrivateSpark(privateSparkId, reason);
+        return liveRepository.getHostedMatching(sessionId);
+      },
     ),
   };
 };

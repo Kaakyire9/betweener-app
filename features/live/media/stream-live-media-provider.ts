@@ -9,6 +9,8 @@ import type {
   LiveMediaTransportListener,
   LiveMediaTransportState,
 } from './live-media-provider.ts';
+import { loadStreamVideoSdk } from './load-stream-video-sdk.ts';
+import { streamVideoClientLeaseRegistry } from './stream-video-client-leases.ts';
 
 type StreamDevicePort = {
   enable(): Promise<void>;
@@ -37,12 +39,43 @@ export type StreamClientPort = {
 export type StreamLiveMediaBindings = {
   client: StreamClientPort;
   call: StreamCallPort;
+  releaseClient?: () => Promise<void>;
 };
 
 export type StreamLiveMediaBindingsFactory = (input: {
   admission: LiveMediaAdmission;
   tokenProvider: () => Promise<string>;
 }) => Promise<StreamLiveMediaBindings>;
+
+type StreamSdkLogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error';
+
+const expectedTransportCloseCode = (message: string): number | null => {
+  if (!message.includes('[coordinator]: connection:WS failed')) return null;
+  const code = message.match(/code:\s*(1001|1006)\b/)?.[1];
+  return code ? Number(code) : null;
+};
+
+const isTransportOwnedSdkMessage = (message: string): boolean => (
+  message.includes('[SfuClientWS]')
+  && message.includes('Signaling WS channel error')
+);
+
+export const streamLiveSdkLogSink = (
+  level: StreamSdkLogLevel,
+  message: string,
+): void => {
+  const closeCode = expectedTransportCloseCode(message);
+  if (closeCode !== null || isTransportOwnedSdkMessage(message)) {
+    // Stream closes its coordinator socket during backgrounding, disposal and
+    // endpoint migration. Our transport observer owns retry/failure telemetry,
+    // so suppress these expected SDK-level console warnings.
+    return;
+  }
+  // SDK diagnostics must not create a React Native red screen. Authoritative
+  // transport failures are emitted by our calling-state observer instead.
+  if (level === 'error') console.warn('[live-media] stream-sdk-error', message);
+  else if (level === 'warn') console.warn('[live-media] stream-sdk-warning', message);
+};
 
 export class StreamLiveMediaProviderError extends Error {
   public readonly code: string;
@@ -78,15 +111,31 @@ const createStreamBindings: StreamLiveMediaBindingsFactory = async ({
   admission,
   tokenProvider,
 }) => {
-  const { StreamVideoClient } = await import('@stream-io/video-react-native-sdk');
-  const client = new StreamVideoClient({
-    apiKey: admission.apiKey,
-    user: { id: admission.user.id },
-    token: admission.token,
-    tokenProvider,
-  });
-  const call = client.call(admission.call.type, admission.call.id);
-  return { client, call };
+  const { StreamVideoClient } = await loadStreamVideoSdk();
+  const lease = streamVideoClientLeaseRegistry.acquire(
+    `${admission.apiKey}:${admission.user.id}`,
+    () => StreamVideoClient.getOrCreateInstance({
+      apiKey: admission.apiKey,
+      user: { id: admission.user.id },
+      token: admission.token,
+      tokenProvider,
+      options: {
+        logOptions: {
+          default: {
+            level: 'warn',
+            sink: streamLiveSdkLogSink,
+          },
+        },
+      },
+    }),
+  );
+  try {
+    const call = lease.client.call(admission.call.type, admission.call.id);
+    return { client: lease.client, call, releaseClient: lease.release };
+  } catch (error) {
+    await lease.release();
+    throw error;
+  }
 };
 
 const qualityFromStream = (
@@ -425,6 +474,18 @@ export class StreamLiveMediaProvider implements LiveMediaProvider {
     ) {
       throw new StreamLiveMediaProviderError('live_backstage_state_invalid');
     }
+    if (
+      options.mode === 'private_spark'
+      && (admission.participantState !== 'private_spark' || !canPublish)
+    ) {
+      throw new StreamLiveMediaProviderError('live_private_spark_state_invalid');
+    }
+    if (
+      options.mode === 'quick_connect'
+      && (admission.participantState !== 'private_spark' || !canPublish)
+    ) {
+      throw new StreamLiveMediaProviderError('live_quick_connect_state_invalid');
+    }
   }
 
   private async setDeviceEnabled(device: StreamDevicePort, enabled: boolean): Promise<void> {
@@ -447,7 +508,8 @@ export class StreamLiveMediaProvider implements LiveMediaProvider {
     this.hasJoinedCall = false;
     this.currentAudioEnabled = false;
     this.currentVideoEnabled = false;
-    await bindings.client.disconnectUser().catch(() => undefined);
+    if (bindings.releaseClient) await bindings.releaseClient();
+    else await bindings.client.disconnectUser().catch(() => undefined);
   }
 
   private attachTransportObserver(): void {

@@ -76,6 +76,31 @@ export const countConnectedLiveParticipants = <T>(
   candidates.filter((candidate) => candidate.userId.trim().length > 0),
 ).length;
 
+/**
+ * PiP has room for one useful video, not the complete stage. Prefer whichever
+ * camera is actively speaking, including the local host, before falling back
+ * to a remote camera. This prevents a quiet guest from occupying PiP while the
+ * host is speaking and still keeps audience PiP focused on a remote publisher.
+ */
+export const selectLivePictureInPictureCandidate = <T>(
+  candidates: readonly LiveStageCandidate<T>[],
+): LiveStageCandidate<T> | null => {
+  const score = (candidate: LiveStageCandidate<T>): number => {
+    if (candidate.hasVideo && candidate.isSpeaking) return 0;
+    if (!candidate.isLocalParticipant && candidate.hasVideo) return 1;
+    if (candidate.isLocalParticipant && candidate.hasVideo) return 2;
+    if (!candidate.isLocalParticipant && candidate.isSpeaking) return 3;
+    if (!candidate.isLocalParticipant) return 4;
+    return 5;
+  };
+
+  return [...deduplicateLiveStageCandidates(candidates)].sort((left, right) => (
+    score(left) - score(right)
+      || left.userId.localeCompare(right.userId)
+      || left.sessionId.localeCompare(right.sessionId)
+  ))[0] ?? null;
+};
+
 export const orderLiveStageCandidates = <T>(
   candidates: readonly LiveStageCandidate<T>[],
   identities: readonly LiveStageIdentity[],

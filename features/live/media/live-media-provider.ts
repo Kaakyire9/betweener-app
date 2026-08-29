@@ -15,7 +15,7 @@ export const LIVE_CONNECTION_QUALITIES = [
 
 export type LiveConnectionQuality = (typeof LIVE_CONNECTION_QUALITIES)[number];
 
-export type LiveMediaJoinMode = 'backstage' | 'audience';
+export type LiveMediaJoinMode = 'backstage' | 'audience' | 'private_spark' | 'quick_connect';
 
 export type LiveMediaUser = {
   id: string;
@@ -45,6 +45,10 @@ export type LiveMediaAdmission = {
 export type LiveMediaAdmissionRequest = {
   sessionId: string;
 };
+
+export type LiveMediaAdmissionRequester = (
+  request: LiveMediaAdmissionRequest,
+) => Promise<LiveMediaAdmission>;
 
 export type LiveMediaSessionOptions = {
   mode: LiveMediaJoinMode;

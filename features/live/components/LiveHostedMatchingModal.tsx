@@ -1,6 +1,6 @@
 import { ChevronLeft, Sparkles } from 'lucide-react-native';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { initialWindowMetrics, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   LiveHostedMatchingPanel,
   type LiveHostedMatchingPanelProps,
@@ -9,17 +9,25 @@ import {
 type Props = LiveHostedMatchingPanelProps & {
   visible: boolean;
   onClose: () => void;
+  refreshing: boolean;
+  onRefresh: () => void;
 };
 
-export function LiveHostedMatchingModal({ visible, onClose, ...panelProps }: Props) {
+export function LiveHostedMatchingModal({ visible, onClose, refreshing, onRefresh, ...panelProps }: Props) {
+  const insets = useSafeAreaInsets();
+  const topInset = Math.max(insets.top, initialWindowMetrics?.insets.top ?? 0);
+  const bottomInset = Math.max(insets.bottom, initialWindowMetrics?.insets.bottom ?? 0);
+
   return (
     <Modal
       animationType="slide"
+      navigationBarTranslucent={false}
       presentationStyle="fullScreen"
+      statusBarTranslucent={false}
       visible={visible}
       onRequestClose={onClose}
     >
-      <SafeAreaView style={styles.root}>
+      <View style={[styles.root, { paddingTop: topInset, paddingBottom: bottomInset }]}>
         <View style={styles.header}>
           <Pressable
             accessibilityLabel="Close Match Desk"
@@ -42,6 +50,14 @@ export function LiveHostedMatchingModal({ visible, onClose, ...panelProps }: Pro
         <ScrollView
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
+          refreshControl={(
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor="#D7B56D"
+              colors={['#D7B56D']}
+            />
+          )}
           showsVerticalScrollIndicator={false}
         >
           <Text style={styles.promise}>
@@ -49,7 +65,7 @@ export function LiveHostedMatchingModal({ visible, onClose, ...panelProps }: Pro
           </Text>
           <LiveHostedMatchingPanel {...panelProps} />
         </ScrollView>
-      </SafeAreaView>
+      </View>
     </Modal>
   );
 }

@@ -7,6 +7,7 @@ import {
   deduplicateLiveStageCandidates,
   liveStageTilePlacement,
   orderLiveStageCandidates,
+  selectLivePictureInPictureCandidate,
   selectLiveStageCandidates,
   type LiveStageCandidate,
 } from '../features/live/stage/live-stage-layout.ts';
@@ -45,6 +46,37 @@ test('room headcount deduplicates reconnects and multiple devices by user identi
   ]);
 
   assert.equal(count, 2);
+});
+
+test('PiP chooses one deterministic remote active camera without exposing the whole Live UI', () => {
+  const selected = selectLivePictureInPictureCandidate([
+    candidate('local-host', 'local', { isLocalParticipant: true, hasVideo: true }),
+    candidate('quiet-guest', 'quiet', { hasVideo: true }),
+    candidate('speaker', 'speaking', { hasVideo: true, isSpeaking: true }),
+  ]);
+
+  assert.equal(selected?.userId, 'speaker');
+});
+
+test('PiP follows a speaking local host instead of a passive remote camera', () => {
+  const selected = selectLivePictureInPictureCandidate([
+    candidate('local-host', 'local', {
+      isLocalParticipant: true,
+      hasVideo: true,
+      isSpeaking: true,
+    }),
+    candidate('quiet-guest', 'quiet', { hasVideo: true }),
+  ]);
+
+  assert.equal(selected?.userId, 'local-host');
+});
+
+test('PiP falls back to the local camera when no remote publisher is connected', () => {
+  const selected = selectLivePictureInPictureCandidate([
+    candidate('local-host', 'local', { isLocalParticipant: true, hasVideo: true }),
+  ]);
+
+  assert.equal(selected?.sessionId, 'local');
 });
 
 test('stage composition prioritizes host and authoritative stage slots', () => {

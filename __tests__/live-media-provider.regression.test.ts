@@ -5,6 +5,7 @@ import {
   LiveMediaAdmissionError,
   parseLiveMediaAdmission,
 } from '../features/live/media/live-media-admission.ts';
+import { readFunctionErrorCode } from '../features/live/media/live-function-error.ts';
 import type {
   LiveMediaAdmission,
   LiveMediaProvider,
@@ -66,6 +67,32 @@ test('Live media admission rejects missing authoritative join capability', () =>
   assert.throws(
     () => parseLiveMediaAdmission(admission),
     /live_media_admission_authority_invalid/,
+  );
+});
+
+test('Live media admission preserves structured Edge Function failure codes', async () => {
+  const responseError = Object.assign(new Error('Edge Function returned a non-2xx status code'), {
+    context: new Response(JSON.stringify({ error: 'rate_limited' }), {
+      status: 429,
+      headers: { 'Content-Type': 'application/json' },
+    }),
+  });
+  assert.equal(await readFunctionErrorCode(responseError), 'rate_limited');
+
+  const structuredError = Object.assign(new Error('Edge Function returned a non-2xx status code'), {
+    context: { code: 'live_admission_denied' },
+  });
+  assert.equal(await readFunctionErrorCode(structuredError), 'live_admission_denied');
+
+  const reactNativeError = Object.assign(new Error('Edge Function returned a non-2xx status code'), {
+    context: {
+      clone: () => { throw new Error('response_clone_unavailable'); },
+      _bodyInit: JSON.stringify({ error: 'live_admission_session_unavailable' }),
+    },
+  });
+  assert.equal(
+    await readFunctionErrorCode(reactNativeError),
+    'live_admission_session_unavailable',
   );
 });
 

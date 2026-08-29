@@ -790,14 +790,21 @@ export const initSupabaseAuthLifecycle = () => {
 // Session sanity check helper
 // -----------------------------
 
-const REFRESH_TIMEOUT_MS = 8_000;
+// The HTTP wrapper owns cancellation. Keep the auth guard slightly longer so a
+// timed-out refresh settles before another attempt can begin. A shorter outer
+// timeout leaves the native request running and can create overlapping refreshes.
+const AUTH_REFRESH_GUARD_TIMEOUT_MS = SUPABASE_FETCH_TIMEOUT_MS + 2_000;
 const REFRESH_COOLDOWN_MS = 60_000;
 const EXPIRY_SOON_SECONDS = 90;
 const AUTH_FAILURE_GRACE_MS = 5 * 60_000;
 const SESSION_GET_TIMEOUT_MS = 2_500;
 const SESSION_RECOVERY_BACKOFF_MS = [450, 1100, 2200] as const;
 
-let refreshInFlight: Promise<'refreshed' | 'failed'> | null = null;
+type AuthRefreshAttempt =
+  | { status: 'refreshed'; session: Session }
+  | { status: 'failed'; error: unknown };
+
+let refreshInFlight: Promise<AuthRefreshAttempt> | null = null;
 let lastRefreshAttemptAt = 0;
 
 export type SupabaseSessionRecoveryStatus =
@@ -825,10 +832,48 @@ export const getRecentSupabaseAuthFailure = () => {
 };
 
 const withTimeout = async <T,>(p: Promise<T>, timeoutMs: number): Promise<T> => {
-  return await Promise.race([
-    p,
-    new Promise<T>((_, reject) => setTimeout(() => reject(new Error('timeout')), timeoutMs)),
-  ]);
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      p,
+      new Promise<T>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error('timeout')), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+};
+
+const refreshAuthSession = async (fallbackSession?: Session): Promise<AuthRefreshAttempt> => {
+  if (refreshInFlight) return await refreshInFlight;
+
+  const attempt = (async (): Promise<AuthRefreshAttempt> => {
+    try {
+      const result: any = await withTimeout(
+        supabaseAuth.auth.refreshSession(fallbackSession),
+        AUTH_REFRESH_GUARD_TIMEOUT_MS,
+      );
+      if (result?.error) return { status: 'failed', error: result.error };
+      if (!result?.data?.session) {
+        return { status: 'failed', error: new Error('refresh_session_empty') };
+      }
+
+      const refreshedSession = result.data.session as Session;
+      setCachedAccessToken(refreshedSession.access_token ?? null);
+      syncRealtimeAuth(refreshedSession.access_token ?? null);
+      return { status: 'refreshed', session: refreshedSession };
+    } catch (error) {
+      return { status: 'failed', error };
+    }
+  })();
+
+  refreshInFlight = attempt;
+  try {
+    return await attempt;
+  } finally {
+    if (refreshInFlight === attempt) refreshInFlight = null;
+  }
 };
 
 const logSessionRecoveryEvent = (event: string, data?: Record<string, unknown>) => {
@@ -893,7 +938,7 @@ const getSessionWithTimeout = async () => {
 
 export async function ensureFreshSession(): Promise<'ok' | 'no_session' | 'refreshed' | 'failed'> {
   try {
-    const { data, error } = await supabaseAuth.auth.getSession();
+    const { data, error } = await getSessionWithTimeout();
     if (error) return 'failed';
 
     const session = data?.session ?? null;
@@ -915,33 +960,12 @@ export async function ensureFreshSession(): Promise<'ok' | 'no_session' | 'refre
 
     if (!expiresSoon && !recent401) return 'ok';
 
-    if (refreshInFlight) {
-      const r = await refreshInFlight;
-      return r === 'refreshed' ? 'refreshed' : 'failed';
-    }
-
     const now = Date.now();
     if (now - lastRefreshAttemptAt < REFRESH_COOLDOWN_MS) return 'failed';
     lastRefreshAttemptAt = now;
 
-    refreshInFlight = (async () => {
-      try {
-        const res: any = await withTimeout(supabaseAuth.auth.refreshSession(), REFRESH_TIMEOUT_MS);
-        if (res?.error) return 'failed';
-        const ok = Boolean(res?.data?.session);
-        if (ok) {
-          setCachedAccessToken(res.data.session.access_token ?? null);
-        }
-        return ok ? 'refreshed' : 'failed';
-      } catch {
-        return 'failed';
-      } finally {
-        refreshInFlight = null;
-      }
-    })();
-
-    const out = await refreshInFlight;
-    return out === 'refreshed' ? 'refreshed' : 'failed';
+    const out = await refreshAuthSession();
+    return out.status === 'refreshed' ? 'refreshed' : 'failed';
   } catch {
     return 'failed';
   }
@@ -1042,13 +1066,10 @@ export async function recoverSupabaseConnectivity(
       });
 
       try {
-        const res: any = await withTimeout(
-          supabaseAuth.auth.refreshSession(sessionForRefresh ?? undefined),
-          REFRESH_TIMEOUT_MS,
-        );
-        if (res?.error) {
-          if (isUnrecoverableAuthRecoveryError(res.error)) {
-            const errorMessage = getAuthRecoveryErrorText(res.error);
+        const refresh = await refreshAuthSession(sessionForRefresh ?? undefined);
+        if (refresh.status === 'failed') {
+          if (isUnrecoverableAuthRecoveryError(refresh.error)) {
+            const errorMessage = getAuthRecoveryErrorText(refresh.error);
             logSessionRecoveryEvent('supabase_refresh_failed_unrecoverable', {
               reason,
               attempt,
@@ -1061,11 +1082,8 @@ export async function recoverSupabaseConnectivity(
               errorMessage,
             };
           }
-          lastRecoverableMessage = getAuthRecoveryErrorText(res.error);
-        } else if (res?.data?.session) {
-          const refreshedToken = res.data.session.access_token ?? null;
-          setCachedAccessToken(refreshedToken);
-          syncRealtimeAuth(refreshedToken);
+          lastRecoverableMessage = getAuthRecoveryErrorText(refresh.error);
+        } else {
           try {
             const realtime = supabaseData?.realtime;
             realtime?.connect?.();
@@ -1082,8 +1100,6 @@ export async function recoverSupabaseConnectivity(
             reason,
             attempts: attempt,
           };
-        } else {
-          lastRecoverableMessage = 'refresh_session_empty';
         }
       } catch (refreshError) {
         if (isUnrecoverableAuthRecoveryError(refreshError)) {

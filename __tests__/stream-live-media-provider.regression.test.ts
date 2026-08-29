@@ -8,6 +8,7 @@ import {
   type StreamLiveMediaBindings,
 } from '../features/live/media/stream-live-media-provider.ts';
 import type { LiveMediaAdmission } from '../features/live/media/live-media-provider.ts';
+import { StreamVideoClientLeaseRegistry } from '../features/live/media/stream-video-client-leases.ts';
 
 const admission = (publisher = false): LiveMediaAdmission => ({
   apiKey: 'stream-key',
@@ -79,6 +80,28 @@ const bindings = () => {
     },
   };
 };
+
+test('shared Stream client leases prevent an outgoing room from disconnecting its successor', async () => {
+  const registry = new StreamVideoClientLeaseRegistry();
+  let disconnectCount = 0;
+  const client = {
+    disconnectUser: async () => { disconnectCount += 1; },
+  };
+
+  const privateSparkLease = registry.acquire('stream-key:user-1', () => client);
+  const publicLiveLease = registry.acquire('stream-key:user-1', () => {
+    throw new Error('the shared Stream client should be reused');
+  });
+
+  assert.equal(privateSparkLease.client, publicLiveLease.client);
+  await privateSparkLease.release();
+  assert.equal(disconnectCount, 0);
+
+  await privateSparkLease.release();
+  assert.equal(disconnectCount, 0);
+  await publicLiveLease.release();
+  assert.equal(disconnectCount, 1);
+});
 
 test('Stream calling states map to provider-neutral transport states', () => {
   assert.equal(transportStateFromStreamCallingState('joined'), 'connected');

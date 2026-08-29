@@ -1,11 +1,17 @@
 import { Check, MapPin, ShieldCheck, Sparkles, UsersRound, X } from 'lucide-react-native';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type {
   LiveHostedCandidate,
   LiveHostedMatchingSnapshot,
   LiveMatchRoundPerson,
 } from '../application/index.ts';
+import {
+  canProposeLivePair,
+  getLivePairAvailability,
+  getLiveHostedMatchingErrorCopy,
+  hasProposableLivePair,
+} from '../domain/live-hosted-pairability.ts';
 
 export type LiveHostedMatchingPanelProps = {
   snapshot: LiveHostedMatchingSnapshot | null;
@@ -20,6 +26,10 @@ export type LiveHostedMatchingPanelProps = {
     roundId: string,
     state: 'public_introduction' | 'completed' | 'cancelled',
   ) => void;
+  onRespondPrivateSpark: (privateSparkId: string, accept: boolean) => void;
+  onEnterPrivateSpark: (privateSparkId: string) => void;
+  onEndPrivateSpark: (privateSparkId: string) => void;
+  showAvailabilityControl?: boolean;
 };
 
 const initials = (name: string | null) => name?.trim().slice(0, 1).toUpperCase() || 'B';
@@ -40,6 +50,10 @@ export function LiveHostedMatchingPanel({
   onPropose,
   onRespond,
   onTransition,
+  onRespondPrivateSpark,
+  onEnterPrivateSpark,
+  onEndPrivateSpark,
+  showAvailabilityControl = true,
 }: LiveHostedMatchingPanelProps) {
   const [selectedIds, setSelectedIds] = useState<readonly string[]>([]);
   const activeRound = snapshot?.activeRound ?? null;
@@ -47,6 +61,29 @@ export function LiveHostedMatchingPanel({
     () => snapshot?.candidates.filter((candidate) => selectedIds.includes(candidate.userId)) ?? [],
     [selectedIds, snapshot?.candidates],
   );
+  const hasAvailablePair = useMemo(
+    () => hasProposableLivePair(snapshot?.candidates ?? []),
+    [snapshot?.candidates],
+  );
+  const selectedPairIsProposable = selected.length === 2
+    && canProposeLivePair(selected[0], selected[1]);
+  const errorCopy = getLiveHostedMatchingErrorCopy(error);
+
+  useEffect(() => {
+    setSelectedIds((current) => {
+      const present = current.filter((id) => (
+        snapshot?.candidates.some((candidate) => candidate.userId === id)
+      ));
+      if (present.length === 2) {
+        const first = snapshot?.candidates.find((candidate) => candidate.userId === present[0]);
+        const second = snapshot?.candidates.find((candidate) => candidate.userId === present[1]);
+        if (!first || !second || !canProposeLivePair(first, second)) return present.slice(0, 1);
+      }
+      return present.length === current.length
+        && present.every((id, index) => id === current[index]) ? current : present;
+    });
+  }, [snapshot?.candidates]);
+
   const toggleCandidate = (userId: string) => {
     setSelectedIds((current) => {
       if (current.includes(userId)) return current.filter((id) => id !== userId);
@@ -54,12 +91,79 @@ export function LiveHostedMatchingPanel({
       const firstCandidate = snapshot?.candidates.find(
         (candidate) => candidate.userId === current[0],
       );
-      if (firstCandidate?.pairedWithUserIds.includes(userId)) return current;
+      const nextCandidate = snapshot?.candidates.find(
+        (candidate) => candidate.userId === userId,
+      );
+      if (firstCandidate && nextCandidate
+        && !canProposeLivePair(firstCandidate, nextCandidate)) return current;
       return [...current, userId];
     });
   };
 
   if (!snapshot) return null;
+
+  const privateSpark = snapshot.privateSpark;
+  const privateSparkOther = privateSpark?.isParticipant
+    ? privateSpark.participantA.userId === currentUserId
+      ? privateSpark.participantB
+      : privateSpark.participantA
+    : null;
+
+  const privateSparkCard = privateSpark ? (
+    <View style={styles.privateSparkCard}>
+      <View style={styles.privateSparkHeading}>
+        <View style={styles.sparkBadge}><Sparkles size={17} color="#D7B56D" /></View>
+        <View style={styles.headingCopy}>
+          <Text style={styles.eyebrow}>PRIVATE SPARK</Text>
+          <Text style={styles.privateSparkTitle}>
+            {privateSpark.state === 'active'
+              ? 'Your private room is ready.'
+              : privateSpark.isParticipant
+                ? `Continue privately with ${privateSparkOther?.fullName?.split(' ')[0] || 'this connection'}?`
+                : 'A private continuation was offered.'}
+          </Text>
+        </View>
+      </View>
+      <Text style={styles.invitationCopy}>
+        {privateSpark.state === 'active'
+          ? privateSpark.isParticipant
+            ? 'Only the two of you can enter. The host and audience cannot watch or listen.'
+            : 'Both members accepted. Their room is private; only safety termination remains available.'
+          : privateSpark.isParticipant
+            ? 'Your answer stays private. The room opens only if you both independently agree.'
+            : 'Waiting privately for both members. Individual answers are never shown to the host.'}
+      </Text>
+      {privateSpark.state === 'active' && privateSpark.isParticipant ? (
+        <Pressable
+          disabled={busyAction !== null}
+          onPress={() => onEnterPrivateSpark(privateSpark.id)}
+          style={styles.primaryAction}
+        >
+          <Text style={styles.primaryActionText}>Enter Private Spark</Text>
+        </Pressable>
+      ) : privateSpark.state === 'awaiting_consent' && privateSpark.isParticipant ? (
+        privateSpark.myResponse ? (
+          <View style={styles.waitingPill}>
+            <Text style={styles.waitingText}>Choice saved privately · waiting</Text>
+          </View>
+        ) : (
+          <View style={styles.actionRow}>
+            <Pressable disabled={busyAction !== null} onPress={() => onRespondPrivateSpark(privateSpark.id, false)} style={styles.notNowAction}>
+              <X size={16} color="#D8C9BF" /><Text style={styles.notNowText}>Not now</Text>
+            </Pressable>
+            <Pressable disabled={busyAction !== null} onPress={() => onRespondPrivateSpark(privateSpark.id, true)} style={styles.primaryAction}>
+              <Text style={styles.primaryActionText}>Continue privately</Text>
+            </Pressable>
+          </View>
+        )
+      ) : null}
+      {privateSpark.canManage && privateSpark.state === 'active' ? (
+        <Pressable disabled={busyAction !== null} onPress={() => onEndPrivateSpark(privateSpark.id)} style={styles.quietAction}>
+          <Text style={styles.quietActionText}>Safety end private room</Text>
+        </Pressable>
+      ) : null}
+    </View>
+  ) : null;
 
   if (snapshot.canManage) {
     return (
@@ -71,6 +175,8 @@ export function LiveHostedMatchingPanel({
             <Text style={styles.title}>Warm introductions, with consent.</Text>
           </View>
         </View>
+
+        {privateSparkCard}
 
         {activeRound ? (
           <View style={styles.roundCard}>
@@ -109,28 +215,40 @@ export function LiveHostedMatchingPanel({
           </View>
         ) : (
           <>
-            <Text style={styles.helper}>{snapshot.candidates.length} members are open to a thoughtful introduction.</Text>
+            <Text style={styles.helper}>
+              {snapshot.candidates.length < 2
+                ? `${snapshot.candidates.length} members are open to a thoughtful introduction.`
+                : hasAvailablePair
+                  ? `${snapshot.candidates.length} members are open to a thoughtful introduction.`
+                  : 'No mutually eligible introduction is available yet.'}
+            </Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.candidateRail}>
               {snapshot.candidates.map((candidate) => {
                 const isSelected = selectedIds.includes(candidate.userId);
                 const firstSelected = selectedIds[0];
-                const unavailable = firstSelected !== undefined
-                  && firstSelected !== candidate.userId
-                  && (snapshot.candidates.find((item) => item.userId === firstSelected)
-                    ?.pairedWithUserIds.includes(candidate.userId) ?? false);
+                const firstCandidate = snapshot.candidates.find(
+                  (item) => item.userId === firstSelected,
+                );
+                const availability = firstCandidate !== undefined
+                  && firstCandidate.userId !== candidate.userId
+                  ? getLivePairAvailability(firstCandidate, candidate)
+                  : 'available';
+                const unavailable = availability !== 'available';
                 return <Pressable disabled={unavailable} key={candidate.userId} onPress={() => toggleCandidate(candidate.userId)} style={[styles.candidateCard, isSelected && styles.candidateSelected, unavailable && styles.candidateUnavailable]}>
                   <PersonAvatar person={candidate} />
                   <Text numberOfLines={1} style={styles.candidateName}>{candidate.fullName || 'Member'}</Text>
                   <View style={styles.metaRow}>{candidate.verified ? <ShieldCheck size={13} color="#73D3BC" /> : null}<Text numberOfLines={1} style={styles.metaText}>{[candidate.age, candidate.city].filter(Boolean).join(' · ') || 'Profile ready'}</Text></View>
                   {candidate.lookingFor ? <Text numberOfLines={2} style={styles.intentText}>{candidate.lookingFor}</Text> : null}
+                  {availability === 'already_introduced' ? <Text style={styles.availabilityReason}>Already introduced</Text> : null}
+                  {availability === 'not_available' ? <Text style={styles.availabilityReason}>Not available for this pairing</Text> : null}
                   <View style={[styles.selectionMark, isSelected && styles.selectionMarkActive]}>{isSelected ? <Check size={13} color="#071310" /> : null}</View>
                 </Pressable>;
               })}
             </ScrollView>
-            {selected.length === 2 ? <Pressable disabled={busyAction !== null} onPress={() => onPropose(selected[0].userId, selected[1].userId)} style={styles.primaryAction}><Text style={styles.primaryActionText}>{busyAction === 'propose' ? 'Sending private invitations…' : `Introduce ${selected[0].fullName?.split(' ')[0] || 'them'} + ${selected[1].fullName?.split(' ')[0] || 'them'}`}</Text></Pressable> : <Text style={styles.selectionHint}>Choose two people to send private invitations.</Text>}
+            {selectedPairIsProposable ? <Pressable disabled={busyAction !== null} onPress={() => onPropose(selected[0].userId, selected[1].userId)} style={styles.primaryAction}><Text style={styles.primaryActionText}>{busyAction === 'propose' ? 'Sending private invitations…' : `Introduce ${selected[0].fullName?.split(' ')[0] || 'them'} + ${selected[1].fullName?.split(' ')[0] || 'them'}`}</Text></Pressable> : <Text style={styles.selectionHint}>{hasAvailablePair ? 'Choose two mutually eligible people to send private invitations.' : 'More compatible members can opt in during the room.'}</Text>}
           </>
         )}
-        {error ? <Text accessibilityLiveRegion="polite" style={styles.errorText}>That could not be completed yet. Please try again.</Text> : null}
+        {errorCopy ? <Text accessibilityLiveRegion="polite" style={styles.errorText}>{errorCopy}</Text> : null}
       </View>
     );
   }
@@ -139,8 +257,10 @@ export function LiveHostedMatchingPanel({
   const otherPerson = activeRound
     ? activeRound.participantA.userId === currentUserId ? activeRound.participantB : activeRound.participantA
     : null;
+  if (!privateSparkCard && !activeRound && !showAvailabilityControl && !errorCopy) return null;
   return (
     <View style={styles.memberPanel}>
+      {privateSparkCard}
       {isMyInvitation && otherPerson ? (
         <View style={styles.invitationCard}>
           <Text style={styles.eyebrow}>A THOUGHTFUL INTRODUCTION</Text>
@@ -150,13 +270,13 @@ export function LiveHostedMatchingPanel({
         </View>
       ) : activeRound?.state === 'both_accepted' && activeRound.isParticipant ? (
         <View style={styles.waitingPill}><Sparkles size={15} color="#D7B56D" /><Text style={styles.waitingText}>You both said yes. The host is preparing your introduction.</Text></View>
-      ) : !activeRound ? (
+      ) : !activeRound && showAvailabilityControl ? (
         <Pressable disabled={busyAction !== null} onPress={() => onSetAvailability(!openToIntroductions)} style={[styles.availability, openToIntroductions && styles.availabilityOpen]}>
           <View><Text style={styles.availabilityTitle}>{openToIntroductions ? 'Open to introductions' : 'Keep me in the audience'}</Text><Text style={styles.availabilityCopy}>{openToIntroductions ? 'The host may privately suggest a thoughtful introduction.' : 'You can still enjoy the room without being proposed.'}</Text></View>
           <View style={[styles.toggle, openToIntroductions && styles.toggleOpen]}><View style={[styles.toggleThumb, openToIntroductions && styles.toggleThumbOpen]} /></View>
         </Pressable>
       ) : null}
-      {error ? <Text accessibilityLiveRegion="polite" style={styles.errorText}>That choice could not be saved yet. Please try again.</Text> : null}
+      {errorCopy ? <Text accessibilityLiveRegion="polite" style={styles.errorText}>{errorCopy}</Text> : null}
     </View>
   );
 }
@@ -181,6 +301,7 @@ const styles = StyleSheet.create({
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   metaText: { flexShrink: 1, color: '#9EB7B1', fontSize: 11, fontFamily: 'Manrope_500Medium' },
   intentText: { color: '#DCCDBF', fontSize: 11, lineHeight: 16, fontFamily: 'Manrope_500Medium' },
+  availabilityReason: { color: '#C7B8AB', fontSize: 9, lineHeight: 13, fontFamily: 'Manrope_600SemiBold' },
   selectionMark: { position: 'absolute', right: 12, top: 12, width: 22, height: 22, borderRadius: 11, borderWidth: 1, borderColor: '#55706A', alignItems: 'center', justifyContent: 'center' },
   selectionMarkActive: { backgroundColor: '#D7B56D', borderColor: '#D7B56D' },
   selectionHint: { color: '#819A94', textAlign: 'center', fontSize: 12, fontFamily: 'Manrope_500Medium' },
@@ -206,6 +327,9 @@ const styles = StyleSheet.create({
   invitationPerson: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   invitationTitle: { color: '#FFF7EC', fontSize: 20, fontFamily: 'PlayfairDisplay_700Bold' },
   invitationCopy: { color: '#AFC2BD', fontSize: 12, lineHeight: 18, fontFamily: 'Manrope_500Medium' },
+  privateSparkCard: { gap: 13, borderRadius: 22, padding: 15, backgroundColor: '#17251F', borderWidth: 1, borderColor: '#B39558' },
+  privateSparkHeading: { flexDirection: 'row', alignItems: 'center', gap: 11 },
+  privateSparkTitle: { color: '#FFF7EC', fontSize: 18, fontFamily: 'PlayfairDisplay_700Bold' },
   notNowAction: { minHeight: 44, paddingHorizontal: 16, borderRadius: 22, flexDirection: 'row', gap: 6, alignItems: 'center', justifyContent: 'center', backgroundColor: '#24302D' },
   notNowText: { color: '#D8C9BF', fontSize: 13, fontFamily: 'Manrope_700Bold' },
   waitingPill: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, borderRadius: 18, paddingVertical: 11, paddingHorizontal: 13, backgroundColor: '#1C302A' },
