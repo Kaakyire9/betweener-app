@@ -6,6 +6,9 @@
     "node": ">=24.18.0 <25"
   },
   "overrides": {
+    "metro": "0.84.5",
+    "metro-config": "0.84.5",
+    "metro-transform-worker": "0.84.5",
     "expo-notification-service-extension-plugin": {
       "@expo/image-utils": {
         "semver": "^7.8.5"
