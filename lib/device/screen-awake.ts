@@ -17,6 +17,7 @@ export type ScreenAwakeLease = {
 
 type InternalLease = {
   lease: ScreenAwakeLease;
+  lastConfirmedAt: number;
   warningTimer: ReturnType<typeof setTimeout> | null;
 };
 
@@ -88,11 +89,19 @@ function rememberRecentRelease(tag: string) {
 function scheduleStaleLeaseWarning(lease: ScreenAwakeLease) {
   if (!isDev) return null;
   return setTimeout(() => {
-    if (!ACTIVE_LEASES.has(lease.tag)) return;
+    const activeLease = ACTIVE_LEASES.get(lease.tag);
+    if (!activeLease) return;
+    const unconfirmedForMs = Date.now() - activeLease.lastConfirmedAt;
+    if (unconfirmedForMs < STALE_LEASE_WARNING_MS) {
+      clearWarningTimer(activeLease);
+      activeLease.warningTimer = scheduleStaleLeaseWarning(activeLease.lease);
+      return;
+    }
     warnLog('screen_awake_stale_lease_detected', {
       tag: lease.tag,
       reason: lease.reason,
       heldForMs: Date.now() - lease.activatedAt,
+      unconfirmedForMs,
     });
   }, STALE_LEASE_WARNING_MS);
 }
@@ -173,6 +182,7 @@ export async function acquireScreenAwake(reason: ScreenAwakeReason, instanceId?:
   const tag = buildScreenAwakeTag(reason, instanceId);
   const existing = ACTIVE_LEASES.get(tag);
   if (existing) {
+    existing.lastConfirmedAt = Date.now();
     debugLog('screen_awake_acquire_duplicate', {
       tag,
       reason,
@@ -188,6 +198,7 @@ export async function acquireScreenAwake(reason: ScreenAwakeReason, instanceId?:
   };
   const internalLease: InternalLease = {
     lease,
+    lastConfirmedAt: Date.now(),
     warningTimer: null,
   };
 
@@ -219,6 +230,13 @@ export async function acquireScreenAwake(reason: ScreenAwakeReason, instanceId?:
     clearWarningTimer(internalLease);
     throw error;
   }
+}
+
+export function confirmScreenAwake(tag: string): boolean {
+  const activeLease = ACTIVE_LEASES.get(tag);
+  if (!activeLease) return false;
+  activeLease.lastConfirmedAt = Date.now();
+  return true;
 }
 
 export async function releaseScreenAwake(tag: string): Promise<void> {

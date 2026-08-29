@@ -81,19 +81,19 @@ module.exports = ({ config }) => {
         },
       ],
       'expo-apple-authentication',
-      // Expo composes native mods inside-out. Register Betweener's compliance
-      // guard before Stream so its Info.plist cleanup executes last.
+      // Expo composes native mods inside-out. Register Betweener's Live native
+      // normalizer before Stream so its final Info.plist pass executes last.
       './plugins/with-betweener-live-webrtc.js',
       [
         '@stream-io/video-react-native-sdk',
         {
           ringing: false,
-          androidKeepCallAlive: false,
-          iosKeepCallAlive: false,
+          androidKeepCallAlive: true,
+          iosKeepCallAlive: true,
           enableScreenshare: false,
           enableNonRingingPushNotifications: false,
-          iOSEnableMultitaskingCameraAccess: false,
-          androidPictureInPicture: false,
+          iOSEnableMultitaskingCameraAccess: true,
+          androidPictureInPicture: true,
           addNoiseCancellation: false,
         },
       ],

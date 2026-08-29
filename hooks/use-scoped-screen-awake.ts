@@ -2,7 +2,9 @@ import { useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
 import type { ScreenAwakeReason } from '@/lib/device/screen-awake';
-import { acquireScreenAwake, isScreenAwakeAllowed, releaseScreenAwake } from '@/lib/device/screen-awake';
+import { acquireScreenAwake, confirmScreenAwake, isScreenAwakeAllowed, releaseScreenAwake } from '@/lib/device/screen-awake';
+
+const SCREEN_AWAKE_CONFIRM_INTERVAL_MS = 60 * 1000;
 
 type UseScopedScreenAwakeOptions = {
   enabled: boolean;
@@ -31,7 +33,13 @@ export function useScopedScreenAwake({
   const lastDebugSnapshotRef = useRef<string | null>(null);
 
   useEffect(() => {
-    const subscription = AppState.addEventListener('change', setAppState);
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      setAppState(nextState);
+      if (nextState === 'active') {
+        const tag = activeTagRef.current;
+        if (tag) confirmScreenAwake(tag);
+      }
+    });
     return () => {
       subscription.remove();
     };
@@ -163,6 +171,17 @@ export function useScopedScreenAwake({
       }
     };
   }, [instanceId, leaseKey, reason, shouldHold, shouldDebugLog]);
+
+  useEffect(() => {
+    if (!isHeld) return;
+    const confirmLease = () => {
+      const tag = activeTagRef.current;
+      if (tag) confirmScreenAwake(tag);
+    };
+    confirmLease();
+    const interval = setInterval(confirmLease, SCREEN_AWAKE_CONFIRM_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [isHeld]);
 
   return { isHeld };
 }
