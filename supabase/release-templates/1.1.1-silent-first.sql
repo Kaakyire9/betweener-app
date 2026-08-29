@@ -3,16 +3,16 @@
 -- supabase/migrations because it must run only after both store builds are
 -- approved and available to users.
 --
--- Replace the two positive integer placeholders before running:
---   __IOS_BUILD__
---   __ANDROID_BUILD__
+-- Store builds verified live on 2026-08-13:
+--   iOS 1.1.1 (46)
+--   Android 1.1.1 (12)
 
 begin;
 
 do $release$
 declare
-  v_ios_build integer := __IOS_BUILD__;
-  v_android_build integer := __ANDROID_BUILD__;
+  v_ios_build integer := 46;
+  v_android_build integer := 12;
   v_affected integer;
   v_items jsonb := jsonb_build_array(
     'Smoother profile media handling',
