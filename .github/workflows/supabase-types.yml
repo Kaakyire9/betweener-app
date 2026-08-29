@@ -2,9 +2,24 @@ name: Supabase Types
 
 on:
   pull_request:
+    paths:
+      - 'supabase/migrations/**'
+      - 'supabase/types/database.ts'
+      - 'scripts/supabase_gen_types.py'
+      - '.github/workflows/supabase-types.yml'
   push:
     branches:
       - main
+    paths:
+      - 'supabase/migrations/**'
+      - 'supabase/types/database.ts'
+      - 'scripts/supabase_gen_types.py'
+      - '.github/workflows/supabase-types.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: supabase-types-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   types:

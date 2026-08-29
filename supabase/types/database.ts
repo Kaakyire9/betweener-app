@@ -10,7 +10,7 @@ export type Database = {
   // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
-    PostgrestVersion: "13.0.5"
+    PostgrestVersion: "14.5"
   }
   public: {
     Tables: {
@@ -3525,6 +3525,390 @@ export type Database = {
         }
         Relationships: []
       }
+      live_audience_poll_options: {
+        Row: {
+          id: string
+          label: string
+          option_index: number
+          poll_id: string
+        }
+        Insert: {
+          id?: string
+          label: string
+          option_index: number
+          poll_id: string
+        }
+        Update: {
+          id?: string
+          label?: string
+          option_index?: number
+          poll_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_audience_poll_options_poll_id_fkey"
+            columns: ["poll_id"]
+            isOneToOne: false
+            referencedRelation: "live_audience_polls"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_audience_poll_templates: {
+        Row: {
+          created_at: string
+          display_order: number
+          enabled: boolean
+          options: Json
+          poll_kind: string
+          prompt: string
+          template_key: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          display_order?: number
+          enabled?: boolean
+          options: Json
+          poll_kind: string
+          prompt: string
+          template_key: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          display_order?: number
+          enabled?: boolean
+          options?: Json
+          poll_kind?: string
+          prompt?: string
+          template_key?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      live_audience_poll_updates: {
+        Row: {
+          session_id: string
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          session_id: string
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          session_id?: string
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_audience_poll_updates_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: true
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_audience_poll_votes: {
+        Row: {
+          client_vote_id: string
+          option_id: string
+          poll_id: string
+          user_id: string
+          voted_at: string
+        }
+        Insert: {
+          client_vote_id: string
+          option_id: string
+          poll_id: string
+          user_id: string
+          voted_at?: string
+        }
+        Update: {
+          client_vote_id?: string
+          option_id?: string
+          poll_id?: string
+          user_id?: string
+          voted_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_audience_poll_vote_option_fk"
+            columns: ["poll_id", "option_id"]
+            isOneToOne: false
+            referencedRelation: "live_audience_poll_options"
+            referencedColumns: ["poll_id", "id"]
+          },
+          {
+            foreignKeyName: "live_audience_poll_votes_poll_id_fkey"
+            columns: ["poll_id"]
+            isOneToOne: false
+            referencedRelation: "live_audience_polls"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_audience_polls: {
+        Row: {
+          client_request_id: string
+          closed_at: string | null
+          closes_at: string
+          id: string
+          opened_at: string
+          opened_by_user_id: string
+          poll_kind: string
+          prompt: string
+          session_id: string
+          state: string
+          template_key: string
+        }
+        Insert: {
+          client_request_id: string
+          closed_at?: string | null
+          closes_at: string
+          id?: string
+          opened_at?: string
+          opened_by_user_id: string
+          poll_kind: string
+          prompt: string
+          session_id: string
+          state?: string
+          template_key: string
+        }
+        Update: {
+          client_request_id?: string
+          closed_at?: string | null
+          closes_at?: string
+          id?: string
+          opened_at?: string
+          opened_by_user_id?: string
+          poll_kind?: string
+          prompt?: string
+          session_id?: string
+          state?: string
+          template_key?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_audience_polls_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_audience_polls_template_key_fkey"
+            columns: ["template_key"]
+            isOneToOne: false
+            referencedRelation: "live_audience_poll_templates"
+            referencedColumns: ["template_key"]
+          },
+        ]
+      }
+      live_chemistry_conversations: {
+        Row: {
+          created_at: string
+          ended_at: string | null
+          id: string
+          mutually_ready_at: string | null
+          participant_a_profile_id: string
+          participant_a_user_id: string
+          participant_b_profile_id: string
+          participant_b_user_id: string
+          reveal_offered_at: string | null
+          revealed_at: string | null
+          session_id: string
+          source_id: string
+          source_kind: string
+          state: string
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          created_at?: string
+          ended_at?: string | null
+          id?: string
+          mutually_ready_at?: string | null
+          participant_a_profile_id: string
+          participant_a_user_id: string
+          participant_b_profile_id: string
+          participant_b_user_id: string
+          reveal_offered_at?: string | null
+          revealed_at?: string | null
+          session_id: string
+          source_id: string
+          source_kind: string
+          state?: string
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          created_at?: string
+          ended_at?: string | null
+          id?: string
+          mutually_ready_at?: string | null
+          participant_a_profile_id?: string
+          participant_a_user_id?: string
+          participant_b_profile_id?: string
+          participant_b_user_id?: string
+          reveal_offered_at?: string | null
+          revealed_at?: string | null
+          session_id?: string
+          source_id?: string
+          source_kind?: string
+          state?: string
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_chemistry_conversations_participant_a_profile_id_fkey"
+            columns: ["participant_a_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "live_chemistry_conversations_participant_a_profile_id_fkey"
+            columns: ["participant_a_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_chemistry_conversations_participant_b_profile_id_fkey"
+            columns: ["participant_b_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "live_chemistry_conversations_participant_b_profile_id_fkey"
+            columns: ["participant_b_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_chemistry_conversations_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_chemistry_events: {
+        Row: {
+          actor_user_id: string | null
+          conversation_id: string
+          created_at: string
+          event_type: string
+          id: number
+          metadata: Json
+          session_id: string
+        }
+        Insert: {
+          actor_user_id?: string | null
+          conversation_id: string
+          created_at?: string
+          event_type: string
+          id?: never
+          metadata?: Json
+          session_id: string
+        }
+        Update: {
+          actor_user_id?: string | null
+          conversation_id?: string
+          created_at?: string
+          event_type?: string
+          id?: never
+          metadata?: Json
+          session_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_chemistry_events_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "live_chemistry_conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_chemistry_events_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_chemistry_readiness: {
+        Row: {
+          conversation_id: string
+          ready_at: string
+          user_id: string
+        }
+        Insert: {
+          conversation_id: string
+          ready_at?: string
+          user_id: string
+        }
+        Update: {
+          conversation_id?: string
+          ready_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_chemistry_readiness_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "live_chemistry_conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_chemistry_updates: {
+        Row: {
+          conversation_id: string
+          session_id: string
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          conversation_id: string
+          session_id: string
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          conversation_id?: string
+          session_id?: string
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_chemistry_updates_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: true
+            referencedRelation: "live_chemistry_conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_chemistry_updates_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       live_comments: {
         Row: {
           body: string
@@ -3619,6 +4003,200 @@ export type Database = {
         }
         Relationships: []
       }
+      live_maintenance_failures: {
+        Row: {
+          error_message: string
+          id: number
+          occurred_at: string
+          sqlstate: string
+          task_name: string
+        }
+        Insert: {
+          error_message: string
+          id?: never
+          occurred_at?: string
+          sqlstate: string
+          task_name: string
+        }
+        Update: {
+          error_message?: string
+          id?: never
+          occurred_at?: string
+          sqlstate?: string
+          task_name?: string
+        }
+        Relationships: []
+      }
+      live_match_round_responses: {
+        Row: {
+          decision: string
+          id: string
+          match_round_id: string
+          responded_at: string
+          session_id: string
+          user_id: string
+        }
+        Insert: {
+          decision: string
+          id?: string
+          match_round_id: string
+          responded_at?: string
+          session_id: string
+          user_id: string
+        }
+        Update: {
+          decision?: string
+          id?: string
+          match_round_id?: string
+          responded_at?: string
+          session_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_match_response_round_session_fk"
+            columns: ["match_round_id", "session_id"]
+            isOneToOne: false
+            referencedRelation: "live_match_rounds"
+            referencedColumns: ["id", "session_id"]
+          },
+          {
+            foreignKeyName: "live_match_round_responses_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_match_round_updates: {
+        Row: {
+          session_id: string
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          session_id: string
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          session_id?: string
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_match_round_updates_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: true
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_match_rounds: {
+        Row: {
+          client_proposal_id: string
+          completed_at: string | null
+          connection_signals: Json
+          consent_resolved_at: string | null
+          conversation_spark: Json
+          created_at: string
+          created_by_user_id: string
+          expires_at: string
+          id: string
+          introduction_started_at: string | null
+          invited_at: string
+          participant_a_profile_id: string
+          participant_a_user_id: string
+          participant_b_profile_id: string
+          participant_b_user_id: string
+          session_id: string
+          state: string
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          client_proposal_id: string
+          completed_at?: string | null
+          connection_signals?: Json
+          consent_resolved_at?: string | null
+          conversation_spark?: Json
+          created_at?: string
+          created_by_user_id: string
+          expires_at?: string
+          id?: string
+          introduction_started_at?: string | null
+          invited_at?: string
+          participant_a_profile_id: string
+          participant_a_user_id: string
+          participant_b_profile_id: string
+          participant_b_user_id: string
+          session_id: string
+          state?: string
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          client_proposal_id?: string
+          completed_at?: string | null
+          connection_signals?: Json
+          consent_resolved_at?: string | null
+          conversation_spark?: Json
+          created_at?: string
+          created_by_user_id?: string
+          expires_at?: string
+          id?: string
+          introduction_started_at?: string | null
+          invited_at?: string
+          participant_a_profile_id?: string
+          participant_a_user_id?: string
+          participant_b_profile_id?: string
+          participant_b_user_id?: string
+          session_id?: string
+          state?: string
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_match_rounds_participant_a_profile_id_fkey"
+            columns: ["participant_a_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "live_match_rounds_participant_a_profile_id_fkey"
+            columns: ["participant_a_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_match_rounds_participant_b_profile_id_fkey"
+            columns: ["participant_b_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "live_match_rounds_participant_b_profile_id_fkey"
+            columns: ["participant_b_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_match_rounds_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       live_moderation_actions: {
         Row: {
           action: string
@@ -3656,6 +4234,49 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "live_moderation_actions_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_participant_arrival_updates: {
+        Row: {
+          arrived_at: string
+          profile_id: string
+          session_id: string
+          version: number
+        }
+        Insert: {
+          arrived_at?: string
+          profile_id: string
+          session_id: string
+          version?: number
+        }
+        Update: {
+          arrived_at?: string
+          profile_id?: string
+          session_id?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_participant_arrival_updates_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "live_participant_arrival_updates_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_participant_arrival_updates_session_id_fkey"
             columns: ["session_id"]
             isOneToOne: false
             referencedRelation: "live_sessions"
@@ -3798,6 +4419,257 @@ export type Database = {
           },
         ]
       }
+      live_presence_leases: {
+        Row: {
+          expires_at: string
+          heartbeat_at: string
+          participant_id: string
+          session_id: string
+          user_id: string
+        }
+        Insert: {
+          expires_at?: string
+          heartbeat_at?: string
+          participant_id: string
+          session_id: string
+          user_id: string
+        }
+        Update: {
+          expires_at?: string
+          heartbeat_at?: string
+          participant_id?: string
+          session_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_presence_leases_participant_id_fkey"
+            columns: ["participant_id"]
+            isOneToOne: true
+            referencedRelation: "live_participants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_presence_leases_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_private_spark_exit_responses: {
+        Row: {
+          decision: string
+          private_spark_id: string
+          responded_at: string
+          session_id: string
+          user_id: string
+        }
+        Insert: {
+          decision: string
+          private_spark_id: string
+          responded_at?: string
+          session_id: string
+          user_id: string
+        }
+        Update: {
+          decision?: string
+          private_spark_id?: string
+          responded_at?: string
+          session_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_private_spark_exit_responses_private_spark_id_fkey"
+            columns: ["private_spark_id"]
+            isOneToOne: false
+            referencedRelation: "live_private_sparks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_private_spark_exit_responses_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_private_spark_responses: {
+        Row: {
+          decision: string
+          id: string
+          private_spark_id: string
+          responded_at: string
+          session_id: string
+          user_id: string
+        }
+        Insert: {
+          decision: string
+          id?: string
+          private_spark_id: string
+          responded_at?: string
+          session_id: string
+          user_id: string
+        }
+        Update: {
+          decision?: string
+          id?: string
+          private_spark_id?: string
+          responded_at?: string
+          session_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_private_spark_responses_private_spark_id_fkey"
+            columns: ["private_spark_id"]
+            isOneToOne: false
+            referencedRelation: "live_private_sparks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_private_spark_responses_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_private_sparks: {
+        Row: {
+          activated_at: string | null
+          active_expires_at: string | null
+          chemistry_first_enabled: boolean
+          consent_expires_at: string
+          created_at: string
+          end_reason: string | null
+          ended_at: string | null
+          ended_by_user_id: string | null
+          exit_outcome: string
+          exit_resolved_at: string | null
+          id: string
+          match_id: string | null
+          match_round_id: string
+          participant_a_profile_id: string
+          participant_a_user_id: string
+          participant_b_profile_id: string
+          participant_b_user_id: string
+          provider: string
+          provider_call_id: string
+          provider_call_type: string
+          session_id: string
+          state: string
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          activated_at?: string | null
+          active_expires_at?: string | null
+          chemistry_first_enabled?: boolean
+          consent_expires_at?: string
+          created_at?: string
+          end_reason?: string | null
+          ended_at?: string | null
+          ended_by_user_id?: string | null
+          exit_outcome?: string
+          exit_resolved_at?: string | null
+          id?: string
+          match_id?: string | null
+          match_round_id: string
+          participant_a_profile_id: string
+          participant_a_user_id: string
+          participant_b_profile_id: string
+          participant_b_user_id: string
+          provider?: string
+          provider_call_id: string
+          provider_call_type?: string
+          session_id: string
+          state?: string
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          activated_at?: string | null
+          active_expires_at?: string | null
+          chemistry_first_enabled?: boolean
+          consent_expires_at?: string
+          created_at?: string
+          end_reason?: string | null
+          ended_at?: string | null
+          ended_by_user_id?: string | null
+          exit_outcome?: string
+          exit_resolved_at?: string | null
+          id?: string
+          match_id?: string | null
+          match_round_id?: string
+          participant_a_profile_id?: string
+          participant_a_user_id?: string
+          participant_b_profile_id?: string
+          participant_b_user_id?: string
+          provider?: string
+          provider_call_id?: string
+          provider_call_type?: string
+          session_id?: string
+          state?: string
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_private_sparks_match_id_fkey"
+            columns: ["match_id"]
+            isOneToOne: false
+            referencedRelation: "matches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_private_sparks_match_round_id_fkey"
+            columns: ["match_round_id"]
+            isOneToOne: true
+            referencedRelation: "live_match_rounds"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_private_sparks_participant_a_profile_id_fkey"
+            columns: ["participant_a_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "live_private_sparks_participant_a_profile_id_fkey"
+            columns: ["participant_a_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_private_sparks_participant_b_profile_id_fkey"
+            columns: ["participant_b_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "live_private_sparks_participant_b_profile_id_fkey"
+            columns: ["participant_b_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_private_sparks_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       live_provider_control_jobs: {
         Row: {
           action: string
@@ -3890,6 +4762,409 @@ export type Database = {
           status?: string
         }
         Relationships: []
+      }
+      live_quick_connect_controls: {
+        Row: {
+          created_at: string
+          creator_mode: string
+          round_seconds: number
+          session_id: string
+          state: string
+          updated_at: string
+          updated_by_user_id: string | null
+          version: number
+        }
+        Insert: {
+          created_at?: string
+          creator_mode?: string
+          round_seconds?: number
+          session_id: string
+          state?: string
+          updated_at?: string
+          updated_by_user_id?: string | null
+          version?: number
+        }
+        Update: {
+          created_at?: string
+          creator_mode?: string
+          round_seconds?: number
+          session_id?: string
+          state?: string
+          updated_at?: string
+          updated_by_user_id?: string | null
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_quick_connect_controls_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: true
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_quick_connect_decisions: {
+        Row: {
+          decided_at: string
+          decision: string
+          pairing_id: string
+          user_id: string
+        }
+        Insert: {
+          decided_at?: string
+          decision: string
+          pairing_id: string
+          user_id: string
+        }
+        Update: {
+          decided_at?: string
+          decision?: string
+          pairing_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_quick_connect_decisions_pairing_id_fkey"
+            columns: ["pairing_id"]
+            isOneToOne: false
+            referencedRelation: "live_quick_connect_pairings"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_quick_connect_events: {
+        Row: {
+          actor_user_id: string | null
+          created_at: string
+          event_type: string
+          id: number
+          metadata: Json
+          pairing_id: string | null
+          session_id: string
+        }
+        Insert: {
+          actor_user_id?: string | null
+          created_at?: string
+          event_type: string
+          id?: never
+          metadata?: Json
+          pairing_id?: string | null
+          session_id: string
+        }
+        Update: {
+          actor_user_id?: string | null
+          created_at?: string
+          event_type?: string
+          id?: never
+          metadata?: Json
+          pairing_id?: string | null
+          session_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_quick_connect_events_pairing_id_fkey"
+            columns: ["pairing_id"]
+            isOneToOne: false
+            referencedRelation: "live_quick_connect_pairings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_quick_connect_events_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_quick_connect_interests: {
+        Row: {
+          created_at: string
+          from_user_id: string
+          session_id: string
+          to_user_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          from_user_id: string
+          session_id: string
+          to_user_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          from_user_id?: string
+          session_id?: string
+          to_user_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_quick_connect_interests_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_quick_connect_pairings: {
+        Row: {
+          chemistry_first_enabled: boolean
+          completed_at: string | null
+          created_at: string
+          ends_at: string
+          id: string
+          participant_a_profile_id: string
+          participant_a_user_id: string
+          participant_b_profile_id: string
+          participant_b_user_id: string
+          provider: string
+          provider_call_id: string
+          provider_call_type: string
+          reconnect_deadline: string | null
+          round_id: string
+          session_id: string
+          shared_outcome: string | null
+          starts_at: string
+          state: string
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          chemistry_first_enabled?: boolean
+          completed_at?: string | null
+          created_at?: string
+          ends_at: string
+          id?: string
+          participant_a_profile_id: string
+          participant_a_user_id: string
+          participant_b_profile_id: string
+          participant_b_user_id: string
+          provider?: string
+          provider_call_id: string
+          provider_call_type?: string
+          reconnect_deadline?: string | null
+          round_id: string
+          session_id: string
+          shared_outcome?: string | null
+          starts_at?: string
+          state?: string
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          chemistry_first_enabled?: boolean
+          completed_at?: string | null
+          created_at?: string
+          ends_at?: string
+          id?: string
+          participant_a_profile_id?: string
+          participant_a_user_id?: string
+          participant_b_profile_id?: string
+          participant_b_user_id?: string
+          provider?: string
+          provider_call_id?: string
+          provider_call_type?: string
+          reconnect_deadline?: string | null
+          round_id?: string
+          session_id?: string
+          shared_outcome?: string | null
+          starts_at?: string
+          state?: string
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_quick_connect_pairings_participant_a_profile_id_fkey"
+            columns: ["participant_a_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "live_quick_connect_pairings_participant_a_profile_id_fkey"
+            columns: ["participant_a_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_quick_connect_pairings_participant_b_profile_id_fkey"
+            columns: ["participant_b_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "live_quick_connect_pairings_participant_b_profile_id_fkey"
+            columns: ["participant_b_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_quick_connect_pairings_round_id_fkey"
+            columns: ["round_id"]
+            isOneToOne: false
+            referencedRelation: "live_quick_connect_rounds"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_quick_connect_pairings_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_quick_connect_participants: {
+        Row: {
+          connection_state: string
+          current_pairing_id: string | null
+          joined_at: string
+          last_seen_at: string
+          pairing_key: string
+          profile_id: string
+          reconnect_deadline: string | null
+          session_id: string
+          state: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          connection_state?: string
+          current_pairing_id?: string | null
+          joined_at?: string
+          last_seen_at?: string
+          pairing_key?: string
+          profile_id: string
+          reconnect_deadline?: string | null
+          session_id: string
+          state?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          connection_state?: string
+          current_pairing_id?: string | null
+          joined_at?: string
+          last_seen_at?: string
+          pairing_key?: string
+          profile_id?: string
+          reconnect_deadline?: string | null
+          session_id?: string
+          state?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_quick_connect_participants_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "live_quick_connect_participants_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_quick_connect_participants_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_quick_current_pairing_fk"
+            columns: ["current_pairing_id"]
+            isOneToOne: false
+            referencedRelation: "live_quick_connect_pairings"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_quick_connect_rounds: {
+        Row: {
+          completed_at: string | null
+          created_at: string
+          ends_at: string
+          id: string
+          round_number: number
+          session_id: string
+          starts_at: string
+          state: string
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string
+          ends_at: string
+          id?: string
+          round_number: number
+          session_id: string
+          starts_at?: string
+          state?: string
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string
+          ends_at?: string
+          id?: string
+          round_number?: number
+          session_id?: string
+          starts_at?: string
+          state?: string
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_quick_connect_rounds_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_quick_connect_updates: {
+        Row: {
+          session_id: string
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          session_id: string
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          session_id?: string
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_quick_connect_updates_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: true
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       live_reactions: {
         Row: {
@@ -4151,6 +5426,35 @@ export type Database = {
           },
         ]
       }
+      live_session_structure_updates: {
+        Row: {
+          reason: string
+          session_id: string
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          reason?: string
+          session_id: string
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          reason?: string
+          session_id?: string
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_session_structure_updates_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: true
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       live_sessions: {
         Row: {
           backstage_opened_at: string | null
@@ -4179,6 +5483,8 @@ export type Database = {
           recording_enabled: boolean
           scheduled_end: string | null
           scheduled_start: string | null
+          stage_request_capacity: number
+          stage_requests_open: boolean
           started_at: string | null
           status: string
           title: string
@@ -4212,6 +5518,8 @@ export type Database = {
           recording_enabled?: boolean
           scheduled_end?: string | null
           scheduled_start?: string | null
+          stage_request_capacity?: number
+          stage_requests_open?: boolean
           started_at?: string | null
           status?: string
           title: string
@@ -4245,6 +5553,8 @@ export type Database = {
           recording_enabled?: boolean
           scheduled_end?: string | null
           scheduled_start?: string | null
+          stage_request_capacity?: number
+          stage_requests_open?: boolean
           started_at?: string | null
           status?: string
           title?: string
@@ -7079,6 +8389,39 @@ export type Database = {
           },
         ]
       }
+      subscription_renewal_job_runs: {
+        Row: {
+          completed_at: string | null
+          error_code: string | null
+          error_message: string | null
+          id: string
+          result: Json
+          started_at: string
+          status: string
+          worker_version: string
+        }
+        Insert: {
+          completed_at?: string | null
+          error_code?: string | null
+          error_message?: string | null
+          id?: string
+          result?: Json
+          started_at?: string
+          status: string
+          worker_version?: string
+        }
+        Update: {
+          completed_at?: string | null
+          error_code?: string | null
+          error_message?: string | null
+          id?: string
+          result?: Json
+          started_at?: string
+          status?: string
+          worker_version?: string
+        }
+        Relationships: []
+      }
       subscription_renewal_nudges: {
         Row: {
           created_at: string
@@ -8631,6 +9974,8 @@ export type Database = {
       }
       clean_expired_distance_cache: { Args: never; Returns: number }
       cleanup_live_ephemeral_activity: { Args: never; Returns: Json }
+      cleanup_live_match_rounds: { Args: never; Returns: number }
+      cleanup_live_private_sparks: { Args: never; Returns: number }
       cleanup_live_stale_participants: { Args: never; Returns: Json }
       cleanup_phone_verifications_orphans: { Args: never; Returns: undefined }
       cleanup_stale_circle_love_seats: {
@@ -9481,9 +10826,53 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      live_audience_poll_json: {
+        Args: { p_poll_id: string; p_user_id?: string }
+        Returns: Json
+      }
+      live_build_connection_signals: {
+        Args: { p_profile_a: string; p_profile_b: string }
+        Returns: Json
+      }
+      live_build_conversation_spark: {
+        Args: { p_profile_a: string; p_profile_b: string }
+        Returns: Json
+      }
+      live_chemistry_private_projection: {
+        Args: { p_conversation_id: string }
+        Returns: Json
+      }
+      live_chemistry_profile_context: {
+        Args: { p_profile_id: string }
+        Returns: Json
+      }
+      live_hosted_matching_snapshot: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      live_match_pair_is_eligible: {
+        Args: { p_session_id: string; p_user_a: string; p_user_b: string }
+        Returns: boolean
+      }
+      live_private_spark_projection: {
+        Args: { p_spark_id: string }
+        Returns: Json
+      }
       live_profile_avatar: {
         Args: { p_profile: Database["public"]["Tables"]["profiles"]["Row"] }
         Returns: string
+      }
+      live_quick_connect_host_snapshot: {
+        Args: { p_requesting_user_id: string; p_session_id: string }
+        Returns: Json
+      }
+      live_quick_connect_pair_is_eligible: {
+        Args: { p_session_id: string; p_user_a: string; p_user_b: string }
+        Returns: boolean
+      }
+      live_quick_connect_sync: {
+        Args: { p_session_id: string }
+        Returns: undefined
       }
       live_role_capabilities: { Args: { p_role: string }; Returns: string[] }
       longtransactionsenabled: { Args: never; Returns: boolean }
@@ -10457,12 +11846,28 @@ export type Database = {
         Args: { p_provider: string }
         Returns: boolean
       }
+      rpc_close_live_audience_poll: {
+        Args: { p_poll_id: string }
+        Returns: Json
+      }
       rpc_complete_view_once_attachment: {
         Args: { p_message_id: string }
         Returns: {
           attachment_id: string
           consumed_at: string
         }[]
+      }
+      rpc_configure_live_quick_connect: {
+        Args: {
+          p_creator_mode: string
+          p_round_seconds: number
+          p_session_id: string
+        }
+        Returns: Json
+      }
+      rpc_control_live_quick_connect: {
+        Args: { p_action: string; p_session_id: string }
+        Returns: Json
       }
       rpc_create_circle: {
         Args: {
@@ -10761,6 +12166,15 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      rpc_create_live_match_round: {
+        Args: {
+          p_client_proposal_id: string
+          p_participant_a_user_id: string
+          p_participant_b_user_id: string
+          p_session_id: string
+        }
+        Returns: Json
+      }
       rpc_create_live_reaction: {
         Args: {
           p_client_event_id: string
@@ -10820,6 +12234,8 @@ export type Database = {
           recording_enabled: boolean
           scheduled_end: string | null
           scheduled_start: string | null
+          stage_request_capacity: number
+          stage_requests_open: boolean
           started_at: string | null
           status: string
           title: string
@@ -11008,6 +12424,10 @@ export type Database = {
       rpc_end_circle_love_seat: {
         Args: { p_actor_profile_id: string; p_love_seat_id: string }
         Returns: boolean
+      }
+      rpc_end_live_private_spark: {
+        Args: { p_private_spark_id: string; p_reason?: string }
+        Returns: Json
       }
       rpc_fail_chat_attachment_cleanup: {
         Args: { p_error: string; p_queue_id: number }
@@ -11641,6 +13061,81 @@ export type Database = {
         Args: { p_intent_request_id: string }
         Returns: string[]
       }
+      rpc_get_live_audience_pulse: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      rpc_get_live_chemistry_for_private_spark: {
+        Args: { p_private_spark_id: string }
+        Returns: Json
+      }
+      rpc_get_live_chemistry_for_quick_connect: {
+        Args: { p_pairing_id: string }
+        Returns: Json
+      }
+      rpc_get_live_member_summary: {
+        Args: { p_profile_id: string; p_session_id: string }
+        Returns: Json
+      }
+      rpc_get_live_private_spark: {
+        Args: { p_spark_id: string }
+        Returns: Json
+      }
+      rpc_get_live_private_spark_rtc_admission: {
+        Args: { p_private_spark_id: string }
+        Returns: {
+          capabilities: string[]
+          maximum_participants: number
+          participant_state: string
+          participant_user_ids: string[]
+          primary_role: string
+          private_spark_id: string
+          profile_id: string
+          provider: string
+          provider_call_id: string
+          provider_call_type: string
+          roles: string[]
+          session_status: string
+          source_session_id: string
+          user_id: string
+        }[]
+      }
+      rpc_get_live_private_spark_snapshot: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      rpc_get_live_quick_connect: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      rpc_get_live_quick_connect_host_control: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      rpc_get_live_quick_connect_pool: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      rpc_get_live_quick_connect_rtc_admission: {
+        Args: { p_pairing_id: string }
+        Returns: {
+          capabilities: string[]
+          maximum_participants: number
+          pairing_id: string
+          participant_state: string
+          participant_user_ids: string[]
+          primary_role: string
+          profile_id: string
+          provider: string
+          provider_call_id: string
+          provider_call_type: string
+          roles: string[]
+          session_status: string
+          source_session_id: string
+          user_id: string
+        }[]
+      }
+      rpc_get_live_room_pulse: { Args: { p_session_id: string }; Returns: Json }
       rpc_get_live_rtc_admission: {
         Args: { p_session_id: string }
         Returns: {
@@ -11820,6 +13315,10 @@ export type Database = {
           moment_id: string
         }[]
       }
+      rpc_heartbeat_live_quick_connect: {
+        Args: { p_connected?: boolean; p_session_id: string }
+        Returns: Json
+      }
       rpc_heartbeat_live_session: {
         Args: { p_session_id: string }
         Returns: {
@@ -11905,6 +13404,14 @@ export type Database = {
         Args: { p_circle_id: string; p_profile_id: string }
         Returns: string
       }
+      rpc_join_live_quick_connect: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      rpc_join_live_quick_connect_uncontrolled: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
       rpc_join_live_session: {
         Args: { p_session_id: string }
         Returns: {
@@ -11943,7 +13450,45 @@ export type Database = {
         Args: { p_circle_id: string; p_profile_id: string }
         Returns: boolean
       }
+      rpc_leave_live_quick_connect: {
+        Args: { p_session_id: string }
+        Returns: undefined
+      }
       rpc_leave_live_session: {
+        Args: { p_session_id: string }
+        Returns: {
+          connection_quality_state: string
+          created_at: string
+          id: string
+          invited_at: string
+          joined_at: string | null
+          last_connection_change_at: string | null
+          last_seen_at: string | null
+          left_at: string | null
+          microphone_muted_by_moderator: boolean
+          open_to_introductions: boolean
+          origin_context_id: string | null
+          origin_context_type: string
+          profile_id: string
+          reconnect_state: string | null
+          role: string
+          rsvp_status: string
+          session_id: string
+          stage_joined_at: string | null
+          stage_left_at: string | null
+          stage_slot: number | null
+          state: string
+          updated_at: string
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "live_participants"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      rpc_leave_live_stage: {
         Args: { p_session_id: string }
         Returns: {
           connection_quality_state: string
@@ -12051,6 +13596,35 @@ export type Database = {
           started_at: string
           status: string
           title: string
+        }[]
+      }
+      rpc_list_live_studio_sessions: {
+        Args: { p_before?: string; p_limit?: number }
+        Returns: {
+          audience_count: number
+          circle_id: string
+          context_id: string
+          context_type: string
+          created_by_profile_id: string
+          description: string
+          ended_at: string
+          format: string
+          id: string
+          matches_made_count: number
+          maximum_publishers: number
+          participant_state: string
+          poster_path: string
+          reservation_count: number
+          rsvp_status: string
+          scheduled_end: string
+          scheduled_start: string
+          stage_count: number
+          started_at: string
+          status: string
+          teaser_duration_seconds: number
+          teaser_video_path: string
+          title: string
+          total_attendee_count: number
         }[]
       }
       rpc_list_my_circle_invitations: {
@@ -12228,6 +13802,19 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      rpc_offer_live_chemistry_reveal: {
+        Args: { p_conversation_id: string }
+        Returns: Json
+      }
+      rpc_open_live_audience_poll: {
+        Args: {
+          p_client_request_id: string
+          p_duration_seconds?: number
+          p_session_id: string
+          p_template_key: string
+        }
+        Returns: Json
       }
       rpc_pin_circle_pulse_comment: {
         Args: { p_comment_id: string; p_pinned?: boolean; p_profile_id: string }
@@ -12614,6 +14201,14 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      rpc_respond_live_match_round: {
+        Args: { p_accept: boolean; p_match_round_id: string }
+        Returns: Json
+      }
+      rpc_respond_live_private_spark: {
+        Args: { p_accept: boolean; p_private_spark_id: string }
+        Returns: Json
+      }
       rpc_respond_warm_introduction: {
         Args: { p_decision: string; p_intro_id: string }
         Returns: {
@@ -12781,6 +14376,58 @@ export type Database = {
           recording_enabled: boolean
           scheduled_end: string | null
           scheduled_start: string | null
+          stage_request_capacity: number
+          stage_requests_open: boolean
+          started_at: string | null
+          status: string
+          title: string
+          updated_at: string
+          version: number
+        }
+        SetofOptions: {
+          from: "*"
+          to: "live_sessions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      rpc_schedule_live_session_v2: {
+        Args: {
+          p_chemistry_first_enabled?: boolean
+          p_description: string
+          p_format?: string
+          p_scheduled_start: string
+          p_title: string
+        }
+        Returns: {
+          backstage_opened_at: string | null
+          cancelled_at: string | null
+          captions_enabled: boolean
+          chemistry_first_enabled: boolean
+          circle_id: string | null
+          configuration: Json
+          context_id: string | null
+          context_type: string
+          created_at: string
+          created_by_profile_id: string
+          created_by_user_id: string
+          description: string | null
+          ended_at: string | null
+          format: string
+          gathering_id: string | null
+          id: string
+          maximum_participants: number
+          maximum_publishers: number
+          minimum_participants: number
+          provider: string
+          provider_call_id: string
+          provider_call_type: string
+          quorum_reached_at: string | null
+          recording_enabled: boolean
+          scheduled_end: string | null
+          scheduled_start: string | null
+          stage_request_capacity: number
+          stage_requests_open: boolean
           started_at: string | null
           status: string
           title: string
@@ -12956,6 +14603,44 @@ export type Database = {
         }
         Returns: boolean
       }
+      rpc_set_live_chemistry_ready: {
+        Args: { p_conversation_id: string }
+        Returns: Json
+      }
+      rpc_set_live_introduction_availability: {
+        Args: { p_open: boolean; p_session_id: string }
+        Returns: {
+          connection_quality_state: string
+          created_at: string
+          id: string
+          invited_at: string
+          joined_at: string | null
+          last_connection_change_at: string | null
+          last_seen_at: string | null
+          left_at: string | null
+          microphone_muted_by_moderator: boolean
+          open_to_introductions: boolean
+          origin_context_id: string | null
+          origin_context_type: string
+          profile_id: string
+          reconnect_state: string | null
+          role: string
+          rsvp_status: string
+          session_id: string
+          stage_joined_at: string | null
+          stage_left_at: string | null
+          stage_slot: number | null
+          state: string
+          updated_at: string
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "live_participants"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       rpc_set_live_stage_participant: {
         Args: {
           p_on_stage: boolean
@@ -12994,6 +14679,94 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      rpc_set_live_stage_request_capacity: {
+        Args: { p_capacity: number; p_session_id: string }
+        Returns: {
+          backstage_opened_at: string | null
+          cancelled_at: string | null
+          captions_enabled: boolean
+          chemistry_first_enabled: boolean
+          circle_id: string | null
+          configuration: Json
+          context_id: string | null
+          context_type: string
+          created_at: string
+          created_by_profile_id: string
+          created_by_user_id: string
+          description: string | null
+          ended_at: string | null
+          format: string
+          gathering_id: string | null
+          id: string
+          maximum_participants: number
+          maximum_publishers: number
+          minimum_participants: number
+          provider: string
+          provider_call_id: string
+          provider_call_type: string
+          quorum_reached_at: string | null
+          recording_enabled: boolean
+          scheduled_end: string | null
+          scheduled_start: string | null
+          stage_request_capacity: number
+          stage_requests_open: boolean
+          started_at: string | null
+          status: string
+          title: string
+          updated_at: string
+          version: number
+        }
+        SetofOptions: {
+          from: "*"
+          to: "live_sessions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      rpc_set_live_stage_requests_open: {
+        Args: { p_open: boolean; p_session_id: string }
+        Returns: {
+          backstage_opened_at: string | null
+          cancelled_at: string | null
+          captions_enabled: boolean
+          chemistry_first_enabled: boolean
+          circle_id: string | null
+          configuration: Json
+          context_id: string | null
+          context_type: string
+          created_at: string
+          created_by_profile_id: string
+          created_by_user_id: string
+          description: string | null
+          ended_at: string | null
+          format: string
+          gathering_id: string | null
+          id: string
+          maximum_participants: number
+          maximum_publishers: number
+          minimum_participants: number
+          provider: string
+          provider_call_id: string
+          provider_call_type: string
+          quorum_reached_at: string | null
+          recording_enabled: boolean
+          scheduled_end: string | null
+          scheduled_start: string | null
+          stage_request_capacity: number
+          stage_requests_open: boolean
+          started_at: string | null
+          status: string
+          title: string
+          updated_at: string
+          version: number
+        }
+        SetofOptions: {
+          from: "*"
+          to: "live_sessions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       rpc_set_profile_saved: {
         Args: {
           p_saved: boolean
@@ -13003,6 +14776,18 @@ export type Database = {
         Returns: boolean
       }
       rpc_set_user_presence: { Args: { p_online: boolean }; Returns: number }
+      rpc_signal_live_quick_connect_interest: {
+        Args: { p_session_id: string; p_target_profile_id: string }
+        Returns: Json
+      }
+      rpc_submit_live_private_spark_exit: {
+        Args: { p_decision: string; p_private_spark_id: string }
+        Returns: Json
+      }
+      rpc_submit_live_quick_connect_decision: {
+        Args: { p_decision: string; p_pairing_id: string }
+        Returns: Json
+      }
       rpc_submit_manual_verification_request: {
         Args: {
           p_auto_verification_reason?: string
@@ -13076,6 +14861,10 @@ export type Database = {
         }
         Returns: boolean
       }
+      rpc_transition_live_match_round: {
+        Args: { p_match_round_id: string; p_target_state: string }
+        Returns: Json
+      }
       rpc_transition_live_session: {
         Args: {
           p_expected_version: number
@@ -13109,6 +14898,8 @@ export type Database = {
           recording_enabled: boolean
           scheduled_end: string | null
           scheduled_start: string | null
+          stage_request_capacity: number
+          stage_requests_open: boolean
           started_at: string | null
           status: string
           title: string
@@ -13493,6 +15284,55 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      rpc_update_live_event_media: {
+        Args: {
+          p_poster_path?: string
+          p_session_id: string
+          p_teaser_duration_seconds?: number
+          p_teaser_video_path?: string
+        }
+        Returns: {
+          backstage_opened_at: string | null
+          cancelled_at: string | null
+          captions_enabled: boolean
+          chemistry_first_enabled: boolean
+          circle_id: string | null
+          configuration: Json
+          context_id: string | null
+          context_type: string
+          created_at: string
+          created_by_profile_id: string
+          created_by_user_id: string
+          description: string | null
+          ended_at: string | null
+          format: string
+          gathering_id: string | null
+          id: string
+          maximum_participants: number
+          maximum_publishers: number
+          minimum_participants: number
+          provider: string
+          provider_call_id: string
+          provider_call_type: string
+          quorum_reached_at: string | null
+          recording_enabled: boolean
+          scheduled_end: string | null
+          scheduled_start: string | null
+          stage_request_capacity: number
+          stage_requests_open: boolean
+          started_at: string | null
+          status: string
+          title: string
+          updated_at: string
+          version: number
+        }
+        SetofOptions: {
+          from: "*"
+          to: "live_sessions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       rpc_update_moment_comment: {
         Args: { p_body: string; p_comment_id: string }
         Returns: {
@@ -13614,6 +15454,14 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      rpc_vote_live_audience_poll: {
+        Args: {
+          p_client_vote_id: string
+          p_option_id: string
+          p_poll_id: string
+        }
+        Returns: Json
+      }
       rpc_withdraw_live_seat_request: {
         Args: { p_session_id: string }
         Returns: {
@@ -13633,6 +15481,7 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      run_live_maintenance: { Args: never; Returns: Json }
       search_ghana_localities: {
         Args: { p_limit?: number; p_query?: string; p_region?: string }
         Returns: {

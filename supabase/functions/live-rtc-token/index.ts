@@ -70,6 +70,21 @@ const providerErrorCode = (error: unknown): string | number | null => {
   return typeof code === 'string' || typeof code === 'number' ? code : null;
 };
 
+const SAFE_ADMISSION_ERRORS = new Set([
+  'live_admission_account_ineligible',
+  'live_admission_session_unavailable',
+  'live_admission_forbidden',
+  'unauthenticated',
+]);
+
+const admissionErrorCode = (error: unknown): string => {
+  if (!error || typeof error !== 'object') return 'live_admission_denied';
+  const message = (error as Record<string, unknown>).message;
+  return typeof message === 'string' && SAFE_ADMISSION_ERRORS.has(message)
+    ? message
+    : 'live_admission_denied';
+};
+
 Deno.serve(async (request) => {
   if (request.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (request.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
@@ -111,8 +126,13 @@ Deno.serve(async (request) => {
       p_session_id: sessionId,
     });
     if (error) {
-      safeLog('admission-denied', { sessionId, code: error.code ?? null });
-      return json({ error: 'live_admission_denied' }, 403);
+      const denialCode = admissionErrorCode(error);
+      safeLog('admission-denied', {
+        sessionId,
+        code: error.code ?? null,
+        denialCode,
+      });
+      return json({ error: denialCode }, 403);
     }
 
     const admission = (Array.isArray(data) ? data[0] : null) as RtcAdmission | null;
