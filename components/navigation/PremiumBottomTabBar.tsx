@@ -21,6 +21,8 @@ type ThemeColors = typeof Colors.light;
 type TabsProps = ComponentProps<typeof Tabs>;
 type BottomTabBarConfig = Parameters<NonNullable<TabsProps['tabBar']>>[0];
 
+export const PREMIUM_TAB_DOCK_CONTENT_RESERVE = 104;
+
 type PremiumBottomTabBarProps = BottomTabBarConfig & {
   isDark: boolean;
   responsive: ResponsiveMetrics;

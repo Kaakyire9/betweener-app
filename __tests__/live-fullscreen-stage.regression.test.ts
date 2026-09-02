@@ -56,8 +56,9 @@ test('public Live stage owns the full viewport behind safe-area chrome', () => {
   assert.match(liveScreen, /fullStageBackground:\s*\{\s*bottom: 0\s*\}/);
   assert.match(
     liveScreen,
-    /isQuickConnectLive[\s\S]*?quickConnectLayout === 'side-by-side'[\s\S]*?styles\.quickConnectStageSideBySide[\s\S]*?styles\.quickConnectStageBackground[\s\S]*?styles\.fullStageBackground/,
+    /!isQuickConnectLive \|\| isPictureInPicture[\s\S]*?styles\.stageBackground, styles\.fullStageBackground/,
   );
+  assert.match(liveScreen, /<LiveQuickConnectStage/);
   assert.match(liveScreen, /<LinearGradient[\s\S]+style=\{styles\.stageScrim\}/);
   assert.doesNotMatch(liveScreen, /style=\{\[styles\.stage, keyboardVisible/);
 });

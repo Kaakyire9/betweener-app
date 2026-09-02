@@ -1,4 +1,4 @@
-export const LIVE_QUICK_CONNECT_POOL_PAGE_SIZE = 8;
+export const LIVE_QUICK_CONNECT_POOL_PAGE_SIZE = 4;
 
 export type LiveQuickConnectPoolPage<T> = {
   page: number;

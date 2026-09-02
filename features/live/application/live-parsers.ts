@@ -22,6 +22,7 @@ import type {
   LiveHostedCandidate,
   LiveHostedMatchingSnapshot,
   LiveChemistrySnapshot,
+  CircleLiveSnapshot,
   LiveQuickConnectDecision,
   LiveQuickConnectHostSnapshot,
   LiveQuickConnectPoolSnapshot,
@@ -32,6 +33,8 @@ import type {
   LiveMatchRoundState,
   LiveParticipant,
   LivePrivateSpark,
+  LivePoolCandidatePreview,
+  LiveQuorumPoolingSnapshot,
   LiveRsvpStatus,
   LiveRoomPulseSnapshot,
   LiveSeatRequest,
@@ -86,6 +89,35 @@ const parseFormat = (value: unknown): LiveSessionFormat =>
 
 const parseStatus = (value: unknown): LiveSessionStatus =>
   includes(LIVE_SESSION_STATUSES, value) ? value : 'draft';
+
+export const parseCircleLiveSnapshot = (value: unknown): CircleLiveSnapshot => {
+  if (!isRecord(value) || !Array.isArray(value.sessions)) throw new Error('circle_live_snapshot_invalid');
+  return {
+    circleId: asString(value.circle_id),
+    canSchedule: value.can_schedule === true,
+    serverNow: asString(value.server_now, new Date().toISOString()),
+    sessions: value.sessions.map((item) => {
+      if (!isRecord(item)) throw new Error('circle_live_session_invalid');
+      return {
+        sessionId: asString(item.session_id),
+        gatheringId: asNullableString(item.gathering_id),
+        title: asString(item.title, 'Circle Live'),
+        description: asNullableString(item.description),
+        status: parseStatus(item.status),
+        scheduledStart: asNullableString(item.scheduled_start),
+        endedAt: asNullableString(item.ended_at),
+        posterPath: asNullableString(item.poster_path),
+        attendanceCount: asNumber(item.attendance_count),
+        minimumAttendance: Math.max(2, asNumber(item.minimum_attendance, 2)),
+        quorumStatus: item.quorum_status === 'confirmed' ? 'confirmed' : 'almost_ready',
+        matchesMadeCount: asNumber(item.matches_made_count),
+        totalAttendeeCount: asNumber(item.total_attendee_count),
+        viewerRsvpStatus: parseRsvp(item.viewer_rsvp_status),
+        isHost: item.is_host === true,
+      };
+    }),
+  };
+};
 
 export const parseLiveParticipant = (value: unknown): LiveParticipant => {
   if (!isRecord(value)) throw new Error('live_participant_invalid');
@@ -201,6 +233,84 @@ export const parseLiveSessionSummary = (value: unknown): LiveSessionSummary => {
     reservationCount: asNumber(value.reservation_count),
     totalAttendeeCount: asNumber(value.total_attendee_count),
     matchesMadeCount: asNumber(value.matches_made_count),
+  };
+};
+
+const POOL_OFFER_STATES = ['pending', 'accepted', 'declined', 'expired', 'withdrawn'] as const;
+const SESSION_POOL_STATES = ['preview', 'offered', 'active', 'cancelled', 'completed'] as const;
+
+export const parseLiveQuorumPoolingSnapshot = (value: unknown): LiveQuorumPoolingSnapshot => {
+  if (!isRecord(value) || !isRecord(value.quorum)) {
+    throw new Error('live_quorum_pooling_snapshot_invalid');
+  }
+  const quorum = value.quorum;
+  const quorumStatus = quorum.status === 'confirmed' ? 'confirmed' : 'almost_ready';
+  const offer = value.offer;
+  const pool = value.pool;
+  return {
+    quorum: {
+      sessionId: asString(quorum.session_id),
+      status: quorumStatus,
+      attendanceCount: Math.max(0, Math.floor(asNumber(quorum.attendance_count))),
+      minimumAttendance: Math.max(2, Math.floor(asNumber(quorum.minimum_attendance, 2))),
+      introductionReadyCount: Math.max(0, Math.floor(asNumber(quorum.introduction_ready_count))),
+      viablePairCount: Math.max(0, Math.floor(asNumber(quorum.viable_pair_count))),
+      requiredPairCount: Math.max(0, Math.floor(asNumber(quorum.required_pair_count))),
+      pairabilityRequired: quorum.pairability_required === true,
+      currentlyViable: quorum.currently_viable == null
+        ? quorum.reached === true
+        : quorum.currently_viable === true,
+      reached: quorum.reached === true,
+      serverNow: asString(quorum.server_now),
+    },
+    allowPooledLiveSessions: value.allow_pooled_live_sessions !== false,
+    offer: isRecord(offer) && includes(POOL_OFFER_STATES, offer.state) ? {
+      id: asString(offer.id),
+      poolId: asString(offer.pool_id),
+      sourceSessionId: asString(offer.source_session_id),
+      destinationSessionId: asString(offer.destination_session_id),
+      destinationTitle: asString(offer.destination_title),
+      state: offer.state,
+      explanation: asString(offer.explanation),
+      expiresAt: asString(offer.expires_at),
+    } : null,
+    pool: isRecord(pool) && includes(SESSION_POOL_STATES, pool.state) ? {
+      id: asString(pool.id),
+      state: pool.state,
+      primarySessionId: asString(pool.primary_session_id),
+      primaryTitle: asString(pool.primary_title),
+      explanation: asString(pool.explanation),
+      originContextType: asString(pool.origin_context_type),
+      originContextId: asNullableString(pool.origin_context_id),
+      myOfferState: includes(POOL_OFFER_STATES, pool.my_offer_state) ? pool.my_offer_state : null,
+    } : null,
+    canManagePooling: value.can_manage_pooling === true,
+    serverNow: asString(value.server_now),
+  };
+};
+
+export const parseLivePoolCandidatePreview = (value: unknown): LivePoolCandidatePreview => {
+  if (!isRecord(value)) throw new Error('live_pool_candidate_preview_invalid');
+  const rule = value.rule;
+  return {
+    rule: isRecord(rule) ? {
+      id: asString(rule.id),
+      name: asString(rule.name),
+      explanation: asString(rule.explanation),
+    } : null,
+    candidates: Array.isArray(value.candidates) ? value.candidates.flatMap((candidate) => {
+      if (!isRecord(candidate)) return [];
+      return [{
+        sessionId: asString(candidate.session_id),
+        title: asString(candidate.title),
+        format: parseFormat(candidate.format),
+        contextType: asString(candidate.context_type),
+        scheduledStart: asNullableString(candidate.scheduled_start),
+        eligible: candidate.eligible === true,
+        reasonCodes: parseContextValues(candidate.reason_codes),
+        reasonTexts: parseContextValues(candidate.reason_texts),
+      }];
+    }) : [],
   };
 };
 
@@ -406,7 +516,7 @@ export const parseLiveHostedMatchingSnapshot = (value: unknown): LiveHostedMatch
 
 const CHEMISTRY_STATES = ['concealed', 'revealed', 'ended'] as const;
 const QUICK_PARTICIPANT_STATES = [
-  'not_joined', 'waiting', 'paired', 'disconnected', 'left', 'unavailable',
+  'not_joined', 'waiting', 'paired', 'disconnected', 'left', 'unavailable', 'safety_check',
 ] as const;
 const QUICK_PAIRING_STATES = [
   'active', 'reconnect_grace', 'completed', 'round_incomplete', 'cancelled',
@@ -476,6 +586,7 @@ export const parseLiveQuickConnectSnapshot = (value: unknown): LiveQuickConnectS
       sharedOutcome: includes(QUICK_OUTCOMES, value.pairing.shared_outcome)
         ? value.pairing.shared_outcome
         : null,
+      safetyReviewed: value.pairing.safety_reviewed === true,
       otherPerson: {
         userId: asString(person.user_id),
         profileId: asString(person.profile_id),
@@ -511,6 +622,9 @@ export const parseLiveQuickConnectSnapshot = (value: unknown): LiveQuickConnectS
 const QUICK_CONTROL_STATES = ['closed', 'open', 'paused', 'draining', 'ended'] as const;
 const QUICK_CREATOR_MODES = ['facilitator', 'participant'] as const;
 const QUICK_ROUND_SECONDS = [120, 180, 300] as const;
+const QUICK_CONCURRENCY = [1, 2, 4, 8] as const;
+const QUICK_CONNECT_INTENTS = ['serious', 'long_term', 'marriage', 'open'] as const;
+const QUICK_STAGE_LAYOUTS = ['stacked', 'side-by-side'] as const;
 
 export const parseLiveQuickConnectHostSnapshot = (value: unknown): LiveQuickConnectHostSnapshot => {
   if (!isRecord(value) || !includes(QUICK_CONTROL_STATES, value.state)) {
@@ -520,6 +634,10 @@ export const parseLiveQuickConnectHostSnapshot = (value: unknown): LiveQuickConn
   if (!QUICK_ROUND_SECONDS.includes(roundSeconds as 120 | 180 | 300)) {
     throw new Error('live_quick_connect_round_duration_invalid');
   }
+  const maxConcurrentPairs = Math.floor(asNumber(value.max_concurrent_pairs, 4));
+  if (!QUICK_CONCURRENCY.includes(maxConcurrentPairs as 1 | 2 | 4 | 8)) {
+    throw new Error('live_quick_connect_concurrency_invalid');
+  }
   const metrics = isRecord(value.metrics) ? value.metrics : {};
   return {
     sessionId: asString(value.session_id),
@@ -528,6 +646,7 @@ export const parseLiveQuickConnectHostSnapshot = (value: unknown): LiveQuickConn
       ? value.creator_mode
       : 'facilitator',
     roundSeconds: roundSeconds as 120 | 180 | 300,
+    maxConcurrentPairs: maxConcurrentPairs as 1 | 2 | 4 | 8,
     version: Math.max(1, Math.floor(asNumber(value.version, 1))),
     serverNow: asString(value.server_now),
     canManage: value.can_manage === true,
@@ -535,6 +654,7 @@ export const parseLiveQuickConnectHostSnapshot = (value: unknown): LiveQuickConn
       waitingPeople: Math.max(0, Math.floor(asNumber(metrics.waiting_people))),
       eligiblePeople: Math.max(0, Math.floor(asNumber(metrics.eligible_people))),
       activePairs: Math.max(0, Math.floor(asNumber(metrics.active_pairs))),
+      availablePairSlots: Math.max(0, Math.floor(asNumber(metrics.available_pair_slots))),
       reconnectingPeople: Math.max(0, Math.floor(asNumber(metrics.reconnecting_people))),
       completedRounds: Math.max(0, Math.floor(asNumber(metrics.completed_rounds))),
     },
@@ -548,6 +668,9 @@ export const parseLiveQuickConnectPoolSnapshot = (value: unknown): LiveQuickConn
   const members = Array.isArray(value.members) ? value.members : [];
   return {
     sessionId: asString(value.session_id),
+    stageLayout: includes(QUICK_STAGE_LAYOUTS, value.stage_layout)
+      ? value.stage_layout
+      : 'stacked',
     controlState: value.control_state,
     creatorMode: includes(QUICK_CREATOR_MODES, value.creator_mode)
       ? value.creator_mode
@@ -556,6 +679,9 @@ export const parseLiveQuickConnectPoolSnapshot = (value: unknown): LiveQuickConn
     isHost: value.is_host === true,
     isOptedIn: value.is_opted_in === true,
     canOptIn: value.can_opt_in === true,
+    connectionIntent: includes(QUICK_CONNECT_INTENTS, value.connection_intent)
+      ? value.connection_intent
+      : null,
     myState: includes(QUICK_PARTICIPANT_STATES, value.my_state)
       ? value.my_state
       : 'not_joined',

@@ -136,7 +136,7 @@ test('seat request is touchable and failure is visible rather than silent', () =
   assert.match(liveScreen, /styles\.overlaySpacer/);
   assert.match(
     liveScreen,
-    /isQuickConnectLive && \(quickConnectLayout === 'side-by-side'[\s\S]*?styles\.quickConnectSideBySideSpacer[\s\S]*?styles\.quickConnectStageSpacer/,
+    /isQuickConnectLive && !keyboardVisible[\s\S]*?<LiveQuickConnectStage/,
   );
   assert.match(requestTile, /onPress=\{request\.onPress\}/);
   assert.match(requestTile, /Stage request sent/);

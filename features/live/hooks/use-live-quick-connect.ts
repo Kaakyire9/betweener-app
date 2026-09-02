@@ -3,6 +3,8 @@ import { AppState } from 'react-native';
 import {
   liveRepository,
   type LiveQuickConnectDecision,
+  type LiveQuickConnectSafetyExperience,
+  type LiveQuickConnectSafetyReason,
   type LiveQuickConnectSnapshot,
 } from '../application/index.ts';
 import {
@@ -65,7 +67,7 @@ export const useLiveQuickConnect = (sessionId: string) => {
   const retryJoin = useCallback(async () => {
     if (!sessionId || inFlightRef.current) return inFlightRef.current ?? undefined;
     if (mountedRef.current) setLoading(true);
-    const operation = liveRepository.joinQuickConnect(sessionId)
+    const operation = liveRepository.rejoinQuickConnect(sessionId)
       .then((next) => {
         if (!mountedRef.current) return;
         applySnapshot(next);
@@ -199,6 +201,30 @@ export const useLiveQuickConnect = (sessionId: string) => {
     if (mountedRef.current) await refresh();
   }, [refresh, sessionId]);
 
+  const submitSafetyCheck = useCallback(async (
+    pairingId: string,
+    experience: LiveQuickConnectSafetyExperience,
+    reason: LiveQuickConnectSafetyReason | null,
+    block: boolean,
+  ) => {
+    if (busy) return false;
+    setBusy(true);
+    applyError(null);
+    try {
+      await liveRepository.submitQuickConnectSafetyCheck(pairingId, experience, reason, block);
+      return true;
+    } catch (nextError) {
+      if (mountedRef.current) {
+        const code = normalizeQuickConnectErrorCode(nextError);
+        console.warn('[live-quick-connect] safety-check-failed', { code, sessionId });
+        applyError(code);
+      }
+      return false;
+    } finally {
+      if (mountedRef.current) setBusy(false);
+    }
+  }, [applyError, busy, sessionId]);
+
   return {
     snapshot,
     loading,
@@ -208,6 +234,7 @@ export const useLiveQuickConnect = (sessionId: string) => {
     retryJoin,
     decide,
     leave,
+    submitSafetyCheck,
     beginMediaPairing,
     reportMediaConnected,
   };

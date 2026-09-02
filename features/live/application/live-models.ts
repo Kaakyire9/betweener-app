@@ -75,6 +75,73 @@ export type LiveSessionSummary = {
   matchesMadeCount: number;
 };
 
+export type LiveQuorumSnapshot = {
+  sessionId: string;
+  status: 'almost_ready' | 'confirmed';
+  attendanceCount: number;
+  minimumAttendance: number;
+  introductionReadyCount: number;
+  viablePairCount: number;
+  requiredPairCount: number;
+  pairabilityRequired: boolean;
+  currentlyViable: boolean;
+  reached: boolean;
+  serverNow: string;
+};
+
+export type LiveSessionPoolOffer = {
+  id: string;
+  poolId: string;
+  sourceSessionId: string;
+  destinationSessionId: string;
+  destinationTitle: string;
+  state: 'pending' | 'accepted' | 'declined' | 'expired' | 'withdrawn';
+  explanation: string;
+  expiresAt: string;
+};
+
+export type LiveSessionPoolContext = {
+  id: string;
+  state: 'preview' | 'offered' | 'active' | 'cancelled' | 'completed';
+  primarySessionId: string;
+  primaryTitle: string;
+  explanation: string;
+  originContextType: string;
+  originContextId: string | null;
+  myOfferState: LiveSessionPoolOffer['state'] | null;
+};
+
+export type LiveQuorumPoolingSnapshot = {
+  quorum: LiveQuorumSnapshot;
+  allowPooledLiveSessions: boolean;
+  offer: LiveSessionPoolOffer | null;
+  pool: LiveSessionPoolContext | null;
+  canManagePooling: boolean;
+  serverNow: string;
+};
+
+export type LivePoolRuleSummary = {
+  id: string;
+  name: string;
+  explanation: string;
+};
+
+export type LivePoolCandidate = {
+  sessionId: string;
+  title: string;
+  format: LiveSessionFormat;
+  contextType: string;
+  scheduledStart: string | null;
+  eligible: boolean;
+  reasonCodes: readonly string[];
+  reasonTexts: readonly string[];
+};
+
+export type LivePoolCandidatePreview = {
+  rule: LivePoolRuleSummary | null;
+  candidates: readonly LivePoolCandidate[];
+};
+
 export type LiveParticipant = {
   id: string;
   sessionId: string;
@@ -179,6 +246,36 @@ export type ScheduleLiveSessionInput = {
   chemistryFirstEnabled?: boolean;
 };
 
+export type ScheduleCircleLiveSessionInput = ScheduleLiveSessionInput & {
+  circleId: string;
+  minimumParticipants?: number;
+};
+
+export type CircleLiveCard = {
+  sessionId: string;
+  gatheringId: string | null;
+  title: string;
+  description: string | null;
+  status: LiveSessionStatus;
+  scheduledStart: string | null;
+  endedAt: string | null;
+  posterPath: string | null;
+  attendanceCount: number;
+  minimumAttendance: number;
+  quorumStatus: 'almost_ready' | 'confirmed';
+  matchesMadeCount: number;
+  totalAttendeeCount: number;
+  viewerRsvpStatus: LiveRsvpStatus;
+  isHost: boolean;
+};
+
+export type CircleLiveSnapshot = {
+  circleId: string;
+  canSchedule: boolean;
+  sessions: readonly CircleLiveCard[];
+  serverNow: string;
+};
+
 export type LiveEventMediaInput = {
   posterPath: string | null;
   teaserVideoPath: string | null;
@@ -214,7 +311,17 @@ export type LiveQuickConnectParticipantState =
   | 'paired'
   | 'disconnected'
   | 'left'
-  | 'unavailable';
+  | 'unavailable'
+  | 'safety_check';
+
+export type LiveQuickConnectSafetyExperience = 'respectful' | 'uncomfortable' | 'safety_concern';
+export type LiveQuickConnectSafetyReason =
+  | 'requested_nudity'
+  | 'sexual_pressure'
+  | 'harassment_disrespect'
+  | 'hate_threats'
+  | 'impersonation_deception'
+  | 'other';
 
 export type LiveQuickConnectDecision = 'continue' | 'friendship' | 'not_this_time';
 
@@ -237,6 +344,7 @@ export type LiveQuickConnectPairing = {
   reconnectDeadline: string | null;
   myDecision: LiveQuickConnectDecision | null;
   sharedOutcome: 'mutual_continue' | 'friendship' | 'closed' | null;
+  safetyReviewed: boolean;
   otherPerson: LiveChemistryPersonContext & {
     userId: string;
     profileId: string;
@@ -260,12 +368,16 @@ export type LiveQuickConnectSnapshot = {
 export type LiveQuickConnectControlState = 'closed' | 'open' | 'paused' | 'draining' | 'ended';
 export type LiveQuickConnectCreatorMode = 'facilitator' | 'participant';
 export type LiveQuickConnectRoundSeconds = 120 | 180 | 300;
+export type LiveQuickConnectConcurrency = 1 | 2 | 4 | 8;
+export type LiveQuickConnectIntent = 'serious' | 'long_term' | 'marriage' | 'open';
+export type LiveQuickConnectStageLayout = 'stacked' | 'side-by-side';
 export type LiveQuickConnectHostAction = 'open' | 'close' | 'pause' | 'resume' | 'drain' | 'end';
 
 export type LiveQuickConnectHostMetrics = {
   waitingPeople: number;
   eligiblePeople: number;
   activePairs: number;
+  availablePairSlots: number;
   reconnectingPeople: number;
   completedRounds: number;
 };
@@ -275,6 +387,7 @@ export type LiveQuickConnectHostSnapshot = {
   state: LiveQuickConnectControlState;
   creatorMode: LiveQuickConnectCreatorMode;
   roundSeconds: LiveQuickConnectRoundSeconds;
+  maxConcurrentPairs: LiveQuickConnectConcurrency;
   version: number;
   serverNow: string;
   canManage: boolean;
@@ -293,12 +406,14 @@ export type LiveQuickConnectPoolMember = {
 
 export type LiveQuickConnectPoolSnapshot = {
   sessionId: string;
+  stageLayout: LiveQuickConnectStageLayout;
   controlState: LiveQuickConnectControlState;
   creatorMode: LiveQuickConnectCreatorMode;
   serverNow: string;
   isHost: boolean;
   isOptedIn: boolean;
   canOptIn: boolean;
+  connectionIntent: LiveQuickConnectIntent | null;
   myState: LiveQuickConnectParticipantState;
   members: readonly LiveQuickConnectPoolMember[];
   queue: LiveQuickConnectSnapshot | null;

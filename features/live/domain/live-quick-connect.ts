@@ -54,6 +54,12 @@ export const quickConnectAvailabilityCopy = (code: string | null): string | null
   if (code === 'live_quick_connect_forbidden') {
     return 'Quick Connect is not available for this account in this room.';
   }
+  if (code === 'live_quick_connect_preferences_required') {
+    return 'Choose who you are open to meeting before joining the pool.';
+  }
+  if (code === 'live_quick_connect_safety_hold_active') {
+    return 'Quick Connect is temporarily paused for this account while Betweener Safety reviews recent private reports.';
+  }
   return 'Quick Connect is temporarily unavailable.';
 };
 

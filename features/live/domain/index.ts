@@ -3,6 +3,7 @@ export * from './live-hosted-pairability.ts';
 export * from './live-chemistry.ts';
 export * from './live-quick-connect.ts';
 export * from './live-quick-connect-pool-layout.ts';
+export * from './live-quorum-pooling.ts';
 export * from './live-match-round-machine.ts';
 export * from './live-participant-machine.ts';
 export * from './live-session-machine.ts';

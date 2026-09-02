@@ -3,17 +3,20 @@ import type { RealtimeChannel } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { readFunctionErrorCode } from '../media/live-function-error.ts';
 import type { LiveParticipantArrivalEvent } from './live-participant-arrivals.ts';
-import type { LiveAudiencePoll, LiveChemistrySnapshot, LiveComment, LiveEventMediaInput, LiveHostedMatchingSnapshot, LiveJoinNotice, LivePrivateSpark, LivePrivateSparkExitDecision, LiveQuickConnectDecision, LiveQuickConnectHostAction, LiveQuickConnectHostSnapshot, LiveQuickConnectCreatorMode, LiveQuickConnectPoolSnapshot, LiveQuickConnectRoundSeconds, LiveQuickConnectSnapshot, LiveReactionKind, LiveRoomPulseSnapshot, LiveSessionSnapshot, LiveSessionSummary, ScheduleLiveSessionInput } from './live-models.ts';
+import type { CircleLiveSnapshot, LiveAudiencePoll, LiveChemistrySnapshot, LiveComment, LiveEventMediaInput, LiveHostedMatchingSnapshot, LiveJoinNotice, LivePoolCandidatePreview, LivePrivateSpark, LivePrivateSparkExitDecision, LiveQuickConnectConcurrency, LiveQuickConnectDecision, LiveQuickConnectHostAction, LiveQuickConnectHostSnapshot, LiveQuickConnectIntent, LiveQuickConnectPoolSnapshot, LiveQuickConnectRoundSeconds, LiveQuickConnectSafetyExperience, LiveQuickConnectSafetyReason, LiveQuickConnectSnapshot, LiveQuickConnectStageLayout, LiveQuorumPoolingSnapshot, LiveReactionKind, LiveRoomPulseSnapshot, LiveSessionSnapshot, LiveSessionSummary, ScheduleCircleLiveSessionInput, ScheduleLiveSessionInput } from './live-models.ts';
 import {
   parseLiveAudiencePoll,
+  parseCircleLiveSnapshot,
   parseLiveComment,
   parseLiveChemistrySnapshot,
   parseLiveHostedMatchingSnapshot,
   parseLivePrivateSpark,
+  parseLivePoolCandidatePreview,
   parseLiveQuickConnectSnapshot,
   parseLiveQuickConnectHostSnapshot,
   parseLiveQuickConnectPoolSnapshot,
   parseLiveRoomPulseSnapshot,
+  parseLiveQuorumPoolingSnapshot,
   parseLiveSessionSnapshot,
   parseLiveSessionSummary,
 } from './live-parsers.ts';
@@ -72,12 +75,83 @@ export const liveRepository = {
     return value.id;
   },
 
+  async getCircleLiveSnapshot(circleId: string): Promise<CircleLiveSnapshot> {
+    return parseCircleLiveSnapshot(await invoke('rpc_get_circle_live_snapshot', { p_circle_id: circleId }));
+  },
+
+  async scheduleCircle(input: ScheduleCircleLiveSessionInput): Promise<string> {
+    const value = await invoke('rpc_schedule_circle_live_session', {
+      p_circle_id: input.circleId,
+      p_title: input.title,
+      p_description: input.description,
+      p_scheduled_start: input.scheduledStart,
+      p_chemistry_first_enabled: input.chemistryFirstEnabled ?? false,
+      p_minimum_participants: input.minimumParticipants ?? 2,
+    });
+    if (!value || typeof value !== 'object' || !('id' in value) || typeof value.id !== 'string') {
+      throw new Error('circle_live_schedule_result_invalid');
+    }
+    return value.id;
+  },
+
   async rsvp(sessionId: string, attending: boolean, openToIntroductions = false): Promise<void> {
     await invoke('rpc_rsvp_live_session', {
       p_session_id: sessionId,
       p_attending: attending,
       p_open_to_introductions: openToIntroductions,
     });
+  },
+
+  async getQuorumPooling(sessionId: string): Promise<LiveQuorumPoolingSnapshot> {
+    return parseLiveQuorumPoolingSnapshot(await invoke('rpc_get_live_quorum_pooling_snapshot', {
+      p_session_id: sessionId,
+    }));
+  },
+
+  async setPoolingPreference(allowed: boolean): Promise<boolean> {
+    return await invoke('rpc_set_live_pooling_preference', { p_allowed: allowed }) === true;
+  },
+
+  async previewPoolCandidates(sessionId: string, ruleId?: string): Promise<LivePoolCandidatePreview> {
+    return parseLivePoolCandidatePreview(await invoke('rpc_preview_live_pool_candidates', {
+      p_session_id: sessionId,
+      p_rule_id: ruleId ?? null,
+    }));
+  },
+
+  async createDefaultPoolRule(): Promise<string> {
+    const value = await invoke('rpc_upsert_live_pool_rule', {
+      p_rule_id: null,
+      p_name: 'Intentional nearby Live events',
+      p_enabled: true,
+      p_allowed_formats: ['hosted_match_night', 'circle_live', 'special_event'],
+      p_allowed_context_types: ['circle', 'match_night', 'diaspora', 'special_event'],
+      p_maximum_start_delta_minutes: 120,
+      p_minimum_verification_level: 1,
+      p_geography_mode: 'same_country',
+      p_required_tags: [],
+      p_blocked_session_ids: [],
+      p_explanation: 'The events share timing, location and viable reciprocal introductions.',
+    });
+    if (typeof value !== 'string') throw new Error('live_pool_rule_result_invalid');
+    return value;
+  },
+
+  async createSessionPool(sourceSessionId: string, candidateSessionId: string, ruleId: string): Promise<string> {
+    const value = await invoke('rpc_create_live_session_pool', {
+      p_source_session_id: sourceSessionId,
+      p_candidate_session_id: candidateSessionId,
+      p_rule_id: ruleId,
+    });
+    if (typeof value !== 'string') throw new Error('live_session_pool_result_invalid');
+    return value;
+  },
+
+  async respondPoolOffer(offerId: string, accept: boolean): Promise<LiveQuorumPoolingSnapshot> {
+    return parseLiveQuorumPoolingSnapshot(await invoke('rpc_respond_live_pool_offer', {
+      p_offer_id: offerId,
+      p_accept: accept,
+    }));
   },
 
   async updateEventMedia(sessionId: string, media: LiveEventMediaInput): Promise<void> {
@@ -197,7 +271,17 @@ export const liveRepository = {
     }));
   },
 
-  async joinQuickConnect(sessionId: string): Promise<LiveQuickConnectSnapshot> {
+  async joinQuickConnect(
+    sessionId: string,
+    connectionIntent: LiveQuickConnectIntent,
+  ): Promise<LiveQuickConnectSnapshot> {
+    return parseLiveQuickConnectSnapshot(await invoke('rpc_join_live_quick_connect', {
+      p_session_id: sessionId,
+      p_connection_intent: connectionIntent,
+    }));
+  },
+
+  async rejoinQuickConnect(sessionId: string): Promise<LiveQuickConnectSnapshot> {
     return parseLiveQuickConnectSnapshot(await invoke('rpc_join_live_quick_connect', {
       p_session_id: sessionId,
     }));
@@ -222,6 +306,16 @@ export const liveRepository = {
     });
   },
 
+  async setQuickConnectStageLayout(
+    sessionId: string,
+    stageLayout: LiveQuickConnectStageLayout,
+  ): Promise<LiveQuickConnectPoolSnapshot> {
+    return parseLiveQuickConnectPoolSnapshot(await invoke('rpc_set_live_quick_connect_stage_layout', {
+      p_session_id: sessionId,
+      p_stage_layout: stageLayout,
+    }));
+  },
+
   async getQuickConnectHostControl(sessionId: string): Promise<LiveQuickConnectHostSnapshot> {
     return parseLiveQuickConnectHostSnapshot(await invoke('rpc_get_live_quick_connect_host_control', {
       p_session_id: sessionId,
@@ -231,12 +325,12 @@ export const liveRepository = {
   async configureQuickConnectHostControl(
     sessionId: string,
     roundSeconds: LiveQuickConnectRoundSeconds,
-    creatorMode: LiveQuickConnectCreatorMode,
+    maxConcurrentPairs: LiveQuickConnectConcurrency,
   ): Promise<LiveQuickConnectHostSnapshot> {
     return parseLiveQuickConnectHostSnapshot(await invoke('rpc_configure_live_quick_connect', {
       p_session_id: sessionId,
       p_round_seconds: roundSeconds,
-      p_creator_mode: creatorMode,
+      p_max_concurrent_pairs: maxConcurrentPairs,
     }));
   },
 
@@ -265,6 +359,20 @@ export const liveRepository = {
       p_pairing_id: pairingId,
       p_decision: decision,
     }));
+  },
+
+  async submitQuickConnectSafetyCheck(
+    pairingId: string,
+    experience: LiveQuickConnectSafetyExperience,
+    reason: LiveQuickConnectSafetyReason | null,
+    block: boolean,
+  ): Promise<void> {
+    await invoke('rpc_submit_live_quick_connect_safety_check', {
+      p_pairing_id: pairingId,
+      p_experience: experience,
+      p_reason: reason,
+      p_block: block,
+    });
   },
 
   async leaveQuickConnect(sessionId: string): Promise<void> {
@@ -542,6 +650,31 @@ export const liveRepository = {
     return () => {
       void supabase.removeChannel(channel);
     };
+  },
+
+  subscribeQuorumPooling(sessionId: string, userId: string, onChange: () => void): () => void {
+    const channel = supabase.channel(`live-quorum-pooling:${sessionId}:${Crypto.randomUUID()}`);
+    channel.on('postgres_changes', {
+      event: '*', schema: 'public', table: 'live_quorum_updates', filter: `session_id=eq.${sessionId}`,
+    }, onChange);
+    channel.on('postgres_changes', {
+      event: '*', schema: 'public', table: 'live_pool_offer_updates', filter: `user_id=eq.${userId}`,
+    }, onChange);
+    channel.subscribe((status) => {
+      if (status === 'SUBSCRIBED') onChange();
+    });
+    return () => { void supabase.removeChannel(channel); };
+  },
+
+  subscribeCircleLive(circleId: string, onChange: () => void): () => void {
+    const channel = supabase.channel(`circle-live:${circleId}:${Crypto.randomUUID()}`);
+    channel.on('postgres_changes', {
+      event: '*', schema: 'public', table: 'live_circle_updates', filter: `circle_id=eq.${circleId}`,
+    }, onChange);
+    channel.subscribe((status) => {
+      if (status === 'SUBSCRIBED') onChange();
+    });
+    return () => { void supabase.removeChannel(channel); };
   },
 
   subscribeChemistry(conversationId: string, onChange: () => void): () => void {

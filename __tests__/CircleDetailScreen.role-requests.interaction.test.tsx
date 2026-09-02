@@ -192,6 +192,19 @@ jest.mock('@/lib/circles/pulse/circle-pulse-service', () => ({
   fetchCirclePulseDiscussionReadStates: jest.fn(async () => []),
 }));
 
+jest.mock('@/features/live/hooks/use-circle-live', () => ({
+  useCircleLive: () => ({
+    snapshot: null,
+    loading: false,
+    error: null,
+    refresh: jest.fn(async () => undefined),
+  }),
+}));
+
+jest.mock('@/features/live/components/CircleLiveSection', () => ({
+  CircleLiveSection: () => null,
+}));
+
 jest.mock('@/components/IntentRequestSheet', () => () => null);
 
 jest.mock('expo-image-picker', () => ({
@@ -298,6 +311,7 @@ describe('Circle detail role requests and role controls', () => {
   });
 
   it('lets a member withdraw a pending moderator request', async () => {
+    mockParams = { id: 'circle-1', tab: 'manage' };
     dataset.circle_members = [
       {
         id: 'membership-me',
@@ -350,6 +364,7 @@ describe('Circle detail role requests and role controls', () => {
   });
 
   it('shows host role controls and lets a host approve a pending moderator request', async () => {
+    mockParams = { id: 'circle-1', tab: 'manage' };
     dataset.circle_members = [
       {
         id: 'membership-me',
@@ -403,6 +418,7 @@ describe('Circle detail role requests and role controls', () => {
   });
 
   it('does not offer a redundant moderator request to an existing moderator', async () => {
+    mockParams = { id: 'circle-1', tab: 'manage' };
     dataset.circle_members = [
       {
         id: 'membership-me',
@@ -474,6 +490,7 @@ describe('Circle detail role requests and role controls', () => {
   });
 
   it('treats the creator as owner when only created_by_user_id and membership user_id match', async () => {
+    mockParams = { id: 'circle-1', tab: 'manage' };
     mockProfile = null;
     dataset.circles[0].created_by_profile_id = 'profile-legacy-owner';
     dataset.circles[0].created_by_user_id = 'user-me';
@@ -535,6 +552,7 @@ describe('Circle detail role requests and role controls', () => {
   });
 
   it('shows the moderation queue and lets a host resolve a report', async () => {
+    mockParams = { id: 'circle-1', tab: 'manage' };
     dataset.circle_members = [
       {
         id: 'membership-me',
@@ -665,28 +683,29 @@ describe('Circle detail role requests and role controls', () => {
       },
     ];
 
-    const { getByLabelText, getAllByText, getByText } = await renderFocusedScreen();
+    const { getByLabelText } = await renderFocusedScreen();
 
-    await waitFor(() => expect(getByLabelText('Open Members tab')).toBeTruthy());
+    await waitFor(() => expect(getByLabelText('View Circle members')).toBeTruthy());
 
-    await fireEvent.press(getByLabelText('Open Members tab'));
+    await fireEvent.press(getByLabelText('View Circle members'));
 
-    await waitFor(() => expect(getAllByText('View').length).toBeGreaterThan(1));
-    expect(getByText('New')).toBeTruthy();
+    await waitFor(() => expect(getByLabelText('View Kojo profile')).toBeTruthy());
 
-    await fireEvent.press(getAllByText('View')[1]);
+    await fireEvent.press(getByLabelText('View Kojo profile'));
 
     expect(mockPush).toHaveBeenCalledWith({
       pathname: '/profile-view',
       params: {
         profileId: 'profile-other',
-        source: 'circle',
+        source: 'circle_people',
+        context: 'circle-community',
         returnCircleId: 'circle-1',
       },
     });
   });
 
   it('opens the exact featured Moment from the Circle Pulse Media spotlight', async () => {
+    mockParams = { id: 'circle-1', tab: 'pulse' };
     dataset.circle_members = [
       {
         id: 'membership-me',
@@ -797,6 +816,7 @@ describe('Circle detail role requests and role controls', () => {
   });
 
   it('opens direct Circle Media in its editorial viewer instead of Moments', async () => {
+    mockParams = { id: 'circle-1', tab: 'pulse' };
     dataset.circle_members = [
       {
         id: 'membership-me',

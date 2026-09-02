@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
   liveRepository,
-  type LiveQuickConnectCreatorMode,
+  type LiveQuickConnectConcurrency,
   type LiveQuickConnectHostAction,
   type LiveQuickConnectHostSnapshot,
   type LiveQuickConnectRoundSeconds,
@@ -81,10 +81,10 @@ export const useLiveQuickConnectHostControl = (sessionId: string, enabled: boole
 
   const configure = useCallback((
     roundSeconds: LiveQuickConnectRoundSeconds,
-    creatorMode: LiveQuickConnectCreatorMode,
+    maxConcurrentPairs: LiveQuickConnectConcurrency,
   ) => run(
     'configure',
-    () => liveRepository.configureQuickConnectHostControl(sessionId, roundSeconds, creatorMode),
+    () => liveRepository.configureQuickConnectHostControl(sessionId, roundSeconds, maxConcurrentPairs),
   ), [run, sessionId]);
 
   const control = useCallback((action: LiveQuickConnectHostAction) => run(

@@ -3,7 +3,9 @@ import { AppState } from 'react-native';
 
 import {
   liveRepository,
+  type LiveQuickConnectIntent,
   type LiveQuickConnectPoolSnapshot,
+  type LiveQuickConnectStageLayout,
 } from '../application/index.ts';
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
@@ -11,9 +13,10 @@ const HEARTBEAT_INTERVAL_MS = 15_000;
 export const useLiveQuickConnectPool = (sessionId: string, enabled: boolean) => {
   const [snapshot, setSnapshot] = useState<LiveQuickConnectPoolSnapshot | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const mountedRef = useRef(true);
+  const hasSnapshotRef = useRef(false);
   const refreshInFlightRef = useRef<Promise<void> | null>(null);
   const actionInFlightRef = useRef(false);
 
@@ -22,20 +25,24 @@ export const useLiveQuickConnectPool = (sessionId: string, enabled: boolean) => 
   const refresh = useCallback(async () => {
     if (!enabled || !sessionId) return;
     if (refreshInFlightRef.current) return refreshInFlightRef.current;
-    if (mountedRef.current) setRefreshing(true);
+    const showInitialLoading = !hasSnapshotRef.current;
+    if (mountedRef.current && showInitialLoading) setInitialLoading(true);
     const operation = liveRepository.getQuickConnectPool(sessionId)
       .then((next) => {
         if (!mountedRef.current) return;
+        hasSnapshotRef.current = true;
         setSnapshot(next);
         setError(null);
       })
       .catch((nextError: unknown) => {
         if (!mountedRef.current) return;
-        setError(nextError instanceof Error ? nextError.message : 'live_quick_connect_pool_unavailable');
+        if (!hasSnapshotRef.current) {
+          setError(nextError instanceof Error ? nextError.message : 'live_quick_connect_pool_unavailable');
+        }
       })
       .finally(() => {
         refreshInFlightRef.current = null;
-        if (mountedRef.current) setRefreshing(false);
+        if (mountedRef.current && showInitialLoading) setInitialLoading(false);
       });
     refreshInFlightRef.current = operation;
     return operation;
@@ -44,9 +51,11 @@ export const useLiveQuickConnectPool = (sessionId: string, enabled: boolean) => 
   useEffect(() => {
     mountedRef.current = true;
     if (!enabled) {
+      hasSnapshotRef.current = false;
       setSnapshot(null);
       setError(null);
       setBusyAction(null);
+      setInitialLoading(false);
       return;
     }
     void refresh();
@@ -96,8 +105,8 @@ export const useLiveQuickConnectPool = (sessionId: string, enabled: boolean) => 
     }
   }, [refresh]);
 
-  const optIn = useCallback(() => run('opt-in', async () => {
-    await liveRepository.joinQuickConnect(sessionId);
+  const optIn = useCallback((connectionIntent: LiveQuickConnectIntent) => run('opt-in', async () => {
+    await liveRepository.joinQuickConnect(sessionId, connectionIntent);
   }), [run, sessionId]);
 
   const leave = useCallback(() => run('leave', async () => {
@@ -108,14 +117,19 @@ export const useLiveQuickConnectPool = (sessionId: string, enabled: boolean) => 
     await liveRepository.signalQuickConnectInterest(sessionId, profileId);
   }), [run, sessionId]);
 
+  const setStageLayout = useCallback((stageLayout: LiveQuickConnectStageLayout) => run('layout', async () => {
+    await liveRepository.setQuickConnectStageLayout(sessionId, stageLayout);
+  }), [run, sessionId]);
+
   return {
     snapshot,
     busyAction,
     error,
-    refreshing,
+    initialLoading,
     refresh,
     optIn,
     leave,
     signalInterest,
+    setStageLayout,
   };
 };

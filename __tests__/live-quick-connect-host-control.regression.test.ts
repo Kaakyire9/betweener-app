@@ -10,12 +10,16 @@ const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf
 const migration = read('../supabase/migrations/20260828160000_live_quick_connect_host_control_room.sql');
 const publicPoolMigration = read('../supabase/migrations/20260828190000_live_quick_connect_public_pool.sql');
 const hostPoolEnrollmentMigration = read('../supabase/migrations/20260829100000_live_quick_connect_host_pool_enrollment.sql');
+const sharedLayoutMigration = read('../supabase/migrations/20260829150000_live_quick_connect_shared_stage_layout.sql');
+const safetyMigration = read('../supabase/migrations/20260829170000_live_quick_connect_private_safety.sql');
 const repository = read('../features/live/application/live-repository.ts');
 const participantHook = read('../features/live/hooks/use-live-quick-connect.ts');
 const hook = read('../features/live/hooks/use-live-quick-connect-host-control.ts');
 const poolHook = read('../features/live/hooks/use-live-quick-connect-pool.ts');
 const panel = read('../features/live/components/LiveQuickConnectHostPanel.tsx');
 const pool = read('../features/live/components/LiveQuickConnectPool.tsx');
+const constellation = read('../features/live/components/LiveQuickConnectConstellation.tsx');
+const sharedStage = read('../features/live/components/LiveQuickConnectStage.tsx');
 const studio = read('../features/live/components/LiveStudioModal.tsx');
 const route = read('../app/live/[sessionId].tsx');
 
@@ -144,8 +148,8 @@ test('Live Studio and repository expose one host-control path', () => {
   assert.match(studio, /LiveQuickConnectHostPanel/i);
   assert.match(panel, />\{seconds \/ 60\} min</i);
   assert.match(panel, /roundOptions = \[120, 180, 300\] as const/i);
-  assert.match(panel, /Facilitate/i);
-  assert.match(panel, /Join rotations/i);
+  assert.doesNotMatch(panel, /Join rotations/i);
+  assert.match(panel, /Host & safety facilitator/i);
   assert.match(panel, /Open rotation/i);
   assert.match(panel, /Close entry/i);
 });
@@ -153,12 +157,13 @@ test('Live Studio and repository expose one host-control path', () => {
 test('Quick Connect is public-first and only a canonical pairing opens a private round', () => {
   assert.match(route, /useLiveQuickConnectPool\([\s\S]*?isQuickConnectLive && participantAdmissionReady/i);
   assert.doesNotMatch(route, /isQuickConnectParticipantExperience/i);
-  assert.match(route, /onOptIn=\{\(\) => void quickConnectPool\.optIn\(\)\}/i);
+  assert.match(route, /onOptIn=\{\(connectionIntent\) => void quickConnectPool\.optIn\(connectionIntent\)\}/i);
   assert.match(route, /quickConnectPairingId = quickConnectPool\.snapshot\?\.queue\?\.pairing\?\.id/i);
   assert.match(
     route,
     /if \(!isQuickConnectLive \|\| !quickConnectPairingId\) return;[\s\S]*?pathname: '\/live\/quick-connect\/\[sessionId\]'/i,
   );
+  assert.match(route, /Promise\.all\([\s\S]*?setTimeout\(resolve, 900\)/i);
   assert.match(route, /<LiveQuickConnectPool/i);
   assert.match(route, /quickConnectProps=\{isQuickConnectLive && isRoomHost/i);
 });
@@ -178,7 +183,7 @@ test('public pool enrolment is explicit, private and server-authoritative', () =
   assert.match(publicPoolMigration, /greatest\(v_user_id, v_target_user_id\)/i);
 });
 
-test('pool enrolment is explicit for guests and hosts', () => {
+test('pool enrolment is explicit for guests while hosts remain facilitators', () => {
   assert.match(poolHook, /const optIn = useCallback/i);
   assert.doesNotMatch(poolHook, /useEffect\([\s\S]{0,300}?joinQuickConnect/i);
   assert.match(poolHook, /subscribeQuickConnect\(sessionId/i);
@@ -186,39 +191,73 @@ test('pool enrolment is explicit for guests and hosts', () => {
   assert.match(hostPoolEnrollmentMigration, /return public\.rpc_join_live_quick_connect_uncontrolled\(p_session_id\)/i);
   assert.match(hostPoolEnrollmentMigration, /'is_host', v_session\.created_by_user_id = v_user_id/i);
   assert.match(hostPoolEnrollmentMigration, /'is_opted_in', coalesce\(v_me\.state in \('waiting', 'paired', 'disconnected'\), false\)/i);
-  assert.match(pool, /snapshot\.isHost \? 'Join your guests, if you choose\.'/i);
+  assert.match(safetyMigration, /live_quick_connect_host_facilitator_required/i);
+  assert.match(safetyMigration, /check \(creator_mode = 'facilitator'\)/i);
+  assert.match(safetyMigration, /p_creator_mode is distinct from 'facilitator'/i);
+  assert.match(pool, /Facilitating this rotation/i);
+  assert.doesNotMatch(pool, /Join your guests, if you choose/i);
   assert.match(pool, /canSignal=\{snapshot\.isOptedIn\}/i);
 });
 
-test('pool grid displays eight compact members and paginates deterministically', () => {
+test('pool constellation displays four readable members and paginates deterministically', () => {
   const members = Array.from({ length: 10 }, (_, index) => ({ id: index }));
   const firstPage = paginateLiveQuickConnectPool(members, 0);
   const secondPage = paginateLiveQuickConnectPool(members, 1);
 
-  assert.equal(firstPage.members.length, 8);
-  assert.equal(firstPage.remainingCount, 2);
+  assert.equal(firstPage.members.length, 4);
+  assert.equal(firstPage.remainingCount, 6);
   assert.equal(firstPage.hasNext, true);
-  assert.deepEqual(secondPage.members.map((member) => member.id), [8, 9]);
+  assert.deepEqual(secondPage.members.map((member) => member.id), [4, 5, 6, 7]);
   assert.equal(secondPage.hasPrevious, true);
   assert.match(pool, /Leave pool/i);
+  assert.match(pool, /AccessibilityInfo\.isReduceMotionEnabled/i);
+  assert.match(constellation, /QUICK_CONNECT_POOL_STARS\.map/i);
+  assert.match(constellation, /Easing\.inOut\(Easing\.sin\)/i);
+  assert.match(constellation, /exitKind === 'pair'/i);
+  assert.match(constellation, /pairing\.interpolate/i);
+  assert.match(pool, /pageMotion/i);
 });
 
 test('Quick Connect supports equal stacked and side-by-side host and pool stages', () => {
-  const stageSpacer = route.indexOf('styles.quickConnectStageSpacer');
+  const sharedStageIndex = route.indexOf('<LiveQuickConnectStage');
   const poolPanel = route.indexOf('<LiveQuickConnectPool');
 
-  assert.ok(stageSpacer >= 0);
-  assert.ok(poolPanel > stageSpacer);
-  assert.match(
-    route,
-    /quickConnectLayout === 'side-by-side'[\s\S]*?styles\.quickConnectStageSideBySide[\s\S]*?styles\.quickConnectStageBackground/i,
-  );
-  assert.match(route, /quickConnectStageBackground:\s*\{[\s\S]*?height:\s*'43%'/i);
-  assert.match(route, /quickConnectStageSideBySide:\s*\{[\s\S]*?width:\s*'46%'[\s\S]*?height:\s*'40%'/i);
-  assert.match(route, /quickConnectPoolSidePane:\s*\{[\s\S]*?right:\s*12[\s\S]*?width:\s*'46%'[\s\S]*?height:\s*'40%'/i);
+  assert.ok(sharedStageIndex >= 0);
+  assert.ok(poolPanel > sharedStageIndex);
+  assert.match(route, /hostSurface=\{renderMediaStage\(\)\}/i);
+  assert.match(route, /poolSurface=\{\(/i);
   assert.match(route, /layout=\{quickConnectLayout\}/i);
-  assert.match(route, /onLayoutChange=\{setQuickConnectLayout\}/i);
+  assert.match(route, /quickConnectPool\.snapshot\?\.stageLayout \?\? 'stacked'/i);
+  assert.match(route, /onLayoutChange=\{\(layout\) => void quickConnectPool\.setStageLayout\(layout\)\}/i);
   assert.match(route, /isQuickConnectLive && !keyboardVisible/i);
+  assert.match(sharedStage, /hostPane:\s*\{[\s\S]*?flex:\s*1/i);
+  assert.match(sharedStage, /poolPane:\s*\{[\s\S]*?flex:\s*1/i);
+  assert.match(sharedStage, /sideBySide \? styles\.horizontal : styles\.vertical/i);
+});
+
+test('the host stage layout is server-owned, realtime and compact in the narrow pane', () => {
+  assert.match(sharedLayoutMigration, /add column if not exists stage_layout text not null default 'stacked'/i);
+  assert.match(sharedLayoutMigration, /check \(stage_layout in \('stacked', 'side-by-side'\)\)/i);
+  assert.match(sharedLayoutMigration, /v_session\.created_by_user_id <> v_user_id/i);
+  assert.match(sharedLayoutMigration, /'stage_layout', coalesce\(v_control\.stage_layout, 'stacked'\)/i);
+  assert.match(sharedLayoutMigration, /rpc_set_live_quick_connect_stage_layout/i);
+  assert.match(repository, /setQuickConnectStageLayout[\s\S]*?rpc_set_live_quick_connect_stage_layout/i);
+  assert.match(poolHook, /setStageLayout[\s\S]*?setQuickConnectStageLayout/i);
+  assert.match(pool, /layout === 'side-by-side' \? 'QUICK CONNECT' : 'QUICK CONNECT POOL'/i);
+  assert.match(pool, /layout === 'stacked' \? <View style=\{styles\.optInCopy\}>/i);
+  assert.doesNotMatch(pool, />Manage</i);
+});
+
+test('background pool synchronization stays silent and keeps layout controls stable', () => {
+  assert.match(poolHook, /const showInitialLoading = !hasSnapshotRef\.current/i);
+  assert.match(poolHook, /if \(mountedRef\.current && showInitialLoading\) setInitialLoading\(true\)/i);
+  assert.match(poolHook, /if \(!hasSnapshotRef\.current\) \{[\s\S]*?setError/i);
+  assert.match(poolHook, /const HEARTBEAT_INTERVAL_MS = 15_000/i);
+  assert.match(pool, /style=\{styles\.progressSlot\}/i);
+  assert.match(pool, /progressSlot:\s*\{ width: 16, height: 16/i);
+  assert.doesNotMatch(pool, /refreshing \|\| busyAction/i);
+  assert.match(route, /initialLoading=\{quickConnectPool\.initialLoading\}/i);
+  assert.doesNotMatch(route, /refreshing=\{quickConnectPool\.refreshing\}/i);
 });
 
 test('opening a host-controlled rotation wakes waiting guests without a polling loop', () => {

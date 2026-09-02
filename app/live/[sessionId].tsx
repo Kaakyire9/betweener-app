@@ -37,6 +37,7 @@ import {
   LiveMemberSummaryModal,
   LivePublicIntroductionCard,
   LiveQuickConnectPool,
+  LiveQuickConnectStage,
   LiveRoomEventNotice,
   LiveStudioModal,
 } from '@/features/live/components/index.ts';
@@ -95,7 +96,6 @@ export default function LiveSessionScreen() {
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [studioOpen, setStudioOpen] = useState(false);
   const [roomPulseExpanded, setRoomPulseExpanded] = useState(false);
-  const [quickConnectLayout, setQuickConnectLayout] = useState<'stacked' | 'side-by-side'>('stacked');
   const [isPictureInPicture, setIsPictureInPicture] = useState(false);
   const [roomEventNotices, setRoomEventNotices] = useState<readonly LiveRoomNotice[]>([]);
   const [audiencePulseOpenRequest, setAudiencePulseOpenRequest] = useState(0);
@@ -136,6 +136,7 @@ export default function LiveSessionScreen() {
     sessionId,
     isQuickConnectLive && participantAdmissionReady,
   );
+  const quickConnectLayout = quickConnectPool.snapshot?.stageLayout ?? 'stacked';
   const quickConnectPairingId = quickConnectPool.snapshot?.queue?.pairing?.id ?? null;
   const canManageStudio = canManageStage
     || hostedMatching.snapshot?.canManage === true
@@ -176,7 +177,6 @@ export default function LiveSessionScreen() {
     announcedSeatRequestsRef.current.clear();
     announcedAudiencePollRef.current = null;
     quickConnectPairingRouteRef.current = null;
-    setQuickConnectLayout('stacked');
     setRoomEventNotices([]);
     setAudiencePulseOpenRequest(0);
   }, [sessionId]);
@@ -186,14 +186,17 @@ export default function LiveSessionScreen() {
     if (quickConnectPairingRouteRef.current === quickConnectPairingId) return;
     quickConnectPairingRouteRef.current = quickConnectPairingId;
 
-    void media.leave()
-      .catch(() => undefined)
-      .then(() => {
+    void Promise.all([
+      media.leave().catch(() => undefined),
+      new Promise((resolve) => setTimeout(resolve, 900)),
+    ]).then(() => {
+      if (quickConnectPairingRouteRef.current === quickConnectPairingId) {
         router.push({
           pathname: '/live/quick-connect/[sessionId]',
           params: { sessionId },
         });
-      });
+      }
+    });
   }, [isQuickConnectLive, media.leave, quickConnectPairingId, sessionId]);
 
   useEffect(() => {
@@ -621,6 +624,73 @@ export default function LiveSessionScreen() {
     );
   }
 
+  const renderMediaStage = () => (
+    <>
+      {media.bindings ? (
+        <LiveMediaStageBoundary resetKey={`${sessionId}:${media.state}`}>
+          <Suspense fallback={<ActivityIndicator color="#D7B56D" />}>
+            <StreamLiveStage
+              bindings={media.bindings}
+              stageParticipants={snapshot.stage}
+              localPublisherUserId={canPublish ? user?.id ?? null : null}
+              onConnectedParticipantCountChange={handleConnectedParticipantCountChange}
+              onPictureInPictureModeChange={handlePictureInPictureModeChange}
+              requestSeat={stageRequestSeat}
+            />
+          </Suspense>
+        </LiveMediaStageBoundary>
+      ) : (
+        <View style={styles.stageLoading}>
+          <ActivityIndicator color="#D7B56D" />
+          <Text style={styles.stageLoadingText}>
+            {media.state === 'failed' ? 'Tap refresh to rejoin the room.' : 'Entering quietly…'}
+          </Text>
+        </View>
+      )}
+      {!isPictureInPicture && media.state === 'failed' ? (
+        <Pressable
+          onPress={() => void media.join({
+            mode: isOnStage ? 'backstage' : 'audience',
+            audioEnabled: isOnStage && requestedStartAudio,
+            videoEnabled: isOnStage && requestedStartVideo,
+          })}
+          style={styles.mediaRetry}
+        >
+          <Text style={styles.mediaRetryText}>Rejoin</Text>
+        </Pressable>
+      ) : null}
+      {!isPictureInPicture && deviceNeedsAttention ? (
+        <View style={[styles.deviceNotice, isQuickConnectLive && styles.stageNoticeCompact]}>
+          <Text style={styles.deviceNoticeText}>
+            You’re in the room. {media.error?.includes('camera') ? 'Camera' : 'Microphone'} needs attention.
+          </Text>
+          <Pressable
+            onPress={() => void (media.error?.includes('camera')
+              ? media.setVideoEnabled(true)
+              : media.setAudioEnabled(true))}
+          >
+            <Text style={styles.deviceRetryText}>Try again</Text>
+          </Pressable>
+        </View>
+      ) : null}
+      {!isPictureInPicture && canPublish && !publicationReady ? (
+        <View style={[styles.authorityNotice, isQuickConnectLive && styles.stageNoticeCompact]}>
+          {media.authorityState === 'syncing' ? <ActivityIndicator color="#D7B56D" size="small" /> : null}
+          <Text style={styles.authorityNoticeText}>
+            {media.authorityState === 'failed'
+              ? 'Stage controls need a quick refresh.'
+              : 'Preparing your stage controls…'}
+          </Text>
+          {media.authorityState === 'failed' ? (
+            <Pressable onPress={() => void media.reconcileAuthority(true)}>
+              <Text style={styles.deviceRetryText}>Try again</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
+    </>
+  );
+
   return (
     <View style={styles.root}>
       <KeyboardAvoidingView
@@ -629,78 +699,12 @@ export default function LiveSessionScreen() {
         keyboardVerticalOffset={0}
         style={styles.keyboardAvoider}
       >
-        <View style={[
-          styles.stageBackground,
-          isQuickConnectLive
-            ? (quickConnectLayout === 'side-by-side'
-              ? styles.quickConnectStageSideBySide
-              : styles.quickConnectStageBackground)
-            : styles.fullStageBackground,
-        ]}>
-          {media.bindings ? (
-            <LiveMediaStageBoundary resetKey={`${sessionId}:${media.state}`}>
-              <Suspense fallback={<ActivityIndicator color="#D7B56D" />}>
-                <StreamLiveStage
-                  bindings={media.bindings}
-                  stageParticipants={snapshot.stage}
-                  localPublisherUserId={canPublish ? user?.id ?? null : null}
-                  onConnectedParticipantCountChange={handleConnectedParticipantCountChange}
-                  onPictureInPictureModeChange={handlePictureInPictureModeChange}
-                  requestSeat={stageRequestSeat}
-                />
-              </Suspense>
-            </LiveMediaStageBoundary>
-          ) : (
-            <View style={styles.stageLoading}>
-              <ActivityIndicator color="#D7B56D" />
-              <Text style={styles.stageLoadingText}>
-                {media.state === 'failed' ? 'Tap refresh to rejoin the room.' : 'Entering quietly…'}
-              </Text>
-            </View>
-          )}
-          {!isPictureInPicture && media.state === 'failed' ? (
-            <Pressable
-              onPress={() => void media.join({
-                mode: isOnStage ? 'backstage' : 'audience',
-                audioEnabled: isOnStage && requestedStartAudio,
-                videoEnabled: isOnStage && requestedStartVideo,
-              })}
-              style={styles.mediaRetry}
-            >
-              <Text style={styles.mediaRetryText}>Rejoin</Text>
-            </Pressable>
-          ) : null}
-          {!isPictureInPicture && deviceNeedsAttention ? (
-            <View style={styles.deviceNotice}>
-              <Text style={styles.deviceNoticeText}>
-                You’re in the room. {media.error?.includes('camera') ? 'Camera' : 'Microphone'} needs attention.
-              </Text>
-              <Pressable
-                onPress={() => void (media.error?.includes('camera')
-                  ? media.setVideoEnabled(true)
-                  : media.setAudioEnabled(true))}
-              >
-                <Text style={styles.deviceRetryText}>Try again</Text>
-              </Pressable>
-            </View>
-          ) : null}
-          {!isPictureInPicture && canPublish && !publicationReady ? (
-            <View style={styles.authorityNotice}>
-              {media.authorityState === 'syncing' ? <ActivityIndicator color="#D7B56D" size="small" /> : null}
-              <Text style={styles.authorityNoticeText}>
-                {media.authorityState === 'failed'
-                  ? 'Stage controls need a quick refresh.'
-                  : 'Preparing your stage controls…'}
-              </Text>
-              {media.authorityState === 'failed' ? (
-                <Pressable onPress={() => void media.reconcileAuthority(true)}>
-                  <Text style={styles.deviceRetryText}>Try again</Text>
-                </Pressable>
-              ) : null}
-            </View>
-          ) : null}
-        </View>
-        {!isPictureInPicture ? <LinearGradient
+        {!isQuickConnectLive || isPictureInPicture ? (
+          <View style={[styles.stageBackground, styles.fullStageBackground]}>
+            {renderMediaStage()}
+          </View>
+        ) : null}
+        {!isPictureInPicture && !isQuickConnectLive ? <LinearGradient
           colors={['#03100DE8', '#03100D12', '#03100D00', '#03100DCC']}
           locations={[0, 0.2, 0.56, 1]}
           pointerEvents="none"
@@ -764,33 +768,27 @@ export default function LiveSessionScreen() {
           <LivePublicIntroductionCard round={hostedMatching.snapshot.activeRound} />
         ) : null}
 
-        <View
-          pointerEvents="none"
-          style={[
-            styles.overlaySpacer,
-            isQuickConnectLive && (quickConnectLayout === 'side-by-side'
-              ? styles.quickConnectSideBySideSpacer
-              : styles.quickConnectStageSpacer),
-          ]}
-        />
-
         {isQuickConnectLive && !keyboardVisible ? (
-          <View style={quickConnectLayout === 'side-by-side' ? styles.quickConnectPoolSidePane : undefined}>
-            <LiveQuickConnectPool
-              busyAction={quickConnectPool.busyAction}
-              currentUserId={user?.id ?? null}
-              error={quickConnectPool.error}
-              layout={quickConnectLayout}
-              onLayoutChange={setQuickConnectLayout}
-              onLeave={() => void quickConnectPool.leave()}
-              onOpenStudio={openLiveStudio}
-              onOptIn={() => void quickConnectPool.optIn()}
-              onSignalInterest={(profileId) => void quickConnectPool.signalInterest(profileId)}
-              refreshing={quickConnectPool.refreshing}
-              snapshot={quickConnectPool.snapshot}
-            />
-          </View>
-        ) : null}
+          <LiveQuickConnectStage
+            hostSurface={renderMediaStage()}
+            layout={quickConnectLayout}
+            poolSurface={(
+              <LiveQuickConnectPool
+                busyAction={quickConnectPool.busyAction}
+                currentUserId={user?.id ?? null}
+                embedded
+                error={quickConnectPool.error}
+                initialLoading={quickConnectPool.initialLoading}
+                layout={quickConnectLayout}
+                onLayoutChange={(layout) => void quickConnectPool.setStageLayout(layout)}
+                onLeave={() => void quickConnectPool.leave()}
+                onOptIn={(connectionIntent) => void quickConnectPool.optIn(connectionIntent)}
+                onSignalInterest={(profileId) => void quickConnectPool.signalInterest(profileId)}
+                snapshot={quickConnectPool.snapshot}
+              />
+            )}
+          />
+        ) : <View pointerEvents="none" style={styles.overlaySpacer} />}
 
         <LiveGlassSurface
           intensity={28}
@@ -887,7 +885,7 @@ export default function LiveSessionScreen() {
             snapshot: quickConnectHost.snapshot,
             busyAction: quickConnectHost.busyAction,
             error: quickConnectHost.error,
-            onConfigure: (roundSeconds, creatorMode) => void quickConnectHost.configure(roundSeconds, creatorMode),
+            onConfigure: (roundSeconds, maxConcurrentPairs) => void quickConnectHost.configure(roundSeconds, maxConcurrentPairs),
             onControl: (action) => void quickConnectHost.control(action),
           } : null}
           matchingProps={hostedMatching.snapshot?.canManage ? {
@@ -947,8 +945,6 @@ const styles = StyleSheet.create({
   safe: { flex: 1 },
   stageBackground: { position: 'absolute', top: 0, right: 0, left: 0, backgroundColor: '#071310' },
   fullStageBackground: { bottom: 0 },
-  quickConnectStageBackground: { height: '43%' },
-  quickConnectStageSideBySide: { top: 76, left: 12, right: undefined, width: '46%', height: '40%', borderRadius: 24, overflow: 'hidden', borderWidth: 1, borderColor: '#D7B56D42' },
   stageScrim: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
   loading: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#071310', gap: 18 },
   errorTitle: { color: '#FFF7EC', fontSize: 21, fontFamily: 'PlayfairDisplay_700Bold' },
@@ -995,10 +991,8 @@ const styles = StyleSheet.create({
     borderColor: '#7C6B45',
   },
   authorityNoticeText: { color: '#E9E2D8', fontSize: 11, fontFamily: 'Manrope_600SemiBold' },
+  stageNoticeCompact: { top: 10, left: 8, right: 8, minHeight: 38, paddingHorizontal: 10 },
   overlaySpacer: { flex: 1, minHeight: 10 },
-  quickConnectStageSpacer: { minHeight: 180 },
-  quickConnectSideBySideSpacer: { minHeight: '43%' },
-  quickConnectPoolSidePane: { position: 'absolute', top: 76, right: 12, width: '46%', height: '40%' },
   conversationGlass: { height: '27%', minHeight: 194, marginHorizontal: 12, marginBottom: 6, borderRadius: 24, backgroundColor: '#07151280' },
   conversationGlassExpanded: { height: '46%' },
   conversationGlassKeyboard: { flex: 1, height: 'auto', minHeight: 0, marginTop: 8, marginBottom: 4 },

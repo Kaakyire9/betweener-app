@@ -1,6 +1,6 @@
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import * as ImagePicker from 'expo-image-picker';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { ArrowLeft, CalendarClock, Film, ImagePlus, ShieldCheck, Sparkles, TimerReset, Trash2, UsersRound } from 'lucide-react-native';
 import { useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Image, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
@@ -10,12 +10,17 @@ import type { LiveSessionFormat } from '@/features/live/domain/live-types.ts';
 import { useAuth } from '@/lib/auth-context';
 
 export default function ScheduleLiveScreen() {
+  const params = useLocalSearchParams<{ circleId?: string; circleName?: string }>();
+  const circleId = typeof params.circleId === 'string' ? params.circleId : null;
+  const circleName = typeof params.circleName === 'string' ? params.circleName : null;
+  const isCircleLive = Boolean(circleId);
   const { user, canPerformAuthenticatedWrites, isSessionRecoveryActive, retrySessionRecovery } = useAuth();
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [scheduledStart, setScheduledStart] = useState(() => new Date(Date.now() + 86_400_000));
   const [format, setFormat] = useState<Extract<LiveSessionFormat, 'hosted_match_night' | 'quick_connect'>>('hosted_match_night');
   const [chemistryFirstEnabled, setChemistryFirstEnabled] = useState(false);
+  const [minimumParticipants, setMinimumParticipants] = useState('2');
   const [showPicker, setShowPicker] = useState(Platform.OS === 'ios');
   const [submitting, setSubmitting] = useState(false);
   const [poster, setPoster] = useState<ImagePicker.ImagePickerAsset | null>(null);
@@ -68,13 +73,15 @@ export default function ScheduleLiveScreen() {
         return;
       }
       if (!user?.id) throw new Error('authentication_required');
-      const id = await liveRepository.schedule({
+      const scheduleInput = {
         title: cleanTitle,
         description: description.trim(),
         scheduledStart: scheduledStart.toISOString(),
-        format,
         chemistryFirstEnabled,
-      });
+      };
+      const id = circleId
+        ? await liveRepository.scheduleCircle({ ...scheduleInput, circleId, format: 'circle_live', minimumParticipants: Math.max(2, Math.min(100, Number.parseInt(minimumParticipants, 10) || 2)) })
+        : await liveRepository.schedule({ ...scheduleInput, format });
       const uploadedPaths: string[] = [];
       try {
         const posterPath = poster ? await uploadLiveEventPoster({ userId: user.id, sessionId: id, uri: poster.uri }) : null;
@@ -92,7 +99,9 @@ export default function ScheduleLiveScreen() {
         await removeLiveEventMedia(uploadedPaths);
         Alert.alert('Event scheduled', 'Your Live is safely scheduled, but its promotional media could not be added. You can still manage the event from your Studio.');
       }
-      router.replace('/live');
+      router.replace(circleId
+        ? { pathname: '/circles/[id]', params: { id: circleId, tab: 'live' } }
+        : '/live');
     } catch {
       Alert.alert('Room not scheduled', 'We could not securely create this room yet. Check your connection and try again.');
     } finally {
@@ -104,8 +113,8 @@ export default function ScheduleLiveScreen() {
     <View style={styles.root}>
       <SafeAreaView style={styles.safe}>
         <View style={styles.header}>
-          <Pressable accessibilityLabel="Back to Live" onPress={() => router.replace('/live')} style={styles.icon}><ArrowLeft size={22} color="#FFF7EC" /></Pressable>
-          <View style={styles.headerCopy}><Text style={styles.eyebrow}>YOUR LIVE STUDIO</Text><Text style={styles.heading}>Create a Live room</Text></View>
+          <Pressable accessibilityLabel={isCircleLive ? 'Back to Circle' : 'Back to Live'} onPress={() => circleId ? router.replace({ pathname: '/circles/[id]', params: { id: circleId, tab: 'live' } }) : router.replace('/live')} style={styles.icon}><ArrowLeft size={22} color="#FFF7EC" /></Pressable>
+          <View style={styles.headerCopy}><Text style={styles.eyebrow}>{isCircleLive ? 'CIRCLE LIVE' : 'YOUR LIVE STUDIO'}</Text><Text style={styles.heading}>{isCircleLive ? `Live in ${circleName || 'this Circle'}` : 'Create a Live room'}</Text></View>
         </View>
         <ScrollView contentContainerStyle={styles.form} keyboardShouldPersistTaps="handled">
           <View style={styles.promise}><ShieldCheck size={20} color="#D7B56D" /><Text style={styles.promiseText}>Four public seats maximum. No recording, gifting, or popularity rankings.</Text></View>
@@ -119,7 +128,9 @@ export default function ScheduleLiveScreen() {
             </Pressable>
           </View>
           {poster || teaser ? <View style={styles.removeRow}>{poster ? <Pressable onPress={() => setPoster(null)} style={styles.remove}><Trash2 size={13} color="#D7B56D" /><Text style={styles.removeText}>Remove poster</Text></Pressable> : null}{teaser ? <Pressable onPress={() => setTeaser(null)} style={styles.remove}><Trash2 size={13} color="#D7B56D" /><Text style={styles.removeText}>Remove video</Text></Pressable> : null}</View> : null}
-          <Text style={styles.label}>LIVE FORMAT</Text>
+          {isCircleLive ? (
+            <View style={styles.circleContext}><UsersRound size={20} color="#D7B56D" /><View style={styles.chemistryCopy}><Text style={styles.chemistryTitle}>Circle Live</Text><Text style={styles.chemistryDescription}>This creates a linked Gathering. Live remains the source of truth for quorum, room state, and recap.</Text></View></View>
+          ) : <><Text style={styles.label}>LIVE FORMAT</Text>
           <View style={styles.formatRow}>
             <FormatCard
               active={format === 'hosted_match_night'}
@@ -135,7 +146,7 @@ export default function ScheduleLiveScreen() {
               description="Private three-minute conversations, paired by Betweener."
               onPress={() => setFormat('quick_connect')}
             />
-          </View>
+          </View></>}
           <View style={styles.chemistryCard}>
             <View style={styles.chemistryIcon}><Sparkles size={18} color="#D7B56D" /></View>
             <View style={styles.chemistryCopy}>
@@ -150,6 +161,7 @@ export default function ScheduleLiveScreen() {
               thumbColor={chemistryFirstEnabled ? '#F3D58B' : '#AFC0BC'}
             />
           </View>
+          {isCircleLive ? <><Text style={styles.label}>MINIMUM PEOPLE</Text><TextInput value={minimumParticipants} onChangeText={(value) => setMinimumParticipants(value.replace(/[^0-9]/g, '').slice(0, 3))} keyboardType="number-pad" maxLength={3} placeholder="2" placeholderTextColor="#71827E" style={styles.input} /><Text style={styles.fieldHint}>The Live confirms when this many places are saved. The host is not counted as a reservation.</Text></> : null}
           <Text style={styles.label}>ROOM TITLE</Text>
           <TextInput value={title} onChangeText={setTitle} maxLength={120} placeholder="Ghana ↔ UK Match Night" placeholderTextColor="#71827E" style={styles.input} />
           <Text style={styles.label}>HOST NOTE</Text>
@@ -212,6 +224,7 @@ const styles = StyleSheet.create({
   formatTitle: { color: '#FFF7EC', fontSize: 13, lineHeight: 17, fontFamily: 'Manrope_800ExtraBold', marginBottom: 7 },
   formatDescription: { color: '#AFC0BC', fontSize: 10, lineHeight: 15, fontFamily: 'Manrope_500Medium' },
   chemistryCard: { minHeight: 86, marginTop: 14, padding: 14, borderRadius: 22, borderWidth: 1, borderColor: '#564C37', backgroundColor: '#172622', flexDirection: 'row', alignItems: 'center', gap: 11 },
+  circleContext: { minHeight: 86, marginTop: 14, padding: 16, borderRadius: 22, borderWidth: 1, borderColor: '#564C37', backgroundColor: '#172622', flexDirection: 'row', alignItems: 'center', gap: 12 },
   chemistryIcon: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: '#29392F' },
   chemistryCopy: { flex: 1 },
   chemistryTitle: { color: '#FFF7EC', fontSize: 13, fontFamily: 'Manrope_800ExtraBold' },
@@ -219,6 +232,7 @@ const styles = StyleSheet.create({
   label: { color: '#D7B56D', fontSize: 9, letterSpacing: 1.6, fontFamily: 'Manrope_800ExtraBold', marginBottom: 8, marginTop: 14 },
   input: { minHeight: 54, borderRadius: 18, paddingHorizontal: 16, color: '#FFF7EC', backgroundColor: '#13211F', borderWidth: 1, borderColor: '#30443F', fontFamily: 'Manrope_500Medium' },
   multiline: { minHeight: 106, paddingTop: 15, textAlignVertical: 'top' },
+  fieldHint: { color: '#82938F', fontSize: 9, lineHeight: 14, marginTop: 6, fontFamily: 'Manrope_500Medium' },
   dateButton: { minHeight: 54, borderRadius: 18, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#13211F', borderWidth: 1, borderColor: '#30443F' },
   dateText: { color: '#FFF7EC', fontSize: 13, fontFamily: 'Manrope_600SemiBold' },
   footer: { padding: 20 }, submit: { height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center', backgroundColor: '#D7B56D' },

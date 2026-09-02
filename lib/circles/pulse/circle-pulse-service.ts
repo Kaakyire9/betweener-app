@@ -735,13 +735,18 @@ export async function nominateCircleLoveSeat(
   actorProfileId: string,
   featuredProfileId: string,
   quote?: string | null,
+  originLiveSessionId?: string | null,
 ) {
-  const { data, error } = await db.rpc('rpc_nominate_circle_love_seat', {
+  const { data, error } = await db.rpc(
+    originLiveSessionId ? 'rpc_nominate_circle_love_seat_from_live' : 'rpc_nominate_circle_love_seat',
+    {
     p_circle_id: circleId,
     p_actor_profile_id: actorProfileId,
     p_featured_profile_id: featuredProfileId,
     p_quote: quote?.trim() || null,
-  });
+    ...(originLiveSessionId ? { p_live_session_id: originLiveSessionId } : {}),
+    },
+  );
   if (error) throw toLoveSeatServiceError(error, 'Could not send this Love Seat invitation right now.');
   return data;
 }

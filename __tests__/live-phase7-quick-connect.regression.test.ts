@@ -55,6 +55,7 @@ const pairedSnapshot: LiveQuickConnectSnapshot = {
     reconnectDeadline: null,
     myDecision: null,
     sharedOutcome: null,
+    safetyReviewed: false,
     otherPerson: {
       userId: 'user-2',
       profileId: 'profile-2',

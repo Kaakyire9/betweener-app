@@ -13,6 +13,13 @@ type Props = {
   items: CirclePulseItem[];
   discussionUnreadByItemId?: Record<string, number>;
   gatheringPosterMembersByUrl?: Record<string, { profileId: string; fullName: string; avatarUrl: string; seatContext?: 'welcome' | 'love' | 'featured_member' }>;
+  liveGatheringsById?: Record<string, {
+    sessionId: string;
+    attendanceCount: number;
+    minimumAttendance: number;
+    quorumStatus: 'almost_ready' | 'confirmed';
+    viewerRsvpStatus: string;
+  }>;
   loading?: boolean;
   error?: string | null;
   isMember: boolean;
@@ -276,6 +283,7 @@ export default function CirclePulseBoard({
   items,
   discussionUnreadByItemId,
   gatheringPosterMembersByUrl,
+  liveGatheringsById,
   loading = false,
   error = null,
   isMember,
@@ -364,16 +372,27 @@ export default function CirclePulseBoard({
     : null;
   const isLoveSeatOwner = !!selectedItem?.featuredProfileId && selectedItem.featuredProfileId === viewerProfileId;
   const selectedGatheringDate = selectedItem?.type === 'gathering' ? selectedItem.gatheringStartsAt || selectedItem.startsAt : null;
+  const selectedLiveGathering = selectedItem?.type === 'gathering' && selectedItem.gatheringId
+    ? liveGatheringsById?.[selectedItem.gatheringId] ?? null
+    : null;
   const selectedGatheringDateParts = useMemo(() => getGatheringDateParts(selectedGatheringDate), [selectedGatheringDate]);
   const selectedGatheringCountdown = useMemo(() => formatGatheringCountdown(selectedGatheringDate), [selectedGatheringDate]);
   const selectedGatheringExactDate = useMemo(() => formatGatheringExactDate(selectedGatheringDate), [selectedGatheringDate]);
   const selectedGatheringAttendance = useMemo(
-    () => formatGatheringAttendance(selectedItem?.type === 'gathering' ? selectedItem.gatheringAttendeeCount : 0),
-    [selectedItem],
+    () => selectedLiveGathering
+      ? selectedLiveGathering.quorumStatus === 'confirmed'
+        ? 'This Circle Live is confirmed'
+        : selectedLiveGathering.attendanceCount <= 0
+          ? 'Be the first to save a place'
+          : `${selectedLiveGathering.attendanceCount} of ${selectedLiveGathering.minimumAttendance} places saved`
+      : formatGatheringAttendance(selectedItem?.type === 'gathering' ? selectedItem.gatheringAttendeeCount : 0),
+    [selectedItem, selectedLiveGathering],
   );
   const selectedGatheringAttendanceBadge = useMemo(
-    () => formatGatheringAttendanceBadge(selectedItem?.type === 'gathering' ? selectedItem.gatheringAttendeeCount : 0),
-    [selectedItem],
+    () => selectedLiveGathering
+      ? `${selectedLiveGathering.attendanceCount} of ${selectedLiveGathering.minimumAttendance} saved`
+      : formatGatheringAttendanceBadge(selectedItem?.type === 'gathering' ? selectedItem.gatheringAttendeeCount : 0),
+    [selectedItem, selectedLiveGathering],
   );
   const selectedDiscussionCallToAction = useMemo(
     () => {
@@ -490,7 +509,7 @@ export default function CirclePulseBoard({
     if (selectedItem.type === 'gathering' && selectedItem.gatheringId) {
       return (
         <TouchableOpacity style={styles.primaryButton} onPress={() => onOpenGathering?.(selectedItem.gatheringId!)}>
-          <Text style={styles.primaryButtonText}>RSVP</Text>
+          <Text style={styles.primaryButtonText}>{selectedLiveGathering ? selectedLiveGathering.viewerRsvpStatus === 'going' ? 'Open Live' : 'Save a place' : 'RSVP'}</Text>
         </TouchableOpacity>
       );
     }
@@ -776,7 +795,7 @@ export default function CirclePulseBoard({
                 </View>
               )}
               <View style={styles.gatheringCopy}>
-                <Text style={styles.label}>Upcoming gathering</Text>
+                <Text style={styles.label}>{selectedLiveGathering ? 'Upcoming Circle Live' : 'Upcoming gathering'}</Text>
                 <Text style={styles.title} numberOfLines={2}>{selectedItem.title || 'A thoughtful gathering'}</Text>
                 <Text style={styles.meta} numberOfLines={2}>
                   {selectedItem.gatheringCity || 'Circle space'}

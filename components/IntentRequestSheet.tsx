@@ -199,7 +199,9 @@ export default function IntentRequestSheet({
       const msg = err instanceof Error ? err.message : supaMessage || 'Please try again.';
       // Friendly UX for common guardrail errors.
       const friendly =
-        msg && /already have a request from them|open intent to respond/i.test(msg)
+        msg && /dating_not_eligible/i.test(msg)
+          ? 'This dating action is not available for this profile right now.'
+          : msg && /already have a request from them|open intent to respond/i.test(msg)
           ? `You already have a request from ${recipientName || 'this person'}. Open Intent to respond.`
           : msg && /already sent|already placed|request pending/i.test(msg)
             ? `You've already placed a request to ${recipientName || 'this person'}. Please wait for their response.`

@@ -772,6 +772,7 @@ export default function CircleCreatorManageScreen() {
               >
                 <Text style={styles.modalTitle}>{editingGistId ? 'Edit Relationship Gist' : 'Write Relationship Gist'}</Text>
                 <Text style={styles.modalBody}>Global editorial guidance for everyone on Betweener. Save drafts here, publish only when the piece is ready.</Text>
+                <Text style={styles.inputLabel}>Title</Text>
                 <TextInput
                   value={gistTitleDraft}
                   onChangeText={setGistTitleDraft}
@@ -779,7 +780,11 @@ export default function CircleCreatorManageScreen() {
                   placeholderTextColor={theme.textMuted}
                   style={styles.input}
                   returnKeyType="next"
+                  maxLength={140}
+                  accessibilityLabel="Relationship Gist title"
                 />
+                <Text style={styles.editorCount}>{gistTitleDraft.length}/140</Text>
+                <Text style={styles.inputLabel}>Card summary</Text>
                 <TextInput
                   value={gistShortBodyDraft}
                   onChangeText={setGistShortBodyDraft}
@@ -787,7 +792,11 @@ export default function CircleCreatorManageScreen() {
                   placeholderTextColor={theme.textMuted}
                   style={styles.input}
                   returnKeyType="next"
+                  maxLength={420}
+                  accessibilityLabel="Relationship Gist card summary"
                 />
+                <Text style={styles.editorCount}>{gistShortBodyDraft.length}/420</Text>
+                <Text style={styles.inputLabel}>Full guidance</Text>
                 <TextInput
                   value={gistBodyDraft}
                   onChangeText={setGistBodyDraft}
@@ -795,7 +804,11 @@ export default function CircleCreatorManageScreen() {
                   placeholderTextColor={theme.textMuted}
                   multiline
                   style={[styles.input, styles.multiline, styles.gistBodyInput]}
+                  maxLength={5000}
+                  accessibilityLabel="Relationship Gist full guidance"
                 />
+                <Text style={styles.editorCount}>{gistBodyDraft.length}/5000</Text>
+                <Text style={styles.inputLabel}>Editorial perspective</Text>
                 <View style={styles.visibilityRow}>
                   {GIST_PERSPECTIVES.map((item) => (
                     <Pressable
@@ -1082,6 +1095,8 @@ const createStyles = (_theme: typeof Colors.light, _isDark: boolean) =>
     },
     modalTitle: { color: '#F4E8D0', fontSize: 20, fontFamily: 'PlayfairDisplay_700Bold' },
     modalBody: { color: 'rgba(244,232,208,0.72)', fontSize: 13, lineHeight: 19 },
+    inputLabel: { color: '#F4E8D0', fontSize: 12, fontWeight: '800', marginTop: 2 },
+    editorCount: { color: 'rgba(244,232,208,0.5)', fontSize: 10, textAlign: 'right', marginTop: -8 },
     input: {
       borderRadius: 14,
       borderWidth: 1,

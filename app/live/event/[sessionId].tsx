@@ -6,8 +6,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, ImageBackground, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { formatLiveCountdown } from '@/features/live/components/LiveSessionCard.tsx';
+import { LiveQuorumPoolingCard } from '@/features/live/components/index.ts';
 import { getLiveEventMediaUrl, getLiveSessionPhase, liveRepository } from '@/features/live/application/index.ts';
-import { useLiveSessions } from '@/features/live/hooks/index.ts';
+import { useLiveQuorumPooling, useLiveSessions } from '@/features/live/hooks/index.ts';
 import { useAuth } from '@/lib/auth-context';
 
 const formatDate = (value: string | null) => value
@@ -23,6 +24,7 @@ export default function LiveEventScreen() {
   const { sessionId } = useLocalSearchParams<{ sessionId: string }>();
   const { profile } = useAuth();
   const { sessions, loading, refresh } = useLiveSessions();
+  const quorumPooling = useLiveQuorumPooling(sessionId);
   const [clock, setClock] = useState(Date.now());
   const [saving, setSaving] = useState(false);
   useEffect(() => { const timer = setInterval(() => setClock(Date.now()), 30_000); return () => clearInterval(timer); }, []);
@@ -31,6 +33,7 @@ export default function LiveEventScreen() {
   const isOwner = session?.createdByProfileId === profile?.id;
   const posterUrl = getLiveEventMediaUrl(session?.posterPath);
   const teaserUrl = getLiveEventMediaUrl(session?.teaserVideoPath);
+  const reservationCount = quorumPooling.snapshot?.quorum.attendanceCount ?? session?.reservationCount ?? 0;
 
   const reserve = async () => {
     if (!session || saving) return;
@@ -68,10 +71,25 @@ export default function LiveEventScreen() {
           <View style={styles.details}>
             <View style={styles.detailRow}><CalendarClock size={18} color="#E1BE70" /><View><Text style={styles.detailLabel}>{phase === 'past' ? 'ENDED' : 'STARTS'}</Text><Text style={styles.detailValue}>{formatDate(phase === 'past' ? session.endedAt : session.scheduledStart)}</Text></View></View>
             <View style={styles.statRow}>
-              <View style={styles.stat}><Users size={18} color="#E1BE70" /><Text style={styles.statNumber}>{phase === 'past' ? session.totalAttendeeCount : session.reservationCount}</Text><Text style={styles.statLabel}>{phase === 'past' ? 'attended' : 'places saved'}</Text></View>
+              <View style={styles.stat}><Users size={18} color="#E1BE70" /><Text style={styles.statNumber}>{phase === 'past' ? session.totalAttendeeCount : reservationCount}</Text><Text style={styles.statLabel}>{phase === 'past' ? 'attended' : 'places saved'}</Text></View>
               <View style={styles.stat}><Sparkles size={18} color="#E1BE70" /><Text style={styles.statNumber}>{session.matchesMadeCount}</Text><Text style={styles.statLabel}>matches made</Text></View>
             </View>
           </View>
+
+          {phase === 'upcoming' ? (
+            <LiveQuorumPoolingCard
+              snapshot={quorumPooling.snapshot}
+              preview={quorumPooling.preview}
+              loading={quorumPooling.loading}
+              saving={quorumPooling.saving}
+              error={quorumPooling.error}
+              onSetPreference={(allowed) => void quorumPooling.setPreference(allowed)}
+              onRespondOffer={(offerId, accept) => void quorumPooling.respondToOffer(offerId, accept)}
+              onCreateDefaultRule={() => void quorumPooling.createDefaultRule()}
+              onCreatePool={(candidateSessionId, ruleId) => void quorumPooling.createPool(candidateSessionId, ruleId)}
+              onOpenSession={(nextSessionId) => router.push({ pathname: '/live/event/[sessionId]', params: { sessionId: nextSessionId } })}
+            />
+          ) : null}
 
           {teaserUrl ? <View style={styles.teaserCard}><View style={styles.teaserHeading}><Play size={16} color="#E1BE70" /><Text style={styles.teaserTitle}>A glimpse of the room</Text></View><TeaserVideo uri={teaserUrl} /></View> : null}
 

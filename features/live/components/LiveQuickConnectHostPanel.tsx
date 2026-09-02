@@ -1,9 +1,9 @@
-import { Activity, Clock3, Pause, Play, ShieldCheck, Square, UsersRound } from 'lucide-react-native';
+import { Activity, Clock3, Pause, Play, ShieldCheck, Square } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type {
-  LiveQuickConnectCreatorMode,
+  LiveQuickConnectConcurrency,
   LiveQuickConnectHostAction,
   LiveQuickConnectHostSnapshot,
   LiveQuickConnectRoundSeconds,
@@ -13,7 +13,7 @@ export type LiveQuickConnectHostPanelProps = {
   snapshot: LiveQuickConnectHostSnapshot | null;
   busyAction: string | null;
   error: string | null;
-  onConfigure: (roundSeconds: LiveQuickConnectRoundSeconds, creatorMode: LiveQuickConnectCreatorMode) => void;
+  onConfigure: (roundSeconds: LiveQuickConnectRoundSeconds, maxConcurrentPairs: LiveQuickConnectConcurrency) => void;
   onControl: (action: LiveQuickConnectHostAction) => void;
 };
 
@@ -26,6 +26,7 @@ const STATE_COPY: Record<LiveQuickConnectHostSnapshot['state'], string> = {
 };
 
 const roundOptions = [120, 180, 300] as const;
+const concurrencyOptions = [1, 2, 4, 8] as const;
 
 export function LiveQuickConnectHostPanel({
   snapshot,
@@ -41,8 +42,8 @@ export function LiveQuickConnectHostPanel({
   const active = snapshot.state === 'open' || snapshot.metrics.activePairs > 0;
   const configure = (
     roundSeconds = snapshot.roundSeconds,
-    creatorMode = snapshot.creatorMode,
-  ) => onConfigure(roundSeconds, creatorMode);
+    maxConcurrentPairs = snapshot.maxConcurrentPairs,
+  ) => onConfigure(roundSeconds, maxConcurrentPairs);
 
   return (
     <View style={styles.shell}>
@@ -58,9 +59,29 @@ export function LiveQuickConnectHostPanel({
       <View style={styles.metrics}>
         <Metric label="Waiting" value={snapshot.metrics.waitingPeople} />
         <Metric label="Eligible" value={snapshot.metrics.eligiblePeople} />
-        <Metric label="Pairs" value={snapshot.metrics.activePairs} />
+        <Metric label="Pairs" value={`${snapshot.metrics.activePairs}/${snapshot.maxConcurrentPairs}`} />
         <Metric label="Complete" value={snapshot.metrics.completedRounds} />
       </View>
+
+      <Text style={styles.label}>SIMULTANEOUS CONVERSATIONS</Text>
+      <View style={styles.options}>
+        {concurrencyOptions.map((count) => (
+          <Pressable
+            key={count}
+            accessibilityLabel={`${count} simultaneous ${count === 1 ? 'conversation' : 'conversations'}`}
+            accessibilityRole="button"
+            disabled={active || busyAction != null}
+            onPress={() => configure(snapshot.roundSeconds, count)}
+            style={[styles.option, snapshot.maxConcurrentPairs === count && styles.optionSelected, active && styles.disabled]}
+          >
+            <Activity color={snapshot.maxConcurrentPairs === count ? '#102522' : '#A9BAB5'} size={14} />
+            <Text style={[styles.optionText, snapshot.maxConcurrentPairs === count && styles.optionTextSelected]}>{count}</Text>
+          </Pressable>
+        ))}
+      </View>
+      <Text style={styles.capacityCopy}>
+        {snapshot.metrics.availablePairSlots} pairing {snapshot.metrics.availablePairSlots === 1 ? 'slot' : 'slots'} available
+      </Text>
       {snapshot.metrics.reconnectingPeople > 0 ? (
         <Text style={styles.reconnecting}>{snapshot.metrics.reconnectingPeople} reconnecting safely</Text>
       ) : null}
@@ -82,25 +103,12 @@ export function LiveQuickConnectHostPanel({
       </View>
 
       <Text style={styles.label}>YOUR ROLE</Text>
-      <View style={styles.options}>
-        <Pressable
-          accessibilityRole="button"
-          disabled={active || busyAction != null}
-          onPress={() => configure(snapshot.roundSeconds, 'facilitator')}
-          style={[styles.roleOption, snapshot.creatorMode === 'facilitator' && styles.optionSelected, active && styles.disabled]}
-        >
-          <ShieldCheck color={snapshot.creatorMode === 'facilitator' ? '#102522' : '#A9BAB5'} size={16} />
-          <Text style={[styles.optionText, snapshot.creatorMode === 'facilitator' && styles.optionTextSelected]}>Facilitate</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          disabled={active || busyAction != null}
-          onPress={() => configure(snapshot.roundSeconds, 'participant')}
-          style={[styles.roleOption, snapshot.creatorMode === 'participant' && styles.optionSelected, active && styles.disabled]}
-        >
-          <UsersRound color={snapshot.creatorMode === 'participant' ? '#102522' : '#A9BAB5'} size={16} />
-          <Text style={[styles.optionText, snapshot.creatorMode === 'participant' && styles.optionTextSelected]}>Join rotations</Text>
-        </Pressable>
+      <View style={styles.facilitatorNotice}>
+        <ShieldCheck color="#D7B56D" size={17} />
+        <View style={styles.facilitatorCopy}>
+          <Text style={styles.facilitatorTitle}>Host & safety facilitator</Text>
+          <Text style={styles.facilitatorBody}>You guide rotations and remain available to the room.</Text>
+        </View>
       </View>
 
       {error ? <Text style={styles.error}>Controls could not be updated. Please try again.</Text> : null}
@@ -119,7 +127,7 @@ export function LiveQuickConnectHostPanel({
   );
 }
 
-function Metric({ label, value }: { label: string; value: number }) {
+function Metric({ label, value }: { label: string; value: number | string }) {
   return <View style={styles.metric}><Text style={styles.metricValue}>{value}</Text><Text style={styles.metricLabel}>{label}</Text></View>;
 }
 
@@ -142,10 +150,14 @@ const styles = StyleSheet.create({
   metricValue: { color: '#FFF7EC', fontSize: 19, fontFamily: 'Manrope_800ExtraBold' },
   metricLabel: { marginTop: 2, color: '#8FA39D', fontSize: 8, fontFamily: 'Manrope_700Bold' },
   reconnecting: { color: '#D7B56D', fontSize: 10, textAlign: 'center', fontFamily: 'Manrope_700Bold' },
+  capacityCopy: { marginTop: -10, color: '#8FA39D', fontSize: 9, textAlign: 'center', fontFamily: 'Manrope_600SemiBold' },
   label: { marginTop: 4, color: '#8FA39D', fontSize: 9, letterSpacing: 1.4, fontFamily: 'Manrope_800ExtraBold' },
   options: { flexDirection: 'row', gap: 8 },
   option: { flex: 1, minHeight: 42, borderRadius: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: '#091714', borderWidth: 1, borderColor: '#29413B' },
-  roleOption: { flex: 1, minHeight: 47, borderRadius: 19, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, backgroundColor: '#091714', borderWidth: 1, borderColor: '#29413B' },
+  facilitatorNotice: { minHeight: 58, borderRadius: 19, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, backgroundColor: '#091714', borderWidth: 1, borderColor: '#D7B56D45' },
+  facilitatorCopy: { flex: 1 },
+  facilitatorTitle: { color: '#FFF7EC', fontSize: 11, fontFamily: 'Manrope_800ExtraBold' },
+  facilitatorBody: { marginTop: 2, color: '#8FA39D', fontSize: 9, lineHeight: 13, fontFamily: 'Manrope_500Medium' },
   optionSelected: { backgroundColor: '#D7B56D', borderColor: '#D7B56D' },
   optionText: { color: '#A9BAB5', fontSize: 10, fontFamily: 'Manrope_700Bold' },
   optionTextSelected: { color: '#102522' },

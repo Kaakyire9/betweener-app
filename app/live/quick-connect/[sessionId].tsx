@@ -1,12 +1,14 @@
 import { LinearGradient } from 'expo-linear-gradient';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { ArrowLeft, Sparkles, Users } from 'lucide-react-native';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, BackHandler, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type {
   LiveParticipant,
   LiveQuickConnectPairing,
+  LiveQuickConnectSafetyExperience,
+  LiveQuickConnectSafetyReason,
   LiveQuickConnectSnapshot,
 } from '@/features/live/application/index.ts';
 import {
@@ -14,6 +16,7 @@ import {
   LiveGlassSurface,
   LiveMediaStageBoundary,
   LiveQuickConnectControlDock,
+  LiveQuickConnectSafetyCheck,
 } from '@/features/live/components/index.ts';
 import type { StreamLiveStageProps } from '@/features/live/components/StreamLiveStage.tsx';
 import {
@@ -77,6 +80,8 @@ function QuickConnectConversation({
   snapshot,
   onDecide,
   onLeave,
+  onSafetyCheck,
+  onSafetyComplete,
   onMediaPairingStart,
   onMediaConnectionChange,
   onRefresh,
@@ -87,6 +92,12 @@ function QuickConnectConversation({
   snapshot: PairedQuickConnectSnapshot;
   onDecide: (decision: 'continue' | 'friendship' | 'not_this_time') => void;
   onLeave: () => void;
+  onSafetyCheck: (
+    experience: LiveQuickConnectSafetyExperience,
+    reason: LiveQuickConnectSafetyReason | null,
+    block: boolean,
+  ) => Promise<boolean>;
+  onSafetyComplete: () => void;
   onMediaPairingStart: (pairingId: string) => void;
   onMediaConnectionChange: (connected: boolean) => void;
   onRefresh: () => void;
@@ -110,6 +121,8 @@ function QuickConnectConversation({
   const videoIntentRef = useRef(true);
   const [remaining, setRemaining] = useState(0);
   const [pictureInPictureActive, setPictureInPictureActive] = useState(false);
+  const [safetyOpen, setSafetyOpen] = useState(false);
+  const [reportFirst, setReportFirst] = useState(false);
   const participants = useMemo(() => user ? [
     participant(pairing, {
       id: user.id,
@@ -178,6 +191,24 @@ function QuickConnectConversation({
   }, [onRefresh, pairing.state, remaining]);
 
   const completed = ['completed', 'round_incomplete', 'cancelled'].includes(pairing.state);
+  const safetyRequired = completed && !pairing.safetyReviewed;
+
+  useEffect(() => {
+    if (!safetyRequired) return;
+    setReportFirst(false);
+    setSafetyOpen(true);
+  }, [safetyRequired]);
+
+  const submitSafetyCheck = useCallback(async (
+    experience: LiveQuickConnectSafetyExperience,
+    reason: LiveQuickConnectSafetyReason | null,
+    block: boolean,
+  ) => {
+    const saved = await onSafetyCheck(experience, reason, block);
+    if (!saved) return;
+    setSafetyOpen(false);
+    onSafetyComplete();
+  }, [onSafetyCheck, onSafetyComplete]);
   const handlePictureInPictureModeChange = useCallback((active: boolean) => {
     setPictureInPictureActive(active);
     onPictureInPictureModeChange(active);
@@ -237,6 +268,10 @@ function QuickConnectConversation({
           audioEnabled={media.audioEnabled}
           busy={media.state === 'preparing' || media.state === 'reconnecting'}
           onLeave={onLeave}
+          onReport={() => {
+            setReportFirst(true);
+            setSafetyOpen(true);
+          }}
           onToggleAudio={() => void media.setAudioEnabled(!media.audioEnabled)}
           onToggleVideo={() => {
             if (!chemistryRevealed) return;
@@ -273,6 +308,16 @@ function QuickConnectConversation({
           {error ? <Text style={styles.error}>That choice could not be saved yet. Try again.</Text> : null}
         </LiveGlassSurface>
       ) : null}
+      <LiveQuickConnectSafetyCheck
+        busy={busy}
+        error={error}
+        mandatory={safetyRequired}
+        onCancel={() => setSafetyOpen(false)}
+        onSubmit={(experience, reason, block) => void submitSafetyCheck(experience, reason, block)}
+        otherName={pairing.otherPerson.fullName?.trim().split(/\s+/)[0] || 'this person'}
+        reportFirst={reportFirst}
+        visible={safetyOpen}
+      />
     </View>
   );
 }
@@ -285,15 +330,45 @@ export default function LiveQuickConnectScreen() {
   const queueCopy = quickConnectQueueCopy(controller.snapshot, controller.error);
   const waitingForHost = quickConnectIsWaitingForHost(controller.error);
   const queueNeedsRejoin = quickConnectQueueNeedsRejoin(controller.snapshot);
-  const leave = useCallback(async () => {
+  const returnToLive = useCallback(() => {
+    router.replace({ pathname: '/live/[sessionId]', params: { sessionId } });
+  }, [sessionId]);
+  const endRound = useCallback(async () => {
     await controller.leave().catch(() => undefined);
-    router.replace('/live');
   }, [controller.leave]);
+  const pendingSafety = Boolean(
+    controller.snapshot?.pairing
+    && ['completed', 'round_incomplete', 'cancelled'].includes(controller.snapshot.pairing.state)
+    && !controller.snapshot.pairing.safetyReviewed,
+  );
+
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (pendingSafety) return true;
+      if (controller.snapshot?.pairing) {
+        void endRound();
+        return true;
+      }
+      returnToLive();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [controller.snapshot?.pairing, endRound, pendingSafety, returnToLive]);
+
+  const handleBack = useCallback(() => {
+    if (pendingSafety) return;
+    if (controller.snapshot?.pairing) {
+      void endRound();
+      return;
+    }
+    returnToLive();
+  }, [controller.snapshot?.pairing, endRound, pendingSafety, returnToLive]);
   return (
     <LinearGradient colors={['#06110F', '#0A1814', '#09110F']} style={styles.root}>
+      <Stack.Screen options={{ gestureEnabled: false }} />
       <SafeAreaView edges={pictureInPictureActive ? [] : undefined} style={styles.safe}>
         <View style={[styles.header, pictureInPictureActive && styles.pictureInPictureHidden]}>
-          <Pressable onPress={() => void leave()} style={styles.roundButton}><ArrowLeft color="#FFF7EC" size={22} /></Pressable>
+          <Pressable accessibilityState={{ disabled: pendingSafety }} disabled={pendingSafety} onPress={handleBack} style={[styles.roundButton, pendingSafety && styles.disabled]}><ArrowLeft color="#FFF7EC" size={22} /></Pressable>
           <View style={styles.headerCopy}><Text style={styles.eyebrow}>QUICK CONNECT</Text><Text style={styles.headerTitle}>A thoughtful three minutes</Text></View>
           <View style={styles.liveDot} />
         </View>
@@ -306,7 +381,14 @@ export default function LiveQuickConnectScreen() {
             error={controller.error}
             onRefresh={() => void controller.refresh()}
             onDecide={(decision) => void controller.decide(decision)}
-            onLeave={() => void leave()}
+            onLeave={() => void endRound()}
+            onSafetyCheck={(experience, reason, block) => controller.submitSafetyCheck(
+              controller.snapshot!.pairing!.id,
+              experience,
+              reason,
+              block,
+            )}
+            onSafetyComplete={returnToLive}
             onMediaPairingStart={controller.beginMediaPairing}
             onMediaConnectionChange={controller.reportMediaConnected}
             onPictureInPictureModeChange={setPictureInPictureActive}
@@ -376,4 +458,5 @@ const styles = StyleSheet.create({
   outlineButton: { minHeight: 46, borderRadius: 999, borderWidth: 1, borderColor: '#D7B56D66', paddingHorizontal: 22, flexDirection: 'row', gap: 8, alignItems: 'center', justifyContent: 'center', marginTop: 8 },
   outlineButtonText: { color: '#E9DCC8', fontWeight: '700' },
   error: { color: '#F0AAA5', fontSize: 12, textAlign: 'center', marginTop: 10 },
+  disabled: { opacity: 0.42 },
 });

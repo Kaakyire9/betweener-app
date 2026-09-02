@@ -1,7 +1,7 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import React from 'react';
-import { Animated, type GestureResponderEvent, Image, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View, type StyleProp, type ViewStyle } from 'react-native';
+import { AccessibilityInfo, Animated, type GestureResponderEvent, Image, Pressable, StyleSheet, Text, TouchableOpacity, View, type StyleProp, type ViewStyle } from 'react-native';
 import { getCircleScopePresentation } from '@/lib/circles/circle-display';
 import { useCirclePulsePalette, type CirclePulsePalette } from '@/lib/circles/pulse/circle-pulse-theme';
 import { normalizeProfilePhotoUri } from '@/lib/profile/media';
@@ -29,13 +29,14 @@ type CircleCardData = {
   location_insight?: string | null;
 };
 
-type CirclePickData = {
+export type CirclePickData = {
   profile_id: string;
   full_name?: string | null;
   age?: number | null;
   avatar_url?: string | null;
   reason: string;
   circleName: string;
+  circleId: string;
 };
 
 type CircleMemberPreview = {
@@ -168,12 +169,12 @@ const getGatheringSeatContextCopy = (value: 'welcome' | 'love' | null | undefine
 };
 const getGatheringTypeLabel = (value?: string | null) => {
   const normalized = String(value ?? '').trim().toLowerCase();
-  if (!normalized) return null;
+  if (!normalized) return 'In person';
   if (normalized === 'online') return 'Online';
   if (normalized === 'hybrid') return 'Hybrid';
   if (normalized === 'livestream') return 'Livestream';
   if (normalized === 'partner_venue') return 'Partner venue';
-  if (normalized === 'physical') return null;
+  if (normalized === 'physical' || normalized === 'in_person') return 'In person';
   return normalized.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
 };
 const formatGatheringAttendanceBadge = (count?: number | null) => {
@@ -613,7 +614,13 @@ export function CircleHeroCard({
           </View>
         </View>
         {mode === 'discover' && onJoin ? (
-          <TouchableOpacity style={styles.joinButton} onPress={onJoin}>
+          <TouchableOpacity
+            style={styles.joinButton}
+            onPress={(event) => {
+              event.stopPropagation();
+              onJoin();
+            }}
+          >
             <Text style={styles.joinButtonText}>{circle.requires_join_approval ? 'Request to join' : 'Join Circle'}</Text>
           </TouchableOpacity>
         ) : null}
@@ -680,7 +687,13 @@ export function CircleCompactCard({
         <View style={styles.compactCircleFooter}>
           <Text style={styles.compactCircleActivity}>{activityLabel}</Text>
           {mode === 'discover' && onJoin ? (
-            <TouchableOpacity style={styles.compactJoinButton} onPress={onJoin}>
+            <TouchableOpacity
+              style={styles.compactJoinButton}
+              onPress={(event) => {
+                event.stopPropagation();
+                onJoin();
+              }}
+            >
               <Text style={styles.compactJoinButtonText}>{circle.requires_join_approval ? 'Request' : 'Join'}</Text>
             </TouchableOpacity>
           ) : (
@@ -698,41 +711,64 @@ export function CircleCompactCard({
 export function CirclePickCard({
   pick,
   onOpenProfile,
+  cardWidth,
 }: {
   pick: CirclePickData;
   onOpenProfile: () => void;
+  cardWidth?: number;
 }) {
   const { styles } = useCircleHomeStyles();
+  const contextSignal = toReasonChips(pick.reason).find((chip) =>
+    chip.trim().toLowerCase() !== pick.circleName.trim().toLowerCase()) ?? 'Shared circle context';
+  const firstName = pick.full_name?.trim().split(/\s+/)[0] || 'this member';
+  const avatarUri = normalizeProfilePhotoUri(pick.avatar_url);
+  const compact = typeof cardWidth === 'number' && cardWidth < 190;
   return (
-    <Pressable style={styles.pickCard} onPress={onOpenProfile}>
-      <View style={styles.pickHeader}>
-        <View style={styles.pickIdentity}>
-          {pick.avatar_url ? (
-            <Image source={{ uri: pick.avatar_url }} style={styles.pickAvatar} />
-          ) : (
-            <View style={styles.pickAvatarFallback}>
-              <MaterialCommunityIcons name="account-heart-outline" size={28} color="rgba(244,232,208,0.64)" />
-            </View>
-          )}
-          <View style={styles.pickIdentityText}>
-            <Text style={styles.pickName} numberOfLines={1}>
-              {pick.full_name ?? 'Member'}{pick.age ? `, ${pick.age}` : ''}
+    <Pressable
+      style={[styles.pickCard, cardWidth ? { width: cardWidth } : null]}
+      onPress={onOpenProfile}
+      accessibilityRole="button"
+      accessibilityLabel={`Meet ${pick.full_name ?? 'this member'} from ${pick.circleName}`}
+      accessibilityHint="Opens this Circle Pick profile"
+    >
+      <View style={[styles.pickPortrait, cardWidth ? { height: Math.round(cardWidth * 1.44) } : null]}>
+        {avatarUri ? (
+          <Image source={{ uri: avatarUri }} style={styles.pickAvatar} resizeMode="cover" />
+        ) : (
+          <View style={styles.pickAvatarFallback}>
+            <MaterialCommunityIcons name="account-heart-outline" size={44} color="rgba(244,232,208,0.64)" />
+          </View>
+        )}
+        <LinearGradient
+          colors={['rgba(3,15,18,0.04)', 'rgba(3,15,18,0.34)', 'rgba(3,15,18,0.98)']}
+          locations={[0.08, 0.42, 1]}
+          style={styles.pickPortraitOverlay}
+        />
+        <View style={[styles.pickHeartBadge, compact && styles.pickHeartBadgeCompact]}>
+          <MaterialCommunityIcons name="heart" size={compact ? 12 : 15} color="#F4E8D0" />
+        </View>
+        <View style={[styles.pickPortraitCopy, compact && styles.pickPortraitCopyCompact]}>
+          <Text style={[styles.pickName, compact && styles.pickNameCompact]} numberOfLines={1}>
+            {pick.full_name ?? 'Member'}{pick.age ? `, ${pick.age}` : ''}
+          </Text>
+          <View style={[styles.pickOriginPill, compact && styles.pickOriginPillCompact]}>
+            <MaterialCommunityIcons name="account-group-outline" size={compact ? 10 : 12} color="#82E7DF" />
+            <Text style={[styles.pickCircle, compact && styles.pickCircleCompact]} numberOfLines={1}>
+              {compact ? pick.circleName : `From ${pick.circleName}`}
             </Text>
-            <Text style={styles.pickCircle} numberOfLines={1}>{pick.circleName}</Text>
           </View>
         </View>
-        <View style={styles.pickHeartBadge}>
-          <MaterialCommunityIcons name="heart" size={12} color="#F4E8D0" />
+      </View>
+      <View style={[styles.pickFooter, compact && styles.pickFooterCompact]}>
+        <View style={styles.pickSignal}>
+          <MaterialCommunityIcons name="creation-outline" size={compact ? 11 : 13} color={styles.pickChip.color} />
+          <Text style={[styles.pickChip, compact && styles.pickChipCompact]} numberOfLines={1}>{contextSignal}</Text>
+        </View>
+        <View style={styles.pickOpenTrail}>
+          {!compact ? <Text style={styles.pickOpenText}>Meet {firstName}</Text> : null}
+          <MaterialCommunityIcons name="arrow-top-right" size={compact ? 12 : 14} color={styles.pickOpenText.color} />
         </View>
       </View>
-      <View style={styles.pickChipRow}>
-        {toReasonChips(pick.reason).map((chip) => (
-          <Text key={`${pick.profile_id}:${chip}`} style={styles.pickChip}>
-            {chip}
-          </Text>
-        ))}
-      </View>
-      <Text style={styles.pickReason} numberOfLines={2}>{pick.reason}</Text>
     </Pressable>
   );
 }
@@ -886,7 +922,6 @@ export function RelationshipGistCard({
   gist,
   availablePerspectives,
   selectedPerspective,
-  onSelectPerspective: _onSelectPerspective,
   onOpenPerspectivePicker,
   onOpenReader,
   saved,
@@ -896,7 +931,6 @@ export function RelationshipGistCard({
   gist: GistData | null | undefined;
   availablePerspectives?: string[];
   selectedPerspective?: string;
-  onSelectPerspective?: (perspective: string) => void;
   onOpenPerspectivePicker?: (event: GestureResponderEvent) => void;
   onOpenReader?: () => void;
   saved?: boolean;
@@ -911,16 +945,13 @@ export function RelationshipGistCard({
     ? selectedPerspective
     : gist?.perspective ?? 'general')?.toLowerCase();
   const summary = gist?.short_body?.trim() || gist?.body?.trim() || '';
-  const bodyPreview = gist?.short_body?.trim() && gist?.body?.trim() && gist.short_body.trim() !== gist.body.trim()
-    ? gist.body?.trim()
-    : null;
-  const words = `${summary} ${bodyPreview ?? ''}`.trim().split(/\s+/).filter(Boolean).length;
+  const words = String(gist?.body ?? '').trim().split(/\s+/).filter(Boolean).length;
   const readTimeLabel = `${Math.max(1, Math.ceil(words / 180))} min read`;
   const activePerspectiveLabel = activePerspective === 'general'
     ? 'General lens'
     : `${activePerspective?.[0]?.toUpperCase()}${activePerspective?.slice(1)} lens`;
   const contentAnim = React.useRef(new Animated.Value(0)).current;
-  const isLongForm = summary.length + (bodyPreview?.length ?? 0) > 160;
+  const isLongForm = summary.length > 160 || String(gist?.body ?? '').trim() !== summary;
   const translateY = contentAnim.interpolate({
     inputRange: [0, 1],
     outputRange: [18, 0],
@@ -936,14 +967,26 @@ export function RelationshipGistCard({
 
   React.useEffect(() => {
     if (!gist) return;
-    contentAnim.setValue(0);
-    Animated.spring(contentAnim, {
-      toValue: 1,
-      damping: 18,
-      stiffness: 190,
-      mass: 0.9,
-      useNativeDriver: true,
-    }).start();
+    let cancelled = false;
+    void AccessibilityInfo.isReduceMotionEnabled().then((reduceMotion) => {
+      if (cancelled) return;
+      if (reduceMotion) {
+        contentAnim.setValue(1);
+        return;
+      }
+      contentAnim.setValue(0);
+      Animated.spring(contentAnim, {
+        toValue: 1,
+        damping: 18,
+        stiffness: 190,
+        mass: 0.9,
+        useNativeDriver: true,
+      }).start();
+    });
+    return () => {
+      cancelled = true;
+      contentAnim.stopAnimation();
+    };
   }, [activePerspective, contentAnim, gist, gist?.body, gist?.id, gist?.short_body, gist?.title]);
 
   if (!gist) return null;
@@ -952,21 +995,28 @@ export function RelationshipGistCard({
     <LinearGradient colors={palette.gistGradient} style={styles.gistPanel}>
       <View style={styles.gistPanelOrb} />
       <View style={styles.gistPanelOrbAlt} />
-      <View style={styles.gistGlassRail} />
       <Animated.View
         style={[
           styles.gistContent,
           { opacity: contentAnim, transform: [{ translateY }, { translateX }, { scale }] },
         ]}
       >
-        <Text style={styles.kicker}>Relationship Gist</Text>
-        <Text style={styles.gistCaption}>Editorial guidance for intentional relationships.</Text>
+        <Text style={styles.kicker}>Betweener editorial</Text>
         <Text style={styles.featuredTitle} numberOfLines={2}>{gist.title}</Text>
         <View style={styles.gistMetaRow}>
-          <View style={styles.gistMetaPill}>
+          <Pressable
+            disabled={!onOpenPerspectivePicker || perspectives.length <= 1}
+            onPress={(event) => onOpenPerspectivePicker?.(event)}
+            style={styles.gistMetaPill}
+            accessibilityRole="button"
+            accessibilityLabel={`Relationship Gist perspective: ${activePerspectiveLabel}`}
+            accessibilityHint={perspectives.length > 1 ? 'Opens the available editorial perspectives' : undefined}
+            accessibilityState={{ disabled: !onOpenPerspectivePicker || perspectives.length <= 1 }}
+          >
             <MaterialCommunityIcons name="tune-variant" size={12} color={palette.tealStrong} />
             <Text style={styles.gistMetaText}>{activePerspectiveLabel}</Text>
-          </View>
+            {perspectives.length > 1 ? <MaterialCommunityIcons name="chevron-down" size={13} color={palette.tealStrong} /> : null}
+          </Pressable>
           <View style={styles.gistMetaPill}>
             <MaterialCommunityIcons name="book-open-page-variant-outline" size={12} color={palette.tealStrong} />
             <Text style={styles.gistMetaText}>{readTimeLabel}</Text>
@@ -978,28 +1028,19 @@ export function RelationshipGistCard({
             </View>
           ) : null}
         </View>
-        <View style={styles.gistScrollShell}>
-          <ScrollView
-            style={styles.gistScrollViewport}
-            contentContainerStyle={styles.gistScrollContent}
-            nestedScrollEnabled
-            showsVerticalScrollIndicator
-            indicatorStyle="white"
-          >
-            <Text style={styles.gistSummary}>{summary}</Text>
-            {bodyPreview ? <Text style={styles.gistBodyPreview}>{bodyPreview}</Text> : null}
-          </ScrollView>
-          {isLongForm ? (
-            <View style={styles.gistScrollHintRow}>
-              <MaterialCommunityIcons name="gesture-swipe-vertical" size={14} color={palette.textMuted} />
-              <Text style={styles.gistScrollHint}>{onOpenReader ? 'Preview only' : 'Scroll to read more'}</Text>
-            </View>
-          ) : null}
+        <View style={styles.gistPreviewShell}>
+          <Text style={styles.gistSummary} numberOfLines={isLongForm ? 3 : 5}>{summary}</Text>
         </View>
       </Animated.View>
       <View style={styles.gistFooterRow}>
         {onToggleSaved ? (
-          <Pressable style={styles.gistSaveButton} onPress={onToggleSaved}>
+          <Pressable
+            style={styles.gistSaveButton}
+            onPress={onToggleSaved}
+            accessibilityRole="button"
+            accessibilityLabel={saved ? 'Remove Relationship Gist from saved' : 'Save Relationship Gist'}
+            accessibilityState={{ selected: saved === true }}
+          >
             <MaterialCommunityIcons
               name={saved ? 'bookmark' : 'bookmark-outline'}
               size={15}
@@ -1008,22 +1049,13 @@ export function RelationshipGistCard({
             <Text style={styles.gistSaveButtonText}>{saved ? 'Saved' : 'Save'}</Text>
           </Pressable>
         ) : null}
-        <Pressable
-          disabled={!onOpenPerspectivePicker || perspectives.length <= 1}
-          onPress={(event) => onOpenPerspectivePicker?.(event)}
-          style={[
-            styles.gistLensButton,
-            (!onOpenPerspectivePicker || perspectives.length <= 1) && styles.gistLensButtonStatic,
-          ]}
-        >
-          <MaterialCommunityIcons name="tune-variant" size={13} color={palette.tealStrong} />
-          <Text style={styles.gistLensButtonText}>{activePerspectiveLabel}</Text>
-          {onOpenPerspectivePicker && perspectives.length > 1 ? (
-            <MaterialCommunityIcons name="chevron-down" size={14} color={palette.tealStrong} />
-          ) : null}
-        </Pressable>
         {onOpenReader ? (
-          <Pressable style={styles.gistReaderLink} onPress={onOpenReader}>
+          <Pressable
+            style={styles.gistReaderLink}
+            onPress={onOpenReader}
+            accessibilityRole="button"
+            accessibilityLabel={`Read full Relationship Gist: ${gist.title}`}
+          >
             <Text style={styles.gistReaderLinkText}>Read full Gist</Text>
             <MaterialCommunityIcons name="arrow-top-right" size={15} color={palette.tealStrong} />
           </Pressable>
@@ -1192,48 +1224,96 @@ const createStyles = (palette: CirclePulsePalette) => StyleSheet.create({
   compactOpenTrail: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   compactOpenLabel: { color: palette.teal, fontSize: 11, fontWeight: '800' },
   pickCard: {
-    width: 272,
-    padding: 14,
-    borderRadius: 20,
+    width: 218,
+    padding: 8,
+    paddingBottom: 11,
+    borderRadius: 24,
     borderWidth: 1,
-    borderColor: palette.outline,
+    borderColor: palette.tealBorder,
     backgroundColor: palette.surfaceStrong,
-    gap: 10,
+    gap: 9,
+    shadowColor: palette.tealStrong,
+    shadowOpacity: palette.dark ? 0.16 : 0.1,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 6,
   },
-  pickHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
-  pickIdentity: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
-  pickIdentityText: { flex: 1, gap: 4 },
-  pickAvatar: { width: 58, height: 58, borderRadius: 29, backgroundColor: palette.surfaceMuted },
+  pickPortrait: {
+    height: 248,
+    borderRadius: 18,
+    overflow: 'hidden',
+    backgroundColor: palette.surfaceMuted,
+  },
+  pickAvatar: { width: '100%', height: '100%', backgroundColor: palette.surfaceMuted },
   pickAvatarFallback: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
+    width: '100%',
+    height: '100%',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: palette.surfaceMuted,
   },
-  pickHeartBadge: {
-    width: 24,
-    height: 24,
+  pickPortraitOverlay: { ...StyleSheet.absoluteFill },
+  pickPortraitCopy: { position: 'absolute', left: 13, right: 13, bottom: 13, gap: 8 },
+  pickPortraitCopyCompact: {
+    left: 6,
+    right: 6,
+    bottom: 6,
+    gap: 5,
+    padding: 6,
     borderRadius: 12,
+    backgroundColor: 'rgba(3,18,21,0.68)',
+    borderWidth: 1,
+    borderColor: 'rgba(244,232,208,0.12)',
+  },
+  pickHeartBadge: {
+    position: 'absolute',
+    top: 11,
+    right: 11,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: palette.purpleStrong,
+    borderWidth: 1,
+    borderColor: 'rgba(244,232,208,0.38)',
+    shadowColor: palette.purpleStrong,
+    shadowOpacity: 0.42,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 5,
   },
-  pickName: { color: palette.text, fontSize: 13, fontWeight: '800' },
-  pickCircle: { color: palette.tealStrong, fontSize: 11, fontWeight: '700' },
-  pickChipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  pickChip: {
-    overflow: 'hidden',
+  pickHeartBadgeCompact: { top: 7, right: 7, width: 26, height: 26, borderRadius: 13 },
+  pickName: { color: '#F4E8D0', fontSize: 20, lineHeight: 24, fontWeight: '900' },
+  pickNameCompact: { fontSize: 15, lineHeight: 19 },
+  pickCircle: { flexShrink: 1, color: '#82E7DF', fontSize: 10.5, fontWeight: '800' },
+  pickCircleCompact: { fontSize: 8 },
+  pickOriginPill: {
+    alignSelf: 'flex-start',
+    maxWidth: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
     borderRadius: 999,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    backgroundColor: 'rgba(5,28,31,0.78)',
+    borderWidth: 1,
+    borderColor: 'rgba(130,231,223,0.24)',
+  },
+  pickOriginPillCompact: { paddingHorizontal: 6, paddingVertical: 4, gap: 4 },
+  pickFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, paddingHorizontal: 4 },
+  pickFooterCompact: { minHeight: 24, gap: 3, paddingHorizontal: 1 },
+  pickSignal: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 5, minWidth: 0 },
+  pickChip: {
+    flexShrink: 1,
     color: palette.teal,
-    backgroundColor: palette.tealSoft,
     fontSize: 10,
     fontWeight: '800',
   },
-  pickReason: { color: palette.textSoft, fontSize: 11, lineHeight: 16 },
+  pickChipCompact: { fontSize: 8 },
+  pickOpenTrail: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  pickOpenText: { color: palette.tealStrong, fontSize: 10, fontWeight: '900' },
   featuredPanel: {
     minHeight: 228,
     padding: 20,
@@ -1331,19 +1411,7 @@ const createStyles = (palette: CirclePulsePalette) => StyleSheet.create({
     borderRadius: 55,
     backgroundColor: palette.tealSoft,
   },
-  gistGlassRail: {
-    position: 'absolute',
-    top: 12,
-    left: 12,
-    right: 12,
-    height: 42,
-    borderRadius: 18,
-    backgroundColor: palette.dark ? 'rgba(255,255,255,0.025)' : 'rgba(255,255,255,0.52)',
-    borderWidth: 1,
-    borderColor: palette.dark ? 'rgba(255,255,255,0.07)' : palette.outlineSoft,
-  },
   gistContent: { gap: 10 },
-  gistCaption: { color: palette.textSoft, fontSize: 12, lineHeight: 18 },
   gistMetaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   gistMetaPill: {
     flexDirection: 'row',
@@ -1357,67 +1425,42 @@ const createStyles = (palette: CirclePulsePalette) => StyleSheet.create({
     borderColor: palette.dark ? 'rgba(255,255,255,0.08)' : palette.outlineSoft,
   },
   gistMetaText: { color: palette.textSoft, fontSize: 11, fontWeight: '800' },
-  gistScrollShell: {
+  gistPreviewShell: {
     marginTop: 2,
     borderRadius: 20,
     borderWidth: 1,
     borderColor: palette.dark ? 'rgba(255,255,255,0.075)' : palette.outlineSoft,
     backgroundColor: palette.dark ? 'rgba(5,18,24,0.38)' : 'rgba(255,255,255,0.68)',
-    overflow: 'hidden',
-  },
-  gistScrollViewport: {
-    maxHeight: 132,
-  },
-  gistScrollContent: {
     paddingHorizontal: 14,
-    paddingTop: 12,
-    paddingBottom: 14,
+    paddingVertical: 14,
     gap: 10,
   },
   gistSummary: { color: palette.text, fontSize: 15, lineHeight: 23, fontWeight: '700' },
-  gistBodyPreview: { color: palette.textSoft, fontSize: 12, lineHeight: 20 },
-  gistScrollHintRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 14,
-    paddingBottom: 10,
-    paddingTop: 2,
-    backgroundColor: palette.dark ? 'rgba(255,255,255,0.02)' : 'rgba(255,255,255,0.44)',
-  },
-  gistScrollHint: { color: palette.textMuted, fontSize: 10, fontWeight: '700' },
-  gistFooterRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 6 },
+  gistFooterRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: 4 },
   gistSaveButton: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     paddingHorizontal: 12,
     paddingVertical: 9,
+    minHeight: 44,
     borderRadius: 999,
     backgroundColor: palette.dark ? 'rgba(255,255,255,0.065)' : 'rgba(255,255,255,0.76)',
     borderWidth: 1,
     borderColor: palette.dark ? 'rgba(255,255,255,0.075)' : palette.outlineSoft,
   },
   gistSaveButtonText: { color: palette.textSoft, fontSize: 12, fontWeight: '800' },
-  gistLensButton: {
+  gistReaderLink: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     paddingHorizontal: 14,
     paddingVertical: 10,
+    minHeight: 44,
     borderRadius: 999,
-    backgroundColor: palette.dark ? 'rgba(6,24,27,0.44)' : palette.tealSoft,
+    backgroundColor: palette.tealSoft,
     borderWidth: 1,
     borderColor: palette.tealBorder,
-  },
-  gistLensButtonStatic: { opacity: 0.92 },
-  gistLensButtonText: { color: palette.text, fontSize: 12, fontWeight: '800' },
-  gistReaderLink: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 4,
-    marginLeft: 'auto',
   },
   gistReaderLinkText: { color: palette.tealStrong, fontSize: 12, fontWeight: '800' },
   gatheringHeroRow: { flexDirection: 'row', alignItems: 'stretch', gap: 14 },

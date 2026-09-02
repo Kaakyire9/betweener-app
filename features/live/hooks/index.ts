@@ -11,3 +11,5 @@ export * from './use-live-chemistry.ts';
 export * from './use-live-quick-connect.ts';
 export * from './use-live-quick-connect-host-control.ts';
 export * from './use-live-quick-connect-pool.ts';
+export * from './use-live-quorum-pooling.ts';
+export * from './use-circle-live.ts';
