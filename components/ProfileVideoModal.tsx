@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useEvent } from 'expo';
+import { useEvent, useEventListener } from 'expo';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import LinearGradientSafe from '@/components/NativeWrappers/LinearGradientSafe';
@@ -27,6 +27,7 @@ type Props = {
   reactionsOpen?: boolean;
   onToggleReactions?: () => void;
   onSelectReaction?: (icon: string) => void;
+  onCompleted?: () => void;
   onClose: () => void;
 };
 
@@ -34,11 +35,14 @@ const ModalVideoPlayer = ({
   uri,
   shouldPlay,
   muted,
+  onCompleted,
 }: {
   uri: string;
   shouldPlay: boolean;
   muted: boolean;
+  onCompleted?: () => void;
 }) => {
+  const completionSentRef = useRef(false);
   const player = useVideoPlayer(uri, (p) => {
     p.loop = true;
     p.muted = muted;
@@ -49,6 +53,16 @@ const ModalVideoPlayer = ({
   });
   const { isPlaying } = useEvent(player as any, 'playingChange', { isPlaying: shouldPlay && player.playing });
   const { status } = useEvent(player as any, 'statusChange', { status: player.status });
+
+  useEffect(() => {
+    if (shouldPlay) completionSentRef.current = false;
+  }, [shouldPlay, uri]);
+
+  useEventListener(player as any, 'playToEnd', () => {
+    if (!shouldPlay || completionSentRef.current) return;
+    completionSentRef.current = true;
+    onCompleted?.();
+  });
 
   useScopedScreenAwake({
     enabled: shouldPlay && isPlaying && status === 'readyToPlay',
@@ -91,6 +105,7 @@ export default function ProfileVideoModal({
   reactionsOpen = false,
   onToggleReactions,
   onSelectReaction,
+  onCompleted,
   onClose,
 }: Props) {
   const playableVideoUrl =
@@ -181,7 +196,12 @@ export default function ProfileVideoModal({
           <Animated.View style={[styles.container, contentStyle]}>
           <View style={styles.videoWrapper}>
             {playableVideoUrl ? (
-              <ModalVideoPlayer uri={playableVideoUrl} shouldPlay={visible} muted={muted} />
+              <ModalVideoPlayer
+                uri={playableVideoUrl}
+                shouldPlay={visible}
+                muted={muted}
+                onCompleted={onCompleted}
+              />
             ) : (
               <View style={styles.fallback}>
                 <Text style={styles.fallbackEyebrow}>Intro video</Text>

@@ -64,6 +64,7 @@ import {
 import { RELIGION_LABELS, formatReligionLabel, isReligionEnumError, normalizeReligionForProfile } from '@/lib/profile/religion';
 import { getProfileInitials } from '@/lib/profile-placeholders';
 import { buildProfileLocationUpdate } from '@/lib/profile/profile-location-update';
+import { moderatePublicProfileText } from '@/lib/profile-guard';
 import { usesGhanaOnboardingExperience } from '@/lib/profile/onboarding-experience';
 import { type ResponsiveMetrics, useResponsiveMetrics } from '@/lib/responsive';
 import { supabase } from '@/lib/supabase';
@@ -2014,6 +2015,25 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         return;
       }
 
+      // Fast feedback only. The same content is authoritatively checked in the
+      // database before it can be published.
+      const publicTextCheck = moderatePublicProfileText([
+        formData.full_name,
+        formData.bio,
+        formData.occupation,
+        formData.education,
+        formData.looking_for,
+        formData.roots_note,
+        formData.future_ghana_plans,
+      ].filter(Boolean).join(' '));
+      if (!publicTextCheck.allowed) {
+        Alert.alert(
+          'Keep your profile personal',
+          "For your safety, contact details, external links and promotional content can't appear on public profiles. You can exchange contact information privately once you've connected.",
+        );
+        return;
+      }
+
       const interestsChanged = JSON.stringify(normalizeLanguages(selectedInterests).sort()) !==
         JSON.stringify(normalizeLanguages(initialSelectedInterestsRef.current).sort());
       if (interestsChanged && (selectedInterests.length < 3 || selectedInterests.length > 5)) {
@@ -2312,7 +2332,6 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       let saveResult: { error: Error | null; queued?: boolean } = { error: null, queued: false };
       let error: Error | null = null;
       if (hasProfileFieldChanges || !mediaSyncPayload) {
-        console.log('Profile update data:', updateData);
         saveResult = await updateProfile(updateData);
         error = saveResult.error;
       }
@@ -2368,6 +2387,11 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       }
 
       if (error) {
+        if ((error as any).code === 'PROFILE_CONTENT_NOT_ALLOWED') {
+          setStatusTone('error');
+          setStatusMessage('Please update your About section. Contact details, external promotion and solicitation cannot appear on public profiles.');
+          return;
+        }
         if ((error as any).code === '23505') {
           setStatusTone('error');
           setStatusMessage(

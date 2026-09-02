@@ -153,15 +153,9 @@ export default function AuthGateScreen() {
   const repairProfileCompletedFlag = async (profileSnapshot: any) => {
     if (!profileSnapshot?.id || profileSnapshot.profile_completed === true) return;
     try {
-      const { error } = await supabase
-        .from("profiles")
-        .update({
-          profile_completed: true,
-          identity_status: profileSnapshot.identity_status ?? "active",
-          onboarding_completed_at: profileSnapshot.onboarding_completed_at ?? new Date().toISOString(),
-          identity_finalized_at: profileSnapshot.identity_finalized_at ?? new Date().toISOString(),
-        } as any)
-        .eq("id", profileSnapshot.id);
+      const { error } = await supabase.functions.invoke("profile-guard-update", {
+        body: { updates: {}, complete_onboarding: true },
+      });
 
       if (error && typeof __DEV__ !== "undefined" && __DEV__) {
         console.log("[auth-gate] profile completion repair failed", error.message);

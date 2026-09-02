@@ -35,6 +35,7 @@ import {
 import { ChatOutboxService } from "@/lib/chat/outbox/chat-outbox-service";
 import { emitNetworkRestored } from "@/lib/network-recovery";
 import { isNetworkConnectionAvailable } from "@/lib/network-state";
+import { startVibesTelemetryAutoDrain } from '@/lib/vibes/telemetry-queue';
 import { captureException, initSentry, wrapWithSentry } from "@/lib/telemetry/sentry";
 import { logger } from "@/lib/telemetry/logger";
 import { recoverSupabaseConnectivity, SUPABASE_IS_CONFIGURED } from "@/lib/supabase";
@@ -202,6 +203,11 @@ function OfflineMutationQueueHydrator() {
     };
   }, []);
 
+  return null;
+}
+
+function VibesTelemetryQueueHydrator() {
+  useEffect(() => startVibesTelemetryAutoDrain(), []);
   return null;
 }
 
@@ -780,6 +786,7 @@ function RootLayout() {
       <AuthProvider>
         <View style={{ flex: 1, backgroundColor: Colors[colorScheme].background }}>
           <OfflineMutationQueueHydrator />
+          <VibesTelemetryQueueHydrator />
           <ChatOutboxHydrator />
           <OfflineSyncHistoryHydrator />
           <NetworkRecoveryHydrator />

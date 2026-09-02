@@ -20,6 +20,7 @@ import {
 import { isLikelyNetworkError } from '@/lib/network';
 import { isNetworkConnectionAvailable } from '@/lib/network-state';
 import { enqueueProfileUpdateMutation } from '@/lib/offline/mutation-queue';
+import { prepareProfileGuardWrite } from '@/lib/profile-guard/write-payload';
 import { fetchUserPresence, overlayPresence, setCurrentUserPresence } from '@/lib/user-presence';
 import { Session, User } from '@supabase/supabase-js';
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
@@ -1668,16 +1669,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     try {
-      // Use upsert for profile creation/updates to handle both scenarios
-      const { error } = await supabase
-        .from('profiles')
-        .upsert({
-          ...updates,
-          user_id: user.id,
-          updated_at: updatedAt,
-        }, {
-          onConflict: 'user_id'
-        });
+      // The Edge Function owns optional semantic review and invokes the
+      // service-only database bridge; mobile never receives a provider secret.
+      const guardWrite = prepareProfileGuardWrite(updates as Record<string, unknown>);
+      const { data, error: invokeError } = await supabase.functions.invoke('profile-guard-update', {
+        body: {
+          updates: guardWrite.updates,
+          complete_onboarding: guardWrite.completeOnboarding,
+        },
+      });
+      const error = invokeError ?? (data?.ok === false
+        ? Object.assign(new Error('Keep your profile personal'), {
+            code: 'PROFILE_CONTENT_NOT_ALLOWED',
+            fieldNames: Array.isArray(data.field_names) ? data.field_names : [],
+          })
+        : null);
 
       if (error && isLikelyNetworkError(error)) {
         throw error;

@@ -1,6 +1,7 @@
 import BlurViewSafe from '@/components/NativeWrappers/BlurViewSafe';
 import { Colors } from '@/constants/theme';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { CircleOff } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import React, { useMemo, type ComponentProps } from 'react';
 import {
@@ -27,8 +28,10 @@ type ActionDockProps = {
   bottomInset: number;
   saved: boolean;
   liked: boolean;
+  allowRomanticActions?: boolean;
   onToggleSaved: () => void;
   onLike: () => void;
+  onPass: () => void;
   onOpenBoostComposer: () => void;
   onOpenGift: () => void;
 };
@@ -54,8 +57,10 @@ export function ProfileViewActionDock({
   bottomInset,
   saved,
   liked,
+  allowRomanticActions = true,
   onToggleSaved,
   onLike,
+  onPass,
   onOpenBoostComposer,
   onOpenGift,
 }: ActionDockProps) {
@@ -88,13 +93,24 @@ export function ProfileViewActionDock({
             icon={saved ? 'bookmark' : 'bookmark-outline'}
             colors={saved ? ['#F1C75B', '#A87812'] : ['#748E91', '#3D5D61']}
             onPress={onToggleSaved}
+            accessibilityLabel={saved ? 'Remove profile from saved' : 'Save profile'}
           />
         ) : null}
-        {!isOwnProfile ? (
+        {!isOwnProfile && allowRomanticActions ? (
           <Fab
             icon={liked ? 'heart' : 'heart-outline'}
             colors={['#C7B3FF', '#7D7CF3']}
             onPress={onLike}
+            accessibilityLabel={liked ? 'Profile liked' : 'Like profile'}
+          />
+        ) : null}
+        {!isOwnProfile && allowRomanticActions ? (
+          <Fab
+            icon="close-circle-outline"
+            colors={isDark ? ['#355052', '#15292C'] : ['#A7B9B6', '#5E7A78']}
+            onPress={onPass}
+            accessibilityLabel="Pass profile"
+            renderIcon={(color) => <CircleOff size={18} color={color} strokeWidth={2.2} />}
           />
         ) : null}
         {isOwnProfile ? (
@@ -102,14 +118,16 @@ export function ProfileViewActionDock({
             icon="rocket-launch-outline"
             colors={['#F6C453', '#C68B1E']}
             onPress={onOpenBoostComposer}
+            accessibilityLabel="Boost profile"
           />
-        ) : (
+        ) : allowRomanticActions ? (
           <Fab
             icon="gift-outline"
             colors={['#F3A0B4', '#C6607E']}
             onPress={onOpenGift}
+            accessibilityLabel="Send gift"
           />
-        )}
+        ) : null}
       </LinearGradient>
     </View>
   );
@@ -215,17 +233,23 @@ function Fab({
   icon,
   colors,
   onPress,
+  accessibilityLabel,
+  renderIcon,
 }: {
   icon: ComponentProps<typeof MaterialCommunityIcons>['name'];
   colors: readonly [string, string, ...string[]] | readonly [string, string];
   onPress: () => void;
+  accessibilityLabel: string;
+  renderIcon?: (color: string) => React.ReactNode;
 }) {
   const styles = baseStyles;
 
   return (
-    <Pressable onPress={onPress} style={styles.fabWrap}>
+    <Pressable onPress={onPress} style={styles.fabWrap} accessibilityRole="button" accessibilityLabel={accessibilityLabel}>
       <LinearGradient colors={colors} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.fab}>
-        <MaterialCommunityIcons name={icon} size={18} color={Colors.light.background} />
+        {renderIcon?.(Colors.light.background) ?? (
+          <MaterialCommunityIcons name={icon} size={18} color={Colors.light.background} />
+        )}
       </LinearGradient>
     </Pressable>
   );

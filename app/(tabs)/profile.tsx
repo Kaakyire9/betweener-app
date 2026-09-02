@@ -55,6 +55,7 @@ import {
 } from "@/lib/profile/media";
 import { resolveProfileMediaDraft } from "@/lib/profile/media-studio";
 import { getPresenceDisplay } from "@/lib/presence";
+import { insertGuardedProfilePrompt } from "@/lib/profile-guard/prompt-write";
 import {
   DISTANCE_UNIT_OPTIONS,
   GIFT_SYSTEM_ENTITY_TYPES,
@@ -1444,8 +1445,7 @@ export default function ProfileScreen() {
     ]).start();
 
     if (!profile?.id) return;
-    const { error } = await supabase.from('profile_prompts').insert({
-      profile_id: profile.id,
+    const { error } = await insertGuardedProfilePrompt({
       prompt_key: prompt.id,
       prompt_title: prompt.title,
       answer,
@@ -1463,8 +1463,7 @@ export default function ProfileScreen() {
     const answer = customPromptAnswer.trim();
     if (!title || !answer) return;
     setCustomPromptSaving(true);
-    const { error } = await supabase.from('profile_prompts').insert({
-      profile_id: profile.id,
+    const { error } = await insertGuardedProfilePrompt({
       prompt_key: 'custom',
       prompt_title: title,
       answer,
@@ -1519,8 +1518,7 @@ export default function ProfileScreen() {
         }
       }
 
-      const { error } = await supabase.from('profile_prompts').insert({
-        profile_id: profile.id,
+      const { error } = await insertGuardedProfilePrompt({
         prompt_key: 'guess',
         prompt_title: title,
         prompt_type: 'guess',
@@ -1528,7 +1526,6 @@ export default function ProfileScreen() {
         guess_mode: guessPromptMode,
         guess_options: options,
         hint_text: guessPromptHint.trim() || null,
-        normalized_answer: normalizeGuessText(answer),
         reveal_policy: DEFAULT_GUESS_REVEAL_POLICY,
       });
 

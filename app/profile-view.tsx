@@ -35,6 +35,7 @@ import {
 import { Colors } from '@/constants/theme';
 import { usePremiumState } from '@/hooks/use-premium-state';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useRomanticEligibility } from '@/hooks/use-romantic-eligibility';
 import { useAuth } from '@/lib/auth-context';
 import {
   createIntentRequestOfflineSafe,
@@ -61,7 +62,13 @@ import {
 } from '@/lib/offline/mutation-queue';
 import { fetchViewedProfile } from '@/lib/profile/fetch-viewed-profile';
 import { getInterestEmoji } from '@/lib/profile/interest-emoji';
-import { getProfileViewReturnCircleId, shouldReturnToCirclesHome } from '@/lib/profile/profile-view-return';
+import {
+  getProfileViewContextCircleId,
+  getProfileViewReturnCircleId,
+  shouldReturnToCirclesHome,
+  shouldReturnToVibes,
+} from '@/lib/profile/profile-view-return';
+import { isCommunityProfileContext, parseProfileDisplayContext } from '@/lib/profile/profile-display-context';
 import { formatReligionLabel } from '@/lib/profile/religion';
 import {
   type PremiumImage,
@@ -570,8 +577,29 @@ export default function ProfileViewPremiumV2Screen() {
   const profileId = String((params as any)?.id ?? (params as any)?.profileId ?? 'preview');
   const isPreviewReplica = String((params as any)?.isPreview ?? '').toLowerCase() === 'true';
   const profileViewSource = String((params as any)?.source ?? '').trim().toLowerCase();
+  const vibesSegmentParam = String((params as any)?.vibesSegment ?? '').trim();
+  const profileVibesSegment = vibesSegmentParam === 'nearby'
+    ? 'nearby'
+    : vibesSegmentParam === 'activeNow'
+      ? 'activeNow'
+      : 'forYou';
+  const vibesSessionIdParam = typeof (params as any)?.vibesSessionId === 'string' ? (params as any).vibesSessionId : null;
+  const vibesRequestIdParam = typeof (params as any)?.vibesRequestId === 'string' ? (params as any).vibesRequestId : null;
+  const vibesRecommendationIdParam =
+    typeof (params as any)?.vibesRecommendationId === 'string'
+      ? (params as any).vibesRecommendationId
+      : null;
+  const profileVibesAttribution = useMemo(() => ({
+    sessionId: vibesSessionIdParam,
+    requestId: vibesRequestIdParam,
+    recommendationId: vibesRecommendationIdParam,
+  }), [vibesRecommendationIdParam, vibesRequestIdParam, vibesSessionIdParam]);
   const returnCircleId = getProfileViewReturnCircleId(params as Record<string, string | string[] | undefined>);
+  const contextCircleId = getProfileViewContextCircleId(params as Record<string, string | string[] | undefined>);
+  const profileDisplayContext = parseProfileDisplayContext((params as any)?.context, profileViewSource);
+  const isCommunityProfile = isCommunityProfileContext(profileDisplayContext);
   const returnToCirclesHome = shouldReturnToCirclesHome(params as Record<string, string | string[] | undefined>);
+  const returnToVibes = shouldReturnToVibes(params as Record<string, string | string[] | undefined>);
   const shouldUseViewedProfileCache = Boolean(
     profileId &&
       profileId !== 'preview' &&
@@ -590,10 +618,18 @@ export default function ProfileViewPremiumV2Screen() {
   const [fetching, setFetching] = useState(false);
   const [fetchWatchdogError, setFetchWatchdogError] = useState<Error | null>(null);
   const [fetchRetryNonce, setFetchRetryNonce] = useState(0);
+  const romanticEligibility = useRomanticEligibility({
+    targetProfileId: profileId,
+    context: profileDisplayContext,
+    circleId: contextCircleId,
+    disabled: profileId === 'preview' || Boolean(currentProfile?.id && currentProfile.id === profileId),
+  });
+  const allowRomanticActions = !isCommunityProfile && romanticEligibility.eligible;
   const [myInterests, setMyInterests] = useState<string[]>([]);
   const signalOpenedRef = useRef<string | null>(null);
   const fullProfileOpenedRef = useRef<string | null>(null);
   const signalIntroRef = useRef<string | null>(null);
+  const signalIntroCompletedRef = useRef<string | null>(null);
   const dwellTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -732,12 +768,13 @@ export default function ProfileViewPremiumV2Screen() {
       void logVibesEvent({
         viewerProfileId: currentProfile.id,
         targetProfileId: resolvedProfile.id,
-        segment: 'forYou',
+        segment: profileVibesSegment,
         eventType: 'full_profile_opened',
+        ...profileVibesAttribution,
         metadata: { source: 'profile_view' },
       });
     }
-  }, [currentProfile?.id, resolvedProfile.id]);
+  }, [currentProfile?.id, profileVibesAttribution, profileVibesSegment, resolvedProfile.id]);
 
   useEffect(() => {
     let mounted = true;
@@ -1055,7 +1092,7 @@ export default function ProfileViewPremiumV2Screen() {
   }, [currentProfile?.id, featuredPrompt, guessInput, refreshViewedProfile, resolvedProfile.name, selectedGuessOption]);
 
   const sendGuessInterest = useCallback(async () => {
-    if (!featuredPrompt?.id || !resolvedProfile.id || !guessResult || guessResult.tone !== 'correct' || guessInterestSending || guessInterestSent) {
+    if (!allowRomanticActions || !featuredPrompt?.id || !resolvedProfile.id || !guessResult || guessResult.tone !== 'correct' || guessInterestSending || guessInterestSent) {
       return;
     }
 
@@ -1066,7 +1103,8 @@ export default function ProfileViewPremiumV2Screen() {
         type: 'connect',
         message: `I guessed your prompt right and I’d like to know more about you.`,
         metadata: {
-          source: 'guess_prompt',
+          source: profileDisplayContext === 'circle-discover' ? 'circles' : 'guess_prompt',
+          ...(profileDisplayContext === 'circle-discover' && contextCircleId ? { circle_id: contextCircleId } : {}),
           prompt_id: featuredPrompt.id,
           guess_outcome: 'correct',
         },
@@ -1100,7 +1138,7 @@ export default function ProfileViewPremiumV2Screen() {
     } finally {
       setGuessInterestSending(false);
     }
-  }, [featuredPrompt?.id, guessInterestSending, guessInterestSent, guessResult, resolvedProfile.id, resolvedProfile.name]);
+  }, [allowRomanticActions, contextCircleId, featuredPrompt?.id, guessInterestSending, guessInterestSent, guessResult, profileDisplayContext, resolvedProfile.id, resolvedProfile.name]);
 
   const openGuessComposer = useCallback(() => {
     if (!featuredPrompt?.id || !isGuessPrompt(featuredPrompt.promptType) || isMultipleChoiceGuess(featuredPrompt.guessMode)) return;
@@ -1554,8 +1592,9 @@ export default function ProfileViewPremiumV2Screen() {
         void logVibesEvent({
           viewerProfileId: currentProfile.id,
           targetProfileId: resolvedProfile.id,
-          segment: 'forYou',
+          segment: profileVibesSegment,
           eventType: 'intro_played',
+          ...profileVibesAttribution,
           metadata: { source: 'profile_view', trigger: 'explicit_open' },
         });
       }
@@ -1584,21 +1623,22 @@ export default function ProfileViewPremiumV2Screen() {
     void cacheOfflineVideo(source, data.signedUrl).then((localUri) => {
       if (localUri) setVideoModalUrl(localUri);
     });
-  }, [currentProfile?.id, resolvedProfile.id, resolvedProfile.profileVideo, resolvedProfile.profileVideoPath]);
+  }, [currentProfile?.id, profileVibesAttribution, profileVibesSegment, resolvedProfile.id, resolvedProfile.profileVideo, resolvedProfile.profileVideoPath]);
 
   const openIntentSheet = useCallback(() => {
-    if (!resolvedProfile.id || isOwnProfile) return;
+    if (!resolvedProfile.id || isOwnProfile || !allowRomanticActions) return;
     if (currentProfile?.id) {
       void logVibesEvent({
         viewerProfileId: currentProfile.id,
         targetProfileId: resolvedProfile.id,
-        segment: 'forYou',
+        segment: profileVibesSegment,
         eventType: 'intent_opened',
+        ...profileVibesAttribution,
         metadata: { source: 'profile_view' },
       });
     }
     setIntentSheetOpen(true);
-  }, [currentProfile?.id, isOwnProfile, resolvedProfile.id]);
+  }, [allowRomanticActions, currentProfile?.id, isOwnProfile, profileVibesAttribution, profileVibesSegment, resolvedProfile.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1853,12 +1893,16 @@ export default function ProfileViewPremiumV2Screen() {
       router.replace('/(tabs)/circles');
       return;
     }
+    if (returnToVibes) {
+      router.replace('/(tabs)/vibes');
+      return;
+    }
     if (profileViewSource === 'me' || (isOwnProfile && isPreviewReplica)) {
       router.replace('/(tabs)/profile');
       return;
     }
     router.back();
-  }, [isOwnProfile, isPreviewReplica, profileViewSource, returnCircleId, returnToCirclesHome]);
+  }, [isOwnProfile, isPreviewReplica, profileViewSource, returnCircleId, returnToCirclesHome, returnToVibes]);
   const handleClose = handleBack;
   const closeSafetySheet = useCallback(() => {
     setSafetySheet(null);
@@ -2419,6 +2463,25 @@ export default function ProfileViewPremiumV2Screen() {
         reactionIcon={introReactionItem ? imageReactions[introReactionItem.reactionUri || introReactionItem.uri] ?? reactionCounts[introReactionItem.reactionUri || introReactionItem.uri]?.topEmoji ?? null : null}
         reactionCount={introReactionItem ? reactionCounts[introReactionItem.reactionUri || introReactionItem.uri]?.count ?? 0 : 0}
         reactionsOpen={activeReactionImageId === 'vid-0'}
+        onCompleted={() => {
+          if (
+            !currentProfile?.id ||
+            !resolvedProfile?.id ||
+            resolvedProfile.id === 'preview' ||
+            currentProfile.id === resolvedProfile.id
+          ) return;
+          const key = `${currentProfile.id}:${resolvedProfile.id}:intro-complete`;
+          if (signalIntroCompletedRef.current === key) return;
+          signalIntroCompletedRef.current = key;
+          void logVibesEvent({
+            viewerProfileId: currentProfile.id,
+            targetProfileId: resolvedProfile.id,
+            segment: profileVibesSegment,
+            eventType: 'intro_completed',
+            ...profileVibesAttribution,
+            metadata: { source: 'profile_view' },
+          });
+        }}
         onToggleReactions={introReactionItem ? () => toggleImageReactions(introReactionItem) : undefined}
         onSelectReaction={introReactionItem ? (icon: string) => handleSelectReaction(introReactionItem, icon) : undefined}
         onClose={() => {
@@ -2430,9 +2493,15 @@ export default function ProfileViewPremiumV2Screen() {
       <IntentRequestSheet
         visible={intentSheetOpen}
         onClose={() => setIntentSheetOpen(false)}
+        onSent={() => {
+          setIntentSheetOpen(false);
+          handleBack();
+        }}
         recipientId={resolvedProfile.id}
         recipientName={resolvedProfile.name}
-        metadata={{ source: 'profile' }}
+        metadata={profileDisplayContext === 'circle-discover' && contextCircleId
+          ? { source: 'circles', circle_id: contextCircleId }
+          : { source: 'profile' }}
       />
 
       <Modal
@@ -2669,7 +2738,7 @@ export default function ProfileViewPremiumV2Screen() {
                     ) : null}
                   </View>
 
-                  {!isOwnProfile && !hasAcceptedMatch ? (
+                  {!isOwnProfile && !hasAcceptedMatch && allowRomanticActions ? (
                     <Pressable onPress={openIntentSheet} style={stylesStatic.heroRequestWrap}>
                       <LinearGradient
                         colors={['#2FB2BE', '#7D7CF3']}
@@ -2691,7 +2760,7 @@ export default function ProfileViewPremiumV2Screen() {
         </View>
       )}
 
-      {profileReminder && !isLoading ? (
+      {profileReminder && !isLoading && !isCommunityProfile ? (
         <View style={stylesStatic.profileReminderWrap}>
           <View
             style={[
@@ -2842,7 +2911,7 @@ export default function ProfileViewPremiumV2Screen() {
                       <Text style={stylesStatic.guessPrimaryText}>{guessPrimaryLabel}</Text>
                     </Pressable>
                   ) : null}
-                  {guessResult ? (
+                  {guessResult && allowRomanticActions ? (
                     <Pressable
                       onPress={guessResult.tone === 'correct' ? () => void sendGuessInterest() : openIntentSheet}
                       disabled={guessResult.tone === 'correct' ? guessInterestSending || guessInterestSent : false}
@@ -3104,7 +3173,7 @@ export default function ProfileViewPremiumV2Screen() {
                         <Text style={stylesStatic.guessPrimaryText}>{guessPrimaryLabel}</Text>
                       </Pressable>
                     ) : null}
-                    {guessResult ? (
+                    {guessResult && allowRomanticActions ? (
                       <Pressable
                         onPress={guessResult.tone === 'correct' ? () => void sendGuessInterest() : openIntentSheet}
                         disabled={guessResult.tone === 'correct' ? guessInterestSending || guessInterestSent : false}
@@ -3326,7 +3395,9 @@ export default function ProfileViewPremiumV2Screen() {
         currentUserId={currentUserId}
         viewerProfileId={currentProfile?.id ?? null}
         isOwnProfile={isOwnProfile}
-        onOpenRequest={openIntentSheet}
+        allowRomanticActions={allowRomanticActions}
+        romanticContextCircleId={profileDisplayContext === 'circle-discover' ? contextCircleId : null}
+        onActionComplete={handleBack}
       />
     </View>
   );
@@ -4371,7 +4442,9 @@ function FloatingActions({
   currentUserId,
   viewerProfileId,
   isOwnProfile,
-  onOpenRequest: _onOpenRequest,
+  allowRomanticActions,
+  romanticContextCircleId,
+  onActionComplete,
 }: {
   theme: typeof Colors.light;
   profileId: string;
@@ -4379,7 +4452,9 @@ function FloatingActions({
   currentUserId: string | null;
   viewerProfileId: string | null;
   isOwnProfile: boolean;
-  onOpenRequest?: () => void;
+  allowRomanticActions: boolean;
+  romanticContextCircleId?: string | null;
+  onActionComplete: () => void;
 }) {
   const insets = useSafeAreaInsets();
   const isDark = theme.background === Colors.dark.background;
@@ -4410,6 +4485,7 @@ function FloatingActions({
     failureReason?: string | null;
   } | null>(null);
   const [likeSending, setLikeSending] = useState(false);
+  const [passSending, setPassSending] = useState(false);
   const [liked, setLiked] = useState(false);
   const [saved, setSaved] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
@@ -4873,6 +4949,7 @@ function FloatingActions({
           message: 'Your gift is saved and will send when you are back online.',
           tone: 'success',
         });
+        onActionComplete();
         return;
       }
 
@@ -4901,6 +4978,7 @@ function FloatingActions({
       message: 'Your gift is on the way. Betweener will let the moment land with warmth.',
       tone: 'success',
     });
+    onActionComplete();
   };
 
   const sendBoost = async (input: CreateBoostInput) => {
@@ -5126,7 +5204,7 @@ function FloatingActions({
 
   const sendLike = async () => {
     // Swipes are keyed by profile ids (swiper_id/target_id). Use the viewer's profile id.
-    if (!viewerProfileId || !profileId || isOwnProfile || likeSending) return;
+    if (!viewerProfileId || !profileId || isOwnProfile || likeSending || !allowRomanticActions) return;
     setLikeSending(true);
     const { error } = await supabase
       .from('swipes')
@@ -5152,12 +5230,15 @@ function FloatingActions({
         });
         setLiked(true);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+        onActionComplete();
         return;
       }
       logger.error('[profile-view] send_like_failed', error);
       showBetweenerAlert({
         title: 'Unable to like',
-        message: (typeof __DEV__ !== 'undefined' && __DEV__) ? error.message : 'Please try again.',
+        message: /dating_not_eligible/i.test(String(error.message ?? ''))
+          ? 'This dating action is not available for this profile right now.'
+          : (typeof __DEV__ !== 'undefined' && __DEV__) ? error.message : 'Please try again.',
         tone: 'error',
       });
       return;
@@ -5170,7 +5251,9 @@ function FloatingActions({
         recipientId: profileId,
         type: 'like_with_note',
         message: null,
-        metadata: { source: 'profile_view', swipe_action: 'like' },
+        metadata: romanticContextCircleId
+          ? { source: 'circles', circle_id: romanticContextCircleId, swipe_action: 'like' }
+          : { source: 'profile_view', swipe_action: 'like' },
         actorProfileId: viewerProfileId,
         snapshotOwnerIds: [viewerProfileId, currentUserId],
       });
@@ -5187,6 +5270,55 @@ function FloatingActions({
         targetProfileId: profileId,
         liked: true,
       });
+    }
+    onActionComplete();
+  };
+
+  const passProfile = async () => {
+    if (!viewerProfileId || !profileId || isOwnProfile || passSending || !allowRomanticActions) return;
+    setPassSending(true);
+    try {
+      const { error } = await supabase
+        .from('swipes')
+        .upsert(
+          [{ swiper_id: viewerProfileId, target_id: profileId, action: 'PASS' }],
+          { onConflict: 'swiper_id,target_id' },
+        );
+      if (error) {
+        if (!isLikelyNetworkError(error)) throw error;
+        await enqueueSwipeSyncMutation({
+          userId: viewerProfileId,
+          targetId: profileId,
+          action: 'PASS',
+          mirrorIntent: false,
+          message: null,
+        });
+      }
+      if (romanticContextCircleId) {
+        const response = await supabase.rpc('rpc_pass_circle_dating_candidate', {
+          p_circle_id: romanticContextCircleId,
+          p_target_profile_id: profileId,
+        });
+        if (response.error && !isLikelyNetworkError(response.error)) {
+          logger.warn('[profile-view] circle_pass_event_failed', {
+            message: response.error.message,
+            circleId: romanticContextCircleId,
+          });
+        }
+      }
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
+      onActionComplete();
+    } catch (error) {
+      logger.warn('[profile-view] pass_profile_failed', {
+        message: String((error as any)?.message || error || 'unknown'),
+      });
+      showBetweenerAlert({
+        title: 'Unable to pass',
+        message: 'Please try again.',
+        tone: 'error',
+      });
+    } finally {
+      setPassSending(false);
     }
   };
 
@@ -5217,8 +5349,10 @@ function FloatingActions({
         bottomInset={insets.bottom}
         saved={saved}
         liked={liked}
+        allowRomanticActions={allowRomanticActions}
         onToggleSaved={toggleSaved}
         onLike={sendLike}
+        onPass={passProfile}
         onOpenBoostComposer={openBoostComposer}
         onOpenGift={openGift}
       />

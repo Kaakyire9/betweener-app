@@ -6,6 +6,7 @@ export type RelationshipGistLocalState = {
   lastReadAt: number | null;
   lastOpenedAt: number | null;
   lastPerspective: string | null;
+  updatedAt: number;
 };
 
 export type RelationshipGistLocalStateMap = Record<string, RelationshipGistLocalState>;
@@ -27,6 +28,7 @@ export const getDefaultRelationshipGistLocalState = (
   lastReadAt: null,
   lastOpenedAt: null,
   lastPerspective: perspective ?? null,
+  updatedAt: 0,
 });
 
 export async function readRelationshipGistLocalState(
@@ -43,6 +45,7 @@ export async function readRelationshipGistLocalState(
         lastReadAt: typeof value?.lastReadAt === 'number' ? value.lastReadAt : null,
         lastOpenedAt: typeof value?.lastOpenedAt === 'number' ? value.lastOpenedAt : null,
         lastPerspective: typeof value?.lastPerspective === 'string' ? value.lastPerspective : null,
+        updatedAt: typeof value?.updatedAt === 'number' ? value.updatedAt : 0,
       };
       return acc;
     }, {});
