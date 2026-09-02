@@ -15,10 +15,11 @@ import {
 } from '@/lib/intents/offline-actions';
 import { isLikelyNetworkError } from '@/lib/network';
 import { enqueueSwipeSyncMutation } from '@/lib/offline/mutation-queue';
-import { readCache, writeCache } from '@/lib/persisted-cache';
+import { writeCache } from '@/lib/persisted-cache';
 import { isOnlineFromLastActive } from '@/lib/presence';
 import { addBreadcrumb } from '@/lib/telemetry/sentry';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Crypto from 'expo-crypto';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { DeviceEventEmitter, Linking } from 'react-native';
 
@@ -220,17 +221,23 @@ export default function useAIRecommendations(
     () => (effectiveDistanceUnit === 'auto' ? resolveAutoUnit() : effectiveDistanceUnit),
     [effectiveDistanceUnit]
   );
+  const resolvedDistanceUnitRef = useRef(resolvedDistanceUnit);
+
+  useEffect(() => {
+    resolvedDistanceUnitRef.current = resolvedDistanceUnit;
+  }, [resolvedDistanceUnit]);
 
   const cacheKey = useMemo(() => {
     if (!userId) return null;
     const win = mode === 'active' ? String(activeWindowMinutes) : '-';
-    return `cache:ai_recs:v3:${userId}:${mode}:${win}`;
+    return `cache:ai_recs:v5_3:${userId}:${mode}:${win}`;
   }, [activeWindowMinutes, mode, userId]);
-  const cacheLoadedKeyRef = useRef<string | null>(null);
   const cacheWriteInFlightRef = useRef(false);
   const lastQueryScopeKeyRef = useRef<string | null>(null);
   const activeQueryScopeKeyRef = useRef(queryScopeKey);
   const activeFetchRunIdRef = useRef(0);
+  const recommendationSessionId = useMemo(() => Crypto.randomUUID(), [queryScopeKey]);
+  const refreshOrdinalRef = useRef(0);
 
   useLayoutEffect(() => {
     if (lastQueryScopeKeyRef.current === queryScopeKey) return;
@@ -241,6 +248,7 @@ export default function useAIRecommendations(
     setLastFetchedAt(null);
     swipeHistoryRef.current = [];
     setSwipeHistory([]);
+    refreshOrdinalRef.current = 0;
   }, [queryScopeKey]);
 
   const persistMatchesCache = useCallback(
@@ -257,36 +265,9 @@ export default function useAIRecommendations(
     [cacheKey],
   );
 
-  // Cached-first: hydrate from last good payload quickly, then refresh in background.
-  useEffect(() => {
-    if (!cacheKey) return;
-    if (cacheLoadedKeyRef.current === cacheKey) return;
-    cacheLoadedKeyRef.current = cacheKey;
-
-    let cancelled = false;
-    (async () => {
-      const cached = await readCache<{ fetchedAt: number; matches: Match[] }>(cacheKey, 6 * 60_000);
-      if (cancelled || !cached || !Array.isArray(cached.matches)) return;
-      if (!mountedRef.current || activeQueryScopeKeyRef.current !== queryScopeKey) return;
-      setMatches((prev) => (prev.length === 0 ? cached.matches : prev));
-      setLastError(null);
-      setLastFetchedAt((prev) => prev ?? cached.fetchedAt ?? Date.now());
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [cacheKey, queryScopeKey]);
-
-  const getStoredDistanceUnit = useCallback(async (): Promise<DistanceUnit> => {
-    try {
-      const stored = await AsyncStorage.getItem(DISTANCE_UNIT_KEY);
-      if (stored === 'auto' || stored === 'km' || stored === 'mi') {
-        return stored;
-      }
-    } catch {}
-    return effectiveDistanceUnit;
-  }, [effectiveDistanceUnit]);
+  // The outer Vibes feed owns offline snapshot recovery. Do not paint this
+  // hook's cache before the live ranked result: displaying two independent
+  // caches was the source of the profile flash on cold start.
 
   const refreshPresence = useCallback(async (ids: string[]) => {
     if (!ids.length) return;
@@ -855,8 +836,10 @@ export default function useAIRecommendations(
     });
   }, []);
 
-  const fetchMatchesFromServer = useCallback(async () => {
+  const fetchMatchesFromServer = useCallback(async (options?: { replaceDeck?: boolean }) => {
     if (!liveFetchEnabled) return;
+    const replaceDeck = options?.replaceDeck === true;
+    if (replaceDeck) refreshOrdinalRef.current += 1;
     const fetchRunId = activeFetchRunIdRef.current + 1;
     activeFetchRunIdRef.current = fetchRunId;
 
@@ -887,9 +870,9 @@ export default function useAIRecommendations(
     };
 
     try {
-      const storedUnit = await getStoredDistanceUnit();
-      const unitForFormat: DistanceUnit = storedUnit === 'auto' ? resolveAutoUnit() : storedUnit;
+      const unitForFormat = resolvedDistanceUnitRef.current;
       const fetchId = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      const requestId = Crypto.randomUUID();
       addBreadcrumb('[recs] fetch_start', {
         fetchId,
         mode,
@@ -1290,14 +1273,58 @@ export default function useAIRecommendations(
           } as Match);
         };
 
-        try {
-          const v2Segment = mode === 'active' ? 'active_now' : mode === 'nearby' ? 'nearby' : 'for_you';
-          const v2Args = {
+        const v2Segment = mode === 'active' ? 'active_now' : mode === 'nearby' ? 'nearby' : 'for_you';
+        const v2Args = {
             p_user_id: userId,
             p_segment: v2Segment,
             p_limit: mode === 'active' ? 50 : 30,
             p_active_window_minutes: activeWindowMinutes,
-          };
+        };
+
+        try {
+          const v53 = await rpc('get_vibes_recommendations_v5_3', {
+            ...v2Args,
+            p_client_session_id: recommendationSessionId,
+            p_request_id: requestId,
+            p_refresh_ordinal: refreshOrdinalRef.current,
+          });
+          if (v53?.error?.code === 'client_timeout') {
+            noteRpcFailure(v53.error, 'get_vibes_recommendations_v5_3');
+            return;
+          }
+          if (!v53?.error && Array.isArray(v53?.data)) {
+            const enriched = await enrichRpcRowsWithInterests(v53.data);
+            const viewerCoords = await loadRpcViewerCoords();
+            const mapped = enriched.map((p: any) => mapRpcRow(p, true, viewerCoords));
+            const filtered = filterDiscoverable(mapped);
+            if (!commitMatchesResult(filtered)) return;
+            addBreadcrumb('[recs] fetch_ok', {
+              fetchId,
+              mode,
+              fn: 'get_vibes_recommendations_v5_3',
+              rows: mapped.length,
+              replaceDeck,
+              refreshOrdinal: refreshOrdinalRef.current,
+            });
+            return;
+          }
+          if (v53?.error) {
+            addBreadcrumb('[recs] v5_3_fallback', {
+              fetchId,
+              mode,
+              errorCode: v53.error.code ?? null,
+              message: String(v53.error.message || 'v5_3_error'),
+            });
+          }
+        } catch (e) {
+          addBreadcrumb('[recs] v5_3_throw_fallback', {
+            fetchId,
+            mode,
+            message: String((e as any)?.message || e || 'v5_3_throw'),
+          });
+        }
+
+        try {
           const v5 = await rpc('get_vibes_recommendations_v5', v2Args);
           if (v5?.error?.code === 'client_timeout') {
             noteRpcFailure(v5.error, 'get_vibes_recommendations_v5');
@@ -1782,26 +1809,10 @@ export default function useAIRecommendations(
           console.log('[useAIRecommendations] profiles query error (falling back to mocks)', error);
           commitFetchFailure(error);
         } else if (Array.isArray(data) && data.length === 0) {
-          const cachedMatches = cacheKey
-            ? ((await readCache<{ fetchedAt: number; matches: Match[] }>(cacheKey, 6 * 60_000))?.matches ?? [])
-            : [];
-          const shouldPreserveExisting = matchesRef.current.length > 0 || cachedMatches.length > 0;
           if (typeof __DEV__ !== 'undefined' && __DEV__) {
             console.log('[useAIRecommendations] profiles query returned 0 rows', {
-              preservedExisting: shouldPreserveExisting,
               liveCount: matchesRef.current.length,
-              cachedCount: cachedMatches.length,
             });
-          }
-          if (shouldPreserveExisting) {
-            if (matchesRef.current.length === 0 && cachedMatches.length > 0) {
-              if (!isCurrentFetch()) return;
-              setMatches(cachedMatches);
-            }
-            if (!isCurrentFetch()) return;
-            setLastError(null);
-            setLastFetchedAt(Date.now());
-            return;
           }
           if (!isCurrentFetch()) return;
           setMatches([]);
@@ -1829,16 +1840,16 @@ export default function useAIRecommendations(
     if (!isCurrentFetch()) return;
     setLastError((prev) => prev ?? new Error('fetch_failed'));
     setLastFetchedAt((prev) => prev ?? Date.now());
-  }, [activeWindowMinutes, getStoredDistanceUnit, liveFetchEnabled, mode, persistMatchesCache, queryScopeKey, resolvedDistanceUnit, userId]);
+  }, [activeWindowMinutes, liveFetchEnabled, mode, persistMatchesCache, queryScopeKey, recommendationSessionId, userId]);
 
     // Fetch matches on mount and when userId changes
     useEffect(() => {
-      void fetchMatchesFromServer();
+      void fetchMatchesFromServer({ replaceDeck: false });
     }, [fetchMatchesFromServer]);
 
   const refreshMatches = useCallback(() => {
-    // fire-and-forget: try server, fallback to mock on error
-    void fetchMatchesFromServer();
+    // Explicit refresh starts a new request inside the same discovery session.
+    void fetchMatchesFromServer({ replaceDeck: true });
     swipeHistoryRef.current = [];
     setSwipeHistory(() => []);
   }, [fetchMatchesFromServer]);

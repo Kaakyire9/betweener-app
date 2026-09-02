@@ -555,7 +555,7 @@ export async function loadClosureCandidatePool(
   targetProfileId: string,
 ): Promise<ClosureCandidatePool> {
   const { data: candidateData, error: candidateError } = await supabase.rpc(
-    'rpc_get_closure_to_clarity_candidates' as any,
+    'rpc_get_closure_to_clarity_candidates_v2' as any,
     {
       p_intent_request_id: intentRequestId,
       p_limit: 28,

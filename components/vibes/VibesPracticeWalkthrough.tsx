@@ -11,7 +11,19 @@ import { toFlagEmoji } from "@/lib/location/location-display";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Animated, Easing, Image, PanResponder, ScrollView, StyleSheet, Text, TouchableOpacity, View, type ImageSourcePropType } from "react-native";
+import {
+  AccessibilityInfo,
+  Animated,
+  Easing,
+  Image,
+  PanResponder,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+  type ImageSourcePropType,
+} from "react-native";
 
 export type PracticeStep =
   | "intro"
@@ -21,7 +33,18 @@ export type PracticeStep =
   | "noticePrompt"
   | "noticeExplain"
   | "passPrompt"
-  | "passExplain";
+  | "passExplain"
+  | "undoPrompt"
+  | "undoExplain";
+
+export type PracticeEvent =
+  | "started"
+  | "intent_opened"
+  | "intent_completed"
+  | "notice_completed"
+  | "pass_completed"
+  | "undo_completed"
+  | "completed";
 
 type PracticeIntentType = "connect" | "like_with_note" | "date_request";
 
@@ -33,6 +56,7 @@ type VibesPracticeWalkthroughProps = {
   onStepChange?: (step: PracticeStep) => void;
   allowClose?: boolean;
   onClose?: () => void;
+  onPracticeEvent?: (event: PracticeEvent, step: PracticeStep, method?: "gesture" | "button") => void;
 };
 
 type PracticeCardData = {
@@ -94,12 +118,12 @@ const PRACTICE_CARDS: PracticeCardData[] = [
 const STEP_COPY: Record<PracticeStep, { eyebrow: string; title: string; body: string; cta?: string }> = {
   intro: {
     eyebrow: "Practice walkthrough",
-    title: "Learn the connection path",
-    body: "Practice Intent, Notice, and Pass here. In the full deck, a limited Signal lets you say exactly what stood out.",
+    title: "Rehearse every important move",
+    body: "Try Intent, Notice, Pass, and Undo on practice profiles. Nothing here reaches a real person.",
     cta: "Start practice",
   },
   intentPrompt: {
-    eyebrow: "Step 1 of 3",
+    eyebrow: "Step 1 of 4",
     title: "Start with Intent",
     body: "Swipe up or press Intent. It opens a deliberate request.",
   },
@@ -115,7 +139,7 @@ const STEP_COPY: Record<PracticeStep, { eyebrow: string; title: string; body: st
     cta: "Next: Notice",
   },
   noticePrompt: {
-    eyebrow: "Step 2 of 3",
+    eyebrow: "Step 2 of 4",
     title: "Send a Notice",
     body: "Drag right or press Notice. It is light interest, not the main move.",
   },
@@ -126,24 +150,38 @@ const STEP_COPY: Record<PracticeStep, { eyebrow: string; title: string; body: st
     cta: "Next: Pass",
   },
   passPrompt: {
-    eyebrow: "Step 3 of 3",
-    title: "Pass with care",
-    body: "Drag left or press Pass. It clears the Vibe quietly.",
+    eyebrow: "Step 3 of 4",
+    title: "Not your Vibe? Pass",
+    body: "Drag left or press Pass. They will not be notified, and we will move them out of your deck for now.",
   },
   passExplain: {
-    eyebrow: "Passed",
-    title: "You passed quietly",
-    body: "Quiet, clean, and private. The full dock appears after this rehearsal.",
+    eyebrow: "Passed privately",
+    title: "We will bring someone else forward",
+    body: "A Pass helps shape your deck. If it was a mistake, your latest action can be reversed.",
+    cta: "Next: Undo",
+  },
+  undoPrompt: {
+    eyebrow: "Step 4 of 4",
+    title: "Bring the last Vibe back",
+    body: "Press Undo now. Undo only reverses your most recent action, so use it straight away.",
+  },
+  undoExplain: {
+    eyebrow: "Profile restored",
+    title: "You are ready for real Vibes",
+    body: "Pass privately, Notice lightly, use a limited Signal when something specific stands out, or open with clear Intent.",
     cta: "Start real Vibes",
   },
 };
 
 const DOCK_LESSONS = [
-  { icon: "close", label: "Pass", body: "Quiet exit." },
+  { icon: "close", label: "Pass", body: "Private exit; moves the profile out for now." },
+  { icon: "undo", label: "Undo", body: "Restores only your latest action." },
   { icon: "heart-outline", label: "Notice", body: "Light interest for 72 hours." },
   { icon: "signal-mark", label: "Signal", body: "Limited, context-rich interest for 48 hours." },
   { icon: "intent-mark", label: "Intent", body: "Deliberate request for 48 hours." },
 ];
+
+const INTRO_MOVES = ["Intent", "Notice", "Pass", "Undo"] as const;
 
 const INTENT_OPTIONS = [
   { type: "connect" as const, label: "Ask to chat", icon: "message-outline" },
@@ -241,6 +279,7 @@ export default function VibesPracticeWalkthrough({
   onStepChange,
   allowClose = false,
   onClose,
+  onPracticeEvent,
 }: VibesPracticeWalkthroughProps) {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? "light"];
@@ -251,6 +290,7 @@ export default function VibesPracticeWalkthrough({
   const [hasPickedIntentOption, setHasPickedIntentOption] = useState(false);
   const [previewIntentOptionIndex, setPreviewIntentOptionIndex] = useState(0);
   const [celebration, setCelebration] = useState<CelebrationState>(null);
+  const [reduceMotion, setReduceMotion] = useState(false);
   const translate = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
   const hint = useRef(new Animated.Value(0)).current;
   const intentHint = useRef(new Animated.Value(0)).current;
@@ -266,7 +306,23 @@ export default function VibesPracticeWalkthrough({
       ? PRACTICE_CARDS[0]
       : step === "noticePrompt" || step === "noticeExplain"
         ? PRACTICE_CARDS[1]
-        : PRACTICE_CARDS[2];
+        : step === "passExplain" || step === "undoPrompt"
+          ? PRACTICE_CARDS[0]
+          : PRACTICE_CARDS[2];
+
+  useEffect(() => {
+    let mounted = true;
+    void AccessibilityInfo.isReduceMotionEnabled()
+      .then((enabled) => {
+        if (mounted) setReduceMotion(enabled);
+      })
+      .catch(() => undefined);
+    const subscription = AccessibilityInfo.addEventListener("reduceMotionChanged", setReduceMotion);
+    return () => {
+      mounted = false;
+      subscription.remove();
+    };
+  }, []);
 
   useEffect(() => {
     setStep(initialStep);
@@ -274,6 +330,10 @@ export default function VibesPracticeWalkthrough({
 
   useEffect(() => {
     onStepChange?.(step);
+    if (step !== "intro") {
+      const copy = STEP_COPY[step];
+      AccessibilityInfo.announceForAccessibility(`${copy.eyebrow}. ${copy.title}. ${copy.body}`);
+    }
   }, [onStepChange, step]);
 
   useEffect(() => {
@@ -287,16 +347,20 @@ export default function VibesPracticeWalkthrough({
       setSelectedIntentType(null);
       return;
     }
-    if (hasPickedIntentOption) return;
+    if (hasPickedIntentOption || reduceMotion) return;
     const interval = setInterval(() => {
       setPreviewIntentOptionIndex((current) => (current + 1) % INTENT_OPTIONS.length);
     }, 920);
     return () => clearInterval(interval);
-  }, [hasPickedIntentOption, step]);
+  }, [hasPickedIntentOption, reduceMotion, step]);
 
   useEffect(() => {
     if (!promptDirection) {
       hint.setValue(0);
+      return;
+    }
+    if (reduceMotion) {
+      hint.setValue(1);
       return;
     }
     const loop = Animated.loop(
@@ -312,11 +376,15 @@ export default function VibesPracticeWalkthrough({
       loop.stop();
       hint.setValue(0);
     };
-  }, [hint, promptDirection]);
+  }, [hint, promptDirection, reduceMotion]);
 
   useEffect(() => {
     if (step !== "intentPrompt") {
       intentHint.setValue(0);
+      return;
+    }
+    if (reduceMotion) {
+      intentHint.setValue(1);
       return;
     }
     const loop = Animated.loop(
@@ -332,11 +400,15 @@ export default function VibesPracticeWalkthrough({
       loop.stop();
       intentHint.setValue(0);
     };
-  }, [intentHint, step]);
+  }, [intentHint, reduceMotion, step]);
 
   useEffect(() => {
     if (step !== "intentForm" || !hasPickedIntentOption) {
       focusPulse.setValue(0);
+      return;
+    }
+    if (reduceMotion) {
+      focusPulse.setValue(1);
       return;
     }
     const loop = Animated.loop(
@@ -352,28 +424,27 @@ export default function VibesPracticeWalkthrough({
       loop.stop();
       focusPulse.setValue(0);
     };
-  }, [focusPulse, hasPickedIntentOption, step]);
+  }, [focusPulse, hasPickedIntentOption, reduceMotion, step]);
 
   useEffect(() => {
     if (step !== "intentForm" || !hasPickedIntentOption) return;
     const timeout = setTimeout(() => {
-      lessonScrollRef.current?.scrollToEnd({ animated: true });
+      lessonScrollRef.current?.scrollToEnd({ animated: !reduceMotion });
     }, 120);
     return () => clearTimeout(timeout);
-  }, [hasPickedIntentOption, step]);
+  }, [hasPickedIntentOption, reduceMotion, step]);
 
   useEffect(() => {
-    if (step !== "intro" && step !== "passExplain") return;
+    if (step !== "undoExplain") return;
     const timeout = setTimeout(() => {
-      lessonScrollRef.current?.scrollToEnd({ animated: true });
+      lessonScrollRef.current?.scrollToEnd({ animated: !reduceMotion });
     }, 120);
     return () => clearTimeout(timeout);
-  }, [step]);
+  }, [reduceMotion, step]);
 
   useEffect(() => {
     const preserveScrollTarget =
-      step === "intro" ||
-      step === "passExplain" ||
+      step === "undoExplain" ||
       (step === "intentForm" && hasPickedIntentOption);
 
     if (preserveScrollTarget) return;
@@ -390,6 +461,10 @@ export default function VibesPracticeWalkthrough({
       ctaHint.setValue(0);
       return;
     }
+    if (reduceMotion) {
+      ctaHint.setValue(1);
+      return;
+    }
     const loop = Animated.loop(
       Animated.sequence([
         Animated.delay(160),
@@ -403,12 +478,17 @@ export default function VibesPracticeWalkthrough({
       loop.stop();
       ctaHint.setValue(0);
     };
-  }, [ctaHint, step]);
+  }, [ctaHint, reduceMotion, step]);
 
   useEffect(() => {
     if (!celebration) {
       celebrationPulse.setValue(0);
       return;
+    }
+    if (reduceMotion) {
+      celebrationPulse.setValue(1);
+      const timeout = setTimeout(() => setCelebration(null), 240);
+      return () => clearTimeout(timeout);
     }
     Animated.sequence([
       Animated.timing(celebrationPulse, {
@@ -427,7 +507,7 @@ export default function VibesPracticeWalkthrough({
     ]).start(() => {
       setCelebration(null);
     });
-  }, [celebration, celebrationPulse]);
+  }, [celebration, celebrationPulse, reduceMotion]);
 
   useEffect(() => () => {
     if (transitionTimeoutRef.current) {
@@ -453,7 +533,7 @@ export default function VibesPracticeWalkthrough({
     }).start();
   }, [translate]);
 
-  const completeSwipe = useCallback((direction: "left" | "right") => {
+  const completeSwipe = useCallback((direction: "left" | "right", method: "gesture" | "button" = "button") => {
     if (direction === "right" && step !== "noticePrompt") return;
     if (direction === "left" && step !== "passPrompt") return;
 
@@ -465,25 +545,39 @@ export default function VibesPracticeWalkthrough({
       }
     } catch {}
 
+    const nextStep = direction === "right" ? "noticeExplain" : "passExplain";
+    onPracticeEvent?.(direction === "right" ? "notice_completed" : "pass_completed", step, method);
+    if (reduceMotion) {
+      setStep(nextStep);
+      translate.setValue({ x: 0, y: 0 });
+      return;
+    }
     Animated.timing(translate, {
       toValue: { x: direction === "right" ? metrics.cardWidth * 1.2 : -metrics.cardWidth * 1.2, y: -14 },
       duration: 260,
       useNativeDriver: true,
     }).start(() => {
-      setStep(direction === "right" ? "noticeExplain" : "passExplain");
+      setStep(nextStep);
       translate.setValue({ x: 0, y: 0 });
     });
-  }, [metrics.cardWidth, step, translate]);
+  }, [metrics.cardWidth, onPracticeEvent, reduceMotion, step, translate]);
 
-  const openIntentForm = useCallback(() => {
+  const openIntentForm = useCallback((method: "gesture" | "button" = "button") => {
     if (step !== "intentPrompt") return;
     try { Haptics.selectionAsync(); } catch {}
+    onPracticeEvent?.("intent_opened", step, method);
     setStep("intentForm");
-  }, [step]);
+  }, [onPracticeEvent, step]);
 
   const completeIntent = useCallback(() => {
-    if (step !== "intentForm") return;
+    if (step !== "intentForm" || !hasPickedIntentOption) return;
     try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
+    onPracticeEvent?.("intent_completed", step, "button");
+    if (reduceMotion) {
+      setStep("intentExplain");
+      translate.setValue({ x: 0, y: 0 });
+      return;
+    }
     Animated.timing(translate, {
       toValue: { x: 0, y: -metrics.cardHeight * 1.08 },
       duration: 280,
@@ -492,7 +586,14 @@ export default function VibesPracticeWalkthrough({
       setStep("intentExplain");
       translate.setValue({ x: 0, y: 0 });
     });
-  }, [metrics.cardHeight, step, translate]);
+  }, [hasPickedIntentOption, metrics.cardHeight, onPracticeEvent, reduceMotion, step, translate]);
+
+  const completeUndo = useCallback(() => {
+    if (step !== "undoPrompt") return;
+    try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
+    onPracticeEvent?.("undo_completed", step, "button");
+    setStep("undoExplain");
+  }, [onPracticeEvent, step]);
 
   const panResponder = useMemo(
     () =>
@@ -527,7 +628,7 @@ export default function VibesPracticeWalkthrough({
         onPanResponderRelease: (_, gesture) => {
           if (step === "intentPrompt") {
             if (gesture.dy < -Math.max(48, metrics.cardHeight * 0.075)) {
-              openIntentForm();
+              openIntentForm("gesture");
               resetCard();
               onGestureLockChange?.(false);
               return;
@@ -538,12 +639,12 @@ export default function VibesPracticeWalkthrough({
           }
           const threshold = metrics.cardWidth * 0.22;
           if (promptDirection === "right" && gesture.dx > threshold) {
-            completeSwipe("right");
+            completeSwipe("right", "gesture");
             onGestureLockChange?.(false);
             return;
           }
           if (promptDirection === "left" && gesture.dx < -threshold) {
-            completeSwipe("left");
+            completeSwipe("left", "gesture");
             onGestureLockChange?.(false);
             return;
           }
@@ -561,6 +662,7 @@ export default function VibesPracticeWalkthrough({
 
   const goNext = useCallback(() => {
     if (step === "intro") {
+      onPracticeEvent?.("started", step, "button");
       setStep("intentPrompt");
       return;
     }
@@ -573,7 +675,7 @@ export default function VibesPracticeWalkthrough({
       transitionTimeoutRef.current = setTimeout(() => {
         setStep("noticePrompt");
         transitionTimeoutRef.current = null;
-      }, 460);
+      }, reduceMotion ? 0 : 460);
       return;
     }
     if (step === "noticeExplain") {
@@ -581,17 +683,26 @@ export default function VibesPracticeWalkthrough({
       transitionTimeoutRef.current = setTimeout(() => {
         setStep("passPrompt");
         transitionTimeoutRef.current = null;
-      }, 460);
+      }, reduceMotion ? 0 : 460);
       return;
     }
     if (step === "passExplain") {
+      triggerCelebration("Pass understood", "cream");
+      transitionTimeoutRef.current = setTimeout(() => {
+        setStep("undoPrompt");
+        transitionTimeoutRef.current = null;
+      }, reduceMotion ? 0 : 460);
+      return;
+    }
+    if (step === "undoExplain") {
       triggerCelebration("Practice complete", "cream");
       transitionTimeoutRef.current = setTimeout(() => {
+        onPracticeEvent?.("completed", step, "button");
         onComplete();
         transitionTimeoutRef.current = null;
-      }, 460);
+      }, reduceMotion ? 0 : 460);
     }
-  }, [onComplete, step, triggerCelebration]);
+  }, [onComplete, onPracticeEvent, reduceMotion, step, triggerCelebration]);
 
   const cardAnimatedStyle: any = {
     transform: [
@@ -701,8 +812,10 @@ export default function VibesPracticeWalkthrough({
       ? "intent"
       : step === "noticePrompt"
         ? "like"
-        : step === "passPrompt"
+      : step === "passPrompt"
           ? "pass"
+          : step === "undoPrompt"
+            ? "undo"
           : null;
 
   return (
@@ -788,27 +901,16 @@ export default function VibesPracticeWalkthrough({
           <Text style={styles.title}>{STEP_COPY[step].title}</Text>
           <Text style={styles.body}>{STEP_COPY[step].body}</Text>
           {step === "intro" ? (
-            <View style={styles.introLessonGrid}>
-              {DOCK_LESSONS.map((lesson) => (
-                <View key={lesson.label} style={styles.introLesson}>
-                  <View style={styles.introLessonIcon}>
-                    {lesson.icon === "intent-mark" ? (
-                      <IntentMark size={14} color={theme.tint} strokeWidth={2.25} />
-                    ) : lesson.icon === "signal-mark" ? (
-                      <SignalIcon size={14} color={theme.tint} accentColor={theme.accent} active />
-                    ) : (
-                      <MaterialCommunityIcons name={lesson.icon as any} size={13} color={theme.tint} />
-                    )}
-                  </View>
-                  <View style={styles.introLessonCopy}>
-                    <Text style={styles.introLessonLabel}>{lesson.label}</Text>
-                    <Text style={styles.introLessonBody}>{lesson.body}</Text>
-                  </View>
+            <View style={styles.introMoveGrid} accessibilityLabel="You will practise Intent, Notice, Pass, and Undo">
+              {INTRO_MOVES.map((move, index) => (
+                <View key={move} style={styles.introMoveChip}>
+                  <Text style={styles.introMoveNumber}>{index + 1}</Text>
+                  <Text style={styles.introMoveLabel}>{move}</Text>
                 </View>
               ))}
             </View>
           ) : null}
-          {step === "passExplain" ? (
+          {step === "undoExplain" ? (
             <View style={styles.dockLessonGrid}>
               {DOCK_LESSONS.map((lesson) => (
                 <View key={lesson.label} style={styles.dockLesson}>
@@ -854,6 +956,9 @@ export default function VibesPracticeWalkthrough({
                     key={option.type}
                     style={[styles.intentOption, selected ? styles.intentOptionActive : null, previewed ? styles.intentOptionPreview : null]}
                     activeOpacity={0.86}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected }}
+                    accessibilityLabel={option.label}
                     onPress={() => {
                       setSelectedIntentType(option.type);
                       setHasPickedIntentOption(true);
@@ -872,7 +977,15 @@ export default function VibesPracticeWalkthrough({
               </View>
               <Animated.View style={[intentSendPulseStyle, hasPickedIntentOption ? styles.intentSendWrapFocused : null]}>
                 {hasPickedIntentOption ? <Text style={styles.intentSendPointer}>👉🏼</Text> : null}
-                <TouchableOpacity style={styles.intentSendButton} activeOpacity={0.88} onPress={completeIntent}>
+                <TouchableOpacity
+                  style={[styles.intentSendButton, !hasPickedIntentOption ? styles.intentSendButtonDisabled : null]}
+                  activeOpacity={0.88}
+                  disabled={!hasPickedIntentOption}
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: !hasPickedIntentOption }}
+                  accessibilityHint={hasPickedIntentOption ? "Completes the practice Intent" : "Choose an Intent type first"}
+                  onPress={completeIntent}
+                >
                   <IntentMark size={17} color="#F8FFFF" strokeWidth={2.2} />
                   <Text style={styles.intentSendText}>Send practice request</Text>
                 </TouchableOpacity>
@@ -882,7 +995,13 @@ export default function VibesPracticeWalkthrough({
           {STEP_COPY[step].cta ? (
             <Animated.View style={[styles.lessonButtonWrap, ctaPointerStyle]}>
               <Text style={styles.lessonButtonPointer}>👉🏼</Text>
-              <TouchableOpacity style={styles.lessonButton} activeOpacity={0.88} onPress={goNext}>
+              <TouchableOpacity
+                style={styles.lessonButton}
+                activeOpacity={0.88}
+                accessibilityRole="button"
+                accessibilityLabel={STEP_COPY[step].cta}
+                onPress={goNext}
+              >
                 <Text style={styles.lessonButtonText}>{STEP_COPY[step].cta}</Text>
               </TouchableOpacity>
             </Animated.View>
@@ -909,11 +1028,11 @@ export default function VibesPracticeWalkthrough({
         <VibesActionDock
           metrics={metrics}
           onPass={() => completeSwipe("left")}
-          onUndo={() => undefined}
+          onUndo={completeUndo}
           onLike={() => completeSwipe("right")}
           onPremium={() => undefined}
           onIntent={openIntentForm}
-          hiddenActions={["undo", "premium"]}
+          hiddenActions={["premium"]}
           highlightedAction={highlightedDockAction}
         />
       </View>
@@ -1051,9 +1170,9 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, metrics: Vibe
       position: "absolute",
       top: 10,
       right: 10,
-      width: 30,
-      height: 30,
-      borderRadius: 15,
+      width: 44,
+      height: 44,
+      borderRadius: 22,
       alignItems: "center",
       justifyContent: "center",
       backgroundColor: isDark ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.58)",
@@ -1082,18 +1201,37 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, metrics: Vibe
       fontSize: metrics.isCompactHeight ? 11 : 12,
       lineHeight: metrics.isCompactHeight ? 16 : 17,
     },
-    introLessonGrid: {
+    introMoveGrid: {
       marginTop: 10,
-      gap: 6,
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: 7,
     },
-    introLesson: {
+    introMoveChip: {
+      width: "47%",
+      minHeight: 38,
       flexDirection: "row",
       alignItems: "center",
       gap: 8,
       paddingHorizontal: 10,
-      paddingVertical: 8,
-      borderRadius: 14,
+      borderRadius: 999,
       backgroundColor: isDark ? "rgba(255,255,255,0.06)" : "rgba(15,61,62,0.07)",
+    },
+    introMoveNumber: {
+      width: 22,
+      height: 22,
+      borderRadius: 11,
+      textAlign: "center",
+      lineHeight: 22,
+      color: theme.tint,
+      backgroundColor: isDark ? "rgba(19,168,168,0.10)" : "rgba(19,168,168,0.12)",
+      fontFamily: "Manrope_800ExtraBold",
+      fontSize: 10,
+    },
+    introMoveLabel: {
+      color: isDark ? "rgba(255,255,255,0.88)" : "rgba(15,61,62,0.82)",
+      fontFamily: "Manrope_800ExtraBold",
+      fontSize: 11,
     },
     introLessonIcon: {
       width: 24,
@@ -1120,7 +1258,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, metrics: Vibe
       lineHeight: 13,
     },
     lessonButton: {
-      minHeight: 34,
+      minHeight: 44,
       paddingHorizontal: 14,
       borderRadius: 999,
       alignItems: "center",
@@ -1189,7 +1327,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, metrics: Vibe
       fontSize: 10,
     },
     intentOption: {
-      minHeight: 34,
+      minHeight: 44,
       borderRadius: 15,
       paddingHorizontal: 10,
       flexDirection: "row",
@@ -1247,7 +1385,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, metrics: Vibe
       lineHeight: 14,
     },
     intentSendButton: {
-      minHeight: 36,
+      minHeight: 44,
       borderRadius: 999,
       paddingHorizontal: 12,
       alignSelf: "flex-start",
@@ -1255,6 +1393,9 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, metrics: Vibe
       alignItems: "center",
       gap: 7,
       backgroundColor: theme.tint,
+    },
+    intentSendButtonDisabled: {
+      opacity: 0.42,
     },
     intentSendWrapFocused: {
       flexDirection: "row",

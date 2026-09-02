@@ -1481,7 +1481,7 @@ export default function IntentScreen() {
       setSuggestedLoading(true);
       setSuggestedError(null);
       try {
-        const { data, error } = await supabase.rpc('rpc_get_suggested_moves', {
+        const { data, error } = await (supabase as any).rpc('rpc_get_suggested_moves_v2', {
           p_profile_id: currentProfileId,
           p_limit: 6,
         });

@@ -1,5 +1,5 @@
-import { supabase } from '@/lib/supabase';
 import type { VibesSegment } from '@/lib/vibes/discovery-logic';
+import { enqueueVibesEvent } from '@/lib/vibes/telemetry-queue';
 
 export type VibesEventType =
   | 'card_seen'
@@ -26,6 +26,9 @@ export async function logVibesEvent(input: {
   eventType: VibesEventType;
   position?: number | null;
   dwellMs?: number | null;
+  sessionId?: string | null;
+  requestId?: string | null;
+  recommendationId?: string | null;
   metadata?: Record<string, unknown>;
 }) {
   const {
@@ -35,24 +38,30 @@ export async function logVibesEvent(input: {
     eventType,
     position = null,
     dwellMs = null,
+    sessionId = null,
+    requestId = null,
+    recommendationId = null,
     metadata = {},
   } = input;
 
   if (!viewerProfileId || !targetProfileId || viewerProfileId === targetProfileId) return;
 
   try {
-    await supabase.rpc('rpc_log_vibes_event' as any, {
-      p_viewer_profile_id: viewerProfileId,
-      p_target_profile_id: targetProfileId,
-      p_segment: toServerSegment(segment),
-      p_event_type: eventType,
-      p_position: position,
-      p_dwell_ms: dwellMs,
-      p_metadata: metadata,
-    } as any);
+    await enqueueVibesEvent({
+      viewerProfileId,
+      targetProfileId,
+      segment: toServerSegment(segment),
+      eventType,
+      position,
+      dwellMs,
+      sessionId,
+      requestId,
+      recommendationId,
+      metadata,
+    });
   } catch (error) {
     if (typeof __DEV__ !== 'undefined' && __DEV__) {
-      console.log('[vibes] event log failed', eventType, error);
+      console.log('[vibes] telemetry enqueue failed', eventType, error);
     }
   }
 }

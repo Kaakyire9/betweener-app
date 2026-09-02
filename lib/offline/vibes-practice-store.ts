@@ -8,7 +8,9 @@ export type VibesPracticeStep =
   | "noticePrompt"
   | "noticeExplain"
   | "passPrompt"
-  | "passExplain";
+  | "passExplain"
+  | "undoPrompt"
+  | "undoExplain";
 
 export type OfflineVibesPracticeSnapshot = {
   completedAt: string | null;
@@ -32,7 +34,9 @@ const isVibesPracticeStep = (value: unknown): value is VibesPracticeStep =>
   value === "noticePrompt" ||
   value === "noticeExplain" ||
   value === "passPrompt" ||
-  value === "passExplain";
+  value === "passExplain" ||
+  value === "undoPrompt" ||
+  value === "undoExplain";
 
 const normalizeSnapshot = (
   snapshot: OfflineVibesPracticeSnapshot | null,

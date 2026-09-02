@@ -20,6 +20,7 @@ import {
   type ClosureRecommendation,
   type ClosureReflectionReason,
 } from '@/lib/intents/closure-to-clarity';
+import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -89,6 +90,7 @@ export default function ClosureToClarityScreen() {
   const [cachedSnapshotSavedAt, setCachedSnapshotSavedAt] = useState<number | null>(null);
   const [cachedSnapshotStale, setCachedSnapshotStale] = useState(false);
   const diagnosticsLoggedForRequestRef = useRef<string | null>(null);
+  const loggedRecommendationImpressionsRef = useRef(new Set<string>());
 
   const load = useCallback(async (refresh = false) => {
     if (!viewerProfileId || !requestId || !targetProfileId) {
@@ -156,6 +158,34 @@ export default function ClosureToClarityScreen() {
     () => classifyClosureRecommendations(pool, selectedReasons),
     [pool, selectedReasons],
   );
+
+  const logRecommendationEvent = useCallback((
+    candidateProfileId: string,
+    eventType: 'impression' | 'profile_opened' | 'intent_opened' | 'intent_sent',
+    metadata: Record<string, unknown> = {},
+  ) => {
+    if (!requestId || !candidateProfileId) return;
+    void (supabase as any).rpc('rpc_log_profile_recommendation_event', {
+      p_surface: 'closure_to_clarity',
+      p_candidate_profile_id: candidateProfileId,
+      p_event_type: eventType,
+      p_context_key: requestId,
+      p_metadata: metadata,
+    });
+  }, [requestId]);
+
+  useEffect(() => {
+    if (loading || error) return;
+    recommendations.forEach((recommendation, position) => {
+      const key = `${requestId}:${recommendation.profileId}`;
+      if (loggedRecommendationImpressionsRef.current.has(key)) return;
+      loggedRecommendationImpressionsRef.current.add(key);
+      logRecommendationEvent(recommendation.profileId, 'impression', {
+        position,
+        lane: recommendation.lane,
+      });
+    });
+  }, [error, loading, logRecommendationEvent, recommendations, requestId]);
 
   useEffect(() => {
     if (loading || error || recommendations.length > 0 || !requestId) return;
@@ -294,6 +324,7 @@ export default function ClosureToClarityScreen() {
   ]);
 
   const openProfile = (profileId: string) => {
+    logRecommendationEvent(profileId, 'profile_opened');
     router.push({ pathname: '/profile-view', params: { profileId } });
   };
 
@@ -416,7 +447,12 @@ export default function ClosureToClarityScreen() {
                 theme={theme}
                 isDark={isDark}
                 onViewProfile={() => openProfile(recommendation.profileId)}
-                onSendIntent={() => setSelectedRecommendation(recommendation)}
+                onSendIntent={() => {
+                  logRecommendationEvent(recommendation.profileId, 'intent_opened', {
+                    lane: recommendation.lane,
+                  });
+                  setSelectedRecommendation(recommendation);
+                }}
               />
             ))}
           </View>
@@ -478,7 +514,14 @@ export default function ClosureToClarityScreen() {
           lane: selectedRecommendation?.lane,
           request_id: requestId,
         }}
-        onSent={() => setSelectedRecommendation(null)}
+        onSent={() => {
+          if (selectedRecommendation) {
+            logRecommendationEvent(selectedRecommendation.profileId, 'intent_sent', {
+              lane: selectedRecommendation.lane,
+            });
+          }
+          setSelectedRecommendation(null);
+        }}
       />
     </SafeAreaView>
   );

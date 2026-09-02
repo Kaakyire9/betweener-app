@@ -24,7 +24,7 @@ import * as Haptics from "expo-haptics";
 import * as Notifications from "expo-notifications";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
-import { type ComponentProps, useEffect, useMemo, useState } from "react";
+import { type ComponentProps, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import Animated, {
   FadeInDown,
@@ -211,77 +211,20 @@ const getCompassProfileLimit = (plan: string | null | undefined) => {
   return 3;
 };
 
-const getOppositeGender = (gender: unknown) => {
-  const normalized = String(gender || "").trim().toUpperCase();
-  if (normalized === "MALE") return "FEMALE";
-  if (normalized === "FEMALE") return "MALE";
-  return null;
-};
-
-const textIncludes = (value: string | null | undefined, needles: string[]) => {
-  const normalized = String(value || "").toLowerCase();
-  return needles.some((needle) => normalized.includes(needle));
-};
-
-const scorePreviewProfile = (
-  candidate: CompassPreviewProfile,
-  compass: RelationshipCompass,
-  viewerProfile: any,
-) => {
-  let score = 0.42 + (stableHash(candidate.id) % 18) / 100;
-
-  if (compass.intention === "marriage" && textIncludes(candidate.looking_for, ["marriage", "serious", "long"])) score += 0.18;
-  if (compass.intention === "long_term" && textIncludes(candidate.looking_for, ["long", "serious", "partner"])) score += 0.16;
-  if (compass.intention === "serious" && textIncludes(candidate.looking_for, ["serious", "long", "marriage"])) score += 0.14;
-  if (compass.intention === "open" && textIncludes(candidate.looking_for, ["see", "casual", "friend", "open"])) score += 0.08;
-
-  if (compass.pace === "slow" && textIncludes(candidate.looking_for, ["serious", "long", "marriage"])) score += 0.08;
-  if (compass.pace === "chemistry" || compass.pace === "meet_soon") score += (stableHash(candidate.id + compass.pace) % 10) / 100;
-
-  const viewerCity = String(viewerProfile?.city || viewerProfile?.location || "").toLowerCase();
-  const candidateCity = String(candidate.city || candidate.location || "").toLowerCase();
-  const viewerCountry = String(viewerProfile?.current_country_code || viewerProfile?.current_country || "").toLowerCase();
-  const candidateCountry = String(candidate.current_country_code || candidate.current_country || "").toLowerCase();
-  if ((compass.geography.mode === "nearby" || compass.geography.mode === "same_city") && viewerCity && candidateCity.includes(viewerCity.split(",")[0] ?? "")) {
-    score += 0.16;
-  }
-  if (compass.geography.mode === "uk" && candidateCountry.includes("gb")) score += 0.16;
-  if (compass.geography.mode === "ghana_diaspora" && (candidateCountry.includes("gh") || candidateCountry === viewerCountry)) score += 0.15;
-  if (compass.geography.mode === "long_distance") score += 0.08;
-  if (compass.geography.city?.trim() && candidateCity.includes(compass.geography.city.trim().toLowerCase())) score += 0.2;
-
-  const sameReligion = viewerProfile?.religion && candidate.religion === viewerProfile.religion;
-  if (sameReligion && compass.priorities.religion !== "open") score += compass.priorities.religion === "essential" ? 0.16 : 0.08;
-  if (!sameReligion && compass.flexibility.religion === "must") score -= 0.22;
-
-  const sameChildrenDirection =
-    viewerProfile?.wants_children &&
-    candidate.wants_children &&
-    String(viewerProfile.wants_children).toLowerCase() === String(candidate.wants_children).toLowerCase();
-  if (sameChildrenDirection && compass.priorities.family !== "open") score += compass.priorities.family === "essential" ? 0.12 : 0.06;
-  if (!sameChildrenDirection && compass.flexibility.children === "must") score -= 0.16;
-
-  const verified = (candidate.verification_level ?? 0) > 0;
-  if (verified && compass.flexibility.verified !== "open") score += compass.flexibility.verified === "must" ? 0.16 : 0.08;
-  if (!verified && compass.flexibility.verified === "must") score -= 0.26;
-
-  return Math.max(0.08, Math.min(0.98, score));
-};
-
 const positionPreviewProfiles = (
   candidates: CompassPreviewProfile[],
   compass: RelationshipCompass,
-  viewerProfile: any,
   limit: number,
 ): PositionedPreviewProfile[] => {
   const directionOffset = ((stableHash(`${compass.intention}:${compass.pace}:${compass.geography.mode}`) % 360) * Math.PI) / 180;
   const scoredCandidates = candidates
-    .map((candidate) => ({
+    .slice(0, Math.max(1, Math.min(12, limit)))
+    .map((candidate, index) => ({
       candidate,
-      score: scorePreviewProfile(candidate, compass, viewerProfile),
-    }))
-    .sort((left, right) => right.score - left.score)
-    .slice(0, Math.max(1, Math.min(12, limit)));
+      // Supabase has already ranked the field. This value only controls visual
+      // emphasis and never changes recommendation order.
+      score: Math.max(0.54, 0.94 - index * 0.045),
+    }));
 
   const count = Math.max(scoredCandidates.length, 1);
   return scoredCandidates.map(({ candidate, score }, index) => {
@@ -548,13 +491,14 @@ export default function RelationshipCompassScreen() {
   const { profile, updateProfile, refreshProfile } = useAuth();
   const { currentPlan } = usePremiumState();
   const storedCompass = (profile as any)?.relationship_compass;
-  const viewerTargetGender = useMemo(() => getOppositeGender((profile as any)?.gender), [profile]);
   const compassProfileLimit = useMemo(() => getCompassProfileLimit(currentPlan), [currentPlan]);
   const [compass, setCompass] = useState<RelationshipCompass>(() =>
     applyDefaults(storedCompass),
   );
   const [previewProfiles, setPreviewProfiles] = useState<CompassPreviewProfile[]>([]);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const loggedPreviewImpressionsRef = useRef(new Set<string>());
   const [expanded, setExpanded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [celebrating, setCelebrating] = useState(false);
@@ -571,14 +515,14 @@ export default function RelationshipCompassScreen() {
     : `Refresh in ${Math.max(1, Math.ceil(refreshRemainingMs / (60 * 60 * 1000)))}h`;
   const compassEmptyTitle = !hasActivatedCompass
     ? "Love Compass appears here"
-    : viewerTargetGender
-      ? "No Compass faces yet"
-      : "Complete your dating direction";
+    : previewError
+      ? "Compass is recalibrating"
+      : "No Compass faces yet";
   const compassEmptyBody = !hasActivatedCompass
     ? "Choose your lens, then find your direction."
-    : viewerTargetGender
-      ? "Refresh later or loosen your lens to open the field."
-      : "Add your gender on your profile so Betweener does not guess your dating pool.";
+    : previewError
+      ? previewError
+      : "Refresh later or loosen your lens to open the field.";
   const upgradeCompassCopy =
     hasActivatedCompass && currentPlan === "SILVER"
       ? "Gold expands your Love Compass to 9 curated profiles daily."
@@ -586,8 +530,8 @@ export default function RelationshipCompassScreen() {
         ? "Silver unlocks 6 curated profiles. Gold expands it to 9."
         : null;
   const positionedProfiles = useMemo(
-    () => (hasActivatedCompass ? positionPreviewProfiles(previewProfiles, compass, profile, compassProfileLimit) : []),
-    [compass, compassProfileLimit, hasActivatedCompass, previewProfiles, profile],
+    () => (hasActivatedCompass ? positionPreviewProfiles(previewProfiles, compass, compassProfileLimit) : []),
+    [compass, compassProfileLimit, hasActivatedCompass, previewProfiles],
   );
 
   useEffect(() => {
@@ -635,56 +579,58 @@ export default function RelationshipCompassScreen() {
 
   useEffect(() => {
     if (!profile?.id) return;
-    if (!viewerTargetGender) {
+    if (!hasActivatedCompass) {
       setPreviewProfiles([]);
       setPreviewLoading(false);
       return;
     }
     let cancelled = false;
     setPreviewLoading(true);
+    setPreviewError(null);
     const loadPreviewProfiles = async () => {
-      const [matchesRes, profilesRes] = await Promise.all([
-        supabase
-          .from("matches")
-          .select("user1_id,user2_id,status")
-          .in("status", ["PENDING", "ACCEPTED"])
-          .or(`user1_id.eq.${profile.id},user2_id.eq.${profile.id}`),
-        supabase
-          .from("profiles")
-          .select("id,user_id,full_name,avatar_url,photos,looking_for,current_country,current_country_code,city,location,region,religion,gender,has_children,wants_children,verification_level")
-          .neq("id", profile.id)
-          .neq("user_id", profile.user_id)
-          .eq("gender", viewerTargetGender)
-          .eq("discoverable_in_vibes", true)
-          .eq("is_active", true)
-          .is("deleted_at", null)
-          .order("last_active", { ascending: false, nullsFirst: false })
-          .limit(24),
-      ]);
+      const { data, error } = await (supabase as any).rpc(
+        "rpc_get_relationship_compass_profiles",
+        { p_limit: compassProfileLimit },
+      );
 
       if (cancelled) return;
       setPreviewLoading(false);
-      if (profilesRes.error || !profilesRes.data) return;
-
-      const excludedProfileIds = new Set<string>();
-      (matchesRes.data || []).forEach((row: any) => {
-        const left = row?.user1_id ? String(row.user1_id) : null;
-        const right = row?.user2_id ? String(row.user2_id) : null;
-        if (!left || !right) return;
-        const other = left === String(profile.id) ? right : right === String(profile.id) ? left : null;
-        if (other) excludedProfileIds.add(other);
-      });
-
-      const nextProfiles = (profilesRes.data as CompassPreviewProfile[]).filter(
-        (candidate) => !excludedProfileIds.has(String(candidate.id)),
-      );
-      setPreviewProfiles(nextProfiles);
+      if (error) {
+        setPreviewProfiles([]);
+        setPreviewError("Your curated field could not load. Pull back and try again shortly.");
+        return;
+      }
+      setPreviewProfiles(((data ?? []) as CompassPreviewProfile[]).filter((candidate) => Boolean(candidate?.id)));
     };
     void loadPreviewProfiles();
     return () => {
       cancelled = true;
     };
-  }, [previewRefreshNonce, profile?.id, profile?.user_id, viewerTargetGender]);
+  }, [compassProfileLimit, hasActivatedCompass, previewRefreshNonce, profile?.id]);
+
+  const logPreviewEvent = useCallback((
+    candidateProfileId: string,
+    eventType: "impression" | "profile_opened",
+    position?: number,
+  ) => {
+    void (supabase as any).rpc("rpc_log_profile_recommendation_event", {
+      p_surface: "relationship_compass",
+      p_candidate_profile_id: candidateProfileId,
+      p_event_type: eventType,
+      p_context_key: "",
+      p_metadata: { position: position ?? null },
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!hasActivatedCompass || previewLoading) return;
+    positionedProfiles.forEach((candidate, position) => {
+      const impressionKey = `${savedAt ?? "initial"}:${candidate.id}`;
+      if (loggedPreviewImpressionsRef.current.has(impressionKey)) return;
+      loggedPreviewImpressionsRef.current.add(impressionKey);
+      logPreviewEvent(candidate.id, "impression", position);
+    });
+  }, [hasActivatedCompass, logPreviewEvent, positionedProfiles, previewLoading, savedAt]);
 
   useEffect(() => {
     if (!celebrating) return;
@@ -768,6 +714,7 @@ export default function RelationshipCompassScreen() {
 
   const openPreviewProfile = (profileId: string) => {
     Haptics.selectionAsync().catch(() => {});
+    logPreviewEvent(profileId, "profile_opened");
     router.push({ pathname: "/profile-view", params: { profileId } });
   };
 

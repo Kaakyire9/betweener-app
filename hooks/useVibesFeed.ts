@@ -3,7 +3,7 @@ import type { Match } from '@/types/match';
 import { getSupabaseNetEvents, supabase } from '@/lib/supabase';
 import { getProfileCardContext } from '@/lib/profile-interest';
 import { captureMessage } from '@/lib/telemetry/sentry';
-import { applyInboundInterestLift, buildLocationSearchText, isRecentlyActive, parseDistanceKm, rerankVibesSegment, type VibesSegment } from '@/lib/vibes/discovery-logic';
+import { buildLocationSearchText, isRecentlyActive, parseDistanceKm, rerankVibesSegment, type VibesSegment } from '@/lib/vibes/discovery-logic';
 import { getLocationAffinity, getLocationConnectionInsight } from '@/lib/location/location-intelligence';
 import { readVibesSnapshot, writeVibesSnapshot } from '@/lib/offline/vibes-store';
 import type { RelationshipCompass } from '@/lib/relationship-compass';
@@ -99,7 +99,7 @@ const buildLegacyRecommendationsCacheKey = (
 ) => {
   const mode = segment === 'activeNow' ? 'active' : segment === 'nearby' ? 'nearby' : 'forYou';
   const win = mode === 'active' ? String(activeWindowMinutes) : '-';
-  return `cache:ai_recs:v3:${profileId}:${mode}:${win}`;
+  return `cache:ai_recs:v5_3:${profileId}:${mode}:${win}`;
 };
 
 // Shared filter logic so the UI can show an accurate "preview count" while users tweak draft filters.
@@ -187,7 +187,10 @@ export function applyVibesFilters(
   }
 
   if (opts.preserveOrder) {
-    return applyInboundInterestLift(out);
+    // A server-ranked deck must remain stable after first paint. Async card
+    // context enrichment may decorate cards, but cannot replace the active
+    // profile or override Supabase's V5.3 order.
+    return out;
   }
 
   return rerankVibesSegment(out, segment, viewerInterests, momentUserIds, relationshipCompass, viewerProfile);
@@ -643,9 +646,9 @@ export default function useVibesFeed({
 
   const sourceMatches = useMemo(() => {
     if (matches.length > 0) return matches;
-    if (!hasFetchedOnce || lastError || watchdogError) return cachedMatches;
+    if (!liveFetchEnabled || lastError || watchdogError) return cachedMatches;
     return matches;
-  }, [cachedMatches, hasFetchedOnce, lastError, matches, watchdogError]);
+  }, [cachedMatches, lastError, liveFetchEnabled, matches, watchdogError]);
 
   const sourceProfileIdsSignature = useMemo(
     () => sourceMatches.map((match) => String(match.id)).filter(Boolean).sort().join(','),

@@ -40,6 +40,11 @@ import { applyDefaults as applyCompassDefaults, mapToDiscoveryFilters } from "@/
 import { supabase } from "@/lib/supabase";
 import { logVibesEvent, type VibesEventType } from "@/lib/vibes/events";
 import {
+  enqueueVibesExposureClose,
+  enqueueVibesExposureOpen,
+  type VibesExposureOutcome,
+} from '@/lib/vibes/telemetry-queue';
+import {
   clearPremiumVibesFilters,
   deriveActivePresetKey,
   deriveCompatibilityHint,
@@ -65,7 +70,7 @@ import VibesAllMomentsModal from "@/components/vibes/VibesAllMomentsModal";
 import FloatingMomentsCapsule from "@/components/vibes/moments/FloatingMomentsCapsule";
 import MomentsHeaderRow from "@/components/vibes/moments/MomentsHeaderRow";
 import useMomentsCapsuleMetrics from "@/components/vibes/moments/useMomentsCapsuleMetrics";
-import VibesPracticeWalkthrough, { type PracticeStep } from "@/components/vibes/VibesPracticeWalkthrough";
+import VibesPracticeWalkthrough, { type PracticeEvent, type PracticeStep } from "@/components/vibes/VibesPracticeWalkthrough";
 import DepthBackground from "@/components/vibes/depth/DepthBackground";
 import VibesActionDock from "@/components/vibes/depth/VibesActionDock";
 import useVibesResponsiveMetrics from "@/components/vibes/depth/useVibesResponsiveMetrics";
@@ -359,11 +364,13 @@ export default function ExploreScreen() {
     [distanceUnit]
   );
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [vibesScreenFocused, setVibesScreenFocused] = useState(false);
 
   const [videoModalUrl, setVideoModalUrl] = useState<string | null>(null);
   const [videoModalVisible, setVideoModalVisible] = useState(false);
   const [videoModalTitle, setVideoModalTitle] = useState<string | null>(null);
   const [videoModalSubtitle, setVideoModalSubtitle] = useState<string | null>(null);
+  const [videoModalProfileId, setVideoModalProfileId] = useState<string | null>(null);
   const [previewingId, setPreviewingId] = useState<string | null>(null);
   const [manualLocationModalVisible, setManualLocationModalVisible] = useState(false);
   const [manualLocation, setManualLocation] = useState((profile as any)?.city || profile?.location || "");
@@ -880,11 +887,7 @@ export default function ExploreScreen() {
           if (!mounted) return;
           if (stored === 'auto' || stored === 'km' || stored === 'mi') {
             setDistanceUnit((prev) => {
-              if (prev !== stored) {
-                queueRefreshMatches();
-                return stored;
-              }
-              return prev;
+              return prev !== stored ? stored : prev;
             });
           }
         } catch {}
@@ -897,25 +900,21 @@ export default function ExploreScreen() {
           refreshDebounceRef.current = null;
         }
       };
-    }, [queueRefreshMatches])
+    }, [])
   );
 
   useEffect(() => {
     const sub = DeviceEventEmitter.addListener(DISTANCE_UNIT_EVENT, (next: DistanceUnit) => {
       if (next === 'auto' || next === 'km' || next === 'mi') {
         setDistanceUnit((prev) => {
-          if (prev !== next) {
-            queueRefreshMatches();
-            return next;
-          }
-          return prev;
+          return prev !== next ? next : prev;
         });
       }
     });
     return () => {
       sub.remove();
     };
-  }, [queueRefreshMatches]);
+  }, []);
 
   const handleRefreshVibes = useCallback(() => {
     refreshMatches();
@@ -955,7 +954,12 @@ export default function ExploreScreen() {
   const stackRef = useRef<ExploreStackHandle | null>(null);
   const vibesActionHistoryRef = useRef<VibesActionHistoryEntry[]>([]);
   const seenVibesCardKeysRef = useRef<Set<string>>(new Set());
-  const activeCardDwellRef = useRef<{ profileId: string; startedAt: number } | null>(null);
+  const matchListRef = useRef(matchList);
+  const activeCardDwellRef = useRef<{
+    profileId: string;
+    startedAt: number;
+    recommendationId: string | null;
+  } | null>(null);
   const buttonScale = useRef(new Animated.Value(1)).current;
   const intentBadgePulse = useRef(new Animated.Value(0)).current;
   const floatingMomentsOpacity = useRef(new Animated.Value(0)).current;
@@ -964,6 +968,10 @@ export default function ExploreScreen() {
   const [renderFloatingMoments, setRenderFloatingMoments] = useState(false);
   const fallbackEntranceTranslate = useRef(new Animated.Value(12)).current;
   const fallbackEntranceOpacity = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    matchListRef.current = matchList;
+  }, [matchList]);
 
   useEffect(() => {
     Animated.parallel([
@@ -989,6 +997,10 @@ export default function ExploreScreen() {
       opts?: { position?: number | null; dwellMs?: number | null; metadata?: Record<string, unknown> },
     ) => {
       if (!profile?.id || !targetProfileId) return;
+      const target = matchListRef.current.find(
+        (match) => String(match.id) === String(targetProfileId),
+      ) as any;
+      const reasons = target?.recommendationReasons ?? {};
       void logVibesEvent({
         viewerProfileId: profile.id,
         targetProfileId: String(targetProfileId),
@@ -996,6 +1008,10 @@ export default function ExploreScreen() {
         eventType,
         position: opts?.position ?? null,
         dwellMs: opts?.dwellMs ?? null,
+        sessionId: typeof reasons.session_id === 'string' ? reasons.session_id : null,
+        requestId: typeof reasons.request_id === 'string' ? reasons.request_id : null,
+        recommendationId:
+          typeof reasons.recommendation_id === 'string' ? reasons.recommendation_id : null,
         metadata: opts?.metadata ?? {},
       });
     },
@@ -1010,9 +1026,39 @@ export default function ExploreScreen() {
     return Math.max(0, Date.now() - activeCard.startedAt);
   }, []);
 
+  const closeActiveVibesExposure = useCallback((outcome?: VibesExposureOutcome | null) => {
+    const activeCard = activeCardDwellRef.current;
+    if (!activeCard?.recommendationId) return;
+    void enqueueVibesExposureClose({
+      recommendationId: activeCard.recommendationId,
+      dwellMs: Math.max(0, Date.now() - activeCard.startedAt),
+      outcome: outcome ?? null,
+    });
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      setVibesScreenFocused(true);
+      return () => {
+        closeActiveVibesExposure(null);
+        activeCardDwellRef.current = null;
+        setVibesScreenFocused(false);
+      };
+    }, [closeActiveVibesExposure]),
+  );
+
+  const activeRecommendation = matchList[currentIndex] as any;
+  const activeRecommendationId =
+    typeof activeRecommendation?.recommendationReasons?.recommendation_id === 'string'
+      ? activeRecommendation.recommendationReasons.recommendation_id
+      : null;
+  const activeRecommendationKey = activeRecommendation?.id
+    ? `${String(activeRecommendation.id)}:${activeRecommendationId ?? 'legacy'}`
+    : null;
+
   useEffect(() => {
-    const current = matchList[currentIndex];
-    if (!current?.id) {
+    const current = matchListRef.current[currentIndex];
+    if (!vibesScreenFocused || !current?.id) {
       activeCardDwellRef.current = null;
       return;
     }
@@ -1020,11 +1066,14 @@ export default function ExploreScreen() {
     activeCardDwellRef.current = {
       profileId: String(current.id),
       startedAt: Date.now(),
+      recommendationId: activeRecommendationId,
     };
 
     if (!profile?.id || showPracticeWalkthrough) return;
 
-    const key = `${vibesSegment}:${String(current.id)}`;
+    void enqueueVibesExposureOpen(activeRecommendationId);
+
+    const key = activeRecommendationId ?? `${vibesSegment}:${String(current.id)}`;
     if (seenVibesCardKeysRef.current.has(key)) return;
     seenVibesCardKeysRef.current.add(key);
 
@@ -1037,7 +1086,24 @@ export default function ExploreScreen() {
         recommendation_version: (current as any).recommendationVersion ?? null,
       },
     });
-  }, [currentIndex, matchList, profile?.id, recordVibesEvent, showPracticeWalkthrough, vibesSegment]);
+
+    return () => {
+      const activeCard = activeCardDwellRef.current;
+      if (activeCard?.profileId !== String(current.id)) return;
+      closeActiveVibesExposure(null);
+      activeCardDwellRef.current = null;
+    };
+  }, [
+    activeRecommendationId,
+    activeRecommendationKey,
+    closeActiveVibesExposure,
+    currentIndex,
+    profile?.id,
+    recordVibesEvent,
+    showPracticeWalkthrough,
+    vibesScreenFocused,
+    vibesSegment,
+  ]);
 
   useEffect(() => {
     if (!intentQueueBadge) {
@@ -1530,9 +1596,12 @@ export default function ExploreScreen() {
           recommendation_version: (swipedProfile as any)?.recommendationVersion ?? null,
         },
       });
+      closeActiveVibesExposure(
+        action === 'dislike' ? 'pass' : action === 'superlike' ? 'signal' : 'like',
+      );
       recordSwipe(id, action, index);
     },
-    [currentIndex, getActiveCardDwellMs, matchList, pushVibesAction, recordSwipe, recordVibesEvent],
+    [closeActiveVibesExposure, currentIndex, getActiveCardDwellMs, matchList, pushVibesAction, recordSwipe, recordVibesEvent],
   );
 
   const cancelDirectIntentRequest = useCallback(async (entry: Extract<VibesActionHistoryEntry, { kind: 'intent' }>) => {
@@ -2261,7 +2330,23 @@ export default function ExploreScreen() {
     });
   }, [practiceComplete, practiceReplayVisible, practiceSnapshotOwnerId]);
 
+  const handlePracticeEvent = useCallback((event: PracticeEvent, step: PracticeStep, method?: 'gesture' | 'button') => {
+    logger.info('[vibes] practice_event', {
+      event,
+      step,
+      method: method ?? null,
+      replay: practiceReplayVisible,
+      version: VIBES_PRACTICE_VERSION,
+    });
+  }, [practiceReplayVisible]);
+
   const closePracticeWalkthrough = useCallback(() => {
+    logger.info('[vibes] practice_event', {
+      event: 'closed',
+      step: practiceStep,
+      replay: practiceReplayVisible,
+      version: VIBES_PRACTICE_VERSION,
+    });
     if (practiceReplayVisible || practiceComplete) {
       setPracticeReplayVisible(false);
       setPracticeDismissed(false);
@@ -2272,9 +2357,15 @@ export default function ExploreScreen() {
     setPracticeGestureLocked(false);
     setDeckGestureLocked(false);
     scrollVibesToTop();
-  }, [practiceComplete, practiceReplayVisible, scrollVibesToTop]);
+  }, [practiceComplete, practiceReplayVisible, practiceStep, scrollVibesToTop]);
 
   const openPracticeReplay = useCallback(() => {
+    logger.info('[vibes] practice_event', {
+      event: 'replay_opened',
+      step: practiceComplete ? 'intro' : practiceStep,
+      replay: practiceComplete,
+      version: VIBES_PRACTICE_VERSION,
+    });
     if (!practiceComplete) {
       setPracticeDismissed(false);
       setPracticeReplayVisible(false);
@@ -2289,7 +2380,7 @@ export default function ExploreScreen() {
     floatingMomentsTranslateY.setValue(-10);
     floatingMomentsScale.setValue(0.985);
     scrollVibesToTop();
-  }, [floatingMomentsOpacity, floatingMomentsScale, floatingMomentsTranslateY, practiceComplete, scrollVibesToTop]);
+  }, [floatingMomentsOpacity, floatingMomentsScale, floatingMomentsTranslateY, practiceComplete, practiceStep, scrollVibesToTop]);
 
   const handleVibesHeaderTabChange = useCallback((id: string) => {
     if (showPracticeWalkthrough) return;
@@ -2484,6 +2575,7 @@ export default function ExploreScreen() {
           position: currentIndex,
           dwellMs: getActiveCardDwellMs(id),
         });
+        closeActiveVibesExposure('profile_open');
       }
       // fetch optional fields on demand and merge into matches
       const updated = await fetchProfileDetails?.(id);
@@ -2491,10 +2583,15 @@ export default function ExploreScreen() {
       const sourceProfile = (updated as any) ?? m;
       const videoUrl = (sourceProfile && (sourceProfile as any).profileVideo) ? String((sourceProfile as any).profileVideo) : undefined;
       // navigate to the full profile preview screen; include videoUrl param if we have it so ProfileView can auto-play
-      const params: any = { profileId: String(id) };
+      const params: any = { profileId: String(id), source: 'vibes' };
       if (m) {
         try {
           const fallbackSource = sourceProfile ?? m;
+          const recommendationReasons = (m as any).recommendationReasons ?? {};
+          params.vibesSegment = vibesSegment;
+          params.vibesSessionId = recommendationReasons.session_id ?? undefined;
+          params.vibesRequestId = recommendationReasons.request_id ?? undefined;
+          params.vibesRecommendationId = recommendationReasons.recommendation_id ?? undefined;
           const compatPct = typeof (fallbackSource as any).compatibility === 'number' ? (fallbackSource as any).compatibility : 0;
           params.fallbackProfile = encodeURIComponent(JSON.stringify({
             id: fallbackSource.id,
@@ -2605,8 +2702,11 @@ export default function ExploreScreen() {
                 style={styles.headerRefreshButton}
                 onPress={openPracticeReplay}
                 activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel="Practice Vibes actions"
+                accessibilityHint="Opens the interactive Intent, Notice, Pass, and Undo walkthrough"
               >
-                <MaterialCommunityIcons name="star-four-points" size={16} color={theme.tint} />
+                <Text style={styles.headerPracticeText}>Practice</Text>
               </TouchableOpacity>
             </>
           ) : null}
@@ -2782,6 +2882,7 @@ export default function ExploreScreen() {
                 onGestureLockChange={setPracticeGestureLocked}
                 initialStep={practiceStep}
                 onStepChange={handlePracticeStepChange}
+                onPracticeEvent={handlePracticeEvent}
                 allowClose
                 onClose={closePracticeWalkthrough}
               />
@@ -2828,6 +2929,7 @@ export default function ExploreScreen() {
                         const age = typeof (display as any)?.age === 'number' ? (display as any).age : null;
                         setVideoModalTitle(display?.name ? `${display.name}${age ? `, ${age}` : ''}` : null);
                         setVideoModalSubtitle('Intro video');
+                        setVideoModalProfileId(String(id));
                         setVideoModalUrl(videoUrl);
                         setVideoModalVisible(true);
                         if (!cachedVideoUrl && videoSource && String(videoUrl).startsWith('http')) {
@@ -3770,6 +3872,7 @@ export default function ExploreScreen() {
                   position: intentTarget.deckIndex ?? currentIndex,
                   metadata: { request_id: requestId ?? null },
                 });
+                closeActiveVibesExposure('intent');
               }
               if (intentTarget?.deckIndex != null) {
                 pushVibesAction({
@@ -3799,6 +3902,7 @@ export default function ExploreScreen() {
                   position: signalTarget.deckIndex ?? currentIndex,
                   metadata: { signal_id: signalId },
                 });
+                closeActiveVibesExposure('signal');
               }
               if (signalTarget?.deckIndex != null) {
                 pushVibesAction({
@@ -3841,11 +3945,20 @@ export default function ExploreScreen() {
           videoUrl={videoModalUrl ?? undefined}
           title={videoModalTitle ?? undefined}
           subtitle={videoModalSubtitle ?? undefined}
+          onCompleted={() => {
+            if (!videoModalProfileId) return;
+            recordVibesEvent(videoModalProfileId, 'intro_completed', {
+              position: currentIndex,
+              dwellMs: getActiveCardDwellMs(videoModalProfileId),
+            });
+            closeActiveVibesExposure('intro_complete');
+          }}
           onClose={() => {
             setVideoModalVisible(false);
             setVideoModalUrl(null);
             setVideoModalTitle(null);
             setVideoModalSubtitle(null);
+            setVideoModalProfileId(null);
             setPreviewingId(null);
           }}
         />
@@ -4453,7 +4566,7 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
     headerBadge: {
       flexDirection: 'row',
       alignItems: 'center',
-      paddingHorizontal: 10,
+      paddingHorizontal: 12,
       paddingVertical: 6,
       borderRadius: 14,
       backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : '#f8fafc',
@@ -4776,7 +4889,6 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       alignSelf: 'flex-start',
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 6,
       paddingHorizontal: 10,
       paddingVertical: 6,
       borderRadius: 999,
@@ -5293,11 +5405,14 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       paddingHorizontal: 16,
     },
     headerRefreshButton: {
-      width: 40,
+      minWidth: 40,
       height: 40,
+      paddingHorizontal: 10,
       borderRadius: 13,
       borderWidth: 1,
       borderColor: outline,
+      flexDirection: 'row',
+      gap: 6,
       alignItems: 'center',
       justifyContent: 'center',
       backgroundColor: isDark ? 'rgba(255,255,255,0.055)' : 'rgba(248,250,252,0.96)',
@@ -5306,6 +5421,11 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       shadowOpacity: isDark ? 0.1 : 0.06,
       shadowRadius: 8,
       elevation: 4,
+    },
+    headerPracticeText: {
+      color: theme.tint,
+      fontFamily: 'Manrope_800ExtraBold',
+      fontSize: 11,
     },
   });
 }
