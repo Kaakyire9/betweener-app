@@ -22,7 +22,9 @@ import type {
   CirclePulseCommentReport,
   CirclePulseCommentReportAction,
   CirclePulseDiscussionReadState,
+  CirclePulseWelcomeEventType,
   CirclePulseWelcomeProfile,
+  CirclePulseWelcomeViewState,
 } from './circle-pulse-types';
 
 type CirclePulseRpcRow = {
@@ -156,6 +158,15 @@ type CirclePulseDiscussionReadStateRpcRow = {
   last_seen_comment_id?: string | null;
   last_seen_at?: string | null;
   unread_count?: number | null;
+};
+
+type CirclePulseWelcomeViewStateRpcRow = {
+  welcome_profile_id: string;
+  first_seen_at?: string | null;
+  last_seen_at?: string | null;
+  gallery_opened_at?: string | null;
+  profile_opened_at?: string | null;
+  welcome_started_at?: string | null;
 };
 
 const db = supabase as any;
@@ -476,6 +487,43 @@ export async function fetchCirclePulseItems(circleId: string) {
     }),
   );
   return await Promise.all(hydratedItems.map(cacheCirclePulseItemMedia));
+}
+
+export async function fetchCirclePulseWelcomeViewStates(
+  circleId: string,
+  viewerProfileId: string,
+): Promise<CirclePulseWelcomeViewState[]> {
+  const { data, error } = await db.rpc('rpc_get_circle_pulse_welcome_view_state', {
+    p_circle_id: circleId,
+    p_viewer_profile_id: viewerProfileId,
+  });
+  if (error) throw toServiceError(error, 'Circle welcome state could not load.');
+  return ((data ?? []) as CirclePulseWelcomeViewStateRpcRow[]).map((row) => ({
+    profileId: String(row.welcome_profile_id),
+    firstSeenAt: row.first_seen_at ?? null,
+    lastSeenAt: row.last_seen_at ?? null,
+    galleryOpenedAt: row.gallery_opened_at ?? null,
+    profileOpenedAt: row.profile_opened_at ?? null,
+    welcomeStartedAt: row.welcome_started_at ?? null,
+  }));
+}
+
+export async function recordCirclePulseWelcomeEvent(
+  circleId: string,
+  viewerProfileId: string,
+  welcomeProfileIds: string[],
+  eventType: CirclePulseWelcomeEventType,
+): Promise<number> {
+  const uniqueProfileIds = Array.from(new Set(welcomeProfileIds.filter(Boolean))).slice(0, 50);
+  if (uniqueProfileIds.length === 0) return 0;
+  const { data, error } = await db.rpc('rpc_record_circle_pulse_welcome_event', {
+    p_circle_id: circleId,
+    p_viewer_profile_id: viewerProfileId,
+    p_welcome_profile_ids: uniqueProfileIds,
+    p_event_type: eventType,
+  });
+  if (error) throw toServiceError(error, 'Circle welcome activity could not be recorded.');
+  return Number(data ?? 0);
 }
 
 export async function fetchCirclePulseItemSnapshot(itemId: string) {

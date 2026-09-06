@@ -37,6 +37,13 @@ test('Circle Live exposes empty, quorum, confirmed, live, and recap presentation
   assert.doesNotMatch(component, /declined|rejected|rejection/i);
 });
 
+test('every Circle Live entry carries an explicit return destination', () => {
+  assert.match(component, /createCircleLiveReturnParams\(circleId, 'live'\)/);
+  assert.match(circleScreen, /createCircleLiveReturnParams\(circleId, returnCircleTab\)/);
+  assert.match(circleScreen, /openCircleLiveEvent\(featuredCircleLive\.sessionId, 'overview'\)/);
+  assert.match(circleScreen, /openCircleLiveEvent\(gathering\.live_session_id, 'gatherings'\)/);
+});
+
 test('linked Pulse Gatherings use the Live quorum instead of duplicate attendance', () => {
   assert.match(circleScreen, /liveGatheringsById/);
   assert.match(pulseBoard, /Upcoming Circle Live/);

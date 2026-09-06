@@ -6,11 +6,12 @@ const migration = readFileSync('supabase/migrations/20260830160000_circle_dating
 const circleScreen = readFileSync('app/circles/[id].tsx', 'utf8');
 const circlesHome = readFileSync('app/(tabs)/explore.tsx', 'utf8');
 const datingPanel = readFileSync('features/circles/components/CircleDatingPanel.tsx', 'utf8');
+const discoveryIntroduction = readFileSync('features/circles/components/CircleDiscoveryIntroduction.tsx', 'utf8');
 const datingHook = readFileSync('features/circles/hooks/use-circle-dating.ts', 'utf8');
 const homeCards = readFileSync('components/circles/CirclesHomeCards.tsx', 'utf8');
 
 test('Circle detail presents the three-destination mental model', () => {
-  assert.match(circleScreen, /\['circle', 'Circle'\]/);
+  assert.match(circleScreen, /\['circle', 'Overview'\]/);
   assert.match(circleScreen, /\['discover', 'Discover'\]/);
   assert.match(circleScreen, /\['live', 'Live'\]/);
   assert.doesNotMatch(circleScreen, /\['connections', 'Connections'\]/);
@@ -20,12 +21,17 @@ test('Circle detail presents the three-destination mental model', () => {
   assert.match(circleScreen, /value === 'community'[\s\S]*value === 'members'[\s\S]*return 'circle'/);
 });
 
-test('Circle home uses editorial previews instead of permanent community tabs', () => {
+test('Circle overview promotes one priority experience before compact supporting paths', () => {
   assert.match(circleScreen, /circleSection === 'home'/);
+  assert.match(circleScreen, /featuredCircleLive \? \(/);
+  assert.match(circleScreen, /<CircleNowSpotlight/);
+  assert.match(circleScreen, /<CircleOverviewTile/);
+  assert.match(circleScreen, /\? 'Happening now'/);
+  assert.match(circleScreen, /: 'Up next'/);
+  assert.match(circleScreen, /isGenericCircleEditorialTitle/);
   assert.match(circleScreen, /PROMPT OF THE WEEK/);
-  assert.match(circleScreen, />UPCOMING</);
-  assert.match(circleScreen, />MOMENTS</);
-  assert.match(circleScreen, />PEOPLE</);
+  assert.match(circleScreen, /<CircleMomentsRibbon/);
+  assert.match(circleScreen, /<CirclePeopleRibbon/);
   assert.doesNotMatch(circleScreen, /\['pulse', 'Pulse'\]/);
   assert.doesNotMatch(circleScreen, /styles\.communityTabs/);
 });
@@ -50,8 +56,22 @@ test('candidate discovery is Circle-scoped and server-authoritative', () => {
   assert.match(datingHook, /rpc_get_circle_dating_candidates/);
 });
 
+test('Circle discovery presents a branded shared-context introduction', () => {
+  assert.match(datingPanel, /<CircleDiscoveryIntroduction/);
+  assert.match(discoveryIntroduction, /A CIRCLE INTRODUCTION/);
+  assert.match(discoveryIntroduction, /WHY THIS INTRODUCTION/);
+  assert.match(discoveryIntroduction, /AN OPENING THREAD/);
+  assert.match(discoveryIntroduction, /<VerificationBadge/);
+  assert.match(discoveryIntroduction, /variant="betweener"/);
+  assert.match(discoveryIntroduction, /surface="explore"/);
+  assert.match(discoveryIntroduction, /INTRODUCTION\\nTODAY/);
+  assert.match(discoveryIntroduction, /profileNameRow/);
+  assert.doesNotMatch(discoveryIntroduction, /portalTopRow|circlePill/);
+  assert.doesNotMatch(datingPanel, /check-decagram/);
+});
+
 test('Circle dating reuses intents, matches, chats and preserves match origin', () => {
-  assert.match(datingPanel, />Intent</);
+  assert.match(discoveryIntroduction, />Send Intent</);
   assert.match(circleScreen, /onSendIntent={handleMemberConnection}/);
   assert.match(circleScreen, /onOpenChat={openMatchedMemberChat}/);
   assert.match(migration, /create table if not exists public\.match_origins/i);
@@ -82,21 +102,24 @@ test('Circle owners and stewards reach management from the overflow', () => {
 });
 
 test('ordinary members regain a read-only People experience', () => {
-  const publicMemberRenderer = circleScreen.slice(
-    circleScreen.indexOf('const renderCommunityMember'),
-    circleScreen.indexOf('const renderLeader'),
+  const membersSectionStart = circleScreen.indexOf("circleSection === 'members'");
+  const portraitDirectoryRenderer = circleScreen.slice(
+    membersSectionStart,
+    circleScreen.indexOf("activeTab === 'manage'", membersSectionStart),
   );
   assert.match(circleScreen, /circleSection === 'members'/);
-  assert.match(circleScreen, /People you share this Circle with/);
+  assert.match(circleScreen, /People in this Circle/);
   assert.match(circleScreen, /context: 'circle-community'/);
-  assert.match(publicMemberRenderer, /openProfile\(member\.id\)/);
-  assert.doesNotMatch(publicMemberRenderer, /handleMemberConnection|openMemberManager|Roles/);
+  assert.match(portraitDirectoryRenderer, /<CircleMembersPortraitDirectory/);
+  assert.match(portraitDirectoryRenderer, /onOpenProfile=\{openProfile\}/);
+  assert.match(portraitDirectoryRenderer, /onOpenConversation=\{openMemberConversation\}/);
+  assert.match(portraitDirectoryRenderer, /onManageMember=\{canManageRoles \|\| canRemoveMembers/);
 });
 
 test('Circle navigation fits compact widths without horizontal scrolling', () => {
   assert.match(circleScreen, /<View style={styles\.tabRow} accessibilityRole="tablist">/);
   assert.match(circleScreen, /tabButton: \{[\s\S]*flex: 1,[\s\S]*minHeight: 44/);
-  assert.match(circleScreen, /accessibilityLabel="Open Circle home"|Open Circle home/);
+  assert.match(circleScreen, /accessibilityLabel="Open Circle overview"|Open Circle overview/);
   assert.match(circleScreen, /Discover people in this Circle/);
   assert.match(circleScreen, /Open Circle Live/);
 });

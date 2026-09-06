@@ -6,7 +6,8 @@
         "appID": "A964DV394M.com.aduboffour.betweener",
         "paths": [
           "/auth/callback*",
-          "/auth/*"
+          "/auth/*",
+          "/circles/*"
         ]
       }
     ]

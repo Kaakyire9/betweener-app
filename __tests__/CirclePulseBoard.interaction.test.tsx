@@ -1,10 +1,23 @@
 // @ts-nocheck
 import React from 'react';
-import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { fireEvent, render } from '@testing-library/react-native';
 import CirclePulseBoard from '@/components/circles/CirclePulseBoard';
 
 jest.mock('@/lib/responsive', () => ({
   useResponsiveMetrics: () => ({ compactWidth: false, compactHeight: false }),
+}));
+
+jest.mock('expo-haptics', () => ({
+  selectionAsync: jest.fn().mockResolvedValue(undefined),
+}));
+
+const mockRecordWelcomeEvent = jest.fn().mockResolvedValue(undefined);
+
+jest.mock('@/lib/circles/pulse/use-circle-pulse-welcome-state', () => ({
+  useCirclePulseWelcomeState: () => ({
+    seenProfileIds: new Set(),
+    recordEvent: mockRecordWelcomeEvent,
+  }),
 }));
 
 jest.mock('expo-image', () => ({
@@ -20,25 +33,6 @@ jest.mock('expo-linear-gradient', () => {
   const { View } = require('react-native');
   return {
     LinearGradient: ({ children, ...props }: any) => React.createElement(View, props, children),
-  };
-});
-
-const mockInlinePlayer = {
-  loop: false,
-  muted: false,
-  play: jest.fn(),
-  pause: jest.fn(),
-};
-
-jest.mock('expo-video', () => {
-  const React = require('react');
-  const { View } = require('react-native');
-  return {
-    VideoView: (props: any) => React.createElement(View, props),
-    useVideoPlayer: (_uri: string, setup: (player: any) => void) => {
-      setup(mockInlinePlayer);
-      return mockInlinePlayer;
-    },
   };
 });
 
@@ -212,9 +206,8 @@ describe('CirclePulseBoard', () => {
 
     expect(getByText('Akosua, 28')).toBeTruthy();
     expect(getAllByText('Love Seat')).toHaveLength(1);
-    expect(getByText('Seats')).toBeTruthy();
-    await fireEvent.press(getByText('View profile'));
-    await fireEvent.press(getByText('Ask a question'));
+    await fireEvent.press(getByText('Meet Akosua'));
+    await fireEvent.press(getByText('Start conversation'));
     await fireEvent.press(getByText('Send Signal'));
 
     expect(onOpenFeaturedProfile).toHaveBeenCalledWith('profile-2');
@@ -224,7 +217,7 @@ describe('CirclePulseBoard', () => {
 
   it('lets the featured member leave their Love Seat', async () => {
     const onEndLoveSeat = jest.fn();
-    const { getByText } = await render(
+    const { getByLabelText } = await render(
       <CirclePulseBoard
         items={[loveSeatItem]}
         isMember
@@ -234,7 +227,7 @@ describe('CirclePulseBoard', () => {
       />,
     );
 
-    await fireEvent.press(getByText('Leave Love Seat'));
+    await fireEvent.press(getByLabelText('Leave Love Seat options'));
 
     expect(onEndLoveSeat).toHaveBeenCalledWith(loveSeatItem);
   });
@@ -253,9 +246,7 @@ describe('CirclePulseBoard', () => {
     );
 
     expect(getByText('Video Moment')).toBeTruthy();
-    expect(getByLabelText('Circle video preview')).toBeTruthy();
-    expect(mockInlinePlayer.loop).toBe(true);
-    expect(mockInlinePlayer.muted).toBe(true);
+    expect(getByLabelText('Open Circle media')).toBeTruthy();
     await fireEvent.press(getByText('Watch moment'));
     await fireEvent.press(getByLabelText('Open media discussion'));
 
@@ -311,7 +302,7 @@ describe('CirclePulseBoard', () => {
     expect(onOpenMedia).toHaveBeenCalledWith(editorialItem);
   });
 
-  it('pages between separate Circle image and video spotlights with premium position dashes', async () => {
+  it('shows separate Circle media spotlights in one vertical journal', async () => {
     const imageItem = {
       ...mediaItem,
       id: 'pulse-image',
@@ -329,20 +320,18 @@ describe('CirclePulseBoard', () => {
       mediaType: 'video',
       momentId: null,
     };
-    const { getByLabelText, getByText } = await render(
+    const { getByText, queryByLabelText } = await render(
       <CirclePulseBoard items={[imageItem, videoItem]} isMember canManage={false} />,
     );
 
     expect(getByText('Gathering image')).toBeTruthy();
-    expect(getByLabelText('Show Circle Media spotlight 1').props.accessibilityState.selected).toBe(true);
-    await fireEvent.press(getByLabelText('Next Circle spotlight'));
-
-    await waitFor(() => expect(getByText('First date guide')).toBeTruthy());
-    expect(getByLabelText('Show Circle Media spotlight 2').props.accessibilityState.selected).toBe(true);
+    expect(getByText('First date guide')).toBeTruthy();
+    expect(getByText('Moments worth opening')).toBeTruthy();
+    expect(queryByLabelText('Next Circle spotlight')).toBeNull();
   });
 
-  it('keeps Welcome as one main spotlight while paging members inside it', async () => {
-    const { getByText, queryByText, getByLabelText } = await render(
+  it('keeps Welcome in its own constellation while other Pulse sections stay visible', async () => {
+    const { getByText, getByLabelText, queryByLabelText } = await render(
       <CirclePulseBoard
         items={[promptItem, ...welcomeSeatItems.slice(0, 2), loveSeatItem]}
         isMember
@@ -351,28 +340,36 @@ describe('CirclePulseBoard', () => {
     );
 
     expect(getByText('First-date energy')).toBeTruthy();
-    await fireEvent.press(getByLabelText('Next Circle spotlight'));
-
-    await waitFor(() => expect(getByText('Jennifer Doe')).toBeTruthy());
-    expect(queryByText('Ama Mensah')).toBeNull();
-    await fireEvent.press(getByLabelText('Next Circle spotlight'));
-
-    await waitFor(() => expect(getByText('Akosua, 28')).toBeTruthy());
+    expect(getByText('Welcome constellation')).toBeTruthy();
+    expect(getByLabelText('View Jennifer Doe profile')).toBeTruthy();
+    expect(getByLabelText('View Ama Mensah profile')).toBeTruthy();
+    expect(getByText('Akosua, 28')).toBeTruthy();
+    expect(queryByLabelText('Next new member')).toBeNull();
   });
 
-  it('pages new members inside the Welcome Seat and opens a targeted discussion', async () => {
+  it('opens every new member in one gallery and targets the selected welcome discussion', async () => {
     const onOpenComments = jest.fn();
     const { getByLabelText, getByText } = await render(
-      <CirclePulseBoard items={welcomeSeatItems} isMember canManage={false} onOpenComments={onOpenComments} />,
+      <CirclePulseBoard
+        items={welcomeSeatItems}
+        isMember
+        canManage={false}
+        welcomeProfileLocationsById={{
+          'profile-3': 'London 🇬🇧',
+          'profile-4': 'Accra 🇬🇭',
+        }}
+        onOpenComments={onOpenComments}
+      />,
     );
 
+    expect(getByText('4 new to you')).toBeTruthy();
+    await fireEvent.press(getByLabelText('Meet all 4 new members'));
     expect(getByText('Jennifer Doe')).toBeTruthy();
-    expect(getByText('New')).toBeTruthy();
-    expect(getByText('1 of 4')).toBeTruthy();
-    await fireEvent.press(getByLabelText('Next new member'));
+    expect(getByText('Ama Mensah')).toBeTruthy();
+    expect(getByText('London 🇬🇧')).toBeTruthy();
+    expect(getByText('Accra 🇬🇭')).toBeTruthy();
     await fireEvent.press(getByText('Welcome Ama'));
 
-    expect(getByText('Ama Mensah')).toBeTruthy();
     expect(onOpenComments).toHaveBeenCalledWith(expect.objectContaining({
       id: 'pulse-welcome-profile-4',
       welcomeProfiles: expect.arrayContaining([
@@ -382,8 +379,7 @@ describe('CirclePulseBoard', () => {
     expect(onOpenComments.mock.calls[0][0].welcomeProfiles[0].profileId).toBe('profile-4');
   });
 
-  it('automatically advances the Pulse carousel', async () => {
-    jest.useFakeTimers();
+  it('keeps priority and supporting content stable without auto-advance controls', async () => {
     const gatheringItem = {
       ...promptItem,
       id: 'pulse-gathering',
@@ -392,17 +388,13 @@ describe('CirclePulseBoard', () => {
       promptId: null,
       gatheringId: 'gathering-1',
     };
-    const { getByText, unmount } = await render(
+    const { getByText, queryByLabelText } = await render(
       <CirclePulseBoard items={[promptItem, gatheringItem]} isMember canManage={false} />,
     );
 
     expect(getByText('First-date energy')).toBeTruthy();
-    await act(() => {
-      jest.advanceTimersByTime(8000);
-    });
-
     expect(getByText('Sunday gathering')).toBeTruthy();
-    await unmount();
-    jest.useRealTimers();
+    expect(queryByLabelText('Next Circle spotlight')).toBeNull();
+    expect(queryByLabelText('Previous Circle spotlight')).toBeNull();
   });
 });

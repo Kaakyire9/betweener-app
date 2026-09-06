@@ -53,6 +53,21 @@ export type CirclePulseWelcomeProfile = {
   joinedAt: string;
 };
 
+export type CirclePulseWelcomeEventType =
+  | 'impression'
+  | 'gallery_opened'
+  | 'profile_opened'
+  | 'welcome_started';
+
+export type CirclePulseWelcomeViewState = {
+  profileId: string;
+  firstSeenAt: string | null;
+  lastSeenAt: string | null;
+  galleryOpenedAt: string | null;
+  profileOpenedAt: string | null;
+  welcomeStartedAt: string | null;
+};
+
 export type CirclePulseFeatureInput =
   | { type: 'prompt'; promptId: string; priority?: number }
   | { type: 'gathering'; gatheringId: string; priority?: number }

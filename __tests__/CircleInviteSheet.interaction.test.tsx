@@ -51,6 +51,7 @@ describe('CircleInviteSheet', () => {
       {
         profileId: 'profile-jennifer',
         fullName: 'Jennifer',
+        username: 'jennifer',
         avatarUrl: null,
         age: 35,
         location: 'London',
@@ -72,7 +73,10 @@ describe('CircleInviteSheet', () => {
       />,
     );
 
-    await waitFor(() => expect(getByText('Jennifer, 35')).toBeTruthy());
+    await waitFor(() => {
+      expect(getByText('Jennifer, 35')).toBeTruthy();
+      expect(getByText(/@jennifer/)).toBeTruthy();
+    });
     await fireEvent.press(getByLabelText('Invite Jennifer'));
 
     await waitFor(() => {
@@ -94,11 +98,20 @@ describe('CircleInviteSheet', () => {
     );
 
     expect(shareSpy).not.toHaveBeenCalled();
-    await fireEvent.press(getByText('Share an external invite'));
+    await fireEvent.press(getByText('Invite outside Betweener'));
 
-    await waitFor(() => expect(shareSpy).toHaveBeenCalledWith({
-      message: expect.stringContaining('betweenerapp://circles/circle-1'),
-    }));
+    await waitFor(() => expect(shareSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Join Betweener Circles on Betweener',
+        message: expect.stringMatching(
+          /betweenerapp:\/\/circles\/circle-1[\s\S]*apps\.apple\.com\/gb\/app\/betweener\/id6753134347[\s\S]*play\.google\.com\/store\/apps\/details\?id=com\.aduboffour\.betweener&pcampaignid=web_share/,
+        ),
+      }),
+      expect.objectContaining({
+        subject: 'Join Betweener Circles on Betweener',
+        dialogTitle: 'Join Betweener Circles on Betweener',
+      }),
+    ));
     shareSpy.mockRestore();
   });
 });

@@ -9,6 +9,7 @@ let mockParams: Record<string, any> = { id: 'circle-1' };
 let mockProfile: any = { id: 'profile-me', city: 'London' };
 let mockUser: any = { id: 'user-me' };
 let mockPulseItems: any[] = [];
+let mockCircleLiveSnapshot: any = null;
 let mockFocusEffectCallbacks: (() => void | (() => void))[] = [];
 const mockPush = jest.fn();
 const mockReplace = jest.fn();
@@ -190,11 +191,13 @@ jest.mock('@/lib/circles/pulse/use-circle-pulse', () => ({
 jest.mock('@/lib/circles/pulse/circle-pulse-service', () => ({
   endCircleLoveSeat: jest.fn(),
   fetchCirclePulseDiscussionReadStates: jest.fn(async () => []),
+  fetchCirclePulseWelcomeViewStates: jest.fn(async () => []),
+  recordCirclePulseWelcomeEvent: jest.fn(async () => 0),
 }));
 
 jest.mock('@/features/live/hooks/use-circle-live', () => ({
   useCircleLive: () => ({
-    snapshot: null,
+    snapshot: mockCircleLiveSnapshot,
     loading: false,
     error: null,
     refresh: jest.fn(async () => undefined),
@@ -278,6 +281,7 @@ describe('Circle detail role requests and role controls', () => {
     mockProfile = { id: 'profile-me', city: 'London' };
     mockUser = { id: 'user-me' };
     mockPulseItems = [];
+    mockCircleLiveSnapshot = null;
     mockFocusEffectCallbacks = [];
     mockPush.mockReset();
     mockReplace.mockReset();
@@ -308,6 +312,107 @@ describe('Circle detail role requests and role controls', () => {
 
   afterEach(() => {
     alertSpy.mockRestore();
+  });
+
+  it('promotes an active Circle Live above other overview content', async () => {
+    dataset.circle_members = [
+      {
+        id: 'membership-me',
+        circle_id: 'circle-1',
+        role: 'member',
+        status: 'active',
+        is_visible: true,
+        profile_id: 'profile-me',
+        user_id: 'user-me',
+        profiles: { id: 'profile-me', full_name: 'Ada', age: 29, avatar_url: null },
+      },
+    ];
+    dataset.gatherings = [{
+      id: 'gathering-1',
+      circle_id: 'circle-1',
+      status: 'approved',
+      title: 'Garden gathering',
+      description: 'Meet in person.',
+      starts_at: '2026-09-06T18:00:00.000Z',
+      attendee_count: 4,
+    }];
+    mockCircleLiveSnapshot = {
+      circleId: 'circle-1',
+      canSchedule: false,
+      serverNow: '2026-09-05T18:00:00.000Z',
+      sessions: [{
+        sessionId: 'live-1',
+        gatheringId: null,
+        title: 'Live focus',
+        description: 'The Circle is together now.',
+        status: 'live',
+        scheduledStart: '2026-09-05T18:00:00.000Z',
+        endedAt: null,
+        posterPath: null,
+        attendanceCount: 7,
+        minimumAttendance: 4,
+        quorumStatus: 'confirmed',
+        matchesMadeCount: 0,
+        totalAttendeeCount: 7,
+        viewerRsvpStatus: 'going',
+        isHost: false,
+      }],
+    };
+
+    const { getByLabelText, getByText } = await renderFocusedScreen();
+
+    await waitFor(() => expect(getByText('Live focus')).toBeTruthy());
+    expect(getByText('Enter Live')).toBeTruthy();
+    expect(getByText('Overview')).toBeTruthy();
+    expect(getByText('Happening now')).toBeTruthy();
+
+    await fireEvent.press(getByLabelText('Open Live focus'));
+    expect(mockPush).toHaveBeenCalledWith({
+      pathname: '/live/event/[sessionId]',
+      params: {
+        sessionId: 'live-1',
+        returnCircleId: 'circle-1',
+        returnCircleTab: 'overview',
+      },
+    });
+  });
+
+  it('uses truthful future-event copy and replaces generic editorial titles', async () => {
+    dataset.circle_members = [
+      {
+        id: 'membership-me',
+        circle_id: 'circle-1',
+        role: 'member',
+        status: 'active',
+        is_visible: true,
+        profile_id: 'profile-me',
+        user_id: 'user-me',
+        profiles: { id: 'profile-me', full_name: 'Ada', age: 29, avatar_url: null },
+      },
+    ];
+    dataset.gatherings = [{
+      id: 'gathering-1',
+      circle_id: 'circle-1',
+      status: 'approved',
+      title: 'Garden gathering',
+      description: 'Meet in person.',
+      starts_at: '2099-09-15T18:00:00.000Z',
+      attendee_count: 4,
+    }];
+    dataset.circle_prompts = [{
+      id: 'prompt-1',
+      circle_id: 'circle-1',
+      status: 'published',
+      title: 'Circles',
+      prompt: 'What makes a first meeting feel intentional?',
+      prompt_type: 'weekly',
+    }];
+
+    const { getByText, queryByText } = await renderFocusedScreen();
+
+    await waitFor(() => expect(getByText('Up next')).toBeTruthy());
+    expect(getByText('What makes a first meeting feel intentional?')).toBeTruthy();
+    expect(queryByText('Circles')).toBeNull();
   });
 
   it('lets a member withdraw a pending moderator request', async () => {
@@ -793,12 +898,12 @@ describe('Circle detail role requests and role controls', () => {
       },
     ];
 
-    const { getAllByLabelText, getByText } = await renderFocusedScreen();
+    const { getByLabelText, getByText } = await renderFocusedScreen();
 
     await waitFor(() => expect(getByText('Watch moment')).toBeTruthy());
-    await waitFor(() => expect(getAllByLabelText('Open Circle media').length).toBeGreaterThan(1));
+    await waitFor(() => expect(getByLabelText('Open Circle media')).toBeTruthy());
 
-    await fireEvent.press(getAllByLabelText('Open Circle media')[1]);
+    await fireEvent.press(getByLabelText('Open Circle media'));
 
     await waitFor(() => {
       expect(mockPush).toHaveBeenCalledWith({

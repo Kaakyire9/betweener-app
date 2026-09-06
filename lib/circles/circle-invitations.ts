@@ -5,6 +5,7 @@ const db = supabase as any;
 export type CircleInviteCandidate = {
   profileId: string;
   fullName: string;
+  username: string | null;
   avatarUrl: string | null;
   age: number | null;
   location: string | null;
@@ -54,7 +55,7 @@ export async function searchCircleInviteCandidates({
   minAge,
   maxAge,
 }: SearchCircleInviteCandidatesInput): Promise<CircleInviteCandidate[]> {
-  const { data, error } = await db.rpc('rpc_search_circle_invite_candidates', {
+  const params = {
     p_circle_id: circleId,
     p_actor_profile_id: actorProfileId,
     p_search: search?.trim() || null,
@@ -63,12 +64,25 @@ export async function searchCircleInviteCandidates({
     p_min_age: minAge ?? null,
     p_max_age: maxAge ?? null,
     p_limit: 24,
-  });
+  };
+
+  let { data, error } = await db.rpc('rpc_search_circle_invite_candidates_v2', params);
+  const v2Unavailable =
+    error?.code === 'PGRST202' ||
+    error?.code === '42883' ||
+    /rpc_search_circle_invite_candidates_v2.*(schema cache|does not exist)/i.test(error?.message || '');
+
+  if (v2Unavailable) {
+    ({ data, error } = await db.rpc('rpc_search_circle_invite_candidates', params));
+  }
   if (error) throw new Error(error.message || 'Could not search for Circle members.');
 
   return (data ?? []).map((row: any) => ({
     profileId: String(row.profile_id),
     fullName: String(row.full_name || 'Betweener member'),
+    username: typeof row.username === 'string'
+      ? row.username.trim().replace(/^@+/, '') || null
+      : null,
     avatarUrl: row.avatar_url ?? null,
     age: typeof row.age === 'number' ? row.age : null,
     location: row.location ?? null,

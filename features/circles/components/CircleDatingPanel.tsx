@@ -4,6 +4,7 @@ import { normalizeProfilePhotoUri } from '@/lib/profile/media';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Image, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useCircleDating, type CircleDatingConnection } from '../hooks/use-circle-dating';
+import { CircleDiscoveryIntroduction } from './CircleDiscoveryIntroduction';
 
 type Props = {
   circleId: string;
@@ -187,8 +188,6 @@ export function CircleDatingPanel({
     );
   }
 
-  const uri = normalizeProfilePhotoUri(candidate.avatarUrl);
-  const location = [candidate.city, candidate.country].filter(Boolean).join(', ');
   return (
     <View style={styles.section}>
       <View style={styles.discoveryControls}>
@@ -201,48 +200,20 @@ export function CircleDatingPanel({
         </TouchableOpacity>
       </View>
 
-      <View style={styles.profileCard}>
-        {uri ? (
-          <Image source={{ uri }} style={styles.profileImage} accessibilityLabel={`${candidate.fullName}'s profile photo`} />
-        ) : (
-          <View style={styles.profileImageFallback}>
-            <MaterialCommunityIcons name="account-outline" size={68} color={theme.textMuted} />
-          </View>
-        )}
-        <View style={styles.profileBody}>
-          <View style={styles.profileNameRow}>
-            <Text style={styles.profileName} numberOfLines={1}>
-              {candidate.fullName}{candidate.age ? `, ${candidate.age}` : ''}
-            </Text>
-            {candidate.verificationLevel > 0 ? <MaterialCommunityIcons name="check-decagram" size={20} color={theme.tint} /> : null}
-          </View>
-          {location ? <Text style={styles.profileMeta}>{location}</Text> : null}
-          {candidate.lookingFor ? <Text style={styles.profileIntent}>{candidate.lookingFor}</Text> : null}
-          <View style={styles.reasonRow}>
-            {candidate.reasons.map((reason) => <Text key={reason} style={styles.reasonChip}>{reason}</Text>)}
-          </View>
-        </View>
-      </View>
-
-      <View style={styles.actions}>
-        <TouchableOpacity accessibilityLabel={`Pass ${candidate.fullName}`} style={styles.passButton} onPress={() => void dating.passCandidate(candidate.profileId)}>
-          <MaterialCommunityIcons name="close" size={23} color={theme.textMuted} />
-          <Text style={styles.passText}>Pass</Text>
-        </TouchableOpacity>
-        <TouchableOpacity accessibilityLabel={`View ${candidate.fullName} profile`} style={styles.viewButton} onPress={() => {
+      <CircleDiscoveryIntroduction
+        candidate={candidate}
+        circleName={circleName}
+        remainingCount={dating.candidates.length}
+        onPass={() => void dating.passCandidate(candidate.profileId)}
+        onOpenProfile={() => {
           void dating.logEvent('profile_opened', candidate.profileId);
           onOpenProfile(candidate.profileId);
-        }}>
-          <Text style={styles.viewText}>View profile</Text>
-        </TouchableOpacity>
-        <TouchableOpacity accessibilityLabel={`Send Intent to ${candidate.fullName}`} style={styles.intentButton} onPress={() => {
+        }}
+        onSendIntent={() => {
           void dating.logEvent('intent_opened', candidate.profileId);
           onSendIntent(candidate.profileId, candidate.fullName);
-        }}>
-          <MaterialCommunityIcons name="heart-plus-outline" size={20} color={theme.backgroundSubtle} />
-          <Text style={styles.intentText}>Intent</Text>
-        </TouchableOpacity>
-      </View>
+        }}
+      />
       {dating.error ? <Text style={styles.errorText}>{dating.error}</Text> : null}
     </View>
   );
@@ -277,23 +248,6 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) => StyleSheet
   discoveryPrivacy: { marginTop: 4, color: theme.textMuted, fontSize: 12 },
   pauseButton: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
   pauseText: { color: theme.textMuted, fontWeight: '700', padding: 8 },
-  profileCard: { overflow: 'hidden', borderRadius: 28, borderWidth: 1, borderColor: theme.outline, backgroundColor: theme.backgroundSubtle },
-  profileImage: { width: '100%', height: 360, backgroundColor: theme.background },
-  profileImageFallback: { width: '100%', height: 300, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.background },
-  profileBody: { gap: 7, padding: 18 },
-  profileNameRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
-  profileName: { flexShrink: 1, color: theme.text, fontFamily: 'PlayfairDisplay_700Bold', fontSize: 28 },
-  profileMeta: { color: theme.textMuted, fontSize: 14 },
-  profileIntent: { color: theme.text, fontSize: 14, fontWeight: '600' },
-  reasonRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginTop: 5 },
-  reasonChip: { overflow: 'hidden', color: theme.tint, fontSize: 12, fontWeight: '700', borderRadius: 999, borderWidth: 1, borderColor: theme.outline, paddingHorizontal: 10, paddingVertical: 6 },
-  actions: { flexDirection: 'row', alignItems: 'center', gap: 9 },
-  passButton: { minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, borderRadius: 24, borderWidth: 1, borderColor: theme.outline, paddingHorizontal: 13 },
-  passText: { color: theme.textMuted, fontWeight: '700' },
-  viewButton: { minHeight: 48, flex: 1, alignItems: 'center', justifyContent: 'center', borderRadius: 24, borderWidth: 1, borderColor: theme.outline, paddingHorizontal: 12 },
-  viewText: { color: theme.text, fontWeight: '700', fontSize: 13 },
-  intentButton: { minHeight: 48, flex: 1.25, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, borderRadius: 24, backgroundColor: theme.tint, paddingHorizontal: 12 },
-  intentText: { color: theme.backgroundSubtle, fontWeight: '800', fontSize: 13 },
   connectionCard: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 13, borderRadius: 20, borderWidth: 1, borderColor: theme.outline, backgroundColor: theme.backgroundSubtle },
   connectionAvatar: { width: 54, height: 54, borderRadius: 27 },
   connectionAvatarFallback: { width: 54, height: 54, borderRadius: 27, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.background },

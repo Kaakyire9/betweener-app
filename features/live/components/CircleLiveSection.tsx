@@ -4,6 +4,7 @@ import { CalendarClock, CheckCircle2, Radio, Sparkles, UsersRound } from 'lucide
 import { memo } from 'react';
 import { ActivityIndicator, ImageBackground, Pressable, StyleSheet, Text, View } from 'react-native';
 import { getLiveEventMediaUrl, type CircleLiveCard, type CircleLiveSnapshot } from '../application/index.ts';
+import { createCircleLiveReturnParams } from '../navigation/live-navigation.ts';
 
 type Props = {
   circleId: string;
@@ -43,7 +44,7 @@ const stateCopy = (session: CircleLiveCard) => {
   return { eyebrow: 'ALMOST READY', title: 'A few more people make it viable', icon: UsersRound };
 };
 
-const CircleLiveCardView = ({ session }: { session: CircleLiveCard }) => {
+const CircleLiveCardView = ({ circleId, session }: { circleId: string; session: CircleLiveCard }) => {
   const state = cardState(session);
   const copy = stateCopy(session);
   const Icon = copy.icon;
@@ -79,7 +80,13 @@ const CircleLiveCardView = ({ session }: { session: CircleLiveCard }) => {
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={`Open ${session.title}`}
-      onPress={() => router.push(`/live/event/${session.sessionId}`)}
+      onPress={() => router.push({
+        pathname: '/live/event/[sessionId]',
+        params: {
+          sessionId: session.sessionId,
+          ...createCircleLiveReturnParams(circleId, 'live'),
+        },
+      })}
       style={({ pressed }) => [styles.cardShell, pressed && styles.pressed]}
     >
       {posterUrl ? <ImageBackground source={{ uri: posterUrl }} style={styles.poster}>{content}</ImageBackground> : content}
@@ -118,9 +125,9 @@ export const CircleLiveSection = memo(function CircleLiveSection({ circleId, cir
           <Text style={styles.emptyBody}>When a host schedules one, its Gathering and quorum progress will appear here.</Text>
           {canSchedule ? <Pressable onPress={schedule} style={styles.primary}><Text style={styles.primaryText}>Create Circle Live</Text></Pressable> : null}
         </View>
-      ) : active.map((session) => <CircleLiveCardView key={session.sessionId} session={session} />)}
+      ) : active.map((session) => <CircleLiveCardView key={session.sessionId} circleId={circleId} session={session} />)}
       {recaps.length > 0 ? <Text style={styles.recapHeading}>Recent Live moments</Text> : null}
-      {recaps.map((session) => <CircleLiveCardView key={session.sessionId} session={session} />)}
+      {recaps.map((session) => <CircleLiveCardView key={session.sessionId} circleId={circleId} session={session} />)}
     </View>
   );
 });

@@ -25,6 +25,7 @@ import {
   type CircleInviteCandidate,
   type SentCircleInvitation,
 } from '@/lib/circles/circle-invitations';
+import { buildCircleExternalInvite } from '@/lib/circles/circle-invite-share';
 import { useCirclePulsePalette, type CirclePulsePalette } from '@/lib/circles/pulse/circle-pulse-theme';
 
 type Props = {
@@ -118,9 +119,11 @@ export default function CircleInviteSheet({ visible, circleId, circleName, actor
 
   const shareExternalInvite = async () => {
     try {
-      await Share.share({
-        message: `You are invited to ${circleName} on Betweener. Open the Circle and choose whether to join.\n\nOpen in Betweener: betweenerapp://circles/${circleId}\n\nWeb fallback: https://getbetweener.com/circles/${circleId}`,
-      });
+      const invite = buildCircleExternalInvite(circleId, circleName);
+      await Share.share(
+        { title: invite.title, message: invite.message },
+        { subject: invite.title, dialogTitle: invite.title },
+      );
     } catch {
       Alert.alert('Share invitation', 'Could not open sharing right now.');
     }
@@ -182,13 +185,17 @@ export default function CircleInviteSheet({ visible, circleId, circleName, actor
               </Pressable>
             </View>
 
-            <TouchableOpacity style={styles.shareButton} onPress={() => void shareExternalInvite()}>
+            <TouchableOpacity
+              accessibilityLabel="Invite someone outside Betweener"
+              style={styles.shareButton}
+              onPress={() => void shareExternalInvite()}
+            >
               <View style={styles.shareIcon}>
                 <MaterialCommunityIcons name="share-variant-outline" size={18} color={palette.teal} />
               </View>
               <View style={styles.shareCopy}>
-                <Text style={styles.shareTitle}>Share an external invite</Text>
-                <Text style={styles.shareSubtitle}>Send a private link outside Betweener. Joining still requires consent.</Text>
+                <Text style={styles.shareTitle}>Invite outside Betweener</Text>
+                <Text style={styles.shareSubtitle}>Share this Circle with iPhone and Android download links included.</Text>
               </View>
               <MaterialCommunityIcons name="chevron-right" size={20} color={palette.textMuted} />
             </TouchableOpacity>
@@ -211,7 +218,7 @@ export default function CircleInviteSheet({ visible, circleId, circleName, actor
               <TextInput
                 value={query}
                 onChangeText={setQuery}
-                placeholder="Search members"
+                placeholder="Search name or @username"
                 placeholderTextColor={palette.textMuted}
                 style={styles.searchInput}
               />
@@ -273,7 +280,10 @@ export default function CircleInviteSheet({ visible, circleId, circleName, actor
                         {candidate.fullName}{candidate.age ? `, ${candidate.age}` : ''}
                       </Text>
                       <Text style={styles.candidateMeta} numberOfLines={1}>
-                        {[candidate.location, candidate.country].filter(Boolean).join(' / ') || 'Location private'}
+                        {[
+                          candidate.username ? `@${candidate.username}` : null,
+                          [candidate.location, candidate.country].filter(Boolean).join(', '),
+                        ].filter(Boolean).join('  ·  ') || 'Location private'}
                       </Text>
                       {candidate.interests.length > 0 ? (
                         <Text style={styles.candidateInterests} numberOfLines={1}>{candidate.interests.join(' / ')}</Text>

@@ -1,17 +1,31 @@
 import IntentRequestSheet from '@/components/IntentRequestSheet';
 import CircleInviteSheet from '@/components/circles/CircleInviteSheet';
 import CircleLoveSeatConsentSheet from '@/components/circles/CircleLoveSeatConsentSheet';
+import CircleMembersPortraitDirectory from '@/components/circles/CircleMembersPortraitDirectory';
+import type { CircleMemberPortrait } from '@/components/circles/CircleMemberPortraitCard';
 import CirclePulseBoard from '@/components/circles/CirclePulseBoard';
 import CirclePulseCommentSheet from '@/components/circles/CirclePulseCommentSheet';
 import CirclePulseManagerSheet from '@/components/circles/CirclePulseManagerSheet';
 import CirclePulseMediaViewer from '@/components/circles/CirclePulseMediaViewer';
 import CirclePulseModerationSheet from '@/components/circles/CirclePulseModerationSheet';
+import CircleDetailHero from '@/components/circles/CircleDetailHero';
+import {
+  CircleMomentsRibbon,
+  CircleNowSpotlight,
+  CircleOverviewTile,
+  CirclePeopleRibbon,
+} from '@/components/circles/CircleOverviewModules';
 import { CircleDatingPanel, CircleEntryContextSheet } from '@/features/circles/components';
 import { useCircleEntryContext } from '@/features/circles/hooks/use-circle-entry-context';
 import { showBetweenerAlert } from '@/components/ui/BetweenerAlertHost';
 import Notice from '@/components/ui/Notice';
 import { CircleLiveSection } from '@/features/live/components/CircleLiveSection';
+import { getLiveEventMediaUrl } from '@/features/live/application';
 import { useCircleLive } from '@/features/live/hooks/use-circle-live';
+import {
+  createCircleLiveReturnParams,
+  type CircleLiveReturnTab,
+} from '@/features/live/navigation/live-navigation';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useResolvedProfileId } from '@/hooks/useResolvedProfileId';
@@ -63,7 +77,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type DetailTab = 'circle' | 'discover' | 'live' | 'manage';
 type CircleSection = 'home' | 'pulse' | 'prompts' | 'gatherings' | 'moments' | 'members';
@@ -433,6 +447,29 @@ const normalizeCopy = (value?: string | null) => String(value ?? '').trim().repl
 const isSameCopy = (left?: string | null, right?: string | null) =>
   normalizeCopy(left).length > 0 && normalizeCopy(left).toLowerCase() === normalizeCopy(right).toLowerCase();
 
+const isGenericCircleEditorialTitle = (value?: string | null, circleName?: string | null) => {
+  const normalized = normalizeCopy(value).toLowerCase();
+  if (!normalized) return true;
+  return new Set([
+    'circle',
+    'circles',
+    'community',
+    'circle update',
+    'circle prompt',
+    normalizeCopy(circleName).toLowerCase(),
+  ]).has(normalized);
+};
+
+const isToday = (value?: string | null) => {
+  if (!value) return false;
+  const candidate = new Date(value);
+  if (Number.isNaN(candidate.getTime())) return false;
+  const today = new Date();
+  return candidate.getFullYear() === today.getFullYear()
+    && candidate.getMonth() === today.getMonth()
+    && candidate.getDate() === today.getDate();
+};
+
 
 const normalizePosterKey = (value?: string | null) => String(value ?? '').trim();
 type GatheringSeatContext = 'welcome' | 'love' | 'featured_member';
@@ -498,6 +535,7 @@ export default function CircleDetailScreen() {
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = (colorScheme ?? 'light') === 'dark';
   const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
+  const insets = useSafeAreaInsets();
 
   const [activeTab, setActiveTab] = useState<DetailTab>(initialRequestedTab);
   const [circleSection, setCircleSection] = useState<CircleSection>(() => resolveRequestedCircleSection(requestedTab));
@@ -1609,6 +1647,7 @@ export default function CircleDetailScreen() {
         : circle?.location_insight ?? getCircleLocationAffinity(circle, profile as any, 'my_country')?.shortText ?? null,
     [circle, profile],
   );
+  const circleScopeLabel = getCircleScopeLabel(circle) || 'Global';
   const mastheadTitle = (() => {
     const shortDescription = normalizeCopy(circle?.short_description);
     if (!shortDescription || isSameCopy(shortDescription, circle?.name)) {
@@ -3222,10 +3261,82 @@ export default function CircleDetailScreen() {
     () => members.filter((item) => !leadershipMembers.some((leader) => leader.id === item.id)),
     [leadershipMembers, members],
   );
+  const circleMemberPortraits = useMemo<CircleMemberPortrait[]>(() => {
+    const promptById = new Map(prompts.map((prompt) => [prompt.id, prompt] as const));
+    const latestResponseByProfileId = Object.values(promptResponsesByPromptId)
+      .flat()
+      .sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime())
+      .reduce<Map<string, CirclePromptResponse>>((result, response) => {
+        if (!result.has(response.profile_id)) result.set(response.profile_id, response);
+        return result;
+      }, new Map());
+    const latestMomentByUserId = [...moments]
+      .sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime())
+      .reduce<Map<string, CircleMoment>>((result, moment) => {
+        if (!result.has(moment.user_id)) result.set(moment.user_id, moment);
+        return result;
+      }, new Map());
+
+    return members.flatMap((item) => {
+      const profile = item.profiles;
+      if (!profile) return [];
+      const response = latestResponseByProfileId.get(item.profile_id) ?? null;
+      const prompt = response ? promptById.get(response.prompt_id) ?? null : null;
+      const memberUserId = item.user_id || profile.user_id || null;
+      const moment = memberUserId ? latestMomentByUserId.get(memberUserId) ?? null : null;
+      const isNew = isRecentCircleMember(item.joined_at);
+      const presence = getAuthoritativePresenceDisplay(profile.online, profile.last_active, presenceNow);
+      const normalizedResponse = String(response?.response ?? '').trim().replace(/\s+/g, ' ');
+
+      return [{
+        profileId: profile.id,
+        name: profile.full_name || 'Circle member',
+        age: profile.age,
+        avatarUrl: profile.avatar_url,
+        location: getMemberLocationLabel(profile),
+        roleLabel: item.role !== 'member' ? getLeaderRoleLabel(item.role) : null,
+        presenceLabel: presence.showPresence ? getCompactPresenceLabel(presence) : null,
+        isOnline: presence.online || presence.activeNow,
+        isNew,
+        isSelf: item.profile_id === currentProfileId,
+        conversationLabel: response
+          ? prompt?.title || 'From a Circle prompt'
+          : moment
+            ? getMomentKindLabel(moment.type)
+            : isNew
+              ? 'A new shared beginning'
+              : 'Shared Circle context',
+        conversationSpark: response && normalizedResponse
+          ? normalizedResponse
+          : moment
+            ? getMomentPreview(moment)
+            : isNew
+              ? 'Recently joined this Circle. A thoughtful welcome is a natural first step.'
+              : 'You already share this Circle—an easy place to begin with context.',
+        conversationKind: response
+          ? 'prompt' as const
+          : moment
+            ? 'moment' as const
+            : isNew
+              ? 'arrival' as const
+              : 'community' as const,
+        conversationId: response?.prompt_id || moment?.id || null,
+      }];
+    });
+  }, [currentProfileId, members, moments, presenceNow, promptResponsesByPromptId, prompts]);
   const membersByProfileId = useMemo(
     () => members.reduce<Record<string, MemberRow>>((acc, item) => {
       acc[item.profile_id] = item;
       return acc;
+    }, {}),
+    [members],
+  );
+  const welcomeProfileLocationsById = useMemo(
+    () => members.reduce<Record<string, string>>((locations, item) => {
+      if (item.profiles) {
+        locations[item.profile_id] = getMemberLocationLabel(item.profiles);
+      }
+      return locations;
     }, {}),
     [members],
   );
@@ -3234,6 +3345,75 @@ export default function CircleDetailScreen() {
   const featuredPrompt = prompts[0] ?? null;
   const upcomingGathering = gatherings[0] ?? null;
   const peoplePreview = members.filter((item) => Boolean(item.profiles)).slice(0, 6);
+  const featuredCircleLive = useMemo(() => {
+    const sessions = circleLive.snapshot?.sessions ?? [];
+    return sessions.find((session) => ['live', 'backstage', 'ending'].includes(session.status))
+      ?? sessions.find((session) => session.status !== 'ended')
+      ?? null;
+  }, [circleLive.snapshot]);
+  const featuredCircleLiveIsNow = Boolean(
+    featuredCircleLive && ['live', 'backstage', 'ending'].includes(featuredCircleLive.status),
+  );
+  const overviewPriorityKind = featuredCircleLive
+    ? 'live'
+    : upcomingGathering
+      ? 'gathering'
+      : featuredPulse
+        ? 'pulse'
+        : featuredPrompt
+          ? 'prompt'
+          : recentMoments[0]
+            ? 'moment'
+            : 'empty';
+  const featuredPulseHeadline = featuredPulse
+    ? isGenericCircleEditorialTitle(featuredPulse.title, circle?.name)
+      ? normalizeCopy(featuredPulse.body)
+        || normalizeCopy(featuredPulse.subtitle)
+        || 'A new Circle conversation'
+      : normalizeCopy(featuredPulse.title)
+    : null;
+  const featuredPulseDescription = featuredPulse
+    ? isSameCopy(featuredPulseHeadline, featuredPulse.body)
+      ? featuredPulse.subtitle
+      : featuredPulse.body || featuredPulse.subtitle
+    : null;
+  const featuredPromptHeadline = featuredPrompt
+    ? isGenericCircleEditorialTitle(featuredPrompt.title, circle?.name)
+      ? featuredPrompt.prompt
+      : featuredPrompt.title
+    : null;
+  const featuredPromptDescription = featuredPrompt && !isSameCopy(featuredPromptHeadline, featuredPrompt.prompt)
+    ? featuredPrompt.prompt
+    : null;
+  const overviewHeading = featuredCircleLive
+    ? featuredCircleLiveIsNow
+      ? 'Happening now'
+      : isToday(featuredCircleLive.scheduledStart)
+        ? 'Happening today'
+        : 'Up next'
+    : upcomingGathering
+      ? isToday(upcomingGathering.starts_at) ? 'Happening today' : 'Up next'
+      : featuredPulse
+        ? 'In conversation'
+        : featuredPrompt
+          ? 'This week’s question'
+          : recentMoments[0]
+            ? 'New from the Circle'
+            : 'A place to begin';
+  const heroPeople = peoplePreview.map((item) => ({
+    id: item.profile_id,
+    name: item.profiles?.full_name ?? 'Circle member',
+    avatarUrl: item.profiles?.avatar_url ?? null,
+  }));
+  const hasOverviewSupportingContent = Boolean(
+    (featuredPulse && overviewPriorityKind !== 'pulse')
+    || (featuredPrompt && overviewPriorityKind !== 'prompt')
+    || (upcomingGathering
+      && overviewPriorityKind !== 'gathering'
+      && upcomingGathering.live_session_id !== featuredCircleLive?.sessionId)
+    || (recentMoments.length > 0 && overviewPriorityKind !== 'moment')
+    || (isMember && (heroPeople.length > 0 || (circle?.member_count ?? members.length) > 0)),
+  );
   const pulsePromptCandidates = useMemo(
     () => prompts.map((item) => ({ id: item.id, title: item.title, prompt: item.prompt })),
     [prompts],
@@ -3387,19 +3567,46 @@ export default function CircleDetailScreen() {
     });
   }, [circle?.name, circleId]);
 
+  const openMemberConversation = useCallback((member: CircleMemberPortrait) => {
+    if (member.conversationKind === 'moment' && member.conversationId) {
+      const moment = moments.find((candidate) => candidate.id === member.conversationId);
+      if (moment) openPulseMomentViewer(moment);
+      return;
+    }
+    if (member.conversationKind === 'prompt') {
+      setCircleSection('prompts');
+    }
+  }, [moments, openPulseMomentViewer]);
+
   const openPulsePrompt = useCallback((promptId: string) => {
     const prompt = prompts.find((item) => item.id === promptId);
     if (prompt) openPromptAnswer(prompt);
   }, [openPromptAnswer, prompts]);
 
+  const openCircleLiveEvent = useCallback((
+    sessionId: string,
+    returnCircleTab: CircleLiveReturnTab,
+  ) => {
+    router.push({
+      pathname: '/live/event/[sessionId]',
+      params: {
+        sessionId,
+        ...createCircleLiveReturnParams(circleId, returnCircleTab),
+      },
+    });
+  }, [circleId]);
+
   const openPulseGathering = useCallback((gatheringId: string) => {
     const gathering = gatherings.find((item) => item.id === gatheringId);
     if (gathering?.live_session_id) {
-      router.push(`/live/event/${gathering.live_session_id}`);
+      openCircleLiveEvent(
+        gathering.live_session_id,
+        circleSection === 'pulse' ? 'pulse' : 'overview',
+      );
       return;
     }
     if (gathering) openGatheringRsvp(gathering);
-  }, [gatherings, openGatheringRsvp]);
+  }, [circleSection, gatherings, openCircleLiveEvent, openGatheringRsvp]);
 
   const openPulseMedia = useCallback((item: CirclePulseItem) => {
     const moment = moments.find((candidate) => candidate.id === item.momentId);
@@ -3518,6 +3725,10 @@ export default function CircleDetailScreen() {
     if (options.roles.length === 0 && !options.canRemove) return;
     setManageMemberTarget(item);
   }, [getMemberManagementOptions]);
+  const openPortraitMemberManager = useCallback((profileId: string) => {
+    const item = members.find((candidate) => candidate.profile_id === profileId || candidate.profiles?.id === profileId);
+    if (item) openMemberManager(item);
+  }, [members, openMemberManager]);
   const manageTargetOptions = manageMemberTarget ? getMemberManagementOptions(manageMemberTarget) : { roles: [] as CircleManageRole[], canRemove: false };
   const manageTargetProfile = manageMemberTarget?.profiles ?? null;
   const getGatheringAttendance = useCallback((gatheringId: string) => gatheringAttendance[gatheringId] ?? null, [gatheringAttendance]);
@@ -3611,33 +3822,6 @@ export default function CircleDetailScreen() {
           </View>
         </View>
       </View>
-    );
-  };
-
-  const renderCommunityMember = (item: MemberRow, compact = false) => {
-    const member = item.profiles;
-    if (!member) return null;
-    return (
-      <TouchableOpacity
-        key={item.id}
-        accessibilityRole="button"
-        accessibilityLabel={`View ${member.full_name || 'Circle member'} profile`}
-        style={[styles.peopleCard, compact && styles.peopleCardCompact]}
-        onPress={() => openProfile(member.id)}
-      >
-        {member.avatar_url ? (
-          <Image source={{ uri: member.avatar_url }} style={compact ? styles.peopleAvatarCompact : styles.peopleAvatar} />
-        ) : (
-          <View style={[styles.peopleAvatarFallback, compact && styles.peopleAvatarFallbackCompact]}>
-            <MaterialCommunityIcons name="account-outline" size={compact ? 22 : 28} color={theme.textMuted} />
-          </View>
-        )}
-        <View style={styles.peopleCopy}>
-          <Text style={styles.peopleName} numberOfLines={1}>{member.full_name ?? 'Circle member'}</Text>
-          <Text style={styles.peopleMeta} numberOfLines={1}>{getMemberLocationLabel(member) || getLeaderRoleLabel(item.role)}</Text>
-        </View>
-        {!compact ? <MaterialCommunityIcons name="chevron-right" size={19} color={theme.textMuted} /> : null}
-      </TouchableOpacity>
     );
   };
 
@@ -3862,31 +4046,24 @@ export default function CircleDetailScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={[
+          styles.content,
+          {
+            paddingBottom: activeTab === 'discover'
+              ? Math.max(72, insets.bottom + 52)
+              : Math.max(132, insets.bottom + 112),
+          },
+        ]}
+      >
         <View style={styles.header}>
           <TouchableOpacity style={styles.backButton} onPress={() => router.replace({ pathname: '/(tabs)/circles' })}>
             <MaterialCommunityIcons name="arrow-left" size={20} color={theme.text} />
           </TouchableOpacity>
-          <Pressable style={styles.circleAvatar} onPress={canEditCircle ? handlePickImage : undefined}>
-            {imageUrl ? (
-              <Image source={{ uri: imageUrl }} style={styles.circleAvatarImage} />
-            ) : (
-              <MaterialCommunityIcons name="account-group" size={24} color={theme.textMuted} />
-            )}
-            {canEditCircle ? (
-              <View style={styles.circleAvatarBadge}>
-                <MaterialCommunityIcons name={imageUploading ? 'loading' : 'pencil'} size={12} color={theme.text} />
-              </View>
-            ) : null}
-          </Pressable>
           <View style={styles.headerCopy}>
+            <Text style={styles.headerKicker}>CIRCLE</Text>
             <Text style={styles.headerTitle} numberOfLines={1}>{circle?.name ?? 'Circle'}</Text>
-            <Text style={styles.headerSubtitle} numberOfLines={1}>
-              {joinMeta([
-                circle?.is_official ? 'Official Circle' : circle?.is_partner ? 'Partner Circle' : circle?.circle_type === 'private' ? 'Private Circle' : 'Community Circle',
-                getCircleScopeLabel(circle),
-              ])}
-            </Text>
           </View>
           <TouchableOpacity accessibilityLabel="Circle options" style={styles.headerUtility} onPress={openCircleOptions}>
             <MaterialCommunityIcons name="dots-horizontal" size={19} color={theme.text} />
@@ -3903,32 +4080,30 @@ export default function CircleDetailScreen() {
           />
         ) : null}
 
-        <View style={styles.trustSection}>
-          <View style={styles.badgeRow}>
-            <Text style={styles.trustBadge}>
-              {circle?.is_official ? 'Official Circle' : circle?.is_partner ? 'Partner Circle' : 'Community Circle'}
-            </Text>
-            <Text style={styles.trustBadge}>{getCircleScopeLabel(circle)}</Text>
-            <Text style={styles.trustBadge}>{circle?.member_count ?? members.length} inside</Text>
-          </View>
-          <View style={styles.trustHeader}>
-            <View style={styles.trustCopy}>
-              <Text style={styles.heroTitle}>{mastheadTitle}</Text>
-              <Text style={styles.heroSubcopy}>{mastheadBody}</Text>
-              {circleLocationInsight ? (
-                <Text style={styles.heroLocationInsight}>{circleLocationInsight}</Text>
-              ) : null}
-            </View>
-          </View>
-          <View style={styles.trustActionRow}>
-            {isMember ? (
-              <TouchableOpacity accessibilityLabel="Invite to Circle" style={styles.inviteButton} onPress={handleInvite}>
-                <MaterialCommunityIcons name="account-plus-outline" size={16} color={theme.tint} />
-                <Text style={styles.inviteText}>Invite</Text>
-              </TouchableOpacity>
-            ) : null}
-          </View>
-        </View>
+        <CircleDetailHero
+          name={circle?.name ?? 'Circle'}
+          purpose={mastheadTitle}
+          description={mastheadBody}
+          imageUrl={imageUrl}
+          hasCoverImage={Boolean(circle?.cover_image_url || circle?.image_path)}
+          kindLabel={circle?.is_official
+            ? 'Official Circle'
+            : circle?.is_partner
+              ? 'Partner Circle'
+              : circle?.circle_type === 'private'
+                ? 'Private Circle'
+                : 'Community Circle'}
+          scopeLabel={circleScopeLabel}
+          locationInsight={circleScopeLabel.toLowerCase() === 'global' ? null : circleLocationInsight}
+          memberCount={circle?.member_count ?? members.length}
+          members={heroPeople}
+          isMember={isMember}
+          primaryActionLabel={isMember ? 'Invite someone' : joinLabel}
+          onPrimaryAction={isMember ? handleInvite : handleJoin}
+          canEditCover={canEditCircle}
+          coverUpdating={imageUploading}
+          onEditCover={handlePickImage}
+        />
 
         {canEditCircle && editingName ? (
           <View style={styles.editNameCard}>
@@ -3947,7 +4122,7 @@ export default function CircleDetailScreen() {
 
         <View style={styles.tabRow} accessibilityRole="tablist">
           {[
-            ['circle', 'Circle'],
+            ['circle', 'Overview'],
             ['discover', 'Discover'],
             ['live', 'Live'],
           ].map(([key, label]) => {
@@ -3958,7 +4133,7 @@ export default function CircleDetailScreen() {
                 accessibilityRole="tab"
                 accessibilityState={{ selected: active }}
                 accessibilityLabel={key === 'circle'
-                  ? 'Open Circle home'
+                  ? 'Open Circle overview'
                   : key === 'discover'
                     ? 'Discover people in this Circle'
                     : 'Open Circle Live'}
@@ -4007,14 +4182,14 @@ export default function CircleDetailScreen() {
           <View style={styles.communityShell}>
             <View style={styles.communityHeader}>
               <View style={styles.communityHeaderCopy}>
-                <Text style={styles.communityEyebrow}>{circleSection === 'home' ? 'CIRCLE' : circleSection.toUpperCase()}</Text>
+                <Text style={styles.communityEyebrow}>{circleSection === 'home' ? 'INSIDE THE CIRCLE' : circleSection.toUpperCase()}</Text>
                 <Text style={styles.communityTitle}>
                   {circleSection === 'home'
-                    ? `What’s happening in ${circle?.name ?? 'this Circle'}`
+                    ? overviewHeading
                     : circleSection === 'members'
                       ? 'People in this Circle'
                       : circleSection === 'pulse'
-                        ? 'The Circle pulse'
+                        ? 'Alive in this Circle'
                         : circleSection === 'prompts'
                           ? 'Questions worth answering'
                           : circleSection === 'gatherings'
@@ -4023,111 +4198,192 @@ export default function CircleDetailScreen() {
                 </Text>
               </View>
               {circleSection !== 'home' ? (
-                <TouchableOpacity accessibilityLabel="Back to Circle home" style={styles.communityManageButton} onPress={() => setCircleSection('home')}>
+                <TouchableOpacity accessibilityLabel="Back to Circle home" style={styles.communitySectionBackButton} onPress={() => setCircleSection('home')}>
                   <MaterialCommunityIcons name="arrow-left" size={17} color={theme.tint} />
-                  <Text style={styles.communityManageText}>Circle</Text>
                 </TouchableOpacity>
               ) : canModerateCircle ? (
                 <TouchableOpacity style={styles.communityManageButton} onPress={() => setPulseManagerOpen(true)}>
                   <MaterialCommunityIcons name="plus" size={17} color={theme.tint} />
-                  <Text style={styles.communityManageText}>Add</Text>
+                  <Text style={styles.communityManageText}>Add highlight</Text>
                 </TouchableOpacity>
               ) : null}
             </View>
 
             {circleSection === 'home' ? (
-              <View style={styles.editorialStack}>
-                {!isMember ? (
-                  <View style={styles.editorialEmptyCard}>
-                    <Text style={styles.editorialTitle}>Meet through something you already share.</Text>
-                    <Text style={styles.editorialBody}>Join this Circle to take part in conversations, gatherings, Moments, and member activity.</Text>
-                    <TouchableOpacity style={styles.primaryButton} onPress={handleJoin}>
-                      <Text style={styles.primaryText}>{joinLabel}</Text>
-                    </TouchableOpacity>
+              <View style={styles.overviewStack}>
+                {featuredCircleLive ? (
+                  <CircleNowSpotlight
+                    accessibilityLabel={`Open ${featuredCircleLive.title}`}
+                    eyebrow={featuredCircleLiveIsNow
+                      ? 'LIVE NOW'
+                      : featuredCircleLive.quorumStatus === 'confirmed'
+                        ? 'LIVE · CONFIRMED'
+                        : 'LIVE · FORMING'}
+                    title={featuredCircleLive.title}
+                    description={featuredCircleLive.description}
+                    meta={joinMeta([
+                      featuredCircleLiveIsNow ? `${featuredCircleLive.attendanceCount} here now` : compactDate(featuredCircleLive.scheduledStart),
+                      `${featuredCircleLive.attendanceCount} place${featuredCircleLive.attendanceCount === 1 ? '' : 's'} saved`,
+                    ])}
+                    cta={featuredCircleLiveIsNow ? 'Enter Live' : 'View Live'}
+                    icon="broadcast"
+                    imageUrl={getLiveEventMediaUrl(featuredCircleLive.posterPath)}
+                    live={featuredCircleLiveIsNow}
+                    onPress={() => openCircleLiveEvent(featuredCircleLive.sessionId, 'overview')}
+                  />
+                ) : upcomingGathering ? (
+                  <CircleNowSpotlight
+                    accessibilityLabel={`Open ${upcomingGathering.title}`}
+                    eyebrow={upcomingGathering.live_session_id ? 'CIRCLE LIVE' : 'IN PERSON · UPCOMING'}
+                    title={upcomingGathering.title}
+                    description={upcomingGathering.description}
+                    meta={joinMeta([
+                      compactDate(upcomingGathering.starts_at),
+                      upcomingGathering.city,
+                      upcomingGathering.venue_name,
+                    ])}
+                    cta={gatheringAttendance[upcomingGathering.id]?.status === 'going' ? 'Your place is saved' : 'View gathering'}
+                    icon={upcomingGathering.live_session_id ? 'broadcast' : 'calendar-heart'}
+                    imageUrl={getGatheringPosterDisplayUri(upcomingGathering.poster_url)}
+                    onPress={() => openPulseGathering(upcomingGathering.id)}
+                  />
+                ) : featuredPulse ? (
+                  <CircleNowSpotlight
+                    accessibilityLabel="Open Circle pulse"
+                    eyebrow={featuredPulse.type === 'host_note' ? 'FROM THE HOST' : 'CIRCLE PULSE'}
+                    title={featuredPulseHeadline || 'A new Circle conversation'}
+                    description={featuredPulseDescription}
+                    meta={featuredPulse.commentCount ? `${featuredPulse.commentCount} replies` : 'A conversation is waiting'}
+                    cta="Join the conversation"
+                    icon="message-text-outline"
+                    imageUrl={featuredPulse.imageUrl || featuredPulse.featuredProfileAvatarUrl}
+                    onPress={() => setCircleSection('pulse')}
+                  />
+                ) : featuredPrompt ? (
+                  <CircleNowSpotlight
+                    accessibilityLabel="Answer Circle prompt"
+                    eyebrow="PROMPT OF THE WEEK"
+                    title={featuredPromptHeadline || featuredPrompt.prompt}
+                    description={featuredPromptDescription}
+                    meta={getPromptResponses(featuredPrompt.id).length
+                      ? `${getPromptResponses(featuredPrompt.id).length} thoughtful answers`
+                      : 'Be the first to answer'}
+                    cta="Answer prompt"
+                    icon="comment-question-outline"
+                    onPress={() => openPulsePrompt(featuredPrompt.id)}
+                  />
+                ) : recentMoments[0] ? (
+                  <CircleNowSpotlight
+                    accessibilityLabel="Open latest Circle Moment"
+                    eyebrow="NEW CIRCLE MOMENT"
+                    title={recentMoments[0].profile?.full_name
+                      ? `${recentMoments[0].profile.full_name} shared a Moment`
+                      : 'A new Circle Moment'}
+                    description={getMomentPreview(recentMoments[0])}
+                    meta={formatMomentTimestamp(recentMoments[0].created_at)}
+                    cta="See the Moment"
+                    icon={recentMoments[0].type === 'video' ? 'play-circle-outline' : 'image-outline'}
+                    imageUrl={momentSignedUrls[recentMoments[0].id] || recentMoments[0].thumbnail_url || recentMoments[0].media_url}
+                    onPress={() => openMomentThread(recentMoments[0])}
+                  />
+                ) : (
+                  <View style={styles.overviewEmpty}>
+                    <View style={styles.overviewEmptyIcon}>
+                      <MaterialCommunityIcons name="creation-outline" size={24} color={theme.tint} />
+                    </View>
+                    <Text style={styles.overviewEmptyTitle}>The next chapter starts here.</Text>
+                    <Text style={styles.overviewEmptyBody}>The first conversation, gathering or Moment will take this place when it arrives.</Text>
+                    {canModerateCircle ? (
+                      <TouchableOpacity style={styles.overviewEmptyAction} onPress={() => setPulseManagerOpen(true)}>
+                        <Text style={styles.overviewEmptyActionText}>Create the first highlight</Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+                )}
+
+                {hasOverviewSupportingContent ? (
+                  <View style={styles.overviewExploreHeader}>
+                    <View>
+                      <Text style={styles.communityEyebrow}>EXPLORE</Text>
+                      <Text style={styles.overviewExploreTitle}>More inside</Text>
+                    </View>
+                    <Text style={styles.overviewExploreMeta}>Stories, people & plans</Text>
                   </View>
                 ) : null}
 
-                {featuredPulse ? (
-                  <TouchableOpacity accessibilityLabel="Open Circle pulse" style={[styles.editorialCard, styles.editorialPulseCard]} onPress={() => setCircleSection('pulse')}>
-                    <View style={styles.editorialTopRow}>
-                      <Text style={styles.editorialEyebrow}>{featuredPulse.type === 'host_note' ? 'FROM THE HOST' : 'PULSE'}</Text>
-                      <Text style={styles.editorialLink}>See all →</Text>
+                <View style={styles.overviewTileGrid}>
+                  {featuredPulse && overviewPriorityKind !== 'pulse' ? (
+                    <CircleOverviewTile
+                      accessibilityLabel="Open Circle pulse"
+                      eyebrow={featuredPulse.type === 'host_note' ? 'HOST NOTE' : 'PULSE'}
+                      title={featuredPulseHeadline || 'Circle conversation'}
+                      meta={featuredPulse.commentCount ? `${featuredPulse.commentCount} replies` : 'Join in'}
+                      icon="message-text-outline"
+                      accent="teal"
+                      onPress={() => setCircleSection('pulse')}
+                    />
+                  ) : null}
+
+                  {featuredPrompt && overviewPriorityKind !== 'prompt' ? (
+                    <CircleOverviewTile
+                      accessibilityLabel="Open Circle prompts"
+                      eyebrow="PROMPT"
+                      title={featuredPromptHeadline || featuredPrompt.prompt}
+                      meta={getPromptResponses(featuredPrompt.id).length
+                        ? `${getPromptResponses(featuredPrompt.id).length} answers`
+                        : 'Add your voice'}
+                      icon="comment-question-outline"
+                      accent="violet"
+                      onPress={() => setCircleSection('prompts')}
+                    />
+                  ) : null}
+
+                  {upcomingGathering
+                    && overviewPriorityKind !== 'gathering'
+                    && upcomingGathering.live_session_id !== featuredCircleLive?.sessionId ? (
+                    <CircleOverviewTile
+                      accessibilityLabel="Open upcoming Circle gathering"
+                      eyebrow={upcomingGathering.live_session_id ? 'LIVE' : 'GATHERING'}
+                      title={upcomingGathering.title}
+                      meta={compactDate(upcomingGathering.starts_at)}
+                      icon={upcomingGathering.live_session_id ? 'broadcast' : 'calendar-heart'}
+                      accent="gold"
+                      onPress={() => setCircleSection('gatherings')}
+                    />
+                  ) : null}
+
+                </View>
+
+                {recentMoments.length > 0 && overviewPriorityKind !== 'moment' ? (
+                  <CircleMomentsRibbon
+                    title={recentMoments[0].profile?.full_name
+                      ? `${recentMoments[0].profile.full_name.split(/\s+/)[0]} shared a new Moment`
+                      : `${recentMoments.length} recent ${recentMoments.length === 1 ? 'story' : 'stories'}`}
+                    meta={`${recentMoments.length} recent ${recentMoments.length === 1 ? 'story' : 'stories'} · See what members shared`}
+                    imageUrl={momentSignedUrls[recentMoments[0].id] || recentMoments[0].thumbnail_url || recentMoments[0].media_url}
+                    onPress={() => setCircleSection('moments')}
+                  />
+                ) : null}
+
+                {isMember && (heroPeople.length > 0 || (circle?.member_count ?? members.length) > 0) ? (
+                  <CirclePeopleRibbon
+                    count={circle?.member_count ?? members.length}
+                    people={heroPeople}
+                    onPress={() => setCircleSection('members')}
+                  />
+                ) : null}
+
+                {!upcomingGathering && canHostGathering ? (
+                  <TouchableOpacity style={styles.createGatheringRow} onPress={() => openGatheringComposer()}>
+                    <View style={styles.createGatheringIcon}>
+                      <MaterialCommunityIcons name="calendar-plus" size={19} color="#D4B767" />
                     </View>
-                    <Text style={styles.editorialTitle}>{featuredPulse.title || featuredPulse.body || 'What the Circle is talking about'}</Text>
-                    {featuredPulse.title && featuredPulse.body ? <Text style={styles.editorialBody} numberOfLines={3}>{featuredPulse.body}</Text> : null}
-                    <Text style={styles.editorialMeta}>{featuredPulse.commentCount ? `${featuredPulse.commentCount} replies` : 'Join the conversation'}</Text>
+                    <View style={styles.createGatheringCopy}>
+                      <Text style={styles.createGatheringTitle}>Bring the Circle together</Text>
+                      <Text style={styles.createGatheringBody}>Create an in-person Gathering.</Text>
+                    </View>
+                    <MaterialCommunityIcons name="arrow-right" size={18} color={theme.tint} />
                   </TouchableOpacity>
-                ) : null}
-
-                {featuredPrompt ? (
-                  <TouchableOpacity accessibilityLabel="Open Circle prompts" style={[styles.editorialCard, styles.editorialPromptCard]} onPress={() => setCircleSection('prompts')}>
-                    <View style={styles.editorialTopRow}>
-                      <Text style={styles.editorialEyebrow}>PROMPT OF THE WEEK</Text>
-                      <Text style={styles.editorialLink}>See all →</Text>
-                    </View>
-                    <Text style={styles.editorialTitle}>{featuredPrompt.title}</Text>
-                    <Text style={styles.editorialBody} numberOfLines={3}>{featuredPrompt.prompt}</Text>
-                    <Text style={styles.editorialMeta}>{getPromptResponses(featuredPrompt.id).length ? `${getPromptResponses(featuredPrompt.id).length} answers` : 'Be the first to answer'}</Text>
-                  </TouchableOpacity>
-                ) : null}
-
-                {upcomingGathering ? (
-                  <TouchableOpacity accessibilityLabel="Open upcoming Circle gathering" style={[styles.editorialCard, styles.editorialGatheringCard]} onPress={() => setCircleSection('gatherings')}>
-                    <View style={styles.editorialTopRow}>
-                      <Text style={styles.editorialEyebrow}>UPCOMING</Text>
-                      <Text style={styles.editorialLink}>See all →</Text>
-                    </View>
-                    <Text style={styles.editorialTitle}>{upcomingGathering.title}</Text>
-                    <Text style={styles.editorialBody}>{joinMeta([compactDate(upcomingGathering.starts_at), upcomingGathering.city, upcomingGathering.venue_name])}</Text>
-                    <Text style={styles.editorialMeta}>{upcomingGathering.live_session_id ? 'Circle Live gathering' : `${upcomingGathering.attendee_count ?? 0} attending`}</Text>
-                  </TouchableOpacity>
-                ) : canHostGathering ? (
-                  <View style={styles.editorialCompactCard}>
-                    <View style={styles.editorialCompactCopy}>
-                      <Text style={styles.editorialEyebrow}>UPCOMING</Text>
-                      <Text style={styles.editorialBody}>Nothing scheduled yet.</Text>
-                    </View>
-                    <TouchableOpacity style={styles.editorialAction} onPress={() => openGatheringComposer()}>
-                      <Text style={styles.editorialLink}>Create gathering</Text>
-                    </TouchableOpacity>
-                  </View>
-                ) : null}
-
-                {recentMoments.length > 0 ? (
-                  <TouchableOpacity accessibilityLabel="Open Circle Moments" style={[styles.editorialCard, styles.editorialMomentsCard]} onPress={() => setCircleSection('moments')}>
-                    <View style={styles.editorialTopRow}>
-                      <Text style={styles.editorialEyebrow}>MOMENTS</Text>
-                      <Text style={styles.editorialLink}>See all →</Text>
-                    </View>
-                    <View style={styles.editorialMomentRow}>
-                      {recentMoments.slice(0, 3).map((moment) => (
-                        <View key={moment.id} style={styles.editorialMomentChip}>
-                          <MaterialCommunityIcons name={moment.type === 'video' ? 'play-circle-outline' : moment.type === 'text' ? 'text-box-outline' : 'image-outline'} size={18} color={theme.tint} />
-                          <Text style={styles.editorialMomentText} numberOfLines={1}>{moment.profile?.full_name ?? 'Circle member'}</Text>
-                        </View>
-                      ))}
-                    </View>
-                  </TouchableOpacity>
-                ) : null}
-
-                {isMember && peoplePreview.length > 0 ? (
-                  <View style={[styles.editorialCard, styles.editorialPeopleCard]}>
-                    <TouchableOpacity accessibilityLabel="View Circle members" style={styles.editorialTopRow} onPress={() => setCircleSection('members')}>
-                      <Text style={styles.editorialEyebrow}>PEOPLE</Text>
-                      <Text style={styles.editorialLink}>View members →</Text>
-                    </TouchableOpacity>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.peoplePreviewRail}>
-                      {peoplePreview.map((item) => renderCommunityMember(item, true))}
-                    </ScrollView>
-                    <Text style={styles.editorialMeta}>People you share this Circle with.</Text>
-                  </View>
-                ) : null}
-
-                {isMember && !featuredPulse && !featuredPrompt && !upcomingGathering && recentMoments.length === 0 && peoplePreview.length === 0 ? (
-                  <View style={styles.editorialEmptyCard}>
-                    <Text style={styles.editorialTitle}>This Circle is ready for its first chapter.</Text>
-                    <Text style={styles.editorialBody}>Conversations, gatherings, Moments, and people will appear here as the community grows.</Text>
-                  </View>
                 ) : null}
               </View>
             ) : null}
@@ -4138,6 +4394,7 @@ export default function CircleDetailScreen() {
                 discussionUnreadByItemId={pulseDiscussionUnreadByItemId}
                 gatheringPosterMembersByUrl={gatheringPosterMembersByUrl}
                 liveGatheringsById={liveGatheringsById}
+                welcomeProfileLocationsById={welcomeProfileLocationsById}
                 loading={pulseLoading}
                 error={pulseError}
                 isMember={isMember}
@@ -4163,8 +4420,15 @@ export default function CircleDetailScreen() {
             {circleSection === 'members' ? (
               isMember ? (
                 <View style={styles.peopleDirectory}>
-                  <Text style={styles.sectionLead}>People you share this Circle with.</Text>
-                  {members.length > 0 ? members.map((item) => renderCommunityMember(item)) : (
+                  {circleMemberPortraits.length > 0 ? (
+                    <CircleMembersPortraitDirectory
+                      circleId={circleId}
+                      members={circleMemberPortraits}
+                      onOpenProfile={openProfile}
+                      onOpenConversation={openMemberConversation}
+                      onManageMember={canManageRoles || canRemoveMembers ? openPortraitMemberManager : undefined}
+                    />
+                  ) : (
                     <View style={styles.editorialEmptyCard}>
                       <Text style={styles.editorialTitle}>No members to show yet.</Text>
                       <Text style={styles.editorialBody}>Active Circle members will appear here as the community grows.</Text>
@@ -4615,7 +4879,7 @@ export default function CircleDetailScreen() {
                       <TouchableOpacity
                         style={styles.primaryButton}
                         onPress={() => gathering.live_session_id
-                          ? router.push(`/live/event/${gathering.live_session_id}`)
+                          ? openCircleLiveEvent(gathering.live_session_id, 'gatherings')
                           : openGatheringRsvp(gathering)}
                       >
                         <Text style={styles.primaryText}>{gathering.live_session_id ? 'Open Live' : getGatheringAttendance(gathering.id) ? 'Manage RSVP' : 'RSVP'}</Text>
@@ -5384,7 +5648,7 @@ export default function CircleDetailScreen() {
 const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
   StyleSheet.create({
     container: { flex: 1, backgroundColor: theme.background },
-    content: { paddingHorizontal: 18, paddingTop: 10, paddingBottom: 28, gap: 16 },
+    content: { paddingHorizontal: 18, paddingTop: 8, paddingBottom: 28, gap: 15 },
     header: { flexDirection: 'row', alignItems: 'center', gap: 12 },
     backButton: {
       width: 38,
@@ -5431,7 +5695,8 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       backgroundColor: theme.backgroundSubtle,
     },
     headerCopy: { flex: 1 },
-    headerTitle: { fontSize: 20, color: theme.text, fontFamily: 'PlayfairDisplay_700Bold' },
+    headerKicker: { color: theme.tint, fontSize: 8, letterSpacing: 1.5, fontWeight: '900' },
+    headerTitle: { marginTop: 2, fontSize: 18, color: theme.text, fontFamily: 'PlayfairDisplay_700Bold' },
     headerSubtitle: { marginTop: 3, fontSize: 12, color: theme.textMuted },
     trustSection: {
       gap: 14,
@@ -5639,7 +5904,11 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       flexDirection: 'row',
       width: '100%',
       gap: 6,
-      paddingVertical: 2,
+      padding: 5,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.1 : 0.07),
+      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.72 : 0.92),
     },
     tabButton: {
       flex: 1,
@@ -5650,10 +5919,13 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       paddingVertical: 9,
       borderRadius: 999,
       borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
-      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.46 : 0.84),
+      borderColor: 'transparent',
+      backgroundColor: 'transparent',
     },
-    tabButtonActive: { backgroundColor: withAlpha(theme.tint, isDark ? 0.2 : 0.12), borderColor: withAlpha(theme.tint, 0.48) },
+    tabButtonActive: {
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.18 : 0.11),
+      borderColor: withAlpha(theme.tint, 0.36),
+    },
     tabText: { color: theme.textMuted, fontSize: 12, fontWeight: '800' },
     tabTextActive: { color: theme.tint },
     communityShell: { gap: 14 },
@@ -5669,7 +5941,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     manageHeaderCopy: { flex: 1, gap: 5 },
     manageHeaderBody: { color: theme.textMuted, fontSize: 13, lineHeight: 19 },
-    communityHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 },
+    communityHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, paddingHorizontal: 2 },
     communityHeaderCopy: { flex: 1, gap: 4 },
     communityEyebrow: { color: theme.tint, fontSize: 11, fontWeight: '800', letterSpacing: 1.5 },
     communityTitle: { color: theme.text, fontFamily: 'PlayfairDisplay_700Bold', fontSize: 22, lineHeight: 28 },
@@ -5684,6 +5956,70 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       paddingHorizontal: 13,
     },
     communityManageText: { color: theme.tint, fontSize: 12, fontWeight: '800' },
+    communitySectionBackButton: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: theme.outline,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    overviewStack: { gap: 14 },
+    overviewExploreHeader: {
+      flexDirection: 'row',
+      alignItems: 'flex-end',
+      justifyContent: 'space-between',
+      gap: 12,
+      marginTop: 8,
+      paddingHorizontal: 2,
+    },
+    overviewExploreTitle: {
+      marginTop: 3,
+      color: theme.text,
+      fontSize: 20,
+      lineHeight: 25,
+      fontFamily: 'PlayfairDisplay_700Bold',
+    },
+    overviewExploreMeta: { color: theme.textMuted, fontSize: 10, fontWeight: '700' },
+    overviewTileGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 11 },
+    overviewEmpty: {
+      minHeight: 218,
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: 24,
+      borderRadius: 28,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, isDark ? 0.22 : 0.16),
+      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.82 : 0.96),
+    },
+    overviewEmptyIcon: {
+      width: 50,
+      height: 50,
+      borderRadius: 25,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.14 : 0.09),
+    },
+    overviewEmptyTitle: { marginTop: 16, color: theme.text, fontSize: 21, textAlign: 'center', fontFamily: 'PlayfairDisplay_700Bold' },
+    overviewEmptyBody: { marginTop: 7, color: theme.textMuted, fontSize: 12, lineHeight: 19, textAlign: 'center' },
+    overviewEmptyAction: { minHeight: 42, justifyContent: 'center', marginTop: 16, paddingHorizontal: 18, borderRadius: 21, backgroundColor: withAlpha(theme.tint, isDark ? 0.17 : 0.1) },
+    overviewEmptyActionText: { color: theme.tint, fontSize: 11, fontWeight: '900' },
+    createGatheringRow: {
+      minHeight: 82,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      padding: 14,
+      borderRadius: 22,
+      borderWidth: 1,
+      borderColor: withAlpha('#D4B767', isDark ? 0.22 : 0.18),
+      backgroundColor: withAlpha('#D4B767', isDark ? 0.07 : 0.055),
+    },
+    createGatheringIcon: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: withAlpha('#D4B767', 0.13) },
+    createGatheringCopy: { flex: 1, gap: 3 },
+    createGatheringTitle: { color: theme.text, fontSize: 13, fontWeight: '800' },
+    createGatheringBody: { color: theme.textMuted, fontSize: 10, lineHeight: 15 },
     editorialStack: { gap: 12 },
     editorialCard: {
       gap: 10,
@@ -5729,27 +6065,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     editorialMomentRow: { gap: 8 },
     editorialMomentChip: { minHeight: 36, flexDirection: 'row', alignItems: 'center', gap: 9 },
     editorialMomentText: { flex: 1, color: theme.text, fontSize: 13, fontWeight: '700' },
-    peoplePreviewRail: { gap: 10, paddingRight: 8 },
     peopleDirectory: { gap: 10 },
-    peopleCard: {
-      minHeight: 72,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 12,
-      padding: 12,
-      borderRadius: 19,
-      borderWidth: 1,
-      borderColor: theme.outline,
-      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.78 : 0.95),
-    },
-    peopleCardCompact: { width: 112, minHeight: 128, flexDirection: 'column', alignItems: 'flex-start', justifyContent: 'flex-start', padding: 10 },
-    peopleAvatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: theme.background },
-    peopleAvatarCompact: { width: 58, height: 58, borderRadius: 29, backgroundColor: theme.background },
-    peopleAvatarFallback: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.background },
-    peopleAvatarFallbackCompact: { width: 58, height: 58, borderRadius: 29 },
-    peopleCopy: { flex: 1, width: '100%', gap: 3 },
-    peopleName: { color: theme.text, fontSize: 13, fontWeight: '800' },
-    peopleMeta: { color: theme.textMuted, fontSize: 11, lineHeight: 15 },
     featureCard: {
       padding: 15,
       borderRadius: 20,
