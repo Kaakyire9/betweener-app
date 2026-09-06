@@ -30,12 +30,14 @@ type Props = {
   profileInitials: string;
   displayName: string;
   displayAge: string;
+  username?: string | null;
   verificationLevel: number;
   showPresence: boolean;
   presenceLabel: string;
   locationDisplay: string;
   personalPremiumPlan: PremiumPlan | null;
   onEditPress: () => void;
+  onHandlePress?: () => void;
 };
 
 export default function MeProfileHero({
@@ -53,12 +55,14 @@ export default function MeProfileHero({
   profileInitials,
   displayName,
   displayAge,
+  username,
   verificationLevel,
   showPresence,
   presenceLabel,
   locationDisplay,
   personalPremiumPlan,
   onEditPress,
+  onHandlePress,
 }: Props) {
   const styles = useMemo(() => createStyles(theme), [theme]);
   const showVideoPoster = hasIntroVideo;
@@ -247,6 +251,27 @@ export default function MeProfileHero({
           </View>
         ) : null}
       </View>
+
+      <TouchableOpacity
+        accessibilityRole="button"
+        accessibilityLabel={username ? `Edit handle @${username}` : "Claim your Betweener handle"}
+        activeOpacity={0.78}
+        onPress={onHandlePress}
+        disabled={!onHandlePress}
+        style={[
+          styles.handlePill,
+          {
+            backgroundColor: username ? theme.tint + "12" : theme.backgroundSubtle,
+            borderColor: username ? theme.tint + "4A" : theme.outline,
+          },
+        ]}
+      >
+        <MaterialCommunityIcons name="at" size={14} color={theme.tint} />
+        <Text style={[styles.handleText, { color: username ? theme.tint : theme.textMuted }]}>
+          {username || "Claim your handle"}
+        </Text>
+        <MaterialCommunityIcons name="chevron-right" size={14} color={theme.textMuted} />
+      </TouchableOpacity>
 
       <View style={styles.heroLocationRow}>
         <MaterialCommunityIcons name="map-marker" size={16} color={theme.tint} />
@@ -452,6 +477,23 @@ function createStyles(_theme: Theme) {
     presenceText: {
       fontSize: 11,
       fontWeight: "700",
+    },
+    handlePill: {
+      alignSelf: "center",
+      minHeight: 31,
+      marginTop: 8,
+      paddingHorizontal: 11,
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 4,
+      borderRadius: 999,
+      borderWidth: 1,
+    },
+    handleText: {
+      maxWidth: 220,
+      fontSize: 12,
+      lineHeight: 16,
+      fontFamily: "Manrope_700Bold",
     },
     profileName: {
       flexShrink: 1,

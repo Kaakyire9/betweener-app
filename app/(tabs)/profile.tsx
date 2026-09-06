@@ -6,6 +6,7 @@ import MeEmailAccountSheet from "@/components/profile/MeEmailAccountSheet";
 import MeFeaturedPromptSection from "@/components/profile/MeFeaturedPromptSection";
 import MeProfileDetailsSection from "@/components/profile/MeProfileDetailsSection";
 import MeProfileHero from "@/components/profile/MeProfileHero";
+import ProfileHandleSheet from "@/components/profile/ProfileHandleSheet";
 import MeProfileProgressSection from "@/components/profile/MeProfileProgressSection";
 import MeProfileStatusStack from "@/components/profile/MeProfileStatusStack";
 import MeReceivedGiftsCard from "@/components/profile/MeReceivedGiftsCard";
@@ -230,6 +231,7 @@ export default function ProfileScreen() {
   const [showAppearanceModal, setShowAppearanceModal] = useState(false);
   const [showNotificationsModal, setShowNotificationsModal] = useState(false);
   const [showEmailModal, setShowEmailModal] = useState(false);
+  const [showHandleSheet, setShowHandleSheet] = useState(false);
   const [emailInput, setEmailInput] = useState('');
   const [emailSaving, setEmailSaving] = useState(false);
   const [emailMessage, setEmailMessage] = useState('');
@@ -1645,6 +1647,8 @@ export default function ProfileScreen() {
       router.push('/admin');
     } else if (itemId === 'email') {
       openEmailAccountModal();
+    } else if (itemId === 'handle') {
+      setShowHandleSheet(true);
     } else if (itemId === 'notifications') {
       setShowNotificationsModal(true);
     } else if (itemId === 'privacy') {
@@ -2977,6 +2981,14 @@ export default function ProfileScreen() {
         styles={styles}
       />
 
+      <ProfileHandleSheet
+        visible={showHandleSheet}
+        onClose={() => setShowHandleSheet(false)}
+        onUpdated={async () => {
+          await refreshProfile();
+        }}
+      />
+
       <MeNotificationsSheet
         visible={showNotificationsModal}
         theme={theme}
@@ -3456,12 +3468,14 @@ export default function ProfileScreen() {
             profileInitials={profileInitials}
             displayName={displayName}
             displayAge={displayAge}
+            username={profile?.username || null}
             verificationLevel={verificationLevel}
             showPresence={showPresence}
             presenceLabel={presenceLabel}
             locationDisplay={locationDisplay}
             personalPremiumPlan={personalPremiumPlan}
             onEditPress={() => setShowEditModal(true)}
+            onHandlePress={() => setShowHandleSheet(true)}
           />
           <MeProfileStatusStack
             theme={theme}

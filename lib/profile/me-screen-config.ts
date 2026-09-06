@@ -93,6 +93,12 @@ export const SETTINGS_MENU_ITEMS: SettingsMenuItem[] = [
     color: Colors.light.tint,
   },
   {
+    id: 'handle',
+    title: 'Betweener Handle',
+    icon: 'at',
+    color: Colors.light.tint,
+  },
+  {
     id: 'privacy',
     title: 'Privacy & Safety',
     icon: 'shield-check',

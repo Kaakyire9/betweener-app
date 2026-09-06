@@ -24,6 +24,8 @@ const getHelperText = (itemId: string) => {
       return "Choose what reaches you and when.";
     case "email":
       return "Manage sign-in methods and recovery.";
+    case "handle":
+      return "Claim a memorable @handle and choose who can find it.";
     case "privacy":
       return "Safety tools, blocks, and trust controls.";
     case "preferences":
