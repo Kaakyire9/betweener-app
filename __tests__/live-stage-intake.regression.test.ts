@@ -179,7 +179,7 @@ test('room exit and stage departure remain explicit, confirmed and distinct', ()
   assert.match(liveScreen, /Leave this Live\?/);
   assert.match(liveScreen, /await Promise\.allSettled\(\[/);
   assert.match(liveScreen, /shouldPersistLeave \? controller\.leave\(\) : Promise\.resolve\(\)/);
-  assert.match(liveScreen, /returnToCircles\(\)/);
+  assert.match(liveScreen, /returnToLiveOrigin\(\)/);
   assert.match(liveScreen, /onLeave=\{isRoomHost \? \(\) => void close\(\) : confirmLeaveLive\}/);
   assert.match(liveScreen, /accessibilityLabel="Leave stage"/);
   assert.match(liveScreen, /Leave the stage\?/);

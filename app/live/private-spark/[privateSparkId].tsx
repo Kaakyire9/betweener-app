@@ -46,6 +46,11 @@ import {
 import { canRenderLiveChemistryStage } from '@/features/live/domain/index.ts';
 import { loadStreamVideoSdk } from '@/features/live/media/load-stream-video-sdk.ts';
 import { requestLivePrivateSparkAdmission } from '@/features/live/media/request-live-private-spark-admission.ts';
+import {
+  getLiveExitDestination,
+  getLiveReturnParams,
+  type LiveReturnRouteParams,
+} from '@/features/live/navigation/live-navigation.ts';
 import { useAuth } from '@/lib/auth-context';
 import { useScopedScreenAwake } from '@/hooks/use-scoped-screen-awake';
 
@@ -87,8 +92,12 @@ const toParticipant = (
 });
 
 export default function LivePrivateSparkScreen() {
-  const params = useLocalSearchParams<{ privateSparkId?: string }>();
+  const params = useLocalSearchParams<{ privateSparkId?: string } & LiveReturnRouteParams>();
   const privateSparkId = typeof params.privateSparkId === 'string' ? params.privateSparkId : '';
+  const liveReturnParams = useMemo(
+    () => getLiveReturnParams(params),
+    [params.returnCircleId, params.returnCircleTab],
+  );
   const { user } = useAuth();
   const controller = useLivePrivateSpark(privateSparkId);
   const media = useLiveMediaSession(privateSparkId, requestLivePrivateSparkAdmission);
@@ -186,12 +195,13 @@ export default function LivePrivateSparkScreen() {
           sessionId: spark.sessionId,
           startAudio: audioEnabled ? '1' : '0',
           startVideo: videoEnabled ? '1' : '0',
+          ...liveReturnParams,
         },
       });
     } else {
-      router.replace('/live');
+      router.dismissTo(getLiveExitDestination(liveReturnParams));
     }
-  }, [spark?.sessionId]);
+  }, [liveReturnParams, spark?.sessionId]);
 
   const finishConversation = useCallback(async (reason = 'conversation_complete') => {
     await media.leave();

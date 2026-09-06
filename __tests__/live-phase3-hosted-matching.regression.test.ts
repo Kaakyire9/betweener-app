@@ -137,8 +137,9 @@ test('host Match Desk is a dedicated full-screen private console', () => {
 test('Live exits are deterministic and never depend on missing navigation history', () => {
   assert.match(route, /getLiveExitDestination/i);
   assert.doesNotMatch(route, /router\.back\(\)/i);
-  assert.match(navigation, /LiveExitDestination = '\/live'/i);
-  assert.match(navigation, /LiveExitDestination => '\/live'/i);
+  assert.match(navigation, /pathname: '\/circles\/\[id\]'/i);
+  assert.match(navigation, /if \(!returnParams\.returnCircleId/i);
+  assert.match(route, /router\.dismissTo\(getLiveExitDestination\(liveReturnParams\)\)/i);
 });
 
 test('double consent resolves into a restrained public introduction and Conversation Spark', () => {

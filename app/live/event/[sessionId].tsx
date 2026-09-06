@@ -2,13 +2,19 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { ArrowLeft, CalendarClock, Check, Play, Sparkles, Users } from 'lucide-react-native';
-import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, ImageBackground, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, BackHandler, ImageBackground, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { formatLiveCountdown } from '@/features/live/components/LiveSessionCard.tsx';
 import { LiveQuorumPoolingCard } from '@/features/live/components/index.ts';
 import { getLiveEventMediaUrl, getLiveSessionPhase, liveRepository } from '@/features/live/application/index.ts';
 import { useLiveQuorumPooling, useLiveSessions } from '@/features/live/hooks/index.ts';
+import {
+  getLiveExitDestination,
+  getLiveReturnParams,
+  isReturningToCircle,
+  type LiveReturnRouteParams,
+} from '@/features/live/navigation/live-navigation.ts';
 import { useAuth } from '@/lib/auth-context';
 
 const formatDate = (value: string | null) => value
@@ -21,7 +27,8 @@ function TeaserVideo({ uri }: { uri: string }) {
 }
 
 export default function LiveEventScreen() {
-  const { sessionId } = useLocalSearchParams<{ sessionId: string }>();
+  const params = useLocalSearchParams<{ sessionId: string } & LiveReturnRouteParams>();
+  const sessionId = typeof params.sessionId === 'string' ? params.sessionId : '';
   const { profile } = useAuth();
   const { sessions, loading, refresh } = useLiveSessions();
   const quorumPooling = useLiveQuorumPooling(sessionId);
@@ -34,6 +41,22 @@ export default function LiveEventScreen() {
   const posterUrl = getLiveEventMediaUrl(session?.posterPath);
   const teaserUrl = getLiveEventMediaUrl(session?.teaserVideoPath);
   const reservationCount = quorumPooling.snapshot?.quorum.attendanceCount ?? session?.reservationCount ?? 0;
+  const liveReturnParams = useMemo(
+    () => getLiveReturnParams(params),
+    [params.returnCircleId, params.returnCircleTab],
+  );
+  const returnsToCircle = isReturningToCircle(liveReturnParams);
+  const leaveEvent = useCallback(() => {
+    router.dismissTo(getLiveExitDestination(liveReturnParams));
+  }, [liveReturnParams]);
+
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      leaveEvent();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [leaveEvent]);
 
   const reserve = async () => {
     if (!session || saving) return;
@@ -47,19 +70,27 @@ export default function LiveEventScreen() {
   const enter = () => {
     if (!session) return;
     if (phase === 'live') {
-      router.push({ pathname: '/live/[sessionId]', params: { sessionId: session.id } });
+      router.push({
+        pathname: '/live/[sessionId]',
+        params: { sessionId: session.id, ...liveReturnParams },
+      });
       return;
     }
-    if (isOwner && phase === 'upcoming') router.push({ pathname: '/live/backstage/[sessionId]', params: { sessionId: session.id } });
+    if (isOwner && phase === 'upcoming') {
+      router.push({
+        pathname: '/live/backstage/[sessionId]',
+        params: { sessionId: session.id, ...liveReturnParams },
+      });
+    }
   };
 
   if (loading && !session) return <View style={styles.loading}><ActivityIndicator color="#E1BE70" /></View>;
-  if (!session) return <View style={styles.loading}><Text style={styles.missing}>This Live event is not available.</Text><Pressable onPress={() => router.replace('/live')}><Text style={styles.link}>Return to Live Studio</Text></Pressable></View>;
+  if (!session) return <View style={styles.loading}><Text style={styles.missing}>This Live event is not available.</Text><Pressable onPress={leaveEvent}><Text style={styles.link}>{returnsToCircle ? 'Return to Circle' : 'Return to Live Studio'}</Text></Pressable></View>;
 
   return (
     <LinearGradient colors={['#071310', '#0C211D', '#121713']} style={styles.root}>
       <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
-        <View style={styles.header}><Pressable accessibilityLabel="Back to Live Studio" onPress={() => router.replace('/live')} style={styles.icon}><ArrowLeft size={21} color="#FFF7EC" /></Pressable><Text style={styles.headerTitle}>Live Event</Text></View>
+        <View style={styles.header}><Pressable accessibilityLabel={returnsToCircle ? 'Back to Circle' : 'Back to Live Studio'} onPress={leaveEvent} style={styles.icon}><ArrowLeft size={21} color="#FFF7EC" /></Pressable><Text style={styles.headerTitle}>Live Event</Text></View>
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <ImageBackground source={posterUrl ? { uri: posterUrl } : undefined} style={styles.hero} imageStyle={styles.heroImage}>
             <LinearGradient colors={['rgba(8,20,18,0.05)', 'rgba(8,20,18,0.96)']} style={styles.heroOverlay}>
@@ -87,7 +118,10 @@ export default function LiveEventScreen() {
               onRespondOffer={(offerId, accept) => void quorumPooling.respondToOffer(offerId, accept)}
               onCreateDefaultRule={() => void quorumPooling.createDefaultRule()}
               onCreatePool={(candidateSessionId, ruleId) => void quorumPooling.createPool(candidateSessionId, ruleId)}
-              onOpenSession={(nextSessionId) => router.push({ pathname: '/live/event/[sessionId]', params: { sessionId: nextSessionId } })}
+              onOpenSession={(nextSessionId) => router.push({
+                pathname: '/live/event/[sessionId]',
+                params: { sessionId: nextSessionId, ...liveReturnParams },
+              })}
             />
           ) : null}
 

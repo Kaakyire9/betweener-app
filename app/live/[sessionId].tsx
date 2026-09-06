@@ -55,7 +55,12 @@ import {
 import { loadStreamVideoSdk } from '@/features/live/media/load-stream-video-sdk.ts';
 import { useAuth } from '@/lib/auth-context';
 import { useScopedScreenAwake } from '@/hooks/use-scoped-screen-awake';
-import { getLiveExitDestination } from '@/features/live/navigation/live-navigation.ts';
+import {
+  getLiveExitDestination,
+  getLiveReturnParams,
+  isReturningToCircle,
+  type LiveReturnRouteParams,
+} from '@/features/live/navigation/live-navigation.ts';
 import IntentRequestSheet from '@/components/IntentRequestSheet';
 
 const StreamLiveStage = lazy(async () => {
@@ -79,8 +84,17 @@ type LiveRoomNotice = {
 };
 
 export default function LiveSessionScreen() {
-  const params = useLocalSearchParams<{ sessionId?: string; startAudio?: string; startVideo?: string }>();
+  const params = useLocalSearchParams<{
+    sessionId?: string;
+    startAudio?: string;
+    startVideo?: string;
+  } & LiveReturnRouteParams>();
   const sessionId = typeof params.sessionId === 'string' ? params.sessionId : '';
+  const liveReturnParams = useMemo(
+    () => getLiveReturnParams(params),
+    [params.returnCircleId, params.returnCircleTab],
+  );
+  const returnsToCircle = isReturningToCircle(liveReturnParams);
   const { profile, user } = useAuth();
   const controller = useLiveSessionController(sessionId, user?.id ?? null);
   const media = useLiveMediaSession(sessionId);
@@ -151,9 +165,9 @@ export default function LiveSessionScreen() {
   const publicationReady = canPublish
     && media.publishAuthorized
     && media.authorityState === 'ready';
-  const returnToCircles = useCallback(() => {
-    router.replace(getLiveExitDestination(snapshot?.session.circleId));
-  }, [snapshot?.session.circleId]);
+  const returnToLiveOrigin = useCallback(() => {
+    router.dismissTo(getLiveExitDestination(liveReturnParams));
+  }, [liveReturnParams]);
   const openLiveStudio = useCallback(() => {
     setStudioOpen(true);
     void Promise.all([
@@ -193,11 +207,11 @@ export default function LiveSessionScreen() {
       if (quickConnectPairingRouteRef.current === quickConnectPairingId) {
         router.push({
           pathname: '/live/quick-connect/[sessionId]',
-          params: { sessionId },
+          params: { sessionId, ...liveReturnParams },
         });
       }
     });
-  }, [isQuickConnectLive, media.leave, quickConnectPairingId, sessionId]);
+  }, [isQuickConnectLive, liveReturnParams, media.leave, quickConnectPairingId, sessionId]);
 
   useEffect(() => {
     participantAdmissionGenerationRef.current += 1;
@@ -342,10 +356,13 @@ export default function LiveSessionScreen() {
       me?.state === 'banned'
         ? 'A host or moderator has ended your access to this room.'
         : 'The host has ended your participation in this room.',
-      [{ text: 'Return to Circles', onPress: returnToCircles }],
+      [{
+        text: returnsToCircle ? 'Return to Circle' : 'Return to Live Studio',
+        onPress: returnToLiveOrigin,
+      }],
       { cancelable: false },
     );
-  }, [me?.state, media.error, media.leave, returnToCircles]);
+  }, [me?.state, media.error, media.leave, returnsToCircle, returnToLiveOrigin]);
 
   useEffect(() => {
     const privateSpark = hostedMatching.snapshot?.privateSpark;
@@ -361,9 +378,12 @@ export default function LiveSessionScreen() {
       // This prevents camera contention and guarantees that private media is
       // never published into the public room during the transition.
       await media.leave();
-      router.replace(`/live/private-spark/${privateSpark.id}`);
+      router.replace({
+        pathname: '/live/private-spark/[privateSparkId]',
+        params: { privateSparkId: privateSpark.id, ...liveReturnParams },
+      });
     })();
-  }, [hostedMatching.snapshot?.privateSpark, media.leave]);
+  }, [hostedMatching.snapshot?.privateSpark, liveReturnParams, media.leave]);
 
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
@@ -446,8 +466,8 @@ export default function LiveSessionScreen() {
       media.leave(),
       shouldPersistLeave ? controller.leave() : Promise.resolve(),
     ]);
-    returnToCircles();
-  }, [controller.leave, me, media.leave, returnToCircles]);
+    returnToLiveOrigin();
+  }, [controller.leave, me, media.leave, returnToLiveOrigin]);
   const confirmLeaveLive = useCallback(() => {
     Alert.alert(
       'Leave this Live?',
@@ -547,7 +567,10 @@ export default function LiveSessionScreen() {
           : 'Prepare this room';
     const handleHostAction = () => {
       if (hostStatus === 'backstage') {
-        router.push({ pathname: '/live/backstage/[sessionId]', params: { sessionId } });
+        router.push({
+          pathname: '/live/backstage/[sessionId]',
+          params: { sessionId, ...liveReturnParams },
+        });
         return;
       }
       const nextStatus = hostStatus === 'confirmed'
@@ -561,7 +584,7 @@ export default function LiveSessionScreen() {
       <View style={styles.invitationRoot}>
         <SafeAreaView style={styles.invitationSafe}>
           <View style={styles.header}>
-            <Pressable onPress={returnToCircles} style={styles.iconButton}><ChevronLeft size={25} color="#FFF7EC" /></Pressable>
+            <Pressable accessibilityLabel={returnsToCircle ? 'Back to Circle' : 'Back to Live Studio'} onPress={returnToLiveOrigin} style={styles.iconButton}><ChevronLeft size={25} color="#FFF7EC" /></Pressable>
             <View style={styles.scheduledPill}><Radio size={13} color="#D7B56D" /><Text style={styles.scheduledText}>SCHEDULED LIVE</Text></View>
             <View style={styles.iconButton}><MoreHorizontal size={21} color="#FFF7EC" /></View>
           </View>
@@ -604,7 +627,7 @@ export default function LiveSessionScreen() {
       <View style={styles.invitationRoot}>
         <SafeAreaView style={styles.invitationSafe}>
           <View style={styles.header}>
-            <Pressable onPress={returnToCircles} style={styles.iconButton}><ChevronLeft size={25} color="#FFF7EC" /></Pressable>
+            <Pressable accessibilityLabel={returnsToCircle ? 'Back to Circle' : 'Back to Live Studio'} onPress={returnToLiveOrigin} style={styles.iconButton}><ChevronLeft size={25} color="#FFF7EC" /></Pressable>
             <View style={styles.scheduledPill}><Radio size={13} color="#D7B56D" /><Text style={styles.scheduledText}>HOST INVITATION</Text></View>
             <View style={styles.iconButton}><MoreHorizontal size={21} color="#FFF7EC" /></View>
           </View>
@@ -615,7 +638,10 @@ export default function LiveSessionScreen() {
           </View>
           <View style={styles.invitationActions}>
             <Pressable
-              onPress={() => router.push({ pathname: '/live/backstage/[sessionId]', params: { sessionId } })}
+              onPress={() => router.push({
+                pathname: '/live/backstage/[sessionId]',
+                params: { sessionId, ...liveReturnParams },
+              })}
               style={styles.primaryButton}
             ><Text style={styles.primaryText}>Enter private backstage</Text></Pressable>
           </View>
@@ -758,7 +784,10 @@ export default function LiveSessionScreen() {
               if (saved) void controller.refresh();
             })}
             onRespondPrivateSpark={(privateSparkId, accept) => void hostedMatching.respondPrivateSpark(privateSparkId, accept)}
-            onEnterPrivateSpark={(privateSparkId) => router.push(`/live/private-spark/${privateSparkId}`)}
+            onEnterPrivateSpark={(privateSparkId) => router.push({
+              pathname: '/live/private-spark/[privateSparkId]',
+              params: { privateSparkId, ...liveReturnParams },
+            })}
             onEndPrivateSpark={(privateSparkId) => void hostedMatching.endPrivateSpark(privateSparkId, 'host_safety_termination')}
             showAvailabilityControl={false}
           />
@@ -901,7 +930,10 @@ export default function LiveSessionScreen() {
               if (saved) void controller.refresh();
             }),
             onRespondPrivateSpark: (privateSparkId, accept) => void hostedMatching.respondPrivateSpark(privateSparkId, accept),
-            onEnterPrivateSpark: (privateSparkId) => router.push(`/live/private-spark/${privateSparkId}`),
+            onEnterPrivateSpark: (privateSparkId) => router.push({
+              pathname: '/live/private-spark/[privateSparkId]',
+              params: { privateSparkId, ...liveReturnParams },
+            }),
             onEndPrivateSpark: (privateSparkId) => void hostedMatching.endPrivateSpark(privateSparkId, 'host_safety_termination'),
           } : null}
           pulseProps={{

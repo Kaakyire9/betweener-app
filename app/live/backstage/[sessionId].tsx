@@ -5,10 +5,18 @@ import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from 'r
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LiveBackstagePreview } from '@/features/live/components/index.ts';
 import { useLiveDeviceReadiness, useLiveSessionController } from '@/features/live/hooks/index.ts';
+import {
+  getLiveReturnParams,
+  type LiveReturnRouteParams,
+} from '@/features/live/navigation/live-navigation.ts';
 
 export default function LiveBackstageScreen() {
-  const params = useLocalSearchParams<{ sessionId?: string }>();
+  const params = useLocalSearchParams<{ sessionId?: string } & LiveReturnRouteParams>();
   const sessionId = typeof params.sessionId === 'string' ? params.sessionId : '';
+  const liveReturnParams = useMemo(
+    () => getLiveReturnParams(params),
+    [params.returnCircleId, params.returnCircleTab],
+  );
   const controller = useLiveSessionController(sessionId);
   const devices = useLiveDeviceReadiness();
   const [cameraReady, setCameraReady] = useState(true);
@@ -36,7 +44,10 @@ export default function LiveBackstageScreen() {
   }, [canOpenStage, stageIsDue]);
 
   const returnToRoom = () => {
-    router.replace({ pathname: '/live/[sessionId]', params: { sessionId } });
+    router.replace({
+      pathname: '/live/[sessionId]',
+      params: { sessionId, ...liveReturnParams },
+    });
   };
 
   const enterRoom = async () => {
@@ -57,6 +68,7 @@ export default function LiveBackstageScreen() {
           sessionId,
           startAudio: microphoneReady ? '1' : '0',
           startVideo: cameraReady ? '1' : '0',
+          ...liveReturnParams,
         },
       });
       return;
@@ -72,9 +84,10 @@ export default function LiveBackstageScreen() {
         sessionId,
         startAudio: microphoneReady ? '1' : '0',
         startVideo: cameraReady ? '1' : '0',
+        ...liveReturnParams,
       },
     });
-  }, [cameraReady, canOpenStage, controller.snapshot?.me?.state, microphoneReady, sessionId]);
+  }, [cameraReady, canOpenStage, controller.snapshot?.me?.state, liveReturnParams, microphoneReady, sessionId]);
 
   const toggleCamera = async () => {
     const next = !cameraReady;
@@ -109,7 +122,7 @@ export default function LiveBackstageScreen() {
       )}
       <SafeAreaView style={StyleSheet.absoluteFill} edges={['top', 'bottom']} pointerEvents="box-none">
         <View style={styles.header}>
-          <Pressable onPress={returnToRoom} style={styles.icon}><ChevronLeft size={24} color="#FFF7EC" /></Pressable>
+          <Pressable accessibilityLabel="Back to Live room" onPress={returnToRoom} style={styles.icon}><ChevronLeft size={24} color="#FFF7EC" /></Pressable>
           <View style={styles.privatePill}><ShieldCheck size={14} color="#D7B56D" /><Text style={styles.privateText}>PRIVATE BACKSTAGE</Text></View>
           <View style={styles.icon}><Wifi size={18} color={controller.state === 'offline' || controller.state === 'error' ? '#E7A46B' : '#BFE0D7'} /></View>
         </View>

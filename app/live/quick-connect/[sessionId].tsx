@@ -32,6 +32,10 @@ import { useLiveChemistry, useLiveMediaSession, useLiveQuickConnect } from '@/fe
 import { quickConnectAvailabilityCopy } from '@/features/live/domain/live-quick-connect.ts';
 import { loadStreamVideoSdk } from '@/features/live/media/load-stream-video-sdk.ts';
 import { requestLiveQuickConnectAdmission } from '@/features/live/media/request-live-quick-connect-admission.ts';
+import {
+  getLiveReturnParams,
+  type LiveReturnRouteParams,
+} from '@/features/live/navigation/live-navigation.ts';
 import { useScopedScreenAwake } from '@/hooks/use-scoped-screen-awake';
 import { useAuth } from '@/lib/auth-context';
 
@@ -323,16 +327,23 @@ function QuickConnectConversation({
 }
 
 export default function LiveQuickConnectScreen() {
-  const params = useLocalSearchParams<{ sessionId?: string }>();
+  const params = useLocalSearchParams<{ sessionId?: string } & LiveReturnRouteParams>();
   const sessionId = typeof params.sessionId === 'string' ? params.sessionId : '';
+  const liveReturnParams = useMemo(
+    () => getLiveReturnParams(params),
+    [params.returnCircleId, params.returnCircleTab],
+  );
   const controller = useLiveQuickConnect(sessionId);
   const [pictureInPictureActive, setPictureInPictureActive] = useState(false);
   const queueCopy = quickConnectQueueCopy(controller.snapshot, controller.error);
   const waitingForHost = quickConnectIsWaitingForHost(controller.error);
   const queueNeedsRejoin = quickConnectQueueNeedsRejoin(controller.snapshot);
   const returnToLive = useCallback(() => {
-    router.replace({ pathname: '/live/[sessionId]', params: { sessionId } });
-  }, [sessionId]);
+    router.replace({
+      pathname: '/live/[sessionId]',
+      params: { sessionId, ...liveReturnParams },
+    });
+  }, [liveReturnParams, sessionId]);
   const endRound = useCallback(async () => {
     await controller.leave().catch(() => undefined);
   }, [controller.leave]);
@@ -368,7 +379,7 @@ export default function LiveQuickConnectScreen() {
       <Stack.Screen options={{ gestureEnabled: false }} />
       <SafeAreaView edges={pictureInPictureActive ? [] : undefined} style={styles.safe}>
         <View style={[styles.header, pictureInPictureActive && styles.pictureInPictureHidden]}>
-          <Pressable accessibilityState={{ disabled: pendingSafety }} disabled={pendingSafety} onPress={handleBack} style={[styles.roundButton, pendingSafety && styles.disabled]}><ArrowLeft color="#FFF7EC" size={22} /></Pressable>
+          <Pressable accessibilityLabel="Back to Live room" accessibilityState={{ disabled: pendingSafety }} disabled={pendingSafety} onPress={handleBack} style={[styles.roundButton, pendingSafety && styles.disabled]}><ArrowLeft color="#FFF7EC" size={22} /></Pressable>
           <View style={styles.headerCopy}><Text style={styles.eyebrow}>QUICK CONNECT</Text><Text style={styles.headerTitle}>A thoughtful three minutes</Text></View>
           <View style={styles.liveDot} />
         </View>
