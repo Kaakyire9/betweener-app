@@ -40,7 +40,7 @@ import {
 } from '@/lib/offline/moments-store';
 import { readOfflineData, writeOfflineEnvelope } from '@/lib/offline/core';
 import { supabase } from '@/lib/supabase';
-import { prepareProfileGuardWrite } from '@/lib/profile-guard/write-payload';
+import { prepareProfileGuardInvocation } from '@/lib/profile-guard/write-payload';
 
 const OFFLINE_MUTATION_QUEUE_KEY = 'offline:mutation-queue:v1';
 const OFFLINE_MUTATION_FAILED_KEY = 'offline:mutation-failed:v1';
@@ -1754,13 +1754,13 @@ async function processIntentRequestCancel(payload: IntentRequestCancelPayload) {
 }
 
 async function processProfileUpdate(payload: ProfileUpdatePayload) {
-  const guardWrite = prepareProfileGuardWrite(payload.updates);
-  const { data, error } = await supabase.functions.invoke('profile-guard-update', {
-    body: {
-      updates: guardWrite.updates,
-      complete_onboarding: guardWrite.completeOnboarding,
+  const guardInvocation = prepareProfileGuardInvocation(payload.updates);
+  const { data, error } = await supabase.functions.invoke(
+    guardInvocation.functionName,
+    {
+      body: guardInvocation.body,
     },
-  });
+  );
   if (error) throw error;
   if (data?.ok === false) {
     throw Object.assign(new Error('PROFILE_CONTENT_NOT_ALLOWED'), {
@@ -1898,17 +1898,15 @@ async function processProfileMediaSync(payload: ProfileMediaSyncPayload) {
 
   if (Object.keys(updates).length === 0) return;
 
-  const { error } = await supabase
-    .from('profiles')
-    .upsert(
-      {
-        ...updates,
-        user_id: payload.userId,
-        updated_at: payload.updatedAt,
-      },
-      { onConflict: 'user_id' },
-    );
+  const { data, error } = await supabase.functions.invoke('profile-guard-update', {
+    body: { updates },
+  });
   if (error) throw error;
+  if (data?.ok === false) {
+    throw Object.assign(new Error(data.code ?? 'PROFILE_MEDIA_NOT_ALLOWED'), {
+      code: data.code ?? 'PROFILE_MEDIA_NOT_ALLOWED',
+    });
+  }
 }
 
 async function processNotificationPrefsUpdate(payload: NotificationPrefsUpdatePayload) {

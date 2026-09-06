@@ -853,10 +853,16 @@ const scheduleOutboxRetry = async (
     errorCode === 'invalid_payload' ||
     errorCode.includes('attachment_size_invalid') ||
     errorCode.includes('attachment_content_mismatch') ||
+    errorCode.includes('image_content_not_allowed') ||
+    errorCode.includes('image_review_required') ||
+    errorCode.includes('encrypted_image_moderation_unavailable') ||
     errorCode.includes('attachment_metadata_invalid') ||
     errorCode.includes('unsupported_attachment') ||
     errorMessage.includes('attachment_size_invalid') ||
     errorMessage.includes('attachment_content_mismatch') ||
+    errorMessage.includes('image_content_not_allowed') ||
+    errorMessage.includes('image_review_required') ||
+    errorMessage.includes('encrypted_image_moderation_unavailable') ||
     errorMessage.includes('violates check constraint') ||
     errorMessage.includes('row-level security') ||
     errorMessage.includes('messaging unavailable') ||
@@ -938,27 +944,41 @@ const sendTextOutboxItem = async (item: ChatPendingOutboxRow) => {
   const clientMessageId = payload.clientMessageId ?? item.local_message_id;
   await ChatRepository.markOutboxItemAttempting(item.owner_user_id, item.local_message_id);
 
-  const { data, error } = await supabase
-    .from('messages')
-    .insert({
+  const { data: guardData, error } = await supabase.functions.invoke('private-message-guard-send', {
+    body: {
+      receiverId: payload.receiverId,
+      clientMessageId,
       text: payload.text,
-      client_message_id: clientMessageId,
-      sender_id: payload.senderId,
-      receiver_id: payload.receiverId,
-      is_read: false,
-      message_type: payload.messageType ?? 'text',
-      reply_to_message_id: payload.replyToMessageId ?? null,
-      storage_path: payload.storagePath ?? null,
-    })
-    .select(REMOTE_MESSAGE_SELECT)
-    .single();
+      messageType: payload.messageType ?? 'text',
+      replyToMessageId: payload.replyToMessageId ?? null,
+      storagePath: payload.storagePath ?? null,
+    },
+  });
 
-  if (error && (error as { code?: string }).code !== '23505') {
+  if (error) {
     await scheduleOutboxRetry(item, error, 'send_failed', 'Unable to send queued message');
     return { sent: false, threadId: item.thread_id };
   }
 
-  const remoteRow = (data as RemoteMessageRow | null) ?? (await fetchExistingClientMessage(payload.senderId, clientMessageId));
+  const guardResult = (guardData ?? {}) as {
+    ok?: boolean;
+    code?: string;
+    message?: RemoteMessageRow | null;
+  };
+  if (guardResult.ok === false) {
+    await ChatRepository.markOutboxItemStatus(item.owner_user_id, item.local_message_id, 'failed', {
+      code: guardResult.code ?? 'MESSAGE_CONTENT_NOT_ALLOWED',
+      message: guardResult.code === 'MESSAGE_REVIEW_REQUIRED'
+        ? 'Message held for safety review'
+        : guardResult.code === 'MESSAGING_TEMPORARILY_RESTRICTED'
+          ? 'Messaging is temporarily restricted'
+          : 'Message violates Betweener safety rules',
+    });
+    return { sent: false, threadId: item.thread_id };
+  }
+
+  const remoteRow = guardResult.message
+    ?? (await fetchExistingClientMessage(payload.senderId, clientMessageId));
   if (remoteRow) {
     await ChatRepository.upsertMessages(item.owner_user_id, item.thread_id, [
       toLocalMessageRow(item.owner_user_id, item.thread_id, remoteRow, payload),

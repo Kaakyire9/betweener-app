@@ -675,6 +675,12 @@ export default function InAppToasts() {
         body: row?.text ?? 'Your report has been reviewed.',
       };
     }
+    if (row?.event_type === 'profile_guard_review_resolved') {
+      return {
+        title: 'Profile review update',
+        body: row?.text ?? 'Your profile review has been completed.',
+      };
+    }
     if (
       row?.event_type === 'date_plan_concierge_claimed' ||
       row?.event_type === 'date_plan_concierge_completed' ||
@@ -744,6 +750,7 @@ export default function InAppToasts() {
     return (
       eventType === 'admin_queue_item' ||
       eventType === 'admin_report_reviewed' ||
+      eventType === 'profile_guard_review_resolved' ||
       eventType === 'date_plan_concierge_claimed' ||
       eventType === 'date_plan_concierge_completed' ||
       eventType === 'date_plan_concierge_cancelled' ||
@@ -768,6 +775,7 @@ export default function InAppToasts() {
           const notificationKind =
             row?.event_type === 'admin_queue_item' ||
             row?.event_type === 'admin_report_reviewed' ||
+            row?.event_type === 'profile_guard_review_resolved' ||
             String(row?.event_type || '').startsWith('account_recovery_')
               ? 'verification'
               : 'messages';

@@ -80,6 +80,7 @@ import {
   getViewOnceUploadErrorMessage,
 } from "@/lib/chat/attachments/view-once-attachment";
 import { prepareDurableViewOnceAttachment } from "@/lib/chat/attachments/view-once-send-service";
+import { moderateEncryptAndSendViewOnceImage } from "@/lib/chat/attachments/view-once-pre-encryption-service";
 import { prepareChatVideo } from "@/lib/chat/video-preparation";
 import {
   getMessageMediaItems,
@@ -3982,6 +3983,13 @@ const resolveQueuedVideoUri = async (
       });
       return;
     }
+    if (kind === 'image' && !networkReady) {
+      Alert.alert(
+        'Connection required',
+        'View-once photos must be checked securely before encryption. Connect to the internet and try again.',
+      );
+      return;
+    }
 
     const startedAt = Date.now();
     console.log('[chat][view-once-send] start', {
@@ -4022,6 +4030,50 @@ const resolveQueuedVideoUri = async (
       kind,
       replyTo: replyToMessage,
     });
+
+    if (kind === 'image') {
+      try {
+        const fileInfo = await FileSystem.getInfoAsync(uri);
+        const byteSize = fileInfo.exists && 'size' in fileInfo && typeof fileInfo.size === 'number'
+          ? fileInfo.size
+          : 0;
+        if (byteSize <= 0) throw new Error('chat_upload_source_unavailable');
+        const canonical = await moderateEncryptAndSendViewOnceImage({
+          senderId: user.id,
+          receiverId: activePeerMessageUserId,
+          clientMessageId,
+          attachmentId,
+          localUri: uri,
+          fileName,
+          contentType,
+          byteSize,
+          replyToMessageId: replyToMessage?.id ?? null,
+        });
+        const mapped = mapRowToMessage(canonical as MessageDatabaseRow);
+        await ChatRepository.upsertMessages(user.id, activePeerMessageUserId, [
+          chatMessageToLocalRow(user.id, activePeerMessageUserId, mapped),
+        ]);
+        setMessages((prev) => appendMessage(prev, mapped));
+        setReplyingTo(null);
+        setEditingMessage(null);
+        setViewOnceMode(false);
+        console.log('[chat][view-once-send] pre-encryption-moderated', {
+          kind,
+          attachmentId,
+          clientMessageId,
+          durationMs: Date.now() - startedAt,
+        });
+      } catch (err) {
+        console.log('[chat][view-once-send] pre-encryption-error', {
+          attachmentId,
+          clientMessageId,
+          code: (err as { code?: string })?.code ?? null,
+          message: err instanceof Error ? err.message : String(err),
+        }, err);
+        Alert.alert('View once', getViewOnceUploadErrorMessage(kind, err));
+      }
+      return;
+    }
 
     let encryptedLocalUri: string | null = null;
     try {
@@ -4115,7 +4167,7 @@ const resolveQueuedVideoUri = async (
         getViewOnceUploadErrorMessage(kind, err),
       );
     }
-  }, [activePeerMessageUserId, conversationId, ensureViewOnceKeys, isBlockedByMe, isChatBlocked, networkReady, replyingTo, user?.id]);
+  }, [activePeerMessageUserId, conversationId, ensureViewOnceKeys, isBlockedByMe, isChatBlocked, mapRowToMessage, networkReady, replyingTo, user?.id]);
 
   const _sendVideoAttachment = useCallback(async ({
     videoUrl,
@@ -5558,22 +5610,24 @@ const resolveQueuedVideoUri = async (
       return;
     }
 
-    const { data, error } = await supabase
-      .from('messages')
-      .insert({
+    const { data: guardData, error } = await supabase.functions.invoke('private-message-guard-send', {
+      body: {
+        receiverId: activePeerMessageUserId,
+        clientMessageId,
         text: retryPayload.text,
-        client_message_id: clientMessageId,
-        sender_id: user.id,
-        receiver_id: activePeerMessageUserId,
-        is_read: false,
-        message_type: 'text',
-        reply_to_message_id: retryPayload.replyToMessageId,
-      })
-      .select(MESSAGE_SELECT_FIELDS)
-      .single();
+        messageType: 'text',
+        replyToMessageId: retryPayload.replyToMessageId,
+      },
+    });
+    const guardResult = (guardData ?? {}) as {
+      ok?: boolean;
+      code?: string;
+      message?: MessageDatabaseRow;
+    };
+    const data = guardResult.message ?? null;
 
     if (error || !data) {
-      if (isLikelyNetworkError(error)) {
+      if (error && isLikelyNetworkError(error)) {
         const queuedRetryMessage = transitionMessageLifecycleRecord({
           message: sendingRetryMessage,
           event: 'send_deferred',
@@ -5591,7 +5645,7 @@ const resolveQueuedVideoUri = async (
         }));
         return;
       }
-      console.log('[chat] retry failed message error', error);
+      console.log('[chat] retry failed message error', error ?? guardResult.code);
       const failedRetryMessage = transitionMessageLifecycleRecord({
         message: sendingRetryMessage,
         event: 'retryable_failure',
@@ -5602,8 +5656,11 @@ const resolveQueuedVideoUri = async (
         message: failedRetryMessage,
         outboxStatus: 'failed',
         error: {
-          code: (error as { code?: string } | null)?.code ?? 'retry_failed',
-          message: (error as { message?: string } | null)?.message ?? 'Unable to retry message',
+          code: (error as { code?: string } | null)?.code ?? guardResult.code ?? 'retry_failed',
+          message: (error as { message?: string } | null)?.message
+            ?? (guardResult.code === 'MESSAGE_REVIEW_REQUIRED'
+              ? 'Message held for safety review'
+              : 'Message violates Betweener safety rules'),
         },
       }).catch((persistError) => console.log('[chat] persist failed retry text outbox error', persistError));
       setMessages((prev) => transitionMessageLifecycle({
@@ -5611,7 +5668,14 @@ const resolveQueuedVideoUri = async (
         messageId,
         event: 'retryable_failure',
       }));
-      Alert.alert('Retry failed', 'Unable to resend this message right now.');
+      Alert.alert(
+        guardResult.ok === false ? 'Message not sent' : 'Retry failed',
+        guardResult.code === 'MESSAGE_REVIEW_REQUIRED'
+          ? 'This message is being held for a safety review.'
+          : guardResult.ok === false
+            ? 'Please remove solicitation, threats, scams, or unsafe content and try again.'
+            : 'Unable to resend this message right now.',
+      );
       return;
     }
 
@@ -6872,7 +6936,17 @@ const resolveQueuedVideoUri = async (
 
     if (error) {
       console.log('[chat] edit message error', error);
-      Alert.alert('Edit message', 'Unable to update this message right now.');
+      const moderationCode = String((error as { code?: string })?.code ?? '');
+      Alert.alert(
+        moderationCode === 'MESSAGE_CONTENT_NOT_ALLOWED' || moderationCode === 'MESSAGE_REVIEW_REQUIRED'
+          ? 'Edit not saved'
+          : 'Edit message',
+        moderationCode === 'MESSAGE_REVIEW_REQUIRED'
+          ? 'This edit is being held for a safety review.'
+          : moderationCode === 'MESSAGE_CONTENT_NOT_ALLOWED'
+            ? 'Please remove solicitation, threats, scams, or unsafe content and try again.'
+            : 'Unable to update this message right now.',
+      );
       await refreshThread();
       return;
     }
@@ -7621,7 +7695,9 @@ const resolveQueuedVideoUri = async (
         updateMediaUploadStatus(
           uploadStatusId,
           `Securing private ${mediaKind}...`,
-          'Encrypting and uploading this media for one-time viewing.',
+          asset.type === 'image'
+            ? 'Checking this photo, then encrypting it for one-time viewing.'
+            : 'Encrypting and uploading this media for one-time viewing.',
           'shield-lock-outline'
         );
         await sendEncryptedMediaAttachment({
@@ -7826,7 +7902,9 @@ const resolveQueuedVideoUri = async (
         updateMediaUploadStatus(
           uploadStatusId,
           `Securing private ${mediaKind}...`,
-          'Encrypting and uploading this media for one-time viewing.',
+          asset.type === 'image'
+            ? 'Checking this photo, then encrypting it for one-time viewing.'
+            : 'Encrypting and uploading this media for one-time viewing.',
           'shield-lock-outline'
         );
         await sendEncryptedMediaAttachment({

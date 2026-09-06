@@ -28,6 +28,15 @@ const retentionFunction = readFileSync(
   'supabase/functions/chat-attachment-retention/index.ts',
   'utf8',
 );
+const viewOnceModerationMigration = readFileSync(
+  'supabase/migrations/20260904130000_view_once_pre_encryption_moderation.sql',
+  'utf8',
+);
+const viewOnceModerationClient = readFileSync(
+  'lib/chat/attachments/view-once-pre-encryption-service.ts',
+  'utf8',
+);
+const chatScreen = readFileSync('components/chat/ChatScreen.tsx', 'utf8');
 
 test('finalized attachment objects are immutable to authenticated clients', () => {
   assert.match(migration, /is_chat_attachment_object_mutable/);
@@ -129,4 +138,31 @@ test('legacy attachment identities are repaired only when the mismatch is determ
     legacyIdentityRepairMigration,
     /validate constraint message_attachments_canonical_identity_fkey/,
   );
+});
+
+test('view-once photos are moderated before server-owned encryption', () => {
+  assert.match(viewOnceModerationClient, /bucket: MODERATION_BUCKET/);
+  assert.match(viewOnceModerationClient, /mode: 'finalize_view_once_plaintext'/);
+  assert.match(finalizeFunction, /await assessChatImage\(inspectionUrl\.signedUrl\)/);
+  assert.match(finalizeFunction, /exact downloaded bytes into a service-only, immutable object/);
+  assert.match(finalizeFunction, /encryptApprovedViewOnceImage/);
+  assert.match(finalizeFunction, /nacl\.secretbox\(plainBytes, mediaNonce, mediaKey\)/);
+  assert.match(chatScreen, /kind === 'image' && !networkReady/);
+  assert.match(chatScreen, /moderateEncryptAndSendViewOnceImage/);
+});
+
+test('a client cannot self-assert that encrypted image moderation passed', () => {
+  assert.match(finalizeFunction, /let preModeratedImageSafety = null/);
+  assert.match(finalizeFunction, /imageSafety = preModeratedImageSafety \|\|/);
+  assert.match(finalizeFunction, /ENCRYPTED_IMAGE_UNINSPECTABLE/);
+  assert.match(viewOnceModerationMigration, /revoke all on table public\.view_once_moderation_receipts from public, anon, authenticated/);
+  assert.match(viewOnceModerationMigration, /unique \(sender_user_id, client_message_id, attachment_id\)/);
+});
+
+test('view-once plaintext has bounded storage and crash cleanup', () => {
+  assert.match(viewOnceModerationMigration, /'view-once-moderation'[\s\S]*false,[\s\S]*15728624/);
+  assert.match(finalizeFunction, /plainBytes\?\.fill\(0\)/);
+  assert.match(finalizeFunction, /storage\.from\(stagingBucket\)\.remove\(\[stagingPath\]\)/);
+  assert.match(retentionFunction, /rpc_service_list_stale_view_once_moderation_objects/);
+  assert.match(retentionFunction, /moderationStagingDeleted/);
 });

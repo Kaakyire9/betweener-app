@@ -20,12 +20,27 @@ export const ChatThreadActionsService = {
     } as never);
   },
 
-  editMessage(args: { messageId: string; newText: string }) {
+  async editMessage(args: { messageId: string; newText: string }) {
     const { messageId, newText } = args;
-    return supabase.rpc('edit_message', {
-      message_id: messageId,
-      new_text: newText,
+    const { data, error } = await supabase.functions.invoke('private-message-guard-send', {
+      body: {
+        action: 'edit',
+        messageId,
+        text: newText,
+        messageType: 'text',
+      },
     });
+    const result = (data ?? {}) as { ok?: boolean; code?: string; message?: unknown };
+    if (error) return { data: null, error };
+    if (result.ok === false) {
+      return {
+        data: null,
+        error: Object.assign(new Error(result.code ?? 'MESSAGE_CONTENT_NOT_ALLOWED'), {
+          code: result.code ?? 'MESSAGE_CONTENT_NOT_ALLOWED',
+        }),
+      };
+    }
+    return { data: result.message ?? null, error: null };
   },
 
   hideMessageForUser(args: { messageId: string; currentUserId: string; peerUserId: string }) {

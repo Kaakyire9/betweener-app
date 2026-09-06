@@ -58,6 +58,21 @@ export const getViewOnceUploadErrorMessage = (kind: ViewOnceAttachmentKind, erro
   if (message.startsWith('view_once_media_exceeds_')) {
     return `For reliable encrypted delivery, choose a ${kind} smaller than ${kind === 'video' ? '25 MB' : '15 MB'}.`;
   }
+  if (message.includes('image_content_not_allowed')) {
+    return 'This photo cannot be sent because it contains prohibited or unsafe content.';
+  }
+  if (message.includes('image_review_required')) {
+    return 'This photo has been held for a safety review and was not sent.';
+  }
+  if (message.includes('image_moderation_unavailable') || message.includes('view_once_moderation_unavailable')) {
+    return 'The safety check is temporarily unavailable. The photo was not sent. Please try again.';
+  }
+  if (message.includes('view_once_keys_unavailable')) {
+    return 'Secure viewing is not ready for this conversation yet. Please try again shortly.';
+  }
+  if (message.includes('view_once_auth_required')) {
+    return 'Please reconnect or sign in again before sending a view-once photo.';
+  }
   return 'Unable to send encrypted media.';
 };
 
