@@ -1,5 +1,5 @@
-// Flat ESLint 10 config. Expo SDK 57 still publishes a few ESLint 9-era rules,
-// so @eslint/compat supplies the removed rule-context APIs until Expo updates them.
+// Flat ESLint config. Keep Expo's rules behind @eslint/compat so the configuration
+// remains stable across supported ESLint 9 patch releases.
 const expoConfig = require('eslint-config-expo/flat');
 const { fixupConfigRules } = require('@eslint/compat');
 const { defineConfig } = require('eslint/config');
