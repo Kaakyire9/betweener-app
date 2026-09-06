@@ -39,6 +39,20 @@ serve(async (req) => {
     if (scheduleError) throw scheduleError
     const { data: rows, error } = await service.rpc('rpc_claim_chat_attachment_cleanup', { p_limit: 100 })
     if (error) throw error
+    const { data: staleModerationRows, error: staleModerationError } = await service.rpc(
+      'rpc_service_list_stale_view_once_moderation_objects',
+      { p_limit: 250 },
+    )
+    if (staleModerationError) throw staleModerationError
+    let moderationStagingDeleted = 0
+    for (const row of staleModerationRows || []) {
+      const storagePath = String(row.storage_path || '')
+      if (!storagePath) continue
+      const { error: removeError } = await service.storage
+        .from('view-once-moderation')
+        .remove([storagePath])
+      if (!removeError) moderationStagingDeleted += 1
+    }
     let deleted = 0
     let failed = 0
     let deadLetter = 0
@@ -79,6 +93,7 @@ serve(async (req) => {
       failed,
       deadLetter,
       abandonedFinalizations: Number(abandonedData || 0),
+      moderationStagingDeleted,
     })
   } catch (error) {
     await failRun(error)

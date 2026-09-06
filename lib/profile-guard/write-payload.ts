@@ -20,3 +20,15 @@ export const prepareProfileGuardWrite = (updates: Record<string, unknown>) => {
     completeOnboarding,
   };
 };
+
+export const prepareProfileGuardInvocation = (updates: Record<string, unknown>) => {
+  const write = prepareProfileGuardWrite(updates);
+  return {
+    functionName: write.completeOnboarding
+      ? 'profile-onboarding-submit'
+      : 'profile-guard-update',
+    body: write.completeOnboarding
+      ? { updates: write.updates }
+      : { updates: write.updates, complete_onboarding: false },
+  } as const;
+};

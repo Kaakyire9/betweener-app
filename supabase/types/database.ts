@@ -2449,6 +2449,94 @@ export type Database = {
           },
         ]
       }
+      circle_pulse_welcome_views: {
+        Row: {
+          circle_id: string
+          created_at: string
+          first_seen_at: string
+          gallery_opened_at: string | null
+          id: string
+          last_seen_at: string
+          profile_opened_at: string | null
+          updated_at: string
+          viewer_profile_id: string
+          viewer_user_id: string
+          welcome_profile_id: string
+          welcome_started_at: string | null
+        }
+        Insert: {
+          circle_id: string
+          created_at?: string
+          first_seen_at?: string
+          gallery_opened_at?: string | null
+          id?: string
+          last_seen_at?: string
+          profile_opened_at?: string | null
+          updated_at?: string
+          viewer_profile_id: string
+          viewer_user_id: string
+          welcome_profile_id: string
+          welcome_started_at?: string | null
+        }
+        Update: {
+          circle_id?: string
+          created_at?: string
+          first_seen_at?: string
+          gallery_opened_at?: string | null
+          id?: string
+          last_seen_at?: string
+          profile_opened_at?: string | null
+          updated_at?: string
+          viewer_profile_id?: string
+          viewer_user_id?: string
+          welcome_profile_id?: string
+          welcome_started_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circle_pulse_welcome_views_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circle_location_features"
+            referencedColumns: ["circle_id"]
+          },
+          {
+            foreignKeyName: "circle_pulse_welcome_views_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_pulse_welcome_views_viewer_profile_id_fkey"
+            columns: ["viewer_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "circle_pulse_welcome_views_viewer_profile_id_fkey"
+            columns: ["viewer_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_pulse_welcome_views_welcome_profile_id_fkey"
+            columns: ["welcome_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "circle_pulse_welcome_views_welcome_profile_id_fkey"
+            columns: ["welcome_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       circle_reports: {
         Row: {
           circle_id: string | null
@@ -2862,6 +2950,165 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      content_guard_media_policies: {
+        Row: {
+          attachment_type: string
+          enabled: boolean
+          enforcement_mode: string
+          inspection_strategy: string
+          updated_at: string
+        }
+        Insert: {
+          attachment_type: string
+          enabled?: boolean
+          enforcement_mode: string
+          inspection_strategy: string
+          updated_at?: string
+        }
+        Update: {
+          attachment_type?: string
+          enabled?: boolean
+          enforcement_mode?: string
+          inspection_strategy?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      content_guard_rate_limits: {
+        Row: {
+          request_count: number
+          scope: string
+          updated_at: string
+          user_id: string
+          window_started_at: string
+        }
+        Insert: {
+          request_count?: number
+          scope: string
+          updated_at?: string
+          user_id: string
+          window_started_at: string
+        }
+        Update: {
+          request_count?: number
+          scope?: string
+          updated_at?: string
+          user_id?: string
+          window_started_at?: string
+        }
+        Relationships: []
+      }
+      content_moderation_events: {
+        Row: {
+          actor_user_id: string
+          categories: string[]
+          client_content_id: string | null
+          content_id: string | null
+          content_type: string
+          created_at: string
+          decision: string
+          detector_version: string
+          evidence_redacted_at: string | null
+          evidence_snapshot: Json
+          extracted_text: string | null
+          failure_reason: string | null
+          id: string
+          provider: string
+          provider_model: string
+          provider_request_id: string | null
+          review_notes: string | null
+          review_outcome: string | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          risk_score: number
+          status: string
+          storage_bucket: string | null
+          storage_path: string | null
+          target_user_id: string | null
+        }
+        Insert: {
+          actor_user_id: string
+          categories?: string[]
+          client_content_id?: string | null
+          content_id?: string | null
+          content_type: string
+          created_at?: string
+          decision: string
+          detector_version?: string
+          evidence_redacted_at?: string | null
+          evidence_snapshot?: Json
+          extracted_text?: string | null
+          failure_reason?: string | null
+          id?: string
+          provider: string
+          provider_model: string
+          provider_request_id?: string | null
+          review_notes?: string | null
+          review_outcome?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          risk_score?: number
+          status: string
+          storage_bucket?: string | null
+          storage_path?: string | null
+          target_user_id?: string | null
+        }
+        Update: {
+          actor_user_id?: string
+          categories?: string[]
+          client_content_id?: string | null
+          content_id?: string | null
+          content_type?: string
+          created_at?: string
+          decision?: string
+          detector_version?: string
+          evidence_redacted_at?: string | null
+          evidence_snapshot?: Json
+          extracted_text?: string | null
+          failure_reason?: string | null
+          id?: string
+          provider?: string
+          provider_model?: string
+          provider_request_id?: string | null
+          review_notes?: string | null
+          review_outcome?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          risk_score?: number
+          status?: string
+          storage_bucket?: string | null
+          storage_path?: string | null
+          target_user_id?: string | null
+        }
+        Relationships: []
+      }
+      content_safety_actor_state: {
+        Row: {
+          blocked_attempts: number
+          last_incident_at: string | null
+          restricted_until: string | null
+          review_attempts: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          blocked_attempts?: number
+          last_incident_at?: string | null
+          restricted_until?: string | null
+          review_attempts?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          blocked_attempts?: number
+          last_incident_at?: string | null
+          restricted_until?: string | null
+          review_attempts?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
       }
       date_plan_concierge_requests: {
         Row: {
@@ -7775,6 +8022,138 @@ export type Database = {
         }
         Relationships: []
       }
+      profile_guard_rate_limits: {
+        Row: {
+          request_count: number
+          updated_at: string
+          user_id: string
+          window_started_at: string
+        }
+        Insert: {
+          request_count?: number
+          updated_at?: string
+          user_id: string
+          window_started_at: string
+        }
+        Update: {
+          request_count?: number
+          updated_at?: string
+          user_id?: string
+          window_started_at?: string
+        }
+        Relationships: []
+      }
+      profile_handle_history: {
+        Row: {
+          change_kind: string
+          changed_by_user_id: string
+          created_at: string
+          id: string
+          new_searchable: boolean
+          new_username: string | null
+          previous_searchable: boolean
+          previous_username: string | null
+          profile_id: string
+        }
+        Insert: {
+          change_kind: string
+          changed_by_user_id: string
+          created_at?: string
+          id?: string
+          new_searchable: boolean
+          new_username?: string | null
+          previous_searchable: boolean
+          previous_username?: string | null
+          profile_id: string
+        }
+        Update: {
+          change_kind?: string
+          changed_by_user_id?: string
+          created_at?: string
+          id?: string
+          new_searchable?: boolean
+          new_username?: string | null
+          previous_searchable?: boolean
+          previous_username?: string | null
+          profile_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "profile_handle_history_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "profile_handle_history_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      profile_handle_rate_limits: {
+        Row: {
+          action: string
+          attempt_count: number
+          profile_id: string
+          window_started_at: string
+        }
+        Insert: {
+          action: string
+          attempt_count?: number
+          profile_id: string
+          window_started_at?: string
+        }
+        Update: {
+          action?: string
+          attempt_count?: number
+          profile_id?: string
+          window_started_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "profile_handle_rate_limits_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "profile_handle_rate_limits_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      profile_handle_reservations: {
+        Row: {
+          created_at: string
+          match_mode: string
+          normalized_username: string
+          reason: string
+          username_skeleton: string
+        }
+        Insert: {
+          created_at?: string
+          match_mode?: string
+          normalized_username: string
+          reason?: string
+          username_skeleton: string
+        }
+        Update: {
+          created_at?: string
+          match_mode?: string
+          normalized_username?: string
+          reason?: string
+          username_skeleton?: string
+        }
+        Relationships: []
+      }
       profile_image_reactions: {
         Row: {
           created_at: string
@@ -7928,6 +8307,8 @@ export type Database = {
           created_at: string
           decision: string
           detector_version: string
+          evidence_redacted_at: string | null
+          evidence_snapshot: Json
           field_names: string[]
           id: string
           metadata: Json
@@ -7945,6 +8326,8 @@ export type Database = {
           created_at?: string
           decision: string
           detector_version: string
+          evidence_redacted_at?: string | null
+          evidence_snapshot?: Json
           field_names?: string[]
           id?: string
           metadata?: Json
@@ -7962,6 +8345,8 @@ export type Database = {
           created_at?: string
           decision?: string
           detector_version?: string
+          evidence_redacted_at?: string | null
+          evidence_snapshot?: Json
           field_names?: string[]
           id?: string
           metadata?: Json
@@ -8748,6 +9133,9 @@ export type Database = {
           updated_at: string
           user_id: string
           username: string | null
+          username_changed_at: string | null
+          username_claimed_at: string | null
+          username_searchable: boolean
           verification_level: number | null
           verification_refresh_reason: string | null
           verification_refresh_requested_at: string | null
@@ -8856,6 +9244,9 @@ export type Database = {
           updated_at?: string
           user_id: string
           username?: string | null
+          username_changed_at?: string | null
+          username_claimed_at?: string | null
+          username_searchable?: boolean
           verification_level?: number | null
           verification_refresh_reason?: string | null
           verification_refresh_requested_at?: string | null
@@ -8964,6 +9355,9 @@ export type Database = {
           updated_at?: string
           user_id?: string
           username?: string | null
+          username_changed_at?: string | null
+          username_claimed_at?: string | null
+          username_searchable?: boolean
           verification_level?: number | null
           verification_refresh_reason?: string | null
           verification_refresh_requested_at?: string | null
@@ -10636,6 +11030,81 @@ export type Database = {
           },
         ]
       }
+      view_once_moderation_receipts: {
+        Row: {
+          attachment_id: string
+          client_message_id: string
+          created_at: string
+          encrypted_byte_size: number
+          encrypted_key_nonce: string
+          encrypted_key_receiver: string
+          encrypted_key_sender: string
+          encrypted_media_nonce: string
+          encrypted_storage_path: string
+          encryption_public_key: string
+          expires_at: string
+          finalized_at: string | null
+          id: string
+          mime_type: string
+          moderation_categories: string[]
+          moderation_model: string
+          moderation_provider: string
+          moderation_risk_score: number
+          original_name: string | null
+          plaintext_sha256: string
+          receiver_user_id: string
+          sender_user_id: string
+        }
+        Insert: {
+          attachment_id: string
+          client_message_id: string
+          created_at?: string
+          encrypted_byte_size: number
+          encrypted_key_nonce: string
+          encrypted_key_receiver: string
+          encrypted_key_sender: string
+          encrypted_media_nonce: string
+          encrypted_storage_path: string
+          encryption_public_key: string
+          expires_at?: string
+          finalized_at?: string | null
+          id?: string
+          mime_type: string
+          moderation_categories?: string[]
+          moderation_model: string
+          moderation_provider: string
+          moderation_risk_score?: number
+          original_name?: string | null
+          plaintext_sha256: string
+          receiver_user_id: string
+          sender_user_id: string
+        }
+        Update: {
+          attachment_id?: string
+          client_message_id?: string
+          created_at?: string
+          encrypted_byte_size?: number
+          encrypted_key_nonce?: string
+          encrypted_key_receiver?: string
+          encrypted_key_sender?: string
+          encrypted_media_nonce?: string
+          encrypted_storage_path?: string
+          encryption_public_key?: string
+          expires_at?: string
+          finalized_at?: string | null
+          id?: string
+          mime_type?: string
+          moderation_categories?: string[]
+          moderation_model?: string
+          moderation_provider?: string
+          moderation_risk_score?: number
+          original_name?: string | null
+          plaintext_sha256?: string
+          receiver_user_id?: string
+          sender_user_id?: string
+        }
+        Relationships: []
+      }
       viewer_profile_behavior_summary: {
         Row: {
           avg_dwell_ms: number
@@ -11361,6 +11830,10 @@ export type Database = {
       configure_chat_attachment_retention_worker: {
         Args: { p_cron_secret: string; p_endpoint: string }
         Returns: boolean
+      }
+      content_safety_assess_private_message: {
+        Args: { p_text: string }
+        Returns: Json
       }
       decrement_superlike: { Args: { p_profile_id: string }; Returns: number }
       detect_travel_for_user: {
@@ -12212,6 +12685,9 @@ export type Database = {
           updated_at: string
           user_id: string
           username: string | null
+          username_changed_at: string | null
+          username_claimed_at: string | null
+          username_searchable: boolean
           verification_level: number | null
           verification_refresh_reason: string | null
           verification_refresh_requested_at: string | null
@@ -12413,6 +12889,28 @@ export type Database = {
       profile_guard_structured_text_is_valid: {
         Args: { p_field: string; p_value: string }
         Returns: boolean
+      }
+      profile_guard_update_lengths_valid: {
+        Args: { p_updates: Json }
+        Returns: boolean
+      }
+      profile_handle_consume_rate_limit: {
+        Args: {
+          p_action: string
+          p_limit: number
+          p_profile_id: string
+          p_window_seconds: number
+        }
+        Returns: undefined
+      }
+      profile_handle_normalize: {
+        Args: { p_username: string }
+        Returns: string
+      }
+      profile_handle_skeleton: { Args: { p_username: string }; Returns: string }
+      profile_handle_validation_reason: {
+        Args: { p_username: string }
+        Returns: string
       }
       profile_interest_level: {
         Args: { p_interest_score: number }
@@ -12739,6 +13237,35 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      rpc_admin_get_content_moderation_events: {
+        Args: { p_limit?: number }
+        Returns: {
+          actor_name: string
+          actor_profile_id: string
+          actor_user_id: string
+          categories: string[]
+          client_content_id: string
+          content_id: string
+          content_type: string
+          created_at: string
+          decision: string
+          event_id: string
+          evidence_snapshot: Json
+          extracted_text: string
+          failure_reason: string
+          provider: string
+          provider_model: string
+          review_notes: string
+          review_outcome: string
+          reviewed_at: string
+          risk_score: number
+          status: string
+          storage_bucket: string
+          storage_path: string
+          target_name: string
+          target_user_id: string
+        }[]
+      }
       rpc_admin_get_date_plan_concierge_queue: {
         Args: never
         Returns: {
@@ -12813,6 +13340,58 @@ export type Database = {
           isOneToOne: false
           isSetofReturn: true
         }
+      }
+      rpc_admin_get_profile_guard_enforcement_history: {
+        Args: { p_limit?: number }
+        Returns: {
+          avatar_url: string
+          categories: string[]
+          current_profile_text: Json
+          decision: string
+          detector_version: string
+          discoverable_in_vibes: boolean
+          enforcement_count: number
+          event_id: string
+          evidence_snapshot: Json
+          field_names: string[]
+          first_enforced_at: string
+          full_name: string
+          last_enforced_at: string
+          profile_id: string
+          profile_moderation_state: string
+          resolved_at: string
+          risk_score: number
+          semantic_used: boolean
+          source: string
+          targeted_enforcement: boolean
+          user_id: string
+        }[]
+      }
+      rpc_admin_get_profile_guard_review_queue: {
+        Args: { p_include_resolved?: boolean; p_limit?: number }
+        Returns: {
+          avatar_url: string
+          categories: string[]
+          created_at: string
+          current_profile_text: Json
+          detector_version: string
+          discoverable_in_vibes: boolean
+          evidence_snapshot: Json
+          field_names: string[]
+          full_name: string
+          prior_discoverable: boolean
+          profile_id: string
+          profile_moderation_state: string
+          resolution_reason_code: string
+          review_id: string
+          review_notes: string
+          review_outcome: string
+          reviewed_at: string
+          reviewed_by: string
+          risk_score: number
+          semantic_used: boolean
+          user_id: string
+        }[]
       }
       rpc_admin_get_relationship_gists: {
         Args: never
@@ -12928,6 +13507,19 @@ export type Database = {
           p_target_level?: number
         }
         Returns: boolean
+      }
+      rpc_admin_resolve_content_moderation_event: {
+        Args: { p_event_id: string; p_notes?: string; p_outcome: string }
+        Returns: Json
+      }
+      rpc_admin_resolve_profile_guard_review: {
+        Args: {
+          p_notes?: string
+          p_reason_code: string
+          p_review_id: string
+          p_state: string
+        }
+        Returns: Json
       }
       rpc_admin_review_verification_request: {
         Args: { p_decision: string; p_notes?: string; p_request_id: string }
@@ -13046,10 +13638,24 @@ export type Database = {
           isSetofReturn: true
         }
       }
-      rpc_apply_profile_guard_semantic_decision: {
-        Args: { p_category: string; p_semantic_scores: Json; p_user_id: string }
-        Returns: undefined
-      }
+      rpc_apply_profile_guard_semantic_decision:
+        | {
+            Args: {
+              p_category: string
+              p_semantic_scores: Json
+              p_user_id: string
+            }
+            Returns: undefined
+          }
+        | {
+            Args: {
+              p_category: string
+              p_evidence_snapshot: Json
+              p_semantic_scores: Json
+              p_user_id: string
+            }
+            Returns: undefined
+          }
       rpc_approve_circle: {
         Args: { p_circle_id: string }
         Returns: {
@@ -13296,6 +13902,10 @@ export type Database = {
         Returns: boolean
       }
       rpc_cancel_signal: { Args: { p_signal_id: string }; Returns: string }
+      rpc_check_profile_username_availability: {
+        Args: { p_username: string }
+        Returns: Json
+      }
       rpc_claim_chat_attachment_cleanup: {
         Args: { p_limit?: number }
         Returns: {
@@ -13976,6 +14586,10 @@ export type Database = {
         Args: { p_private_spark_id: string; p_reason?: string }
         Returns: Json
       }
+      rpc_enforce_profile_contact_guard: {
+        Args: { p_profile_id: string }
+        Returns: Json
+      }
       rpc_fail_chat_attachment_cleanup: {
         Args: { p_error: string; p_queue_id: number }
         Returns: string
@@ -14634,6 +15248,17 @@ export type Database = {
           welcome_profiles: Json
         }[]
       }
+      rpc_get_circle_pulse_welcome_view_state: {
+        Args: { p_circle_id: string; p_viewer_profile_id: string }
+        Returns: {
+          first_seen_at: string
+          gallery_opened_at: string
+          last_seen_at: string
+          profile_opened_at: string
+          welcome_profile_id: string
+          welcome_started_at: string
+        }[]
+      }
       rpc_get_closure_to_clarity_candidates: {
         Args: { p_intent_request_id: string; p_limit?: number }
         Returns: {
@@ -14921,6 +15546,7 @@ export type Database = {
         }[]
       }
       rpc_get_my_premium_state: { Args: never; Returns: Json }
+      rpc_get_my_profile_handle_state: { Args: never; Returns: Json }
       rpc_get_my_profile_interest: { Args: never; Returns: Json }
       rpc_get_my_recent_boost_analytics: { Args: never; Returns: Json }
       rpc_get_my_saved_profiles:
@@ -15739,6 +16365,15 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      rpc_record_circle_pulse_welcome_event: {
+        Args: {
+          p_circle_id: string
+          p_event_type: string
+          p_viewer_profile_id: string
+          p_welcome_profile_ids: string[]
+        }
+        Returns: number
+      }
       rpc_record_profile_guard_semantic_observation: {
         Args: { p_decision: string; p_reason_code: string; p_user_id: string }
         Returns: undefined
@@ -16383,6 +17018,28 @@ export type Database = {
           profile_id: string
         }[]
       }
+      rpc_search_circle_invite_candidates_v2: {
+        Args: {
+          p_actor_profile_id: string
+          p_circle_id: string
+          p_country?: string
+          p_interest?: string
+          p_limit?: number
+          p_max_age?: number
+          p_min_age?: number
+          p_search?: string
+        }
+        Returns: {
+          age: number
+          avatar_url: string
+          country: string
+          full_name: string
+          interests: string[]
+          location: string
+          profile_id: string
+          username: string
+        }[]
+      }
       rpc_send_date_plan:
         | {
             Args: {
@@ -16446,6 +17103,38 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_service_complete_profile_onboarding_with_guard_v1: {
+        Args: {
+          p_evidence_snapshot?: Json
+          p_expected_updated_at: string
+          p_updates: Json
+          p_user_id: string
+        }
+        Returns: Json
+      }
+      rpc_service_consume_content_guard_rate_limit: {
+        Args: { p_scope: string; p_user_id: string }
+        Returns: Json
+      }
+      rpc_service_consume_profile_guard_rate_limit: {
+        Args: { p_user_id: string }
+        Returns: Json
+      }
+      rpc_service_edit_moderated_private_message: {
+        Args: {
+          p_categories?: string[]
+          p_decision: string
+          p_failure_reason?: string
+          p_message_id: string
+          p_provider?: string
+          p_provider_model?: string
+          p_provider_request_id?: string
+          p_risk_score?: number
+          p_sender_user_id: string
+          p_text: string
+        }
+        Returns: Json
+      }
       rpc_service_finalize_profile_onboarding: {
         Args: { p_user_id: string }
         Returns: Json
@@ -16464,8 +17153,102 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_service_insert_profile_prompt_with_guard_v2: {
+        Args: {
+          p_answer: string
+          p_expected_updated_at: string
+          p_guess_mode?: string
+          p_guess_options?: Json
+          p_hint_text?: string
+          p_prompt_key: string
+          p_prompt_title: string
+          p_prompt_type?: string
+          p_reveal_policy?: string
+          p_user_id: string
+        }
+        Returns: Json
+      }
+      rpc_service_insert_profile_prompt_with_guard_v3: {
+        Args: {
+          p_answer: string
+          p_evidence_snapshot?: Json
+          p_expected_updated_at: string
+          p_guess_mode?: string
+          p_guess_options?: Json
+          p_hint_text?: string
+          p_prompt_key: string
+          p_prompt_title: string
+          p_prompt_type?: string
+          p_reveal_policy?: string
+          p_user_id: string
+        }
+        Returns: Json
+      }
+      rpc_service_list_stale_view_once_moderation_objects: {
+        Args: { p_limit?: number }
+        Returns: {
+          storage_path: string
+        }[]
+      }
+      rpc_service_record_content_moderation_event: {
+        Args: {
+          p_actor_user_id: string
+          p_categories: string[]
+          p_client_content_id: string
+          p_content_id: string
+          p_content_type: string
+          p_decision: string
+          p_evidence_snapshot: Json
+          p_extracted_text: string
+          p_failure_reason?: string
+          p_provider: string
+          p_provider_model: string
+          p_provider_request_id: string
+          p_risk_score: number
+          p_storage_bucket: string
+          p_storage_path: string
+          p_target_user_id: string
+        }
+        Returns: string
+      }
+      rpc_service_send_moderated_private_message: {
+        Args: {
+          p_categories?: string[]
+          p_client_message_id: string
+          p_decision?: string
+          p_failure_reason?: string
+          p_message_type?: string
+          p_provider?: string
+          p_provider_model?: string
+          p_provider_request_id?: string
+          p_receiver_user_id: string
+          p_reply_to_message_id?: string
+          p_risk_score?: number
+          p_sender_user_id: string
+          p_storage_path?: string
+          p_text: string
+        }
+        Returns: Json
+      }
       rpc_service_update_profile_with_guard: {
         Args: { p_updates: Json; p_user_id: string }
+        Returns: Json
+      }
+      rpc_service_update_profile_with_guard_v2: {
+        Args: {
+          p_expected_updated_at: string
+          p_updates: Json
+          p_user_id: string
+        }
+        Returns: Json
+      }
+      rpc_service_update_profile_with_guard_v3: {
+        Args: {
+          p_evidence_snapshot: Json
+          p_expected_updated_at: string
+          p_updates: Json
+          p_user_id: string
+        }
         Returns: Json
       }
       rpc_set_chat_typing_state: {
@@ -17332,6 +18115,10 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      rpc_update_my_profile_username: {
+        Args: { p_searchable?: boolean; p_username: string }
+        Returns: Json
       }
       rpc_update_profile_with_guard: {
         Args: { p_updates: Json }
@@ -18236,12 +19023,12 @@ export type Tables<
   DefaultSchemaTableNameOrOptions extends
     | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
         DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -18265,11 +19052,11 @@ export type TablesInsert<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -18290,11 +19077,11 @@ export type TablesUpdate<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -18315,11 +19102,11 @@ export type Enums<
   DefaultSchemaEnumNameOrOptions extends
     | keyof DefaultSchema["Enums"]
     | { schema: keyof DatabaseWithoutInternals },
-  EnumName extends DefaultSchemaEnumNameOrOptions extends {
+  EnumName extends (DefaultSchemaEnumNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaEnumNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -18332,11 +19119,11 @@ export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
     | keyof DefaultSchema["CompositeTypes"]
     | { schema: keyof DatabaseWithoutInternals },
-  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
+  CompositeTypeName extends (PublicCompositeTypeNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
-    : never = never,
+    : never) = never,
 > = PublicCompositeTypeNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }

@@ -1,7 +1,17 @@
 // @ts-nocheck
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.110.7'
+import nacl from 'https://esm.sh/tweetnacl@1.0.3'
+import naclUtil from 'https://esm.sh/tweetnacl-util@0.15.1'
 import { corsHeaders } from '../_shared/cors.ts'
+import {
+  assessPrivateMessageRules,
+  classifyImageSolicitation,
+  classifyTextSolicitation,
+  mergeContentSafetyAssessments,
+  mergeChatImageSafetyAssessments,
+  moderateWithOpenAI,
+} from '../_shared/content-safety.ts'
 
 const json = (status: number, body: Record<string, unknown>) => new Response(JSON.stringify(body), {
   status,
@@ -21,6 +31,232 @@ const DOCUMENT_MIMES = new Set([
 const SAFE_DOCUMENT_EXTENSIONS = new Set([
   'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'csv', 'rtf', 'pages', 'numbers', 'key',
 ])
+
+const SAFE_VIEW_ONCE_IMAGE_MIMES = new Set([
+  'image/jpeg', 'image/png', 'image/webp', 'image/gif',
+])
+const { decodeBase64, encodeBase64 } = naclUtil
+const VIEW_ONCE_PLAINTEXT_LIMIT = LIMITS.image - nacl.secretbox.overheadLength
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const CLIENT_CONTENT_ID_PATTERN = /^[a-zA-Z0-9_-]{1,160}$/
+
+const sha256Hex = async (bytes: Uint8Array) => {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))
+  return [...digest].map((value) => value.toString(16).padStart(2, '0')).join('')
+}
+
+const encryptApprovedViewOnceImage = (
+  plainBytes: Uint8Array,
+  senderPublicKeyB64: string,
+  receiverPublicKeyB64: string,
+) => {
+  const senderPublicKey = decodeBase64(senderPublicKeyB64)
+  const receiverPublicKey = decodeBase64(receiverPublicKeyB64)
+  if (senderPublicKey.length !== nacl.box.publicKeyLength || receiverPublicKey.length !== nacl.box.publicKeyLength) {
+    throw new Error('view_once_public_key_invalid')
+  }
+  const mediaKey = crypto.getRandomValues(new Uint8Array(nacl.secretbox.keyLength))
+  const mediaNonce = crypto.getRandomValues(new Uint8Array(nacl.secretbox.nonceLength))
+  const keyNonce = crypto.getRandomValues(new Uint8Array(nacl.box.nonceLength))
+  const encryptionKeypair = nacl.box.keyPair()
+  try {
+    return {
+      cipherBytes: nacl.secretbox(plainBytes, mediaNonce, mediaKey),
+      encryptedKeySender: encodeBase64(nacl.box(
+        mediaKey, keyNonce, senderPublicKey, encryptionKeypair.secretKey,
+      )),
+      encryptedKeyReceiver: encodeBase64(nacl.box(
+        mediaKey, keyNonce, receiverPublicKey, encryptionKeypair.secretKey,
+      )),
+      encryptedKeyNonce: encodeBase64(keyNonce),
+      encryptedMediaNonce: encodeBase64(mediaNonce),
+      encryptionPublicKey: encodeBase64(encryptionKeypair.publicKey),
+    }
+  } finally {
+    mediaKey.fill(0)
+    encryptionKeypair.secretKey.fill(0)
+  }
+}
+
+const receiptToFinalizeInput = (receipt: Record<string, unknown>, replyToMessageId: unknown) => ({
+  mode: 'finalize_single',
+  receiverId: receipt.receiver_user_id,
+  clientMessageId: receipt.client_message_id,
+  attachmentId: receipt.attachment_id,
+  attachmentType: 'image',
+  bucketId: 'chat-media',
+  storagePath: receipt.encrypted_storage_path,
+  originalName: receipt.original_name,
+  mimeType: receipt.mime_type,
+  byteSize: receipt.encrypted_byte_size,
+  replyToMessageId: replyToMessageId || null,
+  isViewOnce: true,
+  encryptedKeySender: receipt.encrypted_key_sender,
+  encryptedKeyReceiver: receipt.encrypted_key_receiver,
+  encryptedKeyNonce: receipt.encrypted_key_nonce,
+  encryptedMediaNonce: receipt.encrypted_media_nonce,
+  encryptedMediaAlg: 'nacl-secretbox',
+  senderPublicKey: receipt.encryption_public_key,
+  attachmentIndex: 0,
+  expectedCount: 1,
+})
+
+const assessChatImage = async (imageUrl: string) => {
+  const [harm, solicitation] = await Promise.all([
+    moderateWithOpenAI([{ type: 'image_url', image_url: { url: imageUrl } }]),
+    classifyImageSolicitation(imageUrl, 'chat_image'),
+  ])
+  return mergeChatImageSafetyAssessments(harm, solicitation)
+}
+
+const consumeContentGuardRateLimit = async (service, userId: string, scope: string) => {
+  const { data, error } = await service.rpc('rpc_service_consume_content_guard_rate_limit', {
+    p_user_id: userId,
+    p_scope: scope,
+  })
+  if (error || !data) return { available: false, allowed: false, retryAfterSeconds: 0 }
+  return {
+    available: true,
+    allowed: data.allowed === true,
+    retryAfterSeconds: Number(data.retry_after_seconds || 0),
+  }
+}
+
+const resolveLimitedMediaPolicy = async (service, cache: Map<string, unknown>, kind: string) => {
+  if (cache.has(kind)) return cache.get(kind)
+  const { data, error } = await service.from('content_guard_media_policies')
+    .select('attachment_type,enabled,enforcement_mode,inspection_strategy')
+    .eq('attachment_type', kind).maybeSingle()
+  if (error || !data) throw new Error('media_policy_unavailable')
+  cache.set(kind, data)
+  return data
+}
+
+const assessChatCaption = async (caption: string) => {
+  const rules = assessPrivateMessageRules(caption)
+  if (rules.decision === 'BLOCK') return rules
+  const [harm, solicitation] = await Promise.all([
+    moderateWithOpenAI(caption),
+    classifyTextSolicitation(caption),
+  ])
+  return mergeContentSafetyAssessments(rules, harm, solicitation)
+}
+
+const enforceChatCaption = async ({ service, userId, receiverId, clientMessageId, caption }) => {
+  const normalized = String(caption || '').trim()
+  if (!normalized) return null
+  const clientContentId = `${clientMessageId}:caption`
+  const { data: prior } = await service.from('content_moderation_events')
+    .select('status').eq('actor_user_id', userId).eq('content_type', 'chat_caption')
+    .eq('client_content_id', clientContentId).maybeSingle()
+  if (prior?.status === 'APPROVED') return null
+  if (prior?.status === 'PENDING_REVIEW') return json(409, { error: 'caption_review_required' })
+  if (prior?.status === 'REJECTED') return json(422, { error: 'caption_content_not_allowed' })
+  const rateLimit = await consumeContentGuardRateLimit(service, userId, 'private_message')
+  if (!rateLimit.available) return json(503, { error: 'caption_moderation_unavailable' })
+  if (!rateLimit.allowed) return json(429, {
+    error: 'caption_moderation_rate_limited', retry_after_seconds: rateLimit.retryAfterSeconds,
+  })
+  const assessment = await assessChatCaption(normalized)
+  if (assessment.decision !== 'ALLOW' || assessment.failureReason) {
+    const { error } = await service.rpc('rpc_service_record_content_moderation_event', {
+      p_actor_user_id: userId, p_target_user_id: receiverId,
+      p_content_type: 'chat_caption', p_content_id: null,
+      p_client_content_id: clientContentId, p_storage_bucket: null, p_storage_path: null,
+      p_decision: assessment.decision, p_categories: assessment.categories,
+      p_risk_score: assessment.riskScore, p_extracted_text: assessment.extractedText,
+      p_evidence_snapshot: { text: normalized, receiver_user_id: receiverId },
+      p_provider: assessment.provider, p_provider_model: assessment.model,
+      p_provider_request_id: assessment.providerRequestId,
+      p_failure_reason: assessment.failureReason,
+    })
+    if (error) return json(503, { error: 'content_moderation_record_failed' })
+    if (assessment.decision !== 'ALLOW') {
+      return json(assessment.failureReason ? 503 : 422, {
+        error: assessment.failureReason ? 'caption_moderation_unavailable'
+          : assessment.decision === 'REVIEW' ? 'caption_review_required'
+            : 'caption_content_not_allowed',
+        categories: assessment.categories,
+      })
+    }
+  }
+  return null
+}
+
+const recordImageDecision = async ({ service, userId, receiverId, clientMessageId,
+  attachmentId, bucket, path, caption, sha256, assessment }) => {
+  const { error } = await service.rpc('rpc_service_record_content_moderation_event', {
+    p_actor_user_id: userId,
+    p_target_user_id: receiverId,
+    p_content_type: 'chat_image',
+    p_content_id: null,
+    p_client_content_id: `${clientMessageId}:${attachmentId}`,
+    p_storage_bucket: bucket,
+    p_storage_path: path,
+    p_decision: assessment.decision,
+    p_categories: assessment.categories,
+    p_risk_score: assessment.riskScore,
+    p_extracted_text: assessment.extractedText,
+    p_evidence_snapshot: {
+      caption: String(caption || '').slice(0, 2000),
+      sha256: sha256 || null,
+      scores: assessment.scores,
+    },
+    p_provider: assessment.provider,
+    p_provider_model: assessment.model,
+    p_provider_request_id: assessment.providerRequestId,
+    p_failure_reason: assessment.failureReason,
+  })
+  return error
+}
+
+const priorImageReview = async (service, userId: string, clientMessageId: string, attachmentId: string) => {
+  const { data } = await service
+    .from('content_moderation_events')
+    .select('status,storage_bucket,storage_path')
+    .eq('actor_user_id', userId)
+    .eq('content_type', 'chat_image')
+    .eq('client_content_id', `${clientMessageId}:${attachmentId}`)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  return data
+}
+
+const holdChatImage = async ({ service, bucket, path, userId, clientMessageId, attachmentId, mime }) => {
+  const { data, error } = await service.storage.from(bucket).download(path)
+  if (error || !data) throw new Error('image_hold_failed')
+  const bytes = new Uint8Array(await data.arrayBuffer())
+  if (bytes.byteLength === 0 || bytes.byteLength > LIMITS.image) throw new Error('image_hold_failed')
+  const extension = mime === 'image/png' ? 'png' : mime === 'image/webp' ? 'webp'
+    : mime === 'image/gif' ? 'gif' : 'jpg'
+  const holdPath = `${userId}/${clientMessageId}/${attachmentId}.${extension}`
+  const { error: uploadError } = await service.storage.from('moderation-quarantine')
+    .upload(holdPath, bytes, { contentType: mime, upsert: true })
+  if (uploadError) throw new Error('image_hold_failed')
+  const { data: signed, error: signedError } = await service.storage
+    .from('moderation-quarantine').createSignedUrl(holdPath, 180)
+  if (signedError || !signed?.signedUrl) {
+    await service.storage.from('moderation-quarantine').remove([holdPath])
+    throw new Error('image_hold_failed')
+  }
+  return { bucket: 'moderation-quarantine', path: holdPath, signedUrl: signed.signedUrl,
+    sha256: await sha256Hex(bytes) }
+}
+
+const restoreApprovedChatImage = async ({ service, review, bucket, path, mime }) => {
+  if (review?.storage_bucket !== 'moderation-quarantine' || !review?.storage_path) {
+    throw new Error('approved_image_evidence_missing')
+  }
+  const { data, error } = await service.storage.from('moderation-quarantine')
+    .download(review.storage_path)
+  if (error || !data) throw new Error('approved_image_evidence_missing')
+  const bytes = new Uint8Array(await data.arrayBuffer())
+  const { error: uploadError } = await service.storage.from(bucket)
+    .upload(path, bytes, { contentType: mime, upsert: true })
+  if (uploadError) throw new Error('approved_image_restore_failed')
+  return { sha256: await sha256Hex(bytes), byteSize: bytes.byteLength }
+}
 
 const startsWith = (bytes: Uint8Array, signature: number[]) =>
   signature.every((value, index) => bytes[index] === value)
@@ -196,11 +432,238 @@ serve(async (req) => {
     const { data: { user }, error: authError } = await authClient.auth.getUser()
     if (authError || !user) return json(401, { error: 'unauthorized' })
 
-    const input = await req.json()
+    let input = await req.json()
     const service = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
+    const mediaPolicyCache = new Map<string, unknown>()
     const mode = String(input.mode || 'finalize_single')
+    let preModeratedImageSafety = null
+    let preModerationReceiptId: string | null = null
     const atomicFinalizationEnabled =
       String(Deno.env.get('CHAT_ATTACHMENT_ATOMIC_FINALIZATION_ENABLED') || 'true').toLowerCase() !== 'false'
+
+    if (['finalize_single', 'finalize_batch'].includes(mode)) {
+      const captionResponse = await enforceChatCaption({
+        service,
+        userId: user.id,
+        receiverId: String(input.receiverId || ''),
+        clientMessageId: String(input.clientMessageId || ''),
+        caption: input.caption,
+      })
+      if (captionResponse) return captionResponse
+    }
+
+    if (mode === 'finalize_view_once_plaintext') {
+      const receiverId = String(input.receiverId || '')
+      const clientMessageId = String(input.clientMessageId || '')
+      const attachmentId = String(input.attachmentId || '')
+      const declaredMime = String(input.mimeType || '').split(';')[0].trim().toLowerCase()
+      const mime = declaredMime === 'image/jpg' ? 'image/jpeg' : declaredMime
+      const originalName = String(input.originalName || '').slice(0, 255)
+      const stagingBucket = String(input.stagingBucket || '')
+      const stagingPath = String(input.stagingPath || '')
+      const expectedStagingPrefix = `${user.id}/${receiverId}/${clientMessageId}/${attachmentId}-`
+      if (
+        !UUID_PATTERN.test(receiverId) || !UUID_PATTERN.test(attachmentId) ||
+        !CLIENT_CONTENT_ID_PATTERN.test(clientMessageId) || receiverId === user.id ||
+        stagingBucket !== 'view-once-moderation' ||
+        !stagingPath.startsWith(expectedStagingPrefix) ||
+        stagingPath.slice(expectedStagingPrefix.length).includes('/') ||
+        !SAFE_VIEW_ONCE_IMAGE_MIMES.has(mime)
+      ) {
+        return json(400, { error: 'invalid_view_once_moderation_request' })
+      }
+
+      const { data: existingMessage } = await service
+        .from('messages')
+        .select('*')
+        .eq('sender_id', user.id)
+        .eq('client_message_id', clientMessageId)
+        .maybeSingle()
+      if (existingMessage) {
+        await service.storage.from(stagingBucket).remove([stagingPath]).catch(() => undefined)
+        return json(200, { message: existingMessage, idempotent: true })
+      }
+
+      const { data: existingReceipt, error: receiptReadError } = await service
+        .from('view_once_moderation_receipts')
+        .select('*')
+        .eq('sender_user_id', user.id)
+        .eq('client_message_id', clientMessageId)
+        .eq('attachment_id', attachmentId)
+        .maybeSingle()
+      if (receiptReadError) return json(503, { error: 'view_once_receipt_unavailable' })
+
+      let receipt = existingReceipt
+      if (receipt) {
+        if (
+          receipt.receiver_user_id !== receiverId || receipt.mime_type !== mime ||
+          new Date(receipt.expires_at).getTime() <= Date.now()
+        ) {
+          return json(409, { error: 'view_once_moderation_receipt_invalid' })
+        }
+        await service.storage.from(stagingBucket).remove([stagingPath]).catch(() => undefined)
+      } else {
+        let plainBytes: Uint8Array | null = null
+        try {
+          const { data: plainBlob, error: downloadError } = await service.storage
+            .from(stagingBucket)
+            .download(stagingPath)
+          if (downloadError || !plainBlob) return json(404, { error: 'view_once_plaintext_not_found' })
+          if (plainBlob.size <= 0 || plainBlob.size > VIEW_ONCE_PLAINTEXT_LIMIT) {
+            return json(413, { error: 'attachment_size_invalid' })
+          }
+          plainBytes = new Uint8Array(await plainBlob.arrayBuffer())
+          const sample = plainBytes.slice(0, 65536)
+          if (
+            !validateSignature('image', mime, sample, false, originalName) ||
+            !signatureMatchesDeclaredMime('image', mime, sample, false)
+          ) {
+            return json(415, { error: 'attachment_content_mismatch' })
+          }
+
+          // Copy the exact downloaded bytes into a service-only, immutable object.
+          // This avoids both base64 request inflation and a client replace-between-read-and-scan race.
+          const inspectionBucket = 'moderation-quarantine'
+          const inspectionPath = `chat-image-pending/${user.id}/${clientMessageId}/${attachmentId}-${crypto.randomUUID()}.${mime.split('/')[1] || 'bin'}`
+          const { error: inspectionUploadError } = await service.storage
+            .from(inspectionBucket)
+            .upload(inspectionPath, plainBytes, { contentType: mime, upsert: false })
+          if (inspectionUploadError) return json(503, { error: 'content_moderation_evidence_failed' })
+          const { data: inspectionUrl, error: inspectionUrlError } = await service.storage
+            .from(inspectionBucket)
+            .createSignedUrl(inspectionPath, 120)
+          if (inspectionUrlError || !inspectionUrl?.signedUrl) {
+            await service.storage.from(inspectionBucket).remove([inspectionPath])
+            return json(503, { error: 'image_moderation_unavailable' })
+          }
+          const rateLimit = await consumeContentGuardRateLimit(service, user.id, 'chat_image')
+          if (!rateLimit.available || !rateLimit.allowed) {
+            await service.storage.from(inspectionBucket).remove([inspectionPath])
+            return !rateLimit.available
+              ? json(503, { error: 'image_moderation_unavailable' })
+              : json(429, { error: 'image_moderation_rate_limited',
+                  retry_after_seconds: rateLimit.retryAfterSeconds })
+          }
+          const assessment = await assessChatImage(inspectionUrl.signedUrl)
+          if (assessment.decision !== 'ALLOW') {
+            let evidenceBucket = stagingBucket
+            let evidencePath = stagingPath
+            if (assessment.decision === 'REVIEW') {
+              evidenceBucket = inspectionBucket
+              evidencePath = inspectionPath
+            } else {
+              await service.storage.from(inspectionBucket).remove([inspectionPath])
+            }
+            const recordError = await recordImageDecision({
+              service, userId: user.id, receiverId, clientMessageId, attachmentId,
+              bucket: evidenceBucket, path: evidencePath, caption: '',
+              sha256: await sha256Hex(plainBytes), assessment,
+            })
+            if (recordError) return json(503, { error: 'content_moderation_record_failed' })
+            return json(assessment.failureReason ? 503 : 422, {
+              error: assessment.failureReason
+                ? 'image_moderation_unavailable'
+                : assessment.decision === 'REVIEW'
+                  ? 'image_review_required'
+                  : 'image_content_not_allowed',
+              categories: assessment.categories,
+            })
+          }
+          await service.storage.from(inspectionBucket).remove([inspectionPath])
+
+          const { data: keyRows, error: keyError } = await service
+            .from('profiles')
+            .select('user_id,public_key')
+            .in('user_id', [user.id, receiverId])
+          if (keyError) return json(503, { error: 'view_once_keys_unavailable' })
+          const senderPublicKey = keyRows?.find((row) => row.user_id === user.id)?.public_key
+          const receiverPublicKey = keyRows?.find((row) => row.user_id === receiverId)?.public_key
+          if (!senderPublicKey || !receiverPublicKey) {
+            return json(422, { error: 'view_once_keys_unavailable' })
+          }
+
+          const encrypted = encryptApprovedViewOnceImage(
+            plainBytes, String(senderPublicKey), String(receiverPublicKey),
+          )
+          const receiptId = crypto.randomUUID()
+          const encryptedPath = `${user.id}/${receiverId}/${clientMessageId}/${attachmentId}-attachment-${receiptId}.enc`
+          try {
+            const { error: uploadError } = await service.storage.from('chat-media').upload(
+              encryptedPath,
+              encrypted.cipherBytes,
+              { contentType: mime, upsert: false },
+            )
+            if (uploadError) return json(503, { error: 'view_once_encrypted_upload_failed' })
+            const plaintextSha256 = await sha256Hex(plainBytes)
+            const candidateReceipt = {
+              id: receiptId,
+              sender_user_id: user.id,
+              receiver_user_id: receiverId,
+              client_message_id: clientMessageId,
+              attachment_id: attachmentId,
+              original_name: originalName || null,
+              mime_type: mime,
+              plaintext_sha256: plaintextSha256,
+              encrypted_storage_path: encryptedPath,
+              encrypted_byte_size: encrypted.cipherBytes.length,
+              encrypted_key_sender: encrypted.encryptedKeySender,
+              encrypted_key_receiver: encrypted.encryptedKeyReceiver,
+              encrypted_key_nonce: encrypted.encryptedKeyNonce,
+              encrypted_media_nonce: encrypted.encryptedMediaNonce,
+              encryption_public_key: encrypted.encryptionPublicKey,
+              moderation_provider: assessment.provider,
+              moderation_model: assessment.model,
+              moderation_categories: assessment.categories,
+              moderation_risk_score: assessment.riskScore,
+            }
+            const { data: insertedReceipt, error: insertError } = await service
+              .from('view_once_moderation_receipts')
+              .insert(candidateReceipt)
+              .select('*')
+              .single()
+            if (insertError) {
+              await service.storage.from('chat-media').remove([encryptedPath])
+              if (insertError.code !== '23505') {
+                return json(503, { error: 'view_once_receipt_create_failed' })
+              }
+              const { data: concurrentReceipt, error: concurrentError } = await service
+                .from('view_once_moderation_receipts')
+                .select('*')
+                .eq('sender_user_id', user.id)
+                .eq('client_message_id', clientMessageId)
+                .eq('attachment_id', attachmentId)
+                .single()
+              if (concurrentError || !concurrentReceipt) {
+                return json(503, { error: 'view_once_receipt_unavailable' })
+              }
+              receipt = concurrentReceipt
+            } else {
+              receipt = insertedReceipt
+            }
+          } finally {
+            encrypted.cipherBytes.fill(0)
+          }
+        } finally {
+          plainBytes?.fill(0)
+          await service.storage.from(stagingBucket).remove([stagingPath]).catch(() => undefined)
+        }
+      }
+
+      if (!receipt) return json(503, { error: 'view_once_receipt_unavailable' })
+      preModerationReceiptId = String(receipt.id)
+      preModeratedImageSafety = {
+        decision: 'ALLOW',
+        categories: receipt.moderation_categories || [],
+        riskScore: Number(receipt.moderation_risk_score || 0),
+        provider: String(receipt.moderation_provider || 'unknown'),
+        model: String(receipt.moderation_model || 'unknown'),
+        providerRequestId: null,
+        extractedText: null,
+        scores: {},
+        failureReason: null,
+      }
+      input = receiptToFinalizeInput(receipt, input.replyToMessageId)
+    }
 
     if (mode === 'cancel_item') {
       const receiverId = String(input.receiverId || '')
@@ -319,7 +782,7 @@ serve(async (req) => {
         if (signedError || !signed?.signedUrl) return json(404, { error: 'attachment_object_not_found' })
         const sampleResponse = await fetch(signed.signedUrl, { headers: { Range: 'bytes=0-65535' } })
         if (!sampleResponse.ok) return json(422, { error: 'attachment_unreadable' })
-        const contentLength = authoritativeResponseSize(sampleResponse)
+        let contentLength = authoritativeResponseSize(sampleResponse)
         const sample = new Uint8Array(await sampleResponse.arrayBuffer())
         if (
           contentLength === null || contentLength <= 0 || contentLength > LIMITS[itemKind] ||
@@ -327,6 +790,89 @@ serve(async (req) => {
           !signatureMatchesDeclaredMime(itemKind, mime, sample, false)
         ) {
           return json(415, { error: 'attachment_content_mismatch' })
+        }
+
+        let imageSafety = null
+        let limitedMediaSafety = null
+        if (itemKind === 'image') {
+          const priorReview = await priorImageReview(service, user.id, clientMessageId, attachmentId)
+          if (priorReview?.status === 'PENDING_REVIEW') {
+            return json(409, { error: 'image_review_required' })
+          }
+          if (priorReview?.status === 'REJECTED') {
+            return json(422, { error: 'image_content_not_allowed' })
+          }
+          if (priorReview?.status === 'APPROVED') {
+            try {
+              const restored = await restoreApprovedChatImage({ service, review: priorReview, bucket, path, mime })
+              contentLength = restored.byteSize
+              imageSafety = { decision: 'ALLOW', categories: ['human_approved'], riskScore: 0,
+                provider: 'human_review', model: 'admin', providerRequestId: null,
+                extractedText: null, scores: {}, failureReason: null }
+            } catch {
+              return json(503, { error: 'approved_image_evidence_missing' })
+            }
+          } else {
+            let hold
+            try {
+              hold = await holdChatImage({ service, bucket, path, userId: user.id,
+                clientMessageId, attachmentId, mime })
+            } catch {
+              return json(503, { error: 'image_moderation_unavailable' })
+            }
+            const rateLimit = await consumeContentGuardRateLimit(service, user.id, 'chat_image')
+            if (!rateLimit.available || !rateLimit.allowed) {
+              await service.storage.from(hold.bucket).remove([hold.path])
+              return !rateLimit.available
+                ? json(503, { error: 'image_moderation_unavailable' })
+                : json(429, { error: 'image_moderation_rate_limited',
+                    retry_after_seconds: rateLimit.retryAfterSeconds })
+            }
+            imageSafety = await assessChatImage(hold.signedUrl)
+            if (imageSafety.decision !== 'ALLOW' || imageSafety.failureReason) {
+              const recordError = await recordImageDecision({
+                service, userId: user.id, receiverId, clientMessageId, attachmentId,
+                bucket: hold.bucket, path: hold.path, caption: input.caption,
+                sha256: hold.sha256, assessment: imageSafety,
+              })
+              if (recordError) {
+                await service.storage.from(hold.bucket).remove([hold.path])
+                return json(503, { error: 'content_moderation_record_failed' })
+              }
+              if (imageSafety.decision === 'BLOCK') {
+                const rejectedPaths = [path, String(raw.previewStoragePath || '')]
+                  .filter((value) => value.startsWith(expectedPrefix))
+                await service.storage.from(bucket).remove(rejectedPaths)
+                await service.storage.from(hold.bucket).remove([hold.path])
+              }
+              if (imageSafety.decision !== 'ALLOW') {
+                return json(imageSafety.failureReason ? 503 : 422, {
+                  error: imageSafety.failureReason
+                    ? 'image_moderation_unavailable'
+                    : imageSafety.decision === 'REVIEW'
+                      ? 'image_review_required'
+                      : 'image_content_not_allowed',
+                  categories: imageSafety.categories,
+                })
+              }
+            }
+            await service.storage.from(hold.bucket).remove([hold.path])
+          }
+        } else {
+          let policy
+          try {
+            policy = await resolveLimitedMediaPolicy(service, mediaPolicyCache, itemKind)
+          } catch {
+            return json(503, { error: 'attachment_moderation_policy_unavailable' })
+          }
+          if (policy.enabled !== true || policy.enforcement_mode === 'ENFORCE') {
+            return json(422, { error: 'attachment_inspection_not_available', attachment_type: itemKind })
+          }
+          limitedMediaSafety = {
+            decision: 'ALLOW_LIMITED_INSPECTION',
+            coverage: 'limited_inspection',
+            strategy: policy.inspection_strategy,
+          }
         }
 
         const previewPath = String(raw.previewStoragePath || '')
@@ -365,12 +911,23 @@ serve(async (req) => {
           height: positiveIntegerOrNull(raw.height),
           durationMs: positiveIntegerOrNull(raw.durationMs),
           sha256: raw.sha256 || null,
-          validationDetails: buildValidationDetails({
-            sampleBytes: sample.length,
-            hasDimensions: positiveIntegerOrNull(raw.width) !== null && positiveIntegerOrNull(raw.height) !== null,
-            hasDuration: positiveIntegerOrNull(raw.durationMs) !== null,
-            previewVerified: previewLength !== null,
-          }),
+          validationDetails: {
+            ...buildValidationDetails({
+              sampleBytes: sample.length,
+              hasDimensions: positiveIntegerOrNull(raw.width) !== null && positiveIntegerOrNull(raw.height) !== null,
+              hasDuration: positiveIntegerOrNull(raw.durationMs) !== null,
+              previewVerified: previewLength !== null,
+            }),
+            ...(imageSafety ? {
+              content_moderation: {
+                decision: imageSafety.decision,
+                provider: imageSafety.provider,
+                model: imageSafety.model,
+                risk_score: imageSafety.riskScore,
+                categories: imageSafety.categories,
+              },
+            } : limitedMediaSafety ? { content_moderation: limitedMediaSafety } : {}),
+          },
           ...(previewPath ? {
             previewStoragePath: previewPath,
             previewMimeType: 'image/jpeg',
@@ -497,6 +1054,11 @@ serve(async (req) => {
     if (!(kind in LIMITS) || !mime || !path || !receiverId || !clientMessageId || !attachmentId) {
       return json(400, { error: 'invalid_attachment_request' })
     }
+    const expectedBucket = kind === 'audio' ? 'voice-messages' : 'chat-media'
+    const expectedPrefix = `${user.id}/${receiverId}/${clientMessageId}/${attachmentId}-`
+    if (bucket !== expectedBucket || !path.startsWith(expectedPrefix)) {
+      return json(400, { error: 'invalid_attachment_identity' })
+    }
     if (
       attachmentIndex < 0 || attachmentIndex > 9 ||
       expectedCount < 1 || expectedCount > 10 ||
@@ -528,7 +1090,7 @@ serve(async (req) => {
       })
       return json(422, { error: 'attachment_unreadable' })
     }
-    const contentLength = authoritativeResponseSize(sampleResponse)
+    let contentLength = authoritativeResponseSize(sampleResponse)
     if (contentLength === null || contentLength <= 0 || contentLength > LIMITS[kind]) {
       console.log('[chat-attachment-finalize] size-invalid', {
         attachmentId,
@@ -554,6 +1116,112 @@ serve(async (req) => {
       return json(415, { error: 'attachment_content_mismatch' })
     }
 
+    let imageSafety = null
+    let limitedMediaSafety = null
+    if (kind === 'image') {
+      if (isViewOnce) {
+        imageSafety = preModeratedImageSafety || {
+            decision: 'REVIEW', categories: ['encrypted_media_uninspectable'], riskScore: 1,
+            provider: 'server', model: 'content-safety-v1', providerRequestId: null,
+            extractedText: null, scores: {}, failureReason: 'ENCRYPTED_IMAGE_UNINSPECTABLE',
+          }
+      } else {
+        const priorReview = await priorImageReview(service, user.id, clientMessageId, attachmentId)
+        if (priorReview?.status === 'PENDING_REVIEW') {
+          return json(409, { error: 'image_review_required' })
+        }
+        if (priorReview?.status === 'REJECTED') {
+          return json(422, { error: 'image_content_not_allowed' })
+        }
+        if (priorReview?.status === 'APPROVED') {
+          try {
+            const restored = await restoreApprovedChatImage({ service, review: priorReview, bucket, path, mime })
+            contentLength = restored.byteSize
+            imageSafety = { decision: 'ALLOW', categories: ['human_approved'], riskScore: 0,
+              provider: 'human_review', model: 'admin', providerRequestId: null,
+              extractedText: null, scores: {}, failureReason: null }
+          } catch {
+            return json(503, { error: 'approved_image_evidence_missing' })
+          }
+        } else {
+          let hold
+          try {
+            hold = await holdChatImage({ service, bucket, path, userId: user.id,
+              clientMessageId, attachmentId, mime })
+          } catch {
+            return json(503, { error: 'image_moderation_unavailable' })
+          }
+          const rateLimit = await consumeContentGuardRateLimit(service, user.id, 'chat_image')
+          if (!rateLimit.available || !rateLimit.allowed) {
+            await service.storage.from(hold.bucket).remove([hold.path])
+            return !rateLimit.available
+              ? json(503, { error: 'image_moderation_unavailable' })
+              : json(429, { error: 'image_moderation_rate_limited',
+                  retry_after_seconds: rateLimit.retryAfterSeconds })
+          }
+          imageSafety = await assessChatImage(hold.signedUrl)
+          if (imageSafety.decision !== 'ALLOW' || imageSafety.failureReason) {
+            const recordError = await recordImageDecision({
+              service, userId: user.id, receiverId, clientMessageId, attachmentId,
+              bucket: hold.bucket, path: hold.path, caption: input.caption,
+              sha256: hold.sha256, assessment: imageSafety,
+            })
+            if (recordError) {
+              await service.storage.from(hold.bucket).remove([hold.path])
+              return json(503, { error: 'content_moderation_record_failed' })
+            }
+            if (imageSafety.decision === 'BLOCK') {
+              await service.storage.from(bucket).remove([path])
+              await service.storage.from(hold.bucket).remove([hold.path])
+            }
+            if (imageSafety.decision !== 'ALLOW') {
+              return json(imageSafety.failureReason ? 503 : 422, {
+                error: imageSafety.failureReason
+                  ? 'image_moderation_unavailable'
+                  : imageSafety.decision === 'REVIEW'
+                    ? 'image_review_required'
+                    : 'image_content_not_allowed',
+                categories: imageSafety.categories,
+              })
+            }
+          }
+          await service.storage.from(hold.bucket).remove([hold.path])
+        }
+      }
+      if (imageSafety.decision !== 'ALLOW') {
+        const recordError = await recordImageDecision({
+          service, userId: user.id, receiverId, clientMessageId, attachmentId,
+          bucket, path, caption: input.caption, sha256: input.sha256, assessment: imageSafety,
+        })
+        if (recordError) return json(503, { error: 'content_moderation_record_failed' })
+        if (imageSafety.decision === 'BLOCK') await service.storage.from(bucket).remove([path])
+        return json(imageSafety.failureReason ? 503 : 422, {
+          error: imageSafety.failureReason === 'ENCRYPTED_IMAGE_UNINSPECTABLE'
+            ? 'encrypted_image_moderation_unavailable'
+            : imageSafety.failureReason
+              ? 'image_moderation_unavailable'
+              : imageSafety.decision === 'REVIEW'
+                ? 'image_review_required'
+                : 'image_content_not_allowed',
+          categories: imageSafety.categories,
+        })
+      }
+    } else {
+      let policy
+      try {
+        policy = await resolveLimitedMediaPolicy(service, mediaPolicyCache, kind)
+      } catch {
+        return json(503, { error: 'attachment_moderation_policy_unavailable' })
+      }
+      if (policy.enabled !== true || policy.enforcement_mode === 'ENFORCE') {
+        return json(422, { error: 'attachment_inspection_not_available', attachment_type: kind })
+      }
+      limitedMediaSafety = {
+        decision: 'ALLOW_LIMITED_INSPECTION', coverage: 'limited_inspection',
+        strategy: policy.inspection_strategy,
+      }
+    }
+
     const singleFinalizationPayload = {
       protocol: 'attachment-finalization-v2', mode: 'single', receiverId,
       clientMessageId, attachmentId, attachmentType: kind, bucketId: bucket,
@@ -570,12 +1238,23 @@ serve(async (req) => {
       senderPublicKey: input.senderPublicKey || null,
       waveform: Array.isArray(input.waveform) ? input.waveform.slice(0, 240) : null,
     }
-    const validationDetails = buildValidationDetails({
-      sampleBytes: sample.length,
-      encrypted: isViewOnce,
-      hasDimensions: positiveIntegerOrNull(input.width) !== null && positiveIntegerOrNull(input.height) !== null,
-      hasDuration: positiveIntegerOrNull(input.durationMs) !== null,
-    })
+    const validationDetails = {
+      ...buildValidationDetails({
+        sampleBytes: sample.length,
+        encrypted: isViewOnce,
+        hasDimensions: positiveIntegerOrNull(input.width) !== null && positiveIntegerOrNull(input.height) !== null,
+        hasDuration: positiveIntegerOrNull(input.durationMs) !== null,
+      }),
+      ...(imageSafety ? {
+        content_moderation: {
+          decision: imageSafety.decision,
+          provider: imageSafety.provider,
+          model: imageSafety.model,
+          risk_score: imageSafety.riskScore,
+          categories: imageSafety.categories,
+        },
+      } : limitedMediaSafety ? { content_moderation: limitedMediaSafety } : {}),
+    }
     const rpcInput = attachmentIndex === 0 ? {
       p_sender_id: user.id,
       p_receiver_id: receiverId,
@@ -659,6 +1338,18 @@ serve(async (req) => {
       return json(status, { error: error.message || 'attachment_finalize_rejected' })
     }
     const message = Array.isArray(data) ? data[0] : data
+    if (preModerationReceiptId) {
+      const { error: receiptUpdateError } = await service
+        .from('view_once_moderation_receipts')
+        .update({ finalized_at: new Date().toISOString() })
+        .eq('id', preModerationReceiptId)
+      if (receiptUpdateError) {
+        console.error('[chat-attachment-finalize] receipt-finalize-error', {
+          receiptId: preModerationReceiptId,
+          message: receiptUpdateError.message,
+        })
+      }
+    }
     console.log('[chat-attachment-finalize] success', {
       attachmentId,
       clientMessageId,

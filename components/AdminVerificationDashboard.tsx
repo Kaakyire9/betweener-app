@@ -27,11 +27,79 @@ type Overview = {
   pending_verifications: number;
   rejected_unread: number;
   open_reports: number;
+  open_profile_guard_reviews: number;
   active_subscriptions: number;
   silver_active: number;
   gold_active: number;
   members_total: number;
   members_last_7d: number;
+};
+
+type ProfileGuardReviewRow = {
+  review_id: string;
+  profile_id: string;
+  user_id: string;
+  full_name: string | null;
+  avatar_url: string | null;
+  current_profile_text: Record<string, unknown>;
+  evidence_snapshot: Record<string, unknown>;
+  field_names: string[];
+  categories: string[];
+  risk_score: number;
+  detector_version: string;
+  semantic_used: boolean;
+  profile_moderation_state: string;
+  discoverable_in_vibes: boolean;
+  prior_discoverable: boolean;
+  created_at: string;
+};
+
+type ProfileGuardEnforcementRow = {
+  event_id: string;
+  profile_id: string;
+  full_name: string | null;
+  avatar_url: string | null;
+  current_profile_text: Record<string, unknown>;
+  evidence_snapshot: Record<string, unknown>;
+  field_names: string[];
+  categories: string[];
+  risk_score: number;
+  decision: "REQUIRE_REWRITE" | "RESTRICT_PROFILE";
+  source: string;
+  detector_version: string;
+  profile_moderation_state: string;
+  discoverable_in_vibes: boolean;
+  enforcement_count: number;
+  first_enforced_at: string;
+  last_enforced_at: string;
+  resolved_at: string | null;
+};
+
+type ContentModerationRow = {
+  event_id: string;
+  actor_user_id: string;
+  actor_profile_id: string | null;
+  actor_name: string | null;
+  target_user_id: string | null;
+  target_name: string | null;
+  content_type: "private_message" | "private_message_edit" | "profile_image" | "chat_image" | "chat_caption";
+  content_id: string | null;
+  client_content_id: string | null;
+  decision: "ALLOW" | "BLOCK" | "REVIEW";
+  status: "AUTO_CLOSED" | "PENDING_REVIEW" | "APPROVED" | "REJECTED";
+  categories: string[];
+  risk_score: number;
+  extracted_text: string | null;
+  evidence_snapshot: Record<string, unknown>;
+  storage_bucket: string | null;
+  storage_path: string | null;
+  provider: string;
+  provider_model: string;
+  failure_reason: string | null;
+  created_at: string;
+  reviewed_at: string | null;
+  review_outcome: "APPROVE" | "REJECT" | null;
+  review_notes: string | null;
 };
 
 type VerificationRow = {
@@ -358,6 +426,7 @@ const EMPTY_OVERVIEW: Overview = {
   pending_verifications: 0,
   rejected_unread: 0,
   open_reports: 0,
+  open_profile_guard_reviews: 0,
   active_subscriptions: 0,
   silver_active: 0,
   gold_active: 0,
@@ -385,6 +454,9 @@ export const AdminVerificationDashboard = () => {
   const [overview, setOverview] = useState<Overview>(EMPTY_OVERVIEW);
   const [verifications, setVerifications] = useState<VerificationRow[]>([]);
   const [reports, setReports] = useState<ReportRow[]>([]);
+  const [profileGuardReviews, setProfileGuardReviews] = useState<ProfileGuardReviewRow[]>([]);
+  const [profileGuardEnforcements, setProfileGuardEnforcements] = useState<ProfileGuardEnforcementRow[]>([]);
+  const [contentModerationEvents, setContentModerationEvents] = useState<ContentModerationRow[]>([]);
   const [conciergeRequests, setConciergeRequests] = useState<DatePlanConciergeRow[]>([]);
   const [accountMergeCases, setAccountMergeCases] = useState<AccountMergeCaseRow[]>([]);
   const [accountRecoveryRequests, setAccountRecoveryRequests] = useState<AccountRecoveryRequestRow[]>([]);
@@ -411,7 +483,7 @@ export const AdminVerificationDashboard = () => {
   const [recoveryReviewNotesDraft, setRecoveryReviewNotesDraft] = useState("");
   const [recoveryReviewSubmitting, setRecoveryReviewSubmitting] = useState(false);
   const [recoveryReviewError, setRecoveryReviewError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"verification" | "reports" | "concierge" | "recovery_requests" | "merges">("verification");
+  const [activeTab, setActiveTab] = useState<"verification" | "profile_guard" | "reports" | "concierge" | "recovery_requests" | "merges">("verification");
 
   const loadSignedUrls = useCallback(async (rows: VerificationRow[]) => {
     const nextMap: Record<string, string> = {};
@@ -434,9 +506,12 @@ export const AdminVerificationDashboard = () => {
     }
 
     setError(null);
-    const [overviewRes, verificationRes, reportsRes, conciergeRes, recoveryRes, mergeRes] = await Promise.all([
+    const [overviewRes, verificationRes, guardRes, enforcementRes, contentSafetyRes, reportsRes, conciergeRes, recoveryRes, mergeRes] = await Promise.all([
       supabase.rpc("rpc_admin_dashboard_overview"),
       supabase.rpc("rpc_admin_get_verification_queue"),
+      supabase.rpc("rpc_admin_get_profile_guard_review_queue", { p_include_resolved: false, p_limit: 100 }),
+      supabase.rpc("rpc_admin_get_profile_guard_enforcement_history", { p_limit: 100 }),
+      supabase.rpc("rpc_admin_get_content_moderation_events", { p_limit: 100 }),
       supabase.rpc("rpc_admin_get_reports_queue"),
       supabase.rpc("rpc_admin_get_date_plan_concierge_queue"),
       supabase.rpc("rpc_admin_get_account_recovery_requests"),
@@ -455,6 +530,15 @@ export const AdminVerificationDashboard = () => {
     const verificationData = (verificationRes.data as VerificationRow[] | null) ?? [];
     const reportsData = (reportsRes.data as ReportRow[] | null) ?? [];
     const warnings: string[] = [];
+    const guardData = guardRes.error
+      ? (warnings.push("Solicitation Guard reviews are unavailable until the latest migration is applied."), [])
+      : ((guardRes.data as ProfileGuardReviewRow[] | null) ?? []);
+    const enforcementData = enforcementRes.error
+      ? (warnings.push("Automatic Guard enforcement history is unavailable until the latest migration is applied."), [])
+      : ((enforcementRes.data as ProfileGuardEnforcementRow[] | null) ?? []);
+    const contentSafetyData = contentSafetyRes.error
+      ? (warnings.push("Private-message and image safety reviews are unavailable until the latest migration is applied."), [])
+      : ((contentSafetyRes.data as ContentModerationRow[] | null) ?? []);
 
     const conciergeData = conciergeRes.error
       ? (warnings.push("Date concierge queue unavailable until the latest admin migration is applied."), [])
@@ -474,6 +558,9 @@ export const AdminVerificationDashboard = () => {
     });
     setVerifications(verificationData);
     setReports(reportsData);
+    setProfileGuardReviews(guardData);
+    setProfileGuardEnforcements(enforcementData);
+    setContentModerationEvents(contentSafetyData);
     setConciergeRequests(conciergeData);
     setAccountRecoveryRequests(recoveryData);
     setAccountMergeCases(mergeData);
@@ -619,6 +706,85 @@ export const AdminVerificationDashboard = () => {
     },
     [loadDashboard]
   );
+
+  const handleProfileGuardDecision = useCallback(
+    (item: ProfileGuardReviewRow, state: "CLEAR" | "RESTRICTED" | "SUSPENDED") => {
+      const approving = state === "CLEAR";
+      Alert.alert(
+        approving ? "Clear profile review" : `${state === "SUSPENDED" ? "Suspend" : "Restrict"} profile`,
+        approving
+          ? `Approve ${item.full_name || "this member"} and restore their previous discoverability?`
+          : `Keep ${item.full_name || "this member"} out of public recommendations?`,
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: approving ? "Clear review" : state === "SUSPENDED" ? "Suspend" : "Restrict",
+            style: approving ? "default" : "destructive",
+            onPress: async () => {
+              const { error: rpcError } = await supabase.rpc("rpc_admin_resolve_profile_guard_review", {
+                p_review_id: item.review_id,
+                p_state: state,
+                p_reason_code: approving ? "CONTENT_REVIEWED_SAFE" : state === "SUSPENDED" ? "SUSPICIOUS_SOLICITATION" : "SOLICITATION_CONFIRMED",
+                p_notes: null,
+              });
+              if (rpcError) {
+                Alert.alert("Admin action failed", rpcError.message || "Unable to resolve Profile Guard review.");
+                return;
+              }
+              void loadDashboard();
+            },
+          },
+        ],
+      );
+    },
+    [loadDashboard],
+  );
+
+  const handleContentModerationDecision = useCallback(
+    (item: ContentModerationRow, outcome: "APPROVE" | "REJECT") => {
+      const releasesMessage = outcome === "APPROVE" && item.content_type === "private_message";
+      Alert.alert(
+        outcome === "APPROVE" ? "Approve safety review" : "Reject safety review",
+        releasesMessage
+          ? "This will deliver the held private message to its recipient."
+          : (item.content_type.includes("image") || item.content_type === "chat_caption") && outcome === "APPROVE"
+            ? "This approves the exact held content. When the member retries, it will publish or deliver without another scan."
+            : "This will close the review without delivering or publishing the content.",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: outcome === "APPROVE" ? "Approve" : "Reject",
+            style: outcome === "REJECT" ? "destructive" : "default",
+            onPress: async () => {
+              const { error: rpcError } = await supabase.rpc("rpc_admin_resolve_content_moderation_event", {
+                p_event_id: item.event_id,
+                p_outcome: outcome,
+                p_notes: null,
+              });
+              if (rpcError) {
+                Alert.alert("Admin action failed", rpcError.message || "Unable to resolve content review.");
+                return;
+              }
+              void loadDashboard();
+            },
+          },
+        ],
+      );
+    },
+    [loadDashboard],
+  );
+
+  const handleOpenContentEvidence = useCallback(async (item: ContentModerationRow) => {
+    const { data, error: evidenceError } = await supabase.functions.invoke("content-moderation-evidence", {
+      body: { event_id: item.event_id },
+    });
+    const signedUrl = data?.signed_url;
+    if (evidenceError || typeof signedUrl !== "string") {
+      Alert.alert("Evidence unavailable", "The original image is no longer available or could not be opened.");
+      return;
+    }
+    await Linking.openURL(signedUrl);
+  }, []);
 
   const handleConciergeStatus = useCallback(
     async (item: DatePlanConciergeRow, status: "claimed" | "completed" | "cancelled") => {
@@ -955,6 +1121,9 @@ export const AdminVerificationDashboard = () => {
   }
 
   const pendingVerifications = verifications.filter((item) => item.status === "pending");
+  const openProfileGuardReviews = profileGuardReviews.length;
+  const pendingContentModeration = contentModerationEvents.filter((item) => item.status === "PENDING_REVIEW");
+  const openGuardReviews = openProfileGuardReviews + pendingContentModeration.length;
   const activeReports = reports.filter((item) => ["PENDING", "REVIEWING"].includes((item.status || "").toUpperCase()));
   const openConciergeRequests = conciergeRequests.filter((item) => ["pending", "claimed"].includes((item.request_status || "").toLowerCase()));
   const openRecoveryRequests = accountRecoveryRequests.filter((item) => ["pending", "reviewing"].includes((item.status || "").toLowerCase()));
@@ -968,7 +1137,7 @@ export const AdminVerificationDashboard = () => {
   const mergeFailedCount = accountMergeCases.filter((item) => (item.status || "").toLowerCase() === "failed").length;
 
   const metricCards: {
-    key: "verification" | "reports" | "concierge" | "recovery_requests" | "merges";
+    key: "verification" | "profile_guard" | "reports" | "concierge" | "recovery_requests" | "merges";
     label: string;
     value: number;
     icon: string;
@@ -980,6 +1149,13 @@ export const AdminVerificationDashboard = () => {
       value: overview.pending_verifications,
       icon: "shield-account-outline",
       helper: "Open queue",
+    },
+    {
+      key: "profile_guard",
+      label: "Guard reviews",
+      value: openGuardReviews,
+      icon: "shield-alert-outline",
+      helper: "Solicitation review",
     },
     {
       key: "reports",
@@ -1032,6 +1208,15 @@ export const AdminVerificationDashboard = () => {
       subtitle: `${pendingVerifications.length} pending`,
       detail: pendingVerifications.length > 0 ? "Review documents and approve or reject." : "No one is waiting right now.",
       icon: "shield-check-outline",
+    },
+    {
+      key: "profile_guard" as const,
+      title: "Solicitation Guard",
+      subtitle: `${openGuardReviews} pending`,
+      detail: openGuardReviews > 0
+        ? "Inspect captured evidence and decide each case."
+        : `${profileGuardEnforcements.length} automatically enforced profiles in history.`,
+      icon: "shield-search",
     },
     {
       key: "reports" as const,
@@ -1141,6 +1326,7 @@ export const AdminVerificationDashboard = () => {
         <View style={styles.tabRow}>
           {[
             { key: "verification", label: `Verification (${pendingVerifications.length})` },
+            { key: "profile_guard", label: `Guard (${openGuardReviews})` },
             { key: "reports", label: `Reports (${activeReports.length})` },
             { key: "concierge", label: `Concierge (${openConciergeRequests.length})` },
             { key: "recovery_requests", label: `Requests (${openRecoveryRequests.length})` },
@@ -1151,7 +1337,7 @@ export const AdminVerificationDashboard = () => {
               <Pressable
                 key={tab.key}
                 style={[styles.tabButton, active && styles.tabButtonActive]}
-                onPress={() => setActiveTab(tab.key as "verification" | "reports" | "concierge" | "recovery_requests" | "merges")}
+                onPress={() => setActiveTab(tab.key as "verification" | "profile_guard" | "reports" | "concierge" | "recovery_requests" | "merges")}
               >
                 <Text style={[styles.tabButtonText, active && styles.tabButtonTextActive]}>{tab.label}</Text>
               </Pressable>
@@ -1354,6 +1540,199 @@ export const AdminVerificationDashboard = () => {
                 );
               })
             )}
+          </View>
+        ) : activeTab === "profile_guard" ? (
+          <View style={styles.sectionCard}>
+            <Text style={styles.sectionTitle}>Solicitation Guard review queue</Text>
+            {profileGuardReviews.length === 0 ? (
+              <Text style={styles.emptyText}>No semantic profile reviews are waiting right now.</Text>
+            ) : (
+              profileGuardReviews.map((item) => (
+                <View key={item.review_id} style={styles.reviewCard}>
+                  <View style={styles.reviewHeader}>
+                    <View style={styles.identityRow}>
+                      <View style={styles.avatarWrap}>
+                        {item.avatar_url ? (
+                          <Image source={{ uri: item.avatar_url }} style={styles.avatarImage} />
+                        ) : (
+                          <MaterialCommunityIcons name="account-alert-outline" size={26} color={theme.textMuted} />
+                        )}
+                      </View>
+                      <View style={styles.identityCopy}>
+                        <Text style={styles.identityName}>{item.full_name || "Unknown member"}</Text>
+                        <Text style={styles.identityMeta}>
+                          {new Date(item.created_at).toLocaleString()} · Risk {Math.round(Number(item.risk_score) * 100)}%
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={[styles.statusPill, styles.statusPending]}>
+                      <Text style={styles.statusPillText}>REVIEW</Text>
+                    </View>
+                  </View>
+
+                  <Text style={styles.reportReason}>{item.categories.join(", ").replace(/_/g, " ")}</Text>
+                  <View style={styles.reportEvidenceCard}>
+                    <Text style={styles.reportEvidenceTitle}>Submitted evidence</Text>
+                    <Text style={styles.reportEvidenceText} selectable>
+                      {JSON.stringify(item.evidence_snapshot, null, 2)}
+                    </Text>
+                  </View>
+                  <View style={styles.reportEvidenceCard}>
+                    <Text style={styles.reportEvidenceTitle}>Current profile text</Text>
+                    <Text style={styles.reportEvidenceText} selectable>
+                      {JSON.stringify(item.current_profile_text, null, 2)}
+                    </Text>
+                  </View>
+                  <View style={styles.metaRow}>
+                    <Text style={styles.metaText}>Fields: {item.field_names.join(", ")}</Text>
+                    <Text style={styles.metaText}>Detector: {item.detector_version}</Text>
+                  </View>
+                  <View style={styles.actionRow}>
+                    <Pressable style={styles.approveButton} onPress={() => handleProfileGuardDecision(item, "CLEAR")}>
+                      <Text style={styles.actionButtonText}>Clear</Text>
+                    </Pressable>
+                    <Pressable style={styles.rejectButton} onPress={() => handleProfileGuardDecision(item, "RESTRICTED")}>
+                      <Text style={styles.actionButtonText}>Restrict</Text>
+                    </Pressable>
+                    <Pressable style={styles.rejectButton} onPress={() => handleProfileGuardDecision(item, "SUSPENDED")}>
+                      <Text style={styles.actionButtonText}>Suspend</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              ))
+            )}
+            <View style={styles.queueSubsection}>
+              <Text style={styles.sectionTitle}>Private messages &amp; image OCR</Text>
+              <Text style={styles.emptyText}>
+                Review-held messages are not delivered. Review-held profile images are removed from public storage.
+              </Text>
+              <Text style={styles.emptyText}>
+                Approving media does not clear a separate profile restriction. Resolve any matching profile review above to restore discovery visibility.
+              </Text>
+              {contentModerationEvents.length === 0 ? (
+                <Text style={styles.emptyText}>No private-message or image safety events have been recorded.</Text>
+              ) : (
+                contentModerationEvents.map((item) => (
+                  <View key={item.event_id} style={styles.reviewCard}>
+                    <View style={styles.reviewHeader}>
+                      <View style={styles.identityCopy}>
+                        <Text style={styles.identityName}>{item.actor_name || "Unknown member"}</Text>
+                        <Text style={styles.identityMeta}>
+                          {item.content_type.replace(/_/g, " ")} · {new Date(item.created_at).toLocaleString()} · Risk {Math.round(Number(item.risk_score) * 100)}%
+                        </Text>
+                      </View>
+                      <View style={[
+                        styles.statusPill,
+                        item.status === "PENDING_REVIEW"
+                          ? styles.statusPending
+                          : item.status === "APPROVED"
+                            ? styles.statusApproved
+                            : styles.statusRejected,
+                      ]}>
+                        <Text style={styles.statusPillText}>{item.status.replace(/_/g, " ")}</Text>
+                      </View>
+                    </View>
+                    <Text style={styles.reportReason}>
+                      {(item.categories.length ? item.categories : [item.decision]).join(", ").replace(/_/g, " ")}
+                    </Text>
+                    {item.extracted_text ? (
+                      <View style={styles.reportEvidenceCard}>
+                        <Text style={styles.reportEvidenceTitle}>OCR text</Text>
+                        <Text style={styles.reportEvidenceText} selectable>{item.extracted_text}</Text>
+                      </View>
+                    ) : null}
+                    <View style={styles.reportEvidenceCard}>
+                      <Text style={styles.reportEvidenceTitle}>Captured evidence</Text>
+                      <Text style={styles.reportEvidenceText} selectable>
+                        {JSON.stringify(item.evidence_snapshot, null, 2)}
+                      </Text>
+                    </View>
+                    <View style={styles.metaRow}>
+                      <Text style={styles.metaText}>Provider: {item.provider} / {item.provider_model}</Text>
+                      {item.target_name ? <Text style={styles.metaText}>Recipient: {item.target_name}</Text> : null}
+                      {item.failure_reason ? <Text style={styles.metaText}>Failure: {item.failure_reason}</Text> : null}
+                    </View>
+                    <View style={styles.actionRow}>
+                      {item.storage_bucket && item.storage_path ? (
+                        <Pressable style={styles.secondaryAction} onPress={() => void handleOpenContentEvidence(item)}>
+                          <Text style={styles.secondaryActionText}>Open image evidence</Text>
+                        </Pressable>
+                      ) : null}
+                      {item.status === "PENDING_REVIEW" ? (
+                        <>
+                          <Pressable style={styles.approveButton} onPress={() => handleContentModerationDecision(item, "APPROVE")}>
+                            <Text style={styles.actionButtonText}>Approve</Text>
+                          </Pressable>
+                          <Pressable style={styles.rejectButton} onPress={() => handleContentModerationDecision(item, "REJECT")}>
+                            <Text style={styles.actionButtonText}>Reject</Text>
+                          </Pressable>
+                        </>
+                      ) : null}
+                    </View>
+                  </View>
+                ))
+              )}
+            </View>
+            <View style={styles.queueSubsection}>
+              <Text style={styles.sectionTitle}>Automatic enforcement history</Text>
+              <Text style={styles.emptyText}>
+                Deterministic blocks are read-only and separate from cases requiring an admin decision.
+              </Text>
+              {profileGuardEnforcements.length === 0 ? (
+                <Text style={styles.emptyText}>No automatic enforcement has been recorded.</Text>
+              ) : (
+                profileGuardEnforcements.map((item) => {
+                  const historicalSnapshot = item.evidence_snapshot?.capture === "migration_current_profile_snapshot";
+                  return (
+                    <View key={item.event_id} style={styles.reviewCard}>
+                      <View style={styles.reviewHeader}>
+                        <View style={styles.identityRow}>
+                          <View style={styles.avatarWrap}>
+                            {item.avatar_url ? (
+                              <Image source={{ uri: item.avatar_url }} style={styles.avatarImage} />
+                            ) : (
+                              <MaterialCommunityIcons name="shield-alert-outline" size={26} color={theme.textMuted} />
+                            )}
+                          </View>
+                          <View style={styles.identityCopy}>
+                            <Text style={styles.identityName}>{item.full_name || "Unknown member"}</Text>
+                            <Text style={styles.identityMeta}>
+                              {new Date(item.last_enforced_at).toLocaleString()} · Risk {Math.round(Number(item.risk_score) * 100)}%
+                            </Text>
+                          </View>
+                        </View>
+                        <View style={[styles.statusPill, item.decision === "RESTRICT_PROFILE" ? styles.statusRejected : styles.statusPending]}>
+                          <Text style={styles.statusPillText}>{item.decision.replace(/_/g, " ")}</Text>
+                        </View>
+                      </View>
+                      <Text style={styles.reportReason}>{item.categories.join(", ").replace(/_/g, " ")}</Text>
+                      <Text style={styles.metaText}>
+                        {item.enforcement_count} incident{item.enforcement_count === 1 ? "" : "s"} · Current state: {item.profile_moderation_state} · {item.discoverable_in_vibes ? "Publicly visible" : "Hidden from discovery"}
+                      </Text>
+                      <View style={styles.reportEvidenceCard}>
+                        <Text style={styles.reportEvidenceTitle}>
+                          {historicalSnapshot ? "Historical profile snapshot" : "Submitted evidence"}
+                        </Text>
+                        <Text style={styles.reportEvidenceText} selectable>
+                          {JSON.stringify(item.evidence_snapshot, null, 2)}
+                        </Text>
+                        {historicalSnapshot ? (
+                          <Text style={styles.reportEvidenceMeta}>
+                            Captured during migration and may differ from the originally submitted value.
+                          </Text>
+                        ) : null}
+                      </View>
+                      <View style={styles.reportEvidenceCard}>
+                        <Text style={styles.reportEvidenceTitle}>Current profile text</Text>
+                        <Text style={styles.reportEvidenceText} selectable>
+                          {JSON.stringify(item.current_profile_text, null, 2)}
+                        </Text>
+                      </View>
+                    </View>
+                  );
+                })
+              )}
+            </View>
           </View>
         ) : activeTab === "reports" ? (
           <View style={styles.sectionCard}>
@@ -1943,6 +2322,13 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.28 : 0.72),
       borderWidth: 1,
       borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
+    },
+    queueSubsection: {
+      marginTop: 18,
+      paddingTop: 18,
+      gap: 12,
+      borderTopWidth: 1,
+      borderTopColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
     },
     sectionTitle: { color: theme.text, fontSize: 18, fontFamily: "Archivo_700Bold" },
     warningText: { color: theme.textMuted, fontSize: 12, lineHeight: 18, fontFamily: "Manrope_500Medium" },

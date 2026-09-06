@@ -2387,6 +2387,16 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       }
 
       if (error) {
+        if ((error as any).code === 'PROFILE_MEDIA_NOT_ALLOWED') {
+          setStatusTone('error');
+          setStatusMessage('One of your photos contains unsafe content, contact details, or external promotion. Remove it and try again.');
+          return;
+        }
+        if ((error as any).code === 'PROFILE_MEDIA_REVIEW_REQUIRED') {
+          setStatusTone('error');
+          setStatusMessage('One of your photos needs a safety review before it can appear on your profile.');
+          return;
+        }
         if ((error as any).code === 'PROFILE_CONTENT_NOT_ALLOWED') {
           setStatusTone('error');
           setStatusMessage('Please update your About section. Contact details, external promotion and solicitation cannot appear on public profiles.');

@@ -1,5 +1,6 @@
 import argparse
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -10,21 +11,18 @@ SCHEMA = "public"
 OUT_FILE = Path("supabase/types/database.ts")
 
 
-def run_cmd(project_id: str) -> str:
+def run_cmd(project_id: str, local: bool = False) -> str:
     # npm-installed CLIs are exposed as .cmd shims on Windows. Passing the
     # extension explicitly avoids CreateProcess WinError 2 from Python.
     supabase_cli = "supabase.cmd" if os.name == "nt" else "supabase"
-    cmd = [
-        supabase_cli,
-        "gen",
-        "types",
-        "--lang",
-        "typescript",
-        "--project-id",
-        project_id,
-        "--schema",
-        SCHEMA,
-    ]
+    if os.name == "nt" and shutil.which(supabase_cli) is None:
+        cmd = ["npm.cmd", "exec", "--", "supabase"]
+    else:
+        cmd = [supabase_cli]
+    cmd.extend(["gen", "types", "--lang", "typescript"])
+    local_db_url = os.environ.get("SUPABASE_LOCAL_DB_URL") or "postgresql://postgres:postgres@127.0.0.1:54322/postgres"
+    cmd.extend(["--db-url", local_db_url] if local else ["--project-id", project_id])
+    cmd.extend(["--schema", SCHEMA])
     res = subprocess.run(cmd, capture_output=True, text=True)
     if res.returncode != 0:
         sys.stderr.write(res.stderr or "")
@@ -35,7 +33,7 @@ def run_cmd(project_id: str) -> str:
         raise RuntimeError("supabase gen types produced empty output")
 
     # Keep diffs stable across platforms.
-    return res.stdout.replace("\r\n", "\n")
+    return res.stdout.replace("\r\n", "\n").rstrip() + "\n"
 
 
 def read_text_any_encoding(path: Path) -> str:
@@ -64,14 +62,16 @@ def write_file(path: Path, content: str) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", action="store_true", help="Fail if generated types differ from committed file")
+    parser.add_argument("--local", action="store_true", help="Generate from the running local Supabase database")
     args = parser.parse_args()
 
     project_id = os.environ.get("SUPABASE_PROJECT_ID") or os.environ.get("SUPABASE_PROJECT_REF") or PROJECT_ID_FALLBACK
-    generated = run_cmd(project_id)
+    generated = run_cmd(project_id, local=args.local)
+    source = "local database" if args.local else f"project {project_id}"
 
     if not args.check:
         write_file(OUT_FILE, generated)
-        sys.stdout.write(f"Wrote {OUT_FILE.as_posix()} (project {project_id}, schema {SCHEMA})\n")
+        sys.stdout.write(f"Wrote {OUT_FILE.as_posix()} ({source}, schema {SCHEMA})\n")
         return 0
 
     if not OUT_FILE.exists():

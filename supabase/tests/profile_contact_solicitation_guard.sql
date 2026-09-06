@@ -1,13 +1,14 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(24);
+select plan(55);
 
 select set_config('app.profile_guard_write', 'on', true);
 insert into auth.users(id, email) values
   ('91000000-0000-4000-8000-000000000001', 'guard-owner@example.test'),
   ('91000000-0000-4000-8000-000000000002', 'guard-other@example.test'),
-  ('91000000-0000-4000-8000-000000000003', 'guard-review@example.test');
+  ('91000000-0000-4000-8000-000000000003', 'guard-review@example.test'),
+  ('91000000-0000-4000-8000-000000000004', 'guard-legacy@example.test');
 insert into public.profiles(
   id, user_id, full_name, age, gender, bio, phone_number, phone_verified,
   identity_status, profile_completed, discoverable_in_vibes,
@@ -21,7 +22,16 @@ insert into public.profiles(
     'active', true, true, 'CLEAR', 'active', true),
   ('92000000-0000-4000-8000-000000000003', '91000000-0000-4000-8000-000000000003',
     'Guard Review', 31, 'FEMALE', 'I enjoy books.', '+447000000003', true,
-    'active', true, false, 'REVIEW_REQUIRED', 'active', true);
+    'active', true, false, 'REVIEW_REQUIRED', 'active', true),
+  ('92000000-0000-4000-8000-000000000004', '91000000-0000-4000-8000-000000000004',
+    'Guard Legacy', 28, 'FEMALE', 'Message me on Signal +44 7000 000004',
+    '+447000000004', true, 'active', true, true, 'CLEAR', 'active', true);
+insert into public.profile_prompts(
+  profile_id, prompt_key, prompt_title, answer, prompt_type, reveal_policy
+) values (
+  '92000000-0000-4000-8000-000000000001', 'guard_test',
+  'A safe prompt', 'A safe answer', 'standard', 'never'
+);
 select set_config('app.profile_guard_write', 'off', true);
 
 select ok(not exists (
@@ -47,6 +57,56 @@ select ok(
   ),
   'client roles cannot execute backfill'
 );
+select ok(
+  not has_function_privilege(
+    'anon', 'public.rpc_enforce_profile_contact_guard(uuid)', 'EXECUTE'
+  )
+  and not has_function_privilege(
+    'authenticated', 'public.rpc_enforce_profile_contact_guard(uuid)', 'EXECUTE'
+  ),
+  'client roles cannot execute targeted legacy enforcement'
+);
+select ok(
+  has_function_privilege(
+    'service_role', 'public.rpc_enforce_profile_contact_guard(uuid)', 'EXECUTE'
+  ),
+  'service role can execute targeted legacy enforcement'
+);
+select is(
+  public.profile_guard_assess(
+    'See my exclusive on my onlyfan$. I''m online on Signal +1 239 219 2426'
+  )->>'decision',
+  'RESTRICT_PROFILE',
+  'explicit paid-platform and messaging redirection is restricted'
+);
+select ok(
+  (public.profile_guard_assess('I''m online on Signal')->'categories')
+    ? 'EXTERNAL_MESSAGING',
+  'first-person messaging availability is detected'
+);
+select ok(
+  (public.profile_guard_assess('See my exclusive on my onlyfan$')->'categories')
+    ? 'PAID_CONTENT_PROMOTION',
+  'explicit paid-platform promotion is detected'
+);
+select is(
+  public.profile_guard_assess(
+    'I build software for OnlyFans creators.'
+  )->>'decision',
+  'ALLOW',
+  'non-promotional professional platform context remains allowed'
+);
+select ok(
+  (public.profile_guard_assess(
+    'I sell private membership photos away from this app. Ask me how to subscribe.'
+  )->'categories') ? 'PAID_CONTENT_PROMOTION',
+  'content-commerce wording is caught without the semantic provider'
+);
+select ok(
+  (public.profile_guard_assess('See my O n l y F a n s page.')->'categories')
+    ? 'PAID_CONTENT_PROMOTION',
+  'spaced paid-platform wording is caught deterministically'
+);
 
 set local role anon;
 select results_eq(
@@ -67,9 +127,22 @@ reset role;
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '91000000-0000-4000-8000-000000000001', true);
 select set_config('request.jwt.claim.role', 'authenticated', true);
-select throws_ok(
+select lives_ok(
   $$ update public.profiles set bio = 'direct owner write' where id = '92000000-0000-4000-8000-000000000001' $$,
-  '42501', 'PROFILE_GUARD_REQUIRED', 'owner direct protected-field update is denied'
+  'released owner can save a deterministic-safe profile edit during compatibility window'
+);
+select throws_ok(
+  $$ update public.profiles set username = 'contact_me_elsewhere' where id = '92000000-0000-4000-8000-000000000001' $$,
+  '42501', 'PROFILE_HANDLE_RPC_REQUIRED', 'owner direct username redirection is denied'
+);
+select throws_ok(
+  $$ update public.profiles set personality_type = 'Ask how to subscribe' where id = '92000000-0000-4000-8000-000000000001' $$,
+  '42501', 'PROFILE_CONTENT_NOT_ALLOWED', 'owner direct secondary solicitation is denied'
+);
+select throws_ok(
+  $$ update public.profile_prompts set hint_text = 'find me elsewhere'
+     where profile_id = '92000000-0000-4000-8000-000000000001' $$,
+  '42501', 'PROFILE_GUARD_REQUIRED', 'owner direct prompt-hint update is denied'
 );
 select set_config('request.jwt.claim.sub', '91000000-0000-4000-8000-000000000003', true);
 select throws_ok(
@@ -94,12 +167,95 @@ reset role;
 
 set local role service_role;
 select set_config('request.jwt.claim.role', 'service_role', true);
+select ok(
+  has_function_privilege(
+    'service_role',
+    'public.rpc_service_update_profile_with_guard_v2(uuid,jsonb,timestamptz)',
+    'EXECUTE'
+  ),
+  'service role can execute the concurrency-safe bridge'
+);
+select ok(
+  not has_function_privilege(
+    'authenticated',
+    'public.rpc_service_update_profile_with_guard_v2(uuid,jsonb,timestamptz)',
+    'EXECUTE'
+  ),
+  'authenticated cannot execute the concurrency-safe bridge'
+);
+select ok(
+  has_function_privilege(
+    'service_role',
+    'public.rpc_service_consume_profile_guard_rate_limit(uuid)',
+    'EXECUTE'
+  ),
+  'service role can consume the semantic rate limit'
+);
+select ok(
+  not has_function_privilege(
+    'authenticated',
+    'public.rpc_service_consume_profile_guard_rate_limit(uuid)',
+    'EXECUTE'
+  ),
+  'authenticated cannot consume the semantic rate limit'
+);
+select is(
+  (public.rpc_service_update_profile_with_guard_v2(
+    '91000000-0000-4000-8000-000000000001',
+    '{"bio":"Concurrency-safe profile update."}'::jsonb,
+    (select updated_at from public.profiles
+      where user_id = '91000000-0000-4000-8000-000000000001')
+  )->>'ok')::boolean,
+  true,
+  'concurrency-safe bridge accepts the current profile version'
+);
+select throws_ok(
+  $$ select public.rpc_service_update_profile_with_guard_v2(
+       '91000000-0000-4000-8000-000000000001',
+       '{"bio":"Stale update."}'::jsonb,
+       '2000-01-01 00:00:00+00'::timestamptz
+     ) $$,
+  '40001', 'PROFILE_WRITE_CONFLICT', 'concurrency-safe bridge rejects a stale profile version'
+);
+select ok(
+  (public.rpc_service_consume_profile_guard_rate_limit(
+    '91000000-0000-4000-8000-000000000001'
+  )->>'allowed')::boolean,
+  'semantic limiter initially permits a request'
+);
+select ok(
+  (
+    select bool_and((public.rpc_service_consume_profile_guard_rate_limit(
+      '91000000-0000-4000-8000-000000000001'
+    )->>'allowed')::boolean)
+    from generate_series(1, 11)
+  ),
+  'semantic limiter permits twelve requests per window'
+);
+select ok(
+  not (public.rpc_service_consume_profile_guard_rate_limit(
+    '91000000-0000-4000-8000-000000000001'
+  )->>'allowed')::boolean,
+  'semantic limiter rejects the thirteenth request'
+);
 select is(
   (public.rpc_service_update_profile_with_guard(
     '91000000-0000-4000-8000-000000000001', '{"bio":"I enjoy museums.","city":"Accra","region":"Greater Accra","current_country":"Ghana","location":"Accra, Greater Accra, Ghana"}'::jsonb
   )->>'ok')::boolean,
   true,
   'service bridge accepts an owner-safe guarded update'
+);
+select is(
+  public.profile_guard_assess(
+    '{"pace":"balanced","updatedAt":"2026-09-01T15:04:57.497Z","radius":80}'
+  )->>'decision',
+  'ALLOW',
+  'structured ISO timestamps are not classified as phone numbers'
+);
+select isnt(
+  public.profile_guard_assess('Call me on +44 7000 000001')->>'decision',
+  'ALLOW',
+  'real phone numbers remain blocked after timestamp normalization'
 );
 select throws_ok(
   $$ select public.rpc_service_update_profile_with_guard(
@@ -178,6 +334,79 @@ select lives_ok(
   'service role can record an authorized semantic management action'
 );
 reset role;
+
+set local role service_role;
+select set_config('request.jwt.claim.role', 'service_role', true);
+select is(
+  public.rpc_enforce_profile_contact_guard(
+    '92000000-0000-4000-8000-000000000004'
+  )->>'decision',
+  'RESTRICT_PROFILE',
+  'targeted legacy enforcement applies the deterministic decision'
+);
+select is(
+  public.rpc_enforce_profile_contact_guard(
+    '92000000-0000-4000-8000-000000000004'
+  )->>'decision',
+  'RESTRICT_PROFILE',
+  'repeat enforcement preserves the original remediation lifecycle'
+);
+reset role;
+select is(
+  (select profile_moderation_state from public.profiles
+   where id = '92000000-0000-4000-8000-000000000004'),
+  'RESTRICTED',
+  'targeted legacy enforcement restricts the profile'
+);
+select is(
+  (select discoverable_in_vibes from public.profiles
+   where id = '92000000-0000-4000-8000-000000000004'),
+  false,
+  'targeted legacy enforcement removes public discovery'
+);
+select is(
+  (select (metadata->>'prior_discoverable')::boolean
+   from public.profile_moderation_events
+   where profile_id = '92000000-0000-4000-8000-000000000004'
+     and source = 'moderation_action'
+   order by created_at desc
+   limit 1),
+  true,
+  'legacy enforcement records prior discoverability without raw profile text'
+);
+
+set local role service_role;
+select set_config('request.jwt.claim.role', 'service_role', true);
+select is(
+  (public.rpc_service_update_profile_with_guard(
+    '91000000-0000-4000-8000-000000000004',
+    '{"bio":"I enjoy safe community events."}'::jsonb
+  )->>'ok')::boolean,
+  true,
+  'legacy profile can submit a safe correction'
+);
+reset role;
+select is(
+  (select profile_moderation_state from public.profiles
+   where id = '92000000-0000-4000-8000-000000000004'),
+  'CLEAR',
+  'safe legacy correction clears deterministic restriction'
+);
+select is(
+  (select discoverable_in_vibes from public.profiles
+   where id = '92000000-0000-4000-8000-000000000004'),
+  true,
+  'safe legacy correction restores prior discoverability'
+);
+select isnt(
+  (select resolved_at from public.profile_moderation_events
+   where profile_id = '92000000-0000-4000-8000-000000000004'
+     and source = 'moderation_action'
+   order by created_at desc
+   limit 1),
+  null::timestamptz,
+  'safe legacy correction resolves its moderation event'
+);
 
 select * from finish();
 rollback;

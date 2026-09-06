@@ -1,11 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  buildPublicProfileText,
   extractResponseOutputText,
   hasForbiddenTargetIdentifier,
   hasOnlyWritableProfileFields,
+  hasPublicTextUpdate,
+  hasValidPromptPayload,
+  hasValidPublicTextFieldValues,
   needsSemanticReview,
   removeServerManagedProfileFields,
+  removeUnchangedProfileFields,
   resolveGuardConfiguration,
   semanticFailureFallback,
   shouldInvokeSemantic,
@@ -49,7 +54,14 @@ test('server-managed onboarding fields are removed from the write object', () =>
   }), { bio: 'Hello' });
 });
 
-test('semantic classification runs only for deterministic-safe ambiguous text', () => {
+test('full profile snapshots retain only fields that actually changed', () => {
+  assert.deepEqual(removeUnchangedProfileFields(
+    { bio: 'Museum walks', roots: ['African'], min_age_interest: 24 },
+    { bio: 'Museum walks', roots: ['African'], min_age_interest: 25 },
+  ), { min_age_interest: 25 });
+});
+
+test('semantic classification runs for every deterministic-safe public text change', () => {
   const config = resolveGuardConfiguration({
     enabled: true,
     semantic_enabled: true,
@@ -57,10 +69,42 @@ test('semantic classification runs only for deterministic-safe ambiguous text', 
     backfill_enabled: false,
   });
   assert.equal(needsSemanticReview('Ask me about my private page elsewhere'), true);
-  assert.equal(needsSemanticReview('I build private banking software'), false);
-  assert.equal(shouldInvokeSemantic('ALLOW', 'Ask me about my private page elsewhere', config, true), true);
-  assert.equal(shouldInvokeSemantic('REQUIRE_REWRITE', '+44 7000 000000', config, true), false);
-  assert.equal(shouldInvokeSemantic('ALLOW', 'A normal dating profile', config, true), false);
+  assert.equal(needsSemanticReview('I build private banking software'), true);
+  assert.equal(hasPublicTextUpdate({ bio: 'A normal dating profile' }), true);
+  assert.equal(hasPublicTextUpdate({ city: 'Accra' }), false);
+  assert.equal(shouldInvokeSemantic('ALLOW', true, config, true), true);
+  assert.equal(shouldInvokeSemantic('REQUIRE_REWRITE', true, config, true), false);
+  assert.equal(shouldInvokeSemantic('ALLOW', false, config, true), false);
+});
+
+test('complete proposed profile text includes unchanged fields with labels', () => {
+  const text = buildPublicProfileText(
+    {
+      occupation: 'Software Engineer',
+      bio: 'Old bio',
+      languages_spoken: ['English'],
+      relationship_compass: { updatedAt: '2026-09-01T15:04:57.497Z' },
+    },
+    { bio: 'New bio' },
+  );
+  assert.match(text, /occupation: Software Engineer/);
+  assert.match(text, /bio: New bio/);
+  assert.match(text, /languages_spoken: English/);
+  assert.match(text, /relationship_compass: \[structured\]/);
+  assert.doesNotMatch(text, /2026-09-01/);
+});
+
+test('public text and prompt payloads are bounded and type-safe', () => {
+  assert.equal(hasValidPublicTextFieldValues({ bio: 'Hello', roots: ['Ghanaian'] }), true);
+  assert.equal(hasValidPublicTextFieldValues({ bio: 'x'.repeat(501) }), false);
+  assert.equal(hasValidPublicTextFieldValues({ languages_spoken: 'English' }), false);
+  assert.equal(hasValidPromptPayload({
+    prompt_key: 'weekend', prompt_title: 'A weekend looks like', answer: 'Hiking',
+    guess_options: ['Hiking', 'Cooking'], hint_text: 'Outdoors',
+  }), true);
+  assert.equal(hasValidPromptPayload({
+    prompt_key: 'weekend', prompt_title: 'Title', answer: 'x'.repeat(1_001),
+  }), false);
 });
 
 test('semantic failure policy is mode-aware and fail-safe', () => {
