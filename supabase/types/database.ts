@@ -7,11 +7,6 @@ export type Json =
   | Json[]
 
 export type Database = {
-  // Allows to automatically instantiate createClient with right options
-  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
-  __InternalSupabase: {
-    PostgrestVersion: "14.5"
-  }
   public: {
     Tables: {
       account_deletion_requests: {
@@ -4561,6 +4556,94 @@ export type Database = {
         }
         Relationships: []
       }
+      live_director_events: {
+        Row: {
+          action_id: string | null
+          created_at: string
+          event_type: string
+          expires_at: string | null
+          id: string
+          idempotency_key: string | null
+          occurred_at: string
+          payload: Json
+          schema_version: number
+          sequence: number
+          session_id: string
+          source: string
+          state_version: number
+          visibility: string
+        }
+        Insert: {
+          action_id?: string | null
+          created_at?: string
+          event_type: string
+          expires_at?: string | null
+          id?: string
+          idempotency_key?: string | null
+          occurred_at?: string
+          payload?: Json
+          schema_version?: number
+          sequence: number
+          session_id: string
+          source: string
+          state_version: number
+          visibility?: string
+        }
+        Update: {
+          action_id?: string | null
+          created_at?: string
+          event_type?: string
+          expires_at?: string | null
+          id?: string
+          idempotency_key?: string | null
+          occurred_at?: string
+          payload?: Json
+          schema_version?: number
+          sequence?: number
+          session_id?: string
+          source?: string
+          state_version?: number
+          visibility?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_director_events_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_director_updates: {
+        Row: {
+          latest_sequence: number
+          session_id: string
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          latest_sequence?: number
+          session_id: string
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          latest_sequence?: number
+          session_id?: string
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_director_updates_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: true
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       live_maintenance_failures: {
         Row: {
           error_message: string
@@ -4792,6 +4875,390 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "live_moderation_actions_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_odo_action_attempts: {
+        Row: {
+          action_id: string
+          action_type: string
+          call_id: string
+          created_at: string
+          evaluated_at: string
+          expires_at: string
+          fallback_used: boolean
+          lease_generation: number
+          payload: Json
+          policy_outcome: string
+          policy_reason_code: string
+          reason_code: string
+          schema_version: number
+          session_id: string
+          snapshot_version: number
+        }
+        Insert: {
+          action_id: string
+          action_type: string
+          call_id: string
+          created_at?: string
+          evaluated_at?: string
+          expires_at: string
+          fallback_used?: boolean
+          lease_generation: number
+          payload: Json
+          policy_outcome: string
+          policy_reason_code: string
+          reason_code: string
+          schema_version: number
+          session_id: string
+          snapshot_version: number
+        }
+        Update: {
+          action_id?: string
+          action_type?: string
+          call_id?: string
+          created_at?: string
+          evaluated_at?: string
+          expires_at?: string
+          fallback_used?: boolean
+          lease_generation?: number
+          payload?: Json
+          policy_outcome?: string
+          policy_reason_code?: string
+          reason_code?: string
+          schema_version?: number
+          session_id?: string
+          snapshot_version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_odo_action_attempts_call_id_fkey"
+            columns: ["call_id"]
+            isOneToOne: true
+            referencedRelation: "live_odo_ai_usage"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_odo_action_attempts_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_odo_ai_usage: {
+        Row: {
+          action_id: string
+          cached_input_tokens: number
+          completed_at: string | null
+          estimated_cost_micros: number | null
+          failure_reason_code: string | null
+          fallback_used: boolean
+          id: string
+          input_tokens: number
+          latency_ms: number | null
+          lease_generation: number
+          lease_owner: string
+          model: string
+          model_class: string
+          output_tokens: number
+          pricing_version: string
+          provider: string
+          provider_request_id: string | null
+          requested_by_user_id: string
+          routing_reason_code: string
+          session_id: string
+          session_version: number
+          snapshot_version: number
+          started_at: string
+          status: string
+          task: string
+        }
+        Insert: {
+          action_id: string
+          cached_input_tokens?: number
+          completed_at?: string | null
+          estimated_cost_micros?: number | null
+          failure_reason_code?: string | null
+          fallback_used?: boolean
+          id?: string
+          input_tokens?: number
+          latency_ms?: number | null
+          lease_generation: number
+          lease_owner: string
+          model: string
+          model_class: string
+          output_tokens?: number
+          pricing_version: string
+          provider: string
+          provider_request_id?: string | null
+          requested_by_user_id: string
+          routing_reason_code: string
+          session_id: string
+          session_version: number
+          snapshot_version: number
+          started_at?: string
+          status?: string
+          task: string
+        }
+        Update: {
+          action_id?: string
+          cached_input_tokens?: number
+          completed_at?: string | null
+          estimated_cost_micros?: number | null
+          failure_reason_code?: string | null
+          fallback_used?: boolean
+          id?: string
+          input_tokens?: number
+          latency_ms?: number | null
+          lease_generation?: number
+          lease_owner?: string
+          model?: string
+          model_class?: string
+          output_tokens?: number
+          pricing_version?: string
+          provider?: string
+          provider_request_id?: string | null
+          requested_by_user_id?: string
+          routing_reason_code?: string
+          session_id?: string
+          session_version?: number
+          snapshot_version?: number
+          started_at?: string
+          status?: string
+          task?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_odo_ai_usage_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_odo_budget_windows: {
+        Row: {
+          call_count: number
+          created_at: string
+          session_id: string
+          task: string
+          updated_at: string
+          window_started_at: string
+        }
+        Insert: {
+          call_count?: number
+          created_at?: string
+          session_id: string
+          task: string
+          updated_at?: string
+          window_started_at: string
+        }
+        Update: {
+          call_count?: number
+          created_at?: string
+          session_id?: string
+          task?: string
+          updated_at?: string
+          window_started_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_odo_budget_windows_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_odo_configuration: {
+        Row: {
+          audience_pulse_enabled: boolean
+          autopilot_enabled: boolean
+          circuit_breaker_open: boolean
+          conversation_spark_enabled: boolean
+          copilot_enabled: boolean
+          created_at: string
+          id: boolean
+          lease_seconds: number
+          maximum_calls_per_minute: number
+          maximum_calls_per_session: number
+          maximum_input_tokens_per_session: number
+          maximum_output_tokens_per_session: number
+          maximum_terra_calls_per_session: number
+          minimum_call_interval_seconds: number
+          model_pricing: Json
+          music_enabled: boolean
+          odo_enabled: boolean
+          pricing_version: string
+          provider_timeout_ms: number
+          shadow_mode: boolean
+          task_call_limits_per_minute: Json
+          updated_at: string
+          updated_by_user_id: string | null
+        }
+        Insert: {
+          audience_pulse_enabled?: boolean
+          autopilot_enabled?: boolean
+          circuit_breaker_open?: boolean
+          conversation_spark_enabled?: boolean
+          copilot_enabled?: boolean
+          created_at?: string
+          id?: boolean
+          lease_seconds?: number
+          maximum_calls_per_minute?: number
+          maximum_calls_per_session?: number
+          maximum_input_tokens_per_session?: number
+          maximum_output_tokens_per_session?: number
+          maximum_terra_calls_per_session?: number
+          minimum_call_interval_seconds?: number
+          model_pricing?: Json
+          music_enabled?: boolean
+          odo_enabled?: boolean
+          pricing_version?: string
+          provider_timeout_ms?: number
+          shadow_mode?: boolean
+          task_call_limits_per_minute?: Json
+          updated_at?: string
+          updated_by_user_id?: string | null
+        }
+        Update: {
+          audience_pulse_enabled?: boolean
+          autopilot_enabled?: boolean
+          circuit_breaker_open?: boolean
+          conversation_spark_enabled?: boolean
+          copilot_enabled?: boolean
+          created_at?: string
+          id?: boolean
+          lease_seconds?: number
+          maximum_calls_per_minute?: number
+          maximum_calls_per_session?: number
+          maximum_input_tokens_per_session?: number
+          maximum_output_tokens_per_session?: number
+          maximum_terra_calls_per_session?: number
+          minimum_call_interval_seconds?: number
+          model_pricing?: Json
+          music_enabled?: boolean
+          odo_enabled?: boolean
+          pricing_version?: string
+          provider_timeout_ms?: number
+          shadow_mode?: boolean
+          task_call_limits_per_minute?: Json
+          updated_at?: string
+          updated_by_user_id?: string | null
+        }
+        Relationships: []
+      }
+      live_odo_session_state: {
+        Row: {
+          autopilot_state: string
+          created_at: string
+          current_scene: string
+          direction_mode: string
+          last_decision_at: string | null
+          latest_sequence: number
+          lease_expires_at: string | null
+          lease_generation: number
+          lease_heartbeat_at: string | null
+          lease_owner: string | null
+          pause_reason_code: string | null
+          schema_version: number
+          session_id: string
+          state_version: number
+          updated_at: string
+        }
+        Insert: {
+          autopilot_state?: string
+          created_at?: string
+          current_scene?: string
+          direction_mode?: string
+          last_decision_at?: string | null
+          latest_sequence?: number
+          lease_expires_at?: string | null
+          lease_generation?: number
+          lease_heartbeat_at?: string | null
+          lease_owner?: string | null
+          pause_reason_code?: string | null
+          schema_version?: number
+          session_id: string
+          state_version?: number
+          updated_at?: string
+        }
+        Update: {
+          autopilot_state?: string
+          created_at?: string
+          current_scene?: string
+          direction_mode?: string
+          last_decision_at?: string | null
+          latest_sequence?: number
+          lease_expires_at?: string | null
+          lease_generation?: number
+          lease_heartbeat_at?: string | null
+          lease_owner?: string | null
+          pause_reason_code?: string | null
+          schema_version?: number
+          session_id?: string
+          state_version?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_odo_session_state_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: true
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_odo_trace_events: {
+        Row: {
+          action_id: string | null
+          call_id: string | null
+          created_at: string
+          id: number
+          metadata: Json
+          reason_code: string | null
+          session_id: string | null
+          trace_type: string
+        }
+        Insert: {
+          action_id?: string | null
+          call_id?: string | null
+          created_at?: string
+          id?: never
+          metadata?: Json
+          reason_code?: string | null
+          session_id?: string | null
+          trace_type: string
+        }
+        Update: {
+          action_id?: string | null
+          call_id?: string | null
+          created_at?: string
+          id?: never
+          metadata?: Json
+          reason_code?: string | null
+          session_id?: string | null
+          trace_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_odo_trace_events_call_id_fkey"
+            columns: ["call_id"]
+            isOneToOne: false
+            referencedRelation: "live_odo_ai_usage"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_odo_trace_events_session_id_fkey"
             columns: ["session_id"]
             isOneToOne: false
             referencedRelation: "live_sessions"
@@ -12766,6 +13233,65 @@ export type Database = {
         Args: { p_session_id: string; p_user_a: string; p_user_b: string }
         Returns: boolean
       }
+      live_odo_append_director_event_v1: {
+        Args: {
+          p_action_id: string
+          p_event_type: string
+          p_expires_at?: string
+          p_idempotency_key: string
+          p_payload: Json
+          p_schema_version: number
+          p_session_id: string
+          p_source: string
+          p_visibility: string
+        }
+        Returns: {
+          action_id: string | null
+          created_at: string
+          event_type: string
+          expires_at: string | null
+          id: string
+          idempotency_key: string | null
+          occurred_at: string
+          payload: Json
+          schema_version: number
+          sequence: number
+          session_id: string
+          source: string
+          state_version: number
+          visibility: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "live_director_events"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      live_odo_append_trace_v1: {
+        Args: {
+          p_action_id: string
+          p_call_id: string
+          p_metadata?: Json
+          p_reason_code: string
+          p_session_id: string
+          p_trace_type: string
+        }
+        Returns: undefined
+      }
+      live_odo_build_snapshot_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      live_odo_is_service_role: { Args: never; Returns: boolean }
+      live_odo_jsonb_has_exact_keys_v1: {
+        Args: { p_optional?: string[]; p_required: string[]; p_value: Json }
+        Returns: boolean
+      }
+      live_odo_validate_action_payload_v1: {
+        Args: { p_action_type: string; p_payload: Json }
+        Returns: string
+      }
       live_pool_exclusion_reasons: {
         Args: {
           p_candidate_session_id: string
@@ -13560,6 +14086,10 @@ export type Database = {
           p_status: string
         }
         Returns: boolean
+      }
+      rpc_admin_update_live_odo_configuration_v1: {
+        Args: { p_patch: Json }
+        Returns: Json
       }
       rpc_admin_update_report_status: {
         Args: { p_report_id: string; p_status: string }
@@ -15500,9 +16030,29 @@ export type Database = {
         Args: { p_pairing_id: string }
         Returns: Json
       }
+      rpc_get_live_director_snapshot_v1: {
+        Args: {
+          p_after_sequence?: number
+          p_limit?: number
+          p_session_id: string
+        }
+        Returns: Json
+      }
       rpc_get_live_member_summary: {
         Args: { p_profile_id: string; p_session_id: string }
         Returns: Json
+      }
+      rpc_get_live_odo_admin_trace_v1: {
+        Args: { p_limit?: number; p_session_id: string }
+        Returns: {
+          action_id: string
+          call_id: string
+          created_at: string
+          metadata: Json
+          reason_code: string
+          trace_id: number
+          trace_type: string
+        }[]
       }
       rpc_get_live_private_spark: {
         Args: { p_spark_id: string }
@@ -16900,6 +17450,10 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      rpc_resume_live_odo_autopilot_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
       rpc_reveal_profile_gift: { Args: { p_gift_id: string }; Returns: Json }
       rpc_review_circle_pulse_comment_report: {
         Args: {
@@ -17353,6 +17907,20 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_service_begin_live_odo_call_v1: {
+        Args: {
+          p_action_id: string
+          p_lease_owner: string
+          p_model: string
+          p_model_class: string
+          p_provider: string
+          p_requested_by_user_id: string
+          p_routing_reason_code: string
+          p_session_id: string
+          p_task: string
+        }
+        Returns: Json
+      }
       rpc_service_complete_profile_onboarding_with_guard_v1: {
         Args: {
           p_evidence_snapshot?: Json
@@ -17382,6 +17950,32 @@ export type Database = {
           p_risk_score?: number
           p_sender_user_id: string
           p_text: string
+        }
+        Returns: Json
+      }
+      rpc_service_evaluate_live_odo_action_v1: {
+        Args: {
+          p_action: Json
+          p_cached_input_tokens: number
+          p_call_id: string
+          p_content_gate_accepted: boolean
+          p_content_gate_reason_code: string
+          p_fallback_used: boolean
+          p_input_tokens: number
+          p_latency_ms: number
+          p_lease_owner: string
+          p_output_tokens: number
+          p_provider_failure_reason_code?: string
+          p_provider_request_id: string
+        }
+        Returns: Json
+      }
+      rpc_service_fail_live_odo_call_v1: {
+        Args: {
+          p_call_id: string
+          p_failure_reason_code: string
+          p_lease_owner: string
+          p_timed_out?: boolean
         }
         Returns: Json
       }
@@ -17440,6 +18034,10 @@ export type Database = {
           storage_path: string
         }[]
       }
+      rpc_service_pause_live_odo_policy_v1: {
+        Args: { p_reason_code: string; p_session_id: string }
+        Returns: Json
+      }
       rpc_service_record_content_moderation_event: {
         Args: {
           p_actor_user_id: string
@@ -17460,6 +18058,14 @@ export type Database = {
           p_target_user_id: string
         }
         Returns: string
+      }
+      rpc_service_renew_live_odo_lease_v1: {
+        Args: {
+          p_call_id: string
+          p_lease_generation: number
+          p_lease_owner: string
+        }
+        Returns: Json
       }
       rpc_service_send_moderated_private_message: {
         Args: {
@@ -17874,6 +18480,10 @@ export type Database = {
       rpc_sync_moment_reaction: {
         Args: { p_emoji?: string; p_moment_id: string }
         Returns: boolean
+      }
+      rpc_take_over_live_odo_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
       }
       rpc_toggle_circle_pulse_comment_reaction: {
         Args: {
@@ -19358,12 +19968,12 @@ export type Tables<
   DefaultSchemaTableNameOrOptions extends
     | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends (DefaultSchemaTableNameOrOptions extends {
+  TableName extends DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
         DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
-    : never) = never,
+    : never = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -19387,11 +19997,11 @@ export type TablesInsert<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends (DefaultSchemaTableNameOrOptions extends {
+  TableName extends DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never) = never,
+    : never = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -19412,11 +20022,11 @@ export type TablesUpdate<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends (DefaultSchemaTableNameOrOptions extends {
+  TableName extends DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never) = never,
+    : never = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -19437,11 +20047,11 @@ export type Enums<
   DefaultSchemaEnumNameOrOptions extends
     | keyof DefaultSchema["Enums"]
     | { schema: keyof DatabaseWithoutInternals },
-  EnumName extends (DefaultSchemaEnumNameOrOptions extends {
+  EnumName extends DefaultSchemaEnumNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
-    : never) = never,
+    : never = never,
 > = DefaultSchemaEnumNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -19454,11 +20064,11 @@ export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
     | keyof DefaultSchema["CompositeTypes"]
     | { schema: keyof DatabaseWithoutInternals },
-  CompositeTypeName extends (PublicCompositeTypeNameOrOptions extends {
+  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
-    : never) = never,
+    : never = never,
 > = PublicCompositeTypeNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
