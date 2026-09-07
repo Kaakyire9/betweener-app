@@ -7,8 +7,8 @@
 - Baseline at handoff creation: `8fc64c7`
 - Current uncommitted worktree base: `78f33b3`
 - Expo/React Native baseline: Expo SDK `57.0.18`, React Native `0.86.3`
-- Current delivery focus: **Phase 9 paused at the user's request while the
-  dating-first Circles information architecture is reorganized and validated**
+- Current delivery focus: **Phase 10A Odo Autopilot foundation implemented in
+  shadow-only mode; deployment and live shadow validation remain outstanding**
 - Phase 7 has completed three-account development validation. High-concurrency
   and larger-device-cohort validation remains a TestFlight/Play closed-testing
   release gate, not a reason to reopen the Phase 7 architecture implicitly.
@@ -43,7 +43,7 @@ this status document when opening a new development thread.
 | 7 Quick Connect | Implemented through Host controls/public pool, safety and intent-aware pairing; automated | Three development accounts exercised the public pool, Host controls, pairing, private round, Chemistry First, background behavior and safety paths successfully | Validate higher concurrency, larger cohorts and broader device/network diversity in TestFlight and Play closed testing |
 | 8 Quorum + Live Session Pooling | Implemented and automated: pairability-capable quorum, cross-session compatibility/rules, transparent offers, opt-out, origin preservation, admin preview, audit and event UI | User reported both Phase 8 migrations applied and the corrected reservation/quorum UI working as expected on 2026-08-30; the full cross-session physical-device matrix is not recorded | Regenerate remote database types, then retain accepted/declined/expired/opt-out, block, verification and origin-preservation coverage as a TestFlight/Play gate |
 | 9 Circle Integration | Implemented and automated: dedicated Circle Live tab, Circle-authorized scheduling, linked Pulse Gathering, empty/almost-ready/confirmed/live/recap cards, Live RSVP deep links, content-free realtime and consent-aware Love Seat provenance | `20260830113000_live_phase9_circle_integration.sql` is not yet reported applied; no Phase 9 device matrix is recorded | Apply migration, regenerate types, then validate owner/admin/host scheduling, member RSVP/quorum, Live transition, recap and consent-gated Love Seat origin on iPhone and Android |
-| 10 Intelligence | Deterministic Conversation Spark/Connection Signals foundations only | No AI production validation | Host Copilot/provider abstraction and consented explainable generation, after deterministic phases |
+| 10 Intelligence | Phase 10A Odo foundation implemented: versioned contracts, strict validation, provider/router abstractions, stable constitution, deterministic fallback, content gate, fenced leases, shadow policy, budgets/cost, ordered event protocol and admin-safe telemetry | Not deployed; no AI production or physical-device validation | Apply the four `2026090710xxxx` migrations, deploy `live-odo-director`, configure versioned pricing/models, run the Phase 10A health check, then validate shadow traces before separately authorizing Phase 10B participant-visible behavior |
 | 11 Premium Refinement | Pulled-forward work exists: glass UI, occupancy layouts, PiP/background continuity, native controls and event studio | Device partial | Finish accessibility/performance/discovery and separately govern captions, recording, HLS/highlights/analytics |
 
 ### Dating-first Circles reorganization (outside the Live phase ledger)
