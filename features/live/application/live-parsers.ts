@@ -218,8 +218,25 @@ export const parseLiveSessionSummary = (value: unknown): LiveSessionSummary => {
     createdByProfileId: asString(value.created_by_profile_id),
     scheduledStart: asNullableString(value.scheduled_start),
     scheduledEnd: asNullableString(value.scheduled_end),
+    scheduledDurationMinutes: Math.max(30, asNumber(value.scheduled_duration_minutes, 90)),
+    scheduleRevision: Math.max(0, asNumber(value.schedule_revision)),
+    rescheduledAt: asNullableString(value.rescheduled_at),
     startedAt: asNullableString(value.started_at),
     endedAt: asNullableString(value.ended_at),
+    cancelledAt: asNullableString(value.cancelled_at),
+    cancellationReason: [
+      'plans_changed',
+      'host_unavailable',
+      'not_enough_people',
+      'safety',
+      'other',
+    ].includes(String(value.cancellation_reason))
+      ? value.cancellation_reason as LiveSessionSummary['cancellationReason']
+      : null,
+    archivedAt: asNullableString(value.archived_at),
+    chemistryFirstEnabled: value.chemistry_first_enabled === true,
+    minimumParticipants: Math.max(2, asNumber(value.minimum_participants, 2)),
+    version: Math.max(1, asNumber(value.version, 1)),
     posterPath: asNullableString(value.poster_path),
     teaserVideoPath: asNullableString(value.teaser_video_path),
     teaserDurationSeconds: value.teaser_duration_seconds == null

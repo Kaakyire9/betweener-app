@@ -6,7 +6,19 @@ import type {
   LiveSessionStatus,
 } from '../domain/live-types.ts';
 
-export type LiveRsvpStatus = 'none' | 'invited' | 'going' | 'waitlisted' | 'declined';
+export type LiveRsvpStatus =
+  | 'none'
+  | 'invited'
+  | 'going'
+  | 'waitlisted'
+  | 'declined'
+  | 'needs_reconfirmation';
+export type LiveCancellationReason =
+  | 'plans_changed'
+  | 'host_unavailable'
+  | 'not_enough_people'
+  | 'safety'
+  | 'other';
 export type LiveReactionKind = 'heart' | 'spark' | 'applause' | 'support';
 export type LiveAudiencePollKind = 'question_poll' | 'room_poll';
 export type LiveAudiencePollState = 'open' | 'closed' | 'cancelled';
@@ -60,8 +72,17 @@ export type LiveSessionSummary = {
   createdByProfileId: string;
   scheduledStart: string | null;
   scheduledEnd: string | null;
+  scheduledDurationMinutes: number;
+  scheduleRevision: number;
+  rescheduledAt: string | null;
   startedAt: string | null;
   endedAt: string | null;
+  cancelledAt: string | null;
+  cancellationReason: LiveCancellationReason | null;
+  archivedAt: string | null;
+  chemistryFirstEnabled: boolean;
+  minimumParticipants: number;
+  version: number;
   posterPath: string | null;
   teaserVideoPath: string | null;
   teaserDurationSeconds: number | null;
@@ -249,6 +270,26 @@ export type ScheduleLiveSessionInput = {
 export type ScheduleCircleLiveSessionInput = ScheduleLiveSessionInput & {
   circleId: string;
   minimumParticipants?: number;
+};
+
+export type ScheduleLiveStudioSessionInput = {
+  clientRequestId: string;
+  title: string;
+  description: string;
+  scheduledStart: string;
+  durationMinutes: number;
+  format: Extract<LiveSessionFormat, 'hosted_match_night' | 'quick_connect' | 'circle_live'>;
+  chemistryFirstEnabled: boolean;
+  circleId?: string | null;
+  minimumParticipants: number;
+};
+
+export type UpdateLiveStudioSessionInput = Omit<
+  ScheduleLiveStudioSessionInput,
+  'clientRequestId' | 'format' | 'circleId'
+> & {
+  sessionId: string;
+  expectedVersion: number;
 };
 
 export type CircleLiveCard = {

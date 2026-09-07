@@ -6502,7 +6502,9 @@ export type Database = {
       }
       live_sessions: {
         Row: {
+          archived_at: string | null
           backstage_opened_at: string | null
+          cancellation_reason: string | null
           cancelled_at: string | null
           captions_enabled: boolean
           chemistry_first_enabled: boolean
@@ -6513,6 +6515,7 @@ export type Database = {
           created_at: string
           created_by_profile_id: string
           created_by_user_id: string
+          creation_request_id: string | null
           description: string | null
           ended_at: string | null
           format: string
@@ -6528,6 +6531,9 @@ export type Database = {
           quorum_reached_at: string | null
           quorum_required_pairs: number
           recording_enabled: boolean
+          rescheduled_at: string | null
+          schedule_revision: number
+          scheduled_duration_minutes: number
           scheduled_end: string | null
           scheduled_start: string | null
           stage_request_capacity: number
@@ -6539,7 +6545,9 @@ export type Database = {
           version: number
         }
         Insert: {
+          archived_at?: string | null
           backstage_opened_at?: string | null
+          cancellation_reason?: string | null
           cancelled_at?: string | null
           captions_enabled?: boolean
           chemistry_first_enabled?: boolean
@@ -6550,6 +6558,7 @@ export type Database = {
           created_at?: string
           created_by_profile_id: string
           created_by_user_id: string
+          creation_request_id?: string | null
           description?: string | null
           ended_at?: string | null
           format?: string
@@ -6565,6 +6574,9 @@ export type Database = {
           quorum_reached_at?: string | null
           quorum_required_pairs?: number
           recording_enabled?: boolean
+          rescheduled_at?: string | null
+          schedule_revision?: number
+          scheduled_duration_minutes?: number
           scheduled_end?: string | null
           scheduled_start?: string | null
           stage_request_capacity?: number
@@ -6576,7 +6588,9 @@ export type Database = {
           version?: number
         }
         Update: {
+          archived_at?: string | null
           backstage_opened_at?: string | null
+          cancellation_reason?: string | null
           cancelled_at?: string | null
           captions_enabled?: boolean
           chemistry_first_enabled?: boolean
@@ -6587,6 +6601,7 @@ export type Database = {
           created_at?: string
           created_by_profile_id?: string
           created_by_user_id?: string
+          creation_request_id?: string | null
           description?: string | null
           ended_at?: string | null
           format?: string
@@ -6602,6 +6617,9 @@ export type Database = {
           quorum_reached_at?: string | null
           quorum_required_pairs?: number
           recording_enabled?: boolean
+          rescheduled_at?: string | null
+          schedule_revision?: number
+          scheduled_duration_minutes?: number
           scheduled_end?: string | null
           scheduled_start?: string | null
           stage_request_capacity?: number
@@ -13774,6 +13792,58 @@ export type Database = {
         Args: { p_actor_profile_id: string; p_item_id: string }
         Returns: boolean
       }
+      rpc_archive_live_studio_session_v1: {
+        Args: { p_expected_version: number; p_session_id: string }
+        Returns: {
+          archived_at: string | null
+          backstage_opened_at: string | null
+          cancellation_reason: string | null
+          cancelled_at: string | null
+          captions_enabled: boolean
+          chemistry_first_enabled: boolean
+          circle_id: string | null
+          configuration: Json
+          context_id: string | null
+          context_type: string
+          created_at: string
+          created_by_profile_id: string
+          created_by_user_id: string
+          creation_request_id: string | null
+          description: string | null
+          ended_at: string | null
+          format: string
+          gathering_id: string | null
+          id: string
+          maximum_participants: number
+          maximum_publishers: number
+          minimum_participants: number
+          provider: string
+          provider_call_id: string
+          provider_call_type: string
+          quorum_pairability_required: boolean
+          quorum_reached_at: string | null
+          quorum_required_pairs: number
+          recording_enabled: boolean
+          rescheduled_at: string | null
+          schedule_revision: number
+          scheduled_duration_minutes: number
+          scheduled_end: string | null
+          scheduled_start: string | null
+          stage_request_capacity: number
+          stage_requests_open: boolean
+          started_at: string | null
+          status: string
+          title: string
+          updated_at: string
+          version: number
+        }
+        SetofOptions: {
+          from: "*"
+          to: "live_sessions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       rpc_archive_owned_circle: {
         Args: { p_actor_profile_id: string; p_circle_id: string }
         Returns: boolean
@@ -13896,6 +13966,62 @@ export type Database = {
       rpc_cancel_intent_request: {
         Args: { p_request_id: string }
         Returns: string
+      }
+      rpc_cancel_live_studio_session_v1: {
+        Args: {
+          p_expected_version: number
+          p_reason?: string
+          p_session_id: string
+        }
+        Returns: {
+          archived_at: string | null
+          backstage_opened_at: string | null
+          cancellation_reason: string | null
+          cancelled_at: string | null
+          captions_enabled: boolean
+          chemistry_first_enabled: boolean
+          circle_id: string | null
+          configuration: Json
+          context_id: string | null
+          context_type: string
+          created_at: string
+          created_by_profile_id: string
+          created_by_user_id: string
+          creation_request_id: string | null
+          description: string | null
+          ended_at: string | null
+          format: string
+          gathering_id: string | null
+          id: string
+          maximum_participants: number
+          maximum_publishers: number
+          minimum_participants: number
+          provider: string
+          provider_call_id: string
+          provider_call_type: string
+          quorum_pairability_required: boolean
+          quorum_reached_at: string | null
+          quorum_required_pairs: number
+          recording_enabled: boolean
+          rescheduled_at: string | null
+          schedule_revision: number
+          scheduled_duration_minutes: number
+          scheduled_end: string | null
+          scheduled_start: string | null
+          stage_request_capacity: number
+          stage_requests_open: boolean
+          started_at: string | null
+          status: string
+          title: string
+          updated_at: string
+          version: number
+        }
+        SetofOptions: {
+          from: "*"
+          to: "live_sessions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       rpc_cancel_my_verification_request: {
         Args: { p_cancel_reason?: string; p_request_id: string }
@@ -14355,7 +14481,9 @@ export type Database = {
           p_title: string
         }
         Returns: {
+          archived_at: string | null
           backstage_opened_at: string | null
+          cancellation_reason: string | null
           cancelled_at: string | null
           captions_enabled: boolean
           chemistry_first_enabled: boolean
@@ -14366,6 +14494,7 @@ export type Database = {
           created_at: string
           created_by_profile_id: string
           created_by_user_id: string
+          creation_request_id: string | null
           description: string | null
           ended_at: string | null
           format: string
@@ -14381,6 +14510,9 @@ export type Database = {
           quorum_reached_at: string | null
           quorum_required_pairs: number
           recording_enabled: boolean
+          rescheduled_at: string | null
+          schedule_revision: number
+          scheduled_duration_minutes: number
           scheduled_end: string | null
           scheduled_start: string | null
           stage_request_capacity: number
@@ -16015,6 +16147,44 @@ export type Database = {
           total_attendee_count: number
         }[]
       }
+      rpc_list_live_studio_sessions_v2: {
+        Args: { p_before?: string; p_limit?: number }
+        Returns: {
+          archived_at: string
+          audience_count: number
+          cancellation_reason: string
+          cancelled_at: string
+          chemistry_first_enabled: boolean
+          circle_id: string
+          context_id: string
+          context_type: string
+          created_by_profile_id: string
+          description: string
+          ended_at: string
+          format: string
+          id: string
+          matches_made_count: number
+          maximum_publishers: number
+          minimum_participants: number
+          participant_state: string
+          poster_path: string
+          rescheduled_at: string
+          reservation_count: number
+          rsvp_status: string
+          schedule_revision: number
+          scheduled_duration_minutes: number
+          scheduled_end: string
+          scheduled_start: string
+          stage_count: number
+          started_at: string
+          status: string
+          teaser_duration_seconds: number
+          teaser_video_path: string
+          title: string
+          total_attendee_count: number
+          version: number
+        }[]
+      }
       rpc_list_my_circle_invitations: {
         Args: { p_profile_id: string }
         Returns: {
@@ -16848,7 +17018,9 @@ export type Database = {
           p_title: string
         }
         Returns: {
+          archived_at: string | null
           backstage_opened_at: string | null
+          cancellation_reason: string | null
           cancelled_at: string | null
           captions_enabled: boolean
           chemistry_first_enabled: boolean
@@ -16859,6 +17031,7 @@ export type Database = {
           created_at: string
           created_by_profile_id: string
           created_by_user_id: string
+          creation_request_id: string | null
           description: string | null
           ended_at: string | null
           format: string
@@ -16874,6 +17047,9 @@ export type Database = {
           quorum_reached_at: string | null
           quorum_required_pairs: number
           recording_enabled: boolean
+          rescheduled_at: string | null
+          schedule_revision: number
+          scheduled_duration_minutes: number
           scheduled_end: string | null
           scheduled_start: string | null
           stage_request_capacity: number
@@ -16898,7 +17074,9 @@ export type Database = {
           p_title: string
         }
         Returns: {
+          archived_at: string | null
           backstage_opened_at: string | null
+          cancellation_reason: string | null
           cancelled_at: string | null
           captions_enabled: boolean
           chemistry_first_enabled: boolean
@@ -16909,6 +17087,7 @@ export type Database = {
           created_at: string
           created_by_profile_id: string
           created_by_user_id: string
+          creation_request_id: string | null
           description: string | null
           ended_at: string | null
           format: string
@@ -16924,6 +17103,9 @@ export type Database = {
           quorum_reached_at: string | null
           quorum_required_pairs: number
           recording_enabled: boolean
+          rescheduled_at: string | null
+          schedule_revision: number
+          scheduled_duration_minutes: number
           scheduled_end: string | null
           scheduled_start: string | null
           stage_request_capacity: number
@@ -16950,7 +17132,9 @@ export type Database = {
           p_title: string
         }
         Returns: {
+          archived_at: string | null
           backstage_opened_at: string | null
+          cancellation_reason: string | null
           cancelled_at: string | null
           captions_enabled: boolean
           chemistry_first_enabled: boolean
@@ -16961,6 +17145,7 @@ export type Database = {
           created_at: string
           created_by_profile_id: string
           created_by_user_id: string
+          creation_request_id: string | null
           description: string | null
           ended_at: string | null
           format: string
@@ -16976,6 +17161,71 @@ export type Database = {
           quorum_reached_at: string | null
           quorum_required_pairs: number
           recording_enabled: boolean
+          rescheduled_at: string | null
+          schedule_revision: number
+          scheduled_duration_minutes: number
+          scheduled_end: string | null
+          scheduled_start: string | null
+          stage_request_capacity: number
+          stage_requests_open: boolean
+          started_at: string | null
+          status: string
+          title: string
+          updated_at: string
+          version: number
+        }
+        SetofOptions: {
+          from: "*"
+          to: "live_sessions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      rpc_schedule_live_studio_session_v1: {
+        Args: {
+          p_chemistry_first_enabled?: boolean
+          p_circle_id?: string
+          p_client_request_id: string
+          p_description: string
+          p_duration_minutes: number
+          p_format?: string
+          p_minimum_participants?: number
+          p_scheduled_start: string
+          p_title: string
+        }
+        Returns: {
+          archived_at: string | null
+          backstage_opened_at: string | null
+          cancellation_reason: string | null
+          cancelled_at: string | null
+          captions_enabled: boolean
+          chemistry_first_enabled: boolean
+          circle_id: string | null
+          configuration: Json
+          context_id: string | null
+          context_type: string
+          created_at: string
+          created_by_profile_id: string
+          created_by_user_id: string
+          creation_request_id: string | null
+          description: string | null
+          ended_at: string | null
+          format: string
+          gathering_id: string | null
+          id: string
+          maximum_participants: number
+          maximum_publishers: number
+          minimum_participants: number
+          provider: string
+          provider_call_id: string
+          provider_call_type: string
+          quorum_pairability_required: boolean
+          quorum_reached_at: string | null
+          quorum_required_pairs: number
+          recording_enabled: boolean
+          rescheduled_at: string | null
+          schedule_revision: number
+          scheduled_duration_minutes: number
           scheduled_end: string | null
           scheduled_start: string | null
           stage_request_capacity: number
@@ -17412,7 +17662,9 @@ export type Database = {
       rpc_set_live_stage_request_capacity: {
         Args: { p_capacity: number; p_session_id: string }
         Returns: {
+          archived_at: string | null
           backstage_opened_at: string | null
+          cancellation_reason: string | null
           cancelled_at: string | null
           captions_enabled: boolean
           chemistry_first_enabled: boolean
@@ -17423,6 +17675,7 @@ export type Database = {
           created_at: string
           created_by_profile_id: string
           created_by_user_id: string
+          creation_request_id: string | null
           description: string | null
           ended_at: string | null
           format: string
@@ -17438,6 +17691,9 @@ export type Database = {
           quorum_reached_at: string | null
           quorum_required_pairs: number
           recording_enabled: boolean
+          rescheduled_at: string | null
+          schedule_revision: number
+          scheduled_duration_minutes: number
           scheduled_end: string | null
           scheduled_start: string | null
           stage_request_capacity: number
@@ -17458,7 +17714,9 @@ export type Database = {
       rpc_set_live_stage_requests_open: {
         Args: { p_open: boolean; p_session_id: string }
         Returns: {
+          archived_at: string | null
           backstage_opened_at: string | null
+          cancellation_reason: string | null
           cancelled_at: string | null
           captions_enabled: boolean
           chemistry_first_enabled: boolean
@@ -17469,6 +17727,7 @@ export type Database = {
           created_at: string
           created_by_profile_id: string
           created_by_user_id: string
+          creation_request_id: string | null
           description: string | null
           ended_at: string | null
           format: string
@@ -17484,6 +17743,9 @@ export type Database = {
           quorum_reached_at: string | null
           quorum_required_pairs: number
           recording_enabled: boolean
+          rescheduled_at: string | null
+          schedule_revision: number
+          scheduled_duration_minutes: number
           scheduled_end: string | null
           scheduled_start: string | null
           stage_request_capacity: number
@@ -17632,7 +17894,9 @@ export type Database = {
           p_target_status: string
         }
         Returns: {
+          archived_at: string | null
           backstage_opened_at: string | null
+          cancellation_reason: string | null
           cancelled_at: string | null
           captions_enabled: boolean
           chemistry_first_enabled: boolean
@@ -17643,6 +17907,7 @@ export type Database = {
           created_at: string
           created_by_profile_id: string
           created_by_user_id: string
+          creation_request_id: string | null
           description: string | null
           ended_at: string | null
           format: string
@@ -17658,6 +17923,9 @@ export type Database = {
           quorum_reached_at: string | null
           quorum_required_pairs: number
           recording_enabled: boolean
+          rescheduled_at: string | null
+          schedule_revision: number
+          scheduled_duration_minutes: number
           scheduled_end: string | null
           scheduled_start: string | null
           stage_request_capacity: number
@@ -18055,7 +18323,9 @@ export type Database = {
           p_teaser_video_path?: string
         }
         Returns: {
+          archived_at: string | null
           backstage_opened_at: string | null
+          cancellation_reason: string | null
           cancelled_at: string | null
           captions_enabled: boolean
           chemistry_first_enabled: boolean
@@ -18066,6 +18336,7 @@ export type Database = {
           created_at: string
           created_by_profile_id: string
           created_by_user_id: string
+          creation_request_id: string | null
           description: string | null
           ended_at: string | null
           format: string
@@ -18081,6 +18352,70 @@ export type Database = {
           quorum_reached_at: string | null
           quorum_required_pairs: number
           recording_enabled: boolean
+          rescheduled_at: string | null
+          schedule_revision: number
+          scheduled_duration_minutes: number
+          scheduled_end: string | null
+          scheduled_start: string | null
+          stage_request_capacity: number
+          stage_requests_open: boolean
+          started_at: string | null
+          status: string
+          title: string
+          updated_at: string
+          version: number
+        }
+        SetofOptions: {
+          from: "*"
+          to: "live_sessions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      rpc_update_live_studio_session_v1: {
+        Args: {
+          p_chemistry_first_enabled: boolean
+          p_description: string
+          p_duration_minutes: number
+          p_expected_version: number
+          p_minimum_participants?: number
+          p_scheduled_start: string
+          p_session_id: string
+          p_title: string
+        }
+        Returns: {
+          archived_at: string | null
+          backstage_opened_at: string | null
+          cancellation_reason: string | null
+          cancelled_at: string | null
+          captions_enabled: boolean
+          chemistry_first_enabled: boolean
+          circle_id: string | null
+          configuration: Json
+          context_id: string | null
+          context_type: string
+          created_at: string
+          created_by_profile_id: string
+          created_by_user_id: string
+          creation_request_id: string | null
+          description: string | null
+          ended_at: string | null
+          format: string
+          gathering_id: string | null
+          id: string
+          maximum_participants: number
+          maximum_publishers: number
+          minimum_participants: number
+          provider: string
+          provider_call_id: string
+          provider_call_type: string
+          quorum_pairability_required: boolean
+          quorum_reached_at: string | null
+          quorum_required_pairs: number
+          recording_enabled: boolean
+          rescheduled_at: string | null
+          schedule_revision: number
+          scheduled_duration_minutes: number
           scheduled_end: string | null
           scheduled_start: string | null
           stage_request_capacity: number

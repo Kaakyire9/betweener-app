@@ -177,6 +177,20 @@ select
     where reservation.reason = 'cultural_character'
       and reservation.match_mode = 'exact') as cultural_exact_reservations_healthy;
 
+-- 3c. The installed 1.1.1 Live catalogue must retain its original signature
+-- and return shape while newer clients opt into a separately versioned RPC.
+with legacy as (
+  select to_regprocedure(
+    'public.rpc_list_live_studio_sessions(integer,timestamptz)'
+  ) as procedure_oid
+)
+select
+  legacy.procedure_oid is not null as legacy_live_catalogue_installed,
+  case when legacy.procedure_oid is null then false else
+    pg_get_function_result(legacy.procedure_oid) not like '%schedule_revision%'
+  end as legacy_live_catalogue_shape_healthy
+from legacy;
+
 -- 4. Production version rules. Both platforms must keep 1.1.1 supported until
 -- the retirement gate.
 with expected(platform) as (values ('ios'::text), ('android'::text))
@@ -639,6 +653,15 @@ with profile_blockers as (
       'public.rpc_search_circle_invite_candidates_v2(uuid,uuid,text,text,text,integer,integer,integer)'
     ) is not null
     then 0::bigint else 1::bigint end as affected
+), legacy_live_catalogue_blockers as (
+  select case when
+    to_regprocedure(
+      'public.rpc_list_live_studio_sessions(integer,timestamptz)'
+    ) is not null
+    and coalesce(pg_get_function_result(to_regprocedure(
+      'public.rpc_list_live_studio_sessions(integer,timestamptz)'
+    )) not like '%schedule_revision%', false)
+    then 0::bigint else 1::bigint end as affected
 ), contract as (
   select
     exists (
@@ -671,6 +694,8 @@ select
   storage_boundary_blockers.affected as storage_boundary_release_blockers,
   media_policy_blockers.affected as media_policy_release_blockers,
   handle_contract_blockers.affected as handle_contract_release_blockers,
+  legacy_live_catalogue_blockers.affected
+    as legacy_live_catalogue_release_blockers,
   profile_blockers.affected
     + content_blockers.affected
     + attachment_blockers.affected
@@ -681,7 +706,8 @@ select
     + receipt_blockers.affected
     + storage_boundary_blockers.affected
     + media_policy_blockers.affected
-    + handle_contract_blockers.affected as release_blockers,
+    + handle_contract_blockers.affected
+    + legacy_live_catalogue_blockers.affected as release_blockers,
   contract.healthy
     and profile_blockers.affected = 0
     and content_blockers.affected = 0
@@ -693,8 +719,10 @@ select
     and receipt_blockers.affected = 0
     and storage_boundary_blockers.affected = 0
     and media_policy_blockers.affected = 0
-    and handle_contract_blockers.affected = 0 as healthy
+    and handle_contract_blockers.affected = 0
+    and legacy_live_catalogue_blockers.affected = 0 as healthy
 from contract, profile_blockers, content_blockers, attachment_blockers,
   version_blockers, migration_blockers, configuration_blockers,
   moderation_sla_blockers, receipt_blockers, storage_boundary_blockers,
-  media_policy_blockers, handle_contract_blockers;
+  media_policy_blockers, handle_contract_blockers,
+  legacy_live_catalogue_blockers;

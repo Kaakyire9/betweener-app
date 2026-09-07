@@ -5,6 +5,7 @@
 - Repository: `https://github.com/Kaakyire9/betweener-app.git`
 - Working branch: `feature/betweener-live`
 - Baseline at handoff creation: `8fc64c7`
+- Current uncommitted worktree base: `78f33b3`
 - Expo/React Native baseline: Expo SDK `57.0.18`, React Native `0.86.3`
 - Current delivery focus: **Phase 9 paused at the user's request while the
   dating-first Circles information architecture is reorganized and validated**
@@ -439,6 +440,72 @@ Earlier baseline `8fc64c7` checks after the Expo/Metro security work:
 
 These checks prove repository compatibility, not WebRTC real-device behavior or
 remote deployment.
+
+## 2026-09-06 Live Creation Studio lifecycle pass
+
+The mobile Creation Studio is implemented locally as a guided Moment, Story,
+Room and Review flow. New drafts recover from device storage and publish with a
+stable request key so a network retry cannot create a second Live. Existing
+hosted events can be edited or rescheduled with optimistic version checks;
+confirmed guests move to `needs_reconfirmation` when the time changes.
+
+The event management surface now supports editing, rescheduling, creating a
+copy, cancellation with a retained reason and archival after a terminal state.
+Cancellation is the safe pre-Live replacement for deletion; the authoritative
+safety and moderation record is never hard-deleted. The event page also exposes
+host preparation, sharing and backstage readiness.
+
+The backend rollout is intentionally split into an expand-only lifecycle
+migration, concurrent indexes and online constraint validation:
+
+- `20260906170000_live_creation_studio_lifecycle.sql`;
+- `20260906171000_live_creation_studio_indexes_concurrently.sql`;
+- `20260906172000_live_creation_studio_validate_constraints.sql`.
+
+Production 1.1.1 retains `rpc_list_live_studio_sessions(integer,timestamptz)`
+with its original return shape. The new client alone opts into
+`rpc_list_live_studio_sessions_v2(integer,timestamptz)`. All three migrations
+were replayed from a clean local database. On 2026-09-06 the user reported that
+all three were then applied successfully to production project
+`jbyblhithbqwojhwlenv`, followed by remote type generation. The reported final
+1.1.1 production gate returned `healthy = true` and zero for every release
+blocker, including the legacy Live catalogue blocker. The dedicated
+`live_creation_studio_health.sql` production result is still required and has
+not yet been reported.
+
+The user then exercised the four-step Studio on iPhone and reported that the
+overall creation experience looked correct. The pass exposed three refinements:
+the Host Note could sit behind the software keyboard; the pre-Live host screen
+looked like a guest invitation and its overflow icon was inert; and starting a
+room could attempt an invalid one-hop lifecycle transition. The local fix now
+uses keyboard-aware scrolling, distinguishes host preparation from the guest
+invitation, gives the overflow a real details/share/edit/reschedule sheet, and
+starts through `confirmed`, `backstage`, then `live` using fresh snapshots and
+bounded version-conflict retries. These refinements still need an iPhone and
+Android retest before being called device-complete.
+
+Validation for this pass:
+
+- full TypeScript check passed;
+- full repository ESLint passed with zero warnings;
+- Expo Doctor passed 21/21 checks;
+- full `test:all` command passed;
+- Live regression suite passed 274/274 after the Studio refinement pass;
+- Creation Studio draft suite passed 5/5;
+- local Supabase pgTAP passed 237/237 across 12 test files;
+- local Studio health passed with zero blockers and the legacy 1.1.1 Live
+  catalogue signature and shape both healthy.
+
+The clean reset command itself returned nonzero after PostgreSQL finished
+because the pre-existing local `storage-api:v1.26.5` container resumed a
+restart loop on a duplicate internal Storage migration name. PostgreSQL, REST
+and Kong remained healthy, and database validation completed. Repair or refresh
+that local-only Storage container before device media-upload testing; do not
+confuse it with a remote Storage or Studio schema failure.
+
+These automated checks do not replace physical-device validation of date/time
+pickers, media selection, deep-link sharing, push delivery, reschedule
+reconfirmation and cancellation UX.
 
 ## Operational checks before continuing backend work
 

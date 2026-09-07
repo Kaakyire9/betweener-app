@@ -3,10 +3,19 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const migration = readFileSync('supabase/migrations/20260826100000_live_event_studio.sql', 'utf8');
+const lifecycleMigration = readFileSync('supabase/migrations/20260906170000_live_creation_studio_lifecycle.sql', 'utf8');
+const indexMigration = readFileSync('supabase/migrations/20260906171000_live_creation_studio_indexes_concurrently.sql', 'utf8');
+const validationMigration = readFileSync('supabase/migrations/20260906172000_live_creation_studio_validate_constraints.sql', 'utf8');
 const scheduleScreen = readFileSync('app/live/schedule.tsx', 'utf8');
+const creationSteps = readFileSync('features/live/creation/LiveCreationSteps.tsx', 'utf8');
+const managementSheet = readFileSync('features/live/components/LiveEventManagementSheet.tsx', 'utf8');
 const studioScreen = readFileSync('app/live/index.tsx', 'utf8');
 const eventScreen = readFileSync('app/live/event/[sessionId].tsx', 'utf8');
 const backstageScreen = readFileSync('app/live/backstage/[sessionId].tsx', 'utf8');
+const liveRoomScreen = readFileSync('app/live/[sessionId].tsx', 'utf8');
+const repository = readFileSync('features/live/application/live-repository.ts', 'utf8');
+const invitationOptions = readFileSync('features/live/components/LiveInvitationOptionsSheet.tsx', 'utf8');
+const teaserTrimmer = readFileSync('features/live/creation/live-teaser-trimmer.ts', 'utf8');
 
 test('the database prevents a scheduled Live from starting early', () => {
   assert.match(migration, /create or replace function public\.enforce_live_session_start_time/i);
@@ -24,13 +33,76 @@ test('event promotional media is owner controlled and server bound', () => {
   assert.match(migration, /live_event_teaser_duration_required/i);
 });
 
-test('event creation returns to the Studio and Studio exposes lifecycle sections', () => {
-  assert.match(scheduleScreen, /router\.replace\('\/live'\)/);
+test('event creation enters preparation and Studio exposes lifecycle sections', () => {
+  assert.match(scheduleScreen, /pathname: '\/live\/event\/\[sessionId\]'/);
   assert.match(studioScreen, /Live now/);
   assert.match(studioScreen, /Upcoming Live/);
   assert.match(studioScreen, /Past Live/);
   assert.match(studioScreen, /useFocusEffect/);
   assert.match(studioScreen, /refresh\(\{ attemptRecovery: false \}\)/);
+});
+
+test('Creation Studio is guided, recoverable, and idempotently published', () => {
+  assert.match(creationSteps, /Moment/);
+  assert.match(creationSteps, /Story/);
+  assert.match(creationSteps, /Room/);
+  assert.match(creationSteps, /Review/);
+  assert.match(scheduleScreen, /loadLiveCreationDraft/);
+  assert.match(scheduleScreen, /saveLiveCreationDraft/);
+  assert.match(scheduleScreen, /scheduleStudio/);
+  assert.match(lifecycleMigration, /creation_request_id uuid/);
+  assert.match(indexMigration, /drop index concurrently if exists[\s\S]*live_sessions_creator_request_unique_idx/i);
+  assert.match(indexMigration, /create unique index concurrently live_sessions_creator_request_unique_idx/i);
+  assert.match(lifecycleMigration, /pg_advisory_xact_lock/);
+});
+
+test('Creation Studio keeps the host note visible above the software keyboard', () => {
+  assert.match(scheduleScreen, /KeyboardAvoidingView/);
+  assert.match(scheduleScreen, /automaticallyAdjustKeyboardInsets/);
+  assert.match(scheduleScreen, /formScrollRef\.current\?\.scrollToEnd/);
+  assert.match(creationSteps, /onFocus=\{onHostNoteFocus\}/);
+});
+
+test('long Live previews open a precise native editor capped at 20 seconds', () => {
+  assert.match(scheduleScreen, /allowsEditing: false/);
+  assert.match(scheduleScreen, /await trimLiveTeaser\(asset\)/);
+  assert.match(teaserTrimmer, /maxDuration: LIVE_EVENT_TEASER_MAX_DURATION_MS/);
+  assert.match(teaserTrimmer, /enablePreciseTrimming: true/);
+  assert.match(teaserTrimmer, /fileSize: info\.exists/);
+});
+
+test('Studio deployment preserves the production 1.1.1 catalogue contract', () => {
+  assert.doesNotMatch(
+    lifecycleMigration,
+    /drop function if exists public\.rpc_list_live_studio_sessions\(integer,\s*timestamptz\)/i,
+  );
+  assert.match(lifecycleMigration, /rpc_list_live_studio_sessions_v2/);
+  assert.match(repository, /invoke\('rpc_list_live_studio_sessions_v2'/);
+  assert.match(indexMigration, /create index concurrently live_sessions_owner_archive_idx/i);
+  assert.doesNotMatch(indexMigration, /\bbegin\s*;/i);
+  assert.match(lifecycleMigration, /live_sessions_scheduled_duration_valid[\s\S]*not valid/i);
+  assert.match(
+    lifecycleMigration,
+    /live_participants_rsvp_status_valid[\s\S]*?not valid;[\s\S]*?commit;[\s\S]*?begin;[\s\S]*?create or replace function/i,
+  );
+  assert.match(validationMigration, /validate constraint live_sessions_scheduled_duration_valid/i);
+  assert.match(validationMigration, /validate constraint live_participants_rsvp_status_valid/i);
+});
+
+test('published Lives can be edited, rescheduled, cancelled, copied, and archived', () => {
+  assert.match(managementSheet, /Edit details/);
+  assert.match(managementSheet, /Reschedule/);
+  assert.match(managementSheet, /Create a copy/);
+  assert.match(managementSheet, /Cancel Live/);
+  assert.match(managementSheet, /Archive from Studio/);
+  assert.match(lifecycleMigration, /rpc_update_live_studio_session_v1/);
+  assert.match(lifecycleMigration, /needs_reconfirmation/);
+  assert.match(lifecycleMigration, /private\.send_push_webhook/);
+  assert.match(lifecycleMigration, /live_rescheduled/);
+  assert.match(lifecycleMigration, /live_cancelled/);
+  assert.match(lifecycleMigration, /rpc_cancel_live_studio_session_v1/);
+  assert.match(lifecycleMigration, /rpc_archive_live_studio_session_v1/);
+  assert.doesNotMatch(lifecycleMigration, /delete from public\.live_sessions/i);
 });
 
 test('the event catalogue is lifecycle ordered without polling', () => {
@@ -55,4 +127,21 @@ test('backstage mirrors the server start-time guard before enabling the host CTA
   assert.match(backstageScreen, /stageIsDue/);
   assert.match(backstageScreen, /Available in/);
   assert.match(backstageScreen, /live_session_not_due/);
+});
+
+test('host preparation starts through valid lifecycle states and retries version races', () => {
+  assert.match(backstageScreen, /controller\.prepareAndStartSession\(\)/);
+  assert.match(repository, /getLiveSessionStartTarget/);
+  assert.match(repository, /live_session_version_conflict/);
+  assert.doesNotMatch(backstageScreen, /transitionSession\('live'\)/);
+});
+
+test('scheduled invitations distinguish host preparation and expose real overflow actions', () => {
+  assert.match(liveRoomScreen, /HOST PREPARATION/);
+  assert.match(liveRoomScreen, /Open private backstage/);
+  assert.match(liveRoomScreen, /isRoomHost \? 'Live options' : 'Invitation options'/);
+  assert.match(invitationOptions, /View event details/);
+  assert.match(invitationOptions, /Share invitation/);
+  assert.match(invitationOptions, /Edit invitation/);
+  assert.match(invitationOptions, /Reschedule/);
 });

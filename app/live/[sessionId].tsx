@@ -20,6 +20,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  Share,
   StyleSheet,
   Text,
   View,
@@ -32,6 +33,7 @@ import {
   LiveControlDock,
   LiveConversationPanel,
   LiveHostedMatchingPanel,
+  LiveInvitationOptionsSheet,
   LiveGlassSurface,
   LiveMediaStageBoundary,
   LiveMemberSummaryModal,
@@ -119,6 +121,7 @@ export default function LiveSessionScreen() {
   const [likedProfileIds, setLikedProfileIds] = useState<ReadonlySet<string>>(() => new Set());
   const [participantAdmissionReady, setParticipantAdmissionReady] = useState(false);
   const [participantAdmissionRetry, setParticipantAdmissionRetry] = useState(0);
+  const [invitationOptionsOpen, setInvitationOptionsOpen] = useState(false);
   const announcedSeatRequestsRef = useRef(new Set<string>());
   const announcedAudiencePollRef = useRef<string | null>(null);
   const joinSession = controller.join;
@@ -554,53 +557,73 @@ export default function LiveSessionScreen() {
     );
   }
 
+  const closeInvitationOptions = () => setInvitationOptionsOpen(false);
+  const viewEventDetails = () => {
+    closeInvitationOptions();
+    router.replace({
+      pathname: '/live/event/[sessionId]',
+      params: { sessionId, ...liveReturnParams },
+    });
+  };
+  const editInvitation = () => {
+    closeInvitationOptions();
+    router.push({ pathname: '/live/schedule', params: { sessionId, initialStep: 'story' } });
+  };
+  const rescheduleInvitation = () => {
+    closeInvitationOptions();
+    router.push({ pathname: '/live/schedule', params: { sessionId, initialStep: 'room' } });
+  };
+  const shareInvitation = async () => {
+    closeInvitationOptions();
+    const scheduled = snapshot.session.scheduledStart
+      ? new Intl.DateTimeFormat(undefined, { dateStyle: 'full', timeStyle: 'short' })
+        .format(new Date(snapshot.session.scheduledStart))
+      : 'Time to be announced';
+    await Share.share({
+      title: snapshot.session.title,
+      message: `${snapshot.session.title}\n${scheduled}\nhttps://getbetweener.com/live/${sessionId}`,
+    });
+  };
+  const invitationOptions = (
+    <LiveInvitationOptionsSheet
+      visible={invitationOptionsOpen}
+      isHost={isRoomHost}
+      onClose={closeInvitationOptions}
+      onViewDetails={viewEventDetails}
+      onEdit={editInvitation}
+      onReschedule={rescheduleInvitation}
+      onShare={() => void shareInvitation()}
+    />
+  );
+
   if (!isLive) {
     const going = me?.rsvpStatus === 'going';
     const hostCanOpenBackstage = snapshot.capabilities.includes('live.start_session');
-    const hostStatus = snapshot.session.status;
-    const hostActionLabel = hostStatus === 'backstage'
-      ? 'Enter private backstage'
-      : hostStatus === 'confirmed'
-        ? 'Open private backstage'
-        : hostStatus === 'waiting_for_quorum'
-          ? 'Confirm this room'
-          : 'Prepare this room';
-    const handleHostAction = () => {
-      if (hostStatus === 'backstage') {
-        router.push({
-          pathname: '/live/backstage/[sessionId]',
-          params: { sessionId, ...liveReturnParams },
-        });
-        return;
-      }
-      const nextStatus = hostStatus === 'confirmed'
-        ? 'backstage'
-        : hostStatus === 'scheduled'
-          ? 'waiting_for_quorum'
-          : 'confirmed';
-      void controller.transitionSession(nextStatus);
-    };
+    const openBackstage = () => router.push({
+      pathname: '/live/backstage/[sessionId]',
+      params: { sessionId, ...liveReturnParams },
+    });
     return (
       <View style={styles.invitationRoot}>
         <SafeAreaView style={styles.invitationSafe}>
           <View style={styles.header}>
             <Pressable accessibilityLabel={returnsToCircle ? 'Back to Circle' : 'Back to Live Studio'} onPress={returnToLiveOrigin} style={styles.iconButton}><ChevronLeft size={25} color="#FFF7EC" /></Pressable>
             <View style={styles.scheduledPill}><Radio size={13} color="#D7B56D" /><Text style={styles.scheduledText}>SCHEDULED LIVE</Text></View>
-            <View style={styles.iconButton}><MoreHorizontal size={21} color="#FFF7EC" /></View>
+            <Pressable accessibilityLabel={isRoomHost ? 'Live options' : 'Invitation options'} onPress={() => setInvitationOptionsOpen(true)} style={styles.iconButton}><MoreHorizontal size={21} color="#FFF7EC" /></Pressable>
           </View>
           <View style={styles.invitationBody}>
-            <Text style={styles.invitationEyebrow}>YOUR INVITATION</Text>
+            <Text style={styles.invitationEyebrow}>{isRoomHost ? 'HOST PREPARATION' : 'YOUR INVITATION'}</Text>
             <Text style={styles.invitationTitle}>{snapshot.session.title}</Text>
             <Text style={styles.invitationDescription}>{snapshot.session.description || 'A host-led room designed for intentional conversation and warmer introductions.'}</Text>
             <View style={styles.promiseCard}>
-              <Text style={styles.promiseTitle}>What makes this room different</Text>
-              <Text style={styles.promiseBody}>A protected four-seat stage, moderated conversation, no public rankings, and no attention-chasing mechanics.</Text>
+              <Text style={styles.promiseTitle}>{isRoomHost ? 'Your room is scheduled' : 'What makes this room different'}</Text>
+              <Text style={styles.promiseBody}>{isRoomHost ? 'Backstage is private. Check your camera, microphone, and room plan before opening the public stage at the scheduled time.' : 'A protected four-seat stage, moderated conversation, no public rankings, and no attention-chasing mechanics.'}</Text>
             </View>
           </View>
           <View style={styles.invitationActions}>
-            {hostCanOpenBackstage ? (
-              <Pressable onPress={handleHostAction} style={styles.primaryButton}>
-                <Text style={styles.primaryText}>{hostActionLabel}</Text>
+            {isRoomHost ? (
+              <Pressable disabled={!hostCanOpenBackstage} onPress={openBackstage} style={[styles.primaryButton, !hostCanOpenBackstage && styles.primaryButtonDisabled]}>
+                <Text style={styles.primaryText}>Open private backstage</Text>
               </Pressable>
             ) : (
               <Pressable
@@ -611,12 +634,13 @@ export default function LiveSessionScreen() {
                 <Text style={styles.primaryText}>{controller.busyAction === 'rsvp' ? 'Saving your place…' : going ? 'You’re going' : 'Save my place'}</Text>
               </Pressable>
             )}
-            {controller.error ? (
+            {!isRoomHost && controller.error ? (
               <Text accessibilityLiveRegion="polite" style={styles.actionError}>
                 We couldn’t save that yet. Check your connection and try again.
               </Text>
             ) : null}
           </View>
+          {invitationOptions}
         </SafeAreaView>
       </View>
     );
@@ -629,7 +653,7 @@ export default function LiveSessionScreen() {
           <View style={styles.header}>
             <Pressable accessibilityLabel={returnsToCircle ? 'Back to Circle' : 'Back to Live Studio'} onPress={returnToLiveOrigin} style={styles.iconButton}><ChevronLeft size={25} color="#FFF7EC" /></Pressable>
             <View style={styles.scheduledPill}><Radio size={13} color="#D7B56D" /><Text style={styles.scheduledText}>HOST INVITATION</Text></View>
-            <View style={styles.iconButton}><MoreHorizontal size={21} color="#FFF7EC" /></View>
+            <Pressable accessibilityLabel="Invitation options" onPress={() => setInvitationOptionsOpen(true)} style={styles.iconButton}><MoreHorizontal size={21} color="#FFF7EC" /></Pressable>
           </View>
           <View style={styles.invitationBody}>
             <Text style={styles.invitationEyebrow}>YOUR SEAT IS READY</Text>
@@ -645,6 +669,7 @@ export default function LiveSessionScreen() {
               style={styles.primaryButton}
             ><Text style={styles.primaryText}>Enter private backstage</Text></Pressable>
           </View>
+          {invitationOptions}
         </SafeAreaView>
       </View>
     );

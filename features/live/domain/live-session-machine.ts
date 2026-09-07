@@ -4,6 +4,7 @@ export const LIVE_SESSION_EVENTS = [
   'schedule',
   'await_quorum',
   'confirm',
+  'reschedule',
   'open_backstage',
   'start',
   'begin_ending',
@@ -17,9 +18,9 @@ const SESSION_TRANSITIONS: Readonly<
   Record<LiveSessionStatus, Readonly<Partial<Record<LiveSessionEvent, LiveSessionStatus>>>>
 > = {
   draft: { schedule: 'scheduled', cancel: 'cancelled' },
-  scheduled: { schedule: 'scheduled', await_quorum: 'waiting_for_quorum', confirm: 'confirmed', cancel: 'cancelled' },
-  waiting_for_quorum: { await_quorum: 'waiting_for_quorum', confirm: 'confirmed', cancel: 'cancelled' },
-  confirmed: { confirm: 'confirmed', open_backstage: 'backstage', cancel: 'cancelled' },
+  scheduled: { schedule: 'scheduled', reschedule: 'scheduled', await_quorum: 'waiting_for_quorum', confirm: 'confirmed', cancel: 'cancelled' },
+  waiting_for_quorum: { reschedule: 'waiting_for_quorum', await_quorum: 'waiting_for_quorum', confirm: 'confirmed', cancel: 'cancelled' },
+  confirmed: { confirm: 'confirmed', reschedule: 'waiting_for_quorum', open_backstage: 'backstage', cancel: 'cancelled' },
   backstage: { open_backstage: 'backstage', start: 'live', cancel: 'cancelled' },
   live: { start: 'live', begin_ending: 'ending' },
   ending: { begin_ending: 'ending', end: 'ended' },
@@ -56,3 +57,12 @@ export const transitionLiveSession = (args: {
 
 export const getLiveSessionTransitions = (state: LiveSessionStatus) =>
   SESSION_TRANSITIONS[state];
+
+export const getLiveSessionStartTarget = (
+  state: LiveSessionStatus,
+): Extract<LiveSessionStatus, 'confirmed' | 'backstage' | 'live'> | null => {
+  if (state === 'scheduled' || state === 'waiting_for_quorum') return 'confirmed';
+  if (state === 'confirmed') return 'backstage';
+  if (state === 'backstage') return 'live';
+  return null;
+};

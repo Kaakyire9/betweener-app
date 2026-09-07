@@ -45,7 +45,7 @@ export default function LiveBackstageScreen() {
 
   const returnToRoom = () => {
     router.replace({
-      pathname: '/live/[sessionId]',
+      pathname: canOpenStage ? '/live/event/[sessionId]' : '/live/[sessionId]',
       params: { sessionId, ...liveReturnParams },
     });
   };
@@ -57,7 +57,7 @@ export default function LiveBackstageScreen() {
       // session. iOS otherwise intermittently rejects the immediate handoff.
       setCameraHandoff(true);
       await new Promise((resolve) => setTimeout(resolve, 250));
-      const transitioned = await controller.transitionSession('live');
+      const transitioned = await controller.prepareAndStartSession();
       if (!transitioned) {
         setCameraHandoff(false);
         return;

@@ -6,6 +6,7 @@ import { parseCircleLiveSnapshot } from '../features/live/application/live-parse
 const migration = readFileSync('supabase/migrations/20260830113000_live_phase9_circle_integration.sql', 'utf8');
 const circleScreen = readFileSync('app/circles/[id].tsx', 'utf8');
 const scheduleScreen = readFileSync('app/live/schedule.tsx', 'utf8');
+const creationDraft = readFileSync('features/live/creation/live-creation-draft.ts', 'utf8');
 const component = readFileSync('features/live/components/CircleLiveSection.tsx', 'utf8');
 const pulseBoard = readFileSync('components/circles/CirclePulseBoard.tsx', 'utf8');
 const repository = readFileSync('features/live/application/live-repository.ts', 'utf8');
@@ -22,8 +23,8 @@ test('Circle hosts schedule a circle-context session and linked Pulse Gathering 
   assert.match(migration, /'circle_live', 'circle', p_circle_id/i);
   assert.match(migration, /insert into public\.gatherings/i);
   assert.match(migration, /insert into public\.circle_pulse_items/i);
-  assert.match(scheduleScreen, /scheduleCircle/);
-  assert.match(scheduleScreen, /minimumParticipants/);
+  assert.match(scheduleScreen, /scheduleStudio/);
+  assert.match(creationDraft, /minimumParticipants: draft\.minimumParticipants/);
 });
 
 test('Circle Live exposes empty, quorum, confirmed, live, and recap presentation states', () => {

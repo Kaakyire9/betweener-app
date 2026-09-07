@@ -2,8 +2,9 @@ import * as Crypto from 'expo-crypto';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { readFunctionErrorCode } from '../media/live-function-error.ts';
+import { getLiveSessionStartTarget } from '../domain/live-session-machine.ts';
 import type { LiveParticipantArrivalEvent } from './live-participant-arrivals.ts';
-import type { CircleLiveSnapshot, LiveAudiencePoll, LiveChemistrySnapshot, LiveComment, LiveEventMediaInput, LiveHostedMatchingSnapshot, LiveJoinNotice, LivePoolCandidatePreview, LivePrivateSpark, LivePrivateSparkExitDecision, LiveQuickConnectConcurrency, LiveQuickConnectDecision, LiveQuickConnectHostAction, LiveQuickConnectHostSnapshot, LiveQuickConnectIntent, LiveQuickConnectPoolSnapshot, LiveQuickConnectRoundSeconds, LiveQuickConnectSafetyExperience, LiveQuickConnectSafetyReason, LiveQuickConnectSnapshot, LiveQuickConnectStageLayout, LiveQuorumPoolingSnapshot, LiveReactionKind, LiveRoomPulseSnapshot, LiveSessionSnapshot, LiveSessionSummary, ScheduleCircleLiveSessionInput, ScheduleLiveSessionInput } from './live-models.ts';
+import type { CircleLiveSnapshot, LiveAudiencePoll, LiveCancellationReason, LiveChemistrySnapshot, LiveComment, LiveEventMediaInput, LiveHostedMatchingSnapshot, LiveJoinNotice, LivePoolCandidatePreview, LivePrivateSpark, LivePrivateSparkExitDecision, LiveQuickConnectConcurrency, LiveQuickConnectDecision, LiveQuickConnectHostAction, LiveQuickConnectHostSnapshot, LiveQuickConnectIntent, LiveQuickConnectPoolSnapshot, LiveQuickConnectRoundSeconds, LiveQuickConnectSafetyExperience, LiveQuickConnectSafetyReason, LiveQuickConnectSnapshot, LiveQuickConnectStageLayout, LiveQuorumPoolingSnapshot, LiveReactionKind, LiveRoomPulseSnapshot, LiveSessionSnapshot, LiveSessionSummary, ScheduleCircleLiveSessionInput, ScheduleLiveSessionInput, ScheduleLiveStudioSessionInput, UpdateLiveStudioSessionInput } from './live-models.ts';
 import {
   parseLiveAudiencePoll,
   parseCircleLiveSnapshot,
@@ -41,7 +42,7 @@ const invoke = async (name: string, args?: Record<string, unknown>): Promise<unk
 
 export const liveRepository = {
   async listSessions(limit = 20): Promise<LiveSessionSummary[]> {
-    const value = await invoke('rpc_list_live_studio_sessions', { p_limit: limit, p_before: null });
+    const value = await invoke('rpc_list_live_studio_sessions_v2', { p_limit: limit, p_before: null });
     return Array.isArray(value) ? value.map(parseLiveSessionSummary) : [];
   },
 
@@ -92,6 +93,56 @@ export const liveRepository = {
       throw new Error('circle_live_schedule_result_invalid');
     }
     return value.id;
+  },
+
+  async scheduleStudio(input: ScheduleLiveStudioSessionInput): Promise<string> {
+    const value = await invoke('rpc_schedule_live_studio_session_v1', {
+      p_client_request_id: input.clientRequestId,
+      p_title: input.title,
+      p_description: input.description,
+      p_scheduled_start: input.scheduledStart,
+      p_duration_minutes: input.durationMinutes,
+      p_format: input.format,
+      p_chemistry_first_enabled: input.chemistryFirstEnabled,
+      p_circle_id: input.circleId ?? null,
+      p_minimum_participants: input.minimumParticipants,
+    });
+    if (!value || typeof value !== 'object' || !('id' in value) || typeof value.id !== 'string') {
+      throw new Error('live_studio_schedule_result_invalid');
+    }
+    return value.id;
+  },
+
+  async updateStudio(input: UpdateLiveStudioSessionInput): Promise<void> {
+    await invoke('rpc_update_live_studio_session_v1', {
+      p_session_id: input.sessionId,
+      p_expected_version: input.expectedVersion,
+      p_title: input.title,
+      p_description: input.description,
+      p_scheduled_start: input.scheduledStart,
+      p_duration_minutes: input.durationMinutes,
+      p_chemistry_first_enabled: input.chemistryFirstEnabled,
+      p_minimum_participants: input.minimumParticipants,
+    });
+  },
+
+  async cancelStudio(
+    sessionId: string,
+    expectedVersion: number,
+    reason: LiveCancellationReason,
+  ): Promise<void> {
+    await invoke('rpc_cancel_live_studio_session_v1', {
+      p_session_id: sessionId,
+      p_expected_version: expectedVersion,
+      p_reason: reason,
+    });
+  },
+
+  async archiveStudio(sessionId: string, expectedVersion: number): Promise<void> {
+    await invoke('rpc_archive_live_studio_session_v1', {
+      p_session_id: sessionId,
+      p_expected_version: expectedVersion,
+    });
   },
 
   async rsvp(sessionId: string, attending: boolean, openToIntroductions = false): Promise<void> {
@@ -560,6 +611,31 @@ export const liveRepository = {
       p_expected_version: expectedVersion,
       p_target_status: targetStatus,
     });
+  },
+
+  async prepareAndStartSession(sessionId: string): Promise<void> {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const snapshot = parseLiveSessionSnapshot(
+        await invoke('rpc_get_live_session_snapshot', { p_session_id: sessionId }),
+      );
+      if (snapshot.session.status === 'live' || snapshot.session.status === 'ending') return;
+      const targetStatus = getLiveSessionStartTarget(snapshot.session.status);
+      if (!targetStatus) {
+        throw new Error(`live_session_start_unavailable:${snapshot.session.status}`);
+      }
+      try {
+        await invoke('rpc_transition_live_session', {
+          p_session_id: sessionId,
+          p_expected_version: snapshot.session.version,
+          p_target_status: targetStatus,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '';
+        if (message.includes('live_session_version_conflict')) continue;
+        throw error;
+      }
+    }
+    throw new Error('live_session_version_conflict');
   },
 
   subscribe(

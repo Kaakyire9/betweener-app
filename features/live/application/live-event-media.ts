@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabase';
 
 export const LIVE_EVENT_MEDIA_BUCKET = 'live-event-media';
 export const LIVE_EVENT_TEASER_MAX_SECONDS = 20;
+export const LIVE_EVENT_TEASER_MAX_DURATION_MS = LIVE_EVENT_TEASER_MAX_SECONDS * 1000;
 export const LIVE_EVENT_TEASER_MAX_BYTES = 25 * 1024 * 1024;
 
 const readBytes = async (uri: string) => {

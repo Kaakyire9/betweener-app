@@ -23,12 +23,14 @@ export const LiveSessionCard = memo(function LiveSessionCard({ session, onPress 
   const phase = getLiveSessionPhase(session);
   const posterUrl = getLiveEventMediaUrl(session.posterPath);
   const isGoing = session.rsvpStatus === 'going';
+  const needsReconfirmation = session.rsvpStatus === 'needs_reconfirmation';
+  const isCancelled = session.status === 'cancelled';
   const content = (
     <LinearGradient colors={posterUrl ? ['rgba(5,17,15,0.08)', 'rgba(5,17,15,0.94)'] : ['#173933', '#111B1A']} locations={[0.12, 1]} style={styles.card}>
       <View style={styles.topRow}>
         <View style={[styles.status, phase === 'live' && styles.liveStatus]}>
           {phase === 'live' ? <Radio size={13} color="#102522" /> : <CalendarClock size={13} color="#E6CA87" />}
-          <Text style={[styles.statusText, phase === 'live' && styles.liveStatusText]}>{phase === 'live' ? 'LIVE NOW' : phase === 'past' ? 'PAST LIVE' : formatLiveCountdown(session.scheduledStart).toUpperCase()}</Text>
+          <Text style={[styles.statusText, phase === 'live' && styles.liveStatusText]}>{isCancelled ? 'CANCELLED' : phase === 'live' ? 'LIVE NOW' : phase === 'past' ? 'PAST LIVE' : needsReconfirmation ? 'TIME CHANGED' : formatLiveCountdown(session.scheduledStart).toUpperCase()}</Text>
         </View>
         <View style={styles.count}><Users size={14} color="#DDE8E4" /><Text style={styles.countText}>{phase === 'past' ? session.totalAttendeeCount : phase === 'upcoming' ? session.reservationCount : session.audienceCount + session.stageCount}</Text></View>
       </View>
@@ -39,7 +41,7 @@ export const LiveSessionCard = memo(function LiveSessionCard({ session, onPress 
       </View>
       <View style={styles.footer}>
         {phase === 'past' ? <View style={styles.metrics}><Text style={styles.metric}>{session.totalAttendeeCount} attended</Text><Text style={styles.metric}><Sparkles size={12} color="#E6CA87" /> {session.matchesMadeCount} matches</Text></View> : <Text style={styles.meta}>{phase === 'live' ? `${session.stageCount}/${session.maximumPublishers} on stage` : `${session.reservationCount} places saved`}</Text>}
-        <Text style={styles.cta}>{phase === 'live' ? 'Enter room →' : phase === 'past' ? 'View outcome →' : isGoing ? 'Place saved ✓' : 'View event →'}</Text>
+        <Text style={styles.cta}>{phase === 'live' ? 'Enter room →' : isCancelled ? 'View cancellation →' : phase === 'past' ? 'View outcome →' : isGoing ? 'Place saved ✓' : needsReconfirmation ? 'Reconfirm place →' : 'View event →'}</Text>
       </View>
       {isGoing && phase === 'upcoming' ? <View style={styles.saved}><Check size={12} color="#102522" /></View> : null}
     </LinearGradient>

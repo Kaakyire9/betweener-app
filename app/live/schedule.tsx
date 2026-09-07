@@ -1,240 +1,459 @@
-import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
+import * as Crypto from 'expo-crypto';
 import * as ImagePicker from 'expo-image-picker';
 import { router, useLocalSearchParams } from 'expo-router';
-import { ArrowLeft, CalendarClock, Film, ImagePlus, ShieldCheck, Sparkles, TimerReset, Trash2, UsersRound } from 'lucide-react-native';
-import { useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Image, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { ArrowLeft, ChevronLeft, ChevronRight, Trash2 } from 'lucide-react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { LIVE_EVENT_TEASER_MAX_SECONDS, liveRepository, removeLiveEventMedia, uploadLiveEventPoster, uploadLiveEventTeaser } from '@/features/live/application/index.ts';
-import type { LiveSessionFormat } from '@/features/live/domain/live-types.ts';
+import {
+  LIVE_EVENT_TEASER_MAX_SECONDS,
+  LIVE_EVENT_TEASER_MAX_DURATION_MS,
+  getLiveEventMediaUrl,
+  liveRepository,
+  removeLiveEventMedia,
+  uploadLiveEventPoster,
+  uploadLiveEventTeaser,
+} from '@/features/live/application/index.ts';
+import {
+  LIVE_CREATION_STEPS,
+  LiveCreationMomentStep,
+  LiveCreationProgress,
+  LiveCreationReviewStep,
+  LiveCreationRoomStep,
+  LiveCreationStoryStep,
+  clearLiveCreationDraft,
+  createLiveCreationDraft,
+  createLiveCreationDraftFromSession,
+  getLiveCreationStepError,
+  getLiveCreationStorageKey,
+  loadLiveCreationDraft,
+  saveLiveCreationDraft,
+  trimLiveTeaser,
+  toScheduleLiveStudioInput,
+  toUpdateLiveStudioInput,
+  updateLiveCreationDraft,
+  type LiveCreationDraft,
+  type LiveCreationStep,
+} from '@/features/live/creation/index.ts';
+import { useLiveSessions } from '@/features/live/hooks/index.ts';
 import { useAuth } from '@/lib/auth-context';
 
+type StudioParams = {
+  circleId?: string;
+  circleName?: string;
+  sessionId?: string;
+  duplicateSessionId?: string;
+  initialStep?: LiveCreationStep;
+};
+
+const asParam = (value: string | string[] | undefined) => typeof value === 'string' ? value : null;
+
 export default function ScheduleLiveScreen() {
-  const params = useLocalSearchParams<{ circleId?: string; circleName?: string }>();
-  const circleId = typeof params.circleId === 'string' ? params.circleId : null;
-  const circleName = typeof params.circleName === 'string' ? params.circleName : null;
-  const isCircleLive = Boolean(circleId);
-  const { user, canPerformAuthenticatedWrites, isSessionRecoveryActive, retrySessionRecovery } = useAuth();
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [scheduledStart, setScheduledStart] = useState(() => new Date(Date.now() + 86_400_000));
-  const [format, setFormat] = useState<Extract<LiveSessionFormat, 'hosted_match_night' | 'quick_connect'>>('hosted_match_night');
-  const [chemistryFirstEnabled, setChemistryFirstEnabled] = useState(false);
-  const [minimumParticipants, setMinimumParticipants] = useState('2');
+  const params = useLocalSearchParams<StudioParams>();
+  const circleIdParam = asParam(params.circleId);
+  const circleName = asParam(params.circleName);
+  const editSessionId = asParam(params.sessionId);
+  const duplicateSessionId = asParam(params.duplicateSessionId);
+  const sourceSessionId = editSessionId ?? duplicateSessionId;
+  const isEditing = Boolean(editSessionId);
+  const {
+    user,
+    canPerformAuthenticatedWrites,
+    isSessionRecoveryActive,
+    retrySessionRecovery,
+  } = useAuth();
+  const { sessions, loading: sessionsLoading } = useLiveSessions();
+  const sourceSession = useMemo(
+    () => sessions.find((session) => session.id === sourceSessionId),
+    [sessions, sourceSessionId],
+  );
+  const [draft, setDraft] = useState<LiveCreationDraft | null>(null);
+  const [step, setStep] = useState<LiveCreationStep>(
+    params.initialStep && LIVE_CREATION_STEPS.includes(params.initialStep)
+      ? params.initialStep
+      : 'moment',
+  );
   const [showPicker, setShowPicker] = useState(Platform.OS === 'ios');
-  const [submitting, setSubmitting] = useState(false);
   const [poster, setPoster] = useState<ImagePicker.ImagePickerAsset | null>(null);
   const [teaser, setTeaser] = useState<ImagePicker.ImagePickerAsset | null>(null);
-  const formattedStart = useMemo(() => new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'medium', timeStyle: 'short',
-  }).format(scheduledStart), [scheduledStart]);
+  const [posterRemoved, setPosterRemoved] = useState(false);
+  const [teaserRemoved, setTeaserRemoved] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [stageMessage, setStageMessage] = useState<string | null>(null);
+  const [recovered, setRecovered] = useState(false);
+  const initializedKey = useRef<string | null>(null);
+  const publicationComplete = useRef(false);
+  const formScrollRef = useRef<ScrollView>(null);
+  const hostNoteRevealTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const changeDate = (_event: DateTimePickerEvent, value?: Date) => {
-    if (Platform.OS !== 'ios') setShowPicker(false);
-    if (value) setScheduledStart(value);
-  };
+  const circleId = sourceSession?.circleId ?? circleIdParam;
+  const storageKey = user?.id ? getLiveCreationStorageKey(user.id, circleId) : null;
+
+  useEffect(() => {
+    if (!user?.id) return;
+    const key = `${user.id}:${editSessionId ?? ''}:${duplicateSessionId ?? ''}:${circleIdParam ?? ''}`;
+    if (initializedKey.current === key) return;
+    if (sourceSessionId && sessionsLoading) return;
+
+    if (sourceSessionId) {
+      if (!sourceSession) return;
+      initializedKey.current = key;
+      setDraft(createLiveCreationDraftFromSession(sourceSession, Crypto.randomUUID(), {
+        duplicate: Boolean(duplicateSessionId),
+        circleName,
+      }));
+      return;
+    }
+
+    initializedKey.current = key;
+    const nextStorageKey = getLiveCreationStorageKey(user.id, circleIdParam);
+    let active = true;
+    void loadLiveCreationDraft(nextStorageKey, circleIdParam).then((stored) => {
+      if (!active) return;
+      if (stored) {
+        setDraft(stored);
+        setRecovered(true);
+      } else {
+        setDraft(createLiveCreationDraft({
+          clientRequestId: Crypto.randomUUID(),
+          circleId: circleIdParam,
+          circleName,
+        }));
+      }
+    });
+    return () => { active = false; };
+  }, [circleIdParam, circleName, duplicateSessionId, editSessionId, sessionsLoading, sourceSession, sourceSessionId, user?.id]);
+
+  useEffect(() => {
+    if (!draft || !storageKey || isEditing || publicationComplete.current) return;
+    const timer = setTimeout(() => { void saveLiveCreationDraft(storageKey, draft); }, 300);
+    return () => clearTimeout(timer);
+  }, [draft, isEditing, storageKey]);
+
+  useEffect(() => () => {
+    if (hostNoteRevealTimer.current) clearTimeout(hostNoteRevealTimer.current);
+  }, []);
+
+  const updateDraft = useCallback((updates: Partial<LiveCreationDraft>) => {
+    setDraft((current) => current ? updateLiveCreationDraft(current, updates) : current);
+  }, []);
+
+  const revealHostNote = useCallback(() => {
+    if (hostNoteRevealTimer.current) clearTimeout(hostNoteRevealTimer.current);
+    hostNoteRevealTimer.current = setTimeout(() => {
+      formScrollRef.current?.scrollToEnd({ animated: true });
+      hostNoteRevealTimer.current = null;
+    }, Platform.OS === 'ios' ? 260 : 120);
+  }, []);
+
+  const existingPosterUri = !posterRemoved ? getLiveEventMediaUrl(sourceSession?.posterPath) : null;
+  const existingTeaserUri = !teaserRemoved ? getLiveEventMediaUrl(sourceSession?.teaserVideoPath) : null;
+  const posterUri = poster?.uri ?? existingPosterUri;
+  const teaserSelected = Boolean(teaser || existingTeaserUri);
+  const stepIndex = LIVE_CREATION_STEPS.indexOf(step);
+  const error = draft ? getLiveCreationStepError(draft, step) : null;
+  const isLastStep = step === 'review';
 
   const pickPoster = async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) return Alert.alert('Photos access needed', 'Allow photo access to add a Live event poster.');
-    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, aspect: [4, 5], quality: 0.88 });
-    if (!result.canceled) setPoster(result.assets[0] ?? null);
+    if (!permission.granted) {
+      Alert.alert('Photos access needed', 'Allow photo access to add a Live event poster.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [4, 5],
+      quality: 0.88,
+    });
+    if (!result.canceled) {
+      setPoster(result.assets[0] ?? null);
+      setPosterRemoved(false);
+    }
   };
 
   const pickTeaser = async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) return Alert.alert('Videos access needed', 'Allow video access to add a short Live preview.');
-    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Videos, allowsEditing: true, videoMaxDuration: LIVE_EVENT_TEASER_MAX_SECONDS, videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium });
+    if (!permission.granted) {
+      Alert.alert('Videos access needed', 'Allow video access to add a short Live preview.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['videos'],
+      allowsEditing: false,
+    });
     if (result.canceled) return;
     const asset = result.assets[0];
     if (!asset?.duration || asset.duration < 1_000) {
-      return Alert.alert('Preview unavailable', 'Choose a video whose duration can be verified on this device.');
+      Alert.alert('Preview unavailable', 'Choose a video whose duration can be verified on this device.');
+      return;
     }
-    if ((asset?.duration ?? 0) > LIVE_EVENT_TEASER_MAX_SECONDS * 1000) return Alert.alert('Keep it short', `Live previews can be up to ${LIVE_EVENT_TEASER_MAX_SECONDS} seconds.`);
+    if (asset.duration > LIVE_EVENT_TEASER_MAX_DURATION_MS) {
+      try {
+        const trimmed = await trimLiveTeaser(asset);
+        if (!trimmed) return;
+        setTeaser(trimmed);
+        setTeaserRemoved(false);
+      } catch {
+        Alert.alert(
+          'Video editor unavailable',
+          `We couldn't open the ${LIVE_EVENT_TEASER_MAX_SECONDS}-second editor. Update to the latest Betweener build and try again.`,
+        );
+      }
+      return;
+    }
     setTeaser(asset);
+    setTeaserRemoved(false);
   };
 
-  const submit = async () => {
-    const cleanTitle = title.trim();
-    if (!cleanTitle) return;
-    if (scheduledStart.getTime() < Date.now() + 10 * 60_000) {
-      Alert.alert('Choose a later start', 'Schedule this Live at least 10 minutes from now so guests have time to save their place.');
+  const goNext = () => {
+    if (!draft) return;
+    const stepError = getLiveCreationStepError(draft, step);
+    if (stepError) return;
+    setStep(LIVE_CREATION_STEPS[Math.min(stepIndex + 1, LIVE_CREATION_STEPS.length - 1)]!);
+  };
+
+  const discardDraft = () => {
+    if (!draft || !storageKey) return;
+    Alert.alert('Discard this draft?', 'The unpublished Studio draft on this device will be removed.', [
+      { text: 'Keep editing', style: 'cancel' },
+      {
+        text: 'Discard',
+        style: 'destructive',
+        onPress: () => {
+          void clearLiveCreationDraft(storageKey);
+          setDraft(createLiveCreationDraft({
+            clientRequestId: Crypto.randomUUID(),
+            circleId,
+            circleName: draft.circleName,
+          }));
+          setPoster(null);
+          setTeaser(null);
+          setPosterRemoved(false);
+          setTeaserRemoved(false);
+          setStep('moment');
+          setRecovered(false);
+        },
+      },
+    ]);
+  };
+
+  const publish = async () => {
+    if (!draft || submitting) return;
+    const reviewError = getLiveCreationStepError(draft, 'review');
+    if (reviewError) {
+      Alert.alert('Studio needs one more detail', reviewError);
       return;
     }
     setSubmitting(true);
+    setStageMessage(isEditing ? 'Saving the new version…' : 'Creating your room…');
     try {
       const sessionReady = canPerformAuthenticatedWrites
-        || await retrySessionRecovery('live_schedule_manual_retry');
+        || await retrySessionRecovery('live_studio_manual_retry');
       if (!sessionReady) {
-        Alert.alert(
-          'Reconnect to schedule',
-          'Your profile is safe, but Live needs an authenticated connection before a room can be created.'
-        );
+        Alert.alert('Reconnect to publish', 'Your draft is safe on this device. Reconnect, then try again.');
         return;
       }
       if (!user?.id) throw new Error('authentication_required');
-      const scheduleInput = {
-        title: cleanTitle,
-        description: description.trim(),
-        scheduledStart: scheduledStart.toISOString(),
-        chemistryFirstEnabled,
-      };
-      const id = circleId
-        ? await liveRepository.scheduleCircle({ ...scheduleInput, circleId, format: 'circle_live', minimumParticipants: Math.max(2, Math.min(100, Number.parseInt(minimumParticipants, 10) || 2)) })
-        : await liveRepository.schedule({ ...scheduleInput, format });
-      const uploadedPaths: string[] = [];
-      try {
-        const posterPath = poster ? await uploadLiveEventPoster({ userId: user.id, sessionId: id, uri: poster.uri }) : null;
-        if (posterPath) uploadedPaths.push(posterPath);
-        const teaserPath = teaser ? await uploadLiveEventTeaser({ userId: user.id, sessionId: id, uri: teaser.uri, mimeType: teaser.mimeType, fileSize: teaser.fileSize }) : null;
-        if (teaserPath) uploadedPaths.push(teaserPath);
-        if (posterPath || teaserPath) await liveRepository.updateEventMedia(id, {
-          posterPath,
-          teaserVideoPath: teaserPath,
-          teaserDurationSeconds: teaserPath && teaser?.duration
-            ? Math.ceil(teaser.duration / 1000)
-            : null,
-        });
-      } catch {
-        await removeLiveEventMedia(uploadedPaths);
-        Alert.alert('Event scheduled', 'Your Live is safely scheduled, but its promotional media could not be added. You can still manage the event from your Studio.');
+
+      let sessionId: string;
+      if (isEditing) {
+        if (!sourceSession) throw new Error('live_session_not_found');
+        await liveRepository.updateStudio(toUpdateLiveStudioInput(draft, sourceSession));
+        sessionId = sourceSession.id;
+      } else {
+        sessionId = await liveRepository.scheduleStudio(toScheduleLiveStudioInput(draft));
       }
-      router.replace(circleId
-        ? { pathname: '/circles/[id]', params: { id: circleId, tab: 'live' } }
-        : '/live');
-    } catch {
-      Alert.alert('Room not scheduled', 'We could not securely create this room yet. Check your connection and try again.');
+
+      const uploadedPaths: string[] = [];
+      const mediaChanged = Boolean(poster || teaser || posterRemoved || teaserRemoved);
+      if (mediaChanged) {
+        setStageMessage('Finishing the invitation…');
+        try {
+          let posterPath = posterRemoved ? null : sourceSession?.posterPath ?? null;
+          let teaserPath = teaserRemoved ? null : sourceSession?.teaserVideoPath ?? null;
+          let teaserDurationSeconds = teaserRemoved ? null : sourceSession?.teaserDurationSeconds ?? null;
+          if (poster) {
+            posterPath = await uploadLiveEventPoster({ userId: user.id, sessionId, uri: poster.uri });
+            if (posterPath) uploadedPaths.push(posterPath);
+          }
+          if (teaser) {
+            teaserPath = await uploadLiveEventTeaser({
+              userId: user.id,
+              sessionId,
+              uri: teaser.uri,
+              mimeType: teaser.mimeType,
+              fileSize: teaser.fileSize,
+            });
+            if (teaserPath) uploadedPaths.push(teaserPath);
+            teaserDurationSeconds = teaserPath && teaser.duration
+              ? Math.ceil(teaser.duration / 1000)
+              : null;
+          }
+          await liveRepository.updateEventMedia(sessionId, {
+            posterPath,
+            teaserVideoPath: teaserPath,
+            teaserDurationSeconds,
+          });
+        } catch {
+          await removeLiveEventMedia(uploadedPaths);
+          Alert.alert('Room saved', 'The Live details are safe, but its promotional media could not be updated. You can retry from Studio.');
+        }
+      }
+
+      publicationComplete.current = true;
+      if (storageKey && !isEditing) {
+        await clearLiveCreationDraft(storageKey).catch(() => undefined);
+      }
+      router.replace({
+        pathname: '/live/event/[sessionId]',
+        params: {
+          sessionId,
+          ...(circleId ? { returnCircleId: circleId, returnCircleTab: 'live' } : {}),
+        },
+      });
+    } catch (nextError) {
+      const message = nextError instanceof Error ? nextError.message : '';
+      if (message.includes('version_conflict')) {
+        Alert.alert('This Live changed elsewhere', 'Return to the event, refresh it, and reopen Studio before saving again.');
+      } else {
+        Alert.alert(isEditing ? 'Changes not saved' : 'Room not scheduled', 'Your draft is safe. Check your connection and try again.');
+      }
     } finally {
       setSubmitting(false);
+      setStageMessage(null);
     }
   };
+
+  const leave = () => router.back();
+
+  if (!draft) {
+    const unavailable = sourceSessionId && !sessionsLoading && !sourceSession;
+    return (
+      <View style={styles.loading}>
+        {unavailable ? <><Text style={styles.loadingTitle}>This Live cannot be opened in Studio.</Text><Pressable onPress={leave}><Text style={styles.loadingLink}>Go back</Text></Pressable></> : <ActivityIndicator color="#D7B56D" />}
+      </View>
+    );
+  }
 
   return (
     <View style={styles.root}>
       <SafeAreaView style={styles.safe}>
         <View style={styles.header}>
-          <Pressable accessibilityLabel={isCircleLive ? 'Back to Circle' : 'Back to Live'} onPress={() => circleId ? router.replace({ pathname: '/circles/[id]', params: { id: circleId, tab: 'live' } }) : router.replace('/live')} style={styles.icon}><ArrowLeft size={22} color="#FFF7EC" /></Pressable>
-          <View style={styles.headerCopy}><Text style={styles.eyebrow}>{isCircleLive ? 'CIRCLE LIVE' : 'YOUR LIVE STUDIO'}</Text><Text style={styles.heading}>{isCircleLive ? `Live in ${circleName || 'this Circle'}` : 'Create a Live room'}</Text></View>
-        </View>
-        <ScrollView contentContainerStyle={styles.form} keyboardShouldPersistTaps="handled">
-          <View style={styles.promise}><ShieldCheck size={20} color="#D7B56D" /><Text style={styles.promiseText}>Four public seats maximum. No recording, gifting, or popularity rankings.</Text></View>
-          <Text style={styles.label}>EVENT STORY</Text>
-          <View style={styles.mediaRow}>
-            <Pressable onPress={() => void pickPoster()} style={[styles.mediaCard, poster && styles.posterCard]}>
-              {poster ? <Image source={{ uri: poster.uri }} style={styles.posterPreview} /> : <><ImagePlus size={24} color="#D7B56D" /><Text style={styles.mediaTitle}>Add poster</Text><Text style={styles.mediaHint}>4:5 works beautifully</Text></>}
-            </Pressable>
-            <Pressable onPress={() => void pickTeaser()} style={styles.mediaCard}>
-              <Film size={24} color="#D7B56D" /><Text style={styles.mediaTitle}>{teaser ? 'Preview selected' : 'Add video preview'}</Text><Text style={styles.mediaHint}>{teaser ? 'Ready to publish' : 'Optional · 20s max'}</Text>
-            </Pressable>
-          </View>
-          {poster || teaser ? <View style={styles.removeRow}>{poster ? <Pressable onPress={() => setPoster(null)} style={styles.remove}><Trash2 size={13} color="#D7B56D" /><Text style={styles.removeText}>Remove poster</Text></Pressable> : null}{teaser ? <Pressable onPress={() => setTeaser(null)} style={styles.remove}><Trash2 size={13} color="#D7B56D" /><Text style={styles.removeText}>Remove video</Text></Pressable> : null}</View> : null}
-          {isCircleLive ? (
-            <View style={styles.circleContext}><UsersRound size={20} color="#D7B56D" /><View style={styles.chemistryCopy}><Text style={styles.chemistryTitle}>Circle Live</Text><Text style={styles.chemistryDescription}>This creates a linked Gathering. Live remains the source of truth for quorum, room state, and recap.</Text></View></View>
-          ) : <><Text style={styles.label}>LIVE FORMAT</Text>
-          <View style={styles.formatRow}>
-            <FormatCard
-              active={format === 'hosted_match_night'}
-              icon={<UsersRound size={20} color={format === 'hosted_match_night' ? '#102522' : '#D7B56D'} />}
-              title="Hosted Match Night"
-              description="A host curates the stage and thoughtful introductions."
-              onPress={() => setFormat('hosted_match_night')}
-            />
-            <FormatCard
-              active={format === 'quick_connect'}
-              icon={<TimerReset size={20} color={format === 'quick_connect' ? '#102522' : '#D7B56D'} />}
-              title="Quick Connect"
-              description="Private three-minute conversations, paired by Betweener."
-              onPress={() => setFormat('quick_connect')}
-            />
-          </View></>}
-          <View style={styles.chemistryCard}>
-            <View style={styles.chemistryIcon}><Sparkles size={18} color="#D7B56D" /></View>
-            <View style={styles.chemistryCopy}>
-              <Text style={styles.chemistryTitle}>Chemistry First</Text>
-              <Text style={styles.chemistryDescription}>Let conversation lead. Faces reveal only when both people are ready.</Text>
-            </View>
-            <Switch
-              accessibilityLabel="Enable Chemistry First"
-              value={chemistryFirstEnabled}
-              onValueChange={setChemistryFirstEnabled}
-              trackColor={{ false: '#30443F', true: '#806F45' }}
-              thumbColor={chemistryFirstEnabled ? '#F3D58B' : '#AFC0BC'}
-            />
-          </View>
-          {isCircleLive ? <><Text style={styles.label}>MINIMUM PEOPLE</Text><TextInput value={minimumParticipants} onChangeText={(value) => setMinimumParticipants(value.replace(/[^0-9]/g, '').slice(0, 3))} keyboardType="number-pad" maxLength={3} placeholder="2" placeholderTextColor="#71827E" style={styles.input} /><Text style={styles.fieldHint}>The Live confirms when this many places are saved. The host is not counted as a reservation.</Text></> : null}
-          <Text style={styles.label}>ROOM TITLE</Text>
-          <TextInput value={title} onChangeText={setTitle} maxLength={120} placeholder="Ghana ↔ UK Match Night" placeholderTextColor="#71827E" style={styles.input} />
-          <Text style={styles.label}>HOST NOTE</Text>
-          <TextInput value={description} onChangeText={setDescription} maxLength={1000} multiline placeholder="Set the intention and tone for your guests." placeholderTextColor="#71827E" style={[styles.input, styles.multiline]} />
-          <Text style={styles.label}>STARTS</Text>
-          <Pressable onPress={() => setShowPicker(true)} style={styles.dateButton}><CalendarClock size={18} color="#D7B56D" /><Text style={styles.dateText}>{formattedStart}</Text></Pressable>
-          {showPicker ? <DateTimePicker value={scheduledStart} minimumDate={new Date(Date.now() + 600_000)} mode="datetime" onChange={changeDate} textColor="#FFF7EC" /> : null}
-        </ScrollView>
-        <View style={styles.footer}>
-          <Pressable disabled={!title.trim() || submitting || isSessionRecoveryActive} onPress={() => void submit()} style={[styles.submit, (!title.trim() || submitting || isSessionRecoveryActive) && styles.disabled]}>
-            {submitting || isSessionRecoveryActive ? <ActivityIndicator color="#102522" /> : <Text style={styles.submitText}>Schedule Live</Text>}
+          <Pressable accessibilityLabel="Close Live Creation Studio" onPress={leave} style={styles.icon}>
+            <ArrowLeft size={22} color="#FFF7EC" />
           </Pressable>
+          <View style={styles.headerCopy}>
+            <Text style={styles.eyebrow}>LIVE CREATION STUDIO</Text>
+            <Text style={styles.heading}>{isEditing ? 'Refine your Live' : duplicateSessionId ? 'Create from Live' : 'Create a Live'}</Text>
+          </View>
+          {!isEditing ? (
+            <Pressable accessibilityLabel="Discard Live draft" onPress={discardDraft} style={styles.discardIcon}>
+              <Trash2 size={18} color="#D7B56D" />
+            </Pressable>
+          ) : null}
         </View>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={0}
+          style={styles.studioBody}
+        >
+          <LiveCreationProgress current={step} />
+          <ScrollView
+            ref={formScrollRef}
+            automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+            contentContainerStyle={styles.content}
+            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            {recovered ? <View style={styles.recovered}><Text style={styles.recoveredText}>Draft recovered from this device</Text></View> : null}
+            {step === 'moment' ? <LiveCreationMomentStep draft={draft} onFormatChange={(format) => updateDraft({ format })} /> : null}
+            {step === 'story' ? (
+              <LiveCreationStoryStep
+                draft={draft}
+                posterUri={posterUri}
+                teaserSelected={teaserSelected}
+                onChange={updateDraft}
+                onHostNoteFocus={revealHostNote}
+                onPickPoster={() => void pickPoster()}
+                onPickTeaser={() => void pickTeaser()}
+                onRemovePoster={() => { setPoster(null); setPosterRemoved(true); }}
+                onRemoveTeaser={() => { setTeaser(null); setTeaserRemoved(true); }}
+              />
+            ) : null}
+            {step === 'room' ? (
+              <LiveCreationRoomStep
+                draft={draft}
+                showPicker={showPicker}
+                onShowPicker={() => setShowPicker(true)}
+                onDateChange={(_event, date) => {
+                  if (Platform.OS !== 'ios') setShowPicker(false);
+                  if (date) updateDraft({ scheduledStart: date.toISOString() });
+                }}
+                onChange={updateDraft}
+              />
+            ) : null}
+            {step === 'review' ? <LiveCreationReviewStep draft={draft} posterUri={posterUri} isEditing={isEditing} /> : null}
+            {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
+          </ScrollView>
+          <View style={styles.footer}>
+            {stepIndex > 0 ? (
+              <Pressable disabled={submitting} onPress={() => setStep(LIVE_CREATION_STEPS[stepIndex - 1]!)} style={styles.backButton}>
+                <ChevronLeft size={18} color="#E7D8B3" /><Text style={styles.backText}>Back</Text>
+              </Pressable>
+            ) : null}
+            <Pressable
+              accessibilityLabel={isLastStep ? (isEditing ? 'Save Live changes' : 'Schedule Live') : 'Continue'}
+              disabled={Boolean(error) || submitting || isSessionRecoveryActive}
+              onPress={isLastStep ? () => void publish() : goNext}
+              style={[styles.primary, (error || submitting || isSessionRecoveryActive) && styles.disabled]}
+            >
+              {submitting || isSessionRecoveryActive ? <ActivityIndicator color="#102522" /> : (
+                <><Text style={styles.primaryText}>{isLastStep ? (isEditing ? 'Save changes' : 'Schedule Live') : 'Continue'}</Text>{!isLastStep ? <ChevronRight size={18} color="#102522" /> : null}</>
+              )}
+            </Pressable>
+          </View>
+        </KeyboardAvoidingView>
+        {stageMessage ? <View style={styles.stage}><Text style={styles.stageText}>{stageMessage}</Text></View> : null}
       </SafeAreaView>
     </View>
   );
 }
 
-function FormatCard({ active, icon, title, description, onPress }: {
-  active: boolean;
-  icon: React.ReactNode;
-  title: string;
-  description: string;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      accessibilityRole="radio"
-      accessibilityState={{ checked: active }}
-      onPress={onPress}
-      style={[styles.formatCard, active && styles.formatCardActive]}
-    >
-      <View style={[styles.formatIcon, active && styles.formatIconActive]}>{icon}</View>
-      <Text style={styles.formatTitle}>{title}</Text>
-      <Text style={styles.formatDescription}>{description}</Text>
-    </Pressable>
-  );
-}
-
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#081513' }, safe: { flex: 1 },
+  root: { flex: 1, backgroundColor: '#081513' },
+  safe: { flex: 1 },
+  studioBody: { flex: 1 },
+  loading: { flex: 1, backgroundColor: '#081513', alignItems: 'center', justifyContent: 'center', padding: 28, gap: 14 },
+  loadingTitle: { color: '#FFF7EC', textAlign: 'center', fontSize: 16, fontFamily: 'Manrope_700Bold' },
+  loadingLink: { color: '#D7B56D', fontFamily: 'Manrope_800ExtraBold' },
   header: { paddingHorizontal: 18, minHeight: 72, flexDirection: 'row', alignItems: 'center', gap: 14 },
   icon: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: '#162724', borderWidth: 1, borderColor: '#304A45' },
-  headerCopy: { flex: 1 }, eyebrow: { color: '#D7B56D', fontSize: 9, letterSpacing: 1.8, fontFamily: 'Manrope_800ExtraBold' },
-  heading: { color: '#FFF7EC', fontSize: 25, fontFamily: 'PlayfairDisplay_700Bold' },
-  form: { paddingHorizontal: 22, paddingTop: 20, paddingBottom: 24 },
-  promise: { flexDirection: 'row', gap: 11, borderRadius: 20, padding: 16, backgroundColor: '#132522', borderWidth: 1, borderColor: '#345049', marginBottom: 26 },
-  promiseText: { flex: 1, color: '#AFC0BC', fontSize: 12, lineHeight: 18, fontFamily: 'Manrope_500Medium' },
-  mediaRow: { flexDirection: 'row', gap: 10 },
-  mediaCard: { flex: 1, minHeight: 142, borderRadius: 22, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', padding: 12, backgroundColor: '#13211F', borderWidth: 1, borderColor: '#3A504A' },
-  posterCard: { padding: 0 }, posterPreview: { width: '100%', height: 142 },
-  mediaTitle: { color: '#FFF7EC', fontSize: 11, marginTop: 9, textAlign: 'center', fontFamily: 'Manrope_800ExtraBold' },
-  mediaHint: { color: '#82938F', fontSize: 9, marginTop: 4, fontFamily: 'Manrope_500Medium' },
-  removeRow: { flexDirection: 'row', gap: 12, marginTop: 9 }, remove: { flexDirection: 'row', alignItems: 'center', gap: 5 }, removeText: { color: '#D7B56D', fontSize: 9, fontFamily: 'Manrope_700Bold' },
-  formatRow: { flexDirection: 'row', gap: 10 },
-  formatCard: { flex: 1, minHeight: 156, borderRadius: 22, padding: 15, backgroundColor: '#13211F', borderWidth: 1, borderColor: '#30443F' },
-  formatCardActive: { borderColor: '#D7B56D', backgroundColor: '#1B312C' },
-  formatIcon: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: '#203632', marginBottom: 12 },
-  formatIconActive: { backgroundColor: '#D7B56D' },
-  formatTitle: { color: '#FFF7EC', fontSize: 13, lineHeight: 17, fontFamily: 'Manrope_800ExtraBold', marginBottom: 7 },
-  formatDescription: { color: '#AFC0BC', fontSize: 10, lineHeight: 15, fontFamily: 'Manrope_500Medium' },
-  chemistryCard: { minHeight: 86, marginTop: 14, padding: 14, borderRadius: 22, borderWidth: 1, borderColor: '#564C37', backgroundColor: '#172622', flexDirection: 'row', alignItems: 'center', gap: 11 },
-  circleContext: { minHeight: 86, marginTop: 14, padding: 16, borderRadius: 22, borderWidth: 1, borderColor: '#564C37', backgroundColor: '#172622', flexDirection: 'row', alignItems: 'center', gap: 12 },
-  chemistryIcon: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: '#29392F' },
-  chemistryCopy: { flex: 1 },
-  chemistryTitle: { color: '#FFF7EC', fontSize: 13, fontFamily: 'Manrope_800ExtraBold' },
-  chemistryDescription: { color: '#AFC0BC', fontSize: 10, lineHeight: 15, fontFamily: 'Manrope_500Medium', marginTop: 3 },
-  label: { color: '#D7B56D', fontSize: 9, letterSpacing: 1.6, fontFamily: 'Manrope_800ExtraBold', marginBottom: 8, marginTop: 14 },
-  input: { minHeight: 54, borderRadius: 18, paddingHorizontal: 16, color: '#FFF7EC', backgroundColor: '#13211F', borderWidth: 1, borderColor: '#30443F', fontFamily: 'Manrope_500Medium' },
-  multiline: { minHeight: 106, paddingTop: 15, textAlignVertical: 'top' },
-  fieldHint: { color: '#82938F', fontSize: 9, lineHeight: 14, marginTop: 6, fontFamily: 'Manrope_500Medium' },
-  dateButton: { minHeight: 54, borderRadius: 18, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#13211F', borderWidth: 1, borderColor: '#30443F' },
-  dateText: { color: '#FFF7EC', fontSize: 13, fontFamily: 'Manrope_600SemiBold' },
-  footer: { padding: 20 }, submit: { height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center', backgroundColor: '#D7B56D' },
-  disabled: { opacity: 0.45 }, submitText: { color: '#102522', fontSize: 14, fontFamily: 'Manrope_800ExtraBold' },
+  discardIcon: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: '#162724' },
+  headerCopy: { flex: 1 },
+  eyebrow: { color: '#D7B56D', fontSize: 8, letterSpacing: 1.7, fontFamily: 'Manrope_800ExtraBold' },
+  heading: { color: '#FFF7EC', fontSize: 24, fontFamily: 'PlayfairDisplay_700Bold' },
+  content: { paddingHorizontal: 22, paddingTop: 22, paddingBottom: 30 },
+  recovered: { alignSelf: 'flex-start', borderRadius: 12, backgroundColor: '#18332D', paddingHorizontal: 11, paddingVertical: 7, marginBottom: 16 },
+  recoveredText: { color: '#BFD9D0', fontSize: 9, fontFamily: 'Manrope_700Bold' },
+  error: { color: '#FFB8AC', fontSize: 11, lineHeight: 17, fontFamily: 'Manrope_700Bold', marginTop: 12 },
+  footer: { paddingHorizontal: 20, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', gap: 10, borderTopWidth: 1, borderTopColor: '#1F3732', backgroundColor: '#081513' },
+  backButton: { minWidth: 90, height: 54, borderRadius: 27, paddingHorizontal: 18, flexDirection: 'row', gap: 5, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#40564F' },
+  backText: { color: '#E7D8B3', fontSize: 12, fontFamily: 'Manrope_800ExtraBold' },
+  primary: { flex: 1, height: 56, borderRadius: 28, flexDirection: 'row', gap: 7, alignItems: 'center', justifyContent: 'center', backgroundColor: '#D7B56D' },
+  primaryText: { color: '#102522', fontSize: 13, fontFamily: 'Manrope_800ExtraBold' },
+  disabled: { opacity: 0.45 },
+  stage: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'rgba(5,15,13,0.86)', alignItems: 'center', justifyContent: 'center' },
+  stageText: { color: '#FFF7EC', fontSize: 15, fontFamily: 'Manrope_800ExtraBold' },
 });

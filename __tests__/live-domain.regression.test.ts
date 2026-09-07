@@ -5,6 +5,7 @@ import {
   LIVE_PARTICIPANT_STATES,
   LIVE_SESSION_STATUSES,
   getLiveParticipantTransitions,
+  getLiveSessionStartTarget,
   getLiveSessionTransitions,
   hasLiveCapability,
   resolveLiveCapabilities,
@@ -48,6 +49,22 @@ test('Live sessions reject skipped stages, resurrection and cancellation after g
       new RegExp(`invalid_live_session_transition:${currentState}:${event}`),
     );
   });
+});
+
+test('rescheduling preserves lifecycle safety and reopens confirmed quorum', () => {
+  assert.equal(transitionLiveSession({ currentState: 'scheduled', event: 'reschedule' }).to, 'scheduled');
+  assert.equal(transitionLiveSession({ currentState: 'waiting_for_quorum', event: 'reschedule' }).to, 'waiting_for_quorum');
+  assert.equal(transitionLiveSession({ currentState: 'confirmed', event: 'reschedule' }).to, 'waiting_for_quorum');
+  assert.throws(() => transitionLiveSession({ currentState: 'live', event: 'reschedule' }));
+});
+
+test('host start preparation follows every required lifecycle boundary', () => {
+  assert.equal(getLiveSessionStartTarget('scheduled'), 'confirmed');
+  assert.equal(getLiveSessionStartTarget('waiting_for_quorum'), 'confirmed');
+  assert.equal(getLiveSessionStartTarget('confirmed'), 'backstage');
+  assert.equal(getLiveSessionStartTarget('backstage'), 'live');
+  assert.equal(getLiveSessionStartTarget('live'), null);
+  assert.equal(getLiveSessionStartTarget('cancelled'), null);
 });
 
 test('every declared participant transition is executable', () => {

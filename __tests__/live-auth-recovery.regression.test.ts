@@ -58,7 +58,7 @@ test('Live UI distinguishes reconnecting auth from an empty catalogue', () => {
 });
 
 test('Live scheduling recovers auth before attempting the protected RPC', () => {
-  assert.match(liveSchedule, /retrySessionRecovery\('live_schedule_manual_retry'\)/);
+  assert.match(liveSchedule, /retrySessionRecovery\('live_studio_manual_retry'\)/);
   assert.match(liveSchedule, /if \(!sessionReady\)/);
-  assert.match(liveSchedule, /Reconnect to schedule/);
+  assert.match(liveSchedule, /Reconnect to publish/);
 });

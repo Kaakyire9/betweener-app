@@ -453,6 +453,10 @@ export const useLiveSessionController = (sessionId: string, currentUserId: strin
       return runAction(`transition:${targetStatus}`, () =>
         liveRepository.transitionSession(sessionId, snapshot.session.version, targetStatus));
     },
+    prepareAndStartSession: () => runAction(
+      'start-session',
+      () => liveRepository.prepareAndStartSession(sessionId),
+    ),
     moderateParticipant: (
       userId: string,
       action: 'mute' | 'unmute' | 'remove' | 'suspend',
