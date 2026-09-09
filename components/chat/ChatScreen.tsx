@@ -243,7 +243,7 @@ import { fetchUserPresence } from "@/lib/user-presence";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { addEventListener as addNetInfoListener, fetch as fetchNetInfo } from "@react-native-community/netinfo";
-import DateTimePicker, { type DateTimePickerEvent } from "@react-native-community/datetimepicker";
+import DateTimePicker, { type DateTimePickerChangeEvent } from "@react-native-community/datetimepicker";
 import * as Calendar from "expo-calendar";
 import {
   AudioPlayer,
@@ -3366,11 +3366,10 @@ const resolveQueuedVideoUri = async (
   }, []);
 
   const handleDatePickerChange = useCallback(
-    (event: DateTimePickerEvent, selected?: Date) => {
+    (_event: DateTimePickerChangeEvent, selected: Date) => {
       if (Platform.OS !== 'ios') {
         setDatePickerMode(null);
       }
-      if (event.type === 'dismissed' || !selected) return;
       setDatePlannerDate((prev) => {
         const next = new Date(prev);
         if (datePickerMode === 'date') {
@@ -9788,7 +9787,8 @@ const resolveQueuedVideoUri = async (
                     mode={datePickerMode}
                     display={Platform.OS === 'ios' ? 'spinner' : 'default'}
                     minimumDate={datePickerMode === 'date' ? new Date() : undefined}
-                    onChange={handleDatePickerChange}
+                    onValueChange={handleDatePickerChange}
+                    onDismiss={() => setDatePickerMode(null)}
                   />
                 ) : null}
                 <View style={styles.datePlannerQuickSlotRow}>

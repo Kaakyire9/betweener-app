@@ -1,5 +1,5 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import DateTimePicker, { type DateTimePickerEvent } from "@react-native-community/datetimepicker";
+import DateTimePicker, { type DateTimePickerChangeEvent } from "@react-native-community/datetimepicker";
 import { LinearGradient } from "expo-linear-gradient";
 import React from "react";
 import { Modal, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
@@ -52,8 +52,10 @@ type Props = {
   onUpdateQuietHours: (enabled: boolean, start: string, end: string) => void;
   onShowStartPicker: () => void;
   onShowEndPicker: () => void;
-  onStartChange: (event: DateTimePickerEvent, selected?: Date) => void;
-  onEndChange: (event: DateTimePickerEvent, selected?: Date) => void;
+  onStartChange: (event: DateTimePickerChangeEvent, selected: Date) => void;
+  onStartDismiss: () => void;
+  onEndChange: (event: DateTimePickerChangeEvent, selected: Date) => void;
+  onEndDismiss: () => void;
   styles: any;
 };
 
@@ -148,7 +150,9 @@ export default function MeNotificationsSheet({
   onShowStartPicker,
   onShowEndPicker,
   onStartChange,
+  onStartDismiss,
   onEndChange,
+  onEndDismiss,
   styles,
 }: Props) {
   return (
@@ -370,7 +374,8 @@ export default function MeNotificationsSheet({
                         mode="time"
                         display={Platform.OS === "ios" ? "spinner" : "default"}
                         value={startPickerValue}
-                        onChange={onStartChange}
+                        onValueChange={onStartChange}
+                        onDismiss={onStartDismiss}
                       />
                     ) : null}
                     {showEndPicker ? (
@@ -378,7 +383,8 @@ export default function MeNotificationsSheet({
                         mode="time"
                         display={Platform.OS === "ios" ? "spinner" : "default"}
                         value={endPickerValue}
-                        onChange={onEndChange}
+                        onValueChange={onEndChange}
+                        onDismiss={onEndDismiss}
                       />
                     ) : null}
                   </>

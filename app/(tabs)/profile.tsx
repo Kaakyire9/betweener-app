@@ -119,7 +119,7 @@ import {
   View,
 } from "react-native";
 import { addEventListener as addNetInfoListener, fetch as fetchNetInfo } from "@react-native-community/netinfo";
-import { DateTimePickerEvent } from '@react-native-community/datetimepicker';
+import { type DateTimePickerChangeEvent } from '@react-native-community/datetimepicker';
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import * as WebBrowser from "expo-web-browser";
@@ -2751,11 +2751,10 @@ export default function ProfileScreen() {
   }, []);
 
   const handleStartChange = useCallback(
-    (event: DateTimePickerEvent, selected?: Date) => {
+    (_event: DateTimePickerChangeEvent, selected: Date) => {
       if (Platform.OS !== 'ios') {
         setShowStartPicker(false);
       }
-      if (event.type === 'dismissed' || !selected) return;
       void updateQuietHours(
         true,
         dateToTimeString(selected),
@@ -2766,11 +2765,10 @@ export default function ProfileScreen() {
   );
 
   const handleEndChange = useCallback(
-    (event: DateTimePickerEvent, selected?: Date) => {
+    (_event: DateTimePickerChangeEvent, selected: Date) => {
       if (Platform.OS !== 'ios') {
         setShowEndPicker(false);
       }
-      if (event.type === 'dismissed' || !selected) return;
       void updateQuietHours(
         true,
         notificationPrefs.quiet_hours_start,
@@ -3012,7 +3010,9 @@ export default function ProfileScreen() {
         onShowStartPicker={() => setShowStartPicker(true)}
         onShowEndPicker={() => setShowEndPicker(true)}
         onStartChange={handleStartChange}
+        onStartDismiss={() => setShowStartPicker(false)}
         onEndChange={handleEndChange}
+        onEndDismiss={() => setShowEndPicker(false)}
         styles={styles}
       />
 
