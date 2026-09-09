@@ -93,3 +93,85 @@ Host takeover is an authenticated, capability-checked, idempotent internal
 state fence. It increments the lease generation and rejects in-flight work.
 Autopilot resume exists only as an explicit Phase 10B gate and always returns a
 disabled outcome in Phase 10A.
+
+## Phase 10B boundary
+
+Phase 10B adds private, expiring Copilot suggestions to the existing Live
+Studio. Generation remains side-effect free. Only the authenticated Host use
+RPC may turn a fresh suggestion into an existing Spark/Pulse projection or a
+participant-visible Director event, and every such event is attributed to the
+Host rather than Odo. The use transaction rechecks capability, flags, circuit
+breaker, TTL, session/state/round versions and Content Gate status.
+
+See [Odo Copilot Phase 10B rollout](./odo-copilot-phase10b-runbook.md) for the
+deploy, staged enablement, device validation and emergency-pause procedure.
+
+## Phase 10C boundary
+
+Phase 10C permits only the guarded presentation vocabulary: narration of an
+already-authorized pair, predefined scene requests, bounded Conversation
+Sparks and Audience Pulse, visual intermissions, time cues, transition copy,
+`WAIT`, and `NO_ACTION`. Pairing, consent, participant/stage control,
+moderation, RTC, music, and session lifecycle remain outside Odo authority.
+
+See [Odo Guarded Autopilot Phase 10C](./odo-guarded-autopilot-phase10c-runbook.md).
+
+## Phase 10D boundary
+
+Phase 10D adds a separate, internal-only Full Quick Connect capability. The
+Host must explicitly enable it for a live `quick_connect` session. Odo may
+open the existing Quick Connect control, wake its deterministic sync engine,
+observe pair/round state, pace pair-private presentation, enter low-liquidity
+mode, drain current pairs, and close only the Quick Connect segment.
+
+The existing `live_quick_connect_sync` engine remains the sole AutoMatcher and
+round-lifecycle authority. Neither the client nor Odo worker can provide an
+action, person, pair, model, prompt, RTC call, or private decision. Pair-scoped
+Odo Sparks are stored on the authoritative pairing and are returned only to
+the two pair participants; Realtime contains only content-free invalidations.
+
+`full_quick_connect_autopilot_enabled` is independent of the future
+`full_autopilot_enabled` full-show capability. Phase 10D keeps full-show
+Autopilot and music disabled and never starts or ends the parent Live session.
+Take Control fences future work while preserving the active pair and RTC
+truth. Safety clearance returns to manual mode and always requires a separate
+Host resume.
+
+See [Odo Full Quick Connect Autopilot Phase 10D](./odo-full-quick-connect-phase10d-runbook.md).
+
+## Phase 10E boundary
+
+Phase 10E adds a Show Director that is explicitly separate from the Phase 10D
+Quick Connect lifecycle. Its service-only deterministic reconciler observes
+authoritative Live, pool, pair, round, audience, and music state and may select
+only a predefined public presentation scene. It cannot choose participants,
+advance a pair, change consent or outcomes, issue RTC credentials, moderate, or
+start/end the parent Live.
+
+Show state is versioned and durable. One shared Odo fence prevents conflicting
+workers, while the independent program-controller model identifies `odo`,
+`mobile_host`, or `studio_host` control and `mobile` or `studio` program output.
+Host scene changes have priority and a suppression window; Take Control fences
+future automatic work, and Resume always reconciles fresh state.
+
+Music remains a separate engine. Clients cannot send a URL, storage path, model,
+prompt, scene action, or track choice to either Edge worker. Tracks come only
+from a private, approved, unexpired catalogue. The server returns short-lived
+playback grants to eligible main-room audience devices and denies publisher
+devices and private experiences. This mobile delivery is a safe interim path,
+not a shared RTC program mixer. The Studio protocol is defined, while Studio UI,
+screen sharing, Odo voice, and arbitrary/commercial music remain disabled.
+
+The reserved Studio command vocabulary is versioned in the shared 10E domain:
+`TAKE_CONTROL`, `RESUME_ODO`, `SET_SCENE`, `SET_QUICK_CONNECT_LAYOUT`,
+`PLAY_MUSIC`, `PAUSE_MUSIC`, `NEXT_TRACK`, `SET_MUSIC_MOOD`,
+`SET_MUSIC_VOLUME`, `ENABLE_AUTO_DUCK`, `DISABLE_AUTO_DUCK`,
+`OPEN_AUDIENCE_PULSE`, `START_INTERMISSION`, and
+`FINISH_CURRENT_CONNECTIONS`. Each envelope has a command UUID, session UUID,
+schema version, expected state version, and command-specific closed payload.
+There is no arbitrary command or JSON instruction branch. A future Studio
+transport must map these commands onto the same capability-gated Host RPCs; the
+contract itself grants no authority.
+
+See [Odo Show Director Phase 10E](./odo-show-director-phase10e-runbook.md) and
+the [Phase 10D to 10E architecture audit](./odo-show-director-phase10e-audit.md).

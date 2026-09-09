@@ -1,3 +1,5 @@
+import type { OdoCopilotScene } from '../odo/copilot/odo-copilot-contracts.ts';
+
 export type LiveStageCandidate<T> = {
   participant: T;
   userId: string;
@@ -188,6 +190,39 @@ export const composeLiveStageSeats = <T, I extends LiveStageIdentity>(
   }
 
   return seats.slice(0, Math.max(0, maximumPublishers));
+};
+
+/**
+ * Reorders already-authorized seats for a predefined scene without removing a
+ * mounted RTC participant. Stable user keys let the visual layer move tiles
+ * without reconnecting media.
+ */
+export const applyLiveStageScene = <T, I extends LiveStageIdentity>(
+  seats: readonly LiveStageSeat<T, I>[],
+  scene: OdoCopilotScene | null,
+): LiveStageSeat<T, I>[] => {
+  if (scene === 'host_focus') {
+    return [...seats].sort((left, right) => {
+      const leftHost = left.identity?.role === 'host' ? 0 : 1;
+      const rightHost = right.identity?.role === 'host' ? 0 : 1;
+      return leftHost - rightHost;
+    });
+  }
+  if (scene === 'pair_forming' || scene === 'quick_connect_active') {
+    return [...seats].sort((left, right) => {
+      const leftHost = left.identity?.role === 'host' ? 1 : 0;
+      const rightHost = right.identity?.role === 'host' ? 1 : 0;
+      return leftHost - rightHost;
+    });
+  }
+  if (scene === 'pool_focus') {
+    return [...seats].sort((left, right) => {
+      const leftHost = left.identity?.role === 'host' ? 1 : 0;
+      const rightHost = right.identity?.role === 'host' ? 1 : 0;
+      return leftHost - rightHost;
+    });
+  }
+  return [...seats];
 };
 
 export const liveStageTilePlacement = (

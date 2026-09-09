@@ -5,6 +5,11 @@ export const ODO_TASKS = [
   'conversation_spark',
   'audience_pulse',
   'intermission_copy',
+  'pair_narration',
+  'scene_suggestion',
+  'transition_copy',
+  'session_welcome',
+  'session_closing',
 ] as const;
 export type OdoTask = (typeof ODO_TASKS)[number];
 
@@ -38,8 +43,10 @@ export type OdoStructuredProfile = {
 export type OdoProviderRequest = {
   model: string;
   constitutionVersion: string;
+  task?: OdoTask;
   snapshot: Readonly<Record<string, unknown>>;
   profiles: readonly OdoStructuredProfile[];
+  taskContext?: Readonly<Record<string, unknown>>;
   actionIdentity: {
     actionId: string;
     sessionId: string;
@@ -60,11 +67,30 @@ export type OdoAudiencePulse = {
   durationSeconds: number;
 };
 
+export type OdoCopilotTask = Exclude<OdoTask, 'director_action'>;
+
+export type OdoCopilotProviderDraft = {
+  decision: 'suggest' | 'no_action';
+  reasonCode: string;
+  context: string | null;
+  question: string | null;
+  copy: string | null;
+  locale: string | null;
+  templateKey: string | null;
+  durationSeconds: number | null;
+  scene: string | null;
+  signalCodesUsed: readonly string[];
+};
+
 export interface OdoAIProvider {
   decideNextAction(request: OdoProviderRequest): Promise<OdoProviderResult<OdoAction>>;
   generateConversationSpark(request: OdoProviderRequest): Promise<OdoProviderResult<OdoConversationSpark>>;
   generateAudiencePulse(request: OdoProviderRequest): Promise<OdoProviderResult<OdoAudiencePulse>>;
   generateIntermissionCopy(request: OdoProviderRequest): Promise<OdoProviderResult<string>>;
+  generateCopilotSuggestion(
+    request: OdoProviderRequest,
+    task: OdoCopilotTask,
+  ): Promise<OdoProviderResult<OdoCopilotProviderDraft>>;
 }
 
 export class OdoProviderError extends Error {

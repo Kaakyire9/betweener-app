@@ -2,12 +2,18 @@ import {
   ODO_ACTION_JSON_SCHEMA,
   normalizeOdoActionProposal,
 } from '../../../../features/live/odo/domain/odo-validation.ts';
-import { buildOdoProviderInput, ODO_CONSTITUTION } from './constitution.ts';
+import {
+  buildOdoProviderInput,
+  buildOdoCopilotInstructions,
+  ODO_CONSTITUTION,
+} from './constitution.ts';
 import {
   OdoProviderError,
   type OdoAIProvider,
   type OdoAudiencePulse,
   type OdoConversationSpark,
+  type OdoCopilotProviderDraft,
+  type OdoCopilotTask,
   type OdoProviderMetadata,
   type OdoProviderRequest,
   type OdoProviderResult,
@@ -62,6 +68,35 @@ const PULSE_SCHEMA = exactObject({
 const INTERMISSION_SCHEMA = exactObject({
   copy: { type: 'string', minLength: 1, maxLength: 500 },
 }, ['copy']);
+
+const nullableString = (maximum: number) => ({
+  anyOf: [{ type: 'string', minLength: 1, maxLength: maximum }, { type: 'null' }],
+});
+
+const COPILOT_SCHEMA = exactObject({
+  decision: { type: 'string', enum: ['suggest', 'no_action'] },
+  reasonCode: { type: 'string', pattern: '^[a-z][a-z0-9_]{0,63}$' },
+  context: nullableString(200),
+  question: nullableString(300),
+  copy: nullableString(500),
+  locale: { anyOf: [{ type: 'string', pattern: '^[a-z]{2}(?:-[A-Z]{2})?$' }, { type: 'null' }] },
+  templateKey: { anyOf: [{ type: 'string', pattern: '^[a-z][a-z0-9_]{0,63}$' }, { type: 'null' }] },
+  durationSeconds: { anyOf: [{ type: 'integer', minimum: 30, maximum: 300 }, { type: 'null' }] },
+  scene: {
+    anyOf: [
+      { type: 'string', enum: ['HOST_FOCUS', 'PAIR_FOCUS', 'COMMUNITY_WIDE', 'INTERMISSION', 'CLOSING'] },
+      { type: 'null' },
+    ],
+  },
+  signalCodesUsed: {
+    type: 'array',
+    maxItems: 8,
+    items: { type: 'string', pattern: '^[a-z][a-z0-9_]{0,63}$' },
+  },
+}, [
+  'decision', 'reasonCode', 'context', 'question', 'copy', 'locale',
+  'templateKey', 'durationSeconds', 'scene', 'signalCodesUsed',
+]);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -156,11 +191,48 @@ export class OpenAIOdoProvider implements OdoAIProvider {
     return { value: result.value.copy, metadata: result.metadata };
   }
 
+  async generateCopilotSuggestion(
+    request: OdoProviderRequest,
+    task: OdoCopilotTask,
+  ): Promise<OdoProviderResult<OdoCopilotProviderDraft>> {
+    const result = await this.complete(
+      request,
+      task,
+      `odo_copilot_${task}_v1`,
+      COPILOT_SCHEMA,
+      buildOdoCopilotInstructions(task),
+    );
+    const keys = [
+      'decision', 'reasonCode', 'context', 'question', 'copy', 'locale',
+      'templateKey', 'durationSeconds', 'scene', 'signalCodesUsed',
+    ] as const;
+    if (!isRecord(result.value) || !hasOnlyKeys(result.value, keys)
+      || !['suggest', 'no_action'].includes(String(result.value.decision))
+      || typeof result.value.reasonCode !== 'string'
+      || !/^[a-z][a-z0-9_]{0,63}$/.test(result.value.reasonCode)
+      || !Array.isArray(result.value.signalCodesUsed)
+      || result.value.signalCodesUsed.length > 8
+      || !result.value.signalCodesUsed.every((code) => typeof code === 'string'
+        && /^[a-z][a-z0-9_]{0,63}$/.test(code))) {
+      throw new OdoProviderError('invalid_response', 'invalid_copilot_response', result.metadata.providerRequestId);
+    }
+    const optionalStrings = ['context', 'question', 'copy', 'locale', 'templateKey', 'scene'] as const;
+    if (optionalStrings.some((key) => result.value[key] !== null && typeof result.value[key] !== 'string')
+      || (result.value.durationSeconds !== null
+        && (!Number.isInteger(result.value.durationSeconds)
+          || Number(result.value.durationSeconds) < 30
+          || Number(result.value.durationSeconds) > 300))) {
+      throw new OdoProviderError('invalid_response', 'invalid_copilot_payload', result.metadata.providerRequestId);
+    }
+    return { value: result.value as OdoCopilotProviderDraft, metadata: result.metadata };
+  }
+
   private async complete(
     request: OdoProviderRequest,
     task: OdoTask,
     schemaName: string,
     schema: unknown,
+    instructions = ODO_CONSTITUTION,
   ): Promise<OdoProviderResult<unknown>> {
     const startedAt = Date.now();
     const controller = new AbortController();
@@ -178,7 +250,7 @@ export class OpenAIOdoProvider implements OdoAIProvider {
         body: JSON.stringify({
           model: request.model,
           store: false,
-          instructions: ODO_CONSTITUTION,
+          instructions,
           input: buildOdoProviderInput(request),
           text: { format: { type: 'json_schema', name: schemaName, strict: true, schema } },
         }),

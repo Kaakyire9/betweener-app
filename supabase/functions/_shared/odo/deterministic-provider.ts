@@ -6,6 +6,8 @@ import type {
   OdoAIProvider,
   OdoAudiencePulse,
   OdoConversationSpark,
+  OdoCopilotProviderDraft,
+  OdoCopilotTask,
   OdoProviderMetadata,
   OdoProviderRequest,
   OdoProviderResult,
@@ -63,5 +65,53 @@ export class DeterministicOdoProvider implements OdoAIProvider {
       value: 'We will continue shortly.',
       metadata: metadata(this.model, 'intermission_copy'),
     };
+  }
+
+  async generateCopilotSuggestion(
+    request: OdoProviderRequest,
+    task: OdoCopilotTask,
+  ): Promise<OdoProviderResult<OdoCopilotProviderDraft>> {
+    const base: OdoCopilotProviderDraft = {
+      decision: 'suggest',
+      reasonCode: 'deterministic_fallback',
+      context: null,
+      question: null,
+      copy: null,
+      locale: 'en',
+      templateKey: null,
+      durationSeconds: null,
+      scene: null,
+      signalCodesUsed: [],
+    };
+
+    const onStageCount = Number(request.taskContext?.onStageParticipantCount ?? 0);
+    const currentScene = String(request.taskContext?.currentScene ?? '');
+    const roundState = String(request.taskContext?.roundState ?? '');
+    const scene = roundState === 'public_introduction' && onStageCount >= 2
+      && currentScene !== 'pair_forming'
+      ? 'PAIR_FOCUS'
+      : onStageCount >= 3 && currentScene !== 'pool_focus'
+        ? 'COMMUNITY_WIDE'
+        : onStageCount <= 1 && currentScene !== 'host_focus'
+          ? 'HOST_FOCUS'
+          : null;
+
+    const value: OdoCopilotProviderDraft = task === 'conversation_spark'
+      ? { ...base, context: 'A light conversation starter', question: 'What is something you have enjoyed recently?' }
+      : task === 'audience_pulse'
+      ? { ...base, templateKey: 'host_question_next_topic', durationSeconds: 60 }
+      : task === 'scene_suggestion'
+      ? scene
+        ? { ...base, scene }
+        : { ...base, decision: 'no_action', reasonCode: 'scene_already_suitable' }
+      : task === 'session_welcome'
+      ? { ...base, copy: 'Welcome, everyone. Settle in and enjoy meeting the room.' }
+      : task === 'session_closing'
+      ? { ...base, copy: 'Thank you for joining. Take care and enjoy the rest of your evening.' }
+      : task === 'pair_narration'
+      ? { ...base, copy: 'Let us welcome our next pair to the conversation.' }
+      : { ...base, copy: 'We will move into the next part of the session shortly.' };
+
+    return { value, metadata: metadata(this.model, task) };
   }
 }

@@ -2,6 +2,8 @@ import type {
   OdoAIProvider,
   OdoAudiencePulse,
   OdoConversationSpark,
+  OdoCopilotProviderDraft,
+  OdoCopilotTask,
   OdoProviderRequest,
   OdoProviderResult,
 } from './provider.ts';
@@ -12,6 +14,7 @@ export type FakeOdoProviderResponses = {
   spark: OdoProviderResult<OdoConversationSpark>;
   pulse: OdoProviderResult<OdoAudiencePulse>;
   intermission: OdoProviderResult<string>;
+  copilot?: OdoProviderResult<OdoCopilotProviderDraft>;
 };
 
 export class FakeOdoProvider implements OdoAIProvider {
@@ -40,5 +43,11 @@ export class FakeOdoProvider implements OdoAIProvider {
   generateIntermissionCopy(request: OdoProviderRequest) {
     this.requests.push(request);
     return Promise.resolve(this.responses.intermission);
+  }
+
+  generateCopilotSuggestion(request: OdoProviderRequest, _task: OdoCopilotTask) {
+    this.requests.push(request);
+    if (!this.responses.copilot) return Promise.reject(new Error('fake_copilot_response_missing'));
+    return Promise.resolve(this.responses.copilot);
   }
 }
