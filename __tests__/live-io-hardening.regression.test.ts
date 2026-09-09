@@ -67,6 +67,13 @@ test('Repository subscribes only to client-consumed invalidations', () => {
   assert.doesNotMatch(repository, /table: 'live_sessions'/);
 });
 
+test('Live structure reconciles immediately after Realtime attaches or reconnects', () => {
+  const subscription = repository.match(
+    /subscribe\(\s*sessionId[\s\S]+?subscribeHostedMatching/i,
+  )?.[0] ?? '';
+  assert.match(subscription, /liveStatus === 'SUBSCRIBED'\) onEvent\('structure'\)/i);
+});
+
 test('Room pulse reads use a visible-comment feed index', () => {
   assert.match(migration, /live_comments_visible_session_feed_idx/i);
   assert.match(migration, /where status='visible'/i);

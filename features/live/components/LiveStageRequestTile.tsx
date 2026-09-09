@@ -1,5 +1,6 @@
 import { Check, Plus, UserRoundPlus } from 'lucide-react-native';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { LIVE_VISUAL } from './live-visual-tokens.ts';
 
 export type LiveStageRequestSeat = {
   state: 'available' | 'pending';
@@ -37,13 +38,13 @@ export function LiveStageRequestTile({
       <View style={[styles.orbit, pending && styles.orbitPending]}>
         <View style={[styles.innerOrbit, pending && styles.innerOrbitPending]}>
           {pending
-            ? <Check size={24} color="#F4D98F" strokeWidth={2.5} />
-            : <Plus size={28} color="#E7CB83" strokeWidth={1.8} />}
+            ? <Check size={24} color={LIVE_VISUAL.color.teal} strokeWidth={2.5} />
+            : <Plus size={28} color={LIVE_VISUAL.color.teal} strokeWidth={1.8} />}
         </View>
       </View>
       <View style={styles.copy}>
         <View style={styles.labelRow}>
-          <UserRoundPlus size={14} color={pending ? '#CBB06D' : '#E7CB83'} />
+          <UserRoundPlus size={14} color={LIVE_VISUAL.color.teal} />
           <Text style={styles.title}>{pending ? 'Request sent' : passiveOpenSeat ? 'Open seat' : 'Request a seat'}</Text>
         </View>
         <Text style={styles.description}>
@@ -63,15 +64,15 @@ const styles = StyleSheet.create({
     padding: 16,
     backgroundColor: '#0C1C19',
     borderWidth: 1,
-    borderColor: '#D7B56D3D',
+    borderColor: LIVE_VISUAL.color.borderStrong,
     zIndex: 3,
     elevation: 3,
   },
   pendingRoot: { backgroundColor: '#17251F' },
-  orbit: { width: 76, height: 76, borderRadius: 38, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#D7B56D52', backgroundColor: '#D7B56D12' },
-  orbitPending: { borderColor: '#D7B56D85', backgroundColor: '#D7B56D1C' },
-  innerOrbit: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#D7B56D70', backgroundColor: '#10241F' },
-  innerOrbitPending: { backgroundColor: '#4D4128' },
+  orbit: { width: 76, height: 76, borderRadius: 38, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: LIVE_VISUAL.color.borderStrong, backgroundColor: LIVE_VISUAL.color.tealSoft },
+  orbitPending: { borderColor: LIVE_VISUAL.color.teal, backgroundColor: LIVE_VISUAL.color.tealSoft },
+  innerOrbit: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: LIVE_VISUAL.color.borderStrong, backgroundColor: '#10241F' },
+  innerOrbitPending: { backgroundColor: LIVE_VISUAL.color.tealSoft },
   copy: { alignItems: 'center', gap: 4 },
   labelRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   title: { color: '#FFF7EC', fontSize: 14, fontFamily: 'Manrope_700Bold' },

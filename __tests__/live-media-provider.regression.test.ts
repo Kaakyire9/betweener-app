@@ -5,6 +5,10 @@ import {
   LiveMediaAdmissionError,
   parseLiveMediaAdmission,
 } from '../features/live/media/live-media-admission.ts';
+import {
+  LIVE_MEDIA_ADMISSION_RETRY_DELAYS_MS,
+  requestWithLiveMediaAdmissionRetry,
+} from '../features/live/media/live-media-admission-retry.ts';
 import { readFunctionErrorCode } from '../features/live/media/live-function-error.ts';
 import type {
   LiveMediaAdmission,
@@ -94,6 +98,33 @@ test('Live media admission preserves structured Edge Function failure codes', as
     await readFunctionErrorCode(reactNativeError),
     'live_admission_session_unavailable',
   );
+});
+
+test('Live media admission retries only bounded temporary token failures', async () => {
+  let attempts = 0;
+  const waits: number[] = [];
+  const result = await requestWithLiveMediaAdmissionRetry(
+    async () => {
+      attempts += 1;
+      if (attempts < 3) throw new Error('live_token_temporarily_unavailable');
+      return 'admitted';
+    },
+    async (delayMs) => { waits.push(delayMs); },
+  );
+
+  assert.equal(result, 'admitted');
+  assert.equal(attempts, 3);
+  assert.deepEqual(waits, [...LIVE_MEDIA_ADMISSION_RETRY_DELAYS_MS]);
+
+  let terminalAttempts = 0;
+  await assert.rejects(
+    requestWithLiveMediaAdmissionRetry(async () => {
+      terminalAttempts += 1;
+      throw new Error('live_admission_denied');
+    }, async () => undefined),
+    /live_admission_denied/,
+  );
+  assert.equal(terminalAttempts, 1);
 });
 
 test('provider abstraction exposes transport controls without Stream-specific types', () => {

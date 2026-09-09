@@ -4,6 +4,7 @@ import test from 'node:test';
 
 const migration = readFileSync('supabase/migrations/20260826100000_live_event_studio.sql', 'utf8');
 const lifecycleMigration = readFileSync('supabase/migrations/20260906170000_live_creation_studio_lifecycle.sql', 'utf8');
+const completionMigration = readFileSync('supabase/migrations/20260909110000_live_lifecycle_completion_and_recap.sql', 'utf8');
 const indexMigration = readFileSync('supabase/migrations/20260906171000_live_creation_studio_indexes_concurrently.sql', 'utf8');
 const validationMigration = readFileSync('supabase/migrations/20260906172000_live_creation_studio_validate_constraints.sql', 'utf8');
 const scheduleScreen = readFileSync('app/live/schedule.tsx', 'utf8');
@@ -113,8 +114,33 @@ test('the event catalogue is lifecycle ordered without polling', () => {
 test('event details support reservations, countdown and outcome metrics', () => {
   assert.match(eventScreen, /Save my place/);
   assert.match(eventScreen, /places saved/);
-  assert.match(eventScreen, /matches made/);
+  assert.match(eventScreen, /introductions/);
   assert.match(eventScreen, /formatLiveCountdown/);
+});
+
+test('ending a Live is atomic and routes the room into its final report', () => {
+  assert.match(completionMigration, /rpc_end_live_session_v1/i);
+  assert.match(completionMigration, /'ending'[\s\S]*'ended'/i);
+  assert.match(completionMigration, /for update/i);
+  assert.match(
+    completionMigration,
+    /update public\.live_sessions[\s\S]*status = 'ended'[\s\S]*where status = 'ending'/i,
+  );
+  assert.match(liveRoomScreen, /controller\.endSession\(\)/);
+  assert.match(liveRoomScreen, /openSessionRecap/);
+  assert.doesNotMatch(liveRoomScreen, /transitionSession\('ending'\)/);
+  assert.match(eventScreen, /LiveSessionRecapCard/);
+});
+
+test('Past Live remains visible to attendees with a privacy-safe personal recap', () => {
+  assert.match(completionMigration, /rpc_get_live_session_recap_v1/i);
+  assert.match(completionMigration, /participant\.user_id = auth\.uid\(\)/i);
+  assert.match(completionMigration, /'my_room_pulse_notes'/i);
+  assert.match(completionMigration, /'my_private_sparks'/i);
+  assert.match(completionMigration, /'my_quick_connect_rounds'/i);
+  assert.match(completionMigration, /session\.status in \('ended','cancelled'\)[\s\S]*live_participants/i);
+  assert.doesNotMatch(completionMigration, /live_match_round_responses/i);
+  assert.doesNotMatch(completionMigration, /live_private_spark_responses/i);
 });
 
 test('event back navigation returns to its explicit origin on button and hardware back', () => {

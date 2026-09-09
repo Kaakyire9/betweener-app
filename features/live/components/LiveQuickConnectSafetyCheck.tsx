@@ -93,7 +93,7 @@ export function LiveQuickConnectSafetyCheck({
             <View style={styles.icon}>
               {experience === 'safety_concern'
                 ? <ShieldAlert color="#F2B6B6" size={22} />
-                : <ShieldCheck color={LIVE_VISUAL.color.gold} size={22} />}
+                : <ShieldCheck color={LIVE_VISUAL.color.teal} size={22} />}
             </View>
             <View style={styles.headerCopy}>
               <Text style={styles.eyebrow}>PRIVATE SAFETY CHECK</Text>
@@ -197,7 +197,7 @@ function Choice({ icon: Icon, label, copy, danger = false, disabled = false, onP
   return (
     <Pressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={[styles.choice, danger && styles.choiceDanger, disabled && styles.disabled]}>
       <View style={[styles.choiceIcon, danger && styles.choiceIconDanger]}>
-        <Icon color={danger ? '#F2B6B6' : LIVE_VISUAL.color.gold} size={18} />
+        <Icon color={danger ? '#F2B6B6' : LIVE_VISUAL.color.teal} size={18} />
       </View>
       <View style={styles.choiceCopy}>
         <Text style={[styles.choiceTitle, danger && styles.choiceTitleDanger]}>{label}</Text>
@@ -209,11 +209,11 @@ function Choice({ icon: Icon, label, copy, danger = false, disabled = false, onP
 
 const styles = StyleSheet.create({
   backdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: '#020907CC' },
-  sheet: { maxHeight: '88%', borderTopLeftRadius: 30, borderTopRightRadius: 30, borderWidth: 1, borderColor: '#D7B56D45', backgroundColor: '#0B1B17', paddingHorizontal: 20, paddingTop: 18, paddingBottom: 24 },
+  sheet: { maxHeight: '88%', borderTopLeftRadius: 30, borderTopRightRadius: 30, borderWidth: 1, borderColor: LIVE_VISUAL.color.borderStrong, backgroundColor: '#0B1B17', paddingHorizontal: 20, paddingTop: 18, paddingBottom: 24 },
   headerRow: { flexDirection: 'row', alignItems: 'center', gap: 11 },
-  icon: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: '#D7B56D14', borderWidth: 1, borderColor: '#D7B56D40' },
+  icon: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: LIVE_VISUAL.color.tealSoft, borderWidth: 1, borderColor: LIVE_VISUAL.color.borderStrong },
   headerCopy: { flex: 1 },
-  eyebrow: { color: LIVE_VISUAL.color.gold, fontSize: 9, letterSpacing: 1.6, fontFamily: 'Manrope_800ExtraBold' },
+  eyebrow: { color: LIVE_VISUAL.color.teal, fontSize: 9, letterSpacing: 1.6, fontFamily: 'Manrope_800ExtraBold' },
   title: { marginTop: 3, color: LIVE_VISUAL.color.text, fontSize: 21, fontFamily: 'Manrope_800ExtraBold' },
   close: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF0A' },
   privacy: { marginTop: 12, color: LIVE_VISUAL.color.textMuted, fontSize: 11, lineHeight: 16, fontFamily: 'Manrope_500Medium' },
@@ -221,7 +221,7 @@ const styles = StyleSheet.create({
   choices: { gap: 10 },
   choice: { minHeight: 72, borderRadius: 22, borderWidth: 1, borderColor: '#29413B', backgroundColor: '#10231F', padding: 13, flexDirection: 'row', alignItems: 'center', gap: 12 },
   choiceDanger: { borderColor: '#7A3B3B', backgroundColor: '#2B1C1B' },
-  choiceIcon: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: '#D7B56D12' },
+  choiceIcon: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: LIVE_VISUAL.color.tealSoft },
   choiceIconDanger: { backgroundColor: '#7A3B3B35' },
   choiceCopy: { flex: 1 },
   choiceTitle: { color: LIVE_VISUAL.color.text, fontSize: 13, fontFamily: 'Manrope_800ExtraBold' },
@@ -229,9 +229,9 @@ const styles = StyleSheet.create({
   choiceBody: { marginTop: 3, color: LIVE_VISUAL.color.textMuted, fontSize: 10, lineHeight: 15, fontFamily: 'Manrope_500Medium' },
   reasons: { gap: 8 },
   reason: { minHeight: 45, borderRadius: 17, borderWidth: 1, borderColor: '#29413B', paddingHorizontal: 13, flexDirection: 'row', alignItems: 'center', gap: 10 },
-  reasonSelected: { borderColor: '#D7B56D88', backgroundColor: '#D7B56D12' },
+  reasonSelected: { borderColor: LIVE_VISUAL.color.teal, backgroundColor: LIVE_VISUAL.color.tealSoft },
   radio: { width: 15, height: 15, borderRadius: 8, borderWidth: 1, borderColor: '#6F827C' },
-  radioSelected: { borderWidth: 4, borderColor: LIVE_VISUAL.color.gold },
+  radioSelected: { borderWidth: 4, borderColor: LIVE_VISUAL.color.teal },
   reasonText: { flex: 1, color: LIVE_VISUAL.color.text, fontSize: 11, fontFamily: 'Manrope_600SemiBold' },
   supporting: { color: LIVE_VISUAL.color.textMuted, fontSize: 11, lineHeight: 17, fontFamily: 'Manrope_500Medium' },
   blockRow: { marginTop: 14, minHeight: 66, borderRadius: 20, borderWidth: 1, borderColor: '#29413B', padding: 12, flexDirection: 'row', alignItems: 'center', gap: 10 },
@@ -240,11 +240,11 @@ const styles = StyleSheet.create({
   blockTitle: { color: LIVE_VISUAL.color.text, fontSize: 12, fontFamily: 'Manrope_800ExtraBold' },
   blockBody: { marginTop: 2, color: LIVE_VISUAL.color.textMuted, fontSize: 9, lineHeight: 13, fontFamily: 'Manrope_500Medium' },
   checkbox: { width: 21, height: 21, borderRadius: 7, borderWidth: 1, borderColor: '#6F827C', alignItems: 'center', justifyContent: 'center' },
-  checkboxSelected: { borderColor: LIVE_VISUAL.color.gold, backgroundColor: LIVE_VISUAL.color.gold },
+  checkboxSelected: { borderColor: LIVE_VISUAL.color.teal, backgroundColor: LIVE_VISUAL.color.teal },
   actions: { marginTop: 16, flexDirection: 'row', gap: 9 },
   secondaryButton: { minHeight: 48, paddingHorizontal: 18, borderRadius: 24, borderWidth: 1, borderColor: '#FFFFFF20', alignItems: 'center', justifyContent: 'center' },
   secondaryText: { color: LIVE_VISUAL.color.textMuted, fontSize: 11, fontFamily: 'Manrope_800ExtraBold' },
-  submitButton: { flex: 1, minHeight: 48, borderRadius: 24, backgroundColor: LIVE_VISUAL.color.gold, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, paddingHorizontal: 14 },
+  submitButton: { flex: 1, minHeight: 48, borderRadius: 24, backgroundColor: LIVE_VISUAL.color.teal, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, paddingHorizontal: 14 },
   submitText: { color: '#10201C', fontSize: 11, fontFamily: 'Manrope_800ExtraBold' },
   error: { marginTop: 10, color: '#F2B6B6', fontSize: 10, textAlign: 'center', fontFamily: 'Manrope_600SemiBold' },
   disabled: { opacity: 0.45 },

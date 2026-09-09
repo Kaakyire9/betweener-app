@@ -12,6 +12,7 @@ export const useLiveHostedMatching = (sessionId: string, enabled: boolean) => {
   const [error, setError] = useState<string | null>(null);
   const mountedRef = useRef(true);
   const inFlightRef = useRef<Promise<void> | null>(null);
+  const refreshQueuedRef = useRef(false);
   const actionInFlightRef = useRef(false);
 
   useEffect(() => () => {
@@ -20,18 +21,25 @@ export const useLiveHostedMatching = (sessionId: string, enabled: boolean) => {
 
   const refresh = useCallback(async () => {
     if (!sessionId || !enabled) return;
-    if (inFlightRef.current) return inFlightRef.current;
+    if (inFlightRef.current) {
+      refreshQueuedRef.current = true;
+      return inFlightRef.current;
+    }
     if (mountedRef.current) setRefreshing(true);
-    const operation = liveRepository.getHostedMatching(sessionId)
-      .then((next) => {
-        if (!mountedRef.current) return;
-        setSnapshot(next);
-        setError(null);
-      })
-      .catch((nextError: unknown) => {
-        if (!mountedRef.current) return;
-        setError(nextError instanceof Error ? nextError.message : 'live_hosted_matching_unavailable');
-      })
+    const operation = (async () => {
+      do {
+        refreshQueuedRef.current = false;
+        try {
+          const next = await liveRepository.getHostedMatching(sessionId);
+          if (!mountedRef.current) return;
+          setSnapshot(next);
+          setError(null);
+        } catch (nextError: unknown) {
+          if (!mountedRef.current) return;
+          setError(nextError instanceof Error ? nextError.message : 'live_hosted_matching_unavailable');
+        }
+      } while (mountedRef.current && refreshQueuedRef.current);
+    })()
       .finally(() => {
         inFlightRef.current = null;
         if (mountedRef.current) setRefreshing(false);

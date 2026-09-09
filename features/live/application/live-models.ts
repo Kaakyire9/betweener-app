@@ -96,6 +96,31 @@ export type LiveSessionSummary = {
   matchesMadeCount: number;
 };
 
+export type LiveSessionRecap = {
+  sessionId: string;
+  isHost: boolean;
+  viewerRole: string;
+  startedAt: string | null;
+  endedAt: string | null;
+  durationSeconds: number;
+  totalAttendees: number;
+  roomPulseNotes: number;
+  reactions: number;
+  audiencePolls: number;
+  pollResponses: number;
+  hostedIntroductions: number;
+  privateSparks: number;
+  quickConnectRounds: number;
+  myAttended: boolean;
+  myRoomPulseNotes: number;
+  myReactions: number;
+  myPollResponses: number;
+  myHostedIntroductions: number;
+  myPrivateSparks: number;
+  myQuickConnectRounds: number;
+  serverNow: string;
+};
+
 export type LiveQuorumSnapshot = {
   sessionId: string;
   status: 'almost_ready' | 'confirmed';
@@ -393,6 +418,7 @@ export type LiveQuickConnectPairing = {
   };
   providerCallType: string;
   providerCallId: string;
+  odoConversationSpark: LiveConversationSpark | null;
 };
 
 export type LiveQuickConnectSnapshot = {

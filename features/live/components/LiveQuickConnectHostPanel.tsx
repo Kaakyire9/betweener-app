@@ -1,5 +1,6 @@
 import { Activity, Clock3, Pause, Play, ShieldCheck, Square } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
+import { useMemo } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type {
@@ -8,6 +9,7 @@ import type {
   LiveQuickConnectHostSnapshot,
   LiveQuickConnectRoundSeconds,
 } from '../application/index.ts';
+import { type LiveVisualTheme, useLiveVisualTheme } from './live-visual-tokens.ts';
 
 export type LiveQuickConnectHostPanelProps = {
   snapshot: LiveQuickConnectHostSnapshot | null;
@@ -35,8 +37,10 @@ export function LiveQuickConnectHostPanel({
   onConfigure,
   onControl,
 }: LiveQuickConnectHostPanelProps) {
+  const visual = useLiveVisualTheme();
+  const styles = useMemo(() => createStyles(visual), [visual]);
   if (!snapshot) {
-    return <View style={styles.loading}><ActivityIndicator color="#D7B56D" /></View>;
+    return <View style={styles.loading}><ActivityIndicator color={visual.color.teal} /></View>;
   }
 
   const active = snapshot.state === 'open' || snapshot.metrics.activePairs > 0;
@@ -48,12 +52,12 @@ export function LiveQuickConnectHostPanel({
   return (
     <View style={styles.shell}>
       <View style={styles.stateRow}>
-        <View style={styles.stateIcon}><Activity color="#D7B56D" size={20} /></View>
+        <View style={styles.stateIcon}><Activity color={visual.color.teal} size={20} /></View>
         <View style={styles.stateCopy}>
           <Text style={styles.eyebrow}>ROTATION {snapshot.state.toUpperCase()}</Text>
           <Text style={styles.stateText}>{STATE_COPY[snapshot.state]}</Text>
         </View>
-        {busyAction ? <ActivityIndicator color="#D7B56D" size="small" /> : null}
+        {busyAction ? <ActivityIndicator color={visual.color.teal} size="small" /> : null}
       </View>
 
       <View style={styles.metrics}>
@@ -74,7 +78,7 @@ export function LiveQuickConnectHostPanel({
             onPress={() => configure(snapshot.roundSeconds, count)}
             style={[styles.option, snapshot.maxConcurrentPairs === count && styles.optionSelected, active && styles.disabled]}
           >
-            <Activity color={snapshot.maxConcurrentPairs === count ? '#102522' : '#A9BAB5'} size={14} />
+            <Activity color={snapshot.maxConcurrentPairs === count ? visual.color.accentContrast : visual.color.textMuted} size={14} />
             <Text style={[styles.optionText, snapshot.maxConcurrentPairs === count && styles.optionTextSelected]}>{count}</Text>
           </Pressable>
         ))}
@@ -96,7 +100,7 @@ export function LiveQuickConnectHostPanel({
             onPress={() => configure(seconds)}
             style={[styles.option, snapshot.roundSeconds === seconds && styles.optionSelected, active && styles.disabled]}
           >
-            <Clock3 color={snapshot.roundSeconds === seconds ? '#102522' : '#A9BAB5'} size={14} />
+            <Clock3 color={snapshot.roundSeconds === seconds ? visual.color.accentContrast : visual.color.textMuted} size={14} />
             <Text style={[styles.optionText, snapshot.roundSeconds === seconds && styles.optionTextSelected]}>{seconds / 60} min</Text>
           </Pressable>
         ))}
@@ -104,7 +108,7 @@ export function LiveQuickConnectHostPanel({
 
       <Text style={styles.label}>YOUR ROLE</Text>
       <View style={styles.facilitatorNotice}>
-        <ShieldCheck color="#D7B56D" size={17} />
+        <ShieldCheck color={visual.color.teal} size={17} />
         <View style={styles.facilitatorCopy}>
           <Text style={styles.facilitatorTitle}>Host & safety facilitator</Text>
           <Text style={styles.facilitatorBody}>You guide rotations and remain available to the room.</Text>
@@ -128,46 +132,50 @@ export function LiveQuickConnectHostPanel({
 }
 
 function Metric({ label, value }: { label: string; value: number | string }) {
+  const visual = useLiveVisualTheme();
+  const styles = useMemo(() => createStyles(visual), [visual]);
   return <View style={styles.metric}><Text style={styles.metricValue}>{value}</Text><Text style={styles.metricLabel}>{label}</Text></View>;
 }
 
 function Action({ icon: Icon, label, onPress, primary = false, danger = false, disabled = false }: {
   icon: LucideIcon; label: string; onPress: () => void; primary?: boolean; danger?: boolean; disabled?: boolean;
 }) {
-  return <Pressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={[styles.action, primary && styles.actionPrimary, danger && styles.actionDanger, disabled && styles.disabled]}><Icon color={primary ? '#102522' : danger ? '#F2B6B6' : '#D7B56D'} size={16} /><Text style={[styles.actionText, primary && styles.actionTextPrimary, danger && styles.actionTextDanger]}>{label}</Text></Pressable>;
+  const visual = useLiveVisualTheme();
+  const styles = useMemo(() => createStyles(visual), [visual]);
+  return <Pressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={[styles.action, primary && styles.actionPrimary, danger && styles.actionDanger, disabled && styles.disabled]}><Icon color={primary ? visual.color.accentContrast : danger ? visual.color.danger : visual.color.teal} size={16} /><Text style={[styles.actionText, primary && styles.actionTextPrimary, danger && styles.actionTextDanger]}>{label}</Text></Pressable>;
 }
 
-const styles = StyleSheet.create({
-  shell: { gap: 16, borderRadius: 25, borderWidth: 1, borderColor: '#D7B56D45', backgroundColor: '#102522', padding: 18 },
+const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
+  shell: { gap: 16, borderRadius: 25, borderWidth: 1, borderColor: visual.color.borderStrong, backgroundColor: visual.color.surfaceRaised, padding: 18 },
   loading: { minHeight: 220, alignItems: 'center', justifyContent: 'center' },
   stateRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  stateIcon: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: '#D7B56D18' },
+  stateIcon: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.color.tealSoft },
   stateCopy: { flex: 1 },
-  eyebrow: { color: '#D7B56D', fontSize: 9, letterSpacing: 1.4, fontFamily: 'Manrope_800ExtraBold' },
-  stateText: { marginTop: 4, color: '#D3DFDB', fontSize: 12, lineHeight: 18, fontFamily: 'Manrope_500Medium' },
+  eyebrow: { color: visual.color.teal, fontSize: 9, letterSpacing: 1.4, fontFamily: 'Manrope_800ExtraBold' },
+  stateText: { marginTop: 4, color: visual.color.text, fontSize: 12, lineHeight: 18, fontFamily: 'Manrope_500Medium' },
   metrics: { flexDirection: 'row', gap: 7 },
-  metric: { flex: 1, minHeight: 66, alignItems: 'center', justifyContent: 'center', borderRadius: 17, backgroundColor: '#091714', borderWidth: 1, borderColor: '#29413B' },
-  metricValue: { color: '#FFF7EC', fontSize: 19, fontFamily: 'Manrope_800ExtraBold' },
-  metricLabel: { marginTop: 2, color: '#8FA39D', fontSize: 8, fontFamily: 'Manrope_700Bold' },
-  reconnecting: { color: '#D7B56D', fontSize: 10, textAlign: 'center', fontFamily: 'Manrope_700Bold' },
-  capacityCopy: { marginTop: -10, color: '#8FA39D', fontSize: 9, textAlign: 'center', fontFamily: 'Manrope_600SemiBold' },
-  label: { marginTop: 4, color: '#8FA39D', fontSize: 9, letterSpacing: 1.4, fontFamily: 'Manrope_800ExtraBold' },
+  metric: { flex: 1, minHeight: 66, alignItems: 'center', justifyContent: 'center', borderRadius: 17, backgroundColor: visual.color.surface, borderWidth: 1, borderColor: visual.color.border },
+  metricValue: { color: visual.color.text, fontSize: 19, fontFamily: 'Manrope_800ExtraBold' },
+  metricLabel: { marginTop: 2, color: visual.color.textMuted, fontSize: 8, fontFamily: 'Manrope_700Bold' },
+  reconnecting: { color: visual.color.teal, fontSize: 10, textAlign: 'center', fontFamily: 'Manrope_700Bold' },
+  capacityCopy: { marginTop: -10, color: visual.color.textMuted, fontSize: 9, textAlign: 'center', fontFamily: 'Manrope_600SemiBold' },
+  label: { marginTop: 4, color: visual.color.textMuted, fontSize: 9, letterSpacing: 1.4, fontFamily: 'Manrope_800ExtraBold' },
   options: { flexDirection: 'row', gap: 8 },
-  option: { flex: 1, minHeight: 42, borderRadius: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: '#091714', borderWidth: 1, borderColor: '#29413B' },
-  facilitatorNotice: { minHeight: 58, borderRadius: 19, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, backgroundColor: '#091714', borderWidth: 1, borderColor: '#D7B56D45' },
+  option: { flex: 1, minHeight: 42, borderRadius: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: visual.color.surface, borderWidth: 1, borderColor: visual.color.border },
+  facilitatorNotice: { minHeight: 58, borderRadius: 19, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, backgroundColor: visual.color.surface, borderWidth: 1, borderColor: visual.color.borderStrong },
   facilitatorCopy: { flex: 1 },
-  facilitatorTitle: { color: '#FFF7EC', fontSize: 11, fontFamily: 'Manrope_800ExtraBold' },
-  facilitatorBody: { marginTop: 2, color: '#8FA39D', fontSize: 9, lineHeight: 13, fontFamily: 'Manrope_500Medium' },
-  optionSelected: { backgroundColor: '#D7B56D', borderColor: '#D7B56D' },
-  optionText: { color: '#A9BAB5', fontSize: 10, fontFamily: 'Manrope_700Bold' },
-  optionTextSelected: { color: '#102522' },
+  facilitatorTitle: { color: visual.color.text, fontSize: 11, fontFamily: 'Manrope_800ExtraBold' },
+  facilitatorBody: { marginTop: 2, color: visual.color.textMuted, fontSize: 9, lineHeight: 13, fontFamily: 'Manrope_500Medium' },
+  optionSelected: { backgroundColor: visual.color.teal, borderColor: visual.color.teal },
+  optionText: { color: visual.color.textMuted, fontSize: 10, fontFamily: 'Manrope_700Bold' },
+  optionTextSelected: { color: visual.color.accentContrast },
   actions: { gap: 9 },
-  action: { minHeight: 48, borderRadius: 22, borderWidth: 1, borderColor: '#D7B56D65', flexDirection: 'row', gap: 8, alignItems: 'center', justifyContent: 'center' },
-  actionPrimary: { backgroundColor: '#D7B56D', borderColor: '#D7B56D' },
-  actionDanger: { borderColor: '#7A3B3B', backgroundColor: '#4A2424' },
-  actionText: { color: '#D7B56D', fontSize: 11, fontFamily: 'Manrope_800ExtraBold' },
-  actionTextPrimary: { color: '#102522' },
-  actionTextDanger: { color: '#F2B6B6' },
-  error: { color: '#F2B6B6', fontSize: 10, textAlign: 'center', fontFamily: 'Manrope_600SemiBold' },
+  action: { minHeight: 48, borderRadius: 22, borderWidth: 1, borderColor: visual.color.borderStrong, flexDirection: 'row', gap: 8, alignItems: 'center', justifyContent: 'center' },
+  actionPrimary: { backgroundColor: visual.color.teal, borderColor: visual.color.teal },
+  actionDanger: { borderColor: visual.color.danger, backgroundColor: visual.color.dangerSoft },
+  actionText: { color: visual.color.teal, fontSize: 11, fontFamily: 'Manrope_800ExtraBold' },
+  actionTextPrimary: { color: visual.color.accentContrast },
+  actionTextDanger: { color: visual.color.danger },
+  error: { color: visual.color.danger, fontSize: 10, textAlign: 'center', fontFamily: 'Manrope_600SemiBold' },
   disabled: { opacity: 0.48 },
 });

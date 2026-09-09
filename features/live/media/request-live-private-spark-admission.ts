@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { parseLiveMediaAdmission } from './live-media-admission.ts';
+import { requestWithLiveMediaAdmissionRetry } from './live-media-admission-retry.ts';
 import { readFunctionErrorCode } from './live-function-error.ts';
 import type {
   LiveMediaAdmission,
@@ -12,11 +13,11 @@ import type {
  */
 export const requestLivePrivateSparkAdmission = async (
   request: LiveMediaAdmissionRequest,
-): Promise<LiveMediaAdmission> => {
+): Promise<LiveMediaAdmission> => requestWithLiveMediaAdmissionRetry(async () => {
   const { data, error } = await supabase.functions.invoke('live-private-spark-token', {
     body: { privateSparkId: request.sessionId },
   });
 
   if (error) throw new Error(await readFunctionErrorCode(error));
   return parseLiveMediaAdmission(data, { allowPrivateSpark: true });
-};
+});

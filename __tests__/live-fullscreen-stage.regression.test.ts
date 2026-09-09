@@ -34,8 +34,16 @@ const liveStudio = readFileSync(
   new URL('../features/live/components/LiveStudioModal.tsx', import.meta.url),
   'utf8',
 );
+const quickConnectStage = readFileSync(
+  new URL('../features/live/components/LiveQuickConnectStage.tsx', import.meta.url),
+  'utf8',
+);
 const participantTile = readFileSync(
   new URL('../features/live/components/LiveStageParticipantTile.tsx', import.meta.url),
+  'utf8',
+);
+const liveVisualTokens = readFileSync(
+  new URL('../features/live/components/live-visual-tokens.ts', import.meta.url),
   'utf8',
 );
 const privateSparkRoute = readFileSync(
@@ -100,7 +108,7 @@ test('stage management stays outside the public canvas in Live Studio', () => {
   assert.match(liveStudio, /<LiveHostedMatchingPanel/);
   assert.match(stageDesk, /STAGE DESK/);
   assert.match(stageDesk, /presentation\?: 'overlay' \| 'studio'/);
-  assert.match(liveScreen, /height: '27%'/);
+  assert.match(liveScreen, /height: '30%'/);
   assert.match(compactHeader, /minHeight: 56/);
   assert.match(compactHeader, /hostAvatarUrl/);
   assert.match(compactHeader, /hostAvatarShell:[\s\S]*width: 46[\s\S]*height: 46/);
@@ -111,7 +119,8 @@ test('stage management stays outside the public canvas in Live Studio', () => {
   assert.match(liveScreen, /snapshot\?\.stage\.find\(\(participant\) => participant\.role === 'host'\)/);
 });
 
-test('Room Pulse is calm by default and expands only on request', () => {
+test('Room Pulse remains open by default while Odo owns the programme', () => {
+  assert.match(liveScreen, /useState\(true\)/);
   assert.match(liveScreen, /roomPulseExpanded/);
   assert.match(liveScreen, /expanded=\{roomPulseExpanded\}/);
   assert.match(liveScreen, /onExpandedChange=\{setRoomPulseExpanded\}/);
@@ -119,6 +128,26 @@ test('Room Pulse is calm by default and expands only on request', () => {
   assert.match(conversationPanel, /presentation="trigger"/);
   assert.doesNotMatch(conversationPanel, /presentation="compact"/);
   assert.match(conversationPanel, /accessibilityLabel=\{expanded \? 'Collapse Room Pulse' : 'Expand Room Pulse'\}/);
+});
+
+test('Quick Connect always gives the host and pool equal stage space', () => {
+  assert.match(quickConnectStage, /hostPane:\s*\{[\s\S]*?flex: 1/);
+  assert.match(quickConnectStage, /poolPane:\s*\{[\s\S]*?flex: 1/);
+  assert.doesNotMatch(quickConnectStage, /compactPool|poolPaneCompact/);
+  assert.doesNotMatch(liveScreen, /compactPool=/);
+  assert.match(liveScreen, /quickConnectConversationGlass:\s*\{\s*height: '30%', maxHeight: '30%'/);
+});
+
+test('Live surfaces inherit official light and dark brand themes', () => {
+  assert.match(liveVisualTokens, /Colors\.light\.background/);
+  assert.match(liveVisualTokens, /Colors\.dark\.background/);
+  assert.match(liveVisualTokens, /Colors\.light\.accent/);
+  assert.match(liveVisualTokens, /Colors\.dark\.accent/);
+  assert.match(liveVisualTokens, /useColorScheme\(\)/);
+  assert.match(liveVisualTokens, /surfaceSoft: '#18312F'/);
+  assert.match(liveVisualTokens, /borderStrong: '#5BC1BB52'/);
+  assert.match(liveVisualTokens, /text: Colors\.light\.backgroundSubtle/);
+  assert.doesNotMatch(liveScreen, /#D7B56D/i);
 });
 
 test('Room Pulse briefly announces arrivals and member avatars open private actions', () => {

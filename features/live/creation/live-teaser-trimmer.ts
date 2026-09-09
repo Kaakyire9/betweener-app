@@ -125,7 +125,7 @@ export const trimLiveTeaser = async (
         trimmingText: 'Preparing your Live preview...',
         durationFormat: 'mm:ss',
         theme: 'dark',
-        trimmerColor: '#D7B56D',
+        trimmerColor: '#7D5BA6',
         handleIconColor: '#102522',
       });
     } catch (error) {

@@ -453,6 +453,7 @@ export const useLiveSessionController = (sessionId: string, currentUserId: strin
       return runAction(`transition:${targetStatus}`, () =>
         liveRepository.transitionSession(sessionId, snapshot.session.version, targetStatus));
     },
+    endSession: () => runAction('end-session', () => liveRepository.endSession(sessionId)),
     prepareAndStartSession: () => runAction(
       'start-session',
       () => liveRepository.prepareAndStartSession(sessionId),

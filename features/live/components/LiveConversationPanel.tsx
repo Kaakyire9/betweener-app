@@ -25,6 +25,7 @@ import type {
   LiveReactionKind,
 } from '../application/index.ts';
 import { LiveAudiencePulseCard } from './LiveAudiencePulseCard.tsx';
+import { type LiveVisualTheme, useLiveVisualTheme } from './live-visual-tokens.ts';
 
 const REACTIONS: readonly { kind: LiveReactionKind; symbol: string; label: string }[] = [
   { kind: 'heart', symbol: '\u2661', label: 'Heart' },
@@ -79,6 +80,8 @@ const CommentRow = memo(function CommentRow({
   onReport: (comment: LiveComment) => Promise<unknown>;
   onOpenMember?: (member: LiveMemberPreview) => void;
 }) {
+  const visual = useLiveVisualTheme();
+  const styles = useMemo(() => createStyles(visual), [visual]);
   const roleLabel = comment.role === 'host'
     ? 'HOST'
     : comment.role === 'moderator' || comment.role === 'internal_admin'
@@ -172,6 +175,8 @@ export const LiveConversationPanel = memo(function LiveConversationPanel({
   variant = 'solid',
   audiencePulseOpenRequest = 0,
 }: Props) {
+  const visual = useLiveVisualTheme();
+  const styles = useMemo(() => createStyles(visual), [visual]);
   const listRef = useRef<FlatList<LiveComment>>(null);
   const inputRef = useRef<TextInput>(null);
   const shouldFollowRef = useRef(true);
@@ -233,7 +238,7 @@ export const LiveConversationPanel = memo(function LiveConversationPanel({
     <View style={[styles.panel, variant === 'glass' && styles.panelGlass]}>
       <View style={styles.headingRow}>
         <View style={styles.headingCopy}>
-          <Sparkles size={14} color="#D7B56D" />
+          <Sparkles size={14} color={visual.color.teal} />
           <Text style={styles.heading}>ROOM PULSE</Text>
         </View>
         <View style={styles.headingActions}>
@@ -247,8 +252,8 @@ export const LiveConversationPanel = memo(function LiveConversationPanel({
               style={styles.expandButton}
             >
               {expanded
-                ? <ChevronDown color="#B8CAC4" size={16} />
-                : <ChevronUp color="#B8CAC4" size={16} />}
+                ? <ChevronDown color={visual.color.textMuted} size={16} />
+                : <ChevronUp color={visual.color.textMuted} size={16} />}
             </Pressable>
           ) : null}
         </View>
@@ -307,7 +312,7 @@ export const LiveConversationPanel = memo(function LiveConversationPanel({
             onPress={() => void onLoadEarlier()}
             style={styles.loadEarlier}
           >
-            {loadingEarlier ? <ActivityIndicator size="small" color="#D7B56D" /> : null}
+            {loadingEarlier ? <ActivityIndicator size="small" color={visual.color.teal} /> : null}
             <Text style={styles.loadEarlierText}>{loadingEarlier ? 'Loading earlier notes…' : 'Load earlier notes'}</Text>
           </Pressable>
         ) : null}
@@ -368,7 +373,7 @@ export const LiveConversationPanel = memo(function LiveConversationPanel({
           editable={!disabled}
           maxLength={500}
           placeholder="Add something thoughtful…"
-          placeholderTextColor="#8FA19D"
+          placeholderTextColor={visual.color.textMuted}
           style={styles.input}
           returnKeyType="send"
           blurOnSubmit={false}
@@ -384,56 +389,56 @@ export const LiveConversationPanel = memo(function LiveConversationPanel({
           onPress={submit}
           style={[styles.send, (disabled || !draft.trim() || pending?.status === 'sending') && styles.sendDisabled]}
         >
-          <Send size={17} color="#0D2422" />
+          <Send size={17} color={visual.color.accentContrast} />
         </Pressable>
       </View>
     </View>
   );
 });
 
-const styles = StyleSheet.create({
-  panel: { flex: 1, minHeight: 0, backgroundColor: '#0D1D1B', paddingHorizontal: 16, paddingTop: 14 },
+const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
+  panel: { flex: 1, minHeight: 0, backgroundColor: visual.color.surface, paddingHorizontal: 16, paddingTop: 14 },
   panelGlass: { backgroundColor: 'transparent' },
   headingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   headingCopy: { flexDirection: 'row', alignItems: 'center', gap: 7 },
-  heading: { color: '#D7B56D', fontSize: 10, letterSpacing: 1.8, fontFamily: 'Manrope_700Bold' },
+  heading: { color: visual.color.teal, fontSize: 10, letterSpacing: 1.8, fontFamily: 'Manrope_700Bold' },
   headingActions: { flexDirection: 'row', alignItems: 'center', gap: 7 },
-  commentCount: { color: '#7E918C', fontSize: 10, fontFamily: 'Manrope_700Bold' },
-  expandButton: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF0B' },
+  commentCount: { color: visual.color.textMuted, fontSize: 10, fontFamily: 'Manrope_700Bold' },
+  expandButton: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.color.surfaceRaised },
   list: { flex: 1, minHeight: 40 },
   listContent: { paddingVertical: 10, gap: 2, flexGrow: 1 },
   commentRow: { paddingVertical: 4, minHeight: 31, flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
   commentCopy: { flex: 1, minHeight: 27, justifyContent: 'center' },
-  commentAvatarShell: { width: 27, height: 27, borderRadius: 14, alignItems: 'center', justifyContent: 'center', overflow: 'hidden', backgroundColor: '#17322D', borderWidth: 1, borderColor: '#D7B56D55' },
+  commentAvatarShell: { width: 27, height: 27, borderRadius: 14, alignItems: 'center', justifyContent: 'center', overflow: 'hidden', backgroundColor: visual.color.tealSoft, borderWidth: 1, borderColor: visual.color.borderStrong },
   commentAvatar: { width: 27, height: 27, borderRadius: 14 },
-  commentInitial: { color: '#F7E8C7', fontSize: 9, fontFamily: 'Manrope_800ExtraBold' },
-  comment: { color: '#DDE9E5', fontSize: 13, lineHeight: 19, fontFamily: 'Manrope_400Regular' },
-  name: { color: '#FFF7EB', fontFamily: 'Manrope_700Bold' },
-  roleBadge: { color: '#D7B56D', fontSize: 9, letterSpacing: 0.7, fontFamily: 'Manrope_800ExtraBold' },
-  empty: { color: '#8FA19D', fontSize: 12, marginTop: 12, fontFamily: 'Manrope_500Medium' },
-  joinNotice: { minHeight: 38, marginTop: 9, paddingHorizontal: 9, borderRadius: 19, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#D7B56D10', borderWidth: 1, borderColor: '#D7B56D33' },
-  joinAvatarShell: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', overflow: 'hidden', backgroundColor: '#17322D' },
+  commentInitial: { color: visual.color.text, fontSize: 9, fontFamily: 'Manrope_800ExtraBold' },
+  comment: { color: visual.color.text, fontSize: 13, lineHeight: 19, fontFamily: 'Manrope_400Regular' },
+  name: { color: visual.color.text, fontFamily: 'Manrope_700Bold' },
+  roleBadge: { color: visual.color.teal, fontSize: 9, letterSpacing: 0.7, fontFamily: 'Manrope_800ExtraBold' },
+  empty: { color: visual.color.textMuted, fontSize: 12, marginTop: 12, fontFamily: 'Manrope_500Medium' },
+  joinNotice: { minHeight: 38, marginTop: 9, paddingHorizontal: 9, borderRadius: 19, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: visual.color.tealSoft, borderWidth: 1, borderColor: visual.color.borderStrong },
+  joinAvatarShell: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', overflow: 'hidden', backgroundColor: visual.color.tealSoft },
   joinAvatar: { width: 28, height: 28, borderRadius: 14 },
-  joinInitial: { color: '#F7E8C7', fontSize: 9, fontFamily: 'Manrope_800ExtraBold' },
-  joinCopy: { flex: 1, color: '#AFC0BB', fontSize: 11, fontFamily: 'Manrope_500Medium' },
-  joinName: { color: '#FFF7EB', fontFamily: 'Manrope_800ExtraBold' },
-  joinHint: { color: '#D7B56D', fontSize: 8, letterSpacing: 1, fontFamily: 'Manrope_800ExtraBold' },
+  joinInitial: { color: visual.color.text, fontSize: 9, fontFamily: 'Manrope_800ExtraBold' },
+  joinCopy: { flex: 1, color: visual.color.textMuted, fontSize: 11, fontFamily: 'Manrope_500Medium' },
+  joinName: { color: visual.color.text, fontFamily: 'Manrope_800ExtraBold' },
+  joinHint: { color: visual.color.teal, fontSize: 8, letterSpacing: 1, fontFamily: 'Manrope_800ExtraBold' },
   loadEarlier: { height: 34, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 7, paddingHorizontal: 13 },
-  loadEarlierText: { color: '#B8C7C3', fontSize: 11, fontFamily: 'Manrope_700Bold' },
-  pendingRow: { minHeight: 32, marginBottom: 7, paddingHorizontal: 11, borderRadius: 10, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#142522' },
-  pendingFailed: { borderWidth: 1, borderColor: '#704844' },
-  pendingBody: { flex: 1, color: '#C4D1CD', fontSize: 11, fontFamily: 'Manrope_500Medium' },
-  pendingStatus: { color: '#8FA19D', fontSize: 10, fontFamily: 'Manrope_600SemiBold' },
-  retryText: { color: '#E3BE70', fontSize: 10, fontFamily: 'Manrope_800ExtraBold' },
+  loadEarlierText: { color: visual.color.textMuted, fontSize: 11, fontFamily: 'Manrope_700Bold' },
+  pendingRow: { minHeight: 32, marginBottom: 7, paddingHorizontal: 11, borderRadius: 10, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: visual.color.surfaceRaised },
+  pendingFailed: { borderWidth: 1, borderColor: visual.color.danger },
+  pendingBody: { flex: 1, color: visual.color.text, fontSize: 11, fontFamily: 'Manrope_500Medium' },
+  pendingStatus: { color: visual.color.textMuted, fontSize: 10, fontFamily: 'Manrope_600SemiBold' },
+  retryText: { color: visual.color.teal, fontSize: 10, fontFamily: 'Manrope_800ExtraBold' },
   reactions: { flexDirection: 'row', gap: 8, paddingBottom: 10 },
-  reaction: { width: 37, height: 37, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: '#172B28', borderWidth: 1, borderColor: '#29423D' },
-  reactionText: { color: '#FFF7EB', fontSize: 18 },
+  reaction: { width: 37, height: 37, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.color.surfaceRaised, borderWidth: 1, borderColor: visual.color.border },
+  reactionText: { color: visual.color.text, fontSize: 18 },
   keyboardToolbar: { height: 28, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 5 },
-  keyboardToolbarLabel: { color: '#71847F', fontSize: 8, letterSpacing: 1.2, fontFamily: 'Manrope_800ExtraBold' },
-  keyboardDone: { color: '#D7B56D', fontSize: 12, fontFamily: 'Manrope_800ExtraBold' },
+  keyboardToolbarLabel: { color: visual.color.textMuted, fontSize: 8, letterSpacing: 1.2, fontFamily: 'Manrope_800ExtraBold' },
+  keyboardDone: { color: visual.color.teal, fontSize: 12, fontFamily: 'Manrope_800ExtraBold' },
   composer: { flexDirection: 'row', alignItems: 'center', gap: 9, paddingBottom: 10 },
-  input: { flex: 1, height: 46, borderRadius: 23, paddingHorizontal: 17, paddingRight: 44, color: '#FFF7EB', backgroundColor: '#172724', borderWidth: 1, borderColor: '#30423F', fontFamily: 'Manrope_500Medium' },
-  characterCount: { position: 'absolute', right: 58, color: '#7E918C', fontSize: 9, fontFamily: 'Manrope_600SemiBold' },
-  send: { width: 43, height: 43, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: '#D7B56D' },
+  input: { flex: 1, height: 46, borderRadius: 23, paddingHorizontal: 17, paddingRight: 44, color: visual.color.text, backgroundColor: visual.color.surfaceRaised, borderWidth: 1, borderColor: visual.color.border, fontFamily: 'Manrope_500Medium' },
+  characterCount: { position: 'absolute', right: 58, color: visual.color.textMuted, fontSize: 9, fontFamily: 'Manrope_600SemiBold' },
+  send: { width: 43, height: 43, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.color.teal },
   sendDisabled: { opacity: 0.45 },
 });

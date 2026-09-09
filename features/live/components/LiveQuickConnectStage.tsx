@@ -1,5 +1,6 @@
-import { memo, type ReactNode } from 'react';
+import { memo, useMemo, type ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
+import { type LiveVisualTheme, useLiveVisualTheme } from './live-visual-tokens.ts';
 
 export type LiveQuickConnectStageProps = {
   hostSurface: ReactNode;
@@ -17,6 +18,8 @@ export const LiveQuickConnectStage = memo(function LiveQuickConnectStage({
   layout,
   poolSurface,
 }: LiveQuickConnectStageProps) {
+  const visual = useLiveVisualTheme();
+  const styles = useMemo(() => createStyles(visual), [visual]);
   const sideBySide = layout === 'side-by-side';
 
   return (
@@ -36,7 +39,7 @@ export const LiveQuickConnectStage = memo(function LiveQuickConnectStage({
   );
 });
 
-const styles = StyleSheet.create({
+const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
   shell: {
     flex: 1,
     minHeight: 0,
@@ -45,10 +48,10 @@ const styles = StyleSheet.create({
     marginBottom: 7,
     borderRadius: 26,
     borderWidth: 1,
-    borderColor: '#D7B56D52',
-    backgroundColor: '#061310',
+    borderColor: visual.color.borderStrong,
+    backgroundColor: visual.color.surface,
     overflow: 'hidden',
-    shadowColor: '#000000',
+    shadowColor: visual.isDark ? '#000000' : visual.color.teal,
     shadowOffset: { width: 0, height: 12 },
     shadowOpacity: 0.28,
     shadowRadius: 20,
@@ -62,21 +65,21 @@ const styles = StyleSheet.create({
     minWidth: 0,
     minHeight: 0,
     overflow: 'hidden',
-    backgroundColor: '#091413',
+    backgroundColor: visual.color.videoChrome,
   },
   poolPane: {
     flex: 1,
     minWidth: 0,
     minHeight: 0,
     overflow: 'hidden',
-    backgroundColor: '#071714',
+    backgroundColor: visual.color.surface,
   },
   horizontalDivider: {
     height: 1,
-    backgroundColor: '#D7B56D52',
+    backgroundColor: visual.color.borderStrong,
   },
   verticalDivider: {
     width: 1,
-    backgroundColor: '#D7B56D52',
+    backgroundColor: visual.color.borderStrong,
   },
 });

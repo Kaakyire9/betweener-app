@@ -61,7 +61,7 @@ export function LiveChemistryOverlay({
           showsVerticalScrollIndicator={false}
           style={styles.scroll}
         >
-          <View style={styles.icon}><Sparkles color={LIVE_VISUAL.color.gold} size={23} /></View>
+          <View style={styles.icon}><Sparkles color={LIVE_VISUAL.color.purple} size={23} /></View>
           <Text style={styles.eyebrow}>CHEMISTRY FIRST</Text>
           <Text style={styles.title}>{name}</Text>
           <Text style={styles.copy}>Stay with the conversation before the full picture appears.</Text>
@@ -74,7 +74,7 @@ export function LiveChemistryOverlay({
           ) : null}
         </ScrollView>
         <View style={styles.actionArea}>
-          {loading || (!snapshot && !error) ? <ActivityIndicator color={LIVE_VISUAL.color.gold} /> : null}
+          {loading || (!snapshot && !error) ? <ActivityIndicator color={LIVE_VISUAL.color.purple} /> : null}
           {error ? (
             <View style={styles.errorArea}>
               <Text style={styles.error}>This private reveal could not be verified yet. Video remains protected.</Text>
@@ -108,20 +108,20 @@ const styles = StyleSheet.create({
   content: { width: '100%', maxWidth: 390, maxHeight: '100%', flex: 1, alignItems: 'center' },
   scroll: { width: '100%', flex: 1, minHeight: 0 },
   scrollContent: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 2, paddingTop: 2, paddingBottom: 8 },
-  icon: { width: 48, height: 48, borderRadius: 24, borderWidth: 1, borderColor: '#D7B56D66', backgroundColor: '#D7B56D16', alignItems: 'center', justifyContent: 'center', marginBottom: 10 },
-  eyebrow: { color: LIVE_VISUAL.color.gold, fontSize: 12, fontWeight: '800', letterSpacing: 2.4 },
+  icon: { width: 48, height: 48, borderRadius: 24, borderWidth: 1, borderColor: LIVE_VISUAL.color.borderStrong, backgroundColor: LIVE_VISUAL.color.purpleSoft, alignItems: 'center', justifyContent: 'center', marginBottom: 10 },
+  eyebrow: { color: LIVE_VISUAL.color.purple, fontSize: 12, fontWeight: '800', letterSpacing: 2.4 },
   title: { color: LIVE_VISUAL.color.text, fontFamily: 'PlayfairDisplay_700Bold', fontSize: 30, textAlign: 'center', marginTop: 8 },
   copy: { color: LIVE_VISUAL.color.textMuted, fontSize: 14, lineHeight: 20, textAlign: 'center', marginTop: 8 },
   contextRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 7, marginTop: 14 },
   chip: { borderWidth: 1, borderColor: LIVE_VISUAL.color.borderStrong, backgroundColor: '#FFFFFF0D', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999, maxWidth: '100%' },
   chipText: { color: LIVE_VISUAL.color.oat, fontSize: 13 },
   actionArea: { width: '100%', minHeight: 54, flexShrink: 0, alignItems: 'center', justifyContent: 'center', paddingTop: 6 },
-  button: { width: '100%', maxWidth: 280, borderRadius: 999, backgroundColor: LIVE_VISUAL.color.gold, paddingHorizontal: 24, paddingVertical: 14, alignItems: 'center' },
+  button: { width: '100%', maxWidth: 280, borderRadius: 999, backgroundColor: LIVE_VISUAL.color.purple, paddingHorizontal: 24, paddingVertical: 14, alignItems: 'center' },
   buttonText: { color: '#10201C', fontSize: 15, fontWeight: '800' },
   waiting: { borderRadius: 999, borderWidth: 1, borderColor: '#8B73D666', backgroundColor: '#8B73D620', paddingHorizontal: 20, paddingVertical: 13 },
   waitingText: { color: '#D8CCFA', fontWeight: '700' },
   errorArea: { alignItems: 'center' },
   error: { color: '#F0AAA5', fontSize: 12, textAlign: 'center' },
-  retryButton: { marginTop: 8, paddingHorizontal: 18, paddingVertical: 9, borderRadius: 999, borderWidth: 1, borderColor: '#D7B56D66' },
-  retryText: { color: LIVE_VISUAL.color.gold, fontSize: 13, fontWeight: '800' },
+  retryButton: { marginTop: 8, paddingHorizontal: 18, paddingVertical: 9, borderRadius: 999, borderWidth: 1, borderColor: LIVE_VISUAL.color.borderStrong },
+  retryText: { color: LIVE_VISUAL.color.purple, fontSize: 13, fontWeight: '800' },
 });

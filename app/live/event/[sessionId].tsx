@@ -21,9 +21,11 @@ import {
   LiveEventManagementSheet,
   LiveHostPreparationCard,
   LiveQuorumPoolingCard,
+  LiveSessionRecapCard,
 } from '@/features/live/components/index.ts';
 import { formatLiveCountdown } from '@/features/live/components/LiveSessionCard.tsx';
-import { useLiveQuorumPooling, useLiveSessions } from '@/features/live/hooks/index.ts';
+import { type LiveVisualTheme, useLiveVisualTheme } from '@/features/live/components/live-visual-tokens.ts';
+import { useLiveQuorumPooling, useLiveSessionRecap, useLiveSessions } from '@/features/live/hooks/index.ts';
 import {
   getLiveExitDestination,
   getLiveReturnParams,
@@ -37,11 +39,15 @@ const formatDate = (value: string | null) => value
   : 'Date to be announced';
 
 function TeaserVideo({ uri }: { uri: string }) {
+  const visual = useLiveVisualTheme();
+  const styles = useMemo(() => createStyles(visual), [visual]);
   const player = useVideoPlayer(uri, (instance) => { instance.loop = true; instance.muted = false; });
   return <VideoView player={player} nativeControls contentFit="cover" style={styles.teaser} />;
 }
 
 export default function LiveEventScreen() {
+  const visual = useLiveVisualTheme();
+  const styles = useMemo(() => createStyles(visual), [visual]);
   const params = useLocalSearchParams<{ sessionId: string } & LiveReturnRouteParams>();
   const sessionId = typeof params.sessionId === 'string' ? params.sessionId : '';
   const { profile } = useAuth();
@@ -54,7 +60,9 @@ export default function LiveEventScreen() {
   useEffect(() => { const timer = setInterval(() => setClock(Date.now()), 30_000); return () => clearInterval(timer); }, []);
   const session = useMemo(() => sessions.find((item) => item.id === sessionId), [sessionId, sessions]);
   const phase = session ? getLiveSessionPhase(session, clock) : 'upcoming';
+  const recap = useLiveSessionRecap(sessionId, phase === 'past' && session?.status === 'ended');
   const isOwner = session?.createdByProfileId === profile?.id;
+  const isDue = Boolean(session?.scheduledStart && Date.parse(session.scheduledStart) <= clock);
   const posterUrl = getLiveEventMediaUrl(session?.posterPath);
   const teaserUrl = getLiveEventMediaUrl(session?.teaserVideoPath);
   const reservationCount = quorumPooling.snapshot?.quorum.attendanceCount ?? session?.reservationCount ?? 0;
@@ -139,17 +147,17 @@ export default function LiveEventScreen() {
     ]);
   };
 
-  if (loading && !session) return <View style={styles.loading}><ActivityIndicator color="#E1BE70" /></View>;
+  if (loading && !session) return <View style={styles.loading}><ActivityIndicator color={visual.teal} /></View>;
   if (!session) return <View style={styles.loading}><Text style={styles.missing}>This Live event is not available.</Text><Pressable onPress={leaveEvent}><Text style={styles.link}>{returnsToCircle ? 'Return to Circle' : 'Return to Live Studio'}</Text></Pressable></View>;
 
   const cancelled = session.status === 'cancelled';
   return (
-    <LinearGradient colors={['#071310', '#0C211D', '#121713']} style={styles.root}>
+    <LinearGradient colors={visual.isDark ? [visual.canvas, visual.surfaceSoft, visual.canvas] : [visual.canvas, visual.bgSubtle, visual.surface]} style={styles.root}>
       <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
         <View style={styles.header}>
-          <Pressable accessibilityLabel={returnsToCircle ? 'Back to Circle' : 'Back to Live Studio'} onPress={leaveEvent} style={styles.icon}><ArrowLeft size={21} color="#FFF7EC" /></Pressable>
+          <Pressable accessibilityLabel={returnsToCircle ? 'Back to Circle' : 'Back to Live Studio'} onPress={leaveEvent} style={styles.icon}><ArrowLeft size={21} color={visual.text} /></Pressable>
           <Text style={styles.headerTitle}>Live Event</Text>
-          {isOwner ? <Pressable accessibilityLabel="Manage Live" onPress={() => setManagementOpen(true)} style={styles.manageIcon}><MoreHorizontal size={22} color="#FFF7EC" /></Pressable> : null}
+          {isOwner ? <Pressable accessibilityLabel="Manage Live" onPress={() => setManagementOpen(true)} style={styles.manageIcon}><MoreHorizontal size={22} color={visual.text} /></Pressable> : null}
         </View>
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <ImageBackground source={posterUrl ? { uri: posterUrl } : undefined} style={styles.hero} imageStyle={styles.heroImage}>
@@ -164,14 +172,24 @@ export default function LiveEventScreen() {
           </ImageBackground>
 
           <View style={styles.details}>
-            <View style={styles.detailRow}><CalendarClock size={18} color="#E1BE70" /><View><Text style={styles.detailLabel}>{cancelled ? 'WAS SCHEDULED' : phase === 'past' ? 'ENDED' : 'STARTS'}</Text><Text style={styles.detailValue}>{formatDate(cancelled ? session.scheduledStart : phase === 'past' ? session.endedAt : session.scheduledStart)}</Text></View></View>
+            <View style={styles.detailRow}><CalendarClock size={18} color={visual.teal} /><View><Text style={styles.detailLabel}>{cancelled ? 'WAS SCHEDULED' : phase === 'past' ? 'ENDED' : 'STARTS'}</Text><Text style={styles.detailValue}>{formatDate(cancelled ? session.scheduledStart : phase === 'past' ? session.endedAt : session.scheduledStart)}</Text></View></View>
             <View style={styles.statRow}>
-              <View style={styles.stat}><Users size={18} color="#E1BE70" /><Text style={styles.statNumber}>{phase === 'past' ? session.totalAttendeeCount : reservationCount}</Text><Text style={styles.statLabel}>{phase === 'past' ? 'attended' : 'places saved'}</Text></View>
-              <View style={styles.stat}><Sparkles size={18} color="#E1BE70" /><Text style={styles.statNumber}>{session.matchesMadeCount}</Text><Text style={styles.statLabel}>matches made</Text></View>
+              <View style={styles.stat}><Users size={18} color={visual.teal} /><Text style={styles.statNumber}>{phase === 'past' ? session.totalAttendeeCount : reservationCount}</Text><Text style={styles.statLabel}>{phase === 'past' ? 'attended' : 'places saved'}</Text></View>
+              <View style={styles.stat}><Sparkles size={18} color={visual.teal} /><Text style={styles.statNumber}>{session.matchesMadeCount}</Text><Text style={styles.statLabel}>introductions</Text></View>
             </View>
           </View>
 
           {cancelled ? <View style={styles.cancelledNotice}><Text style={styles.cancelledNoticeTitle}>This Live was cancelled</Text><Text style={styles.cancelledNoticeCopy}>The room is closed. Its details remain visible so guests are not left wondering what happened.</Text></View> : null}
+
+          {session.status === 'ended' ? <LiveSessionRecapCard recap={recap.recap} loading={recap.loading} error={recap.error} onRetry={() => void recap.refresh()} /> : null}
+
+          {phase === 'upcoming' && isDue && !isOwner ? (
+            <View style={styles.dueNotice}>
+              <Text style={styles.dueEyebrow}>THE ROOM IS DUE</Text>
+              <Text style={styles.dueTitle}>The host is preparing the stage.</Text>
+              <Text style={styles.dueCopy}>Stay here—the Enter Live button will appear as soon as the host opens the public room.</Text>
+            </View>
+          ) : null}
 
           {phase === 'upcoming' ? (
             <LiveQuorumPoolingCard
@@ -188,14 +206,14 @@ export default function LiveEventScreen() {
             />
           ) : null}
 
-          {teaserUrl ? <View style={styles.teaserCard}><View style={styles.teaserHeading}><Play size={16} color="#E1BE70" /><Text style={styles.teaserTitle}>A glimpse of the room</Text></View><TeaserVideo uri={teaserUrl} /></View> : null}
+          {teaserUrl ? <View style={styles.teaserCard}><View style={styles.teaserHeading}><Play size={16} color={visual.teal} /><Text style={styles.teaserTitle}>A glimpse of the room</Text></View><TeaserVideo uri={teaserUrl} /></View> : null}
 
           {phase === 'upcoming' && !isOwner ? (
             <Pressable disabled={saving} onPress={() => void reserve()} style={[styles.primary, session.rsvpStatus === 'going' && styles.savedButton]}>
-              {saving ? <ActivityIndicator color="#102522" /> : <><Check size={18} color="#102522" /><Text style={styles.primaryText}>{session.rsvpStatus === 'going' ? 'Place saved — tap to cancel' : session.rsvpStatus === 'needs_reconfirmation' ? 'Confirm my place again' : 'Save my place'}</Text></>}
+              {saving ? <ActivityIndicator color={visual.accentContrast} /> : <><Check size={18} color={visual.accentContrast} /><Text style={styles.primaryText}>{session.rsvpStatus === 'going' ? 'Place saved — tap to cancel' : session.rsvpStatus === 'needs_reconfirmation' ? 'Confirm my place again' : 'Save my place'}</Text></>}
             </Pressable>
           ) : null}
-          {isOwner && phase === 'upcoming' ? <LiveHostPreparationCard session={session} onOpenBackstage={enter} onManage={() => setManagementOpen(true)} onShare={() => void shareEvent()} /> : null}
+          {isOwner && phase === 'upcoming' ? <LiveHostPreparationCard session={session} now={clock} onOpenBackstage={enter} onManage={() => setManagementOpen(true)} onShare={() => void shareEvent()} /> : null}
           {phase === 'live' ? <Pressable onPress={enter} style={styles.primary}><Text style={styles.primaryText}>Enter Live room</Text></Pressable> : null}
         </ScrollView>
         {isOwner ? (
@@ -216,45 +234,49 @@ export default function LiveEventScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
   root: { flex: 1 },
   safe: { flex: 1 },
-  loading: { flex: 1, backgroundColor: '#071310', alignItems: 'center', justifyContent: 'center', gap: 15 },
-  missing: { color: '#FFF7EC', fontFamily: 'Manrope_700Bold' },
-  link: { color: '#E1BE70', fontFamily: 'Manrope_800ExtraBold' },
+  loading: { flex: 1, backgroundColor: visual.canvas, alignItems: 'center', justifyContent: 'center', gap: 15 },
+  missing: { color: visual.text, fontFamily: 'Manrope_700Bold' },
+  link: { color: visual.teal, fontFamily: 'Manrope_800ExtraBold' },
   header: { height: 66, paddingHorizontal: 18, flexDirection: 'row', alignItems: 'center', gap: 14 },
-  icon: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: '#152824', borderWidth: 1, borderColor: '#36514B' },
-  manageIcon: { marginLeft: 'auto', width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: '#152824', borderWidth: 1, borderColor: '#36514B' },
-  headerTitle: { color: '#FFF7EC', fontSize: 18, fontFamily: 'PlayfairDisplay_700Bold' },
+  icon: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.surface, borderWidth: 1, borderColor: visual.border },
+  manageIcon: { marginLeft: 'auto', width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.surface, borderWidth: 1, borderColor: visual.border },
+  headerTitle: { color: visual.text, fontSize: 18, fontFamily: 'PlayfairDisplay_700Bold' },
   content: { padding: 18, paddingBottom: 50, gap: 16 },
-  hero: { minHeight: 430, borderRadius: 30, overflow: 'hidden', backgroundColor: '#17322D' },
+  hero: { minHeight: 430, borderRadius: 30, overflow: 'hidden', backgroundColor: visual.surfaceSoft },
   heroImage: { borderRadius: 30 },
   heroOverlay: { flex: 1, padding: 20 },
-  phasePill: { alignSelf: 'flex-start', paddingHorizontal: 12, minHeight: 30, borderRadius: 15, justifyContent: 'center', backgroundColor: 'rgba(10,31,27,0.86)', borderWidth: 1, borderColor: '#806F4A' },
-  livePill: { backgroundColor: '#E1BE70' },
-  cancelledPill: { backgroundColor: '#432824', borderColor: '#A86156' },
-  phaseText: { color: '#E6CE94', fontSize: 9, letterSpacing: 1.3, fontFamily: 'Manrope_800ExtraBold' },
-  liveText: { color: '#102522' },
-  cancelledText: { color: '#FFD3CB' },
+  phasePill: { alignSelf: 'flex-start', paddingHorizontal: 12, minHeight: 30, borderRadius: 15, justifyContent: 'center', backgroundColor: 'rgba(10,31,27,0.86)', borderWidth: 1, borderColor: visual.teal },
+  livePill: { backgroundColor: visual.teal },
+  cancelledPill: { backgroundColor: visual.dangerSoft, borderColor: visual.danger },
+  phaseText: { color: '#FFFFFF', fontSize: 9, letterSpacing: 1.3, fontFamily: 'Manrope_800ExtraBold' },
+  liveText: { color: visual.accentContrast },
+  cancelledText: { color: visual.dangerText },
   heroCopy: { marginTop: 'auto' },
   title: { color: '#FFF9EF', fontSize: 38, lineHeight: 43, fontFamily: 'PlayfairDisplay_700Bold' },
   description: { color: '#D0DDD9', fontSize: 13, lineHeight: 20, marginTop: 10, fontFamily: 'Manrope_500Medium' },
-  details: { borderRadius: 25, padding: 18, backgroundColor: '#132622', borderWidth: 1, borderColor: '#38514B', gap: 18 },
+  details: { borderRadius: 25, padding: 18, backgroundColor: visual.surface, borderWidth: 1, borderColor: visual.border, gap: 18 },
   detailRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  detailLabel: { color: '#8FA49F', fontSize: 8, letterSpacing: 1.5, fontFamily: 'Manrope_800ExtraBold' },
-  detailValue: { color: '#FFF7EC', fontSize: 13, marginTop: 3, fontFamily: 'Manrope_700Bold' },
+  detailLabel: { color: visual.textMuted, fontSize: 8, letterSpacing: 1.5, fontFamily: 'Manrope_800ExtraBold' },
+  detailValue: { color: visual.text, fontSize: 13, marginTop: 3, fontFamily: 'Manrope_700Bold' },
   statRow: { flexDirection: 'row', gap: 10 },
-  stat: { flex: 1, borderRadius: 18, padding: 14, backgroundColor: '#0D1E1B' },
-  statNumber: { color: '#FFF7EC', fontSize: 23, marginTop: 8, fontFamily: 'PlayfairDisplay_700Bold' },
-  statLabel: { color: '#91A39F', fontSize: 10, fontFamily: 'Manrope_600SemiBold' },
-  cancelledNotice: { borderRadius: 22, padding: 17, backgroundColor: '#2B211E', borderWidth: 1, borderColor: '#68423B' },
-  cancelledNoticeTitle: { color: '#FFD3CB', fontSize: 13, fontFamily: 'Manrope_800ExtraBold' },
-  cancelledNoticeCopy: { color: '#BFA9A4', fontSize: 10, lineHeight: 16, marginTop: 5, fontFamily: 'Manrope_500Medium' },
-  teaserCard: { borderRadius: 25, padding: 12, backgroundColor: '#132622', borderWidth: 1, borderColor: '#38514B' },
+  stat: { flex: 1, borderRadius: 18, padding: 14, backgroundColor: visual.surfaceSoft },
+  statNumber: { color: visual.text, fontSize: 23, marginTop: 8, fontFamily: 'PlayfairDisplay_700Bold' },
+  statLabel: { color: visual.textMuted, fontSize: 10, fontFamily: 'Manrope_600SemiBold' },
+  cancelledNotice: { borderRadius: 22, padding: 17, backgroundColor: visual.dangerSoft, borderWidth: 1, borderColor: visual.danger },
+  cancelledNoticeTitle: { color: visual.dangerText, fontSize: 13, fontFamily: 'Manrope_800ExtraBold' },
+  cancelledNoticeCopy: { color: visual.textMuted, fontSize: 10, lineHeight: 16, marginTop: 5, fontFamily: 'Manrope_500Medium' },
+  dueNotice: { borderRadius: 22, padding: 17, backgroundColor: visual.tealSoft, borderWidth: 1, borderColor: visual.borderStrong },
+  dueEyebrow: { color: visual.teal, fontSize: 8, letterSpacing: 1.4, fontFamily: 'Manrope_800ExtraBold' },
+  dueTitle: { color: visual.text, fontSize: 16, marginTop: 5, fontFamily: 'PlayfairDisplay_700Bold' },
+  dueCopy: { color: visual.textMuted, fontSize: 10, lineHeight: 16, marginTop: 5, fontFamily: 'Manrope_500Medium' },
+  teaserCard: { borderRadius: 25, padding: 12, backgroundColor: visual.surface, borderWidth: 1, borderColor: visual.border },
   teaserHeading: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 8 },
-  teaserTitle: { color: '#F8F1E7', fontSize: 12, fontFamily: 'Manrope_800ExtraBold' },
+  teaserTitle: { color: visual.text, fontSize: 12, fontFamily: 'Manrope_800ExtraBold' },
   teaser: { height: 230, borderRadius: 18, overflow: 'hidden' },
-  primary: { minHeight: 58, borderRadius: 29, paddingHorizontal: 20, flexDirection: 'row', gap: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: '#E1BE70' },
-  savedButton: { backgroundColor: '#BBD7CC' },
-  primaryText: { color: '#102522', fontSize: 13, fontFamily: 'Manrope_800ExtraBold' },
+  primary: { minHeight: 58, borderRadius: 29, paddingHorizontal: 20, flexDirection: 'row', gap: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.teal },
+  savedButton: { backgroundColor: visual.teal },
+  primaryText: { color: visual.accentContrast, fontSize: 13, fontFamily: 'Manrope_800ExtraBold' },
 });

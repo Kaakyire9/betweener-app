@@ -4882,6 +4882,266 @@ export type Database = {
           },
         ]
       }
+      live_music_events: {
+        Row: {
+          action: string
+          created_at: string
+          effective_volume: number | null
+          event_id: string
+          idempotency_key: string
+          playlist_id: string | null
+          reason_code: string
+          requested_volume: number | null
+          session_id: string
+          source: string
+          state_version: number
+          status: string
+          track_id: string | null
+        }
+        Insert: {
+          action: string
+          created_at?: string
+          effective_volume?: number | null
+          event_id?: string
+          idempotency_key: string
+          playlist_id?: string | null
+          reason_code: string
+          requested_volume?: number | null
+          session_id: string
+          source: string
+          state_version: number
+          status?: string
+          track_id?: string | null
+        }
+        Update: {
+          action?: string
+          created_at?: string
+          effective_volume?: number | null
+          event_id?: string
+          idempotency_key?: string
+          playlist_id?: string | null
+          reason_code?: string
+          requested_volume?: number | null
+          session_id?: string
+          source?: string
+          state_version?: number
+          status?: string
+          track_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_music_events_playlist_id_fkey"
+            columns: ["playlist_id"]
+            isOneToOne: false
+            referencedRelation: "live_music_playlists"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_music_events_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_music_events_track_id_fkey"
+            columns: ["track_id"]
+            isOneToOne: false
+            referencedRelation: "live_music_tracks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_music_playlist_tracks: {
+        Row: {
+          playlist_id: string
+          position: number
+          track_id: string
+        }
+        Insert: {
+          playlist_id: string
+          position: number
+          track_id: string
+        }
+        Update: {
+          playlist_id?: string
+          position?: number
+          track_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_music_playlist_tracks_playlist_id_fkey"
+            columns: ["playlist_id"]
+            isOneToOne: false
+            referencedRelation: "live_music_playlists"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_music_playlist_tracks_track_id_fkey"
+            columns: ["track_id"]
+            isOneToOne: false
+            referencedRelation: "live_music_tracks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_music_playlists: {
+        Row: {
+          created_at: string
+          enabled: boolean
+          id: string
+          mood: string | null
+          name: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          mood?: string | null
+          name: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          mood?: string | null
+          name?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      live_music_session_state: {
+        Row: {
+          control_source: string
+          effective_volume: number
+          last_action: string | null
+          last_reason_code: string | null
+          mood: string | null
+          playback_offset_seconds: number
+          playlist_id: string | null
+          program_started_at: string | null
+          requested_volume: number
+          session_id: string
+          status: string
+          track_id: string | null
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          control_source?: string
+          effective_volume?: number
+          last_action?: string | null
+          last_reason_code?: string | null
+          mood?: string | null
+          playback_offset_seconds?: number
+          playlist_id?: string | null
+          program_started_at?: string | null
+          requested_volume?: number
+          session_id: string
+          status?: string
+          track_id?: string | null
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          control_source?: string
+          effective_volume?: number
+          last_action?: string | null
+          last_reason_code?: string | null
+          mood?: string | null
+          playback_offset_seconds?: number
+          playlist_id?: string | null
+          program_started_at?: string | null
+          requested_volume?: number
+          session_id?: string
+          status?: string
+          track_id?: string | null
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_music_session_state_playlist_id_fkey"
+            columns: ["playlist_id"]
+            isOneToOne: false
+            referencedRelation: "live_music_playlists"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_music_session_state_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: true
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_music_session_state_track_id_fkey"
+            columns: ["track_id"]
+            isOneToOne: false
+            referencedRelation: "live_music_tracks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_music_tracks: {
+        Row: {
+          artist: string
+          contains_vocals: boolean
+          created_at: string
+          duration_seconds: number
+          enabled: boolean
+          energy: number
+          id: string
+          license_expires_at: string | null
+          license_reference: string
+          license_status: string
+          licensed_regions: string[]
+          mood: string
+          storage_bucket: string
+          storage_path: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          artist: string
+          contains_vocals?: boolean
+          created_at?: string
+          duration_seconds: number
+          enabled?: boolean
+          energy?: number
+          id?: string
+          license_expires_at?: string | null
+          license_reference: string
+          license_status?: string
+          licensed_regions?: string[]
+          mood: string
+          storage_bucket?: string
+          storage_path: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          artist?: string
+          contains_vocals?: boolean
+          created_at?: string
+          duration_seconds?: number
+          enabled?: boolean
+          energy?: number
+          id?: string
+          license_expires_at?: string | null
+          license_reference?: string
+          license_status?: string
+          licensed_regions?: string[]
+          mood?: string
+          storage_bucket?: string
+          storage_path?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       live_odo_action_attempts: {
         Row: {
           action_id: string
@@ -4971,6 +5231,8 @@ export type Database = {
           provider: string
           provider_request_id: string | null
           requested_by_user_id: string
+          round_id: string | null
+          round_version: number | null
           routing_reason_code: string
           session_id: string
           session_version: number
@@ -4998,6 +5260,8 @@ export type Database = {
           provider: string
           provider_request_id?: string | null
           requested_by_user_id: string
+          round_id?: string | null
+          round_version?: number | null
           routing_reason_code: string
           session_id: string
           session_version: number
@@ -5025,6 +5289,8 @@ export type Database = {
           provider?: string
           provider_request_id?: string | null
           requested_by_user_id?: string
+          round_id?: string | null
+          round_version?: number | null
           routing_reason_code?: string
           session_id?: string
           session_version?: number
@@ -5081,80 +5347,778 @@ export type Database = {
       live_odo_configuration: {
         Row: {
           audience_pulse_enabled: boolean
+          auto_audience_pulse_enabled: boolean
+          auto_intermission_enabled: boolean
+          auto_narration_enabled: boolean
+          auto_scene_enabled: boolean
+          auto_spark_enabled: boolean
+          automatic_intermission_cooldown_seconds: number
+          automatic_intervention_window_seconds: number
+          automatic_narration_cooldown_seconds: number
+          automatic_pulse_cooldown_seconds: number
+          automatic_scene_minimum_dwell_seconds: number
+          automatic_spark_delay_seconds: number
           autopilot_enabled: boolean
+          betweener_studio_control_enabled: boolean
+          betweener_studio_enabled: boolean
           circuit_breaker_open: boolean
           conversation_spark_enabled: boolean
           copilot_enabled: boolean
           created_at: string
+          full_autopilot_enabled: boolean
+          full_quick_connect_autopilot_enabled: boolean
+          full_quick_connect_internal_only: boolean
+          full_quick_connect_low_liquidity_seconds: number
+          full_quick_connect_maximum_runtime_minutes: number
+          full_quick_connect_reconcile_seconds: number
+          guarded_autopilot_enabled: boolean
+          guarded_autopilot_internal_only: boolean
+          host_scene_suppression_seconds: number
           id: boolean
           lease_seconds: number
+          maximum_automatic_interventions_per_window: number
           maximum_calls_per_minute: number
           maximum_calls_per_session: number
           maximum_input_tokens_per_session: number
           maximum_output_tokens_per_session: number
           maximum_terra_calls_per_session: number
+          minimum_audience_for_automatic_pulse: number
           minimum_call_interval_seconds: number
           model_pricing: Json
+          music_auto_enabled: boolean
+          music_default_volume: number
+          music_ducked_volume: number
+          music_ducking_enabled: boolean
           music_enabled: boolean
           odo_enabled: boolean
+          odo_voice_enabled: boolean
+          pair_narration_enabled: boolean
           pricing_version: string
           provider_timeout_ms: number
+          scene_suggestions_enabled: boolean
+          screen_share_enabled: boolean
           shadow_mode: boolean
+          show_director_enabled: boolean
+          show_director_internal_only: boolean
+          show_energy_mode_enabled: boolean
+          show_host_suppression_seconds: number
+          show_intermission_enabled: boolean
+          show_intermission_every_rounds: number
+          show_reconcile_seconds: number
+          show_scene_minimum_dwell_seconds: number
           task_call_limits_per_minute: Json
+          transition_copy_enabled: boolean
           updated_at: string
           updated_by_user_id: string | null
         }
         Insert: {
           audience_pulse_enabled?: boolean
+          auto_audience_pulse_enabled?: boolean
+          auto_intermission_enabled?: boolean
+          auto_narration_enabled?: boolean
+          auto_scene_enabled?: boolean
+          auto_spark_enabled?: boolean
+          automatic_intermission_cooldown_seconds?: number
+          automatic_intervention_window_seconds?: number
+          automatic_narration_cooldown_seconds?: number
+          automatic_pulse_cooldown_seconds?: number
+          automatic_scene_minimum_dwell_seconds?: number
+          automatic_spark_delay_seconds?: number
           autopilot_enabled?: boolean
+          betweener_studio_control_enabled?: boolean
+          betweener_studio_enabled?: boolean
           circuit_breaker_open?: boolean
           conversation_spark_enabled?: boolean
           copilot_enabled?: boolean
           created_at?: string
+          full_autopilot_enabled?: boolean
+          full_quick_connect_autopilot_enabled?: boolean
+          full_quick_connect_internal_only?: boolean
+          full_quick_connect_low_liquidity_seconds?: number
+          full_quick_connect_maximum_runtime_minutes?: number
+          full_quick_connect_reconcile_seconds?: number
+          guarded_autopilot_enabled?: boolean
+          guarded_autopilot_internal_only?: boolean
+          host_scene_suppression_seconds?: number
           id?: boolean
           lease_seconds?: number
+          maximum_automatic_interventions_per_window?: number
           maximum_calls_per_minute?: number
           maximum_calls_per_session?: number
           maximum_input_tokens_per_session?: number
           maximum_output_tokens_per_session?: number
           maximum_terra_calls_per_session?: number
+          minimum_audience_for_automatic_pulse?: number
           minimum_call_interval_seconds?: number
           model_pricing?: Json
+          music_auto_enabled?: boolean
+          music_default_volume?: number
+          music_ducked_volume?: number
+          music_ducking_enabled?: boolean
           music_enabled?: boolean
           odo_enabled?: boolean
+          odo_voice_enabled?: boolean
+          pair_narration_enabled?: boolean
           pricing_version?: string
           provider_timeout_ms?: number
+          scene_suggestions_enabled?: boolean
+          screen_share_enabled?: boolean
           shadow_mode?: boolean
+          show_director_enabled?: boolean
+          show_director_internal_only?: boolean
+          show_energy_mode_enabled?: boolean
+          show_host_suppression_seconds?: number
+          show_intermission_enabled?: boolean
+          show_intermission_every_rounds?: number
+          show_reconcile_seconds?: number
+          show_scene_minimum_dwell_seconds?: number
           task_call_limits_per_minute?: Json
+          transition_copy_enabled?: boolean
           updated_at?: string
           updated_by_user_id?: string | null
         }
         Update: {
           audience_pulse_enabled?: boolean
+          auto_audience_pulse_enabled?: boolean
+          auto_intermission_enabled?: boolean
+          auto_narration_enabled?: boolean
+          auto_scene_enabled?: boolean
+          auto_spark_enabled?: boolean
+          automatic_intermission_cooldown_seconds?: number
+          automatic_intervention_window_seconds?: number
+          automatic_narration_cooldown_seconds?: number
+          automatic_pulse_cooldown_seconds?: number
+          automatic_scene_minimum_dwell_seconds?: number
+          automatic_spark_delay_seconds?: number
           autopilot_enabled?: boolean
+          betweener_studio_control_enabled?: boolean
+          betweener_studio_enabled?: boolean
           circuit_breaker_open?: boolean
           conversation_spark_enabled?: boolean
           copilot_enabled?: boolean
           created_at?: string
+          full_autopilot_enabled?: boolean
+          full_quick_connect_autopilot_enabled?: boolean
+          full_quick_connect_internal_only?: boolean
+          full_quick_connect_low_liquidity_seconds?: number
+          full_quick_connect_maximum_runtime_minutes?: number
+          full_quick_connect_reconcile_seconds?: number
+          guarded_autopilot_enabled?: boolean
+          guarded_autopilot_internal_only?: boolean
+          host_scene_suppression_seconds?: number
           id?: boolean
           lease_seconds?: number
+          maximum_automatic_interventions_per_window?: number
           maximum_calls_per_minute?: number
           maximum_calls_per_session?: number
           maximum_input_tokens_per_session?: number
           maximum_output_tokens_per_session?: number
           maximum_terra_calls_per_session?: number
+          minimum_audience_for_automatic_pulse?: number
           minimum_call_interval_seconds?: number
           model_pricing?: Json
+          music_auto_enabled?: boolean
+          music_default_volume?: number
+          music_ducked_volume?: number
+          music_ducking_enabled?: boolean
           music_enabled?: boolean
           odo_enabled?: boolean
+          odo_voice_enabled?: boolean
+          pair_narration_enabled?: boolean
           pricing_version?: string
           provider_timeout_ms?: number
+          scene_suggestions_enabled?: boolean
+          screen_share_enabled?: boolean
           shadow_mode?: boolean
+          show_director_enabled?: boolean
+          show_director_internal_only?: boolean
+          show_energy_mode_enabled?: boolean
+          show_host_suppression_seconds?: number
+          show_intermission_enabled?: boolean
+          show_intermission_every_rounds?: number
+          show_reconcile_seconds?: number
+          show_scene_minimum_dwell_seconds?: number
           task_call_limits_per_minute?: Json
+          transition_copy_enabled?: boolean
           updated_at?: string
           updated_by_user_id?: string | null
         }
         Relationships: []
+      }
+      live_odo_copilot_suggestions: {
+        Row: {
+          action_id: string
+          call_id: string
+          content_gate_reason_code: string
+          created_at: string
+          dismissed_at: string | null
+          expires_at: string
+          fallback_used: boolean
+          id: string
+          payload: Json
+          rationale: string
+          reason_code: string
+          requested_by_user_id: string
+          round_id: string | null
+          round_version: number | null
+          session_id: string
+          session_version: number
+          snapshot_version: number
+          state_version: number
+          status: string
+          suggestion_type: string
+          superseded_at: string | null
+          task: string
+          title: string
+          used_at: string | null
+        }
+        Insert: {
+          action_id: string
+          call_id: string
+          content_gate_reason_code: string
+          created_at?: string
+          dismissed_at?: string | null
+          expires_at: string
+          fallback_used?: boolean
+          id?: string
+          payload?: Json
+          rationale: string
+          reason_code: string
+          requested_by_user_id: string
+          round_id?: string | null
+          round_version?: number | null
+          session_id: string
+          session_version: number
+          snapshot_version: number
+          state_version: number
+          status?: string
+          suggestion_type: string
+          superseded_at?: string | null
+          task: string
+          title: string
+          used_at?: string | null
+        }
+        Update: {
+          action_id?: string
+          call_id?: string
+          content_gate_reason_code?: string
+          created_at?: string
+          dismissed_at?: string | null
+          expires_at?: string
+          fallback_used?: boolean
+          id?: string
+          payload?: Json
+          rationale?: string
+          reason_code?: string
+          requested_by_user_id?: string
+          round_id?: string | null
+          round_version?: number | null
+          session_id?: string
+          session_version?: number
+          snapshot_version?: number
+          state_version?: number
+          status?: string
+          suggestion_type?: string
+          superseded_at?: string | null
+          task?: string
+          title?: string
+          used_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_odo_copilot_suggestions_call_id_fkey"
+            columns: ["call_id"]
+            isOneToOne: true
+            referencedRelation: "live_odo_ai_usage"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_odo_copilot_suggestions_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_odo_full_quick_connect_actions: {
+        Row: {
+          action_id: string
+          action_key: string
+          action_type: string
+          control_version: number
+          executed_at: string
+          lease_generation: number
+          metadata: Json
+          orchestration_version: number
+          pairing_id: string | null
+          reason_code: string
+          round_id: string | null
+          session_id: string
+          status: string
+        }
+        Insert: {
+          action_id?: string
+          action_key: string
+          action_type: string
+          control_version: number
+          executed_at?: string
+          lease_generation: number
+          metadata?: Json
+          orchestration_version: number
+          pairing_id?: string | null
+          reason_code: string
+          round_id?: string | null
+          session_id: string
+          status?: string
+        }
+        Update: {
+          action_id?: string
+          action_key?: string
+          action_type?: string
+          control_version?: number
+          executed_at?: string
+          lease_generation?: number
+          metadata?: Json
+          orchestration_version?: number
+          pairing_id?: string | null
+          reason_code?: string
+          round_id?: string | null
+          session_id?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_odo_full_quick_connect_actions_pairing_id_fkey"
+            columns: ["pairing_id"]
+            isOneToOne: false
+            referencedRelation: "live_quick_connect_pairings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_odo_full_quick_connect_actions_round_id_fkey"
+            columns: ["round_id"]
+            isOneToOne: false
+            referencedRelation: "live_quick_connect_rounds"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_odo_full_quick_connect_actions_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_odo_full_quick_connect_settings: {
+        Row: {
+          created_at: string
+          enabled: boolean
+          enabled_by_user_id: string | null
+          energy_mode: string
+          last_action_type: string | null
+          last_pairing_id: string | null
+          last_reason_code: string | null
+          last_reconciled_at: string | null
+          last_round_id: string | null
+          lifecycle_state: string
+          low_liquidity_since: string | null
+          maximum_runtime_ends_at: string | null
+          next_wake_at: string | null
+          orchestration_state: string
+          session_id: string
+          started_at: string | null
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          created_at?: string
+          enabled?: boolean
+          enabled_by_user_id?: string | null
+          energy_mode?: string
+          last_action_type?: string | null
+          last_pairing_id?: string | null
+          last_reason_code?: string | null
+          last_reconciled_at?: string | null
+          last_round_id?: string | null
+          lifecycle_state?: string
+          low_liquidity_since?: string | null
+          maximum_runtime_ends_at?: string | null
+          next_wake_at?: string | null
+          orchestration_state?: string
+          session_id: string
+          started_at?: string | null
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          created_at?: string
+          enabled?: boolean
+          enabled_by_user_id?: string | null
+          energy_mode?: string
+          last_action_type?: string | null
+          last_pairing_id?: string | null
+          last_reason_code?: string | null
+          last_reconciled_at?: string | null
+          last_round_id?: string | null
+          lifecycle_state?: string
+          low_liquidity_since?: string | null
+          maximum_runtime_ends_at?: string | null
+          next_wake_at?: string | null
+          orchestration_state?: string
+          session_id?: string
+          started_at?: string | null
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_odo_full_quick_connect_settings_last_pairing_id_fkey"
+            columns: ["last_pairing_id"]
+            isOneToOne: false
+            referencedRelation: "live_quick_connect_pairings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_odo_full_quick_connect_settings_last_round_id_fkey"
+            columns: ["last_round_id"]
+            isOneToOne: false
+            referencedRelation: "live_quick_connect_rounds"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_odo_full_quick_connect_settings_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: true
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_odo_full_quick_connect_updates: {
+        Row: {
+          session_id: string
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          session_id: string
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          session_id?: string
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_odo_full_quick_connect_updates_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: true
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_odo_guarded_autopilot_actions: {
+        Row: {
+          action_id: string
+          action_type: string
+          content_gate_reason_code: string | null
+          director_event_id: string | null
+          evaluated_at: string | null
+          event_id: number
+          executed_at: string | null
+          expires_at: string
+          fallback_used: boolean
+          lease_generation: number
+          lease_owner: string
+          payload: Json
+          policy_reason_code: string | null
+          proposed_at: string
+          reason_code: string
+          risk_tier: number
+          session_id: string
+          session_version: number
+          snapshot_version: number
+          source_version: number
+          status: string
+        }
+        Insert: {
+          action_id: string
+          action_type: string
+          content_gate_reason_code?: string | null
+          director_event_id?: string | null
+          evaluated_at?: string | null
+          event_id: number
+          executed_at?: string | null
+          expires_at: string
+          fallback_used?: boolean
+          lease_generation: number
+          lease_owner: string
+          payload?: Json
+          policy_reason_code?: string | null
+          proposed_at?: string
+          reason_code: string
+          risk_tier: number
+          session_id: string
+          session_version: number
+          snapshot_version: number
+          source_version: number
+          status?: string
+        }
+        Update: {
+          action_id?: string
+          action_type?: string
+          content_gate_reason_code?: string | null
+          director_event_id?: string | null
+          evaluated_at?: string | null
+          event_id?: number
+          executed_at?: string | null
+          expires_at?: string
+          fallback_used?: boolean
+          lease_generation?: number
+          lease_owner?: string
+          payload?: Json
+          policy_reason_code?: string | null
+          proposed_at?: string
+          reason_code?: string
+          risk_tier?: number
+          session_id?: string
+          session_version?: number
+          snapshot_version?: number
+          source_version?: number
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_odo_guarded_autopilot_actions_director_event_id_fkey"
+            columns: ["director_event_id"]
+            isOneToOne: false
+            referencedRelation: "live_director_events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_odo_guarded_autopilot_actions_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: true
+            referencedRelation: "live_odo_guarded_autopilot_events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_odo_guarded_autopilot_actions_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_odo_guarded_autopilot_events: {
+        Row: {
+          claimed_at: string | null
+          claimed_by: string | null
+          completed_at: string | null
+          created_at: string
+          expires_at: string
+          id: number
+          lease_generation: number | null
+          not_before: string
+          origin_key: string
+          outcome_reason_code: string | null
+          priority: number
+          session_id: string
+          source_id: string
+          source_kind: string
+          source_version: number
+          state_version: number | null
+          status: string
+          trigger_type: string
+        }
+        Insert: {
+          claimed_at?: string | null
+          claimed_by?: string | null
+          completed_at?: string | null
+          created_at?: string
+          expires_at: string
+          id?: never
+          lease_generation?: number | null
+          not_before?: string
+          origin_key: string
+          outcome_reason_code?: string | null
+          priority: number
+          session_id: string
+          source_id: string
+          source_kind: string
+          source_version: number
+          state_version?: number | null
+          status?: string
+          trigger_type: string
+        }
+        Update: {
+          claimed_at?: string | null
+          claimed_by?: string | null
+          completed_at?: string | null
+          created_at?: string
+          expires_at?: string
+          id?: never
+          lease_generation?: number | null
+          not_before?: string
+          origin_key?: string
+          outcome_reason_code?: string | null
+          priority?: number
+          session_id?: string
+          source_id?: string
+          source_kind?: string
+          source_version?: number
+          state_version?: number | null
+          status?: string
+          trigger_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_odo_guarded_autopilot_events_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_odo_guarded_autopilot_host_allowlist: {
+        Row: {
+          added_by_user_id: string | null
+          created_at: string
+          note: string | null
+          user_id: string
+        }
+        Insert: {
+          added_by_user_id?: string | null
+          created_at?: string
+          note?: string | null
+          user_id: string
+        }
+        Update: {
+          added_by_user_id?: string | null
+          created_at?: string
+          note?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      live_odo_guarded_autopilot_settings: {
+        Row: {
+          auto_audience_pulse_enabled: boolean
+          auto_intermission_enabled: boolean
+          auto_narration_enabled: boolean
+          auto_scene_enabled: boolean
+          auto_spark_enabled: boolean
+          automatic_scene_suppressed_until: string | null
+          created_at: string
+          enabled: boolean
+          enabled_at: string | null
+          enabled_by_user_id: string | null
+          last_action_at: string | null
+          last_automatic_scene: string | null
+          last_intermission_at: string | null
+          last_narration_at: string | null
+          last_pulse_at: string | null
+          last_scene_changed_at: string | null
+          last_scene_reason_code: string | null
+          limited_mode: boolean
+          previous_automatic_scene: string | null
+          session_id: string
+          taken_over_at: string | null
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          auto_audience_pulse_enabled?: boolean
+          auto_intermission_enabled?: boolean
+          auto_narration_enabled?: boolean
+          auto_scene_enabled?: boolean
+          auto_spark_enabled?: boolean
+          automatic_scene_suppressed_until?: string | null
+          created_at?: string
+          enabled?: boolean
+          enabled_at?: string | null
+          enabled_by_user_id?: string | null
+          last_action_at?: string | null
+          last_automatic_scene?: string | null
+          last_intermission_at?: string | null
+          last_narration_at?: string | null
+          last_pulse_at?: string | null
+          last_scene_changed_at?: string | null
+          last_scene_reason_code?: string | null
+          limited_mode?: boolean
+          previous_automatic_scene?: string | null
+          session_id: string
+          taken_over_at?: string | null
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          auto_audience_pulse_enabled?: boolean
+          auto_intermission_enabled?: boolean
+          auto_narration_enabled?: boolean
+          auto_scene_enabled?: boolean
+          auto_spark_enabled?: boolean
+          automatic_scene_suppressed_until?: string | null
+          created_at?: string
+          enabled?: boolean
+          enabled_at?: string | null
+          enabled_by_user_id?: string | null
+          last_action_at?: string | null
+          last_automatic_scene?: string | null
+          last_intermission_at?: string | null
+          last_narration_at?: string | null
+          last_pulse_at?: string | null
+          last_scene_changed_at?: string | null
+          last_scene_reason_code?: string | null
+          limited_mode?: boolean
+          previous_automatic_scene?: string | null
+          session_id?: string
+          taken_over_at?: string | null
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_odo_guarded_autopilot_settings_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: true
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_odo_guarded_autopilot_updates: {
+        Row: {
+          session_id: string
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          session_id: string
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          session_id?: string
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_odo_guarded_autopilot_updates_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: true
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       live_odo_session_state: {
         Row: {
@@ -5211,6 +6175,178 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "live_odo_session_state_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: true
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_odo_show_actions: {
+        Row: {
+          action_id: string
+          action_key: string
+          action_type: string
+          executed_at: string
+          lease_generation: number
+          metadata: Json
+          priority: number
+          reason_code: string
+          scene: string | null
+          session_id: string
+          state_version: number
+          status: string
+        }
+        Insert: {
+          action_id?: string
+          action_key: string
+          action_type: string
+          executed_at?: string
+          lease_generation: number
+          metadata?: Json
+          priority: number
+          reason_code: string
+          scene?: string | null
+          session_id: string
+          state_version: number
+          status?: string
+        }
+        Update: {
+          action_id?: string
+          action_key?: string
+          action_type?: string
+          executed_at?: string
+          lease_generation?: number
+          metadata?: Json
+          priority?: number
+          reason_code?: string
+          scene?: string | null
+          session_id?: string
+          state_version?: number
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_odo_show_actions_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_odo_show_sessions: {
+        Row: {
+          completed_rounds_seen: number
+          control_lease_expires_at: string | null
+          control_source: string
+          control_user_id: string | null
+          created_at: string
+          current_priority: number
+          current_scene: string
+          enabled: boolean
+          enabled_by_user_id: string | null
+          energy_mode: string
+          host_suppression_ends_at: string | null
+          last_intermission_round: number
+          last_pairing_id: string | null
+          last_reason_code: string | null
+          next_wake_at: string | null
+          paused_by_host: boolean
+          program_source: string
+          scene_entered_at: string
+          scene_history: Json
+          session_id: string
+          show_state: string
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          completed_rounds_seen?: number
+          control_lease_expires_at?: string | null
+          control_source?: string
+          control_user_id?: string | null
+          created_at?: string
+          current_priority?: number
+          current_scene?: string
+          enabled?: boolean
+          enabled_by_user_id?: string | null
+          energy_mode?: string
+          host_suppression_ends_at?: string | null
+          last_intermission_round?: number
+          last_pairing_id?: string | null
+          last_reason_code?: string | null
+          next_wake_at?: string | null
+          paused_by_host?: boolean
+          program_source?: string
+          scene_entered_at?: string
+          scene_history?: Json
+          session_id: string
+          show_state?: string
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          completed_rounds_seen?: number
+          control_lease_expires_at?: string | null
+          control_source?: string
+          control_user_id?: string | null
+          created_at?: string
+          current_priority?: number
+          current_scene?: string
+          enabled?: boolean
+          enabled_by_user_id?: string | null
+          energy_mode?: string
+          host_suppression_ends_at?: string | null
+          last_intermission_round?: number
+          last_pairing_id?: string | null
+          last_reason_code?: string | null
+          next_wake_at?: string | null
+          paused_by_host?: boolean
+          program_source?: string
+          scene_entered_at?: string
+          scene_history?: Json
+          session_id?: string
+          show_state?: string
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_odo_show_sessions_last_pairing_id_fkey"
+            columns: ["last_pairing_id"]
+            isOneToOne: false
+            referencedRelation: "live_quick_connect_pairings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_odo_show_sessions_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: true
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_odo_show_updates: {
+        Row: {
+          session_id: string
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          session_id: string
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          session_id?: string
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_odo_show_updates_session_id_fkey"
             columns: ["session_id"]
             isOneToOne: true
             referencedRelation: "live_sessions"
@@ -6080,6 +7216,8 @@ export type Database = {
           created_at: string
           ends_at: string
           id: string
+          odo_conversation_spark: Json | null
+          odo_spark_published_at: string | null
           participant_a_profile_id: string
           participant_a_user_id: string
           participant_b_profile_id: string
@@ -6104,6 +7242,8 @@ export type Database = {
           created_at?: string
           ends_at: string
           id?: string
+          odo_conversation_spark?: Json | null
+          odo_spark_published_at?: string | null
           participant_a_profile_id: string
           participant_a_user_id: string
           participant_b_profile_id: string
@@ -6128,6 +7268,8 @@ export type Database = {
           created_at?: string
           ends_at?: string
           id?: string
+          odo_conversation_spark?: Json | null
+          odo_spark_published_at?: string | null
           participant_a_profile_id?: string
           participant_a_user_id?: string
           participant_b_profile_id?: string
@@ -13268,6 +14410,130 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      live_odo_append_full_quick_event_v1: {
+        Args: {
+          p_action_id: string
+          p_event_type: string
+          p_expires_at: string
+          p_payload: Json
+          p_session_id: string
+        }
+        Returns: {
+          action_id: string | null
+          created_at: string
+          event_type: string
+          expires_at: string | null
+          id: string
+          idempotency_key: string | null
+          occurred_at: string
+          payload: Json
+          schema_version: number
+          sequence: number
+          session_id: string
+          source: string
+          state_version: number
+          visibility: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "live_director_events"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      live_odo_append_guarded_event_v1: {
+        Args: {
+          p_action_id: string
+          p_event_type: string
+          p_expires_at: string
+          p_payload: Json
+          p_session_id: string
+        }
+        Returns: {
+          action_id: string | null
+          created_at: string
+          event_type: string
+          expires_at: string | null
+          id: string
+          idempotency_key: string | null
+          occurred_at: string
+          payload: Json
+          schema_version: number
+          sequence: number
+          session_id: string
+          source: string
+          state_version: number
+          visibility: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "live_director_events"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      live_odo_append_host_copilot_event_v1: {
+        Args: {
+          p_action_id: string
+          p_event_type: string
+          p_expires_at: string
+          p_payload: Json
+          p_session_id: string
+        }
+        Returns: {
+          action_id: string | null
+          created_at: string
+          event_type: string
+          expires_at: string | null
+          id: string
+          idempotency_key: string | null
+          occurred_at: string
+          payload: Json
+          schema_version: number
+          sequence: number
+          session_id: string
+          source: string
+          state_version: number
+          visibility: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "live_director_events"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      live_odo_append_show_event_v1: {
+        Args: {
+          p_action_id: string
+          p_event_type: string
+          p_expires_at: string
+          p_payload: Json
+          p_session_id: string
+        }
+        Returns: {
+          action_id: string | null
+          created_at: string
+          event_type: string
+          expires_at: string | null
+          id: string
+          idempotency_key: string | null
+          occurred_at: string
+          payload: Json
+          schema_version: number
+          sequence: number
+          session_id: string
+          source: string
+          state_version: number
+          visibility: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "live_director_events"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       live_odo_append_trace_v1: {
         Args: {
           p_action_id: string
@@ -13279,14 +14545,117 @@ export type Database = {
         }
         Returns: undefined
       }
+      live_odo_build_copilot_context_v1: {
+        Args: { p_round_id?: string; p_session_id: string; p_task: string }
+        Returns: Json
+      }
       live_odo_build_snapshot_v1: {
         Args: { p_session_id: string }
         Returns: Json
+      }
+      live_odo_copilot_suggestion_json_v1: {
+        Args: {
+          p_suggestion: Database["public"]["Tables"]["live_odo_copilot_suggestions"]["Row"]
+        }
+        Returns: Json
+      }
+      live_odo_copilot_task_enabled_v1: {
+        Args: {
+          p_configuration: Database["public"]["Tables"]["live_odo_configuration"]["Row"]
+          p_task: string
+        }
+        Returns: boolean
+      }
+      live_odo_copilot_ttl_seconds_v1: {
+        Args: { p_task: string }
+        Returns: number
+      }
+      live_odo_full_quick_eligible_pairs_v1: {
+        Args: { p_session_id: string }
+        Returns: number
+      }
+      live_odo_full_quick_host_allowed_v1: {
+        Args: { p_session_id: string; p_user_id: string }
+        Returns: boolean
+      }
+      live_odo_full_quick_record_action_v1: {
+        Args: {
+          p_action_key: string
+          p_action_type: string
+          p_control_version: number
+          p_metadata?: Json
+          p_pairing_id?: string
+          p_reason_code: string
+          p_round_id?: string
+          p_session_id: string
+        }
+        Returns: string
+      }
+      live_odo_full_quick_snapshot_v1: {
+        Args: { p_actor_user_id: string; p_session_id: string }
+        Returns: Json
+      }
+      live_odo_guarded_action_allowed_v1: {
+        Args: { p_action_type: string }
+        Returns: boolean
+      }
+      live_odo_guarded_action_risk_tier_v1: {
+        Args: { p_action_type: string }
+        Returns: number
+      }
+      live_odo_guarded_enqueue_event_v1:
+        | {
+            Args: {
+              p_not_before: string
+              p_origin_key: string
+              p_priority: number
+              p_session_id: string
+              p_source_id: string
+              p_source_kind: string
+              p_source_version: number
+              p_trigger_type: string
+              p_ttl_seconds: number
+            }
+            Returns: number
+          }
+        | {
+            Args: {
+              p_not_before?: string
+              p_origin_key: string
+              p_priority: number
+              p_session_id: string
+              p_source_id: string
+              p_source_kind: string
+              p_source_version: number
+              p_trigger_type: string
+              p_ttl_seconds?: number
+            }
+            Returns: number
+          }
+      live_odo_guarded_feature_allowed_v1: {
+        Args: {
+          p_action_type: string
+          p_configuration: Database["public"]["Tables"]["live_odo_configuration"]["Row"]
+          p_settings: Database["public"]["Tables"]["live_odo_guarded_autopilot_settings"]["Row"]
+        }
+        Returns: boolean
+      }
+      live_odo_guarded_host_allowed_v1: {
+        Args: { p_user_id: string }
+        Returns: boolean
       }
       live_odo_is_service_role: { Args: never; Returns: boolean }
       live_odo_jsonb_has_exact_keys_v1: {
         Args: { p_optional?: string[]; p_required: string[]; p_value: Json }
         Returns: boolean
+      }
+      live_odo_show_host_allowed_v1: {
+        Args: { p_session_id: string; p_user_id: string }
+        Returns: boolean
+      }
+      live_odo_show_snapshot_v1: {
+        Args: { p_actor_user_id: string; p_session_id: string }
+        Returns: Json
       }
       live_odo_validate_action_payload_v1: {
         Args: { p_action_type: string; p_payload: Json }
@@ -13547,6 +14916,14 @@ export type Database = {
       rpc_acknowledge_messages_delivered: {
         Args: { p_message_id?: string; p_peer_user_id?: string }
         Returns: number
+      }
+      rpc_acquire_live_program_control_v1: {
+        Args: {
+          p_expected_version: number
+          p_session_id: string
+          p_source: string
+        }
+        Returns: Json
       }
       rpc_admin_clear_verification_refresh: {
         Args: { p_profile_id: string }
@@ -14069,6 +15446,10 @@ export type Database = {
         Args: { p_decision: string; p_notes?: string; p_request_id: string }
         Returns: boolean
       }
+      rpc_admin_set_live_odo_guarded_host_access_v1: {
+        Args: { p_allowed: boolean; p_note?: string; p_user_id: string }
+        Returns: Json
+      }
       rpc_admin_update_account_merge_case: {
         Args: {
           p_case_id: string
@@ -14091,9 +15472,35 @@ export type Database = {
         Args: { p_patch: Json }
         Returns: Json
       }
+      rpc_admin_update_live_odo_full_quick_connect_v1: {
+        Args: { p_patch: Json }
+        Returns: Json
+      }
+      rpc_admin_update_live_odo_guarded_autopilot_v1: {
+        Args: { p_patch: Json }
+        Returns: Json
+      }
+      rpc_admin_update_live_odo_show_v1: {
+        Args: { p_patch: Json }
+        Returns: Json
+      }
       rpc_admin_update_report_status: {
         Args: { p_report_id: string; p_status: string }
         Returns: boolean
+      }
+      rpc_admin_upsert_live_music_track_v1: {
+        Args: {
+          p_artist: string
+          p_duration_seconds: number
+          p_enabled?: boolean
+          p_license_expires_at?: string
+          p_license_reference: string
+          p_mood: string
+          p_storage_path: string
+          p_title: string
+          p_track_id: string
+        }
+        Returns: Json
       }
       rpc_answer_circle_prompt: {
         Args: { p_prompt_id: string; p_response: string }
@@ -15240,12 +16647,28 @@ export type Database = {
         Args: { p_actor_profile_id: string; p_circle_id: string }
         Returns: boolean
       }
+      rpc_enable_live_odo_full_quick_connect_v1: {
+        Args: { p_session_id: string; p_settings?: Json }
+        Returns: Json
+      }
+      rpc_enable_live_odo_guarded_autopilot_v1: {
+        Args: { p_session_id: string; p_settings?: Json }
+        Returns: Json
+      }
+      rpc_enable_live_odo_show_director_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
       rpc_end_circle_love_seat: {
         Args: { p_actor_profile_id: string; p_love_seat_id: string }
         Returns: boolean
       }
       rpc_end_live_private_spark: {
         Args: { p_private_spark_id: string; p_reason?: string }
+        Returns: Json
+      }
+      rpc_end_live_session_v1: {
+        Args: { p_session_id: string }
         Returns: Json
       }
       rpc_enforce_profile_contact_guard: {
@@ -15607,6 +17030,10 @@ export type Database = {
           isOneToOne: false
           isSetofReturn: true
         }
+      }
+      rpc_finish_live_odo_quick_connect_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
       }
       rpc_get_account_recovery_options: {
         Args: { p_recovery_token: string }
@@ -16054,6 +17481,26 @@ export type Database = {
           trace_type: string
         }[]
       }
+      rpc_get_live_odo_copilot_v1: {
+        Args: { p_limit?: number; p_session_id: string }
+        Returns: Json
+      }
+      rpc_get_live_odo_full_quick_connect_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      rpc_get_live_odo_guarded_autopilot_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      rpc_get_live_odo_quick_connect_public_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      rpc_get_live_odo_show_director_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
       rpc_get_live_private_spark: {
         Args: { p_spark_id: string }
         Returns: Json
@@ -16078,6 +17525,10 @@ export type Database = {
         }[]
       }
       rpc_get_live_private_spark_snapshot: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      rpc_get_live_program_snapshot_v1: {
         Args: { p_session_id: string }
         Returns: Json
       }
@@ -16111,6 +17562,10 @@ export type Database = {
           source_session_id: string
           user_id: string
         }[]
+      }
+      rpc_get_live_quick_connect_without_odo_10d: {
+        Args: { p_session_id: string }
+        Returns: Json
       }
       rpc_get_live_quick_connect_without_safety: {
         Args: { p_session_id: string }
@@ -16155,6 +17610,10 @@ export type Database = {
         }[]
       }
       rpc_get_live_session_snapshot: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      rpc_get_live_session_recap_v1: {
         Args: { p_session_id: string }
         Returns: Json
       }
@@ -16404,6 +17863,26 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      rpc_host_control_live_music_v1: {
+        Args: {
+          p_action: string
+          p_idempotency_key?: string
+          p_mood?: string
+          p_playlist_id?: string
+          p_session_id: string
+          p_track_id?: string
+          p_volume?: number
+        }
+        Returns: Json
+      }
+      rpc_host_set_live_show_scene_v1: {
+        Args: {
+          p_expected_version: number
+          p_scene: string
+          p_session_id: string
+        }
+        Returns: Json
       }
       rpc_insert_request_acceptance_system_messages: {
         Args: { p_request_id: string }
@@ -16825,6 +18304,10 @@ export type Database = {
           p_viewer_profile_id: string
         }
         Returns: boolean
+      }
+      rpc_manage_live_odo_copilot_suggestion_v1: {
+        Args: { p_action: string; p_suggestion_id: string }
+        Returns: Json
       }
       rpc_mark_chat_thread_read: {
         Args: { p_peer_user_id: string }
@@ -17454,6 +18937,14 @@ export type Database = {
         Args: { p_session_id: string }
         Returns: Json
       }
+      rpc_resume_live_odo_full_quick_connect_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      rpc_resume_live_odo_show_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
       rpc_reveal_profile_gift: { Args: { p_gift_id: string }; Returns: Json }
       rpc_review_circle_pulse_comment_report: {
         Args: {
@@ -17921,6 +19412,73 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_service_begin_live_odo_copilot_call_v1: {
+        Args: {
+          p_action_id: string
+          p_lease_owner: string
+          p_model: string
+          p_model_class: string
+          p_provider: string
+          p_requested_by_user_id: string
+          p_round_id: string
+          p_routing_reason_code: string
+          p_session_id: string
+          p_task: string
+        }
+        Returns: Json
+      }
+      rpc_service_claim_live_odo_guarded_event_v1: {
+        Args: {
+          p_lease_owner: string
+          p_model: string
+          p_requested_by_user_id: string
+          p_routing_reason_code: string
+          p_session_id: string
+        }
+        Returns: Json
+      }
+      rpc_service_clear_live_odo_policy_pause_v1: {
+        Args: { p_reason_code: string; p_session_id: string }
+        Returns: Json
+      }
+      rpc_service_clear_live_odo_policy_pause_without_full_quick_v1: {
+        Args: { p_reason_code: string; p_session_id: string }
+        Returns: Json
+      }
+      rpc_service_complete_live_odo_copilot_call_v1: {
+        Args: {
+          p_cached_input_tokens: number
+          p_call_id: string
+          p_content_gate_accepted: boolean
+          p_content_gate_reason_code: string
+          p_draft: Json
+          p_fallback_used: boolean
+          p_input_tokens: number
+          p_latency_ms: number
+          p_lease_owner: string
+          p_output_tokens: number
+          p_provider_failure_reason_code?: string
+          p_provider_request_id: string
+        }
+        Returns: Json
+      }
+      rpc_service_complete_live_odo_guarded_action_v1: {
+        Args: {
+          p_action_id: string
+          p_cached_input_tokens: number
+          p_content_gate_accepted: boolean
+          p_content_gate_reason_code: string
+          p_draft: Json
+          p_fallback_used: boolean
+          p_input_tokens: number
+          p_latency_ms: number
+          p_lease_owner: string
+          p_output_tokens: number
+          p_provider_failure_reason_code?: string
+          p_provider_request_id: string
+        }
+        Returns: Json
+      }
       rpc_service_complete_profile_onboarding_with_guard_v1: {
         Args: {
           p_evidence_snapshot?: Json
@@ -17979,8 +19537,21 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_service_fail_live_odo_guarded_action_v1: {
+        Args: {
+          p_action_id: string
+          p_failure_reason_code: string
+          p_lease_owner: string
+          p_timed_out?: boolean
+        }
+        Returns: Json
+      }
       rpc_service_finalize_profile_onboarding: {
         Args: { p_user_id: string }
+        Returns: Json
+      }
+      rpc_service_get_live_music_playback_v1: {
+        Args: { p_session_id: string; p_user_id: string }
         Returns: Json
       }
       rpc_service_insert_profile_prompt_with_guard: {
@@ -18036,6 +19607,22 @@ export type Database = {
       }
       rpc_service_pause_live_odo_policy_v1: {
         Args: { p_reason_code: string; p_session_id: string }
+        Returns: Json
+      }
+      rpc_service_reconcile_live_odo_full_quick_connect_v1: {
+        Args: {
+          p_lease_owner: string
+          p_requested_by_user_id: string
+          p_session_id: string
+        }
+        Returns: Json
+      }
+      rpc_service_reconcile_live_odo_show_v1: {
+        Args: {
+          p_lease_owner: string
+          p_requested_by_user_id: string
+          p_session_id: string
+        }
         Returns: Json
       }
       rpc_service_record_content_moderation_event: {
@@ -18395,6 +19982,10 @@ export type Database = {
         Returns: boolean
       }
       rpc_set_user_presence: { Args: { p_online: boolean }; Returns: number }
+      rpc_signal_live_odo_autopilot_clock_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
       rpc_signal_live_quick_connect_interest: {
         Args: { p_session_id: string; p_target_profile_id: string }
         Returns: Json
@@ -18481,7 +20072,19 @@ export type Database = {
         Args: { p_emoji?: string; p_moment_id: string }
         Returns: boolean
       }
+      rpc_take_over_live_odo_show_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
       rpc_take_over_live_odo_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      rpc_take_over_live_odo_without_full_quick_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      rpc_take_over_live_odo_without_show_10e_v1: {
         Args: { p_session_id: string }
         Returns: Json
       }
@@ -19214,6 +20817,10 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      rpc_use_live_odo_copilot_suggestion_v1: {
+        Args: { p_suggestion_id: string }
+        Returns: Json
+      }
       rpc_vote_live_audience_poll: {
         Args: {
           p_client_vote_id: string
@@ -19242,6 +20849,11 @@ export type Database = {
         }
       }
       run_live_maintenance: { Args: never; Returns: Json }
+      run_live_maintenance_without_full_quick_v1: { Args: never; Returns: Json }
+      run_live_maintenance_without_show_director_v1: {
+        Args: never
+        Returns: Json
+      }
       search_ghana_localities: {
         Args: { p_limit?: number; p_query?: string; p_region?: string }
         Returns: {

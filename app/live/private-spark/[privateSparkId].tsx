@@ -35,6 +35,7 @@ import {
 } from '@/features/live/components/index.ts';
 import { deterministicConversationSparkProvider } from '@/features/live/conversation/conversation-spark-provider.ts';
 import type { StreamLiveStageProps } from '@/features/live/components/StreamLiveStage.tsx';
+import { type LiveVisualTheme, useLiveVisualTheme } from '@/features/live/components/live-visual-tokens.ts';
 import {
   useLiveMediaSession,
   useLiveChemistry,
@@ -92,6 +93,8 @@ const toParticipant = (
 });
 
 export default function LivePrivateSparkScreen() {
+  const visual = useLiveVisualTheme();
+  const styles = useMemo(() => createStyles(visual), [visual]);
   const params = useLocalSearchParams<{ privateSparkId?: string } & LiveReturnRouteParams>();
   const privateSparkId = typeof params.privateSparkId === 'string' ? params.privateSparkId : '';
   const liveReturnParams = useMemo(
@@ -295,12 +298,12 @@ export default function LivePrivateSparkScreen() {
   }, [otherPerson]);
 
   if (controller.loading && !spark) {
-    return <View style={styles.center}><ActivityIndicator color="#D7B56D" /></View>;
+    return <View style={styles.center}><ActivityIndicator color={visual.purple} /></View>;
   }
   if (!spark || !spark.isParticipant) {
     return (
       <View style={styles.center}>
-        <LockKeyhole color="#D7B56D" size={28} />
+        <LockKeyhole color={visual.purple} size={28} />
         <Text style={styles.stateTitle}>This private room is unavailable.</Text>
         <Pressable onPress={returnToLive} style={styles.secondaryButton}>
           <Text style={styles.secondaryText}>Return to Live</Text>
@@ -325,7 +328,7 @@ export default function LivePrivateSparkScreen() {
     }
     return (
       <View style={styles.center}>
-        <LockKeyhole color="#D7B56D" size={28} />
+        <LockKeyhole color={visual.purple} size={28} />
         <Text style={styles.stateTitle}>Private Spark has ended.</Text>
         <Text style={styles.stateCopy}>Your conversation stayed between the two of you.</Text>
         <Pressable onPress={returnToLive} style={styles.secondaryButton}>
@@ -340,7 +343,7 @@ export default function LivePrivateSparkScreen() {
       <View style={styles.stage}>
         {media.bindings && chemistryRevealed ? (
           <LiveMediaStageBoundary resetKey={`${privateSparkId}:${media.state}`}>
-            <Suspense fallback={<ActivityIndicator color="#D7B56D" />}>
+            <Suspense fallback={<ActivityIndicator color={visual.purple} />}>
               <PrivateSparkStage
                 bindings={media.bindings}
                 stageParticipants={participants}
@@ -353,7 +356,7 @@ export default function LivePrivateSparkScreen() {
           </LiveMediaStageBoundary>
         ) : (
           <View style={styles.center}>
-            <ActivityIndicator color="#D7B56D" />
+            <ActivityIndicator color={visual.purple} />
             <Text style={styles.stateCopy}>Opening your private room…</Text>
             {media.state === 'failed' ? (
               <Pressable
@@ -493,19 +496,19 @@ export default function LivePrivateSparkScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#06110F' },
+const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
+  root: { flex: 1, backgroundColor: visual.videoChrome },
   stage: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
   atmosphere: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
   videoTapTarget: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
   overlay: { flex: 1, justifyContent: 'space-between' },
   statusLane: { alignItems: 'center', gap: 8, paddingTop: 8, paddingHorizontal: 24 },
-  connectionPill: { minHeight: 34, paddingHorizontal: 13, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: '#161D1BDD', borderWidth: 1, borderColor: '#E1B86C3D' },
+  connectionPill: { minHeight: 34, paddingHorizontal: 13, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: '#161D1BDD', borderWidth: 1, borderColor: visual.purple },
   connectionText: { color: '#F3E7D5', fontSize: 10, textAlign: 'center', fontFamily: 'Manrope_700Bold' },
   overlaySpacer: { flex: 1 },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, paddingHorizontal: 28, backgroundColor: '#06110F' },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, paddingHorizontal: 28, backgroundColor: visual.videoChrome },
   stateTitle: { color: '#FFF7EC', fontSize: 21, textAlign: 'center', fontFamily: 'PlayfairDisplay_700Bold' },
   stateCopy: { color: '#A6BAB4', fontSize: 12, textAlign: 'center', fontFamily: 'Manrope_500Medium' },
-  secondaryButton: { marginTop: 8, minHeight: 44, paddingHorizontal: 18, borderRadius: 22, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#D7B56D88' },
-  secondaryText: { color: '#E7C77F', fontSize: 12, fontFamily: 'Manrope_700Bold' },
+  secondaryButton: { marginTop: 8, minHeight: 44, paddingHorizontal: 18, borderRadius: 22, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: visual.purple },
+  secondaryText: { color: '#CDBAF0', fontSize: 12, fontFamily: 'Manrope_700Bold' },
 });

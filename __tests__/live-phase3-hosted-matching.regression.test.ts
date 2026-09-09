@@ -34,6 +34,10 @@ const repository = readFileSync(
   new URL('../features/live/application/live-repository.ts', import.meta.url),
   'utf8',
 );
+const hostedMatchingHook = readFileSync(
+  new URL('../features/live/hooks/use-live-hosted-matching.ts', import.meta.url),
+  'utf8',
+);
 const route = readFileSync(new URL('../app/live/[sessionId].tsx', import.meta.url), 'utf8');
 const modal = readFileSync(
   new URL('../features/live/components/LiveHostedMatchingModal.tsx', import.meta.url),
@@ -113,6 +117,16 @@ test('hosted matching realtime carries invalidation only, never consent payloads
   assert.match(repository, /table: 'live_match_round_updates'/i);
   const mainSubscription = repository.match(/subscribe\(sessionId[\s\S]+?subscribeHostedMatching/i)?.[0] ?? '';
   assert.doesNotMatch(mainSubscription, /live_match_rounds/i);
+});
+
+test('hosted matching reconciles subscription races without dropping an in-flight consent update', () => {
+  const subscription = repository.match(
+    /subscribeHostedMatching[\s\S]+?subscribeLiveDirector/i,
+  )?.[0] ?? '';
+  assert.match(subscription, /channel\.subscribe\(\(status\)/i);
+  assert.match(subscription, /status === 'SUBSCRIBED'\) onChange\(\)/i);
+  assert.match(hostedMatchingHook, /refreshQueuedRef\.current = true/i);
+  assert.match(hostedMatchingHook, /while \(mountedRef\.current && refreshQueuedRef\.current\)/i);
 });
 
 test('introduction availability invalidates every host snapshot without exposing candidate data', () => {

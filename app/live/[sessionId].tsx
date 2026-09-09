@@ -38,6 +38,7 @@ import {
   LiveMediaStageBoundary,
   LiveMemberSummaryModal,
   LivePublicIntroductionCard,
+  OdoProgramStage,
   LiveQuickConnectPool,
   LiveQuickConnectStage,
   LiveRoomEventNotice,
@@ -49,11 +50,20 @@ import { likeLiveMember } from '@/features/live/application/index.ts';
 import type { StreamLiveStageProps } from '@/features/live/components/StreamLiveStage.tsx';
 import {
   useLiveHostedMatching,
+  useLiveDirectorEvents,
   useLiveMediaSession,
   useLiveQuickConnectHostControl,
   useLiveQuickConnectPool,
   useLiveSessionController,
 } from '@/features/live/hooks/index.ts';
+import {
+  getOdoCopilotParticipantNotice,
+} from '@/features/live/odo/copilot/odo-copilot-participant-notice.ts';
+import {
+  ODO_COPILOT_SCENES,
+  type OdoCopilotScene,
+} from '@/features/live/odo/copilot/odo-copilot-contracts.ts';
+import { useLiveProgram } from '@/features/live/odo/show/use-live-program.ts';
 import { loadStreamVideoSdk } from '@/features/live/media/load-stream-video-sdk.ts';
 import { useAuth } from '@/lib/auth-context';
 import { useScopedScreenAwake } from '@/hooks/use-scoped-screen-awake';
@@ -64,6 +74,10 @@ import {
   type LiveReturnRouteParams,
 } from '@/features/live/navigation/live-navigation.ts';
 import IntentRequestSheet from '@/components/IntentRequestSheet';
+import {
+  type LiveVisualTheme,
+  useLiveVisualTheme,
+} from '@/features/live/components/live-visual-tokens.ts';
 
 const StreamLiveStage = lazy(async () => {
   const [module, sdk] = await Promise.all([
@@ -86,6 +100,8 @@ type LiveRoomNotice = {
 };
 
 export default function LiveSessionScreen() {
+  const visual = useLiveVisualTheme();
+  const styles = useMemo(() => createStyles(visual), [visual]);
   const params = useLocalSearchParams<{
     sessionId?: string;
     startAudio?: string;
@@ -104,6 +120,7 @@ export default function LiveSessionScreen() {
   const privateSparkHandoffRef = useRef<string | null>(null);
   const quickConnectPairingRouteRef = useRef<string | null>(null);
   const terminalExitHandledRef = useRef(false);
+  const completionExitHandledRef = useRef(false);
   const participantAdmissionInFlightRef = useRef(false);
   const participantAdmissionAttemptsRef = useRef(0);
   const participantAdmissionGenerationRef = useRef(0);
@@ -111,7 +128,7 @@ export default function LiveSessionScreen() {
   const [connectedParticipantCount, setConnectedParticipantCount] = useState<number | null>(null);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [studioOpen, setStudioOpen] = useState(false);
-  const [roomPulseExpanded, setRoomPulseExpanded] = useState(false);
+  const [roomPulseExpanded, setRoomPulseExpanded] = useState(true);
   const [isPictureInPicture, setIsPictureInPicture] = useState(false);
   const [roomEventNotices, setRoomEventNotices] = useState<readonly LiveRoomNotice[]>([]);
   const [audiencePulseOpenRequest, setAudiencePulseOpenRequest] = useState(0);
@@ -124,6 +141,7 @@ export default function LiveSessionScreen() {
   const [invitationOptionsOpen, setInvitationOptionsOpen] = useState(false);
   const announcedSeatRequestsRef = useRef(new Set<string>());
   const announcedAudiencePollRef = useRef<string | null>(null);
+  const announcedDirectorEventIdsRef = useRef(new Set<string>());
   const joinSession = controller.join;
   const mediaState = media.state;
   useScopedScreenAwake({
@@ -144,6 +162,20 @@ export default function LiveSessionScreen() {
   const isRoomHost = me?.role === 'host'
     || snapshot?.session.createdByUserId === user?.id;
   const isLive = snapshot?.session.status === 'live';
+  const liveProgram = useLiveProgram({
+    enabled: isLive && participantAdmissionReady,
+    sessionId,
+    // Mobile publishers stay out of programme playback until physical RTC/audio
+    // mix validation is complete. Audience devices may use synchronized playback.
+    allowMusicPlayback: isLive && !canPublish,
+  });
+  const director = useLiveDirectorEvents(sessionId, isLive);
+  const odoStageScene = useMemo(() => {
+    const scene = director.snapshot?.currentScene;
+    return scene && ODO_COPILOT_SCENES.includes(scene as OdoCopilotScene)
+      ? scene as OdoCopilotScene
+      : null;
+  }, [director.snapshot?.currentScene]);
   const isQuickConnectLive = isLive && snapshot?.session.format === 'quick_connect';
   const quickConnectHost = useLiveQuickConnectHostControl(
     sessionId,
@@ -171,6 +203,15 @@ export default function LiveSessionScreen() {
   const returnToLiveOrigin = useCallback(() => {
     router.dismissTo(getLiveExitDestination(liveReturnParams));
   }, [liveReturnParams]);
+  const openSessionRecap = useCallback(async () => {
+    if (completionExitHandledRef.current) return;
+    completionExitHandledRef.current = true;
+    await media.leave().catch(() => undefined);
+    router.replace({
+      pathname: '/live/event/[sessionId]',
+      params: { sessionId, ...liveReturnParams },
+    });
+  }, [liveReturnParams, media.leave, sessionId]);
   const openLiveStudio = useCallback(() => {
     setStudioOpen(true);
     void Promise.all([
@@ -193,9 +234,11 @@ export default function LiveSessionScreen() {
   useEffect(() => {
     announcedSeatRequestsRef.current.clear();
     announcedAudiencePollRef.current = null;
+    announcedDirectorEventIdsRef.current.clear();
     quickConnectPairingRouteRef.current = null;
     setRoomEventNotices([]);
     setAudiencePulseOpenRequest(0);
+    completionExitHandledRef.current = false;
   }, [sessionId]);
 
   useEffect(() => {
@@ -272,6 +315,21 @@ export default function LiveSessionScreen() {
       title: activePoll.prompt,
     });
   }, [controller.audiencePulse.activePoll, controller.audiencePulse.canManage, enqueueRoomNotice]);
+
+  useEffect(() => {
+    if (isRoomHost) return;
+    for (const event of director.events) {
+      if (announcedDirectorEventIdsRef.current.has(event.eventId)) continue;
+      announcedDirectorEventIdsRef.current.add(event.eventId);
+      const notice = getOdoCopilotParticipantNotice(event);
+      if (!notice) continue;
+      enqueueRoomNotice({
+        ...notice,
+      actionLabel: 'Got it',
+        kind: 'odo_copilot',
+      });
+    }
+  }, [director.events, enqueueRoomNotice, isRoomHost]);
 
   useEffect(() => {
     if (
@@ -366,6 +424,12 @@ export default function LiveSessionScreen() {
       { cancelable: false },
     );
   }, [me?.state, media.error, media.leave, returnsToCircle, returnToLiveOrigin]);
+
+  useEffect(() => {
+    const status = snapshot?.session.status;
+    if (status !== 'ended' && status !== 'cancelled') return;
+    void openSessionRecap();
+  }, [openSessionRecap, snapshot?.session.status]);
 
   useEffect(() => {
     const privateSpark = hostedMatching.snapshot?.privateSpark;
@@ -481,6 +545,28 @@ export default function LiveSessionScreen() {
       ],
     );
   }, [close]);
+  const confirmEndLive = useCallback(() => {
+    if (controller.busyAction !== null) return;
+    Alert.alert(
+      'End this Live?',
+      'The public room will close for everyone and the final Live report will be prepared.',
+      [
+        { text: 'Keep Live open', style: 'cancel' },
+        {
+          text: 'End Live',
+          style: 'destructive',
+          onPress: () => void (async () => {
+            const ended = await controller.endSession();
+            if (ended) {
+              await openSessionRecap();
+              return;
+            }
+            Alert.alert('Live not ended', 'The room may have changed elsewhere. Refresh and try again.');
+          })(),
+        },
+      ],
+    );
+  }, [controller.busyAction, controller.endSession, openSessionRecap]);
   const confirmLeaveStage = useCallback(() => {
     Alert.alert(
       'Leave the stage?',
@@ -538,7 +624,7 @@ export default function LiveSessionScreen() {
     if (!notice) return;
     if (notice.kind === 'stage_request') {
       openLiveStudio();
-    } else {
+    } else if (notice.kind === 'audience_pulse') {
       setRoomPulseExpanded(true);
       setAudiencePulseOpenRequest((request) => request + 1);
     }
@@ -546,7 +632,7 @@ export default function LiveSessionScreen() {
   }, [openLiveStudio, roomEventNotices]);
 
   if (!snapshot && controller.state === 'loading') {
-    return <View style={styles.loading}><ActivityIndicator color="#D7B56D" /></View>;
+    return <View style={styles.loading}><ActivityIndicator color={visual.color.teal} /></View>;
   }
   if (!snapshot) {
     return (
@@ -599,6 +685,10 @@ export default function LiveSessionScreen() {
   if (!isLive) {
     const going = me?.rsvpStatus === 'going';
     const hostCanOpenBackstage = snapshot.capabilities.includes('live.start_session');
+    const scheduledStartMs = snapshot.session.scheduledStart
+      ? Date.parse(snapshot.session.scheduledStart)
+      : 0;
+    const sessionIsDue = !scheduledStartMs || scheduledStartMs <= Date.now();
     const openBackstage = () => router.push({
       pathname: '/live/backstage/[sessionId]',
       params: { sessionId, ...liveReturnParams },
@@ -607,23 +697,31 @@ export default function LiveSessionScreen() {
       <View style={styles.invitationRoot}>
         <SafeAreaView style={styles.invitationSafe}>
           <View style={styles.header}>
-            <Pressable accessibilityLabel={returnsToCircle ? 'Back to Circle' : 'Back to Live Studio'} onPress={returnToLiveOrigin} style={styles.iconButton}><ChevronLeft size={25} color="#FFF7EC" /></Pressable>
-            <View style={styles.scheduledPill}><Radio size={13} color="#D7B56D" /><Text style={styles.scheduledText}>SCHEDULED LIVE</Text></View>
-            <Pressable accessibilityLabel={isRoomHost ? 'Live options' : 'Invitation options'} onPress={() => setInvitationOptionsOpen(true)} style={styles.iconButton}><MoreHorizontal size={21} color="#FFF7EC" /></Pressable>
+            <Pressable accessibilityLabel={returnsToCircle ? 'Back to Circle' : 'Back to Live Studio'} onPress={returnToLiveOrigin} style={styles.iconButton}><ChevronLeft size={25} color={visual.color.text} /></Pressable>
+            <View style={styles.scheduledPill}><Radio size={13} color={visual.color.teal} /><Text style={styles.scheduledText}>SCHEDULED LIVE</Text></View>
+            <Pressable accessibilityLabel={isRoomHost ? 'Live options' : 'Invitation options'} onPress={() => setInvitationOptionsOpen(true)} style={styles.iconButton}><MoreHorizontal size={21} color={visual.color.text} /></Pressable>
           </View>
           <View style={styles.invitationBody}>
             <Text style={styles.invitationEyebrow}>{isRoomHost ? 'HOST PREPARATION' : 'YOUR INVITATION'}</Text>
             <Text style={styles.invitationTitle}>{snapshot.session.title}</Text>
             <Text style={styles.invitationDescription}>{snapshot.session.description || 'A host-led room designed for intentional conversation and warmer introductions.'}</Text>
             <View style={styles.promiseCard}>
-              <Text style={styles.promiseTitle}>{isRoomHost ? 'Your room is scheduled' : 'What makes this room different'}</Text>
-              <Text style={styles.promiseBody}>{isRoomHost ? 'Backstage is private. Check your camera, microphone, and room plan before opening the public stage at the scheduled time.' : 'A protected four-seat stage, moderated conversation, no public rankings, and no attention-chasing mechanics.'}</Text>
+              <Text style={styles.promiseTitle}>{isRoomHost
+                ? sessionIsDue ? 'Your room is ready to open' : 'Your room is scheduled'
+                : sessionIsDue ? 'The host is preparing the stage' : 'What makes this room different'}</Text>
+              <Text style={styles.promiseBody}>{isRoomHost
+                ? sessionIsDue
+                  ? 'Enter backstage for one final camera and microphone check, then open the public stage when you are ready.'
+                  : 'Backstage is private and available now. Rehearse safely; the public stage unlocks at the scheduled time.'
+                : sessionIsDue
+                  ? 'Your place is held. The room will open as soon as the host completes the private backstage check.'
+                  : 'A protected four-seat stage, moderated conversation, no public rankings, and no attention-chasing mechanics.'}</Text>
             </View>
           </View>
           <View style={styles.invitationActions}>
             {isRoomHost ? (
               <Pressable disabled={!hostCanOpenBackstage} onPress={openBackstage} style={[styles.primaryButton, !hostCanOpenBackstage && styles.primaryButtonDisabled]}>
-                <Text style={styles.primaryText}>Open private backstage</Text>
+                <Text style={styles.primaryText}>{sessionIsDue ? 'Open backstage & go live' : 'Open private backstage'}</Text>
               </Pressable>
             ) : (
               <Pressable
@@ -651,9 +749,9 @@ export default function LiveSessionScreen() {
       <View style={styles.invitationRoot}>
         <SafeAreaView style={styles.invitationSafe}>
           <View style={styles.header}>
-            <Pressable accessibilityLabel={returnsToCircle ? 'Back to Circle' : 'Back to Live Studio'} onPress={returnToLiveOrigin} style={styles.iconButton}><ChevronLeft size={25} color="#FFF7EC" /></Pressable>
-            <View style={styles.scheduledPill}><Radio size={13} color="#D7B56D" /><Text style={styles.scheduledText}>HOST INVITATION</Text></View>
-            <Pressable accessibilityLabel="Invitation options" onPress={() => setInvitationOptionsOpen(true)} style={styles.iconButton}><MoreHorizontal size={21} color="#FFF7EC" /></Pressable>
+            <Pressable accessibilityLabel={returnsToCircle ? 'Back to Circle' : 'Back to Live Studio'} onPress={returnToLiveOrigin} style={styles.iconButton}><ChevronLeft size={25} color={visual.color.text} /></Pressable>
+            <View style={[styles.scheduledPill, styles.notificationPill]}><Radio size={13} color={visual.color.purple} /><Text style={[styles.scheduledText, styles.notificationText]}>HOST INVITATION</Text></View>
+            <Pressable accessibilityLabel="Invitation options" onPress={() => setInvitationOptionsOpen(true)} style={styles.iconButton}><MoreHorizontal size={21} color={visual.color.text} /></Pressable>
           </View>
           <View style={styles.invitationBody}>
             <Text style={styles.invitationEyebrow}>YOUR SEAT IS READY</Text>
@@ -679,7 +777,7 @@ export default function LiveSessionScreen() {
     <>
       {media.bindings ? (
         <LiveMediaStageBoundary resetKey={`${sessionId}:${media.state}`}>
-          <Suspense fallback={<ActivityIndicator color="#D7B56D" />}>
+          <Suspense fallback={<ActivityIndicator color={visual.color.teal} />}>
             <StreamLiveStage
               bindings={media.bindings}
               stageParticipants={snapshot.stage}
@@ -687,12 +785,14 @@ export default function LiveSessionScreen() {
               onConnectedParticipantCountChange={handleConnectedParticipantCountChange}
               onPictureInPictureModeChange={handlePictureInPictureModeChange}
               requestSeat={stageRequestSeat}
+              scene={odoStageScene}
             />
+            <OdoProgramStage program={liveProgram.state} />
           </Suspense>
         </LiveMediaStageBoundary>
       ) : (
         <View style={styles.stageLoading}>
-          <ActivityIndicator color="#D7B56D" />
+          <ActivityIndicator color={visual.color.teal} />
           <Text style={styles.stageLoadingText}>
             {media.state === 'failed' ? 'Tap refresh to rejoin the room.' : 'Entering quietly…'}
           </Text>
@@ -726,7 +826,7 @@ export default function LiveSessionScreen() {
       ) : null}
       {!isPictureInPicture && canPublish && !publicationReady ? (
         <View style={[styles.authorityNotice, isQuickConnectLive && styles.stageNoticeCompact]}>
-          {media.authorityState === 'syncing' ? <ActivityIndicator color="#D7B56D" size="small" /> : null}
+          {media.authorityState === 'syncing' ? <ActivityIndicator color={visual.color.teal} size="small" /> : null}
           <Text style={styles.authorityNoticeText}>
             {media.authorityState === 'failed'
               ? 'Stage controls need a quick refresh.'
@@ -849,6 +949,7 @@ export default function LiveSessionScreen() {
           style={[
             styles.conversationGlass,
             roomPulseExpanded && styles.conversationGlassExpanded,
+            isQuickConnectLive && !keyboardVisible && styles.quickConnectConversationGlass,
             keyboardVisible && styles.conversationGlassKeyboard,
           ]}
         >
@@ -886,7 +987,7 @@ export default function LiveSessionScreen() {
               onPress={confirmLeaveStage}
               style={styles.leaveButton}
             >
-              <ChevronDown color="#FFD8D4" size={18} />
+              <ChevronDown color={visual.color.dangerText} size={18} />
               <Text style={styles.leaveText}>Leave stage</Text>
             </Pressable>
           ) : null}
@@ -897,22 +998,22 @@ export default function LiveSessionScreen() {
               onPress={openLiveStudio}
               style={styles.studioButton}
             >
-              <SlidersHorizontal size={18} color="#D7B56D" />
+              <SlidersHorizontal size={18} color={visual.color.teal} />
               <Text style={styles.studioText}>Live Studio</Text>
             </Pressable>
           ) : null}
           {canPublish ? (
             <>
               <Pressable disabled={!publicationReady} onPress={() => void media.setAudioEnabled(!media.audioEnabled)} style={[styles.control, !media.audioEnabled && styles.controlOff, !publicationReady && styles.controlDisabled]}>
-                {media.audioEnabled ? <Mic size={20} color="#102522" /> : <MicOff size={20} color="#F9ECE1" />}
+                {media.audioEnabled ? <Mic size={20} color={visual.color.accentContrast} /> : <MicOff size={20} color={visual.color.dangerText} />}
               </Pressable>
               <Pressable disabled={!publicationReady} onPress={() => void media.setVideoEnabled(!media.videoEnabled)} style={[styles.control, !media.videoEnabled && styles.controlOff, !publicationReady && styles.controlDisabled]}>
-                {media.videoEnabled ? <Camera size={20} color="#102522" /> : <CameraOff size={20} color="#F9ECE1" />}
+                {media.videoEnabled ? <Camera size={20} color={visual.color.accentContrast} /> : <CameraOff size={20} color={visual.color.dangerText} />}
               </Pressable>
             </>
           ) : null}
           {canManageStage && snapshot.session.createdByUserId === user?.id ? (
-            <Pressable onPress={() => void controller.transitionSession('ending')} style={styles.endButton}><Text style={styles.endText}>End room</Text></Pressable>
+            <Pressable disabled={controller.busyAction !== null} onPress={confirmEndLive} style={[styles.endButton, controller.busyAction !== null && styles.controlDisabled]}><Text style={styles.endText}>{controller.busyAction === 'end-session' ? 'Ending…' : 'End room'}</Text></Pressable>
           ) : null}
         </LiveControlDock> : null}
         <LiveStudioModal
@@ -922,6 +1023,16 @@ export default function LiveSessionScreen() {
           onRefresh={() => void Promise.all([hostedMatching.refresh(), quickConnectHost.refresh(), controller.refresh()])}
           sessionId={sessionId}
           roomTitle={snapshot.session.title}
+          odoRoundId={hostedMatching.snapshot?.activeRound?.state === 'public_introduction'
+            ? hostedMatching.snapshot.activeRound.id
+            : null}
+          odoAutopilotOperational={isLive && isRoomHost}
+          onOdoSuggestionUsed={() => Promise.all([
+            hostedMatching.refresh(),
+            quickConnectHost.refresh(),
+            quickConnectPool.refresh(),
+            controller.refresh(),
+          ]).then(() => undefined)}
           stageDeskProps={{
             backstage: snapshot.backstage,
             onModerate: (userId, action) => void controller.moderateParticipant(userId, action),
@@ -996,23 +1107,23 @@ export default function LiveSessionScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#071310' },
+const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
+  root: { flex: 1, backgroundColor: visual.color.canvas },
   keyboardAvoider: { flex: 1 },
   safe: { flex: 1 },
-  stageBackground: { position: 'absolute', top: 0, right: 0, left: 0, backgroundColor: '#071310' },
+  stageBackground: { position: 'absolute', top: 0, right: 0, left: 0, backgroundColor: visual.color.videoChrome },
   fullStageBackground: { bottom: 0 },
   stageScrim: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
-  loading: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#071310', gap: 18 },
-  errorTitle: { color: '#FFF7EC', fontSize: 21, fontFamily: 'PlayfairDisplay_700Bold' },
-  retry: { paddingHorizontal: 20, height: 44, borderRadius: 22, justifyContent: 'center', backgroundColor: '#D7B56D' },
-  retryText: { color: '#102522', fontFamily: 'Manrope_700Bold' },
-  header: { minHeight: 67, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#091614' },
-  iconButton: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: '#08151299', borderWidth: 1, borderColor: '#FFFFFF24' },
+  loading: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.color.canvas, gap: 18 },
+  errorTitle: { color: visual.color.text, fontSize: 21, fontFamily: 'PlayfairDisplay_700Bold' },
+  retry: { paddingHorizontal: 20, height: 44, borderRadius: 22, justifyContent: 'center', backgroundColor: visual.color.teal },
+  retryText: { color: visual.color.accentContrast, fontFamily: 'Manrope_700Bold' },
+  header: { minHeight: 67, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: visual.color.surface },
+  iconButton: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.color.surfaceRaised, borderWidth: 1, borderColor: visual.color.border },
   stageLoading: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
-  stageLoadingText: { color: '#A7B7B3', fontSize: 12, fontFamily: 'Manrope_600SemiBold' },
-  mediaRetry: { position: 'absolute', alignSelf: 'center', top: '46%', paddingHorizontal: 18, height: 40, justifyContent: 'center', borderRadius: 20, backgroundColor: '#D7B56D' },
-  mediaRetryText: { color: '#102522', fontFamily: 'Manrope_700Bold' },
+  stageLoadingText: { color: visual.color.textMuted, fontSize: 12, fontFamily: 'Manrope_600SemiBold' },
+  mediaRetry: { position: 'absolute', alignSelf: 'center', top: '46%', paddingHorizontal: 18, height: 40, justifyContent: 'center', borderRadius: 20, backgroundColor: visual.color.teal },
+  mediaRetryText: { color: visual.color.accentContrast, fontFamily: 'Manrope_700Bold' },
   deviceNotice: {
     position: 'absolute',
     left: 16,
@@ -1025,12 +1136,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 12,
-    backgroundColor: '#172A27F2',
+    backgroundColor: visual.color.surfaceTranslucent,
     borderWidth: 1,
-    borderColor: '#7C6B45',
+    borderColor: visual.color.borderStrong,
   },
-  deviceNoticeText: { flex: 1, color: '#E9E2D8', fontSize: 11, fontFamily: 'Manrope_600SemiBold' },
-  deviceRetryText: { color: '#D7B56D', fontSize: 11, fontFamily: 'Manrope_800ExtraBold' },
+  deviceNoticeText: { flex: 1, color: visual.color.text, fontSize: 11, fontFamily: 'Manrope_600SemiBold' },
+  deviceRetryText: { color: visual.color.teal, fontSize: 11, fontFamily: 'Manrope_800ExtraBold' },
   authorityNotice: {
     position: 'absolute',
     left: 16,
@@ -1043,19 +1154,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 10,
-    backgroundColor: '#172A27F2',
+    backgroundColor: visual.color.surfaceTranslucent,
     borderWidth: 1,
-    borderColor: '#7C6B45',
+    borderColor: visual.color.borderStrong,
   },
-  authorityNoticeText: { color: '#E9E2D8', fontSize: 11, fontFamily: 'Manrope_600SemiBold' },
+  authorityNoticeText: { color: visual.color.text, fontSize: 11, fontFamily: 'Manrope_600SemiBold' },
   stageNoticeCompact: { top: 10, left: 8, right: 8, minHeight: 38, paddingHorizontal: 10 },
   overlaySpacer: { flex: 1, minHeight: 10 },
-  conversationGlass: { height: '27%', minHeight: 194, marginHorizontal: 12, marginBottom: 6, borderRadius: 24, backgroundColor: '#07151280' },
-  conversationGlassExpanded: { height: '46%' },
+  conversationGlass: { height: '30%', minHeight: 194, marginHorizontal: 12, marginBottom: 6, borderRadius: 24, backgroundColor: visual.color.surfaceTranslucent },
+  conversationGlassExpanded: { height: '38%' },
+  quickConnectConversationGlass: { height: '30%', maxHeight: '30%' },
   conversationGlassKeyboard: { flex: 1, height: 'auto', minHeight: 0, marginTop: 8, marginBottom: 4 },
   controls: { marginHorizontal: 12, marginBottom: 3 },
-  studioButton: { height: 44, borderRadius: 22, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: '#172A25', borderWidth: 1, borderColor: '#766842' },
-  studioText: { color: '#E9D8B4', fontSize: 11, fontFamily: 'Manrope_800ExtraBold' },
+  studioButton: { height: 44, borderRadius: 22, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: visual.color.tealSoft, borderWidth: 1, borderColor: visual.color.borderStrong },
+  studioText: { color: visual.color.teal, fontSize: 11, fontFamily: 'Manrope_800ExtraBold' },
   leaveButton: {
     height: 44,
     borderRadius: 22,
@@ -1063,31 +1175,33 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 7,
-    backgroundColor: '#3B2525',
+    backgroundColor: visual.color.dangerSoft,
     borderWidth: 1,
-    borderColor: '#A65E5E66',
+    borderColor: visual.color.danger,
   },
-  leaveText: { color: '#FFD8D4', fontSize: 11, fontFamily: 'Manrope_800ExtraBold' },
-  control: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: '#D7B56D' },
-  controlOff: { backgroundColor: '#59302F' },
+  leaveText: { color: visual.color.dangerText, fontSize: 11, fontFamily: 'Manrope_800ExtraBold' },
+  control: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.color.teal },
+  controlOff: { backgroundColor: visual.color.dangerSoft },
   controlDisabled: { opacity: 0.45 },
-  endButton: { height: 44, borderRadius: 22, paddingHorizontal: 14, justifyContent: 'center', backgroundColor: '#472424' },
-  endText: { color: '#FFD8D4', fontSize: 11, fontFamily: 'Manrope_700Bold' },
-  invitationRoot: { flex: 1, backgroundColor: '#0A1715' },
+  endButton: { height: 44, borderRadius: 22, paddingHorizontal: 14, justifyContent: 'center', backgroundColor: visual.color.dangerSoft },
+  endText: { color: visual.color.dangerText, fontSize: 11, fontFamily: 'Manrope_700Bold' },
+  invitationRoot: { flex: 1, backgroundColor: visual.color.canvas },
   invitationSafe: { flex: 1 },
-  scheduledPill: { minHeight: 32, paddingHorizontal: 12, borderRadius: 16, flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderColor: '#766842', backgroundColor: '#24271E' },
-  scheduledText: { color: '#D7B56D', fontSize: 9, letterSpacing: 1.2, fontFamily: 'Manrope_800ExtraBold' },
+  scheduledPill: { minHeight: 32, paddingHorizontal: 12, borderRadius: 16, flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderColor: visual.color.borderStrong, backgroundColor: visual.color.tealSoft },
+  scheduledText: { color: visual.color.teal, fontSize: 9, letterSpacing: 1.2, fontFamily: 'Manrope_800ExtraBold' },
+  notificationPill: { borderColor: visual.color.purple, backgroundColor: visual.color.purpleSoft },
+  notificationText: { color: visual.color.purple },
   invitationBody: { flex: 1, paddingHorizontal: 28, justifyContent: 'center', alignItems: 'center' },
-  invitationEyebrow: { color: '#D7B56D', fontSize: 10, letterSpacing: 2, fontFamily: 'Manrope_800ExtraBold' },
-  invitationTitle: { color: '#FFF7EC', fontSize: 40, lineHeight: 47, textAlign: 'center', fontFamily: 'PlayfairDisplay_700Bold', marginTop: 16 },
-  invitationDescription: { color: '#A3B4AF', fontSize: 14, lineHeight: 22, textAlign: 'center', fontFamily: 'Manrope_500Medium', marginTop: 16 },
-  promiseCard: { marginTop: 32, borderRadius: 24, padding: 20, backgroundColor: '#132522', borderWidth: 1, borderColor: '#345049' },
-  promiseTitle: { color: '#F7EFE4', fontSize: 15, fontFamily: 'Archivo_700Bold' },
-  promiseBody: { color: '#94A6A1', fontSize: 12, lineHeight: 19, fontFamily: 'Manrope_500Medium', marginTop: 7 },
+  invitationEyebrow: { color: visual.color.teal, fontSize: 10, letterSpacing: 2, fontFamily: 'Manrope_800ExtraBold' },
+  invitationTitle: { color: visual.color.text, fontSize: 40, lineHeight: 47, textAlign: 'center', fontFamily: 'PlayfairDisplay_700Bold', marginTop: 16 },
+  invitationDescription: { color: visual.color.textMuted, fontSize: 14, lineHeight: 22, textAlign: 'center', fontFamily: 'Manrope_500Medium', marginTop: 16 },
+  promiseCard: { marginTop: 32, borderRadius: 24, padding: 20, backgroundColor: visual.color.surfaceRaised, borderWidth: 1, borderColor: visual.color.border },
+  promiseTitle: { color: visual.color.text, fontSize: 15, fontFamily: 'Archivo_700Bold' },
+  promiseBody: { color: visual.color.textMuted, fontSize: 12, lineHeight: 19, fontFamily: 'Manrope_500Medium', marginTop: 7 },
   invitationActions: { padding: 20 },
-  primaryButton: { height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center', backgroundColor: '#D7B56D' },
+  primaryButton: { height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.color.teal },
   primaryButtonDisabled: { opacity: 0.55 },
-  goingButton: { backgroundColor: '#82B5A5' },
-  primaryText: { color: '#0E2723', fontSize: 14, fontFamily: 'Manrope_800ExtraBold' },
-  actionError: { color: '#F2AAA3', fontSize: 11, lineHeight: 17, textAlign: 'center', fontFamily: 'Manrope_600SemiBold', marginTop: 10 },
+  goingButton: { backgroundColor: visual.color.teal },
+  primaryText: { color: visual.color.accentContrast, fontSize: 14, fontFamily: 'Manrope_800ExtraBold' },
+  actionError: { color: visual.color.danger, fontSize: 11, lineHeight: 17, textAlign: 'center', fontFamily: 'Manrope_600SemiBold', marginTop: 10 },
 });

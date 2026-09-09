@@ -1,10 +1,10 @@
 import * as Haptics from 'expo-haptics';
 import { UsersRound } from 'lucide-react-native';
-import { memo } from 'react';
+import { memo, useMemo } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { LiveGlassSurface } from './LiveGlassSurface.tsx';
-import { LIVE_VISUAL } from './live-visual-tokens.ts';
+import { type LiveVisualTheme, useLiveVisualTheme } from './live-visual-tokens.ts';
 
 type SeatRequest = { id: string; fullName: string | null };
 type StagePerson = {
@@ -50,6 +50,8 @@ export const LiveStageDesk = memo(function LiveStageDesk({
   stage,
   presentation = 'overlay',
 }: LiveStageDeskProps) {
+  const visual = useLiveVisualTheme();
+  const styles = useMemo(() => createStyles(visual), [visual]);
   const managedStage = stage.filter((participant) => participant.role !== 'host');
   const waitingCount = seatRequests.length + backstage.length;
   const confirmRemoval = (participant: StagePerson) => {
@@ -87,7 +89,7 @@ export const LiveStageDesk = memo(function LiveStageDesk({
         style={styles.pillPressable}
       >
         <LiveGlassSurface intensity={44} style={styles.pill}>
-          <UsersRound size={14} color={LIVE_VISUAL.color.oat} />
+          <UsersRound size={14} color={visual.color.text} />
           <Text style={styles.pillLabel}>STAGE DESK</Text>
           <View style={styles.count}>
             <Text style={styles.countText}>{countLabel}</Text>
@@ -101,7 +103,7 @@ export const LiveStageDesk = memo(function LiveStageDesk({
     <LiveGlassSurface intensity={48} style={[styles.panel, isStudio && styles.studioPanel]}>
       <View style={styles.titleRow}>
         <View style={styles.titleCopy}>
-          <UsersRound size={14} color={LIVE_VISUAL.color.teal} />
+          <UsersRound size={14} color={visual.color.teal} />
           <Text style={styles.title}>STAGE DESK</Text>
         </View>
         {!isStudio ? <Pressable
@@ -214,7 +216,7 @@ export const LiveStageDesk = memo(function LiveStageDesk({
   );
 });
 
-const styles = StyleSheet.create({
+const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
   pillPressable: { alignSelf: 'flex-start', marginLeft: 12, marginTop: 7, borderRadius: 22 },
   pill: {
     minHeight: 38,
@@ -223,41 +225,41 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#061411CA',
-    borderColor: LIVE_VISUAL.color.borderStrong,
+    backgroundColor: visual.color.surfaceTranslucent,
+    borderColor: visual.color.borderStrong,
   },
-  pillLabel: { color: LIVE_VISUAL.color.oat, fontSize: 8, letterSpacing: 1.3, fontFamily: 'Manrope_800ExtraBold' },
-  count: { minHeight: 22, paddingHorizontal: 9, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: LIVE_VISUAL.color.tealSoft },
-  countText: { color: '#BEE7DC', fontSize: 9, fontFamily: 'Manrope_700Bold' },
-  panel: { marginHorizontal: 12, marginTop: 7, borderRadius: 20, backgroundColor: '#061411E8', paddingVertical: 9, borderColor: LIVE_VISUAL.color.borderStrong },
-  studioPanel: { marginHorizontal: 0, marginTop: 0, paddingVertical: 14, backgroundColor: '#0C201C' },
+  pillLabel: { color: visual.color.text, fontSize: 8, letterSpacing: 1.3, fontFamily: 'Manrope_800ExtraBold' },
+  count: { minHeight: 22, paddingHorizontal: 9, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.color.tealSoft },
+  countText: { color: visual.color.teal, fontSize: 9, fontFamily: 'Manrope_700Bold' },
+  panel: { marginHorizontal: 12, marginTop: 7, borderRadius: 20, backgroundColor: visual.color.surfaceTranslucent, paddingVertical: 9, borderColor: visual.color.borderStrong },
+  studioPanel: { marginHorizontal: 0, marginTop: 0, paddingVertical: 14, backgroundColor: visual.color.surfaceRaised },
   titleRow: { paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   titleCopy: { flexDirection: 'row', alignItems: 'center', gap: 7 },
-  title: { color: LIVE_VISUAL.color.oat, fontSize: 9, letterSpacing: 1.4, fontFamily: 'Manrope_800ExtraBold' },
-  intakeControl: { marginHorizontal: 14, marginTop: 13, borderRadius: 16, borderWidth: 1, borderColor: LIVE_VISUAL.color.borderStrong, backgroundColor: '#102721', paddingHorizontal: 13, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  title: { color: visual.color.text, fontSize: 9, letterSpacing: 1.4, fontFamily: 'Manrope_800ExtraBold' },
+  intakeControl: { marginHorizontal: 14, marginTop: 13, borderRadius: 16, borderWidth: 1, borderColor: visual.color.borderStrong, backgroundColor: visual.color.surface, paddingHorizontal: 13, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', gap: 12 },
   intakeCopy: { flex: 1 },
   intakeTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  intakeTitle: { color: LIVE_VISUAL.color.text, fontSize: 10, letterSpacing: 1.1, fontFamily: 'Manrope_800ExtraBold' },
-  intakeStatus: { color: LIVE_VISUAL.color.textMuted, fontSize: 8, letterSpacing: 1, fontFamily: 'Manrope_800ExtraBold' },
-  intakeStatusOpen: { color: '#8FD8C5' },
-  intakeBody: { marginTop: 4, color: LIVE_VISUAL.color.textMuted, fontSize: 10, lineHeight: 15, fontFamily: 'Manrope_500Medium' },
+  intakeTitle: { color: visual.color.text, fontSize: 10, letterSpacing: 1.1, fontFamily: 'Manrope_800ExtraBold' },
+  intakeStatus: { color: visual.color.textMuted, fontSize: 8, letterSpacing: 1, fontFamily: 'Manrope_800ExtraBold' },
+  intakeStatusOpen: { color: visual.color.teal },
+  intakeBody: { marginTop: 4, color: visual.color.textMuted, fontSize: 10, lineHeight: 15, fontFamily: 'Manrope_500Medium' },
   capacityOptions: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  capacityOption: { minWidth: 32, minHeight: 32, paddingHorizontal: 8, borderRadius: 16, borderWidth: 1, borderColor: '#35534B', alignItems: 'center', justifyContent: 'center', backgroundColor: '#081B17' },
-  capacityOptionSelected: { borderColor: '#D7B56D', backgroundColor: '#D7B56D' },
+  capacityOption: { minWidth: 32, minHeight: 32, paddingHorizontal: 8, borderRadius: 16, borderWidth: 1, borderColor: visual.color.border, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.color.surface },
+  capacityOptionSelected: { borderColor: visual.color.teal, backgroundColor: visual.color.teal },
   capacityOptionDisabled: { opacity: 0.38 },
-  capacityOptionText: { color: '#AFC1BC', fontSize: 9, fontFamily: 'Manrope_700Bold' },
-  capacityOptionTextSelected: { color: '#10231F' },
-  done: { color: '#CFE1DC', fontSize: 11, fontFamily: 'Manrope_700Bold' },
+  capacityOptionText: { color: visual.color.textMuted, fontSize: 9, fontFamily: 'Manrope_700Bold' },
+  capacityOptionTextSelected: { color: visual.color.accentContrast },
+  done: { color: visual.color.text, fontSize: 11, fontFamily: 'Manrope_700Bold' },
   content: { paddingHorizontal: 12, paddingTop: 8, gap: 8 },
   emptyState: { paddingHorizontal: 16, paddingTop: 18, paddingBottom: 10 },
-  emptyTitle: { color: LIVE_VISUAL.color.text, fontSize: 15, fontFamily: 'Manrope_700Bold' },
-  emptyBody: { marginTop: 5, color: LIVE_VISUAL.color.textMuted, fontSize: 11, lineHeight: 17, fontFamily: 'Manrope_500Medium' },
-  card: { width: 184, borderRadius: 16, padding: 11, backgroundColor: '#102721F2', borderWidth: 1, borderColor: LIVE_VISUAL.color.borderStrong },
-  name: { color: LIVE_VISUAL.color.text, fontSize: 12, fontFamily: 'Manrope_700Bold' },
-  cardContext: { color: LIVE_VISUAL.color.textMuted, fontSize: 9, fontFamily: 'Manrope_600SemiBold', marginTop: 2 },
+  emptyTitle: { color: visual.color.text, fontSize: 15, fontFamily: 'Manrope_700Bold' },
+  emptyBody: { marginTop: 5, color: visual.color.textMuted, fontSize: 11, lineHeight: 17, fontFamily: 'Manrope_500Medium' },
+  card: { width: 184, borderRadius: 16, padding: 11, backgroundColor: visual.color.surface, borderWidth: 1, borderColor: visual.color.borderStrong },
+  name: { color: visual.color.text, fontSize: 12, fontFamily: 'Manrope_700Bold' },
+  cardContext: { color: visual.color.textMuted, fontSize: 9, fontFamily: 'Manrope_600SemiBold', marginTop: 2 },
   actions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 12, marginTop: 9 },
-  secondary: { color: '#B8C8C3', fontSize: 10, fontFamily: 'Manrope_700Bold' },
-  remove: { color: '#F1AAA5', fontSize: 9, fontFamily: 'Manrope_700Bold' },
-  primary: { minHeight: 28, paddingHorizontal: 11, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: '#BFE2D7' },
-  primaryText: { color: '#0B2520', fontSize: 9, fontFamily: 'Manrope_800ExtraBold' },
+  secondary: { color: visual.color.textMuted, fontSize: 10, fontFamily: 'Manrope_700Bold' },
+  remove: { color: visual.color.danger, fontSize: 9, fontFamily: 'Manrope_700Bold' },
+  primary: { minHeight: 28, paddingHorizontal: 11, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.color.teal },
+  primaryText: { color: visual.color.accentContrast, fontSize: 9, fontFamily: 'Manrope_800ExtraBold' },
 });

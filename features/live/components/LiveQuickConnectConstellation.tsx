@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 
 import type { LiveQuickConnectPoolMember } from '../application/index.ts';
-import { LIVE_VISUAL } from './live-visual-tokens.ts';
+import { type LiveVisualTheme, useLiveVisualTheme } from './live-visual-tokens.ts';
 
 type PoolLayout = 'stacked' | 'side-by-side';
 type MemberPhase = 'active' | 'exiting';
@@ -57,7 +57,7 @@ export const QUICK_CONNECT_POOL_STARS = [
   { position: { left: '9%', top: '18%' }, size: 3, color: '#7858D8' },
   { position: { left: '25%', top: '66%' }, size: 2, color: '#3AAE9C' },
   { position: { left: '45%', top: '27%' }, size: 4, color: '#9464EF' },
-  { position: { right: '12%', top: '20%' }, size: 2, color: '#D7B56D' },
+  { position: { right: '12%', top: '20%' }, size: 2, color: '#7D5BA6' },
   { position: { right: '20%', bottom: '16%' }, size: 3, color: '#694BBE' },
   { position: { left: '14%', bottom: '10%' }, size: 2, color: '#61B5A5' },
   { position: { right: '42%', top: '9%' }, size: 2, color: '#8ED7CA' },
@@ -92,6 +92,8 @@ export function LiveQuickConnectConstellation({
   reduceMotion,
   onSignalInterest,
 }: LiveQuickConnectConstellationProps) {
+  const visual = useLiveVisualTheme();
+  const styles = useMemo(() => createStyles(visual), [visual]);
   const atmosphere = useRef(new Animated.Value(0)).current;
   const orbitSpin = useRef(new Animated.Value(0)).current;
   const coreEnergy = useRef(new Animated.Value(0)).current;
@@ -293,7 +295,7 @@ export function LiveQuickConnectConstellation({
           },
         ]}
       >
-        <Sparkles color={pairingActive ? '#C8A4FF' : LIVE_VISUAL.color.gold} size={14} />
+        <Sparkles color={visual.color.teal} size={14} />
       </Animated.View>
 
       <Animated.View
@@ -354,6 +356,8 @@ function ConstellationMember({
   reduceMotion: boolean;
   onPress: () => void;
 }) {
+  const visual = useLiveVisualTheme();
+  const styles = useMemo(() => createStyles(visual), [visual]);
   const entrance = useRef(new Animated.Value(0)).current;
   const drift = useRef(new Animated.Value(0)).current;
   const breathe = useRef(new Animated.Value(0)).current;
@@ -603,7 +607,7 @@ function ConstellationMember({
           )}
           {member.expressedInterest ? (
             <View style={styles.interestBadge}>
-              <Heart color={LIVE_VISUAL.color.text} fill={LIVE_VISUAL.color.text} size={8} />
+              <Heart color={visual.color.accentContrast} fill={visual.color.accentContrast} size={8} />
             </View>
           ) : null}
         </View>
@@ -612,9 +616,9 @@ function ConstellationMember({
         {!current && canSignal ? (
           <View style={styles.privateAction}>
             {busy ? (
-              <ActivityIndicator color={LIVE_VISUAL.color.gold} size={9} />
+              <ActivityIndicator color={visual.color.purple} size={9} />
             ) : (
-              <Sparkles color={LIVE_VISUAL.color.gold} size={9} />
+              <Sparkles color={visual.color.purple} size={9} />
             )}
           </View>
         ) : null}
@@ -623,7 +627,7 @@ function ConstellationMember({
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
   constellation: {
     flex: 1,
     minHeight: 86,
@@ -638,11 +642,11 @@ const styles = StyleSheet.create({
     width: 210,
     height: 130,
     borderRadius: 105,
-    backgroundColor: '#48328036',
+    backgroundColor: visual.color.tealSoft,
   },
   poolStar: {
     position: 'absolute',
-    shadowColor: '#8763E8',
+    shadowColor: visual.color.teal,
     shadowOpacity: 0.8,
     shadowRadius: 5,
   },
@@ -652,7 +656,7 @@ const styles = StyleSheet.create({
     height: 178,
     borderRadius: 89,
     borderWidth: 1,
-    borderColor: '#D7B56D35',
+    borderColor: visual.color.borderStrong,
     borderStyle: 'dashed',
   },
   orbitRingInner: {
@@ -661,14 +665,14 @@ const styles = StyleSheet.create({
     height: 106,
     borderRadius: 53,
     borderWidth: 1,
-    borderColor: '#82B5A538',
+    borderColor: visual.color.tealSoft,
   },
   coreRadiance: {
     position: 'absolute',
     width: 46,
     height: 46,
     borderRadius: 23,
-    backgroundColor: '#9A66F2',
+    backgroundColor: visual.color.teal,
   },
   orbitCore: {
     width: 42,
@@ -676,9 +680,9 @@ const styles = StyleSheet.create({
     borderRadius: 21,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#D7B56D16',
+    backgroundColor: visual.color.tealSoft,
     borderWidth: 1,
-    borderColor: '#D7B56D70',
+    borderColor: visual.color.borderStrong,
   },
   memberCell: { position: 'absolute', width: 58, alignItems: 'center' },
   memberAura: {
@@ -687,9 +691,9 @@ const styles = StyleSheet.create({
     width: 68,
     height: 84,
     borderRadius: 24,
-    backgroundColor: '#55C5B4',
+    backgroundColor: visual.color.teal,
   },
-  memberAuraInterested: { backgroundColor: '#D7B56D' },
+  memberAuraInterested: { backgroundColor: visual.color.purple },
   member: {
     width: 58,
     minHeight: 75,
@@ -697,25 +701,25 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: 18,
     borderWidth: 1,
-    borderColor: '#29413B',
-    backgroundColor: '#0E211DF5',
+    borderColor: visual.color.border,
+    backgroundColor: visual.color.surfaceTranslucent,
     paddingHorizontal: 3,
     paddingVertical: 5,
-    shadowColor: '#000000',
+    shadowColor: visual.isDark ? '#000000' : visual.color.teal,
     shadowOffset: { width: 0, height: 5 },
     shadowOpacity: 0.28,
     shadowRadius: 8,
     elevation: 5,
   },
-  memberCurrent: { borderColor: '#87B9AA75', backgroundColor: '#102923' },
-  memberInterested: { borderColor: '#D7B56DAA' },
-  memberPaired: { borderColor: '#B98AFF', backgroundColor: '#151D2B' },
+  memberCurrent: { borderColor: visual.color.teal, backgroundColor: visual.color.tealSoft },
+  memberInterested: { borderColor: visual.color.purple },
+  memberPaired: { borderColor: visual.color.purple, backgroundColor: visual.color.purpleSoft },
   avatarFrame: {
     width: 34,
     height: 34,
     borderRadius: 17,
     borderWidth: 1,
-    borderColor: '#D7B56D70',
+    borderColor: visual.color.borderStrong,
     padding: 1.5,
   },
   avatar: { width: '100%', height: '100%', borderRadius: 16 },
@@ -724,9 +728,9 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#1B3932',
+    backgroundColor: visual.color.tealSoft,
   },
-  avatarInitial: { color: LIVE_VISUAL.color.text, fontSize: 14, fontFamily: 'Manrope_800ExtraBold' },
+  avatarInitial: { color: visual.color.text, fontSize: 14, fontFamily: 'Manrope_800ExtraBold' },
   interestBadge: {
     position: 'absolute',
     right: -3,
@@ -736,19 +740,19 @@ const styles = StyleSheet.create({
     borderRadius: 7,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: LIVE_VISUAL.color.gold,
+    backgroundColor: visual.color.purple,
   },
   memberName: {
     marginTop: 4,
     maxWidth: '100%',
-    color: LIVE_VISUAL.color.text,
+    color: visual.color.text,
     fontSize: 8,
     fontFamily: 'Manrope_800ExtraBold',
   },
   memberMeta: {
     marginTop: 1,
     maxWidth: '100%',
-    color: LIVE_VISUAL.color.textMuted,
+    color: visual.color.textMuted,
     fontSize: 6.5,
     fontFamily: 'Manrope_600SemiBold',
   },
@@ -761,6 +765,6 @@ const styles = StyleSheet.create({
     borderRadius: 9,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#D7B56D1F',
+    backgroundColor: visual.color.purpleSoft,
   },
 });

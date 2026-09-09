@@ -46,6 +46,7 @@ import {
   type LiveCreationStep,
 } from '@/features/live/creation/index.ts';
 import { useLiveSessions } from '@/features/live/hooks/index.ts';
+import { type LiveVisualTheme, useLiveVisualTheme } from '@/features/live/components/live-visual-tokens.ts';
 import { useAuth } from '@/lib/auth-context';
 
 type StudioParams = {
@@ -59,6 +60,8 @@ type StudioParams = {
 const asParam = (value: string | string[] | undefined) => typeof value === 'string' ? value : null;
 
 export default function ScheduleLiveScreen() {
+  const visual = useLiveVisualTheme();
+  const styles = useMemo(() => createStyles(visual), [visual]);
   const params = useLocalSearchParams<StudioParams>();
   const circleIdParam = asParam(params.circleId);
   const circleName = asParam(params.circleName);
@@ -341,7 +344,7 @@ export default function ScheduleLiveScreen() {
     const unavailable = sourceSessionId && !sessionsLoading && !sourceSession;
     return (
       <View style={styles.loading}>
-        {unavailable ? <><Text style={styles.loadingTitle}>This Live cannot be opened in Studio.</Text><Pressable onPress={leave}><Text style={styles.loadingLink}>Go back</Text></Pressable></> : <ActivityIndicator color="#D7B56D" />}
+        {unavailable ? <><Text style={styles.loadingTitle}>This Live cannot be opened in Studio.</Text><Pressable onPress={leave}><Text style={styles.loadingLink}>Go back</Text></Pressable></> : <ActivityIndicator color={visual.teal} />}
       </View>
     );
   }
@@ -351,7 +354,7 @@ export default function ScheduleLiveScreen() {
       <SafeAreaView style={styles.safe}>
         <View style={styles.header}>
           <Pressable accessibilityLabel="Close Live Creation Studio" onPress={leave} style={styles.icon}>
-            <ArrowLeft size={22} color="#FFF7EC" />
+            <ArrowLeft size={22} color={visual.text} />
           </Pressable>
           <View style={styles.headerCopy}>
             <Text style={styles.eyebrow}>LIVE CREATION STUDIO</Text>
@@ -359,7 +362,7 @@ export default function ScheduleLiveScreen() {
           </View>
           {!isEditing ? (
             <Pressable accessibilityLabel="Discard Live draft" onPress={discardDraft} style={styles.discardIcon}>
-              <Trash2 size={18} color="#D7B56D" />
+              <Trash2 size={18} color={visual.teal} />
             </Pressable>
           ) : null}
         </View>
@@ -399,8 +402,9 @@ export default function ScheduleLiveScreen() {
                 onShowPicker={() => setShowPicker(true)}
                 onDateChange={(_event, date) => {
                   if (Platform.OS !== 'ios') setShowPicker(false);
-                  if (date) updateDraft({ scheduledStart: date.toISOString() });
+                  updateDraft({ scheduledStart: date.toISOString() });
                 }}
+                onDateDismiss={() => setShowPicker(false)}
                 onChange={updateDraft}
               />
             ) : null}
@@ -410,7 +414,7 @@ export default function ScheduleLiveScreen() {
           <View style={styles.footer}>
             {stepIndex > 0 ? (
               <Pressable disabled={submitting} onPress={() => setStep(LIVE_CREATION_STEPS[stepIndex - 1]!)} style={styles.backButton}>
-                <ChevronLeft size={18} color="#E7D8B3" /><Text style={styles.backText}>Back</Text>
+                <ChevronLeft size={18} color={visual.text} /><Text style={styles.backText}>Back</Text>
               </Pressable>
             ) : null}
             <Pressable
@@ -419,8 +423,8 @@ export default function ScheduleLiveScreen() {
               onPress={isLastStep ? () => void publish() : goNext}
               style={[styles.primary, (error || submitting || isSessionRecoveryActive) && styles.disabled]}
             >
-              {submitting || isSessionRecoveryActive ? <ActivityIndicator color="#102522" /> : (
-                <><Text style={styles.primaryText}>{isLastStep ? (isEditing ? 'Save changes' : 'Schedule Live') : 'Continue'}</Text>{!isLastStep ? <ChevronRight size={18} color="#102522" /> : null}</>
+              {submitting || isSessionRecoveryActive ? <ActivityIndicator color={visual.accentContrast} /> : (
+                <><Text style={styles.primaryText}>{isLastStep ? (isEditing ? 'Save changes' : 'Schedule Live') : 'Continue'}</Text>{!isLastStep ? <ChevronRight size={18} color={visual.accentContrast} /> : null}</>
               )}
             </Pressable>
           </View>
@@ -431,29 +435,29 @@ export default function ScheduleLiveScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#081513' },
+const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
+  root: { flex: 1, backgroundColor: visual.canvas },
   safe: { flex: 1 },
   studioBody: { flex: 1 },
-  loading: { flex: 1, backgroundColor: '#081513', alignItems: 'center', justifyContent: 'center', padding: 28, gap: 14 },
-  loadingTitle: { color: '#FFF7EC', textAlign: 'center', fontSize: 16, fontFamily: 'Manrope_700Bold' },
-  loadingLink: { color: '#D7B56D', fontFamily: 'Manrope_800ExtraBold' },
+  loading: { flex: 1, backgroundColor: visual.canvas, alignItems: 'center', justifyContent: 'center', padding: 28, gap: 14 },
+  loadingTitle: { color: visual.text, textAlign: 'center', fontSize: 16, fontFamily: 'Manrope_700Bold' },
+  loadingLink: { color: visual.teal, fontFamily: 'Manrope_800ExtraBold' },
   header: { paddingHorizontal: 18, minHeight: 72, flexDirection: 'row', alignItems: 'center', gap: 14 },
-  icon: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: '#162724', borderWidth: 1, borderColor: '#304A45' },
-  discardIcon: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: '#162724' },
+  icon: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.surface, borderWidth: 1, borderColor: visual.border },
+  discardIcon: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.surface },
   headerCopy: { flex: 1 },
-  eyebrow: { color: '#D7B56D', fontSize: 8, letterSpacing: 1.7, fontFamily: 'Manrope_800ExtraBold' },
-  heading: { color: '#FFF7EC', fontSize: 24, fontFamily: 'PlayfairDisplay_700Bold' },
+  eyebrow: { color: visual.teal, fontSize: 8, letterSpacing: 1.7, fontFamily: 'Manrope_800ExtraBold' },
+  heading: { color: visual.text, fontSize: 24, fontFamily: 'PlayfairDisplay_700Bold' },
   content: { paddingHorizontal: 22, paddingTop: 22, paddingBottom: 30 },
-  recovered: { alignSelf: 'flex-start', borderRadius: 12, backgroundColor: '#18332D', paddingHorizontal: 11, paddingVertical: 7, marginBottom: 16 },
-  recoveredText: { color: '#BFD9D0', fontSize: 9, fontFamily: 'Manrope_700Bold' },
-  error: { color: '#FFB8AC', fontSize: 11, lineHeight: 17, fontFamily: 'Manrope_700Bold', marginTop: 12 },
-  footer: { paddingHorizontal: 20, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', gap: 10, borderTopWidth: 1, borderTopColor: '#1F3732', backgroundColor: '#081513' },
-  backButton: { minWidth: 90, height: 54, borderRadius: 27, paddingHorizontal: 18, flexDirection: 'row', gap: 5, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#40564F' },
-  backText: { color: '#E7D8B3', fontSize: 12, fontFamily: 'Manrope_800ExtraBold' },
-  primary: { flex: 1, height: 56, borderRadius: 28, flexDirection: 'row', gap: 7, alignItems: 'center', justifyContent: 'center', backgroundColor: '#D7B56D' },
-  primaryText: { color: '#102522', fontSize: 13, fontFamily: 'Manrope_800ExtraBold' },
+  recovered: { alignSelf: 'flex-start', borderRadius: 12, backgroundColor: visual.tealSoft, paddingHorizontal: 11, paddingVertical: 7, marginBottom: 16 },
+  recoveredText: { color: visual.teal, fontSize: 9, fontFamily: 'Manrope_700Bold' },
+  error: { color: visual.dangerText, fontSize: 11, lineHeight: 17, fontFamily: 'Manrope_700Bold', marginTop: 12 },
+  footer: { paddingHorizontal: 20, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', gap: 10, borderTopWidth: 1, borderTopColor: visual.border, backgroundColor: visual.canvas },
+  backButton: { minWidth: 90, height: 54, borderRadius: 27, paddingHorizontal: 18, flexDirection: 'row', gap: 5, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: visual.borderStrong },
+  backText: { color: visual.text, fontSize: 12, fontFamily: 'Manrope_800ExtraBold' },
+  primary: { flex: 1, height: 56, borderRadius: 28, flexDirection: 'row', gap: 7, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.teal },
+  primaryText: { color: visual.accentContrast, fontSize: 13, fontFamily: 'Manrope_800ExtraBold' },
   disabled: { opacity: 0.45 },
-  stage: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'rgba(5,15,13,0.86)', alignItems: 'center', justifyContent: 'center' },
-  stageText: { color: '#FFF7EC', fontSize: 15, fontFamily: 'Manrope_800ExtraBold' },
+  stage: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: visual.scrim, alignItems: 'center', justifyContent: 'center' },
+  stageText: { color: '#FFFFFF', fontSize: 15, fontFamily: 'Manrope_800ExtraBold' },
 });

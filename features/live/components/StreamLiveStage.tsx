@@ -8,8 +8,10 @@ import {
 import { memo, useEffect, useMemo } from 'react';
 import { Platform, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import type { LiveParticipant } from '../application/live-models.ts';
+import type { OdoCopilotScene } from '../odo/copilot/odo-copilot-contracts.ts';
 import type { StreamLiveMediaBindings } from '../media/stream-live-media-provider.ts';
 import type { StreamVideoSdkModule } from '../media/load-stream-video-sdk.ts';
+import { LIVE_VISUAL } from './live-visual-tokens.ts';
 import {
   clearAndroidLivePictureInPictureActions,
   setAndroidLivePictureInPictureActions,
@@ -17,6 +19,7 @@ import {
 } from '../media/live-picture-in-picture-actions.ts';
 import {
   composeLiveStageSeats,
+  applyLiveStageScene,
   countConnectedLiveParticipants,
   liveStageTilePlacement,
   selectLivePictureInPictureCandidate,
@@ -37,6 +40,7 @@ export type StreamLiveStageProps = {
   tileFooterInset?: number;
   onPictureInPictureModeChange?: (active: boolean) => void;
   requestSeat?: LiveStageRequestSeat | null;
+  scene?: OdoCopilotScene | null;
 };
 
 const LivePictureInPictureBridge = memo(function LivePictureInPictureBridge({
@@ -115,7 +119,8 @@ const StageGrid = memo(function StageGrid({
   tileFooterInset,
   isInPictureInPicture,
   requestSeat,
-}: Pick<StreamLiveStageProps, 'sdk' | 'stageParticipants' | 'localPublisherUserId' | 'onConnectedParticipantCountChange' | 'constrainMultiStage' | 'presentation' | 'tileFooterInset' | 'requestSeat'> & {
+  scene,
+}: Pick<StreamLiveStageProps, 'sdk' | 'stageParticipants' | 'localPublisherUserId' | 'onConnectedParticipantCountChange' | 'constrainMultiStage' | 'presentation' | 'tileFooterInset' | 'requestSeat' | 'scene'> & {
   isInPictureInPicture: boolean;
 }) {
   const { useParticipants } = sdk.useCallStateHooks();
@@ -136,18 +141,21 @@ const StageGrid = memo(function StageGrid({
     [candidates],
   );
   const participants = useMemo(() => {
-    return composeLiveStageSeats(
+    const seats = composeLiveStageSeats(
       candidates,
       stageParticipants,
       localPublisherUserId,
     );
-  }, [candidates, localPublisherUserId, stageParticipants]);
+    return applyLiveStageScene(seats, scene ?? null);
+  }, [candidates, localPublisherUserId, scene, stageParticipants]);
   const pictureInPictureCandidate = useMemo(
     () => selectLivePictureInPictureCandidate(
       participants.flatMap((seat) => seat.candidate ? [seat.candidate] : []),
     ),
     [participants],
   );
+  // Odo scenes are presentation-only. They must never hide the audience's
+  // manual seat-request path or interfere with Host stage admission.
   const visibleRequestSeat = presentation === 'public' && !isInPictureInPicture
     ? requestSeat ?? null
     : null;
@@ -269,6 +277,7 @@ export const StreamLiveStage = memo(function StreamLiveStage({
   tileFooterInset,
   onPictureInPictureModeChange,
   requestSeat,
+  scene,
 }: StreamLiveStageProps) {
   const client = bindings.client as unknown as StreamVideoClient;
   const call = bindings.call as unknown as Call;
@@ -292,6 +301,7 @@ export const StreamLiveStage = memo(function StreamLiveStage({
           tileFooterInset={tileFooterInset}
           isInPictureInPicture={isInPictureInPicture}
           requestSeat={requestSeat}
+          scene={scene}
         />
       </StreamCall>
     </StreamVideo>
@@ -337,7 +347,7 @@ const styles = StyleSheet.create({
     right: 14,
     bottom: '20%',
     left: 14,
-    borderColor: '#D7B56D52',
+    borderColor: LIVE_VISUAL.color.borderStrong,
   },
   dualStageShell: {
     top: '18%',
@@ -385,12 +395,12 @@ const styles = StyleSheet.create({
     height: 92,
     borderRadius: 46,
     borderWidth: 1,
-    borderColor: '#D7B56D88',
+    borderColor: LIVE_VISUAL.color.teal,
     backgroundColor: '#0D6D6826',
     marginBottom: 24,
   },
   emptyEyebrow: {
-    color: '#D7B56D',
+    color: LIVE_VISUAL.color.teal,
     fontSize: 11,
     letterSpacing: 2,
     fontFamily: 'Manrope_700Bold',

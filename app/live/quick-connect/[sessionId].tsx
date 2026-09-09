@@ -19,6 +19,7 @@ import {
   LiveQuickConnectSafetyCheck,
 } from '@/features/live/components/index.ts';
 import type { StreamLiveStageProps } from '@/features/live/components/StreamLiveStage.tsx';
+import { type LiveVisualTheme, useLiveVisualTheme } from '@/features/live/components/live-visual-tokens.ts';
 import {
   canRenderLiveChemistryStage,
   formatQuickConnectTime,
@@ -109,6 +110,8 @@ function QuickConnectConversation({
   busy: boolean;
   error: string | null;
 }) {
+  const visual = useLiveVisualTheme();
+  const styles = useMemo(() => createStyles(visual), [visual]);
   const pairing = snapshot.pairing;
   const { user, profile } = useAuth();
   const media = useLiveMediaSession(pairing.id, requestLiveQuickConnectAdmission);
@@ -220,7 +223,7 @@ function QuickConnectConversation({
 
   const stageContent = media.bindings && chemistryRevealed ? (
     <LiveMediaStageBoundary resetKey={`${pairing.id}:${media.state}`}>
-      <Suspense fallback={<ActivityIndicator color="#D7B56D" />}>
+      <Suspense fallback={<ActivityIndicator color={visual.teal} />}>
         <QuickConnectStage
           bindings={media.bindings}
           stageParticipants={participants}
@@ -233,7 +236,7 @@ function QuickConnectConversation({
     </LiveMediaStageBoundary>
   ) : (
     <View style={styles.stageLoading}>
-      <ActivityIndicator color="#D7B56D" />
+      <ActivityIndicator color={visual.teal} />
       <Text style={styles.muted}>{pairing.state === 'reconnect_grace' ? 'Holding your place...' : 'Opening the conversation...'}</Text>
       {media.state === 'failed' ? (
         <Pressable style={styles.outlineButton} onPress={() => void media.join({
@@ -267,6 +270,16 @@ function QuickConnectConversation({
           />
         ) : null}
       </View>
+      {!pictureInPictureActive && pairing.odoConversationSpark && !completed ? (
+        <LiveGlassSurface style={styles.odoSparkCard}>
+          <View style={styles.odoSparkHeading}>
+            <Sparkles color={visual.purple} size={14} />
+            <Text style={styles.odoSparkLabel}>A SPARK FROM ODO</Text>
+          </View>
+          <Text style={styles.odoSparkContext}>{pairing.odoConversationSpark.context}</Text>
+          <Text style={styles.odoSparkQuestion}>{pairing.odoConversationSpark.question}</Text>
+        </LiveGlassSurface>
+      ) : null}
       {!pictureInPictureActive ? (
         <LiveQuickConnectControlDock
           audioEnabled={media.audioEnabled}
@@ -327,6 +340,8 @@ function QuickConnectConversation({
 }
 
 export default function LiveQuickConnectScreen() {
+  const visual = useLiveVisualTheme();
+  const styles = useMemo(() => createStyles(visual), [visual]);
   const params = useLocalSearchParams<{ sessionId?: string } & LiveReturnRouteParams>();
   const sessionId = typeof params.sessionId === 'string' ? params.sessionId : '';
   const liveReturnParams = useMemo(
@@ -375,16 +390,16 @@ export default function LiveQuickConnectScreen() {
     returnToLive();
   }, [controller.snapshot?.pairing, endRound, pendingSafety, returnToLive]);
   return (
-    <LinearGradient colors={['#06110F', '#0A1814', '#09110F']} style={styles.root}>
+    <LinearGradient colors={visual.isDark ? [visual.canvas, visual.surfaceSoft, visual.canvas] : [visual.canvas, visual.bgSubtle, visual.surface]} style={styles.root}>
       <Stack.Screen options={{ gestureEnabled: false }} />
       <SafeAreaView edges={pictureInPictureActive ? [] : undefined} style={styles.safe}>
         <View style={[styles.header, pictureInPictureActive && styles.pictureInPictureHidden]}>
-          <Pressable accessibilityLabel="Back to Live room" accessibilityState={{ disabled: pendingSafety }} disabled={pendingSafety} onPress={handleBack} style={[styles.roundButton, pendingSafety && styles.disabled]}><ArrowLeft color="#FFF7EC" size={22} /></Pressable>
+          <Pressable accessibilityLabel="Back to Live room" accessibilityState={{ disabled: pendingSafety }} disabled={pendingSafety} onPress={handleBack} style={[styles.roundButton, pendingSafety && styles.disabled]}><ArrowLeft color={visual.text} size={22} /></Pressable>
           <View style={styles.headerCopy}><Text style={styles.eyebrow}>QUICK CONNECT</Text><Text style={styles.headerTitle}>A thoughtful three minutes</Text></View>
           <View style={styles.liveDot} />
         </View>
         {controller.loading && !controller.snapshot ? (
-          <View style={styles.center}><ActivityIndicator color="#D7B56D" /><Text style={styles.muted}>Finding the room...</Text></View>
+          <View style={styles.center}><ActivityIndicator color={visual.teal} /><Text style={styles.muted}>Finding the room...</Text></View>
         ) : controller.snapshot?.pairing ? (
           <QuickConnectConversation
             snapshot={controller.snapshot}
@@ -406,7 +421,7 @@ export default function LiveQuickConnectScreen() {
           />
         ) : (
           <View style={styles.center}>
-            <View style={styles.waitIcon}><Users color="#D7B56D" size={30} /></View>
+            <View style={styles.waitIcon}><Users color={visual.teal} size={30} /></View>
             <Text style={styles.waitTitle}>{queueCopy.title}</Text>
             <Text style={styles.waitCopy}>{queueCopy.body}</Text>
             {controller.error && !waitingForHost ? (
@@ -420,7 +435,7 @@ export default function LiveQuickConnectScreen() {
                   : controller.refresh()
               )}
             >
-              <Sparkles color="#D7B56D" size={17} />
+              <Sparkles color={visual.teal} size={17} />
               <Text style={styles.outlineButtonText}>
                 {waitingForHost
                   ? 'Check rotation'
@@ -438,36 +453,41 @@ export default function LiveQuickConnectScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
   root: { flex: 1 }, safe: { flex: 1 },
   header: { minHeight: 76, marginHorizontal: 18, flexDirection: 'row', alignItems: 'center', gap: 13 },
-  roundButton: { width: 46, height: 46, borderRadius: 23, borderWidth: 1, borderColor: '#FFFFFF20', alignItems: 'center', justifyContent: 'center', backgroundColor: '#10231FCC' },
-  headerCopy: { flex: 1 }, eyebrow: { color: '#D7B56D', fontSize: 10, fontWeight: '800', letterSpacing: 2 },
-  headerTitle: { color: '#FFF7EC', fontSize: 18, fontWeight: '700', marginTop: 2 },
-  liveDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: '#36B8A4', shadowColor: '#36B8A4', shadowOpacity: 0.8, shadowRadius: 8 },
+  roundButton: { width: 46, height: 46, borderRadius: 23, borderWidth: 1, borderColor: visual.border, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.surfaceTranslucent },
+  headerCopy: { flex: 1 }, eyebrow: { color: visual.teal, fontSize: 10, fontWeight: '800', letterSpacing: 2 },
+  headerTitle: { color: visual.text, fontSize: 18, fontWeight: '700', marginTop: 2 },
+  liveDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: visual.teal, shadowColor: visual.teal, shadowOpacity: 0.8, shadowRadius: 8 },
   conversation: { flex: 1, paddingHorizontal: 16, paddingBottom: 14 },
   pictureInPictureConversation: { paddingHorizontal: 0, paddingBottom: 0, overflow: 'hidden', backgroundColor: '#06110F' },
   pictureInPictureHidden: { display: 'none' },
   pictureInPictureStage: { minHeight: 0, maxHeight: '100%', borderRadius: 0, borderWidth: 0 },
-  timerPill: { alignSelf: 'center', borderWidth: 1, borderColor: '#8B73D655', backgroundColor: '#1D1936CC', borderRadius: 999, paddingHorizontal: 18, paddingVertical: 8, marginBottom: 10 },
-  timerText: { color: '#D8CCFA', fontSize: 16, fontWeight: '800', fontVariant: ['tabular-nums'] },
-  stage: { flex: 1, minHeight: 330, maxHeight: 620, borderRadius: 28, overflow: 'hidden', borderWidth: 1, borderColor: '#D7B56D4A', backgroundColor: '#0B1A17' },
+  timerPill: { alignSelf: 'center', borderWidth: 1, borderColor: visual.teal, backgroundColor: visual.tealSoft, borderRadius: 999, paddingHorizontal: 18, paddingVertical: 8, marginBottom: 10 },
+  timerText: { color: visual.teal, fontSize: 16, fontWeight: '800', fontVariant: ['tabular-nums'] },
+  stage: { flex: 1, minHeight: 330, maxHeight: 620, borderRadius: 28, overflow: 'hidden', borderWidth: 1, borderColor: visual.teal, backgroundColor: visual.videoChrome },
   stageLoading: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
+  odoSparkCard: { marginTop: 10, borderRadius: 20, paddingHorizontal: 15, paddingVertical: 12, borderColor: visual.purple, borderWidth: 1 },
+  odoSparkHeading: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  odoSparkLabel: { color: visual.purple, fontSize: 9, fontWeight: '800', letterSpacing: 1.2 },
+  odoSparkContext: { marginTop: 7, color: visual.textMuted, fontSize: 11, lineHeight: 16 },
+  odoSparkQuestion: { marginTop: 3, color: visual.text, fontSize: 15, lineHeight: 21, fontWeight: '700' },
   decisionPanel: { borderRadius: 26, padding: 16, marginTop: 12 },
-  panelTitle: { color: '#FFF7EC', fontSize: 17, fontWeight: '800', textAlign: 'center' },
-  panelCopy: { color: '#A6B9B3', fontSize: 13, textAlign: 'center', marginTop: 5 },
+  panelTitle: { color: visual.text, fontSize: 17, fontWeight: '800', textAlign: 'center' },
+  panelCopy: { color: visual.textMuted, fontSize: 13, textAlign: 'center', marginTop: 5 },
   decisionRow: { flexDirection: 'row', gap: 8, marginTop: 14 },
-  decisionButton: { flex: 1, minHeight: 48, borderRadius: 18, borderWidth: 1, borderColor: '#D7B56D55', backgroundColor: '#D7B56D12', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
-  decisionText: { color: '#F5E8D3', fontSize: 12, fontWeight: '700', textAlign: 'center' },
-  primaryButton: { borderRadius: 999, backgroundColor: '#D7B56D', paddingVertical: 14, marginTop: 14, alignItems: 'center' },
-  primaryButtonText: { color: '#10201C', fontWeight: '800' },
+  decisionButton: { flex: 1, minHeight: 48, borderRadius: 18, borderWidth: 1, borderColor: visual.purple, backgroundColor: visual.purpleSoft, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
+  decisionText: { color: visual.text, fontSize: 12, fontWeight: '700', textAlign: 'center' },
+  primaryButton: { borderRadius: 999, backgroundColor: visual.teal, paddingVertical: 14, marginTop: 14, alignItems: 'center' },
+  primaryButtonText: { color: visual.accentContrast, fontWeight: '800' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 34, gap: 14 },
-  waitIcon: { width: 72, height: 72, borderRadius: 36, borderWidth: 1, borderColor: '#D7B56D55', backgroundColor: '#D7B56D12', alignItems: 'center', justifyContent: 'center' },
-  waitTitle: { color: '#FFF7EC', fontSize: 26, fontWeight: '800', textAlign: 'center' },
-  waitCopy: { color: '#A6B9B3', fontSize: 15, lineHeight: 22, textAlign: 'center', maxWidth: 390 },
-  muted: { color: '#A6B9B3', fontSize: 14, textAlign: 'center' },
-  outlineButton: { minHeight: 46, borderRadius: 999, borderWidth: 1, borderColor: '#D7B56D66', paddingHorizontal: 22, flexDirection: 'row', gap: 8, alignItems: 'center', justifyContent: 'center', marginTop: 8 },
-  outlineButtonText: { color: '#E9DCC8', fontWeight: '700' },
-  error: { color: '#F0AAA5', fontSize: 12, textAlign: 'center', marginTop: 10 },
+  waitIcon: { width: 72, height: 72, borderRadius: 36, borderWidth: 1, borderColor: visual.teal, backgroundColor: visual.tealSoft, alignItems: 'center', justifyContent: 'center' },
+  waitTitle: { color: visual.text, fontSize: 26, fontWeight: '800', textAlign: 'center' },
+  waitCopy: { color: visual.textMuted, fontSize: 15, lineHeight: 22, textAlign: 'center', maxWidth: 390 },
+  muted: { color: visual.textMuted, fontSize: 14, textAlign: 'center' },
+  outlineButton: { minHeight: 46, borderRadius: 999, borderWidth: 1, borderColor: visual.teal, paddingHorizontal: 22, flexDirection: 'row', gap: 8, alignItems: 'center', justifyContent: 'center', marginTop: 8 },
+  outlineButtonText: { color: visual.text, fontWeight: '700' },
+  error: { color: visual.dangerText, fontSize: 12, textAlign: 'center', marginTop: 10 },
   disabled: { opacity: 0.42 },
 });

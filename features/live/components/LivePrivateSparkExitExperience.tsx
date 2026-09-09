@@ -7,6 +7,7 @@ import type {
   LivePrivateSparkExitOutcome,
 } from '../application/live-models.ts';
 import { LiveGlassSurface } from './LiveGlassSurface.tsx';
+import { LIVE_VISUAL } from './live-visual-tokens.ts';
 
 type Props = {
   busy: boolean;
@@ -116,7 +117,7 @@ export const LivePrivateSparkExitExperience = memo(function LivePrivateSparkExit
               <Text style={styles.choiceLabel}>{choice.label}</Text>
               <Text style={styles.choiceDescription}>{choice.description}</Text>
             </View>
-            {busy ? <ActivityIndicator color="#D7B56D" size="small" /> : <ArrowRight color="#BFAF94" size={17} />}
+            {busy ? <ActivityIndicator color={LIVE_VISUAL.color.purple} size="small" /> : <ArrowRight color="#CDBAF0" size={17} />}
           </Pressable>
         ))}
       </View>
@@ -153,8 +154,8 @@ const styles = StyleSheet.create({
   choiceDescription: { marginTop: 3, color: '#8FA49E', fontSize: 10, lineHeight: 15, fontFamily: 'Manrope_500Medium' },
   primaryButton: { width: '100%', minHeight: 52, marginTop: 24, paddingHorizontal: 19, borderRadius: 26, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, backgroundColor: '#C7E2D6' },
   primaryText: { color: '#09201B', fontSize: 13, fontFamily: 'Manrope_800ExtraBold' },
-  secondaryButton: { width: '100%', minHeight: 50, marginTop: 23, borderRadius: 25, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#D7B56D70' },
-  secondaryText: { color: '#E4C77F', fontSize: 12, fontFamily: 'Manrope_800ExtraBold' },
+  secondaryButton: { width: '100%', minHeight: 50, marginTop: 23, borderRadius: 25, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: LIVE_VISUAL.color.borderStrong },
+  secondaryText: { color: LIVE_VISUAL.color.purple, fontSize: 12, fontFamily: 'Manrope_800ExtraBold' },
   error: { marginTop: 12, color: '#F0BFC0', fontSize: 10, lineHeight: 15, textAlign: 'center', fontFamily: 'Manrope_600SemiBold' },
   privacyRow: { marginTop: 16, flexDirection: 'row', alignItems: 'center', gap: 7 },
   privacyText: { color: '#7F928D', fontSize: 9, fontFamily: 'Manrope_600SemiBold' },

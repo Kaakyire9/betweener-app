@@ -39,6 +39,7 @@ import type {
   LiveRoomPulseSnapshot,
   LiveSeatRequest,
   LiveSessionRecord,
+  LiveSessionRecap,
   LiveSessionSnapshot,
   LiveSessionSummary,
 } from './live-models.ts';
@@ -250,6 +251,38 @@ export const parseLiveSessionSummary = (value: unknown): LiveSessionSummary => {
     reservationCount: asNumber(value.reservation_count),
     totalAttendeeCount: asNumber(value.total_attendee_count),
     matchesMadeCount: asNumber(value.matches_made_count),
+  };
+};
+
+export const parseLiveSessionRecap = (value: unknown): LiveSessionRecap => {
+  if (!isRecord(value)) throw new Error('live_session_recap_invalid');
+  const sessionId = asString(value.session_id);
+  const endedAt = asNullableString(value.ended_at);
+  if (!sessionId || !endedAt) throw new Error('live_session_recap_invalid');
+  const count = (field: unknown) => Math.max(0, Math.floor(asNumber(field)));
+  return {
+    sessionId,
+    isHost: value.is_host === true,
+    viewerRole: asString(value.viewer_role, 'guest'),
+    startedAt: asNullableString(value.started_at),
+    endedAt,
+    durationSeconds: count(value.duration_seconds),
+    totalAttendees: count(value.total_attendees),
+    roomPulseNotes: count(value.room_pulse_notes),
+    reactions: count(value.reactions),
+    audiencePolls: count(value.audience_polls),
+    pollResponses: count(value.poll_responses),
+    hostedIntroductions: count(value.hosted_introductions),
+    privateSparks: count(value.private_sparks),
+    quickConnectRounds: count(value.quick_connect_rounds),
+    myAttended: value.my_attended === true,
+    myRoomPulseNotes: count(value.my_room_pulse_notes),
+    myReactions: count(value.my_reactions),
+    myPollResponses: count(value.my_poll_responses),
+    myHostedIntroductions: count(value.my_hosted_introductions),
+    myPrivateSparks: count(value.my_private_sparks),
+    myQuickConnectRounds: count(value.my_quick_connect_rounds),
+    serverNow: asString(value.server_now),
   };
 };
 
@@ -590,6 +623,7 @@ export const parseLiveQuickConnectSnapshot = (value: unknown): LiveQuickConnectS
     }
     const person = value.pairing.other_person;
     if (!isRecord(person)) throw new Error('live_quick_connect_person_invalid');
+    const odoSpark = value.pairing.odo_conversation_spark;
     pairing = {
       id: asString(value.pairing.id),
       chemistryFirstEnabled: value.pairing.chemistry_first_enabled === true,
@@ -616,6 +650,11 @@ export const parseLiveQuickConnectSnapshot = (value: unknown): LiveQuickConnectS
       },
       providerCallType: asString(value.pairing.provider_call_type),
       providerCallId: asString(value.pairing.provider_call_id),
+      odoConversationSpark: isRecord(odoSpark)
+        && typeof odoSpark.context === 'string'
+        && typeof odoSpark.question === 'string'
+        ? { context: odoSpark.context, question: odoSpark.question }
+        : null,
     };
   }
   return {

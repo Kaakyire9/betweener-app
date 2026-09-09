@@ -1,9 +1,10 @@
 import { Image } from 'expo-image';
 import { X } from 'lucide-react-native';
-import { memo } from 'react';
+import { memo, useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { LiveGlassSurface } from './LiveGlassSurface.tsx';
+import { type LiveVisualTheme, useLiveVisualTheme } from './live-visual-tokens.ts';
 
 type LiveCompactHeaderProps = {
   attendeeCount: number;
@@ -27,6 +28,8 @@ export const LiveCompactHeader = memo(function LiveCompactHeader({
   onLeave,
   roomTitle,
 }: LiveCompactHeaderProps) {
+  const visual = useLiveVisualTheme();
+  const styles = useMemo(() => createStyles(visual), [visual]);
   const displayName = hostName?.trim() || 'Host';
 
   return (
@@ -61,14 +64,14 @@ export const LiveCompactHeader = memo(function LiveCompactHeader({
           onPress={onLeave}
           style={styles.iconButton}
         >
-          <X size={20} color="#FFF7EC" />
+          <X size={20} color={visual.color.text} />
         </Pressable>
       </View>
     </LiveGlassSurface>
   );
 });
 
-const styles = StyleSheet.create({
+const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
   glass: { marginHorizontal: 10, marginTop: 4, borderRadius: 26 },
   header: {
     minHeight: 56,
@@ -84,9 +87,9 @@ const styles = StyleSheet.create({
     borderRadius: 19,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#08151299',
+    backgroundColor: visual.color.surfaceTranslucent,
     borderWidth: 1,
-    borderColor: '#FFFFFF24',
+    borderColor: visual.color.border,
   },
   hostAvatarShell: {
     width: 46,
@@ -94,12 +97,12 @@ const styles = StyleSheet.create({
     borderRadius: 23,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#17302B',
+    backgroundColor: visual.color.tealSoft,
     borderWidth: 1,
-    borderColor: '#D7B56D99',
+    borderColor: visual.color.borderStrong,
   },
   hostAvatar: { width: 42, height: 42, borderRadius: 21 },
-  hostInitials: { color: '#F6E8C8', fontSize: 13, fontFamily: 'Manrope_800ExtraBold' },
+  hostInitials: { color: visual.color.text, fontSize: 13, fontFamily: 'Manrope_800ExtraBold' },
   liveBadge: {
     position: 'absolute',
     right: -1,
@@ -109,15 +112,15 @@ const styles = StyleSheet.create({
     borderRadius: 5,
     backgroundColor: '#E75C69',
     borderWidth: 1.5,
-    borderColor: '#10211D',
+    borderColor: visual.color.surface,
   },
   copy: { flex: 1, minWidth: 0 },
   hostRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  hostName: { maxWidth: '72%', color: '#FFF6EB', fontSize: 13, fontFamily: 'Archivo_700Bold' },
-  hostLabel: { color: '#D7B56D', fontSize: 7, letterSpacing: 0.9, fontFamily: 'Manrope_800ExtraBold' },
+  hostName: { maxWidth: '72%', color: visual.color.text, fontSize: 13, fontFamily: 'Archivo_700Bold' },
+  hostLabel: { color: visual.color.teal, fontSize: 7, letterSpacing: 0.9, fontFamily: 'Manrope_800ExtraBold' },
   roomRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 1 },
   liveDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: '#E75C69' },
   liveText: { color: '#FF818C', fontSize: 8, letterSpacing: 0.9, fontFamily: 'Manrope_800ExtraBold' },
-  roomTitle: { flexShrink: 1, color: '#CAD7D3', fontSize: 9, fontFamily: 'Manrope_600SemiBold' },
-  viewerText: { color: '#8FA29D', fontSize: 9, fontFamily: 'Manrope_600SemiBold' },
+  roomTitle: { flexShrink: 1, color: visual.color.text, fontSize: 9, fontFamily: 'Manrope_600SemiBold' },
+  viewerText: { color: visual.color.textMuted, fontSize: 9, fontFamily: 'Manrope_600SemiBold' },
 });

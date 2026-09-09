@@ -87,3 +87,9 @@ test('ended and cancelled rooms are retained as past host outcomes', () => {
   const result = partitionLiveLobbySessions([...sessions, ended, cancelled], 'host-profile', true);
   assert.deepEqual(result.past.map(({ id }) => id), ['owned-ended', 'owned-cancelled']);
 });
+
+test('ended rooms remain available to guests for their recap', () => {
+  const attended = session('attended-ended', 'ended', 'other-host');
+  const result = partitionLiveLobbySessions([...sessions, attended], 'guest-profile', false);
+  assert.deepEqual(result.past.map(({ id }) => id), ['attended-ended']);
+});

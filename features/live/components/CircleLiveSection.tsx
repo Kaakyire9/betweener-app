@@ -1,10 +1,11 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { CalendarClock, CheckCircle2, Radio, Sparkles, UsersRound } from 'lucide-react-native';
-import { memo } from 'react';
+import { memo, useMemo } from 'react';
 import { ActivityIndicator, ImageBackground, Pressable, StyleSheet, Text, View } from 'react-native';
 import { getLiveEventMediaUrl, type CircleLiveCard, type CircleLiveSnapshot } from '../application/index.ts';
 import { createCircleLiveReturnParams } from '../navigation/live-navigation.ts';
+import { type LiveVisualTheme, useLiveVisualTheme } from './live-visual-tokens.ts';
 
 type Props = {
   circleId: string;
@@ -45,6 +46,8 @@ const stateCopy = (session: CircleLiveCard) => {
 };
 
 const CircleLiveCardView = ({ circleId, session }: { circleId: string; session: CircleLiveCard }) => {
+  const visual = useLiveVisualTheme();
+  const styles = useMemo(() => createStyles(visual), [visual]);
   const state = cardState(session);
   const copy = stateCopy(session);
   const Icon = copy.icon;
@@ -53,7 +56,7 @@ const CircleLiveCardView = ({ circleId, session }: { circleId: string; session: 
   const content = (
     <LinearGradient colors={posterUrl ? ['rgba(10,34,30,0.35)', 'rgba(10,24,21,0.97)'] : ['#173933', '#101B19']} style={styles.card}>
       <View style={styles.stateRow}>
-        <View style={[styles.icon, state === 'live' && styles.liveIcon]}><Icon size={18} color={state === 'live' ? '#102522' : '#E5C77D'} /></View>
+        <View style={[styles.icon, state === 'live' && styles.liveIcon]}><Icon size={18} color={state === 'live' ? visual.accentContrast : '#CDBAF0'} /></View>
         <View style={styles.stateCopy}>
           <Text style={styles.eyebrow}>{copy.eyebrow}</Text>
           <Text style={styles.stateTitle}>{copy.title}</Text>
@@ -68,7 +71,7 @@ const CircleLiveCardView = ({ circleId, session }: { circleId: string; session: 
         </View>
       ) : (
         <>
-          <View style={styles.timeRow}><CalendarClock size={14} color="#D7B56D" /><Text style={styles.time}>{dateLabel(session.scheduledStart)} · {countdownLabel(session.scheduledStart)}</Text></View>
+          <View style={styles.timeRow}><CalendarClock size={14} color={visual.teal} /><Text style={styles.time}>{dateLabel(session.scheduledStart)} · {countdownLabel(session.scheduledStart)}</Text></View>
           <View style={styles.progressTrack}><View style={[styles.progress, { width: `${Math.min(100, (saved / session.minimumAttendance) * 100)}%` }]} /></View>
           <Text style={styles.progressText}>{session.attendanceCount} of {session.minimumAttendance} places saved</Text>
         </>
@@ -95,6 +98,8 @@ const CircleLiveCardView = ({ circleId, session }: { circleId: string; session: 
 };
 
 export const CircleLiveSection = memo(function CircleLiveSection({ circleId, circleName, canHost, snapshot, loading, error, refresh }: Props) {
+  const visual = useLiveVisualTheme();
+  const styles = useMemo(() => createStyles(visual), [visual]);
   const canSchedule = canHost && snapshot?.canSchedule === true;
   const active = snapshot?.sessions.filter((session) => session.status !== 'ended') ?? [];
   const recaps = snapshot?.sessions.filter((session) => session.status === 'ended').slice(0, 3) ?? [];
@@ -104,7 +109,7 @@ export const CircleLiveSection = memo(function CircleLiveSection({ circleId, cir
     params: { circleId, circleName },
   });
 
-  if (loading && !snapshot) return <View style={styles.loading}><ActivityIndicator color="#D7B56D" /></View>;
+  if (loading && !snapshot) return <View style={styles.loading}><ActivityIndicator color={visual.teal} /></View>;
   if (error && !snapshot) return (
     <View style={styles.empty}>
       <Text style={styles.emptyTitle}>Circle Live could not load</Text>
@@ -120,7 +125,7 @@ export const CircleLiveSection = memo(function CircleLiveSection({ circleId, cir
       </View>
       {active.length === 0 ? (
         <View style={styles.empty}>
-          <View style={styles.emptyIcon}><Radio size={24} color="#D7B56D" /></View>
+          <View style={styles.emptyIcon}><Radio size={24} color={visual.teal} /></View>
           <Text style={styles.emptyTitle}>No Circle Live scheduled</Text>
           <Text style={styles.emptyBody}>When a host schedules one, its Gathering and quorum progress will appear here.</Text>
           {canSchedule ? <Pressable onPress={schedule} style={styles.primary}><Text style={styles.primaryText}>Create Circle Live</Text></Pressable> : null}
@@ -132,14 +137,14 @@ export const CircleLiveSection = memo(function CircleLiveSection({ circleId, cir
   );
 });
 
-const styles = StyleSheet.create({
+const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
   section: { gap: 14 }, loading: { minHeight: 180, alignItems: 'center', justifyContent: 'center' },
-  header: { flexDirection: 'row', alignItems: 'center', gap: 12 }, headerCopy: { flex: 1 }, heading: { color: '#FFF7EC', fontSize: 22, fontFamily: 'PlayfairDisplay_700Bold' }, support: { color: '#9FB2AD', fontSize: 11, lineHeight: 17, marginTop: 4, fontFamily: 'Manrope_500Medium' },
-  schedule: { borderRadius: 18, backgroundColor: '#D7B56D', paddingHorizontal: 15, paddingVertical: 10 }, scheduleText: { color: '#102522', fontSize: 11, fontFamily: 'Manrope_800ExtraBold' },
+  header: { flexDirection: 'row', alignItems: 'center', gap: 12 }, headerCopy: { flex: 1 }, heading: { color: visual.text, fontSize: 22, fontFamily: 'PlayfairDisplay_700Bold' }, support: { color: visual.textMuted, fontSize: 11, lineHeight: 17, marginTop: 4, fontFamily: 'Manrope_500Medium' },
+  schedule: { borderRadius: 18, backgroundColor: visual.teal, paddingHorizontal: 15, paddingVertical: 10 }, scheduleText: { color: visual.accentContrast, fontSize: 11, fontFamily: 'Manrope_800ExtraBold' },
   cardShell: { borderRadius: 24, overflow: 'hidden' }, pressed: { opacity: 0.92 }, poster: { minHeight: 230 }, card: { minHeight: 230, borderRadius: 24, borderWidth: 1, borderColor: '#466159', padding: 18 },
-  stateRow: { flexDirection: 'row', alignItems: 'center', gap: 10 }, icon: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: '#243A34' }, liveIcon: { backgroundColor: '#D7B56D' }, stateCopy: { flex: 1 }, eyebrow: { color: '#D7B56D', fontSize: 8, letterSpacing: 1.5, fontFamily: 'Manrope_800ExtraBold' }, stateTitle: { color: '#EAF1EE', fontSize: 14, marginTop: 2, fontFamily: 'Manrope_700Bold' },
+  stateRow: { flexDirection: 'row', alignItems: 'center', gap: 10 }, icon: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: '#243A34' }, liveIcon: { backgroundColor: visual.teal }, stateCopy: { flex: 1 }, eyebrow: { color: '#9CDDD7', fontSize: 8, letterSpacing: 1.5, fontFamily: 'Manrope_800ExtraBold' }, stateTitle: { color: '#EAF1EE', fontSize: 14, marginTop: 2, fontFamily: 'Manrope_700Bold' },
   title: { color: '#FFF7EC', fontSize: 25, lineHeight: 30, marginTop: 16, fontFamily: 'PlayfairDisplay_700Bold' }, description: { color: '#B9C8C4', fontSize: 11, lineHeight: 17, marginTop: 6, fontFamily: 'Manrope_500Medium' },
   timeRow: { flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 14 }, time: { color: '#E5D4AA', fontSize: 10, fontFamily: 'Manrope_600SemiBold' }, progressTrack: { height: 5, borderRadius: 3, backgroundColor: '#30433E', marginTop: 14, overflow: 'hidden' }, progress: { height: 5, borderRadius: 3, backgroundColor: '#9FD3C5' }, progressText: { color: '#91A6A0', fontSize: 9, marginTop: 7, fontFamily: 'Manrope_600SemiBold' },
-  metrics: { flexDirection: 'row', gap: 16, marginTop: 16 }, metric: { color: '#C7D5D1', fontSize: 10, fontFamily: 'Manrope_700Bold' }, cta: { color: '#E4C77F', fontSize: 11, marginTop: 16, textAlign: 'right', fontFamily: 'Manrope_800ExtraBold' },
-  empty: { borderRadius: 24, borderWidth: 1, borderColor: '#334A44', backgroundColor: '#12231F', padding: 22, alignItems: 'center' }, emptyIcon: { width: 50, height: 50, borderRadius: 25, backgroundColor: '#203630', alignItems: 'center', justifyContent: 'center', marginBottom: 12 }, emptyTitle: { color: '#FFF7EC', fontSize: 16, textAlign: 'center', fontFamily: 'Manrope_800ExtraBold' }, emptyBody: { color: '#9FB2AD', fontSize: 11, lineHeight: 17, textAlign: 'center', marginTop: 7, fontFamily: 'Manrope_500Medium' }, primary: { marginTop: 16, borderRadius: 20, backgroundColor: '#D7B56D', paddingHorizontal: 18, paddingVertical: 11 }, primaryText: { color: '#102522', fontSize: 11, fontFamily: 'Manrope_800ExtraBold' }, retry: { color: '#D7B56D', marginTop: 12, fontFamily: 'Manrope_700Bold' }, recapHeading: { color: '#D7B56D', fontSize: 10, letterSpacing: 1.2, marginTop: 8, fontFamily: 'Manrope_800ExtraBold' },
+  metrics: { flexDirection: 'row', gap: 16, marginTop: 16 }, metric: { color: '#C7D5D1', fontSize: 10, fontFamily: 'Manrope_700Bold' }, cta: { color: '#CDBAF0', fontSize: 11, marginTop: 16, textAlign: 'right', fontFamily: 'Manrope_800ExtraBold' },
+  empty: { borderRadius: 24, borderWidth: 1, borderColor: visual.border, backgroundColor: visual.surface, padding: 22, alignItems: 'center' }, emptyIcon: { width: 50, height: 50, borderRadius: 25, backgroundColor: visual.tealSoft, alignItems: 'center', justifyContent: 'center', marginBottom: 12 }, emptyTitle: { color: visual.text, fontSize: 16, textAlign: 'center', fontFamily: 'Manrope_800ExtraBold' }, emptyBody: { color: visual.textMuted, fontSize: 11, lineHeight: 17, textAlign: 'center', marginTop: 7, fontFamily: 'Manrope_500Medium' }, primary: { marginTop: 16, borderRadius: 20, backgroundColor: visual.teal, paddingHorizontal: 18, paddingVertical: 11 }, primaryText: { color: visual.accentContrast, fontSize: 11, fontFamily: 'Manrope_800ExtraBold' }, retry: { color: visual.teal, marginTop: 12, fontFamily: 'Manrope_700Bold' }, recapHeading: { color: visual.teal, fontSize: 10, letterSpacing: 1.2, marginTop: 8, fontFamily: 'Manrope_800ExtraBold' },
 });

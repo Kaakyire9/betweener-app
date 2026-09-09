@@ -12,6 +12,7 @@ import {
   getLiveHostedMatchingErrorCopy,
   hasProposableLivePair,
 } from '../domain/live-hosted-pairability.ts';
+import { type LiveVisualTheme, useLiveVisualTheme } from './live-visual-tokens.ts';
 
 export type LiveHostedMatchingPanelProps = {
   snapshot: LiveHostedMatchingSnapshot | null;
@@ -34,11 +35,13 @@ export type LiveHostedMatchingPanelProps = {
 
 const initials = (name: string | null) => name?.trim().slice(0, 1).toUpperCase() || 'B';
 
-const PersonAvatar = ({ person, size = 50 }: { person: LiveMatchRoundPerson | LiveHostedCandidate; size?: number }) => (
-  person.avatarUrl
+const PersonAvatar = ({ person, size = 50 }: { person: LiveMatchRoundPerson | LiveHostedCandidate; size?: number }) => {
+  const visual = useLiveVisualTheme();
+  const styles = useMemo(() => createStyles(visual), [visual]);
+  return person.avatarUrl
     ? <Image source={{ uri: person.avatarUrl }} style={[styles.avatar, { width: size, height: size, borderRadius: size / 2 }]} />
-    : <View style={[styles.avatarFallback, { width: size, height: size, borderRadius: size / 2 }]}><Text style={styles.avatarInitial}>{initials(person.fullName)}</Text></View>
-);
+    : <View style={[styles.avatarFallback, { width: size, height: size, borderRadius: size / 2 }]}><Text style={styles.avatarInitial}>{initials(person.fullName)}</Text></View>;
+};
 
 export function LiveHostedMatchingPanel({
   snapshot,
@@ -55,6 +58,8 @@ export function LiveHostedMatchingPanel({
   onEndPrivateSpark,
   showAvailabilityControl = true,
 }: LiveHostedMatchingPanelProps) {
+  const visual = useLiveVisualTheme();
+  const styles = useMemo(() => createStyles(visual), [visual]);
   const [selectedIds, setSelectedIds] = useState<readonly string[]>([]);
   const activeRound = snapshot?.activeRound ?? null;
   const selected = useMemo(
@@ -112,7 +117,7 @@ export function LiveHostedMatchingPanel({
   const privateSparkCard = privateSpark ? (
     <View style={styles.privateSparkCard}>
       <View style={styles.privateSparkHeading}>
-        <View style={styles.sparkBadge}><Sparkles size={17} color="#D7B56D" /></View>
+        <View style={styles.sparkBadge}><Sparkles size={17} color={visual.color.purple} /></View>
         <View style={styles.headingCopy}>
           <Text style={styles.eyebrow}>PRIVATE SPARK</Text>
           <Text style={styles.privateSparkTitle}>
@@ -149,7 +154,7 @@ export function LiveHostedMatchingPanel({
         ) : (
           <View style={styles.actionRow}>
             <Pressable disabled={busyAction !== null} onPress={() => onRespondPrivateSpark(privateSpark.id, false)} style={styles.notNowAction}>
-              <X size={16} color="#D8C9BF" /><Text style={styles.notNowText}>Not now</Text>
+              <X size={16} color={visual.color.textMuted} /><Text style={styles.notNowText}>Not now</Text>
             </Pressable>
             <Pressable disabled={busyAction !== null} onPress={() => onRespondPrivateSpark(privateSpark.id, true)} style={styles.primaryAction}>
               <Text style={styles.primaryActionText}>Continue privately</Text>
@@ -169,7 +174,7 @@ export function LiveHostedMatchingPanel({
     return (
       <View style={styles.panel}>
         <View style={styles.headingRow}>
-          <View style={styles.headingIcon}><UsersRound size={16} color="#D7B56D" /></View>
+          <View style={styles.headingIcon}><UsersRound size={16} color={visual.color.purple} /></View>
           <View style={styles.headingCopy}>
             <Text style={styles.eyebrow}>HOSTED MATCHING</Text>
             <Text style={styles.title}>Warm introductions, with consent.</Text>
@@ -182,7 +187,7 @@ export function LiveHostedMatchingPanel({
           <View style={styles.roundCard}>
             <View style={styles.pairRow}>
               <View style={styles.pairPerson}><PersonAvatar person={activeRound.participantA} /><Text numberOfLines={1} style={styles.personName}>{activeRound.participantA.fullName || 'Member'}</Text></View>
-              <View style={styles.sparkBadge}><Sparkles size={17} color="#D7B56D" /></View>
+              <View style={styles.sparkBadge}><Sparkles size={17} color={visual.color.purple} /></View>
               <View style={styles.pairPerson}><PersonAvatar person={activeRound.participantB} /><Text numberOfLines={1} style={styles.personName}>{activeRound.participantB.fullName || 'Member'}</Text></View>
             </View>
             <Text style={styles.roundStatus}>
@@ -197,7 +202,7 @@ export function LiveHostedMatchingPanel({
             {activeRound.connectionSignals.length > 0 ? (
               <View style={styles.signalList}>
                 <Text style={styles.sectionLabel}>CONNECTION SIGNALS</Text>
-                {activeRound.connectionSignals.map((signal) => <View key={signal.code} style={styles.signalRow}><Check size={14} color="#73D3BC" /><Text style={styles.signalText}>{signal.text}</Text></View>)}
+                {activeRound.connectionSignals.map((signal) => <View key={signal.code} style={styles.signalRow}><Check size={14} color={visual.color.teal} /><Text style={styles.signalText}>{signal.text}</Text></View>)}
               </View>
             ) : null}
             {activeRound.conversationSpark ? (
@@ -237,11 +242,11 @@ export function LiveHostedMatchingPanel({
                 return <Pressable disabled={unavailable} key={candidate.userId} onPress={() => toggleCandidate(candidate.userId)} style={[styles.candidateCard, isSelected && styles.candidateSelected, unavailable && styles.candidateUnavailable]}>
                   <PersonAvatar person={candidate} />
                   <Text numberOfLines={1} style={styles.candidateName}>{candidate.fullName || 'Member'}</Text>
-                  <View style={styles.metaRow}>{candidate.verified ? <ShieldCheck size={13} color="#73D3BC" /> : null}<Text numberOfLines={1} style={styles.metaText}>{[candidate.age, candidate.city].filter(Boolean).join(' · ') || 'Profile ready'}</Text></View>
+                  <View style={styles.metaRow}>{candidate.verified ? <ShieldCheck size={13} color={visual.color.teal} /> : null}<Text numberOfLines={1} style={styles.metaText}>{[candidate.age, candidate.city].filter(Boolean).join(' · ') || 'Profile ready'}</Text></View>
                   {candidate.lookingFor ? <Text numberOfLines={2} style={styles.intentText}>{candidate.lookingFor}</Text> : null}
                   {availability === 'already_introduced' ? <Text style={styles.availabilityReason}>Already introduced</Text> : null}
                   {availability === 'not_available' ? <Text style={styles.availabilityReason}>Not available for this pairing</Text> : null}
-                  <View style={[styles.selectionMark, isSelected && styles.selectionMarkActive]}>{isSelected ? <Check size={13} color="#071310" /> : null}</View>
+                  <View style={[styles.selectionMark, isSelected && styles.selectionMarkActive]}>{isSelected ? <Check size={13} color={visual.color.accentContrast} /> : null}</View>
                 </Pressable>;
               })}
             </ScrollView>
@@ -264,12 +269,12 @@ export function LiveHostedMatchingPanel({
       {isMyInvitation && otherPerson ? (
         <View style={styles.invitationCard}>
           <Text style={styles.eyebrow}>A THOUGHTFUL INTRODUCTION</Text>
-          <View style={styles.invitationPerson}><PersonAvatar person={otherPerson} size={58} /><View style={styles.headingCopy}><Text style={styles.invitationTitle}>Meet {otherPerson.fullName?.split(' ')[0] || 'this member'}?</Text><View style={styles.metaRow}><MapPin size={13} color="#9EB7B1" /><Text style={styles.metaText}>{[otherPerson.age, otherPerson.city].filter(Boolean).join(' · ') || 'Live now'}</Text></View></View></View>
+          <View style={styles.invitationPerson}><PersonAvatar person={otherPerson} size={58} /><View style={styles.headingCopy}><Text style={styles.invitationTitle}>Meet {otherPerson.fullName?.split(' ')[0] || 'this member'}?</Text><View style={styles.metaRow}><MapPin size={13} color={visual.color.textMuted} /><Text style={styles.metaText}>{[otherPerson.age, otherPerson.city].filter(Boolean).join(' · ') || 'Live now'}</Text></View></View></View>
           <Text style={styles.invitationCopy}>Your choice is private. The room will only continue if you both independently say yes.</Text>
-          {activeRound.myResponse ? <View style={styles.waitingPill}><Text style={styles.waitingText}>Choice saved privately · waiting</Text></View> : <View style={styles.actionRow}><Pressable disabled={busyAction !== null} onPress={() => onRespond(activeRound.id, false)} style={styles.notNowAction}><X size={16} color="#D8C9BF" /><Text style={styles.notNowText}>Not now</Text></Pressable><Pressable disabled={busyAction !== null} onPress={() => onRespond(activeRound.id, true)} style={styles.primaryAction}><Text style={styles.primaryActionText}>I’m open</Text></Pressable></View>}
+          {activeRound.myResponse ? <View style={styles.waitingPill}><Text style={styles.waitingText}>Choice saved privately · waiting</Text></View> : <View style={styles.actionRow}><Pressable disabled={busyAction !== null} onPress={() => onRespond(activeRound.id, false)} style={styles.notNowAction}><X size={16} color={visual.color.textMuted} /><Text style={styles.notNowText}>Not now</Text></Pressable><Pressable disabled={busyAction !== null} onPress={() => onRespond(activeRound.id, true)} style={styles.primaryAction}><Text style={styles.primaryActionText}>I’m open</Text></Pressable></View>}
         </View>
       ) : activeRound?.state === 'both_accepted' && activeRound.isParticipant ? (
-        <View style={styles.waitingPill}><Sparkles size={15} color="#D7B56D" /><Text style={styles.waitingText}>You both said yes. The host is preparing your introduction.</Text></View>
+        <View style={styles.waitingPill}><Sparkles size={15} color={visual.color.purple} /><Text style={styles.waitingText}>You both said yes. The host is preparing your introduction.</Text></View>
       ) : !activeRound && showAvailabilityControl ? (
         <Pressable disabled={busyAction !== null} onPress={() => onSetAvailability(!openToIntroductions)} style={[styles.availability, openToIntroductions && styles.availabilityOpen]}>
           <View><Text style={styles.availabilityTitle}>{openToIntroductions ? 'Open to introductions' : 'Keep me in the audience'}</Text><Text style={styles.availabilityCopy}>{openToIntroductions ? 'The host may privately suggest a thoughtful introduction.' : 'You can still enjoy the room without being proposed.'}</Text></View>
@@ -281,66 +286,66 @@ export function LiveHostedMatchingPanel({
   );
 }
 
-const styles = StyleSheet.create({
-  panel: { borderTopWidth: 1, borderBottomWidth: 1, borderColor: '#25423C', backgroundColor: '#0A201B', padding: 16, gap: 13 },
-  memberPanel: { backgroundColor: '#091B17', paddingHorizontal: 16, paddingVertical: 10 },
+const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
+  panel: { borderTopWidth: 1, borderBottomWidth: 1, borderColor: visual.color.border, backgroundColor: visual.color.surface, padding: 16, gap: 13 },
+  memberPanel: { backgroundColor: visual.color.surface, paddingHorizontal: 16, paddingVertical: 10 },
   headingRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  headingIcon: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: '#172F29' },
+  headingIcon: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.color.purpleSoft },
   headingCopy: { flex: 1, gap: 2 },
-  eyebrow: { color: '#D7B56D', fontSize: 11, letterSpacing: 1.7, fontFamily: 'Manrope_700Bold' },
-  title: { color: '#FFF7EC', fontSize: 17, fontFamily: 'PlayfairDisplay_700Bold' },
-  helper: { color: '#9EB7B1', fontSize: 13, fontFamily: 'Manrope_500Medium' },
+  eyebrow: { color: visual.color.purple, fontSize: 11, letterSpacing: 1.7, fontFamily: 'Manrope_700Bold' },
+  title: { color: visual.color.text, fontSize: 17, fontFamily: 'PlayfairDisplay_700Bold' },
+  helper: { color: visual.color.textMuted, fontSize: 13, fontFamily: 'Manrope_500Medium' },
   candidateRail: { gap: 10, paddingRight: 10 },
-  candidateCard: { width: 154, minHeight: 178, borderRadius: 20, padding: 13, gap: 7, backgroundColor: '#112923', borderWidth: 1, borderColor: '#29433D' },
-  candidateSelected: { borderColor: '#D7B56D', backgroundColor: '#18312A' },
+  candidateCard: { width: 154, minHeight: 178, borderRadius: 20, padding: 13, gap: 7, backgroundColor: visual.color.surfaceRaised, borderWidth: 1, borderColor: visual.color.border },
+  candidateSelected: { borderColor: visual.color.purple, backgroundColor: visual.color.purpleSoft },
   candidateUnavailable: { opacity: 0.38 },
-  avatar: { backgroundColor: '#18312A' },
-  avatarFallback: { backgroundColor: '#21453B', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#826F46' },
-  avatarInitial: { color: '#FFF7EC', fontSize: 19, fontFamily: 'Manrope_700Bold' },
-  candidateName: { color: '#FFF7EC', fontSize: 15, fontFamily: 'Manrope_700Bold' },
+  avatar: { backgroundColor: visual.color.tealSoft },
+  avatarFallback: { backgroundColor: visual.color.tealSoft, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: visual.color.borderStrong },
+  avatarInitial: { color: visual.color.text, fontSize: 19, fontFamily: 'Manrope_700Bold' },
+  candidateName: { color: visual.color.text, fontSize: 15, fontFamily: 'Manrope_700Bold' },
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  metaText: { flexShrink: 1, color: '#9EB7B1', fontSize: 11, fontFamily: 'Manrope_500Medium' },
-  intentText: { color: '#DCCDBF', fontSize: 11, lineHeight: 16, fontFamily: 'Manrope_500Medium' },
-  availabilityReason: { color: '#C7B8AB', fontSize: 9, lineHeight: 13, fontFamily: 'Manrope_600SemiBold' },
-  selectionMark: { position: 'absolute', right: 12, top: 12, width: 22, height: 22, borderRadius: 11, borderWidth: 1, borderColor: '#55706A', alignItems: 'center', justifyContent: 'center' },
-  selectionMarkActive: { backgroundColor: '#D7B56D', borderColor: '#D7B56D' },
-  selectionHint: { color: '#819A94', textAlign: 'center', fontSize: 12, fontFamily: 'Manrope_500Medium' },
-  primaryAction: { minHeight: 44, paddingHorizontal: 18, borderRadius: 22, backgroundColor: '#D7B56D', alignItems: 'center', justifyContent: 'center' },
-  primaryActionText: { color: '#071310', fontSize: 13, fontFamily: 'Manrope_700Bold' },
-  roundCard: { gap: 13, borderRadius: 22, padding: 14, backgroundColor: '#112923', borderWidth: 1, borderColor: '#35534C' },
+  metaText: { flexShrink: 1, color: visual.color.textMuted, fontSize: 11, fontFamily: 'Manrope_500Medium' },
+  intentText: { color: visual.color.text, fontSize: 11, lineHeight: 16, fontFamily: 'Manrope_500Medium' },
+  availabilityReason: { color: visual.color.textMuted, fontSize: 9, lineHeight: 13, fontFamily: 'Manrope_600SemiBold' },
+  selectionMark: { position: 'absolute', right: 12, top: 12, width: 22, height: 22, borderRadius: 11, borderWidth: 1, borderColor: visual.color.border, alignItems: 'center', justifyContent: 'center' },
+  selectionMarkActive: { backgroundColor: visual.color.purple, borderColor: visual.color.purple },
+  selectionHint: { color: visual.color.textMuted, textAlign: 'center', fontSize: 12, fontFamily: 'Manrope_500Medium' },
+  primaryAction: { minHeight: 44, paddingHorizontal: 18, borderRadius: 22, backgroundColor: visual.color.purple, alignItems: 'center', justifyContent: 'center' },
+  primaryActionText: { color: visual.color.accentContrast, fontSize: 13, fontFamily: 'Manrope_700Bold' },
+  roundCard: { gap: 13, borderRadius: 22, padding: 14, backgroundColor: visual.color.surfaceRaised, borderWidth: 1, borderColor: visual.color.border },
   pairRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 15 },
   pairPerson: { width: 90, alignItems: 'center', gap: 6 },
-  personName: { color: '#FFF7EC', fontSize: 12, fontFamily: 'Manrope_700Bold' },
-  sparkBadge: { width: 35, height: 35, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: '#2B3529' },
-  roundStatus: { color: '#AFC2BD', textAlign: 'center', fontSize: 12, lineHeight: 18, fontFamily: 'Manrope_500Medium' },
+  personName: { color: visual.color.text, fontSize: 12, fontFamily: 'Manrope_700Bold' },
+  sparkBadge: { width: 35, height: 35, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.color.purpleSoft },
+  roundStatus: { color: visual.color.textMuted, textAlign: 'center', fontSize: 12, lineHeight: 18, fontFamily: 'Manrope_500Medium' },
   signalList: { gap: 7 },
-  sectionLabel: { color: '#D7B56D', fontSize: 10, letterSpacing: 1.4, fontFamily: 'Manrope_700Bold' },
+  sectionLabel: { color: visual.color.purple, fontSize: 10, letterSpacing: 1.4, fontFamily: 'Manrope_700Bold' },
   signalRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
-  signalText: { flex: 1, color: '#E6DDD3', fontSize: 12, fontFamily: 'Manrope_500Medium' },
-  sparkCard: { gap: 6, borderRadius: 15, padding: 12, backgroundColor: '#0A1C18' },
-  sparkContext: { color: '#9EB7B1', fontSize: 11, fontFamily: 'Manrope_500Medium' },
-  sparkQuestion: { color: '#FFF7EC', fontSize: 14, lineHeight: 21, fontFamily: 'PlayfairDisplay_700Bold' },
+  signalText: { flex: 1, color: visual.color.text, fontSize: 12, fontFamily: 'Manrope_500Medium' },
+  sparkCard: { gap: 6, borderRadius: 15, padding: 12, backgroundColor: visual.color.surface },
+  sparkContext: { color: visual.color.textMuted, fontSize: 11, fontFamily: 'Manrope_500Medium' },
+  sparkQuestion: { color: visual.color.text, fontSize: 14, lineHeight: 21, fontFamily: 'PlayfairDisplay_700Bold' },
   actionRow: { flexDirection: 'row', gap: 9, justifyContent: 'center' },
   quietAction: { minHeight: 44, paddingHorizontal: 16, alignItems: 'center', justifyContent: 'center' },
-  quietActionText: { color: '#B9AAA1', fontSize: 12, fontFamily: 'Manrope_700Bold' },
-  invitationCard: { gap: 13, borderRadius: 22, padding: 15, backgroundColor: '#112923', borderWidth: 1, borderColor: '#816E45' },
+  quietActionText: { color: visual.color.textMuted, fontSize: 12, fontFamily: 'Manrope_700Bold' },
+  invitationCard: { gap: 13, borderRadius: 22, padding: 15, backgroundColor: visual.color.surfaceRaised, borderWidth: 1, borderColor: visual.color.borderStrong },
   invitationPerson: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  invitationTitle: { color: '#FFF7EC', fontSize: 20, fontFamily: 'PlayfairDisplay_700Bold' },
-  invitationCopy: { color: '#AFC2BD', fontSize: 12, lineHeight: 18, fontFamily: 'Manrope_500Medium' },
-  privateSparkCard: { gap: 13, borderRadius: 22, padding: 15, backgroundColor: '#17251F', borderWidth: 1, borderColor: '#B39558' },
+  invitationTitle: { color: visual.color.text, fontSize: 20, fontFamily: 'PlayfairDisplay_700Bold' },
+  invitationCopy: { color: visual.color.textMuted, fontSize: 12, lineHeight: 18, fontFamily: 'Manrope_500Medium' },
+  privateSparkCard: { gap: 13, borderRadius: 22, padding: 15, backgroundColor: visual.color.surfaceRaised, borderWidth: 1, borderColor: visual.color.borderStrong },
   privateSparkHeading: { flexDirection: 'row', alignItems: 'center', gap: 11 },
-  privateSparkTitle: { color: '#FFF7EC', fontSize: 18, fontFamily: 'PlayfairDisplay_700Bold' },
-  notNowAction: { minHeight: 44, paddingHorizontal: 16, borderRadius: 22, flexDirection: 'row', gap: 6, alignItems: 'center', justifyContent: 'center', backgroundColor: '#24302D' },
-  notNowText: { color: '#D8C9BF', fontSize: 13, fontFamily: 'Manrope_700Bold' },
-  waitingPill: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, borderRadius: 18, paddingVertical: 11, paddingHorizontal: 13, backgroundColor: '#1C302A' },
-  waitingText: { flexShrink: 1, color: '#E9DDCE', textAlign: 'center', fontSize: 12, lineHeight: 17, fontFamily: 'Manrope_600SemiBold' },
-  availability: { minHeight: 76, borderRadius: 18, padding: 13, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, backgroundColor: '#10231F', borderWidth: 1, borderColor: '#29413B' },
-  availabilityOpen: { borderColor: '#71623F', backgroundColor: '#172B25' },
-  availabilityTitle: { color: '#FFF7EC', fontSize: 13, fontFamily: 'Manrope_700Bold' },
-  availabilityCopy: { maxWidth: 270, marginTop: 3, color: '#91A8A2', fontSize: 10, lineHeight: 15, fontFamily: 'Manrope_500Medium' },
-  toggle: { width: 42, height: 24, padding: 3, borderRadius: 12, backgroundColor: '#33453F' },
-  toggleOpen: { backgroundColor: '#D7B56D' },
-  toggleThumb: { width: 18, height: 18, borderRadius: 9, backgroundColor: '#E8E0D5' },
-  toggleThumbOpen: { alignSelf: 'flex-end', backgroundColor: '#0C211D' },
-  errorText: { color: '#E4A09B', textAlign: 'center', fontSize: 11, fontFamily: 'Manrope_600SemiBold' },
+  privateSparkTitle: { color: visual.color.text, fontSize: 18, fontFamily: 'PlayfairDisplay_700Bold' },
+  notNowAction: { minHeight: 44, paddingHorizontal: 16, borderRadius: 22, flexDirection: 'row', gap: 6, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.color.surface },
+  notNowText: { color: visual.color.textMuted, fontSize: 13, fontFamily: 'Manrope_700Bold' },
+  waitingPill: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, borderRadius: 18, paddingVertical: 11, paddingHorizontal: 13, backgroundColor: visual.color.purpleSoft },
+  waitingText: { flexShrink: 1, color: visual.color.text, textAlign: 'center', fontSize: 12, lineHeight: 17, fontFamily: 'Manrope_600SemiBold' },
+  availability: { minHeight: 76, borderRadius: 18, padding: 13, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, backgroundColor: visual.color.surfaceRaised, borderWidth: 1, borderColor: visual.color.border },
+  availabilityOpen: { borderColor: visual.color.borderStrong, backgroundColor: visual.color.purpleSoft },
+  availabilityTitle: { color: visual.color.text, fontSize: 13, fontFamily: 'Manrope_700Bold' },
+  availabilityCopy: { maxWidth: 270, marginTop: 3, color: visual.color.textMuted, fontSize: 10, lineHeight: 15, fontFamily: 'Manrope_500Medium' },
+  toggle: { width: 42, height: 24, padding: 3, borderRadius: 12, backgroundColor: visual.color.border },
+  toggleOpen: { backgroundColor: visual.color.purple },
+  toggleThumb: { width: 18, height: 18, borderRadius: 9, backgroundColor: visual.color.surfaceRaised },
+  toggleThumbOpen: { alignSelf: 'flex-end', backgroundColor: visual.color.accentContrast },
+  errorText: { color: visual.color.danger, textAlign: 'center', fontSize: 11, fontFamily: 'Manrope_600SemiBold' },
 });

@@ -4,15 +4,16 @@ import type {
   LiveMediaAdmission,
   LiveMediaAdmissionRequest,
 } from './live-media-provider.ts';
+import { requestWithLiveMediaAdmissionRetry } from './live-media-admission-retry.ts';
 import { readFunctionErrorCode } from './live-function-error.ts';
 
 export const requestLiveMediaAdmission = async (
   request: LiveMediaAdmissionRequest,
-): Promise<LiveMediaAdmission> => {
+): Promise<LiveMediaAdmission> => requestWithLiveMediaAdmissionRetry(async () => {
   const { data, error } = await supabase.functions.invoke('live-rtc-token', {
     body: request,
   });
 
   if (error) throw new Error(await readFunctionErrorCode(error));
   return parseLiveMediaAdmission(data);
-};
+});

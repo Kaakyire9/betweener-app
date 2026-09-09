@@ -23,7 +23,7 @@ import type {
 } from '../application/index.ts';
 import { paginateLiveQuickConnectPool } from '../domain/index.ts';
 import { LiveQuickConnectConstellation } from './LiveQuickConnectConstellation.tsx';
-import { LIVE_VISUAL } from './live-visual-tokens.ts';
+import { type LiveVisualTheme, useLiveVisualTheme } from './live-visual-tokens.ts';
 
 export type LiveQuickConnectPoolProps = {
   snapshot: LiveQuickConnectPoolSnapshot | null;
@@ -85,6 +85,8 @@ export function LiveQuickConnectPool({
   onLayoutChange,
   embedded = false,
 }: LiveQuickConnectPoolProps) {
+  const visual = useLiveVisualTheme();
+  const styles = useMemo(() => createStyles(visual), [visual]);
   const glow = useRef(new Animated.Value(0)).current;
   const pageMotion = useRef(new Animated.Value(0)).current;
   const [page, setPage] = useState(0);
@@ -161,7 +163,7 @@ export function LiveQuickConnectPool({
   if (!snapshot) {
     return initialLoading ? (
       <View style={styles.loading}>
-        <ActivityIndicator color={LIVE_VISUAL.color.gold} size="small" />
+        <ActivityIndicator color={visual.color.teal} size="small" />
       </View>
     ) : null;
   }
@@ -176,7 +178,7 @@ export function LiveQuickConnectPool({
     <View style={[styles.shell, embedded && styles.shellEmbedded]}>
       <View style={[styles.headingRow, layout === 'side-by-side' && styles.headingRowCompact]}>
         <View style={styles.headingIcon}>
-          <UsersRound color={LIVE_VISUAL.color.gold} size={15} />
+          <UsersRound color={visual.color.teal} size={15} />
         </View>
         <View style={styles.headingCopy}>
           <Text numberOfLines={1} style={styles.eyebrow}>
@@ -217,7 +219,7 @@ export function LiveQuickConnectPool({
           </View>
         ) : null}
         <View style={styles.progressSlot}>
-          {busyAction ? <ActivityIndicator color={LIVE_VISUAL.color.gold} size="small" /> : null}
+          {busyAction ? <ActivityIndicator color={visual.color.teal} size="small" /> : null}
         </View>
       </View>
 
@@ -257,7 +259,7 @@ export function LiveQuickConnectPool({
               (!snapshot.canOptIn || busyAction != null || (choosingIntent && connectionIntent == null)) && styles.disabled,
             ]}
           >
-            <UserRoundPlus color={LIVE_VISUAL.color.canvas} size={16} />
+            <UserRoundPlus color={visual.color.accentContrast} size={16} />
             <Text style={styles.primaryText}>{choosingIntent ? 'Confirm & join' : 'Join pool'}</Text>
           </Pressable>
         </View>
@@ -327,7 +329,7 @@ export function LiveQuickConnectPool({
                 onPress={() => changePage(poolPage.page - 1)}
                 style={[styles.pageButton, (!poolPage.hasPrevious || pageAnimating) && styles.disabled]}
               >
-                <ChevronLeft color={LIVE_VISUAL.color.text} size={15} />
+                <ChevronLeft color={visual.color.text} size={15} />
               </Pressable>
               <Text style={styles.pageText}>
                 {poolPage.page + 1} of {poolPage.pageCount}
@@ -340,7 +342,7 @@ export function LiveQuickConnectPool({
                 onPress={() => changePage(poolPage.page + 1)}
                 style={[styles.pageButton, (!poolPage.hasNext || pageAnimating) && styles.disabled]}
               >
-                <ChevronRight color={LIVE_VISUAL.color.text} size={15} />
+                <ChevronRight color={visual.color.text} size={15} />
               </Pressable>
             </View>
           ) : null}
@@ -357,7 +359,7 @@ export function LiveQuickConnectPool({
           onPress={onLeave}
           style={[styles.leaveButton, busyAction != null && styles.disabled]}
         >
-          <LogOut color={LIVE_VISUAL.color.textMuted} size={13} />
+          <LogOut color={visual.color.textMuted} size={13} />
           <Text style={styles.leaveText}>Leave pool</Text>
         </Pressable>
       ) : null}
@@ -371,53 +373,53 @@ export function LiveQuickConnectPool({
   );
 }
 
-const styles = StyleSheet.create({
-  shell: { marginHorizontal: 16, gap: 8, borderRadius: 22, borderWidth: 1, borderColor: '#D7B56D45', backgroundColor: '#071714EE', padding: 11 },
-  shellEmbedded: { flex: 1, minHeight: 0, marginHorizontal: 0, gap: 5, borderRadius: 0, borderWidth: 0, padding: 9, backgroundColor: '#071714' },
-  loading: { alignSelf: 'center', borderRadius: 999, backgroundColor: '#071714E8', padding: 10 },
+const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
+  shell: { marginHorizontal: 16, gap: 8, borderRadius: 22, borderWidth: 1, borderColor: visual.color.borderStrong, backgroundColor: visual.color.surfaceTranslucent, padding: 11 },
+  shellEmbedded: { flex: 1, minHeight: 0, marginHorizontal: 0, gap: 5, borderRadius: 0, borderWidth: 0, padding: 9, backgroundColor: visual.color.surface },
+  loading: { alignSelf: 'center', borderRadius: 999, backgroundColor: visual.color.surfaceTranslucent, padding: 10 },
   headingRow: { minHeight: 32, flexDirection: 'row', alignItems: 'center', gap: 8 },
   headingRowCompact: { minHeight: 29, gap: 5 },
-  headingIcon: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: '#D7B56D18' },
+  headingIcon: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.color.tealSoft },
   headingCopy: { flex: 1 },
-  eyebrow: { color: LIVE_VISUAL.color.gold, fontSize: 7, letterSpacing: 1.35, fontFamily: 'Manrope_800ExtraBold' },
-  heading: { marginTop: 1, color: LIVE_VISUAL.color.text, fontSize: 12, fontFamily: 'Manrope_800ExtraBold' },
+  eyebrow: { color: visual.color.teal, fontSize: 7, letterSpacing: 1.35, fontFamily: 'Manrope_800ExtraBold' },
+  heading: { marginTop: 1, color: visual.color.text, fontSize: 12, fontFamily: 'Manrope_800ExtraBold' },
   hostActions: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   progressSlot: { width: 16, height: 16, alignItems: 'center', justifyContent: 'center' },
-  layoutToggle: { height: 30, borderRadius: 15, flexDirection: 'row', alignItems: 'center', padding: 2, backgroundColor: '#FFFFFF0A', borderWidth: 1, borderColor: '#D7B56D30' },
+  layoutToggle: { height: 30, borderRadius: 15, flexDirection: 'row', alignItems: 'center', padding: 2, backgroundColor: visual.color.surfaceRaised, borderWidth: 1, borderColor: visual.color.border },
   layoutButton: { width: 25, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  layoutButtonSelected: { backgroundColor: '#D7B56D2B' },
+  layoutButtonSelected: { backgroundColor: visual.color.tealSoft },
   stackedLayoutIcon: { width: 12, height: 12, justifyContent: 'space-between', paddingVertical: 1 },
   sideLayoutIcon: { width: 12, height: 12, flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 1 },
-  layoutBar: { width: 12, height: 4, borderRadius: 2, backgroundColor: LIVE_VISUAL.color.gold },
-  layoutColumn: { width: 4, height: 12, borderRadius: 2, backgroundColor: LIVE_VISUAL.color.gold },
+  layoutBar: { width: 12, height: 4, borderRadius: 2, backgroundColor: visual.color.teal },
+  layoutColumn: { width: 4, height: 12, borderRadius: 2, backgroundColor: visual.color.teal },
   optInRow: { flexDirection: 'row', alignItems: 'center', gap: 9 },
   optInRowCompact: { minHeight: 31, justifyContent: 'flex-end' },
   optInCopy: { flex: 1, minWidth: 0 },
-  optInTitle: { color: LIVE_VISUAL.color.text, fontSize: 11, fontFamily: 'Manrope_800ExtraBold', marginBottom: 2 },
-  supporting: { color: LIVE_VISUAL.color.textMuted, fontSize: 8, lineHeight: 12, fontFamily: 'Manrope_500Medium' },
-  primaryButton: { minHeight: 36, borderRadius: 18, backgroundColor: LIVE_VISUAL.color.gold, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingHorizontal: 12 },
+  optInTitle: { color: visual.color.text, fontSize: 11, fontFamily: 'Manrope_800ExtraBold', marginBottom: 2 },
+  supporting: { color: visual.color.textMuted, fontSize: 8, lineHeight: 12, fontFamily: 'Manrope_500Medium' },
+  primaryButton: { minHeight: 36, borderRadius: 18, backgroundColor: visual.color.teal, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingHorizontal: 12 },
   primaryButtonCompact: { minHeight: 31, borderRadius: 16, paddingHorizontal: 10 },
-  primaryText: { color: LIVE_VISUAL.color.canvas, fontSize: 9, fontFamily: 'Manrope_800ExtraBold' },
-  preferencePanel: { gap: 6, borderRadius: 14, borderWidth: 1, borderColor: '#D7B56D32', backgroundColor: '#091714', padding: 9 },
-  preferenceTitle: { color: LIVE_VISUAL.color.text, fontSize: 9, fontFamily: 'Manrope_800ExtraBold' },
-  preferenceSupporting: { color: LIVE_VISUAL.color.textMuted, fontSize: 7, fontFamily: 'Manrope_500Medium' },
+  primaryText: { color: visual.color.accentContrast, fontSize: 9, fontFamily: 'Manrope_800ExtraBold' },
+  preferencePanel: { gap: 6, borderRadius: 14, borderWidth: 1, borderColor: visual.color.borderStrong, backgroundColor: visual.color.surfaceRaised, padding: 9 },
+  preferenceTitle: { color: visual.color.text, fontSize: 9, fontFamily: 'Manrope_800ExtraBold' },
+  preferenceSupporting: { color: visual.color.textMuted, fontSize: 7, fontFamily: 'Manrope_500Medium' },
   preferenceOptions: { flexDirection: 'row', flexWrap: 'wrap', gap: 5 },
-  preferenceChip: { minWidth: '47%', minHeight: 40, flexGrow: 1, justifyContent: 'center', gap: 1, borderRadius: 12, borderWidth: 1, borderColor: '#29413B', paddingHorizontal: 9, paddingVertical: 5 },
-  preferenceChipSelected: { borderColor: LIVE_VISUAL.color.gold, backgroundColor: '#D7B56D' },
-  preferenceChipText: { color: LIVE_VISUAL.color.textMuted, fontSize: 7, fontFamily: 'Manrope_700Bold' },
-  preferenceChipTextSelected: { color: LIVE_VISUAL.color.canvas },
-  preferenceChipSupporting: { color: '#839690', fontSize: 6, fontFamily: 'Manrope_500Medium' },
-  preferenceChipSupportingSelected: { color: '#27433D' },
+  preferenceChip: { minWidth: '47%', minHeight: 40, flexGrow: 1, justifyContent: 'center', gap: 1, borderRadius: 12, borderWidth: 1, borderColor: visual.color.border, paddingHorizontal: 9, paddingVertical: 5 },
+  preferenceChipSelected: { borderColor: visual.color.teal, backgroundColor: visual.color.teal },
+  preferenceChipText: { color: visual.color.textMuted, fontSize: 7, fontFamily: 'Manrope_700Bold' },
+  preferenceChipTextSelected: { color: visual.color.accentContrast },
+  preferenceChipSupporting: { color: visual.color.textMuted, fontSize: 6, fontFamily: 'Manrope_500Medium' },
+  preferenceChipSupportingSelected: { color: visual.color.accentContrast },
   disabled: { opacity: 0.4 },
   statusRow: { minHeight: 22, flexDirection: 'row', alignItems: 'center', gap: 6 },
-  liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: LIVE_VISUAL.color.teal },
-  facilitatorDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: LIVE_VISUAL.color.gold },
-  statusText: { flex: 1, color: LIVE_VISUAL.color.textMuted, fontSize: 8, fontFamily: 'Manrope_600SemiBold' },
+  liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: visual.color.teal },
+  facilitatorDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: visual.color.teal },
+  statusText: { flex: 1, color: visual.color.textMuted, fontSize: 8, fontFamily: 'Manrope_600SemiBold' },
   paginationRow: { minHeight: 25, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 },
-  pageButton: { width: 25, height: 25, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF0B' },
-  pageText: { minWidth: 72, color: LIVE_VISUAL.color.textMuted, fontSize: 8, textAlign: 'center', fontFamily: 'Manrope_700Bold' },
-  emptyCopy: { color: LIVE_VISUAL.color.textMuted, fontSize: 8, textAlign: 'center', fontFamily: 'Manrope_500Medium', paddingVertical: 4 },
-  leaveButton: { alignSelf: 'center', minHeight: 28, borderRadius: 14, flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: '#FFFFFF0B', paddingHorizontal: 12 },
-  leaveText: { color: LIVE_VISUAL.color.textMuted, fontSize: 8, fontFamily: 'Manrope_800ExtraBold' },
-  error: { color: '#F2B6B6', fontSize: 8, textAlign: 'center', fontFamily: 'Manrope_600SemiBold' },
+  pageButton: { width: 25, height: 25, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.color.surfaceRaised },
+  pageText: { minWidth: 72, color: visual.color.textMuted, fontSize: 8, textAlign: 'center', fontFamily: 'Manrope_700Bold' },
+  emptyCopy: { color: visual.color.textMuted, fontSize: 8, textAlign: 'center', fontFamily: 'Manrope_500Medium', paddingVertical: 4 },
+  leaveButton: { alignSelf: 'center', minHeight: 28, borderRadius: 14, flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: visual.color.surfaceRaised, paddingHorizontal: 12 },
+  leaveText: { color: visual.color.textMuted, fontSize: 8, fontFamily: 'Manrope_800ExtraBold' },
+  error: { color: visual.color.danger, fontSize: 8, textAlign: 'center', fontFamily: 'Manrope_600SemiBold' },
 });

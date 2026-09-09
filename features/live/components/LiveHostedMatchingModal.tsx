@@ -1,10 +1,12 @@
 import { ChevronLeft, Sparkles } from 'lucide-react-native';
+import { useMemo } from 'react';
 import { Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { initialWindowMetrics, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   LiveHostedMatchingPanel,
   type LiveHostedMatchingPanelProps,
 } from './LiveHostedMatchingPanel.tsx';
+import { type LiveVisualTheme, useLiveVisualTheme } from './live-visual-tokens.ts';
 
 type Props = LiveHostedMatchingPanelProps & {
   visible: boolean;
@@ -14,6 +16,8 @@ type Props = LiveHostedMatchingPanelProps & {
 };
 
 export function LiveHostedMatchingModal({ visible, onClose, refreshing, onRefresh, ...panelProps }: Props) {
+  const visual = useLiveVisualTheme();
+  const styles = useMemo(() => createStyles(visual), [visual]);
   const insets = useSafeAreaInsets();
   const topInset = Math.max(insets.top, initialWindowMetrics?.insets.top ?? 0);
   const bottomInset = Math.max(insets.bottom, initialWindowMetrics?.insets.bottom ?? 0);
@@ -36,11 +40,11 @@ export function LiveHostedMatchingModal({ visible, onClose, refreshing, onRefres
             onPress={onClose}
             style={styles.closeButton}
           >
-            <ChevronLeft color="#FFF7EC" size={24} />
+            <ChevronLeft color={visual.text} size={24} />
           </Pressable>
           <View style={styles.headerCopy}>
             <View style={styles.eyebrowRow}>
-              <Sparkles color="#D7B56D" size={13} />
+              <Sparkles color={visual.purple} size={13} />
               <Text style={styles.eyebrow}>PRIVATE HOST CONSOLE</Text>
             </View>
             <Text style={styles.title}>Match Desk</Text>
@@ -54,8 +58,8 @@ export function LiveHostedMatchingModal({ visible, onClose, refreshing, onRefres
             <RefreshControl
               refreshing={refreshing}
               onRefresh={onRefresh}
-              tintColor="#D7B56D"
-              colors={['#D7B56D']}
+              tintColor={visual.purple}
+              colors={[visual.purple]}
             />
           )}
           showsVerticalScrollIndicator={false}
@@ -70,16 +74,16 @@ export function LiveHostedMatchingModal({ visible, onClose, refreshing, onRefres
   );
 }
 
-const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#071310' },
+const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
+  root: { flex: 1, backgroundColor: visual.canvas },
   header: {
     minHeight: 70,
     paddingHorizontal: 16,
     flexDirection: 'row',
     alignItems: 'center',
     borderBottomWidth: 1,
-    borderBottomColor: '#263E38',
-    backgroundColor: '#091714',
+    borderBottomColor: visual.border,
+    backgroundColor: visual.surface,
   },
   closeButton: {
     width: 44,
@@ -87,20 +91,20 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#152622',
+    backgroundColor: visual.surfaceSoft,
     borderWidth: 1,
-    borderColor: '#304640',
+    borderColor: visual.border,
   },
   headerCopy: { flex: 1, alignItems: 'center' },
   headerSpacer: { width: 44 },
   eyebrowRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  eyebrow: { color: '#D7B56D', fontSize: 9, letterSpacing: 1.5, fontFamily: 'Manrope_800ExtraBold' },
-  title: { marginTop: 2, color: '#FFF7EC', fontSize: 22, fontFamily: 'PlayfairDisplay_700Bold' },
+  eyebrow: { color: visual.purple, fontSize: 9, letterSpacing: 1.5, fontFamily: 'Manrope_800ExtraBold' },
+  title: { marginTop: 2, color: visual.text, fontSize: 22, fontFamily: 'PlayfairDisplay_700Bold' },
   content: { paddingBottom: 32 },
   promise: {
     marginHorizontal: 22,
     marginVertical: 20,
-    color: '#AFC0BC',
+    color: visual.textMuted,
     fontSize: 13,
     lineHeight: 20,
     textAlign: 'center',

@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { parseLiveMediaAdmission } from './live-media-admission.ts';
+import { requestWithLiveMediaAdmissionRetry } from './live-media-admission-retry.ts';
 import { readFunctionErrorCode } from './live-function-error.ts';
 import type {
   LiveMediaAdmission,
@@ -9,11 +10,11 @@ import type {
 /** Quick Connect uses the pairing id as its isolated two-person RTC room id. */
 export const requestLiveQuickConnectAdmission = async (
   request: LiveMediaAdmissionRequest,
-): Promise<LiveMediaAdmission> => {
+): Promise<LiveMediaAdmission> => requestWithLiveMediaAdmissionRetry(async () => {
   const { data, error } = await supabase.functions.invoke('live-quick-connect-token', {
     body: { pairingId: request.sessionId },
   });
 
   if (error) throw new Error(await readFunctionErrorCode(error));
   return parseLiveMediaAdmission(data, { allowPrivateSpark: true });
-};
+});

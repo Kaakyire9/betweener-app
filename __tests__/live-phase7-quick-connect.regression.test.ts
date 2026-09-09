@@ -68,6 +68,7 @@ const pairedSnapshot: LiveQuickConnectSnapshot = {
     },
     providerCallType: 'betweener_live',
     providerCallId: 'quick_pair_1',
+    odoConversationSpark: null,
   },
 };
 

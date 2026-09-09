@@ -2,9 +2,44 @@ import * as Crypto from 'expo-crypto';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { readFunctionErrorCode } from '../media/live-function-error.ts';
+import {
+  type OdoCopilotState,
+  type OdoCopilotSuggestion,
+  type OdoCopilotTask,
+} from '../odo/copilot/odo-copilot-contracts.ts';
+import {
+  parseOdoCopilotState,
+  parseOdoCopilotSuggestion,
+} from '../odo/copilot/odo-copilot-validation.ts';
+import type {
+  LiveDirectorEvent,
+  OdoDirectorSnapshot,
+} from '../odo/domain/odo-contracts.ts';
+import type {
+  OdoGuardedAutopilotState,
+  OdoGuardedFeatures,
+} from '../odo/autopilot/odo-autopilot-contracts.ts';
+import { parseOdoGuardedAutopilotState } from '../odo/autopilot/odo-autopilot-validation.ts';
+import type { OdoFullQuickConnectState } from '../odo/full-quick-connect/odo-full-quick-connect-contracts.ts';
+import { parseOdoFullQuickConnectState } from '../odo/full-quick-connect/odo-full-quick-connect-validation.ts';
+import type {
+  LiveMusicAction,
+  LiveMusicPlaybackGrant,
+  OdoLiveProgramState,
+  OdoShowDirectorState,
+  OdoShowScene,
+} from '../odo/show/odo-show-contracts.ts';
+import {
+  parseOdoLiveProgramState,
+  parseOdoShowDirectorState,
+} from '../odo/show/odo-show-validation.ts';
+import {
+  parseLiveDirectorEvent,
+  parseOdoDirectorSnapshot,
+} from '../odo/domain/odo-validation.ts';
 import { getLiveSessionStartTarget } from '../domain/live-session-machine.ts';
 import type { LiveParticipantArrivalEvent } from './live-participant-arrivals.ts';
-import type { CircleLiveSnapshot, LiveAudiencePoll, LiveCancellationReason, LiveChemistrySnapshot, LiveComment, LiveEventMediaInput, LiveHostedMatchingSnapshot, LiveJoinNotice, LivePoolCandidatePreview, LivePrivateSpark, LivePrivateSparkExitDecision, LiveQuickConnectConcurrency, LiveQuickConnectDecision, LiveQuickConnectHostAction, LiveQuickConnectHostSnapshot, LiveQuickConnectIntent, LiveQuickConnectPoolSnapshot, LiveQuickConnectRoundSeconds, LiveQuickConnectSafetyExperience, LiveQuickConnectSafetyReason, LiveQuickConnectSnapshot, LiveQuickConnectStageLayout, LiveQuorumPoolingSnapshot, LiveReactionKind, LiveRoomPulseSnapshot, LiveSessionSnapshot, LiveSessionSummary, ScheduleCircleLiveSessionInput, ScheduleLiveSessionInput, ScheduleLiveStudioSessionInput, UpdateLiveStudioSessionInput } from './live-models.ts';
+import type { CircleLiveSnapshot, LiveAudiencePoll, LiveCancellationReason, LiveChemistrySnapshot, LiveComment, LiveEventMediaInput, LiveHostedMatchingSnapshot, LiveJoinNotice, LivePoolCandidatePreview, LivePrivateSpark, LivePrivateSparkExitDecision, LiveQuickConnectConcurrency, LiveQuickConnectDecision, LiveQuickConnectHostAction, LiveQuickConnectHostSnapshot, LiveQuickConnectIntent, LiveQuickConnectPoolSnapshot, LiveQuickConnectRoundSeconds, LiveQuickConnectSafetyExperience, LiveQuickConnectSafetyReason, LiveQuickConnectSnapshot, LiveQuickConnectStageLayout, LiveQuorumPoolingSnapshot, LiveReactionKind, LiveRoomPulseSnapshot, LiveSessionRecap, LiveSessionSnapshot, LiveSessionSummary, ScheduleCircleLiveSessionInput, ScheduleLiveSessionInput, ScheduleLiveStudioSessionInput, UpdateLiveStudioSessionInput } from './live-models.ts';
 import {
   parseLiveAudiencePoll,
   parseCircleLiveSnapshot,
@@ -19,6 +54,7 @@ import {
   parseLiveRoomPulseSnapshot,
   parseLiveQuorumPoolingSnapshot,
   parseLiveSessionSnapshot,
+  parseLiveSessionRecap,
   parseLiveSessionSummary,
 } from './live-parsers.ts';
 
@@ -34,6 +70,11 @@ export type LiveSessionRealtimeStatus =
   | 'CLOSED'
   | 'CHANNEL_ERROR';
 
+export type LiveDirectorRead = {
+  events: readonly LiveDirectorEvent[];
+  snapshot: OdoDirectorSnapshot;
+};
+
 const invoke = async (name: string, args?: Record<string, unknown>): Promise<unknown> => {
   const { data, error } = await rpc(name, args);
   if (error) throw new Error(error.message || error.code || `live_rpc_failed:${name}`);
@@ -41,9 +82,325 @@ const invoke = async (name: string, args?: Record<string, unknown>): Promise<unk
 };
 
 export const liveRepository = {
+  async getOdoShowDirector(sessionId: string): Promise<OdoShowDirectorState> {
+    const parsed = parseOdoShowDirectorState(await invoke(
+      'rpc_get_live_odo_show_director_v1',
+      { p_session_id: sessionId },
+    ));
+    if (parsed.ok === false) throw new Error(parsed.reasonCode);
+    return parsed.value;
+  },
+
+  async getLiveProgram(sessionId: string): Promise<OdoLiveProgramState> {
+    const parsed = parseOdoLiveProgramState(await invoke(
+      'rpc_get_live_program_snapshot_v1',
+      { p_session_id: sessionId },
+    ));
+    if (parsed.ok === false) throw new Error(parsed.reasonCode);
+    return parsed.value;
+  },
+
+  async enableOdoShowDirector(sessionId: string): Promise<void> {
+    const value = await invoke('rpc_enable_live_odo_show_director_v1', {
+      p_session_id: sessionId,
+    });
+    if (!value || typeof value !== 'object' || !('enabled' in value) || value.enabled !== true) {
+      throw new Error(value && typeof value === 'object' && 'reasonCode' in value
+        && typeof value.reasonCode === 'string' ? value.reasonCode : 'odo_show_enable_failed');
+    }
+  },
+
+  async takeOverOdoShow(sessionId: string): Promise<void> {
+    const value = await invoke('rpc_take_over_live_odo_show_v1', { p_session_id: sessionId });
+    if (!value || typeof value !== 'object' || !('takenOver' in value)
+      || value.takenOver !== true) throw new Error('odo_show_takeover_failed');
+  },
+
+  async resumeOdoShow(sessionId: string): Promise<void> {
+    const value = await invoke('rpc_resume_live_odo_show_v1', { p_session_id: sessionId });
+    if (!value || typeof value !== 'object' || !('resumed' in value)
+      || value.resumed !== true) {
+      throw new Error(value && typeof value === 'object' && 'reasonCode' in value
+        && typeof value.reasonCode === 'string' ? value.reasonCode : 'odo_show_resume_failed');
+    }
+  },
+
+  async setLiveShowScene(
+    sessionId: string,
+    scene: OdoShowScene,
+    expectedVersion: number,
+  ): Promise<void> {
+    const value = await invoke('rpc_host_set_live_show_scene_v1', {
+      p_session_id: sessionId,
+      p_scene: scene,
+      p_expected_version: expectedVersion,
+    });
+    if (!value || typeof value !== 'object' || !('changed' in value) || value.changed !== true) {
+      throw new Error(value && typeof value === 'object' && 'reasonCode' in value
+        && typeof value.reasonCode === 'string' ? value.reasonCode : 'odo_show_scene_failed');
+    }
+  },
+
+  async controlLiveMusic(input: {
+    sessionId: string;
+    action: LiveMusicAction;
+    trackId?: string | null;
+    playlistId?: string | null;
+    volume?: number | null;
+    mood?: string | null;
+  }): Promise<void> {
+    const value = await invoke('rpc_host_control_live_music_v1', {
+      p_session_id: input.sessionId,
+      p_action: input.action,
+      p_track_id: input.trackId ?? null,
+      p_playlist_id: input.playlistId ?? null,
+      p_volume: input.volume ?? null,
+      p_mood: input.mood ?? null,
+      p_idempotency_key: Crypto.randomUUID(),
+    });
+    if (!value || typeof value !== 'object' || !('applied' in value) || value.applied !== true) {
+      throw new Error(value && typeof value === 'object' && 'reasonCode' in value
+        && typeof value.reasonCode === 'string' ? value.reasonCode : 'live_music_action_failed');
+    }
+  },
+
+  async wakeOdoShowDirector(sessionId: string): Promise<void> {
+    const { data, error } = await supabase.functions.invoke('live-odo-show-director', {
+      body: { sessionId },
+    });
+    if (error) throw new Error(await readFunctionErrorCode(error));
+    if (!data || typeof data !== 'object' || data.ok !== true) {
+      throw new Error('odo_show_worker_failed');
+    }
+  },
+
+  async getLiveMusicPlayback(sessionId: string): Promise<LiveMusicPlaybackGrant> {
+    const { data, error } = await supabase.functions.invoke('live-music-playback', {
+      body: { sessionId },
+    });
+    if (error) throw new Error(await readFunctionErrorCode(error));
+    const playback = data?.playback;
+    if (!data || typeof data !== 'object' || data.ok !== true
+      || !playback || typeof playback !== 'object'
+      || typeof playback.trackId !== 'string' || typeof playback.uri !== 'string'
+      || typeof playback.expiresAt !== 'string'
+      || typeof playback.programStartedAt !== 'string'
+      || typeof playback.playbackOffsetSeconds !== 'number'
+      || typeof playback.volume !== 'number'
+      || !Number.isSafeInteger(playback.stateVersion)) {
+      throw new Error('live_music_playback_invalid');
+    }
+    return playback as LiveMusicPlaybackGrant;
+  },
+
+  async getOdoFullQuickConnect(sessionId: string): Promise<OdoFullQuickConnectState> {
+    const parsed = parseOdoFullQuickConnectState(
+      await invoke('rpc_get_live_odo_full_quick_connect_v1', {
+        p_session_id: sessionId,
+      }),
+    );
+    if (parsed.ok === false) throw new Error(parsed.reasonCode);
+    return parsed.value;
+  },
+
+  async enableOdoFullQuickConnect(
+    sessionId: string,
+    maximumRuntimeMinutes = 90,
+  ): Promise<void> {
+    const value = await invoke('rpc_enable_live_odo_full_quick_connect_v1', {
+      p_session_id: sessionId,
+      p_settings: { maximumRuntimeMinutes },
+    });
+    if (!value || typeof value !== 'object' || !('enabled' in value) || value.enabled !== true) {
+      throw new Error(value && typeof value === 'object' && 'reasonCode' in value
+        && typeof value.reasonCode === 'string'
+        ? value.reasonCode
+        : 'odo_full_quick_connect_enable_failed');
+    }
+  },
+
+  async finishOdoQuickConnect(sessionId: string): Promise<void> {
+    const value = await invoke('rpc_finish_live_odo_quick_connect_v1', {
+      p_session_id: sessionId,
+    });
+    if (!value || typeof value !== 'object' || !('draining' in value)
+      || value.draining !== true) {
+      throw new Error(value && typeof value === 'object' && 'reasonCode' in value
+        && typeof value.reasonCode === 'string'
+        ? value.reasonCode
+        : 'odo_full_quick_connect_finish_failed');
+    }
+  },
+
+  async resumeOdoFullQuickConnect(sessionId: string): Promise<void> {
+    const value = await invoke('rpc_resume_live_odo_full_quick_connect_v1', {
+      p_session_id: sessionId,
+    });
+    if (!value || typeof value !== 'object' || !('resumed' in value) || value.resumed !== true) {
+      throw new Error(value && typeof value === 'object' && 'reasonCode' in value
+        && typeof value.reasonCode === 'string'
+        ? value.reasonCode
+        : 'odo_full_quick_connect_resume_failed');
+    }
+  },
+
+  async wakeOdoFullQuickConnect(sessionId: string): Promise<void> {
+    const { data, error } = await supabase.functions.invoke('live-odo-full-quick-connect', {
+      body: { sessionId },
+    });
+    if (error) throw new Error(await readFunctionErrorCode(error));
+    if (!data || typeof data !== 'object' || data.ok !== true) {
+      throw new Error('odo_full_quick_connect_worker_failed');
+    }
+  },
+
+  async getOdoGuardedAutopilot(sessionId: string): Promise<OdoGuardedAutopilotState> {
+    const parsed = parseOdoGuardedAutopilotState(
+      await invoke('rpc_get_live_odo_guarded_autopilot_v1', {
+        p_session_id: sessionId,
+      }),
+    );
+    if (parsed.ok === false) throw new Error(parsed.reasonCode);
+    return parsed.value;
+  },
+
+  async enableOdoGuardedAutopilot(
+    sessionId: string,
+    settings: Pick<OdoGuardedFeatures,
+      'narration' | 'scenes' | 'conversationSparks' | 'audiencePulse' | 'intermissions'>,
+  ): Promise<void> {
+    const value = await invoke('rpc_enable_live_odo_guarded_autopilot_v1', {
+      p_session_id: sessionId,
+      p_settings: settings,
+    });
+    if (!value || typeof value !== 'object' || !('enabled' in value) || value.enabled !== true) {
+      throw new Error(value && typeof value === 'object' && 'reasonCode' in value
+        && typeof value.reasonCode === 'string'
+        ? value.reasonCode
+        : 'odo_guarded_enable_failed');
+    }
+  },
+
+  async takeOverOdo(sessionId: string): Promise<void> {
+    const value = await invoke('rpc_take_over_live_odo_v1', { p_session_id: sessionId });
+    if (!value || typeof value !== 'object' || !('takenOver' in value) || value.takenOver !== true) {
+      throw new Error('odo_takeover_failed');
+    }
+  },
+
+  async resumeOdoGuardedAutopilot(sessionId: string): Promise<void> {
+    const value = await invoke('rpc_resume_live_odo_autopilot_v1', { p_session_id: sessionId });
+    if (!value || typeof value !== 'object' || !('resumed' in value) || value.resumed !== true) {
+      throw new Error(value && typeof value === 'object' && 'reasonCode' in value
+        && typeof value.reasonCode === 'string'
+        ? value.reasonCode
+        : 'odo_guarded_resume_failed');
+    }
+  },
+
+  async signalOdoGuardedClock(sessionId: string): Promise<void> {
+    await invoke('rpc_signal_live_odo_autopilot_clock_v1', { p_session_id: sessionId });
+  },
+
+  async wakeOdoGuardedAutopilot(sessionId: string): Promise<void> {
+    const { data, error } = await supabase.functions.invoke('live-odo-autopilot', {
+      body: { sessionId },
+    });
+    if (error) throw new Error(await readFunctionErrorCode(error));
+    if (!data || typeof data !== 'object' || data.ok !== true) {
+      throw new Error('odo_guarded_worker_failed');
+    }
+  },
+
+  async getLiveDirectorEvents(
+    sessionId: string,
+    afterSequence: number,
+  ): Promise<LiveDirectorRead> {
+    const value = await invoke('rpc_get_live_director_snapshot_v1', {
+      p_session_id: sessionId,
+      p_after_sequence: afterSequence,
+      p_limit: 100,
+    });
+    if (!value || typeof value !== 'object' || !('snapshot' in value) || !('events' in value)) {
+      throw new Error('live_director_snapshot_invalid');
+    }
+    const parsedSnapshot = parseOdoDirectorSnapshot(value.snapshot);
+    if (parsedSnapshot.ok === false || !Array.isArray(value.events)) {
+      throw new Error(parsedSnapshot.ok === false
+        ? parsedSnapshot.reasonCode
+        : 'live_director_events_invalid');
+    }
+    const events = value.events.map((event) => {
+      const parsed = parseLiveDirectorEvent(event);
+      if (parsed.ok === false) throw new Error(parsed.reasonCode);
+      return parsed.value;
+    });
+    return { events, snapshot: parsedSnapshot.value };
+  },
+
+  async getOdoCopilot(sessionId: string): Promise<OdoCopilotState> {
+    const parsed = parseOdoCopilotState(await invoke('rpc_get_live_odo_copilot_v1', {
+      p_session_id: sessionId,
+      p_limit: 20,
+    }));
+    if (parsed.ok === false) throw new Error(parsed.reasonCode);
+    return parsed.value;
+  },
+
+  async requestOdoCopilotSuggestion(input: {
+    sessionId: string;
+    task: OdoCopilotTask;
+    roundId: string | null;
+  }): Promise<OdoCopilotSuggestion> {
+    const { data, error } = await supabase.functions.invoke('live-odo-copilot', {
+      body: {
+        sessionId: input.sessionId,
+        task: input.task,
+        ...(input.roundId ? { roundId: input.roundId } : {}),
+      },
+    });
+    if (error) throw new Error(await readFunctionErrorCode(error));
+    if (!data || typeof data !== 'object' || data.ok !== true) {
+      throw new Error(typeof data?.reasonCode === 'string'
+        ? data.reasonCode
+        : 'odo_copilot_request_failed');
+    }
+    const parsed = parseOdoCopilotSuggestion(data.suggestion);
+    if (parsed.ok === false) throw new Error(parsed.reasonCode);
+    return parsed.value;
+  },
+
+  async manageOdoCopilotSuggestion(
+    suggestionId: string,
+    action: 'shown' | 'dismiss' | 'regenerate',
+  ): Promise<void> {
+    await invoke('rpc_manage_live_odo_copilot_suggestion_v1', {
+      p_suggestion_id: suggestionId,
+      p_action: action,
+    });
+  },
+
+  async useOdoCopilotSuggestion(suggestionId: string): Promise<void> {
+    const value = await invoke('rpc_use_live_odo_copilot_suggestion_v1', {
+      p_suggestion_id: suggestionId,
+    });
+    if (!value || typeof value !== 'object' || !('ok' in value) || value.ok !== true) {
+      throw new Error(value && typeof value === 'object' && 'reasonCode' in value
+        && typeof value.reasonCode === 'string'
+        ? value.reasonCode
+        : 'odo_copilot_use_failed');
+    }
+  },
+
   async listSessions(limit = 20): Promise<LiveSessionSummary[]> {
     const value = await invoke('rpc_list_live_studio_sessions_v2', { p_limit: limit, p_before: null });
     return Array.isArray(value) ? value.map(parseLiveSessionSummary) : [];
+  },
+
+  async getSessionRecap(sessionId: string): Promise<LiveSessionRecap> {
+    return parseLiveSessionRecap(await invoke('rpc_get_live_session_recap_v1', {
+      p_session_id: sessionId,
+    }));
   },
 
   async getSnapshot(sessionId: string): Promise<LiveSessionSnapshot> {
@@ -613,6 +970,13 @@ export const liveRepository = {
     });
   },
 
+  async endSession(sessionId: string): Promise<void> {
+    const result = await invoke('rpc_end_live_session_v1', { p_session_id: sessionId });
+    if (!result || typeof result !== 'object' || !('status' in result) || result.status !== 'ended') {
+      throw new Error('live_session_end_incomplete');
+    }
+  },
+
   async prepareAndStartSession(sessionId: string): Promise<void> {
     for (let attempt = 0; attempt < 8; attempt += 1) {
       const snapshot = parseLiveSessionSnapshot(
@@ -707,7 +1071,14 @@ export const liveRepository = {
       },
       () => onEvent('pulse'),
     );
-    channel.subscribe((status) => onStatus?.(status as LiveSessionRealtimeStatus));
+    channel.subscribe((status) => {
+      const liveStatus = status as LiveSessionRealtimeStatus;
+      onStatus?.(liveStatus);
+      // Re-read the capability-filtered snapshot after every initial attach or
+      // reconnect. This closes the window where a seat request lands while
+      // the channel is still subscribing and avoids waiting for fallback IO.
+      if (liveStatus === 'SUBSCRIBED') onEvent('structure');
+    });
     return () => {
       void supabase.removeChannel(channel);
     };
@@ -722,10 +1093,98 @@ export const liveRepository = {
       { event: '*', schema: 'public', table: 'live_match_round_updates', filter: `session_id=eq.${sessionId}` },
       onChange,
     );
-    channel.subscribe();
+    channel.subscribe((status) => {
+      // Reconcile after attachment so consent cannot settle between the
+      // initial snapshot fetch and the Realtime subscription.
+      if (status === 'SUBSCRIBED') onChange();
+    });
     return () => {
       void supabase.removeChannel(channel);
     };
+  },
+
+  subscribeLiveDirector(sessionId: string, onChange: () => void): () => void {
+    const channel: RealtimeChannel = supabase.channel(
+      `live-director:${sessionId}:${Crypto.randomUUID()}`,
+    );
+    channel.on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'live_director_updates',
+        filter: `session_id=eq.${sessionId}`,
+      },
+      onChange,
+    );
+    channel.subscribe((status) => {
+      // Reconcile after subscribe so an accepted Host action cannot be lost
+      // between the initial ordered fetch and Realtime attachment.
+      if (status === 'SUBSCRIBED') onChange();
+    });
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  },
+
+  subscribeOdoGuardedAutopilot(sessionId: string, onChange: () => void): () => void {
+    const channel: RealtimeChannel = supabase.channel(
+      `live-odo-guarded:${sessionId}:${Crypto.randomUUID()}`,
+    );
+    channel.on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'live_odo_guarded_autopilot_updates',
+        filter: `session_id=eq.${sessionId}`,
+      },
+      onChange,
+    );
+    channel.subscribe((status) => {
+      if (status === 'SUBSCRIBED') onChange();
+    });
+    return () => { void supabase.removeChannel(channel); };
+  },
+
+  subscribeOdoFullQuickConnect(sessionId: string, onChange: () => void): () => void {
+    const channel: RealtimeChannel = supabase.channel(
+      `live-odo-full-quick:${sessionId}:${Crypto.randomUUID()}`,
+    );
+    channel.on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'live_odo_full_quick_connect_updates',
+        filter: `session_id=eq.${sessionId}`,
+      },
+      onChange,
+    );
+    channel.subscribe((status) => {
+      if (status === 'SUBSCRIBED') onChange();
+    });
+    return () => { void supabase.removeChannel(channel); };
+  },
+
+  subscribeOdoShow(sessionId: string, onChange: () => void): () => void {
+    const channel: RealtimeChannel = supabase.channel(
+      `live-odo-show:${sessionId}:${Crypto.randomUUID()}`,
+    );
+    channel.on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'live_odo_show_updates',
+        filter: `session_id=eq.${sessionId}`,
+      },
+      onChange,
+    );
+    channel.subscribe((status) => {
+      if (status === 'SUBSCRIBED') onChange();
+    });
+    return () => { void supabase.removeChannel(channel); };
   },
 
   subscribeQuorumPooling(sessionId: string, userId: string, onChange: () => void): () => void {

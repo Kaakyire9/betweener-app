@@ -5,6 +5,7 @@ import {
   Camera as VisionCamera,
   useCameraDevice,
 } from 'react-native-vision-camera';
+import { LIVE_VISUAL } from './live-visual-tokens.ts';
 
 type LiveBackstagePreviewProps = {
   active: boolean;
@@ -22,7 +23,7 @@ export const LiveBackstagePreview = memo(function LiveBackstagePreview({
   if (!active) {
     return (
       <View style={styles.fallback}>
-        <CameraOff size={38} color="#D7B56D" />
+        <CameraOff size={38} color={LIVE_VISUAL.teal} />
         <Text style={styles.fallbackTitle}>Camera is off</Text>
         <Text style={styles.fallbackBody}>Your private preview remains on this device.</Text>
       </View>
@@ -32,7 +33,7 @@ export const LiveBackstagePreview = memo(function LiveBackstagePreview({
   if (!device) {
     return (
       <View style={styles.fallback}>
-        <CameraOff size={38} color="#D7B56D" />
+        <CameraOff size={38} color={LIVE_VISUAL.teal} />
         <Text style={styles.fallbackTitle}>Front camera unavailable</Text>
         <Text style={styles.fallbackBody}>Try closing another app that may be using the camera.</Text>
       </View>
@@ -62,7 +63,7 @@ const styles = StyleSheet.create({
     left: 0,
     backgroundColor: '#03100D1A',
     borderWidth: 1,
-    borderColor: '#D7B56D18',
+    borderColor: LIVE_VISUAL.tealSoft,
   },
   fallback: {
     flex: 1,

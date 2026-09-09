@@ -40,7 +40,7 @@ export const partitionLiveLobbySessions = (
     owned,
     liveNow: discoverable.filter((session) => getLiveSessionPhase(session) === 'live'),
     upcoming: discoverable.filter((session) => getLiveSessionPhase(session) === 'upcoming'),
-    past: owned.filter((session) => getLiveSessionPhase(session) === 'past'),
+    past: sessions.filter((session) => getLiveSessionPhase(session) === 'past'),
     hasHostLobby,
   };
 };
