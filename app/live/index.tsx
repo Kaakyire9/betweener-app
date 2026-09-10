@@ -4,7 +4,7 @@ import { ArrowLeft, Plus, Radio, RefreshCw } from 'lucide-react-native';
 import { useCallback, useMemo, useRef } from 'react';
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { LiveSessionCard } from '@/features/live/components/index.ts';
+import { LiveAlwaysOnQuickConnectCard, LiveSessionCard } from '@/features/live/components/index.ts';
 import { getLiveSessionPhase, partitionLiveLobbySessions } from '@/features/live/application/index.ts';
 import { useLiveSessions } from '@/features/live/hooks/index.ts';
 import { useAuth } from '@/lib/auth-context';
@@ -110,6 +110,13 @@ export default function LiveHomeScreen() {
               </Pressable>
             </View>
           ) : null}
+
+          <LiveAlwaysOnQuickConnectCard
+            onOpenOpportunity={(opportunityId) => router.push({
+              pathname: '/live/opportunity/[opportunityId]',
+              params: { opportunityId },
+            })}
+          />
 
           {loading && !sessions.length ? (
             <View style={styles.center}><ActivityIndicator color={visual.color.teal} /></View>

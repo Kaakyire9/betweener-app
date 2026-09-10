@@ -258,6 +258,20 @@ export function buildNotificationRoute(
     };
   }
 
+  if (pushType === "live_quick_connect_opportunity" && data?.opportunity_id) {
+    return {
+      pathname: "/live/opportunity/[opportunityId]",
+      params: { opportunityId: String(data.opportunity_id) },
+    };
+  }
+
+  if (pushType === "live_quick_connect_ready" && data?.session_id) {
+    return {
+      pathname: "/live/[sessionId]",
+      params: { sessionId: String(data.session_id) },
+    };
+  }
+
   const route = typeof data?.route === "string" ? String(data.route) : "";
   if (route && route.startsWith("/")) {
     return { pathname: route };

@@ -46,6 +46,15 @@ Deno.serve(async (request) => {
   const service = createClient(url, env('SUPABASE_SERVICE_ROLE_KEY'), {
     auth: { autoRefreshToken: false, persistSession: false },
   });
+  const { error: studioMaintenanceError } = await service.rpc(
+    'rpc_service_maintain_live_studio_program_v1',
+    { p_limit: 25 },
+  );
+  if (studioMaintenanceError) {
+    console.error('[live-odo-show-director] studio_maintenance_failed', {
+      code: studioMaintenanceError.code ?? 'unknown',
+    });
+  }
   const { data, error } = await service.rpc('rpc_service_reconcile_live_odo_show_v1', {
     p_session_id: body.sessionId,
     p_requested_by_user_id: actor.user.id,

@@ -1,4 +1,9 @@
 import {
+  PROGRAM_SCENES,
+  parseProgramSource,
+  parseProgramState,
+} from '@betweener/live-program-domain';
+import {
   LIVE_MUSIC_MOODS,
   ODO_CONTROL_SOURCES,
   ODO_PROGRAM_SOURCES,
@@ -7,6 +12,7 @@ import {
   ODO_SHOW_STATES,
   type OdoShowDirectorState,
   type OdoLiveProgramState,
+  type LiveProgramSnapshotV2,
   type LiveMusicProgramState,
 } from './odo-show-contracts.ts';
 
@@ -101,4 +107,48 @@ export const parseOdoLiveProgramState = (
     return { ok: false, reasonCode: 'odo_live_program_state_invalid' };
   }
   return { ok: true, value: value as OdoLiveProgramState };
+};
+
+export const parseLiveProgramSnapshotV2 = (
+  value: unknown,
+): { ok: true; value: LiveProgramSnapshotV2 } | { ok: false; reasonCode: string } => {
+  if (!isRecord(value) || !hasExactKeys(value, [
+    'schemaVersion', 'sessionId', 'enabled', 'showState', 'currentScene',
+    'energyMode', 'programSource', 'stateVersion', 'nextWakeAt', 'music',
+    'program', 'sources',
+  ]) || value.schemaVersion !== 2
+    || !isMember(PROGRAM_SCENES, value.currentScene)
+    || !Array.isArray(value.sources)) {
+    return { ok: false, reasonCode: 'live_program_v2_invalid' };
+  }
+  const legacy = parseOdoLiveProgramState({
+    schemaVersion: 1,
+    sessionId: value.sessionId,
+    enabled: value.enabled,
+    showState: value.showState,
+    currentScene: isMember(ODO_SHOW_SCENES, value.currentScene)
+      ? value.currentScene : 'host_focus',
+    energyMode: value.energyMode,
+    programSource: value.programSource,
+    stateVersion: value.stateVersion,
+    nextWakeAt: value.nextWakeAt,
+    music: value.music,
+  });
+  const program = parseProgramState(value.program);
+  const sources = value.sources.map(parseProgramSource);
+  if (legacy.ok === false || !program || sources.some((source) => !source)
+    || program.sessionId !== legacy.value.sessionId
+    || program.scene !== value.currentScene) {
+    return { ok: false, reasonCode: 'live_program_v2_invalid' };
+  }
+  return {
+    ok: true,
+    value: {
+      ...legacy.value,
+      schemaVersion: 2,
+      currentScene: value.currentScene,
+      program,
+      sources: sources as NonNullable<(typeof sources)[number]>[],
+    },
+  };
 };

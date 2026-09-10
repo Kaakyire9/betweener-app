@@ -1,3 +1,9 @@
+import type {
+  ProgramScene,
+  ProgramSource,
+  ProgramState,
+} from '@betweener/live-program-domain';
+
 export const ODO_SHOW_STATES = [
   'opening',
   'host_focus',
@@ -41,10 +47,21 @@ export const ODO_SHOW_ENERGY_MODES = [
 ] as const;
 export type OdoShowEnergyMode = (typeof ODO_SHOW_ENERGY_MODES)[number];
 
-export const ODO_PROGRAM_SOURCES = ['mobile', 'studio'] as const;
+export const ODO_PROGRAM_SOURCES = ['mobile', 'studio', 'system'] as const;
 export type OdoProgramSource = (typeof ODO_PROGRAM_SOURCES)[number];
 
-export const ODO_CONTROL_SOURCES = ['odo', 'mobile_host', 'studio_host'] as const;
+export const LIVE_PROGRAM_OUTPUT_SOURCES = [
+  'host_camera',
+  'active_pair',
+  'quick_connect_pool',
+  'odo_stage',
+  'audience_pulse',
+  'branded_visual',
+  'screen_share',
+] as const;
+export type LiveProgramOutputSource = (typeof LIVE_PROGRAM_OUTPUT_SOURCES)[number];
+
+export const ODO_CONTROL_SOURCES = ['odo', 'mobile_host', 'studio_host', 'system'] as const;
 export type OdoControlSource = (typeof ODO_CONTROL_SOURCES)[number];
 
 export const LIVE_MUSIC_MOODS = [
@@ -125,6 +142,13 @@ export type OdoLiveProgramState = Pick<
   'schemaVersion' | 'sessionId' | 'enabled' | 'showState' | 'currentScene'
   | 'energyMode' | 'programSource' | 'stateVersion' | 'nextWakeAt' | 'music'
 >;
+
+export type LiveProgramSnapshotV2 = Omit<OdoLiveProgramState, 'schemaVersion' | 'currentScene'> & {
+  schemaVersion: 2;
+  currentScene: ProgramScene;
+  program: ProgramState;
+  sources: readonly ProgramSource[];
+};
 
 export type LiveMusicPlaybackGrant = {
   trackId: string;

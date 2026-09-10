@@ -171,11 +171,15 @@ export default function LiveSessionScreen() {
   });
   const director = useLiveDirectorEvents(sessionId, isLive);
   const odoStageScene = useMemo(() => {
-    const scene = director.snapshot?.currentScene;
+    // Phase 10G makes Program authoritative. Fall back to the older director
+    // snapshot while a v2 Program snapshot is still loading so pre-Studio
+    // sessions retain their existing presentation behaviour.
+    const scene = liveProgram.state?.currentScene
+      ?? director.snapshot?.currentScene;
     return scene && ODO_COPILOT_SCENES.includes(scene as OdoCopilotScene)
       ? scene as OdoCopilotScene
       : null;
-  }, [director.snapshot?.currentScene]);
+  }, [director.snapshot?.currentScene, liveProgram.state?.currentScene]);
   const isQuickConnectLive = isLive && snapshot?.session.format === 'quick_connect';
   const quickConnectHost = useLiveQuickConnectHostControl(
     sessionId,
@@ -786,6 +790,8 @@ export default function LiveSessionScreen() {
               onPictureInPictureModeChange={handlePictureInPictureModeChange}
               requestSeat={stageRequestSeat}
               scene={odoStageScene}
+              program={liveProgram.state?.program ?? null}
+              programSources={liveProgram.state?.sources ?? []}
             />
             <OdoProgramStage program={liveProgram.state} />
           </Suspense>

@@ -2,6 +2,11 @@ import * as Crypto from 'expo-crypto';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { readFunctionErrorCode } from '../media/live-function-error.ts';
+import type {
+  LiveAlwaysOnResponse,
+  LiveAlwaysOnSnapshot,
+} from '../always-on/live-always-on-contracts.ts';
+import { parseLiveAlwaysOnSnapshot } from '../always-on/live-always-on-validation.ts';
 import {
   type OdoCopilotState,
   type OdoCopilotSuggestion,
@@ -25,12 +30,12 @@ import { parseOdoFullQuickConnectState } from '../odo/full-quick-connect/odo-ful
 import type {
   LiveMusicAction,
   LiveMusicPlaybackGrant,
-  OdoLiveProgramState,
+  LiveProgramSnapshotV2,
   OdoShowDirectorState,
   OdoShowScene,
 } from '../odo/show/odo-show-contracts.ts';
 import {
-  parseOdoLiveProgramState,
+  parseLiveProgramSnapshotV2,
   parseOdoShowDirectorState,
 } from '../odo/show/odo-show-validation.ts';
 import {
@@ -82,6 +87,53 @@ const invoke = async (name: string, args?: Record<string, unknown>): Promise<unk
 };
 
 export const liveRepository = {
+  async getAlwaysOnQuickConnect(): Promise<LiveAlwaysOnSnapshot> {
+    const parsed = parseLiveAlwaysOnSnapshot(
+      await invoke('rpc_get_live_quick_connect_availability_v1'),
+    );
+    if (parsed.ok === false) throw new Error(parsed.reasonCode);
+    return parsed.value;
+  },
+
+  async setAlwaysOnQuickConnectAvailability(
+    durationMinutes: number,
+    source: 'live_lobby' | 'notification' | 'post_live' | 'internal_test' = 'live_lobby',
+  ): Promise<LiveAlwaysOnSnapshot> {
+    await invoke('rpc_set_live_quick_connect_availability_v1', {
+      p_duration_minutes: durationMinutes,
+      p_source: source,
+    });
+    return liveRepository.getAlwaysOnQuickConnect();
+  },
+
+  async respondToAlwaysOnQuickConnect(
+    opportunityId: string,
+    response: LiveAlwaysOnResponse,
+    expectedVersion?: number,
+  ): Promise<LiveAlwaysOnSnapshot> {
+    const parsed = parseLiveAlwaysOnSnapshot(await invoke(
+      'rpc_respond_live_quick_connect_opportunity_v1',
+      {
+        p_opportunity_id: opportunityId,
+        p_response: response,
+        p_expected_version: expectedVersion ?? null,
+      },
+    ));
+    if (parsed.ok === false) throw new Error(parsed.reasonCode);
+    return parsed.value;
+  },
+
+  async wakeAlwaysOnQuickConnect(opportunityId?: string | null): Promise<void> {
+    const { data, error } = await supabase.functions.invoke(
+      'live-odo-always-on-quick-connect',
+      { body: opportunityId ? { opportunityId } : {} },
+    );
+    if (error) throw new Error(await readFunctionErrorCode(error));
+    if (!data || typeof data !== 'object' || data.ok !== true) {
+      throw new Error('live_always_on_wake_failed');
+    }
+  },
+
   async getOdoShowDirector(sessionId: string): Promise<OdoShowDirectorState> {
     const parsed = parseOdoShowDirectorState(await invoke(
       'rpc_get_live_odo_show_director_v1',
@@ -91,9 +143,9 @@ export const liveRepository = {
     return parsed.value;
   },
 
-  async getLiveProgram(sessionId: string): Promise<OdoLiveProgramState> {
-    const parsed = parseOdoLiveProgramState(await invoke(
-      'rpc_get_live_program_snapshot_v1',
+  async getLiveProgram(sessionId: string): Promise<LiveProgramSnapshotV2> {
+    const parsed = parseLiveProgramSnapshotV2(await invoke(
+      'rpc_get_live_program_snapshot_v2',
       { p_session_id: sessionId },
     ));
     if (parsed.ok === false) throw new Error(parsed.reasonCode);
@@ -1093,6 +1145,16 @@ export const liveRepository = {
       { event: '*', schema: 'public', table: 'live_match_round_updates', filter: `session_id=eq.${sessionId}` },
       onChange,
     );
+    channel.on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'live_program_source_updates',
+        filter: `session_id=eq.${sessionId}`,
+      },
+      onChange,
+    );
     channel.subscribe((status) => {
       // Reconcile after attachment so consent cannot settle between the
       // initial snapshot fetch and the Realtime subscription.
@@ -1178,6 +1240,26 @@ export const liveRepository = {
         schema: 'public',
         table: 'live_odo_show_updates',
         filter: `session_id=eq.${sessionId}`,
+      },
+      onChange,
+    );
+    channel.subscribe((status) => {
+      if (status === 'SUBSCRIBED') onChange();
+    });
+    return () => { void supabase.removeChannel(channel); };
+  },
+
+  subscribeAlwaysOnQuickConnect(userId: string, onChange: () => void): () => void {
+    const channel: RealtimeChannel = supabase.channel(
+      `live-always-on:${userId}:${Crypto.randomUUID()}`,
+    );
+    channel.on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'live_quick_connect_opportunity_updates',
+        filter: `user_id=eq.${userId}`,
       },
       onChange,
     );

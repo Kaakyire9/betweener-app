@@ -4,6 +4,7 @@ export * from './use-live-session-controller.ts';
 export * from './use-live-director-events.ts';
 export * from './use-live-session-recap.ts';
 export * from './use-live-sessions.ts';
+export * from './use-live-always-on-quick-connect.ts';
 export * from './use-live-hosted-matching.ts';
 export * from './use-live-private-spark.ts';
 export * from './use-live-private-spark-countdown.ts';

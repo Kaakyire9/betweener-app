@@ -3,15 +3,15 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { liveRepository } from '../../application/live-repository.ts';
 import { ExpoLiveMusicEngine } from './expo-live-music-engine.ts';
 import type { LiveMusicEngine } from './live-music-engine.ts';
-import type { OdoLiveProgramState } from './odo-show-contracts.ts';
+import type { LiveProgramSnapshotV2 } from './odo-show-contracts.ts';
 
 export const useLiveProgram = (options: {
   enabled: boolean;
   sessionId: string;
   allowMusicPlayback: boolean;
   engineFactory?: () => LiveMusicEngine;
-}): { state: OdoLiveProgramState | null; error: string | null; refresh: () => Promise<void> } => {
-  const [state, setState] = useState<OdoLiveProgramState | null>(null);
+}): { state: LiveProgramSnapshotV2 | null; error: string | null; refresh: () => Promise<void> } => {
+  const [state, setState] = useState<LiveProgramSnapshotV2 | null>(null);
   const [error, setError] = useState<string | null>(null);
   const mountedRef = useRef(true);
   const refreshRef = useRef<Promise<void> | null>(null);

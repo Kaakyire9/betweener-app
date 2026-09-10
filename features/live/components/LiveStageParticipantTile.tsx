@@ -3,6 +3,7 @@ import {
   hasVideo,
   SfuModels,
   type StreamVideoParticipant,
+  type VideoTrackType,
 } from '@stream-io/video-client';
 import {
   type ParticipantVideoFallbackProps,
@@ -25,6 +26,7 @@ type LiveStageParticipantTileProps = {
   fit: 'contain' | 'cover';
   ParticipantViewComponent: StreamVideoSdkModule['ParticipantView'];
   footerInset?: number;
+  trackType?: VideoTrackType;
 };
 
 const initialsFor = (name: string): string => {
@@ -76,6 +78,7 @@ export const LiveStageParticipantTile = memo(function LiveStageParticipantTile({
   fit,
   ParticipantViewComponent,
   footerInset = 0,
+  trackType = 'videoTrack',
 }: LiveStageParticipantTileProps) {
   const cameraOn = participant ? hasVideo(participant) : false;
   const microphoneOn = participant ? hasAudio(participant) : false;
@@ -128,6 +131,7 @@ export const LiveStageParticipantTile = memo(function LiveStageParticipantTile({
       {participant ? (
         <ParticipantViewComponent
           participant={participant}
+          trackType={trackType}
           objectFit={fit}
           style={styles.participant}
           ParticipantLabel={null}

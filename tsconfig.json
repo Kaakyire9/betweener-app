@@ -33,6 +33,7 @@
   ],
   "exclude": [
     "node_modules",
+    "apps/studio",
     "babel.config.js",
     "metro.config.js",
     "jest.config.js"

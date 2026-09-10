@@ -6,3 +6,4 @@ export * from './live-member-actions.ts';
 export * from './live-participant-arrivals.ts';
 export * from './live-lobby.ts';
 export * from './live-event-media.ts';
+export * from '../always-on/index.ts';

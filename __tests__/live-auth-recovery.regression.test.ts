@@ -37,6 +37,7 @@ test('persisted profile fallback never authorizes protected writes', () => {
     /AUTH_REFRESH_GUARD_TIMEOUT_MS = SUPABASE_FETCH_TIMEOUT_MS \+ 2_000/,
   );
   assert.match(supabaseSource, /const refreshAuthSession = async/);
+  assert.doesNotMatch(supabaseSource, /processLock|lockAcquireTimeout/);
   assert.match(authContext, /allowWithoutSnapshot: true,[\s\S]*force: true/);
 });
 

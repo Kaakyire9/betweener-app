@@ -1,4 +1,9 @@
 import {
+  isStudioPresentationScene,
+  type ProgramSource,
+  type ProgramState,
+} from '@betweener/live-program-domain';
+import {
   hasAudio,
   hasVideo,
   type Call,
@@ -26,6 +31,7 @@ import {
   type LiveStageTilePlacement,
 } from '../stage/live-stage-layout.ts';
 import { LiveStageParticipantTile } from './LiveStageParticipantTile.tsx';
+import { LiveAuthoritativeProgramStage } from './LiveAuthoritativeProgramStage.tsx';
 import { LiveStageRequestTile, type LiveStageRequestSeat } from './LiveStageRequestTile.tsx';
 import { PrivateSparkParticipantSurface } from './PrivateSparkParticipantSurface.tsx';
 
@@ -41,6 +47,8 @@ export type StreamLiveStageProps = {
   onPictureInPictureModeChange?: (active: boolean) => void;
   requestSeat?: LiveStageRequestSeat | null;
   scene?: OdoCopilotScene | null;
+  program?: ProgramState | null;
+  programSources?: readonly ProgramSource[];
 };
 
 const LivePictureInPictureBridge = memo(function LivePictureInPictureBridge({
@@ -120,13 +128,21 @@ const StageGrid = memo(function StageGrid({
   isInPictureInPicture,
   requestSeat,
   scene,
-}: Pick<StreamLiveStageProps, 'sdk' | 'stageParticipants' | 'localPublisherUserId' | 'onConnectedParticipantCountChange' | 'constrainMultiStage' | 'presentation' | 'tileFooterInset' | 'requestSeat' | 'scene'> & {
+  program,
+  programSources,
+}: Pick<StreamLiveStageProps, 'sdk' | 'stageParticipants' | 'localPublisherUserId' | 'onConnectedParticipantCountChange' | 'constrainMultiStage' | 'presentation' | 'tileFooterInset' | 'requestSeat' | 'scene' | 'program' | 'programSources'> & {
   isInPictureInPicture: boolean;
 }) {
   const { useParticipants } = sdk.useCallStateHooks();
   const rtcParticipants = useParticipants();
+  const publicRtcParticipants = useMemo(
+    () => rtcParticipants.filter((participant: StreamVideoParticipant) => (
+      !participant.userId.startsWith('studio-')
+    )),
+    [rtcParticipants],
+  );
   const candidates = useMemo(() => (
-    rtcParticipants.map((participant: StreamVideoParticipant) => ({
+    publicRtcParticipants.map((participant: StreamVideoParticipant) => ({
       participant,
       userId: participant.userId,
       sessionId: participant.sessionId,
@@ -135,7 +151,7 @@ const StageGrid = memo(function StageGrid({
       hasVideo: hasVideo(participant),
       hasAudio: hasAudio(participant),
     }))
-  ), [rtcParticipants]);
+  ), [publicRtcParticipants]);
   const connectedParticipantCount = useMemo(
     () => countConnectedLiveParticipants(candidates),
     [candidates],
@@ -166,7 +182,10 @@ const StageGrid = memo(function StageGrid({
   useEffect(() => {
     onConnectedParticipantCountChange?.(connectedParticipantCount);
   }, [connectedParticipantCount, onConnectedParticipantCountChange]);
-  if (!participants.length && !visibleRequestSeat) {
+  const hasAuthoritativePresentation = Boolean(
+    program && isStudioPresentationScene(program.scene),
+  );
+  if (!participants.length && !visibleRequestSeat && !hasAuthoritativePresentation) {
     return (
       <View style={styles.emptyStage}>
         <View style={styles.orbit} />
@@ -176,7 +195,7 @@ const StageGrid = memo(function StageGrid({
     );
   }
 
-  if (Platform.OS === 'android' && isInPictureInPicture) {
+  if (Platform.OS === 'android' && isInPictureInPicture && participants.length) {
     const pictureInPictureSeat = participants.find(
       (seat) => seat.userId === pictureInPictureCandidate?.userId,
     ) ?? participants[0];
@@ -189,6 +208,18 @@ const StageGrid = memo(function StageGrid({
           ParticipantViewComponent={sdk.ParticipantView}
         />
       </View>
+    );
+  }
+
+  if (hasAuthoritativePresentation) {
+    return (
+      <LiveAuthoritativeProgramStage
+        program={program ?? null}
+        sources={programSources ?? []}
+        rtcParticipants={rtcParticipants}
+        stageSeats={participants}
+        sdk={sdk}
+      />
     );
   }
 
@@ -278,6 +309,8 @@ export const StreamLiveStage = memo(function StreamLiveStage({
   onPictureInPictureModeChange,
   requestSeat,
   scene,
+  program,
+  programSources,
 }: StreamLiveStageProps) {
   const client = bindings.client as unknown as StreamVideoClient;
   const call = bindings.call as unknown as Call;
@@ -302,6 +335,8 @@ export const StreamLiveStage = memo(function StreamLiveStage({
           isInPictureInPicture={isInPictureInPicture}
           requestSeat={requestSeat}
           scene={scene}
+          program={program}
+          programSources={programSources}
         />
       </StreamCall>
     </StreamVideo>

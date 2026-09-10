@@ -3,10 +3,11 @@ import { Bot, Heart, Music2, Radio, Sparkles } from 'lucide-react-native';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AccessibilityInfo, Animated, StyleSheet, Text, View } from 'react-native';
 
-import type { OdoLiveProgramState, OdoShowScene } from '../odo/show/odo-show-contracts.ts';
+import type { ProgramScene } from '@betweener/live-program-domain';
+import type { LiveProgramSnapshotV2 } from '../odo/show/odo-show-contracts.ts';
 import { type LiveVisualTheme, useLiveVisualTheme } from './live-visual-tokens.ts';
 
-const COPY: Partial<Record<OdoShowScene, { eyebrow: string; title: string; body: string }>> = {
+const COPY: Partial<Record<ProgramScene, { eyebrow: string; title: string; body: string }>> = {
   odo_stage: {
     eyebrow: 'ODO · LIVE',
     title: 'Making room for the next connection.',
@@ -49,7 +50,7 @@ const COPY: Partial<Record<OdoShowScene, { eyebrow: string; title: string; body:
   },
 };
 
-const programCopy = (program: OdoLiveProgramState) => {
+const programCopy = (program: LiveProgramSnapshotV2) => {
   if (program.currentScene !== 'odo_stage') return COPY[program.currentScene];
   switch (program.showState) {
     case 'pair_forming':
@@ -77,7 +78,7 @@ const programCopy = (program: OdoLiveProgramState) => {
   }
 };
 
-export function OdoProgramStage({ program }: { program: OdoLiveProgramState | null }) {
+export function OdoProgramStage({ program }: { program: LiveProgramSnapshotV2 | null }) {
   const visual = useLiveVisualTheme();
   const styles = useMemo(() => createStyles(visual), [visual]);
   const [reduceMotion, setReduceMotion] = useState(false);
