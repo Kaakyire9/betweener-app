@@ -60,3 +60,5 @@ tmp/
 # Local production schema safety snapshots (never commit).
 supabase/baseline-backups/
 supabase/migrations_legacy_20260713/
+
+/.vercel/
