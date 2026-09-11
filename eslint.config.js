@@ -15,6 +15,7 @@ module.exports = defineConfig([
       '**/dist/**',
       '**/build/**',
       '**/.expo/**',
+      '**/.vercel/**',
       '**/.turbo/**',
       '**/android/**',
       '**/ios/**',

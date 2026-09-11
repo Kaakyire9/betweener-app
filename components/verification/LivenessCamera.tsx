@@ -82,8 +82,6 @@ export const LivenessCamera = forwardRef<LivenessCameraHandle, LivenessCameraPro
       () => createFaceDetectorOutput({
         cameraFacing: 'front',
         autoMode: true,
-        windowWidth,
-        windowHeight,
         performanceMode: 'fast',
         runClassifications: true,
         runContours: false,
