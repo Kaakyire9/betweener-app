@@ -22,6 +22,22 @@ const liveSchedule = readFileSync(
   new URL('../app/live/schedule.tsx', import.meta.url),
   'utf8',
 );
+const packageManifest = readFileSync(
+  new URL('../package.json', import.meta.url),
+  'utf8',
+);
+const authCallback = readFileSync(
+  new URL('../app/(auth)/callback.tsx', import.meta.url),
+  'utf8',
+);
+const authGate = readFileSync(
+  new URL('../app/(auth)/gate.tsx', import.meta.url),
+  'utf8',
+);
+const phoneVerification = readFileSync(
+  new URL('../lib/phone-verification.ts', import.meta.url),
+  'utf8',
+);
 
 test('persisted profile fallback never authorizes protected writes', () => {
   assert.match(
@@ -39,6 +55,59 @@ test('persisted profile fallback never authorizes protected writes', () => {
   assert.match(supabaseSource, /const refreshAuthSession = async/);
   assert.doesNotMatch(supabaseSource, /processLock|lockAcquireTimeout/);
   assert.match(authContext, /allowWithoutSnapshot: true,[\s\S]*force: true/);
+});
+
+test('rotated refresh credentials have one durable storage authority', () => {
+  const storageBlock = supabaseSource.match(
+    /const durableAuthStorage = \{([\s\S]*?)\n\};/,
+  )?.[0] ?? '';
+  const dataTokenBlock = supabaseSource.match(
+    /const getDataAccessToken = async[\s\S]*?\n\};/,
+  )?.[0] ?? '';
+  const snapshotType = authContext.match(
+    /type PersistedAuthSnapshot = \{([\s\S]*?)\n\};/,
+  )?.[0] ?? '';
+
+  assert.match(storageBlock, /await AsyncStorage\.getItem\(key\)/);
+  assert.match(storageBlock, /await AsyncStorage\.setItem\(key, value\)/);
+  assert.match(storageBlock, /await AsyncStorage\.removeItem\(key\)/);
+  assert.doesNotMatch(storageBlock, /Promise\.race|setTimeout|return null|best-effort only/);
+  assert.doesNotMatch(supabaseSource, /AUTH_STORAGE_TIMEOUT_MS|storageWithTimeout/);
+  assert.match(dataTokenBlock, /await supabaseAuth\.auth\.getSession\(\)/);
+  assert.match(dataTokenBlock, /catch \(error\)[\s\S]*throw error/);
+  assert.doesNotMatch(dataTokenBlock, /Promise\.race|setTimeout/);
+
+  assert.match(snapshotType, /version: 2/);
+  assert.match(snapshotType, /userId: string/);
+  assert.doesNotMatch(snapshotType, /session: Session|access_token|refresh_token/);
+  assert.match(authContext, /LEGACY_AUTH_SNAPSHOT_KEY = "auth_snapshot_v1"/);
+  assert.match(authContext, /AsyncStorage\.removeItem\(LEGACY_AUTH_SNAPSHOT_KEY\)/);
+  assert.doesNotMatch(
+    authCallback,
+    /AsyncStorage\.setItem\(\s*(?:AUTH|LEGACY_AUTH)_PENDING_TOKENS_KEY/,
+  );
+  assert.doesNotMatch(authGate, /supabase\.auth\.setSession\(/);
+  assert.doesNotMatch(
+    `${authCallback}\n${authGate}\n${phoneVerification}`,
+    /Promise\.race\(\[(?:(?!\]\);)[\s\S])*supabase\.auth\.(?:getSession|setSession)/,
+  );
+  assert.doesNotMatch(authCallback, /\.slice\(/);
+});
+
+test('session recovery is single-flight and missing credentials require reauthentication', () => {
+  assert.match(supabaseSource, /let ensureSessionInFlight:/);
+  assert.match(
+    supabaseSource,
+    /if \(ensureSessionInFlight\) return await ensureSessionInFlight/,
+  );
+  assert.match(
+    supabaseSource,
+    /if \(!session && !error\)[\s\S]*status: 'failed_unrecoverable'[\s\S]*errorMessage: 'session_missing'/,
+  );
+  assert.doesNotMatch(supabaseSource, /fallbackSession|sessionForRefresh/);
+  assert.match(authContext, /supabase\.auth\.signOut\(\{ scope: 'local' \}\)/);
+  assert.match(authContext, /finally \{[\s\S]*applySignedOutState\(\)/);
+  assert.match(packageManifest, /"@supabase\/supabase-js": "2\.116\.0"/);
 });
 
 test('Live catalogue waits for real auth and reloads after auth recovery', () => {

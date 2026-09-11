@@ -7,16 +7,18 @@ import { useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import { View } from "react-native";
 import { supabase } from "@/lib/supabase";
-import { clearPendingAuthProvider, getFreshPendingAuthProvider } from "@/lib/auth-callback";
+import {
+  clearPendingAuthProvider,
+  getFreshPendingAuthProvider,
+  LEGACY_AUTH_PENDING_TOKENS_KEY,
+} from "@/lib/auth-callback";
 import {
   peekPendingNotificationRoute,
 } from "@/lib/notifications/notification-routing";
 
-const AUTH_PENDING_TOKENS_KEY = "auth_pending_tokens_v1";
 const RETIRED_DUPLICATE_REDIRECT_KEY = "retired_duplicate_redirect_v1";
 const DISCONNECTED_PROVIDER_REDIRECT_KEY = "disconnected_provider_redirect_v1";
 const EXPLICIT_SIGN_OUT_KEY = "auth_explicit_sign_out_v1";
-const SESSION_CHECK_TIMEOUT_MS = 4_000;
 const GATE_PROFILE_TIMEOUT_MS = 6_000;
 const GATE_RETRY_DELAY_MS = 2_500;
 const GATE_STORAGE_HELPER_TIMEOUT_MS = 1_200;
@@ -65,18 +67,11 @@ export default function AuthGateScreen() {
     };
   }, []);
 
-  const waitForStoredSession = async (timeoutMs = SESSION_CHECK_TIMEOUT_MS) => {
+  const waitForStoredSession = async () => {
     try {
-      const { data, timedOut } = await Promise.race([
-        supabase.auth.getSession().then((result) => ({
-          data: result.data,
-          timedOut: false,
-        })),
-        new Promise<{ data: { session: null }; timedOut: true }>((resolve) =>
-          setTimeout(() => resolve({ data: { session: null }, timedOut: true }), timeoutMs),
-        ),
-      ]);
-      return { session: data?.session ?? null, timedOut };
+      const { data, error } = await supabase.auth.getSession();
+      if (error) throw error;
+      return { session: data?.session ?? null, timedOut: false };
     } catch {
       return { session: null, timedOut: true };
     }
@@ -517,17 +512,21 @@ export default function AuthGateScreen() {
         let sessionToUse = session;
         let userToUse = user;
 
+        // Old builds temporarily duplicated raw callback credentials here.
+        // They must never be replayed after Supabase has rotated the token.
+        try {
+          await AsyncStorage.removeItem(LEGACY_AUTH_PENDING_TOKENS_KEY);
+        } catch {
+          // best effort legacy cleanup
+        }
+
         // Give auth/session a short grace period to settle after OAuth callback.
         if (!sessionToUse || !userToUse) {
           const startedAt = Date.now();
           while (Date.now() - startedAt < 8000) {
             try {
-              const { data } = await Promise.race([
-                supabase.auth.getSession(),
-                new Promise<{ data: { session: null } }>((resolve) =>
-                  setTimeout(() => resolve({ data: { session: null } }), 1200)
-                ),
-              ]);
+              const { data, error } = await supabase.auth.getSession();
+              if (error) throw error;
               if (data?.session?.user) {
                 sessionToUse = data.session;
                 userToUse = data.session.user;
@@ -537,41 +536,6 @@ export default function AuthGateScreen() {
               // keep polling
             }
             await new Promise((resolve) => setTimeout(resolve, 250));
-          }
-        }
-
-        // If callback could not finish setSession in time, recover from pending tokens once.
-        if (!sessionToUse || !userToUse) {
-          try {
-            const rawPending = await AsyncStorage.getItem(AUTH_PENDING_TOKENS_KEY);
-            if (rawPending) {
-              const pending = JSON.parse(rawPending) as {
-                accessToken?: string;
-                refreshToken?: string;
-                createdAt?: number;
-              };
-              const isFresh =
-                typeof pending.createdAt === "number" && Date.now() - pending.createdAt < 15 * 60 * 1000;
-              if (pending.accessToken && pending.refreshToken && isFresh) {
-                await Promise.race([
-                  supabase.auth.setSession({
-                    access_token: pending.accessToken,
-                    refresh_token: pending.refreshToken,
-                  }),
-                  new Promise((resolve) => setTimeout(resolve, 7000)),
-                ]);
-                const { data } = await supabase.auth.getSession();
-                if (data?.session?.user) {
-                  sessionToUse = data.session;
-                  userToUse = data.session.user;
-                  await AsyncStorage.removeItem(AUTH_PENDING_TOKENS_KEY);
-                }
-              } else if (!isFresh) {
-                await AsyncStorage.removeItem(AUTH_PENDING_TOKENS_KEY);
-              }
-            }
-          } catch {
-            // ignore pending token recovery errors
           }
         }
 

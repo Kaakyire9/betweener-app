@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
+import { useAuth } from '@/lib/auth-context';
 import { logger } from '@/lib/telemetry/logger';
 import {
   foregroundRecoveryDelayMs,
@@ -36,6 +37,7 @@ export const useLiveMediaSession = (
   sessionId: string,
   requestAdmission: LiveMediaAdmissionRequester = requestLiveMediaAdmission,
 ) => {
+  const { retrySessionRecovery } = useAuth();
   const providerRef = useRef<StreamLiveMediaProvider | null>(null);
   const [bindings, setBindings] = useState<StreamLiveMediaBindings | null>(null);
   const [state, setState] = useState<LiveMediaControllerState>('idle');
@@ -66,10 +68,24 @@ export const useLiveMediaSession = (
   const authorityRetryCountRef = useRef(0);
   const authorityExpectedPublishRef = useRef<boolean | null>(null);
   const requestAdmissionRef = useRef(requestAdmission);
+  const retrySessionRecoveryRef = useRef(retrySessionRecovery);
 
   useEffect(() => {
     requestAdmissionRef.current = requestAdmission;
   }, [requestAdmission]);
+
+  useEffect(() => {
+    retrySessionRecoveryRef.current = retrySessionRecovery;
+  }, [retrySessionRecovery]);
+
+  const requestCurrentAdmission = useCallback(() => requestAdmissionRef.current(
+    { sessionId },
+    {
+      recoverAuthentication: () => retrySessionRecoveryRef.current(
+        'live_media_admission_unauthorized',
+      ),
+    },
+  ), [sessionId]);
 
   useEffect(() => {
     const lease = acquireStreamLiveMediaProvider(sessionId);
@@ -96,10 +112,10 @@ export const useLiveMediaSession = (
     setError(null);
     joinInFlightRef.current = true;
     try {
-      const admission = await requestAdmissionRef.current({ sessionId });
+      const admission = await requestCurrentAdmission();
       admissionExpiresAtRef.current = admission.expiresAt;
       const admissionCanPublish = admission.capabilities.includes('live.publish');
-      const renew = () => requestAdmissionRef.current({ sessionId });
+      const renew = requestCurrentAdmission;
       await provider.initialize(admission, renew);
       if (!mountedRef.current || attempt !== joinAttemptRef.current) return;
       const result = await provider.joinSession(options);
@@ -171,7 +187,7 @@ export const useLiveMediaSession = (
     } finally {
       joinInFlightRef.current = false;
     }
-  }, [sessionId]);
+  }, [requestCurrentAdmission, sessionId]);
 
   const recoverConnection = useCallback((reason: string) => {
     if (
@@ -191,9 +207,9 @@ export const useLiveMediaSession = (
       setAuthorityState('syncing');
       logger.warn('[live-media] transport-recovery-started', { sessionId, reason });
       try {
-        const admission = await requestAdmissionRef.current({ sessionId });
+        const admission = await requestCurrentAdmission();
         admissionExpiresAtRef.current = admission.expiresAt;
-        const renew = () => requestAdmissionRef.current({ sessionId });
+        const renew = requestCurrentAdmission;
         const inferredOptions = recoveryJoinOptions(admission, {
           audioEnabled: desiredAudioEnabledRef.current,
           videoEnabled: desiredVideoEnabledRef.current,
@@ -262,7 +278,7 @@ export const useLiveMediaSession = (
     recoveryPromiseRef.current = recovery.finally(() => {
       recoveryPromiseRef.current = null;
     });
-  }, [sessionId]);
+  }, [requestCurrentAdmission, sessionId]);
 
   recoverConnectionRef.current = recoverConnection;
 
@@ -310,7 +326,7 @@ export const useLiveMediaSession = (
     setAuthorityState('syncing');
     setError(null);
     try {
-      const admission = await requestAdmissionRef.current({ sessionId });
+      const admission = await requestCurrentAdmission();
       admissionExpiresAtRef.current = admission.expiresAt;
       const actualCanPublish = admission.capabilities.includes('live.publish');
       if (actualCanPublish !== expectedCanPublish) {
@@ -370,7 +386,7 @@ export const useLiveMediaSession = (
       });
       return false;
     }
-  }, [sessionId]);
+  }, [requestCurrentAdmission, sessionId]);
 
   reconcileAuthorityRef.current = reconcileAuthority;
 

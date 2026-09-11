@@ -35,10 +35,18 @@ import { createPresenceWriteCoordinator } from '@/lib/presence-write-coordinator
 type Profile = Database['public']['Tables']['profiles']['Row'];
 type FetchProfileOptions = { force?: boolean };
 type PersistedAuthSnapshot = {
-  session: Session;
+  version: 2;
+  userId: string;
   profile: Profile | null;
   phoneVerified: boolean;
+  emailVerified: boolean;
   cachedAt: number;
+};
+type LegacyPersistedAuthSnapshot = {
+  session?: Session | null;
+  profile?: Profile | null;
+  phoneVerified?: boolean;
+  cachedAt?: number;
 };
 
 export type AuthStatus =
@@ -92,7 +100,8 @@ type AuthContextType = {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 const PHONE_VERIFIED_CACHE_KEY_PREFIX = "phone_verified_cache_v1:";
-const AUTH_SNAPSHOT_KEY = "auth_snapshot_v1";
+const AUTH_SNAPSHOT_KEY = "auth_profile_snapshot_v2";
+const LEGACY_AUTH_SNAPSHOT_KEY = "auth_snapshot_v1";
 const EXPLICIT_SIGN_OUT_KEY = "auth_explicit_sign_out_v1";
 const PHONE_VERIFIED_CACHE_TTL_MS = 60_000;
 const PROFILE_DIAG_TIMEOUT_MS = 8000;
@@ -137,22 +146,53 @@ const probeReachableNetwork = async () => {
 const readPersistedAuthSnapshot = async (): Promise<PersistedAuthSnapshot | null> => {
   try {
     const raw = await AsyncStorage.getItem(AUTH_SNAPSHOT_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<PersistedAuthSnapshot> | null;
-    if (!parsed?.session?.user?.id) return null;
-    if (
-      typeof parsed.cachedAt === "number" &&
-      Date.now() - parsed.cachedAt > AUTH_SNAPSHOT_TTL_MS
-    ) {
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<PersistedAuthSnapshot> | null;
+      if (
+        parsed?.version === 2 &&
+        typeof parsed.userId === 'string' &&
+        parsed.userId.length > 0 &&
+        typeof parsed.cachedAt === 'number'
+      ) {
+        if (Date.now() - parsed.cachedAt > AUTH_SNAPSHOT_TTL_MS) {
+          await AsyncStorage.removeItem(AUTH_SNAPSHOT_KEY);
+          return null;
+        }
+        return {
+          version: 2,
+          userId: parsed.userId,
+          profile: (parsed.profile as Profile | null) ?? null,
+          phoneVerified: parsed.phoneVerified === true || parsed.profile?.phone_verified === true,
+          emailVerified: parsed.emailVerified === true,
+          cachedAt: parsed.cachedAt,
+        };
+      }
       await AsyncStorage.removeItem(AUTH_SNAPSHOT_KEY);
-      return null;
     }
-    return {
-      session: parsed.session as Session,
-      profile: (parsed.profile as Profile | null) ?? null,
-      phoneVerified: parsed.phoneVerified === true || parsed.profile?.phone_verified === true,
-      cachedAt: typeof parsed.cachedAt === "number" ? parsed.cachedAt : Date.now(),
-    };
+
+    // One-time migration: retain only non-authoritative profile presentation
+    // data and permanently remove the legacy duplicate refresh-token copy.
+    const legacyRaw = await AsyncStorage.getItem(LEGACY_AUTH_SNAPSHOT_KEY);
+    if (!legacyRaw) return null;
+    try {
+      const legacy = JSON.parse(legacyRaw) as LegacyPersistedAuthSnapshot | null;
+      const userId = legacy?.session?.user?.id;
+      const cachedAt = typeof legacy?.cachedAt === 'number' ? legacy.cachedAt : Date.now();
+      if (!userId || Date.now() - cachedAt > AUTH_SNAPSHOT_TTL_MS) return null;
+      const migrated: PersistedAuthSnapshot = {
+        version: 2,
+        userId,
+        profile: legacy?.profile ?? null,
+        phoneVerified:
+          legacy?.phoneVerified === true || legacy?.profile?.phone_verified === true,
+        emailVerified: !!legacy?.session?.user?.email_confirmed_at,
+        cachedAt,
+      };
+      await AsyncStorage.setItem(AUTH_SNAPSHOT_KEY, JSON.stringify(migrated));
+      return migrated;
+    } finally {
+      await AsyncStorage.removeItem(LEGACY_AUTH_SNAPSHOT_KEY);
+    }
   } catch {
     return null;
   }
@@ -168,7 +208,7 @@ const writePersistedAuthSnapshot = async (snapshot: PersistedAuthSnapshot) => {
 
 const clearPersistedAuthSnapshot = async () => {
   try {
-    await AsyncStorage.removeItem(AUTH_SNAPSHOT_KEY);
+    await AsyncStorage.multiRemove([AUTH_SNAPSHOT_KEY, LEGACY_AUTH_SNAPSHOT_KEY]);
   } catch {
     // best effort only
   }
@@ -432,12 +472,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   ) => {
     const existing = await readPersistedAuthSnapshot();
     await writePersistedAuthSnapshot({
-      session: nextSession,
+      version: 2,
+      userId: nextSession.user.id,
       profile: nextProfile ?? existing?.profile ?? null,
       phoneVerified:
         nextPhoneVerified ||
         nextProfile?.phone_verified === true ||
         existing?.phoneVerified === true,
+      emailVerified:
+        !!nextSession.user.email_confirmed_at || existing?.emailVerified === true,
       cachedAt: Date.now(),
     });
   };
@@ -446,39 +489,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const snapshot = await readPersistedAuthSnapshot();
     if (!snapshot) return null;
 
-    accessTokenRef.current = isSupabaseAccessTokenUsable(snapshot.session.access_token)
-      ? snapshot.session.access_token
-      : null;
-    currentSessionUserIdRef.current = snapshot.session.user?.id ?? null;
-    userRef.current = snapshot.session.user ?? null;
+    accessTokenRef.current = null;
+    currentSessionUserIdRef.current = snapshot.userId;
+    userRef.current = null;
     profileRef.current = snapshot.profile ?? null;
     setUsingPersistedSessionFallback(true);
     const restoredStableAccess =
-      !!snapshot.session &&
-      !!snapshot.session.user &&
-      !!snapshot.session.user.email_confirmed_at &&
+      snapshot.emailVerified &&
       (snapshot.phoneVerified === true || snapshot.profile?.phone_verified === true) &&
       snapshot.profile?.profile_completed === true;
     setAuthRecoveryPending(false);
     setHadStableAppAccess(restoredStableAccess);
     setAuthStatus('offline_authenticated');
-    setSession(snapshot.session);
-    setUser(snapshot.session.user ?? null);
+    setSession(null);
+    setUser(null);
     setProfile(snapshot.profile ?? null);
     setPhoneVerified(snapshot.phoneVerified === true || snapshot.profile?.phone_verified === true);
 
-    if (snapshot.session.user?.id) {
-      profileCacheRef.current = {
-        userId: snapshot.session.user.id,
-        profile: snapshot.profile ?? null,
-        fetchedAt: Date.now(),
-      };
-    }
+    profileCacheRef.current = {
+      userId: snapshot.userId,
+      profile: snapshot.profile ?? null,
+      fetchedAt: Date.now(),
+    };
 
     if (typeof __DEV__ !== "undefined" && __DEV__) {
       console.log("[auth] restored persisted auth snapshot", {
         reason,
-        userId: snapshot.session.user?.id ?? null,
+        userId: snapshot.userId,
         hasProfile: !!snapshot.profile,
         phoneVerified: snapshot.phoneVerified,
       });
@@ -493,19 +530,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     nextSession?: Session | null
   ): Promise<Profile | null> => {
     const snapshot = await readPersistedAuthSnapshot();
-    if (!snapshot?.profile || snapshot.session.user?.id !== userId) return null;
+    if (!snapshot?.profile || snapshot.userId !== userId) return null;
 
-    const resolvedSession = nextSession ?? session ?? snapshot.session;
-    const resolvedUser = resolvedSession?.user ?? snapshot.session.user ?? null;
+    const resolvedSession = nextSession ?? session ?? null;
+    const resolvedUser = resolvedSession?.user ?? userRef.current ?? null;
     const resolvedPhoneVerified =
       snapshot.phoneVerified === true || snapshot.profile.phone_verified === true;
 
-    const nextAccessToken =
-      resolvedSession?.access_token ?? snapshot.session.access_token ?? accessTokenRef.current;
+    const nextAccessToken = resolvedSession?.access_token ?? accessTokenRef.current;
     accessTokenRef.current = isSupabaseAccessTokenUsable(nextAccessToken)
       ? nextAccessToken
       : null;
-    currentSessionUserIdRef.current = userId;
+    currentSessionUserIdRef.current = resolvedUser?.id ?? userId;
     userRef.current = resolvedUser;
     profileRef.current = snapshot.profile;
     setUsingPersistedSessionFallback(true);
@@ -526,7 +562,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setPhoneVerified((current) => current || resolvedPhoneVerified);
 
     if (
-      resolvedUser?.email_confirmed_at &&
+      (resolvedUser?.email_confirmed_at || snapshot.emailVerified) &&
       resolvedPhoneVerified &&
       snapshot.profile.profile_completed === true
     ) {
@@ -593,16 +629,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return session.access_token;
     }
     try {
-      const { data } = await Promise.race([
-        supabase.auth.getSession(),
-        new Promise<{ data: { session: null } }>((resolve) =>
-          setTimeout(() => resolve({ data: { session: null } }), 1500)
-        ),
-      ]);
+      const { data, error } = await supabase.auth.getSession();
+      if (error) throw error;
       const token = data?.session?.access_token ?? null;
       accessTokenRef.current = isSupabaseAccessTokenUsable(token) ? token : null;
       return accessTokenRef.current;
-    } catch {
+    } catch (error) {
+      if (session?.user || userRef.current) throw error;
       return null;
     }
   };
@@ -626,7 +659,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const recoveryPromise = (async () => {
       const snapshot = await readPersistedAuthSnapshot();
       const hasCachedAccess =
-        !!snapshot?.session?.user?.id ||
+        !!snapshot?.userId ||
         !!session?.user?.id ||
         !!user?.id ||
         usingPersistedSessionFallback ||
@@ -647,7 +680,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       const recovery = await recoverSupabaseConnectivity(reason, {
         maxRefreshAttempts: 2,
-        fallbackSession: snapshot?.session ?? session ?? null,
         onStateChange: (state) => {
           if (state === 'session_refreshing') {
             setAuthStatus('session_refreshing');
@@ -658,12 +690,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
 
       if (recovery.status === 'ok' || recovery.status === 'refreshed') {
-        const { data } = await Promise.race([
-          supabase.auth.getSession(),
-          new Promise<{ data: { session: null } }>((resolve) =>
-            setTimeout(() => resolve({ data: { session: null } }), 1500),
-          ),
-        ]);
+        const { data } = await supabase.auth.getSession();
 
         const recoveredSession = data?.session ?? null;
         if (recoveredSession?.user) {
@@ -719,15 +746,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     let cancelled = false;
     const initAuth = async () => {
       try {
-        const { data, error } = await Promise.race([
-          supabase.auth.getSession(),
-          new Promise<{
-            data: { session: null };
-            error: Error;
-          }>((resolve) =>
-            setTimeout(() => resolve({ data: { session: null }, error: new Error("initial_session_timeout") }), 2500)
-          ),
-        ]);
+        const { data, error } = await supabase.auth.getSession();
 
         if (cancelled) return;
         if (error && typeof __DEV__ !== "undefined" && __DEV__) {
@@ -781,9 +800,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             initialProfile?.phone_verified === true
           );
         } else {
-          const restored = await restoreAuthSnapshot(
-            error?.message === "initial_session_timeout" ? "initial_session_timeout" : "initial_session_empty"
-          );
+          const restored = await restoreAuthSnapshot("initial_session_empty");
           if (!restored) {
             setProfile(null);
             setPhoneVerified(false);
@@ -1380,10 +1397,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       // Pull the latest session snapshot so downstream requests have a current token.
-      const { data } = await Promise.race([
-        supabase.auth.getSession(),
-        new Promise<{ data: { session: null } }>((resolve) => setTimeout(() => resolve({ data: { session: null } }), 1500)),
-      ]);
+      const { data } = await supabase.auth.getSession();
 
       if (data?.session) {
         accessTokenRef.current = isSupabaseAccessTokenUsable(data.session.access_token)
@@ -1602,11 +1616,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (signedOutUserId) {
       void updatePresence(false);
     }
-    const { error } = await supabase.auth.signOut();
-    if (error) {
+    try {
+      const { error } = await supabase.auth.signOut({ scope: 'local' });
+      if (error) {
+        console.error('Error signing out:', error);
+      }
+    } catch (error) {
       console.error('Error signing out:', error);
-      signOutRequestedRef.current = false;
-      return;
+    } finally {
+      // Local UX must never remain authenticated because remote revocation or
+      // connectivity failed. Supabase also removes the current local session
+      // for local-scope sign-out failures after it has read that session.
+      applySignedOutState();
+      await clearPersistedAuthSnapshot();
     }
 
     if (signedOutUserId) {
@@ -1648,9 +1670,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setProfile(optimisticProfile);
         if (session) {
           void writePersistedAuthSnapshot({
-            session,
+            version: 2,
+            userId: session.user.id,
             profile: optimisticProfile,
             phoneVerified: phoneVerified || optimisticProfile.phone_verified === true,
+            emailVerified: !!session.user.email_confirmed_at,
             cachedAt: Date.now(),
           });
         }

@@ -1,7 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 export const LAST_DEEP_LINK_URL_KEY = "last_deep_link_url";
-export const AUTH_PENDING_TOKENS_KEY = "auth_pending_tokens_v1";
+export const LEGACY_AUTH_PENDING_TOKENS_KEY = "auth_pending_tokens_v1";
 export const AUTH_PENDING_PROVIDER_KEY = "auth_pending_provider_v1";
 export const AUTH_PENDING_IDENTITY_LINK_KEY = "auth_pending_identity_link_v1";
 

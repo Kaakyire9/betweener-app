@@ -5,11 +5,11 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
 import {
-  AUTH_PENDING_TOKENS_KEY,
   clearPendingAuthFlow,
   getFreshPendingAuthFlow,
   isTrustedAuthCallbackUrl,
   LAST_DEEP_LINK_URL_KEY,
+  LEGACY_AUTH_PENDING_TOKENS_KEY,
   urlHasAuthPayload,
 } from "@/lib/auth-callback";
 
@@ -51,12 +51,8 @@ export default function AuthCallback() {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
       try {
-        const { data } = await Promise.race([
-          supabase.auth.getSession(),
-          new Promise<{ data: { session: null } }>((resolve) =>
-            setTimeout(() => resolve({ data: { session: null } }), 1500)
-          ),
-        ]);
+        const { data, error } = await supabase.auth.getSession();
+        if (error) throw error;
         if (data?.session) return true;
       } catch {
         // ignore transient getSession errors while polling
@@ -64,6 +60,15 @@ export default function AuthCallback() {
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
     return false;
+  };
+
+  const fingerprintCredential = (value?: string) => {
+    if (!value) return "";
+    let hash = 2166136261;
+    for (let index = 0; index < value.length; index += 1) {
+      hash = Math.imul(hash ^ value.charCodeAt(index), 16777619);
+    }
+    return `${value.length}:${(hash >>> 0).toString(36)}`;
   };
 
   const buildCallbackSignature = (payload: {
@@ -74,13 +79,13 @@ export default function AuthCallback() {
     type?: string;
   }) => {
     if (payload.accessToken || payload.refreshToken) {
-      const a = (payload.accessToken ?? "").slice(-24);
-      const r = (payload.refreshToken ?? "").slice(-24);
+      const a = fingerprintCredential(payload.accessToken);
+      const r = fingerprintCredential(payload.refreshToken);
       return `tokens:${a}:${r}`;
     }
-    if (payload.code) return `code:${payload.code.slice(0, 24)}`;
+    if (payload.code) return `code:${fingerprintCredential(payload.code)}`;
     if (payload.tokenHash || payload.type) {
-      return `otp:${payload.type ?? ""}:${(payload.tokenHash ?? "").slice(0, 24)}`;
+      return `otp:${payload.type ?? ""}:${fingerprintCredential(payload.tokenHash)}`;
     }
     return null;
   };
@@ -335,28 +340,16 @@ export default function AuthCallback() {
 
         if (accessToken && refreshToken) {
           setStatus(isRecoveryFlow ? "Preparing password reset..." : "Completing sign in...");
-          await AsyncStorage.setItem(
-            AUTH_PENDING_TOKENS_KEY,
-            JSON.stringify({
-              accessToken,
-              refreshToken,
-              createdAt: Date.now(),
-            })
-          );
-          await Promise.race([
-            supabase.auth.setSession({
-              access_token: accessToken,
-              refresh_token: refreshToken,
-            }),
-            new Promise<{ error: Error }>((resolve) =>
-              setTimeout(() => resolve({ error: new Error("set_session_final_timeout") }), 18000)
-            ),
-          ]);
-          // Gate can recover pending tokens if setSession is slow on some devices.
-          const settled = await waitForSession(7000);
-          if (settled) {
-            await AsyncStorage.removeItem(AUTH_PENDING_TOKENS_KEY);
-          }
+          // Supabase's durable auth storage is the sole owner of rotating
+          // refresh credentials. Remove the legacy duplicate before adoption.
+          await AsyncStorage.removeItem(LEGACY_AUTH_PENDING_TOKENS_KEY);
+          const { data: sessionData, error } = await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+          });
+          if (error) throw error;
+          const settled = !!sessionData.session || await waitForSession(7000);
+          if (!settled) throw new Error("set_session_empty");
           if (callbackSig) {
             await AsyncStorage.setItem(AUTH_CALLBACK_LAST_SIG_KEY, callbackSig);
           }
@@ -370,7 +363,7 @@ export default function AuthCallback() {
             }
           } else {
             await AsyncStorage.removeItem(PENDING_RECOVERY_EMAIL_CONTEXT_KEY);
-            // Always hand off to gate; it can recover pending tokens and route correctly.
+            // Always hand off to gate after the authoritative session is durable.
             if (!didNavigateRef.current) {
               didNavigateRef.current = true;
               setIsComplete(true);

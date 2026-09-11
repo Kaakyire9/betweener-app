@@ -168,7 +168,7 @@ const recordNetEvent = (
 };
 
 // -----------------------------
-// AsyncStorage wrapper (timeout)
+// Durable auth storage
 // -----------------------------
 
 const safeStorageKey = (key: string) => {
@@ -180,93 +180,68 @@ const safeStorageKey = (key: string) => {
   }
 };
 
-// AsyncStorage can occasionally hang on iOS after backgrounding/OS upgrades.
-// Supabase auth reads from storage on many code paths; if storage hangs,
-// supabase-js calls can hang *without ever reaching fetch()*.
-const AUTH_STORAGE_TIMEOUT_MS = IS_DEV ? 2500 : 1800;
-const authStorageCache = new Map<string, string | null>();
+// Refresh tokens are single-use, rotated credentials. A storage adapter must
+// never turn a slow read into "no session" or report a write as successful
+// before it is durable. Keep slow-operation telemetry, but always await the
+// native operation and propagate failures to Supabase Auth.
+const AUTH_STORAGE_SLOW_MS = 2_000;
 
-const storageWithTimeout = {
+const logSlowAuthStorage = (op: 'getItem' | 'setItem' | 'removeItem', key: string, startedAt: number) => {
+  const ms = Date.now() - startedAt;
+  if (ms < AUTH_STORAGE_SLOW_MS) return;
+  logFetchIssueThrottled(
+    'auth_storage_slow',
+    { op, key: safeStorageKey(key), ms },
+    `auth_storage_slow|${op}|${safeStorageKey(key)}`,
+  );
+};
+
+const durableAuthStorage = {
   async getItem(key: string) {
+    const startedAt = Date.now();
     try {
-      let didTimeout = false;
-      const value = await Promise.race([
-        AsyncStorage.getItem(key),
-        new Promise<string | null>((resolve) =>
-          setTimeout(() => {
-            didTimeout = true;
-            resolve(null);
-          }, AUTH_STORAGE_TIMEOUT_MS),
-        ),
-      ]);
-      if (didTimeout) {
-        const cachedValue = authStorageCache.has(key) ? authStorageCache.get(key) ?? null : null;
-        logFetchIssueThrottled(
-          'storage_timeout',
-          {
-            op: 'getItem',
-            key: safeStorageKey(key),
-            timeoutMs: AUTH_STORAGE_TIMEOUT_MS,
-            usedCachedValue: cachedValue !== null,
-          },
-          `storage_timeout|getItem|${safeStorageKey(key)}`,
-        );
-        return cachedValue as any;
-      }
-      authStorageCache.set(key, (value as string | null) ?? null);
-      return value as any;
-    } catch {
-      return authStorageCache.has(key) ? (authStorageCache.get(key) ?? null) : null;
+      return await AsyncStorage.getItem(key);
+    } catch (error) {
+      logFetchIssueThrottled(
+        'auth_storage_error',
+        { op: 'getItem', key: safeStorageKey(key) },
+        `auth_storage_error|getItem|${safeStorageKey(key)}`,
+      );
+      throw error;
+    } finally {
+      logSlowAuthStorage('getItem', key, startedAt);
     }
   },
 
   async setItem(key: string, value: string) {
+    const startedAt = Date.now();
     try {
-      let didTimeout = false;
-      await Promise.race([
-        AsyncStorage.setItem(key, value),
-        new Promise<void>((resolve) =>
-          setTimeout(() => {
-            didTimeout = true;
-            resolve();
-          }, AUTH_STORAGE_TIMEOUT_MS),
-        ),
-      ]);
-      if (didTimeout) {
-        logFetchIssueThrottled(
-          'storage_timeout',
-          { op: 'setItem', key: safeStorageKey(key), timeoutMs: AUTH_STORAGE_TIMEOUT_MS },
-          `storage_timeout|setItem|${safeStorageKey(key)}`,
-        );
-      }
-      authStorageCache.set(key, value);
-    } catch {
-      // best-effort only
+      await AsyncStorage.setItem(key, value);
+    } catch (error) {
+      logFetchIssueThrottled(
+        'auth_storage_error',
+        { op: 'setItem', key: safeStorageKey(key) },
+        `auth_storage_error|setItem|${safeStorageKey(key)}`,
+      );
+      throw error;
+    } finally {
+      logSlowAuthStorage('setItem', key, startedAt);
     }
   },
 
   async removeItem(key: string) {
+    const startedAt = Date.now();
     try {
-      let didTimeout = false;
-      await Promise.race([
-        AsyncStorage.removeItem(key),
-        new Promise<void>((resolve) =>
-          setTimeout(() => {
-            didTimeout = true;
-            resolve();
-          }, AUTH_STORAGE_TIMEOUT_MS),
-        ),
-      ]);
-      if (didTimeout) {
-        logFetchIssueThrottled(
-          'storage_timeout',
-          { op: 'removeItem', key: safeStorageKey(key), timeoutMs: AUTH_STORAGE_TIMEOUT_MS },
-          `storage_timeout|removeItem|${safeStorageKey(key)}`,
-        );
-      }
-      authStorageCache.delete(key);
-    } catch {
-      // best-effort only
+      await AsyncStorage.removeItem(key);
+    } catch (error) {
+      logFetchIssueThrottled(
+        'auth_storage_error',
+        { op: 'removeItem', key: safeStorageKey(key) },
+        `auth_storage_error|removeItem|${safeStorageKey(key)}`,
+      );
+      throw error;
+    } finally {
+      logSlowAuthStorage('removeItem', key, startedAt);
     }
   },
 };
@@ -289,6 +264,11 @@ let lastAuthFailureStatus: 401 | 403 | null = null;
 const recordAuthFailure = (status: 401 | 403) => {
   lastAuthFailureAt = Date.now();
   lastAuthFailureStatus = status;
+};
+
+const clearAuthFailure = () => {
+  lastAuthFailureAt = 0;
+  lastAuthFailureStatus = null;
 };
 
 const getSyntheticCode = (res: Response) => {
@@ -550,12 +530,9 @@ const getDataAccessToken = async (): Promise<string | null> => {
   // If auth isn't ready yet, fall back to null (supabase-js will use anon key).
   if (!supabaseAuth?.auth) return null;
 
-  // Avoid long stalls here - this path is hit on data requests.
   try {
-    const { data } = await Promise.race([
-      supabaseAuth.auth.getSession(),
-      new Promise<{ data: { session: null } }>((resolve) => setTimeout(() => resolve({ data: { session: null } }), 1200)),
-    ]);
+    const { data, error } = await supabaseAuth.auth.getSession();
+    if (error) throw error;
     const token = data?.session?.access_token ?? null;
     if (isSupabaseAccessTokenUsable(token)) {
       setCachedAccessToken(token);
@@ -563,15 +540,17 @@ const getDataAccessToken = async (): Promise<string | null> => {
       return token;
     }
     return null;
-  } catch {
-    return null;
+  } catch (error) {
+    // Authenticated operations must not silently downgrade to an anonymous
+    // request when session storage is unavailable.
+    throw error;
   }
 };
 
 // Auth-capable client (used only for supabase.auth.* and session refresh).
 supabaseAuth = createClient(SUPABASE_URL_FOR_CLIENT, SUPABASE_ANON_KEY_FOR_CLIENT, {
   auth: {
-    storage: storageWithTimeout as any,
+    storage: durableAuthStorage,
     autoRefreshToken: true,
     persistSession: true,
     detectSessionInUrl: false,
@@ -597,6 +576,7 @@ try {
     const token = session?.access_token ?? null;
     setCachedAccessToken(token);
     syncRealtimeAuth(token);
+    if (session?.access_token) clearAuthFailure();
   });
 } catch {
   // best-effort only
@@ -655,7 +635,7 @@ try {
       if (timedOut) {
         logFetchIssueThrottled(
           'client_timeout',
-          { fn: String(fn), ms, message: 'client_hang_or_fetch_stall', storageTimeoutMs: AUTH_STORAGE_TIMEOUT_MS },
+          { fn: String(fn), ms, message: 'client_hang_or_fetch_stall' },
           `client_timeout|${pseudoPath}`,
         );
         void probeSupabaseConnectivity('rpc_client_timeout');
@@ -796,7 +776,6 @@ const AUTH_REFRESH_GUARD_TIMEOUT_MS = SUPABASE_FETCH_TIMEOUT_MS + 2_000;
 const REFRESH_COOLDOWN_MS = 60_000;
 const EXPIRY_SOON_SECONDS = 90;
 const AUTH_FAILURE_GRACE_MS = 5 * 60_000;
-const SESSION_GET_TIMEOUT_MS = 2_500;
 const SESSION_RECOVERY_BACKOFF_MS = [450, 1100, 2200] as const;
 
 type AuthRefreshAttempt =
@@ -805,6 +784,8 @@ type AuthRefreshAttempt =
 
 let refreshInFlight: Promise<AuthRefreshAttempt> | null = null;
 let lastRefreshAttemptAt = 0;
+type EnsureFreshSessionStatus = 'ok' | 'no_session' | 'refreshed' | 'failed';
+let ensureSessionInFlight: Promise<EnsureFreshSessionStatus> | null = null;
 
 export type SupabaseSessionRecoveryStatus =
   | 'ok'
@@ -844,13 +825,13 @@ const withTimeout = async <T,>(p: Promise<T>, timeoutMs: number): Promise<T> => 
   }
 };
 
-const refreshAuthSession = async (fallbackSession?: Session): Promise<AuthRefreshAttempt> => {
+const refreshAuthSession = async (currentSession?: Session): Promise<AuthRefreshAttempt> => {
   if (refreshInFlight) return await refreshInFlight;
 
   const attempt = (async (): Promise<AuthRefreshAttempt> => {
     try {
       const result: any = await withTimeout(
-        supabaseAuth.auth.refreshSession(fallbackSession),
+        supabaseAuth.auth.refreshSession(currentSession),
         AUTH_REFRESH_GUARD_TIMEOUT_MS,
       );
       if (result?.error) return { status: 'failed', error: result.error };
@@ -861,6 +842,7 @@ const refreshAuthSession = async (fallbackSession?: Session): Promise<AuthRefres
       const refreshedSession = result.data.session as Session;
       setCachedAccessToken(refreshedSession.access_token ?? null);
       syncRealtimeAuth(refreshedSession.access_token ?? null);
+      clearAuthFailure();
       return { status: 'refreshed', session: refreshedSession };
     } catch (error) {
       return { status: 'failed', error };
@@ -923,21 +905,11 @@ const isUnrecoverableAuthRecoveryError = (error: unknown) => {
   );
 };
 
-const getSessionWithTimeout = async () => {
-  return await Promise.race([
-    supabaseAuth.auth.getSession(),
-    new Promise<{ data: { session: null }; error: Error }>((resolve) =>
-      setTimeout(
-        () => resolve({ data: { session: null }, error: new Error('get_session_timeout') }),
-        SESSION_GET_TIMEOUT_MS,
-      ),
-    ),
-  ]);
-};
+const getCurrentSession = async () => await supabaseAuth.auth.getSession();
 
-export async function ensureFreshSession(): Promise<'ok' | 'no_session' | 'refreshed' | 'failed'> {
+const ensureFreshSessionOnce = async (): Promise<EnsureFreshSessionStatus> => {
   try {
-    const { data, error } = await getSessionWithTimeout();
+    const { data, error } = await getCurrentSession();
     if (error) return 'failed';
 
     const session = data?.session ?? null;
@@ -957,7 +929,15 @@ export async function ensureFreshSession(): Promise<'ok' | 'no_session' | 'refre
     const expiresSoon = typeof expiresAt === 'number' ? (expiresAt - nowSec) <= EXPIRY_SOON_SECONDS : false;
     const recent401 = lastAuthFailureStatus === 401 && (Date.now() - lastAuthFailureAt) <= AUTH_FAILURE_GRACE_MS;
 
-    if (!expiresSoon && !recent401) return 'ok';
+    if (!expiresSoon && !recent401) {
+      clearAuthFailure();
+      return 'ok';
+    }
+
+    if (refreshInFlight) {
+      const activeRefresh = await refreshInFlight;
+      return activeRefresh.status === 'refreshed' ? 'refreshed' : 'failed';
+    }
 
     const now = Date.now();
     if (now - lastRefreshAttemptAt < REFRESH_COOLDOWN_MS) return 'failed';
@@ -968,13 +948,24 @@ export async function ensureFreshSession(): Promise<'ok' | 'no_session' | 'refre
   } catch {
     return 'failed';
   }
+};
+
+export async function ensureFreshSession(): Promise<EnsureFreshSessionStatus> {
+  if (ensureSessionInFlight) return await ensureSessionInFlight;
+
+  const attempt = ensureFreshSessionOnce();
+  ensureSessionInFlight = attempt;
+  try {
+    return await attempt;
+  } finally {
+    if (ensureSessionInFlight === attempt) ensureSessionInFlight = null;
+  }
 }
 
 export async function recoverSupabaseConnectivity(
   reason: string = 'network_restored',
   options?: {
     maxRefreshAttempts?: number;
-    fallbackSession?: Session | null;
     onStateChange?: (state: 'get_session' | 'session_refreshing') => void;
   },
 ): Promise<SupabaseSessionRecoveryResult> {
@@ -997,10 +988,8 @@ export async function recoverSupabaseConnectivity(
     options?.onStateChange?.('get_session');
     logSessionRecoveryEvent('supabase_get_session_attempted', { reason });
 
-    const { data, error } = await getSessionWithTimeout();
+    const { data, error } = await getCurrentSession();
     const session = data?.session ?? null;
-    const fallbackSession = options?.fallbackSession ?? null;
-    const sessionForRefresh = session?.refresh_token ? session : fallbackSession;
     const nowSec = Math.floor(Date.now() / 1000);
     const expiresAt = typeof (session as any)?.expires_at === 'number' ? (session as any).expires_at : null;
     const expiresSoon = typeof expiresAt === 'number' ? expiresAt - nowSec <= EXPIRY_SOON_SECONDS : false;
@@ -1008,18 +997,14 @@ export async function recoverSupabaseConnectivity(
       lastAuthFailureStatus === 401 && Date.now() - lastAuthFailureAt <= AUTH_FAILURE_GRACE_MS;
 
     try {
-      const token = session?.access_token ?? fallbackSession?.access_token ?? cachedAccessToken ?? null;
+      const token = session?.access_token ?? null;
       setCachedAccessToken(token);
       syncRealtimeAuth(token);
     } catch {
       // best effort only
     }
 
-    if (
-      error &&
-      isUnrecoverableAuthRecoveryError(error) &&
-      !fallbackSession?.refresh_token
-    ) {
+    if (error && isUnrecoverableAuthRecoveryError(error)) {
       const errorMessage = getAuthRecoveryErrorText(error);
       logSessionRecoveryEvent('supabase_refresh_failed_unrecoverable', {
         reason,
@@ -1031,6 +1016,20 @@ export async function recoverSupabaseConnectivity(
         reason,
         attempts: 0,
         errorMessage,
+      };
+    }
+
+    if (!session && !error) {
+      logSessionRecoveryEvent('supabase_refresh_failed_unrecoverable', {
+        reason,
+        stage: 'get_session',
+        error: 'session_missing',
+      });
+      return {
+        status: 'failed_unrecoverable',
+        reason,
+        attempts: 0,
+        errorMessage: 'session_missing',
       };
     }
 
@@ -1046,6 +1045,7 @@ export async function recoverSupabaseConnectivity(
         mode: 'get_session',
       });
       addBreadcrumb('[supabase] recover_connectivity', { reason, status: 'ok' });
+      clearAuthFailure();
       return {
         status: 'ok',
         reason,
@@ -1065,7 +1065,7 @@ export async function recoverSupabaseConnectivity(
       });
 
       try {
-        const refresh = await refreshAuthSession(sessionForRefresh ?? undefined);
+        const refresh = await refreshAuthSession(session ?? undefined);
         if (refresh.status === 'failed') {
           if (isUnrecoverableAuthRecoveryError(refresh.error)) {
             const errorMessage = getAuthRecoveryErrorText(refresh.error);
@@ -1126,8 +1126,8 @@ export async function recoverSupabaseConnectivity(
     }
 
     try {
-      const postRecovery = await getSessionWithTimeout();
-      const token = postRecovery?.data?.session?.access_token ?? cachedAccessToken ?? null;
+      const postRecovery = await getCurrentSession();
+      const token = postRecovery?.data?.session?.access_token ?? null;
       setCachedAccessToken(token);
       syncRealtimeAuth(token);
     } catch {
@@ -1157,7 +1157,21 @@ export async function recoverSupabaseConnectivity(
       attempts: maxRefreshAttempts,
       errorMessage: lastRecoverableMessage,
     };
-  } catch {
+  } catch (error) {
+    if (isUnrecoverableAuthRecoveryError(error)) {
+      const errorMessage = getAuthRecoveryErrorText(error);
+      logSessionRecoveryEvent('supabase_refresh_failed_unrecoverable', {
+        reason,
+        attempts: 0,
+        error: errorMessage,
+      });
+      return {
+        status: 'failed_unrecoverable',
+        reason,
+        attempts: 0,
+        errorMessage,
+      };
+    }
     logSessionRecoveryEvent('supabase_refresh_failed_recoverable', {
       reason,
       attempts: 0,

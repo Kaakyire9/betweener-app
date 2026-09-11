@@ -109,7 +109,7 @@ test('Live media admission retries only bounded temporary token failures', async
       if (attempts < 3) throw new Error('live_token_temporarily_unavailable');
       return 'admitted';
     },
-    async (delayMs) => { waits.push(delayMs); },
+    { wait: async (delayMs) => { waits.push(delayMs); } },
   );
 
   assert.equal(result, 'admitted');
@@ -121,10 +121,52 @@ test('Live media admission retries only bounded temporary token failures', async
     requestWithLiveMediaAdmissionRetry(async () => {
       terminalAttempts += 1;
       throw new Error('live_admission_denied');
-    }, async () => undefined),
+    }, { wait: async () => undefined }),
     /live_admission_denied/,
   );
   assert.equal(terminalAttempts, 1);
+});
+
+test('Live media admission recovers authentication once after an idle session', async () => {
+  let attempts = 0;
+  let recoveries = 0;
+  const result = await requestWithLiveMediaAdmissionRetry(
+    async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error('unauthorized');
+      return 'admitted';
+    },
+    {
+      recoverAuthentication: async () => {
+        recoveries += 1;
+        return true;
+      },
+    },
+  );
+
+  assert.equal(result, 'admitted');
+  assert.equal(attempts, 2);
+  assert.equal(recoveries, 1);
+
+  attempts = 0;
+  recoveries = 0;
+  await assert.rejects(
+    requestWithLiveMediaAdmissionRetry(
+      async () => {
+        attempts += 1;
+        throw new Error('unauthorized');
+      },
+      {
+        recoverAuthentication: async () => {
+          recoveries += 1;
+          return true;
+        },
+      },
+    ),
+    /unauthorized/,
+  );
+  assert.equal(attempts, 2);
+  assert.equal(recoveries, 1);
 });
 
 test('provider abstraction exposes transport controls without Stream-specific types', () => {

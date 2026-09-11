@@ -3,12 +3,15 @@ import { parseLiveMediaAdmission } from './live-media-admission.ts';
 import type {
   LiveMediaAdmission,
   LiveMediaAdmissionRequest,
+  LiveMediaAdmissionRequestOptions,
 } from './live-media-provider.ts';
+import { recoverLiveMediaAdmissionAuthentication } from './live-media-auth-recovery.ts';
 import { requestWithLiveMediaAdmissionRetry } from './live-media-admission-retry.ts';
 import { readFunctionErrorCode } from './live-function-error.ts';
 
 export const requestLiveMediaAdmission = async (
   request: LiveMediaAdmissionRequest,
+  options?: LiveMediaAdmissionRequestOptions,
 ): Promise<LiveMediaAdmission> => requestWithLiveMediaAdmissionRetry(async () => {
   const { data, error } = await supabase.functions.invoke('live-rtc-token', {
     body: request,
@@ -16,4 +19,7 @@ export const requestLiveMediaAdmission = async (
 
   if (error) throw new Error(await readFunctionErrorCode(error));
   return parseLiveMediaAdmission(data);
+}, {
+  recoverAuthentication:
+    options?.recoverAuthentication ?? recoverLiveMediaAdmissionAuthentication,
 });

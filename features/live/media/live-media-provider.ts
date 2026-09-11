@@ -46,8 +46,13 @@ export type LiveMediaAdmissionRequest = {
   sessionId: string;
 };
 
+export type LiveMediaAdmissionRequestOptions = {
+  recoverAuthentication?: () => Promise<boolean>;
+};
+
 export type LiveMediaAdmissionRequester = (
   request: LiveMediaAdmissionRequest,
+  options?: LiveMediaAdmissionRequestOptions,
 ) => Promise<LiveMediaAdmission>;
 
 export type LiveMediaSessionOptions = {

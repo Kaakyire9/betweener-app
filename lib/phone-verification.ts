@@ -66,7 +66,7 @@ export class PhoneVerificationService {
     return this.looksLikeJwt(token) ? token : null;
   }
 
-  private static async getAccessTokenFast(timeoutMs: number = 5000): Promise<string | null> {
+  private static async getAccessTokenFast(): Promise<string | null> {
     // Always prefer a real access token; never "invent" one by using the anon key as bearer.
     // When this returns null, callers may still call functions anonymously (verify_jwt=false)
     // but the backend will not be able to bind the verification row to a user_id.
@@ -76,12 +76,8 @@ export class PhoneVerificationService {
         return cached.token;
       }
 
-      const { data } = await Promise.race([
-        supabase.auth.getSession(),
-        new Promise<{ data: { session: null } }>((resolve) =>
-          setTimeout(() => resolve({ data: { session: null } }), timeoutMs)
-        ),
-      ]);
+      const { data, error } = await supabase.auth.getSession();
+      if (error) throw error;
 
       const token = data?.session?.access_token ?? null;
       const normalized = this.normalizeAccessToken(token);
@@ -95,7 +91,7 @@ export class PhoneVerificationService {
   private static async getAccessTokenWithRetry(totalWaitMs: number = 8000): Promise<string | null> {
     const startedAt = Date.now();
     while (Date.now() - startedAt < totalWaitMs) {
-      const token = await this.getAccessTokenFast(2500);
+      const token = await this.getAccessTokenFast();
       if (token) return token;
       await new Promise((r) => setTimeout(r, 250));
     }
