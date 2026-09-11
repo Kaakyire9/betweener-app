@@ -9,6 +9,7 @@ const controls = readFileSync('apps/studio/src/media/StudioMediaControls.tsx', '
 const dj = readFileSync('apps/studio/src/media/StudioDjSource.tsx', 'utf8');
 const stage = readFileSync('features/live/components/StreamLiveStage.tsx', 'utf8');
 const programStage = readFileSync('features/live/components/LiveAuthoritativeProgramStage.tsx', 'utf8');
+const liveScreen = readFileSync('app/live/[sessionId].tsx', 'utf8');
 const workspace = readFileSync('apps/studio/src/workspace/StudioWorkspace.tsx', 'utf8');
 
 const allFiles = (root: string): string[] => readdirSync(root, { withFileTypes: true }).flatMap((entry) => {
@@ -57,6 +58,15 @@ test('Studio transport identities never become public stage seats or room headco
   assert.match(stage, /!participant\.userId\.startsWith\('studio-'\)/i);
   assert.match(programStage, /trackType === 'screenShareTrack'/i);
   assert.match(programStage, /isStudioPresentationScene/i);
+});
+
+test('mobile Program is confined to Stage and never replaces Live chrome', () => {
+  assert.match(programStage, /root:\s*\{[\s\S]*top: '13%'[\s\S]*bottom: '34%'/i);
+  assert.doesNotMatch(programStage, /root:\s*\{[\s\S]*zIndex: 5/i);
+  assert.match(liveScreen, /safe:\s*\{ position: 'relative', zIndex: 10, flex: 1 \}/i);
+  assert.match(liveScreen, /<LiveCompactHeader/i);
+  assert.match(liveScreen, /<LiveConversationPanel/i);
+  assert.match(liveScreen, /<LiveControlDock/i);
 });
 
 test('Studio browser bundle cannot import Private Spark implementation', () => {

@@ -1116,7 +1116,7 @@ export default function LiveSessionScreen() {
 const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
   root: { flex: 1, backgroundColor: visual.color.canvas },
   keyboardAvoider: { flex: 1 },
-  safe: { flex: 1 },
+  safe: { position: 'relative', zIndex: 10, flex: 1 },
   stageBackground: { position: 'absolute', top: 0, right: 0, left: 0, backgroundColor: visual.color.videoChrome },
   fullStageBackground: { bottom: 0 },
   stageScrim: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },

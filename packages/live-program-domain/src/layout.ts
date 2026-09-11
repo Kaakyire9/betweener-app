@@ -133,17 +133,25 @@ export const resolveAssignedProgramLayout = (
   const required = new Set(requiredSlotsForScene(scene));
   const participants = layout.regions.filter((item) => PANEL_SLOTS.includes(item.slot)
     && (required.has(item.slot) || Boolean(assignments[item.slot])));
-  const retained = layout.regions.filter((item) => !PANEL_SLOTS.includes(item.slot));
+  const discussionSplit = canvas === 'portrait_9_16' ? 0.42 : 0.62;
+  const retained = layout.regions
+    .filter((item) => !PANEL_SLOTS.includes(item.slot))
+    .map((item) => scene === 'screen_discussion' && item.slot === 'primary'
+      ? { ...item, height: discussionSplit }
+      : item);
 
   const participantRegions = participants.map((item, index) => {
     if (scene === 'screen_discussion' || canvas === 'portrait_9_16') {
-      const y = scene === 'screen_discussion' ? 0.62 : 0.72;
+      const y = scene === 'screen_discussion' ? discussionSplit : 0.72;
+      const usePanelGrid = scene === 'screen_discussion'
+        && canvas === 'portrait_9_16'
+        && participants.length === 4;
       return {
         ...item,
-        x: index / participants.length,
-        y,
-        width: 1 / participants.length,
-        height: 1 - y,
+        x: usePanelGrid ? (index % 2) * 0.5 : index / participants.length,
+        y: usePanelGrid ? y + Math.floor(index / 2) * ((1 - y) / 2) : y,
+        width: usePanelGrid ? 0.5 : 1 / participants.length,
+        height: usePanelGrid ? (1 - y) / 2 : 1 - y,
       };
     }
     return {

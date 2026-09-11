@@ -109,9 +109,29 @@ test('Screen Discussion only renders assigned people and divides the stage evenl
   assert.deepEqual(discussion.regions.map((region) => region.slot), ['primary', 'host', 'guest_1']);
   assert.equal(discussion.regions[1]?.width, 0.5);
   assert.equal(discussion.regions[2]?.x, 0.5);
+  assert.equal(discussion.regions[0]?.height, 0.42);
+  assert.ok(Math.abs((discussion.regions[1]?.height ?? 0) - 0.58) < 0.0001);
   assert.deepEqual(visualSlotsForScene('screen_discussion'), [
     'primary', 'host', 'guest_1', 'guest_2', 'guest_3',
   ]);
+
+  const fullPanel = resolveAssignedProgramLayout('screen_discussion', 'portrait_9_16', {
+    primary: 'studio:screen', host: 'server.host', guest_1: 'participant.one',
+    guest_2: 'participant.two', guest_3: 'participant.three',
+  });
+  const expectedPanel = [
+    { x: 0, y: 0.42, width: 0.5, height: 0.29 },
+    { x: 0.5, y: 0.42, width: 0.5, height: 0.29 },
+    { x: 0, y: 0.71, width: 0.5, height: 0.29 },
+    { x: 0.5, y: 0.71, width: 0.5, height: 0.29 },
+  ];
+  fullPanel.regions.slice(1).forEach((region, index) => {
+    const expected = expectedPanel[index];
+    assert.ok(expected);
+    (['x', 'y', 'width', 'height'] as const).forEach((key) => {
+      assert.ok(Math.abs(region[key] - expected[key]) < 0.0001);
+    });
+  });
 });
 
 test('Screen Discussion auto-assigns distinct on-stage cameras', () => {
