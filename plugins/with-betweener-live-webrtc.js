@@ -11,10 +11,18 @@ const path = require('node:path');
 
 const pkg = {
   name: 'with-betweener-live-webrtc',
-  version: '1.1.0',
+  version: '1.1.1',
 };
 
 const moduleName = 'BetweenerLivePictureInPicture';
+const invalidMediaPlaybackPermission =
+  'android.permission.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK';
+const androidLiveForegroundPermissions = [
+  'android.permission.FOREGROUND_SERVICE',
+  'android.permission.FOREGROUND_SERVICE_CAMERA',
+  'android.permission.FOREGROUND_SERVICE_MICROPHONE',
+  'android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK',
+];
 
 const kotlinSources = (androidPackage) => ({
   'BetweenerLivePictureInPictureModule.kt': `package ${androidPackage}.livepip
@@ -177,6 +185,10 @@ const withAndroidPictureInPictureControls = (config) => {
   config = withAndroidManifest(config, (modConfig) => {
     const androidPackage = modConfig.android?.package;
     if (!androidPackage) throw new Error('Betweener Live PiP requires android.package');
+    const manifest = modConfig.modResults.manifest;
+    manifest['uses-permission'] = (manifest['uses-permission'] ?? []).filter(
+      (permission) => permission.$?.['android:name'] !== invalidMediaPlaybackPermission,
+    );
     const application = AndroidConfig.Manifest.getMainApplicationOrThrow(modConfig.modResults);
     application.receiver ??= [];
     const receiverName = `${androidPackage}.livepip.BetweenerLivePictureInPictureActionReceiver`;
@@ -254,6 +266,7 @@ const withBetweenerLiveWebRtc = (config) => {
     'android.permission.WAKE_LOCK',
     'android.permission.BLUETOOTH',
     'android.permission.BLUETOOTH_CONNECT',
+    ...androidLiveForegroundPermissions,
   ]);
 
   return withAndroidPictureInPictureControls(config);

@@ -117,9 +117,12 @@ test('Live native config retains privacy permissions and blocks overlay permissi
   assert.match(guardPlugin, /NSMicrophoneUsageDescription/);
   assert.match(guardPlugin, /android\.permission\.CAMERA/);
   assert.match(guardPlugin, /android\.permission\.RECORD_AUDIO/);
+  assert.match(guardPlugin, /android\.permission\.FOREGROUND_SERVICE'/);
+  assert.match(guardPlugin, /android\.permission\.FOREGROUND_SERVICE_CAMERA/);
+  assert.match(guardPlugin, /android\.permission\.FOREGROUND_SERVICE_MICROPHONE/);
+  assert.match(guardPlugin, /android\.permission\.FOREGROUND_SERVICE_MEDIA_PLAYBACK/);
   assert.match(appJson, /android\.permission\.SYSTEM_ALERT_WINDOW/);
   assert.match(appJson, /blockedPermissions/);
-  assert.doesNotMatch(appJson, /FOREGROUND_SERVICE_MEDIA_PLAYBACK/);
 });
 
 test('Android PiP controls are native, scoped and do not require overlay permission', () => {
@@ -160,7 +163,7 @@ test('long-running Live leases are confirmed while leaked leases remain observab
   assert.match(scopedScreenAwakeHook, /confirmScreenAwake\(tag\)/);
 });
 
-test('resolved iOS native config declares active RTC background modes', () => {
+test('resolved native config declares active RTC background support', () => {
   const result = spawnSync(
     process.execPath,
     [path.join(root, 'node_modules/expo/bin/cli'), 'config', '--type', 'introspect', '--json'],
@@ -173,9 +176,41 @@ test('resolved iOS native config declares active RTC background modes', () => {
   assert.equal(result.status, 0, result.stderr);
   const resolved = JSON.parse(result.stdout) as {
     ios?: { infoPlist?: { UIBackgroundModes?: string[] } };
+    _internal?: {
+      modResults?: {
+        android?: {
+          manifest?: {
+            manifest?: {
+              'uses-permission'?: { $?: { 'android:name'?: string } }[];
+            };
+          };
+        };
+      };
+    };
   };
   const backgroundModes = resolved.ios?.infoPlist?.UIBackgroundModes ?? [];
   assert.equal(backgroundModes.includes('audio'), true);
   assert.equal(backgroundModes.includes('voip'), true);
   assert.equal(backgroundModes.includes('remote-notification'), true);
+
+  const permissions =
+    resolved._internal?.modResults?.android?.manifest?.manifest?.['uses-permission']
+      ?.map((permission) => permission.$?.['android:name']) ?? [];
+  assert.equal(permissions.includes('android.permission.FOREGROUND_SERVICE'), true);
+  assert.equal(
+    permissions.includes('android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK'),
+    true,
+  );
+  assert.equal(
+    permissions.includes('android.permission.FOREGROUND_SERVICE_CAMERA'),
+    true,
+  );
+  assert.equal(
+    permissions.includes('android.permission.FOREGROUND_SERVICE_MICROPHONE'),
+    true,
+  );
+  assert.equal(
+    permissions.includes('android.permission.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK'),
+    false,
+  );
 });
