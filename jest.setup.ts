@@ -28,8 +28,8 @@ jest.mock("expo-clipboard", () => ({
 jest.mock("expo-constants", () => ({
   __esModule: true,
   default: {
-    expoConfig: { version: "1.1.1", extra: {} },
-    nativeAppVersion: "1.1.1",
+    expoConfig: { version: "1.2.0", extra: {} },
+    nativeAppVersion: "1.2.0",
     nativeBuildVersion: "1",
     executionEnvironment: "storeClient",
   },
