@@ -1,6 +1,6 @@
 import {
   isStudioPresentationScene,
-  resolveProgramLayout,
+  resolveAssignedProgramLayout,
   type ProgramSource,
   type ProgramState,
 } from '@betweener/live-program-domain';
@@ -43,7 +43,9 @@ export const LiveAuthoritativeProgramStage = memo(function LiveAuthoritativeProg
   sdk: StreamVideoSdkModule;
 }) {
   if (!program || !isStudioPresentationScene(program.scene)) return null;
-  const layout = resolveProgramLayout(program.scene, 'portrait_9_16');
+  const layout = resolveAssignedProgramLayout(
+    program.scene, 'portrait_9_16', program.sourceAssignments,
+  );
   const sourcesByKey = new Map(sources.map((source) => [source.key, source]));
   const participantsByUserId = new Map(rtcParticipants.map((participant) => [participant.userId, participant]));
 

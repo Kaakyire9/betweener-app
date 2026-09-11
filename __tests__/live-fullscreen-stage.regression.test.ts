@@ -108,7 +108,7 @@ test('stage management stays outside the public canvas in Live Studio', () => {
   assert.match(liveStudio, /<LiveHostedMatchingPanel/);
   assert.match(stageDesk, /STAGE DESK/);
   assert.match(stageDesk, /presentation\?: 'overlay' \| 'studio'/);
-  assert.match(liveScreen, /height: '30%'/);
+  assert.match(liveScreen, /conversationGlass:\s*\{ height: '27%'/);
   assert.match(compactHeader, /minHeight: 56/);
   assert.match(compactHeader, /hostAvatarUrl/);
   assert.match(compactHeader, /hostAvatarShell:[\s\S]*width: 46[\s\S]*height: 46/);
@@ -124,6 +124,9 @@ test('Room Pulse remains open by default while Odo owns the programme', () => {
   assert.match(liveScreen, /roomPulseExpanded/);
   assert.match(liveScreen, /expanded=\{roomPulseExpanded\}/);
   assert.match(liveScreen, /onExpandedChange=\{setRoomPulseExpanded\}/);
+  assert.match(liveScreen, /conversationGlass:\s*\{ height: '27%'/);
+  assert.match(liveScreen, /conversationGlassExpanded:\s*\{ height: '27%'/);
+  assert.doesNotMatch(liveScreen, /conversationGlassExpanded:\s*\{ height: '38%'/);
   assert.match(conversationPanel, /comments\.slice\(-3\)/);
   assert.match(conversationPanel, /presentation="trigger"/);
   assert.doesNotMatch(conversationPanel, /presentation="compact"/);
@@ -135,7 +138,7 @@ test('Quick Connect always gives the host and pool equal stage space', () => {
   assert.match(quickConnectStage, /poolPane:\s*\{[\s\S]*?flex: 1/);
   assert.doesNotMatch(quickConnectStage, /compactPool|poolPaneCompact/);
   assert.doesNotMatch(liveScreen, /compactPool=/);
-  assert.match(liveScreen, /quickConnectConversationGlass:\s*\{\s*height: '30%', maxHeight: '30%'/);
+  assert.match(liveScreen, /quickConnectConversationGlass:\s*\{\s*height: '27%', maxHeight: '27%'/);
 });
 
 test('Live surfaces inherit official light and dark brand themes', () => {

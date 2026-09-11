@@ -1,5 +1,5 @@
 import {
-  resolveProgramLayout,
+  resolveAssignedProgramLayout,
   type ProgramPreviewState,
   type ProgramSource,
   type ProgramState,
@@ -37,7 +37,9 @@ function ConnectedProgramRenderer({
 }) {
   const { useParticipants } = useCallStateHooks();
   const participants = useParticipants();
-  const layout = resolveProgramLayout(state.scene, state.targetCanvas);
+  const layout = resolveAssignedProgramLayout(
+    state.scene, state.targetCanvas, state.sourceAssignments,
+  );
   const byKey = new Map(sources.map((source) => [source.key, source]));
   const studioParticipants = participants.filter((participant) => participant.userId.startsWith('studio-'));
   const roomParticipants = participants.filter((participant) => !participant.userId.startsWith('studio-'));
@@ -109,7 +111,9 @@ export function ProgramRenderer({
 }) {
   const { binding } = useStudioMedia();
   if (binding) return <ConnectedProgramRenderer state={state} sources={sources} label={label} />;
-  const layout = resolveProgramLayout(state.scene, state.targetCanvas);
+  const layout = resolveAssignedProgramLayout(
+    state.scene, state.targetCanvas, state.sourceAssignments,
+  );
   const byKey = new Map(sources.map((source) => [source.key, source]));
   return (
     <div className={`program-canvas canvas-${state.targetCanvas}`} aria-label={label}>

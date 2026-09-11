@@ -11,10 +11,13 @@ import {
   previewFromProgram,
   reduceProgramPreview,
   requiredSlotsForScene,
+  resolveAssignedProgramLayout,
   resolveProgramLayout,
+  visualSlotsForScene,
   type ProgramSource,
   type ProgramState,
 } from '../packages/live-program-domain/src/index.ts';
+import { assignmentsForScene } from '../apps/studio/src/program/source-assignments.ts';
 import { parseLiveProgramSnapshotV2 } from '../features/live/odo/show/odo-show-validation.ts';
 
 const sessionId = '11111111-1111-4111-8111-111111111111';
@@ -88,6 +91,59 @@ test('10G presentation scenes have deterministic source requirements and layouts
   assert.equal(isStudioPresentationScene('host_focus'), false);
   assert.deepEqual(requiredSlotsForScene('screen_plus_host'), ['primary', 'host']);
   assert.equal(resolveProgramLayout('screen_plus_host', 'portrait_9_16').regions[1]?.treatment, 'pip');
+});
+
+test('Screen Discussion only renders assigned people and divides the stage evenly', () => {
+  const hostOnly = resolveAssignedProgramLayout(
+    'screen_discussion', 'portrait_9_16', { primary: 'studio:screen', host: 'server.host' },
+  );
+  assert.deepEqual(hostOnly.regions.map((region) => region.slot), ['primary', 'host']);
+  assert.deepEqual(
+    { x: hostOnly.regions[1]?.x, width: hostOnly.regions[1]?.width },
+    { x: 0, width: 1 },
+  );
+
+  const discussion = resolveAssignedProgramLayout('screen_discussion', 'portrait_9_16', {
+    primary: 'studio:screen', host: 'server.host', guest_1: 'participant.guest',
+  });
+  assert.deepEqual(discussion.regions.map((region) => region.slot), ['primary', 'host', 'guest_1']);
+  assert.equal(discussion.regions[1]?.width, 0.5);
+  assert.equal(discussion.regions[2]?.x, 0.5);
+  assert.deepEqual(visualSlotsForScene('screen_discussion'), [
+    'primary', 'host', 'guest_1', 'guest_2', 'guest_3',
+  ]);
+});
+
+test('Screen Discussion auto-assigns distinct on-stage cameras', () => {
+  const hostUserId = '44444444-4444-4444-8444-444444444444';
+  const guestOneId = '55555555-5555-4555-8555-555555555555';
+  const guestTwoId = '66666666-6666-4666-8666-666666666666';
+  const makeSource = (
+    key: string,
+    type: ProgramSource['type'],
+    ownerUserId: string | null,
+  ): ProgramSource => ({
+    ...source,
+    id: `${key}.id`,
+    key,
+    type,
+    ownerUserId,
+    providerUserId: ownerUserId,
+  });
+  const assignments = assignmentsForScene('screen_discussion', [
+    makeSource('studio:screen', 'screen_share', hostUserId),
+    makeSource('server.host', 'host_camera', hostUserId),
+    makeSource('participant.host', 'participant_camera', hostUserId),
+    makeSource('participant.guest1', 'participant_camera', guestOneId),
+    makeSource('participant.guest2', 'participant_camera', guestTwoId),
+  ], {});
+
+  assert.deepEqual(assignments, {
+    primary: 'studio:screen',
+    host: 'server.host',
+    guest_1: 'participant.guest1',
+    guest_2: 'participant.guest2',
+  });
 });
 
 test('Preview is local and TAKE carries both fencing versions', () => {

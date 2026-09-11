@@ -2,6 +2,7 @@ import type {
   ProgramLayout,
   ProgramRegion,
   ProgramScene,
+  ProgramSourceAssignments,
   ProgramSourceSlot,
   ProgramTargetCanvas,
 } from './contracts.ts';
@@ -105,6 +106,56 @@ export const resolveProgramLayout = (
     ? portraitPresentation(base)
     : base;
   return { scene, canvas, regions };
+};
+
+const PANEL_SLOTS: readonly ProgramSourceSlot[] = ['host', 'guest_1', 'guest_2', 'guest_3'];
+
+export const visualSlotsForScene = (scene: ProgramScene): readonly ProgramSourceSlot[] => {
+  const regions = CONVERSATION_LAYOUTS[scene] ?? PRESENTATION_LAYOUTS[scene] ?? [];
+  return [...new Set(regions
+    .filter((item) => item.treatment !== 'audio')
+    .map((item) => item.slot))];
+};
+
+/**
+ * Removes unused optional panel positions and lets the people who are actually
+ * assigned share the available stage space. Required positions stay visible so
+ * Preview can still explain an incomplete scene.
+ */
+export const resolveAssignedProgramLayout = (
+  scene: ProgramScene,
+  canvas: ProgramTargetCanvas,
+  assignments: ProgramSourceAssignments,
+): ProgramLayout => {
+  const layout = resolveProgramLayout(scene, canvas);
+  if (scene !== 'screen_discussion' && scene !== 'screen_plus_panel') return layout;
+
+  const required = new Set(requiredSlotsForScene(scene));
+  const participants = layout.regions.filter((item) => PANEL_SLOTS.includes(item.slot)
+    && (required.has(item.slot) || Boolean(assignments[item.slot])));
+  const retained = layout.regions.filter((item) => !PANEL_SLOTS.includes(item.slot));
+
+  const participantRegions = participants.map((item, index) => {
+    if (scene === 'screen_discussion' || canvas === 'portrait_9_16') {
+      const y = scene === 'screen_discussion' ? 0.62 : 0.72;
+      return {
+        ...item,
+        x: index / participants.length,
+        y,
+        width: 1 / participants.length,
+        height: 1 - y,
+      };
+    }
+    return {
+      ...item,
+      x: 0.7,
+      y: index / participants.length,
+      width: 0.3,
+      height: 1 / participants.length,
+    };
+  });
+
+  return { ...layout, regions: [...retained, ...participantRegions] };
 };
 
 export const requiredSlotsForScene = (scene: ProgramScene): readonly ProgramSourceSlot[] => {

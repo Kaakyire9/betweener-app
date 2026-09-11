@@ -1,6 +1,6 @@
 import {
   PROGRAM_SCENES,
-  requiredSlotsForScene,
+  visualSlotsForScene,
   type ProgramPreviewState,
   type ProgramScene,
   type ProgramSource,
@@ -8,6 +8,8 @@ import {
   type ProgramTargetCanvas,
   type ProgramTransition,
 } from '@betweener/live-program-domain';
+
+import { sourceFitsSlot } from './source-assignments.ts';
 
 const LABELS: Record<ProgramScene, string> = {
   host_focus: 'Host',
@@ -32,44 +34,7 @@ const LABELS: Record<ProgramScene, string> = {
   dj_plus_pool: 'DJ + Pool',
 };
 
-const sourceFitsSlot = (slot: ProgramSourceSlot, source: ProgramSource): boolean => {
-  switch (slot) {
-    case 'primary': return source.type === 'screen_share';
-    case 'host': return source.type === 'host_camera';
-    case 'pair': return source.type === 'active_pair';
-    case 'pool': return source.type === 'quick_connect_pool';
-    case 'pulse': return source.type === 'audience_pulse';
-    case 'odo': return source.type === 'odo_stage' || source.type === 'branded_visual';
-    case 'audio_atmosphere': return source.type === 'dj_audio' || source.type === 'programme_music';
-    case 'audio_host': return source.type === 'host_microphone';
-    case 'audio_screen': return source.type === 'screen_share_audio';
-    default: return source.type === 'participant_camera' || source.type === 'host_camera';
-  }
-};
-
-export const assignmentsForScene = (
-  scene: ProgramScene,
-  sources: readonly ProgramSource[],
-  current: ProgramPreviewState['sourceAssignments'],
-) => {
-  const next = { ...current };
-  requiredSlotsForScene(scene).forEach((slot) => {
-    const existing = sources.find((source) => source.key === next[slot]);
-    if (!existing || !sourceFitsSlot(slot, existing)) {
-      next[slot] = sources.find((source) => sourceFitsSlot(slot, source)
-        && ['ready', 'live'].includes(source.readiness) && source.health !== 'lost')?.key;
-      if (!next[slot]) delete next[slot];
-    }
-  });
-  if (scene === 'host_focus' && !next.host) next.host = 'server.host';
-  if (scene === 'pool_focus' && !next.pool) next.pool = 'server.pool';
-  if (scene === 'quick_connect_active' && !next.pair) next.pair = 'server.pair';
-  if (scene === 'audience_pulse' && !next.pulse) next.pulse = 'server.pulse';
-  if (['odo_stage','conversation_topic','music_intermission','branded_intermission','session_closing']
-    .includes(scene) && !next.odo) next.odo = scene === 'branded_intermission'
-      ? 'server.brand' : 'server.odo';
-  return next;
-};
+export { assignmentsForScene } from './source-assignments.ts';
 
 export function SceneLibrary({
   preview,
@@ -86,10 +51,10 @@ export function SceneLibrary({
   onCanvas: (canvas: ProgramTargetCanvas) => void;
   onTransition: (transition: ProgramTransition) => void;
 }) {
-  const requiredSlots = requiredSlotsForScene(preview.scene);
+  const visualSlots = visualSlotsForScene(preview.scene);
   const audioSlots = (['audio_host', 'audio_screen', 'audio_atmosphere'] as const)
     .filter((slot) => sources.some((source) => sourceFitsSlot(slot, source)));
-  const assignableSlots = [...requiredSlots, ...audioSlots.filter((slot) => !requiredSlots.includes(slot))];
+  const assignableSlots = [...visualSlots, ...audioSlots.filter((slot) => !visualSlots.includes(slot))];
   return (
     <div className="stack-md">
       <div className="scene-grid" role="list" aria-label="Program scenes">
