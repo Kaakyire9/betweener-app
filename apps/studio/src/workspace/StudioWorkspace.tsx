@@ -22,6 +22,7 @@ import { StudioMediaProvider } from '../media/studio-media-context.tsx';
 import { OperationalPanels } from '../panels/OperationalPanels.tsx';
 import { ProgramRenderer } from '../program/ProgramRenderer.tsx';
 import { assignmentsForScene, SceneLibrary } from '../program/SceneLibrary.tsx';
+import { assignmentsContainTerminalSource } from '../program/source-assignments.ts';
 
 export function StudioWorkspace({
   sessionId,
@@ -40,7 +41,10 @@ export function StudioWorkspace({
   useEffect(() => {
     if (!snapshot) return;
     setPreview((current) => {
-      if (!current || (!current.dirty && current.baseProgramVersion !== snapshot.program.programVersion)) {
+      if (!current
+        || (!current.dirty && current.baseProgramVersion !== snapshot.program.programVersion)
+        || (current.dirty
+          && assignmentsContainTerminalSource(current.sourceAssignments, snapshot.sources))) {
         return previewFromProgram(snapshot.program);
       }
       return current;

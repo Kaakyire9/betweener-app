@@ -88,6 +88,9 @@ export const LIVE_MUSIC_ACTIONS = [
   'set_mood',
   'duck',
   'unduck',
+  'repeat_off',
+  'repeat_one',
+  'repeat_all',
   'stop',
 ] as const;
 export type LiveMusicAction = (typeof LIVE_MUSIC_ACTIONS)[number];
@@ -154,9 +157,11 @@ export type LiveMusicPlaybackGrant = {
   trackId: string;
   uri: string;
   expiresAt: string;
+  durationSeconds: number;
   programStartedAt: string;
   playbackOffsetSeconds: number;
   volume: number;
+  repeatMode: 'off' | 'one' | 'all';
   stateVersion: number;
 };
 

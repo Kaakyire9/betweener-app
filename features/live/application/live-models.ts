@@ -215,6 +215,25 @@ export type LiveSeatRequest = {
   avatarUrl: string | null;
 };
 
+export type LiveStageInvitationStatus =
+  | 'pending'
+  | 'accepted'
+  | 'declined'
+  | 'expired'
+  | 'cancelled';
+
+export type LiveStageInvitation = {
+  id: string;
+  sessionId: string;
+  userId: string;
+  profileId: string;
+  invitedByUserId: string;
+  status: LiveStageInvitationStatus;
+  invitedAt: string;
+  expiresAt: string;
+  respondedAt: string | null;
+};
+
 export type LiveComment = {
   id: string;
   sessionId: string;
@@ -272,8 +291,11 @@ export type LiveSessionSnapshot = {
   capabilities: readonly LiveCapability[];
   stage: readonly LiveParticipant[];
   backstage: readonly LiveParticipant[];
+  audience: readonly LiveParticipant[];
   audienceCount: number;
   seatRequests: readonly LiveSeatRequest[];
+  stageInvitations: readonly LiveStageInvitation[];
+  myStageInvitation: LiveStageInvitation | null;
   comments: readonly LiveComment[];
   commentCount: number;
 };

@@ -17,6 +17,8 @@ export const useLiveProgram = (options: {
   const refreshRef = useRef<Promise<void> | null>(null);
   const engineRef = useRef<LiveMusicEngine | null>(null);
   const loadedTrackRef = useRef<string | null>(null);
+  const loadedStateVersionRef = useRef<number | null>(null);
+  const completionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -54,6 +56,9 @@ export const useLiveProgram = (options: {
       const engine = engineRef.current;
       engineRef.current = null;
       loadedTrackRef.current = null;
+      loadedStateVersionRef.current = null;
+      if (completionTimerRef.current) clearTimeout(completionTimerRef.current);
+      completionTimerRef.current = null;
       if (engine) void engine.dispose();
       return;
     }
@@ -61,10 +66,15 @@ export const useLiveProgram = (options: {
     if (!music || !music.enabled || !music.playbackAvailable || !music.trackId
       || !['playing', 'ducked', 'fading'].includes(music.status)) {
       if (engineRef.current) void engineRef.current.pause();
+      if (completionTimerRef.current) clearTimeout(completionTimerRef.current);
+      completionTimerRef.current = null;
       if (!music || music.status === 'stopped' || !music.trackId) {
         const engine = engineRef.current;
         engineRef.current = null;
         loadedTrackRef.current = null;
+        loadedStateVersionRef.current = null;
+        if (completionTimerRef.current) clearTimeout(completionTimerRef.current);
+        completionTimerRef.current = null;
         if (engine) void engine.dispose();
       }
       return;
@@ -74,17 +84,46 @@ export const useLiveProgram = (options: {
       const engine = engineRef.current
         ?? (options.engineFactory ? options.engineFactory() : new ExpoLiveMusicEngine());
       engineRef.current = engine;
-      if (loadedTrackRef.current !== music.trackId) {
+      if (loadedTrackRef.current !== music.trackId
+        || loadedStateVersionRef.current !== music.stateVersion) {
         const grant = await liveRepository.getLiveMusicPlayback(options.sessionId);
         if (cancelled || grant.trackId !== music.trackId) return;
         const elapsed = Math.max(0,
           (Date.now() - Date.parse(grant.programStartedAt)) / 1000);
-        await engine.load({
-          uri: grant.uri,
-          offsetSeconds: Math.max(grant.playbackOffsetSeconds, elapsed),
-          volume: music.volume,
-        });
+        const absoluteOffset = Math.max(grant.playbackOffsetSeconds, elapsed);
+        const offsetSeconds = grant.repeatMode === 'one'
+          ? absoluteOffset % grant.durationSeconds
+          : Math.min(absoluteOffset, grant.durationSeconds);
+        if (loadedTrackRef.current !== grant.trackId) {
+          await engine.load({
+            uri: grant.uri,
+            offsetSeconds,
+            volume: music.volume,
+            repeatOne: grant.repeatMode === 'one',
+          });
+        } else {
+          await engine.setVolume(music.volume);
+          await engine.setRepeatOne(grant.repeatMode === 'one');
+        }
         loadedTrackRef.current = grant.trackId;
+        loadedStateVersionRef.current = grant.stateVersion;
+        if (completionTimerRef.current) clearTimeout(completionTimerRef.current);
+        completionTimerRef.current = null;
+        if (grant.repeatMode !== 'one') {
+          const remainingMilliseconds = Math.max(
+            250,
+            (grant.durationSeconds - offsetSeconds) * 1_000,
+          );
+          completionTimerRef.current = setTimeout(() => {
+            completionTimerRef.current = null;
+            void liveRepository.completeLiveMusicPlayback(
+              options.sessionId,
+              grant.stateVersion,
+            ).catch(() => {
+              if (mountedRef.current) setError('live_music_completion_unavailable');
+            });
+          }, remainingMilliseconds);
+        }
       } else {
         await engine.setVolume(music.volume);
       }
@@ -103,6 +142,9 @@ export const useLiveProgram = (options: {
     const engine = engineRef.current;
     engineRef.current = null;
     loadedTrackRef.current = null;
+    loadedStateVersionRef.current = null;
+    if (completionTimerRef.current) clearTimeout(completionTimerRef.current);
+    completionTimerRef.current = null;
     if (engine) void engine.dispose();
   }, []);
 

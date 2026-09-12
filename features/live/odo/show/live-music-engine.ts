@@ -2,6 +2,7 @@ export type LiveMusicPlaybackCommand = {
   uri: string;
   offsetSeconds: number;
   volume: number;
+  repeatOne: boolean;
 };
 
 /** Platform-neutral boundary. Odo controls logical music state, never a player. */
@@ -11,6 +12,7 @@ export interface LiveMusicEngine {
   pause(): Promise<void>;
   seek(offsetSeconds: number): Promise<void>;
   setVolume(volume: number): Promise<void>;
+  setRepeatOne(enabled: boolean): Promise<void>;
   stop(): Promise<void>;
   dispose(): Promise<void>;
 }
@@ -20,6 +22,7 @@ export class NoopLiveMusicEngine implements LiveMusicEngine {
   async pause(): Promise<void> {}
   async seek(_offsetSeconds: number): Promise<void> {}
   async setVolume(_volume: number): Promise<void> {}
+  async setRepeatOne(_enabled: boolean): Promise<void> {}
   async stop(): Promise<void> {}
   async dispose(): Promise<void> {}
 }

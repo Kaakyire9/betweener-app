@@ -1,3 +1,4 @@
+import { LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT } from '@betweener/live-program-domain';
 import {
   LIVE_CAPABILITIES,
   type LiveCapability,
@@ -38,6 +39,8 @@ import type {
   LiveRsvpStatus,
   LiveRoomPulseSnapshot,
   LiveSeatRequest,
+  LiveStageInvitation,
+  LiveStageInvitationStatus,
   LiveSessionRecord,
   LiveSessionRecap,
   LiveSessionSnapshot,
@@ -78,6 +81,9 @@ const QUICK_CONNECT_QUEUE_STATUSES = [
 ] as const satisfies readonly LiveQuickConnectQueueStatus[];
 const AUDIENCE_POLL_KINDS = ['question_poll', 'room_poll'] as const satisfies readonly LiveAudiencePollKind[];
 const AUDIENCE_POLL_STATES = ['open', 'closed', 'cancelled'] as const satisfies readonly LiveAudiencePollState[];
+const STAGE_INVITATION_STATUSES = [
+  'pending', 'accepted', 'declined', 'expired', 'cancelled',
+] as const satisfies readonly LiveStageInvitationStatus[];
 
 const parseRsvp = (value: unknown): LiveRsvpStatus =>
   includes(RSVP_VALUES, value) ? value : 'none';
@@ -153,6 +159,23 @@ const parseLiveSeatRequest = (value: unknown): LiveSeatRequest => {
   };
 };
 
+const parseLiveStageInvitation = (value: unknown): LiveStageInvitation => {
+  if (!isRecord(value) || !includes(STAGE_INVITATION_STATUSES, value.status)) {
+    throw new Error('live_stage_invitation_invalid');
+  }
+  return {
+    id: asString(value.id),
+    sessionId: asString(value.session_id),
+    userId: asString(value.user_id),
+    profileId: asString(value.profile_id),
+    invitedByUserId: asString(value.invited_by_user_id),
+    status: value.status,
+    invitedAt: asString(value.invited_at),
+    expiresAt: asString(value.expires_at),
+    respondedAt: asNullableString(value.responded_at),
+  };
+};
+
 export const parseLiveComment = (value: unknown): LiveComment => {
   if (!isRecord(value)) throw new Error('live_comment_invalid');
   return {
@@ -171,7 +194,10 @@ export const parseLiveComment = (value: unknown): LiveComment => {
 
 const parseSessionRecord = (value: unknown): LiveSessionRecord => {
   if (!isRecord(value)) throw new Error('live_session_invalid');
-  const maximumPublishers = Math.max(1, Math.min(asNumber(value.maximum_publishers, 4), 4));
+  const maximumPublishers = Math.max(1, Math.min(
+    asNumber(value.maximum_publishers, LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT),
+    LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT,
+  ));
   const maximumGuestSeats = Math.max(0, maximumPublishers - 1);
   const stageRequestCapacity = Math.max(
     0,
@@ -243,7 +269,10 @@ export const parseLiveSessionSummary = (value: unknown): LiveSessionSummary => {
     teaserDurationSeconds: value.teaser_duration_seconds == null
       ? null
       : Math.max(0, asNumber(value.teaser_duration_seconds)),
-    maximumPublishers: Math.max(1, Math.min(asNumber(value.maximum_publishers, 4), 4)),
+    maximumPublishers: Math.max(1, Math.min(
+      asNumber(value.maximum_publishers, LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT),
+      LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT,
+    )),
     rsvpStatus: parseRsvp(value.rsvp_status),
     participantState: parseState(value.participant_state),
     audienceCount: asNumber(value.audience_count),
@@ -376,10 +405,17 @@ export const parseLiveSessionSnapshot = (value: unknown): LiveSessionSnapshot =>
     capabilities,
     stage: Array.isArray(value.stage) ? value.stage.map(parseLiveParticipant) : [],
     backstage: Array.isArray(value.backstage) ? value.backstage.map(parseLiveParticipant) : [],
+    audience: Array.isArray(value.audience) ? value.audience.map(parseLiveParticipant) : [],
     audienceCount: asNumber(value.audienceCount),
     seatRequests: Array.isArray(value.seatRequests)
       ? value.seatRequests.map(parseLiveSeatRequest)
       : [],
+    stageInvitations: Array.isArray(value.stageInvitations)
+      ? value.stageInvitations.map(parseLiveStageInvitation)
+      : [],
+    myStageInvitation: value.myStageInvitation == null
+      ? null
+      : parseLiveStageInvitation(value.myStageInvitation),
     comments,
     commentCount: Math.max(asNumber(value.commentCount), comments.length),
   };

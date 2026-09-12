@@ -9,7 +9,7 @@ import {
   type ProgramTransition,
 } from '@betweener/live-program-domain';
 
-import { sourceFitsSlot } from './source-assignments.ts';
+import { isProgramSourceUsable, sourceFitsSlot } from './source-assignments.ts';
 
 const LABELS: Record<ProgramScene, string> = {
   host_focus: 'Host',
@@ -53,7 +53,8 @@ export function SceneLibrary({
 }) {
   const visualSlots = visualSlotsForScene(preview.scene);
   const audioSlots = (['audio_host', 'audio_screen', 'audio_atmosphere'] as const)
-    .filter((slot) => sources.some((source) => sourceFitsSlot(slot, source)));
+    .filter((slot) => sources.some((source) => sourceFitsSlot(slot, source)
+      && isProgramSourceUsable(source)));
   const assignableSlots = [...visualSlots, ...audioSlots.filter((slot) => !visualSlots.includes(slot))];
   return (
     <div className="stack-md">
@@ -71,10 +72,11 @@ export function SceneLibrary({
           <select value={preview.sourceAssignments[slot] ?? ''}
             onChange={(event) => onAssignment(slot, event.target.value || null)}>
             <option value="">Choose source</option>
-            {sources.filter((source) => sourceFitsSlot(slot, source)).map((source) => (
-              <option key={source.id} value={source.key} disabled={
-                !['ready', 'live'].includes(source.readiness) || source.health === 'lost'
-              }>{source.key} · {source.readiness}</option>
+            {sources.filter((source) => sourceFitsSlot(slot, source)
+              && isProgramSourceUsable(source)).map((source) => (
+              <option key={source.id} value={source.key}>
+                {source.key} · {source.readiness}
+              </option>
             ))}
           </select>
         </label>)}

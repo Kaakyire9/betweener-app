@@ -88,6 +88,8 @@ test('Edge requests cannot inject a scene, person, track, prompt or action', () 
   assert.match(showEdge, /rpc_service_reconcile_live_odo_show_v1/i);
   assert.doesNotMatch(showEdge, /body\.(?:scene|action|track|pair|person|prompt|model)/i);
   assert.match(musicEdge, /rpc_service_get_live_music_playback_v1/i);
+  assert.match(musicEdge, /completedStateVersion/i);
+  assert.match(musicEdge, /rpc_service_complete_live_music_playback_v1/i);
   assert.match(musicEdge, /createSignedUrl/i);
   assert.doesNotMatch(musicEdge, /body\.(?:track|path|bucket|url|uri)/i);
 });

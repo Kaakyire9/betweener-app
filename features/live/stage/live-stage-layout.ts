@@ -1,3 +1,4 @@
+import { LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT } from '@betweener/live-program-domain';
 import type { OdoCopilotScene } from '../odo/copilot/odo-copilot-contracts.ts';
 
 export type LiveStageCandidate<T> = {
@@ -133,7 +134,7 @@ export const selectLiveStageCandidates = <T>(
   candidates: readonly LiveStageCandidate<T>[],
   identities: readonly LiveStageIdentity[],
   localPublisherUserId: string | null,
-  maximumPublishers = 4,
+  maximumPublishers = LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT,
 ): LiveStageCandidate<T>[] => {
   const admittedUserIds = new Set(identities.map((identity) => identity.userId));
   if (localPublisherUserId) admittedUserIds.add(localPublisherUserId);
@@ -155,7 +156,7 @@ export const composeLiveStageSeats = <T, I extends LiveStageIdentity>(
   candidates: readonly LiveStageCandidate<T>[],
   identities: readonly I[],
   localPublisherUserId: string | null,
-  maximumPublishers = 4,
+  maximumPublishers = LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT,
 ): LiveStageSeat<T, I>[] => {
   const candidateByUserId = new Map(
     deduplicateLiveStageCandidates(candidates).map((candidate) => [candidate.userId, candidate]),

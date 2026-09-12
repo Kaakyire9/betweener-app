@@ -70,6 +70,7 @@ const bindings = () => {
         for (const listener of callingStateListeners) listener('left');
       },
     },
+    configureAudioSession: () => { events.push('audio:communicator:speaker'); },
   };
   return {
     events,
@@ -143,6 +144,7 @@ test('Stream adapter joins an audience member muted and never creates a call', a
   assert.equal(fake.events.includes('camera:enable'), false);
   assert.equal(fake.events.includes('microphone:enable'), false);
   assert.equal(fake.events.includes('join'), true);
+  assert.ok(fake.events.indexOf('audio:communicator:speaker') < fake.events.indexOf('join'));
   assert.deepEqual(result, { audioEnabled: false, videoEnabled: false, deviceIssues: [] });
 });
 
@@ -172,6 +174,7 @@ test('Stream adapter allows authorized backstage publication and serializes dupl
   ]);
 
   assert.equal(fake.events.filter((event) => event === 'join').length, 1);
+  assert.ok(fake.events.indexOf('audio:communicator:speaker') < fake.events.indexOf('join'));
   assert.equal(fake.events.filter((event) => event === 'camera:enable').length, 1);
   assert.equal(fake.events.filter((event) => event === 'microphone:enable').length, 1);
 });

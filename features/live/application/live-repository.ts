@@ -177,6 +177,17 @@ export const liveRepository = {
     }
   },
 
+  async disconnectLiveStudio(sessionId: string): Promise<void> {
+    const { data, error } = await supabase.functions.invoke('live-studio-disconnect', {
+      body: { sessionId, commandId: Crypto.randomUUID() },
+    });
+    if (error) throw new Error(await readFunctionErrorCode(error));
+    if (!data || typeof data !== 'object' || data.ok !== true
+      || typeof data.disconnected !== 'boolean') {
+      throw new Error('live_studio_disconnect_invalid');
+    }
+  },
+
   async setLiveShowScene(
     sessionId: string,
     scene: OdoShowScene,
@@ -236,13 +247,26 @@ export const liveRepository = {
       || !playback || typeof playback !== 'object'
       || typeof playback.trackId !== 'string' || typeof playback.uri !== 'string'
       || typeof playback.expiresAt !== 'string'
+      || !Number.isSafeInteger(playback.durationSeconds)
+      || playback.durationSeconds < 10 || playback.durationSeconds > 7_200
       || typeof playback.programStartedAt !== 'string'
       || typeof playback.playbackOffsetSeconds !== 'number'
       || typeof playback.volume !== 'number'
+      || !['off', 'one', 'all'].includes(String(playback.repeatMode))
       || !Number.isSafeInteger(playback.stateVersion)) {
       throw new Error('live_music_playback_invalid');
     }
     return playback as LiveMusicPlaybackGrant;
+  },
+
+  async completeLiveMusicPlayback(sessionId: string, stateVersion: number): Promise<void> {
+    const { data, error } = await supabase.functions.invoke('live-music-playback', {
+      body: { sessionId, completedStateVersion: stateVersion },
+    });
+    if (error) throw new Error(await readFunctionErrorCode(error));
+    if (!data || typeof data !== 'object' || data.ok !== true) {
+      throw new Error('live_music_completion_failed');
+    }
   },
 
   async getOdoFullQuickConnect(sessionId: string): Promise<OdoFullQuickConnectState> {
@@ -914,6 +938,21 @@ export const liveRepository = {
     await invoke('rpc_resolve_live_seat_request', {
       p_request_id: requestId,
       p_approve: approve,
+    });
+  },
+
+  async inviteToStage(sessionId: string, targetUserId: string): Promise<void> {
+    await invoke('rpc_invite_live_stage_member_v1', {
+      p_session_id: sessionId,
+      p_target_user_id: targetUserId,
+      p_invitation_id: Crypto.randomUUID(),
+    });
+  },
+
+  async respondToStageInvitation(invitationId: string, accept: boolean): Promise<void> {
+    await invoke('rpc_respond_live_stage_invitation_v1', {
+      p_invitation_id: invitationId,
+      p_accept: accept,
     });
   },
 

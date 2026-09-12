@@ -60,10 +60,23 @@ export const studioApi = {
   },
 
   async getSnapshot(sessionId: string): Promise<StudioOperationalSnapshot> {
-    const value = await rpc<unknown>('rpc_get_live_studio_snapshot_v1', {
-      p_session_id: sessionId,
-    });
-    const parsed = parseStudioOperationalSnapshot(value);
+    const [value, repeat] = await Promise.all([
+      rpc<unknown>('rpc_get_live_studio_snapshot_v1', { p_session_id: sessionId }),
+      rpc<{ repeatMode: unknown }>('rpc_get_live_music_repeat_mode_v1', {
+        p_session_id: sessionId,
+      }),
+    ]);
+    const candidate = value && typeof value === 'object' && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : null;
+    const music = candidate?.music && typeof candidate.music === 'object'
+      && !Array.isArray(candidate.music)
+      ? candidate.music as Record<string, unknown>
+      : null;
+    const hydrated = candidate && music
+      ? { ...candidate, music: { ...music, repeatMode: repeat.repeatMode } }
+      : value;
+    const parsed = parseStudioOperationalSnapshot(hydrated);
     if (!parsed) throw new Error('live_studio_snapshot_contract_invalid');
     return parsed;
   },
@@ -177,7 +190,8 @@ export const studioApi = {
 
   async controlMusic(input: {
     sessionId: string;
-    action: 'pause' | 'resume' | 'next' | 'set_volume' | 'set_mood' | 'duck' | 'unduck' | 'stop';
+    action: 'pause' | 'resume' | 'next' | 'set_volume' | 'set_mood'
+      | 'duck' | 'unduck' | 'stop' | 'repeat_off' | 'repeat_one' | 'repeat_all';
     volume?: number;
     mood?: string;
   }): Promise<void> {

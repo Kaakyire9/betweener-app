@@ -24,8 +24,17 @@ export const sourceFitsSlot = (slot: ProgramSourceSlot, source: ProgramSource): 
   }
 };
 
-const isUsable = (source: ProgramSource): boolean =>
+export const isProgramSourceUsable = (source: ProgramSource): boolean =>
   ['ready', 'live'].includes(source.readiness) && source.health !== 'lost';
+
+export const assignmentsContainTerminalSource = (
+  assignments: ProgramPreviewState['sourceAssignments'],
+  sources: readonly ProgramSource[],
+): boolean => Object.values(assignments).some((key) => {
+  const source = sources.find((candidate) => candidate.key === key);
+  return source !== undefined
+    && (['ended', 'failed'].includes(source.readiness) || source.health === 'lost');
+});
 
 const VISUAL_SLOTS: readonly ProgramSourceSlot[] = [
   'primary', 'host', 'guest_1', 'guest_2', 'guest_3', 'pair', 'pool', 'pulse', 'odo', 'pip',
@@ -57,12 +66,12 @@ export const assignmentsForScene = (
     const existing = sources.find((source) => source.key === next[slot]);
     const existingIsDistinct = existing && !usedKeys.has(existing.key)
       && (!isPanelSlot || !existing.ownerUserId || !usedOwners.has(existing.ownerUserId));
-    const selected = existing && sourceFitsSlot(slot, existing) && isUsable(existing)
+    const selected = existing && sourceFitsSlot(slot, existing) && isProgramSourceUsable(existing)
       && existingIsDistinct
       ? existing
       : [...sources]
         .sort((left, right) => sourcePriority(scene, slot, left) - sourcePriority(scene, slot, right))
-        .find((source) => sourceFitsSlot(slot, source) && isUsable(source)
+        .find((source) => sourceFitsSlot(slot, source) && isProgramSourceUsable(source)
           && !usedKeys.has(source.key)
           && (!isPanelSlot || !source.ownerUserId || !usedOwners.has(source.ownerUserId)));
 
@@ -82,5 +91,18 @@ export const assignmentsForScene = (
   if (['odo_stage', 'conversation_topic', 'music_intermission', 'branded_intermission', 'session_closing']
     .includes(scene) && !next.odo) next.odo = scene === 'branded_intermission'
       ? 'server.brand' : 'server.odo';
+  if (scene.startsWith('screen_')) {
+    const existingScreenAudio = sources.find((source) => source.key === next.audio_screen);
+    const screenAudio = existingScreenAudio
+      && sourceFitsSlot('audio_screen', existingScreenAudio)
+      && isProgramSourceUsable(existingScreenAudio)
+      ? existingScreenAudio
+      : sources.find((source) => sourceFitsSlot('audio_screen', source)
+        && isProgramSourceUsable(source));
+    if (screenAudio) next.audio_screen = screenAudio.key;
+    else delete next.audio_screen;
+  } else {
+    delete next.audio_screen;
+  }
   return next;
 };

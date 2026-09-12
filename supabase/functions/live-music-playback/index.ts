@@ -25,13 +25,21 @@ Deno.serve(async (request) => {
     return json({ error: 'invalid_request' }, 400);
   }
   let sessionId = '';
+  let completedStateVersion: number | null = null;
   try {
     const value = JSON.parse(raw);
     if (!value || typeof value !== 'object' || Array.isArray(value)
-      || Object.keys(value).length !== 1 || !UUID_PATTERN.test(String(value.sessionId))) {
+      || !UUID_PATTERN.test(String(value.sessionId))
+      || !(
+        (Object.keys(value).length === 1 && value.completedStateVersion === undefined)
+        || (Object.keys(value).length === 2
+          && Number.isSafeInteger(value.completedStateVersion)
+          && value.completedStateVersion > 0)
+      )) {
       return json({ error: 'invalid_request' }, 400);
     }
     sessionId = String(value.sessionId);
+    completedStateVersion = value.completedStateVersion ?? null;
   } catch {
     return json({ error: 'invalid_request' }, 400);
   }
@@ -47,6 +55,23 @@ Deno.serve(async (request) => {
   const service = createClient(url, env('SUPABASE_SERVICE_ROLE_KEY'), {
     auth: { autoRefreshToken: false, persistSession: false },
   });
+  if (completedStateVersion !== null) {
+    const { data: completion, error: completionError } = await service.rpc(
+      'rpc_service_complete_live_music_playback_v1',
+      {
+        p_session_id: sessionId,
+        p_user_id: actor.user.id,
+        p_expected_state_version: completedStateVersion,
+      },
+    );
+    if (completionError) {
+      console.error('[live-music-playback] completion_failed', {
+        code: completionError.code ?? 'unknown',
+      });
+      return json({ error: 'music_completion_unavailable' }, 503);
+    }
+    return json({ ok: true, completion });
+  }
   const { data: descriptor, error: descriptorError } = await service.rpc(
     'rpc_service_get_live_music_playback_v1',
     { p_session_id: sessionId, p_user_id: actor.user.id },
@@ -55,6 +80,16 @@ Deno.serve(async (request) => {
     return json({
       error: String(descriptor?.reasonCode ?? 'music_playback_unavailable'),
     }, descriptor?.reasonCode === 'private_experience_music_forbidden' ? 409 : 404);
+  }
+  const { data: repeat, error: repeatError } = await service.rpc(
+    'rpc_service_get_live_music_repeat_mode_v1',
+    { p_session_id: sessionId },
+  );
+  if (repeatError || !repeat || !['off', 'one', 'all'].includes(String(repeat.repeatMode))) {
+    console.error('[live-music-playback] repeat_state_failed', {
+      code: repeatError?.code ?? 'invalid_repeat_state',
+    });
+    return json({ error: 'music_playback_unavailable' }, 503);
   }
   const { data: signed, error: signingError } = await service.storage
     .from(String(descriptor.bucket))
@@ -70,9 +105,11 @@ Deno.serve(async (request) => {
       trackId: String(descriptor.trackId),
       uri: signed.signedUrl,
       expiresAt,
+      durationSeconds: Number(descriptor.durationSeconds),
       programStartedAt: String(descriptor.programStartedAt),
       playbackOffsetSeconds: Number(descriptor.playbackOffsetSeconds ?? 0),
       volume: Number(descriptor.volume ?? 0),
+      repeatMode: String(repeat.repeatMode),
       stateVersion: Number(descriptor.stateVersion ?? 0),
     },
   });

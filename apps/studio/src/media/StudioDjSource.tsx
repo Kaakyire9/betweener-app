@@ -17,6 +17,7 @@ type DjBinding = {
   context: AudioContext;
   gain: GainNode;
   providerUserId: string;
+  unsubscribeFromKick?: () => void;
 };
 
 export function StudioDjSource({
@@ -48,6 +49,7 @@ export function StudioDjSource({
     bindingRef.current = null;
     setBinding(null);
     if (!current) return;
+    current.unsubscribeFromKick?.();
     await current.call.microphone.disable().catch(() => undefined);
     current.handle.unregister();
     current.input.getTracks().forEach((track) => track.stop());
@@ -170,6 +172,11 @@ export function StudioDjSource({
       };
       bindingRef.current = next;
       setBinding(next);
+      next.unsubscribeFromKick = call.on('call.kicked_user', (event) => {
+        if (event.user.id !== admission.user.id) return;
+        setError('DJ input was disconnected by the Live host.');
+        void stop('studio_disconnected_by_host');
+      });
       input.getAudioTracks()[0]?.addEventListener('ended', () => {
         void stop('dj_input_disconnected');
       }, { once: true });
@@ -201,7 +208,7 @@ export function StudioDjSource({
         <div><span className="eyebrow">PRO INPUT</span><h3>DJ / audio interface</h3></div>
         <span className={`status-dot ${binding ? 'healthy' : ''}`} aria-hidden="true" />
       </div>
-      <p className="notice-copy">Use a separate browser-visible input. Headphones are strongly recommended.</p>
+      <p className="notice-copy">This is a live hardware/virtual input, not the uploaded Programme Music catalogue. Connect a USB interface, mixer, Stereo Mix, or a virtual cable; headphones are strongly recommended.</p>
       <label className="field-label">Input device
         <select disabled={Boolean(binding)} value={selectedDeviceId}
           onChange={(event) => setSelectedDeviceId(event.target.value)}>
@@ -211,6 +218,8 @@ export function StudioDjSource({
           </option>)}
         </select>
       </label>
+      <button className="text-button" disabled={Boolean(binding) || busy}
+        onClick={() => void refreshDevices()}>Refresh audio inputs</button>
       <AudioMeter level={level} label="DJ input" />
       <p className="notice-copy">{binding
         ? inProgram ? 'On Program. The room can hear this input.' : 'Armed in Preview. TAKE a scene with this atmosphere bus to make it audible.'

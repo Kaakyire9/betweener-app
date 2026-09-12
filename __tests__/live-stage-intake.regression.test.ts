@@ -62,6 +62,14 @@ const hardenedStageDepartureMigration = readFileSync(
   new URL('../supabase/migrations/20260825090000_harden_live_participant_self_stage_departure.sql', import.meta.url),
   'utf8',
 );
+const targetedInvitationMigration = readFileSync(
+  new URL('../supabase/migrations/20260912080000_live_targeted_stage_invitations.sql', import.meta.url),
+  'utf8',
+);
+const invitationPrompt = readFileSync(
+  new URL('../features/live/components/LiveStageInvitationPrompt.tsx', import.meta.url),
+  'utf8',
+);
 
 test('legacy stage intake remains closed by default and capability controlled', () => {
   assert.match(foundationMigration, /stage_requests_open boolean not null default false/i);
@@ -130,7 +138,7 @@ test('host chooses zero to three guest seats and the stage renders each availabl
   assert.match(liveScreen, /availableGuestSeats/);
 });
 
-test('seat request is touchable and failure is visible rather than silent', () => {
+test('seat request has one touchable entry point and failure is visible rather than silent', () => {
   assert.match(liveScreen, /const saved = await \(hasRequestedSeat \? controller\.withdrawSeat\(\) : controller\.requestSeat\(\)\)/);
   assert.match(liveScreen, /Seat request unavailable/);
   assert.match(liveScreen, /styles\.overlaySpacer/);
@@ -140,6 +148,25 @@ test('seat request is touchable and failure is visible rather than silent', () =
   );
   assert.match(requestTile, /onPress=\{request\.onPress\}/);
   assert.match(requestTile, /Stage request sent/);
+  assert.doesNotMatch(liveScreen, /Ask to join stage/);
+  assert.doesNotMatch(liveScreen, /styles\.seatRequest/);
+  assert.match(liveScreen, /requestSeat=\{stageRequestSeat\}/);
+});
+
+test('host roster and targeted stage invitation remain private and consent-first', () => {
+  assert.match(targetedInvitationMigration, /create table public\.live_stage_invitations/i);
+  assert.match(targetedInvitationMigration, /force row level security/i);
+  assert.match(targetedInvitationMigration, /revoke all on table public\.live_stage_invitations from public, anon, authenticated/i);
+  assert.match(targetedInvitationMigration, /'audience', case when v_can_manage_stage/i);
+  assert.match(targetedInvitationMigration, /'myStageInvitation'/i);
+  assert.match(targetedInvitationMigration, /participant\.state <> 'audience'/i);
+  assert.match(targetedInvitationMigration, /p_accept boolean/i);
+  assert.match(targetedInvitationMigration, /set state = 'on_stage'/i);
+  assert.match(stageDesk, /IN THE ROOM/);
+  assert.match(stageDesk, /Invite to stage/);
+  assert.match(invitationPrompt, /Join only when you’re ready/);
+  assert.match(invitationPrompt, /Not now/);
+  assert.match(liveScreen, /respondToStageInvitation/);
 });
 
 test('guest introduction consent stays separate from stage consent', () => {

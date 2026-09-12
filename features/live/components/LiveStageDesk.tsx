@@ -1,31 +1,39 @@
 import * as Haptics from 'expo-haptics';
+import { Image } from 'expo-image';
 import { UsersRound } from 'lucide-react-native';
 import { memo, useMemo } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import type {
+  LiveParticipant,
+  LiveSeatRequest,
+  LiveStageInvitation,
+} from '../application/live-models.ts';
 import { LiveGlassSurface } from './LiveGlassSurface.tsx';
 import { type LiveVisualTheme, useLiveVisualTheme } from './live-visual-tokens.ts';
 
-type SeatRequest = { id: string; fullName: string | null };
-type StagePerson = {
-  id: string;
-  userId: string;
-  fullName: string | null;
-  role: string;
-  microphoneMutedByModerator: boolean;
-};
+type SeatRequest = Pick<LiveSeatRequest, 'id' | 'fullName'>;
+type StagePerson = Pick<
+  LiveParticipant,
+  'id' | 'userId' | 'fullName' | 'avatarUrl' | 'role' | 'microphoneMutedByModerator'
+>;
+type StageInvitation = Pick<LiveStageInvitation, 'id' | 'userId' | 'status'>;
 
 export type LiveStageDeskProps = {
+  audience: readonly StagePerson[];
   backstage: readonly StagePerson[];
   expanded: boolean;
   onExpandedChange: (expanded: boolean) => void;
   onModerate: (userId: string, action: 'mute' | 'unmute' | 'remove') => void;
+  onInviteToStage: (userId: string) => void;
   onResolveSeat: (requestId: string, approved: boolean) => void;
   onSetOnStage: (userId: string, onStage: boolean) => void;
   maximumGuestSeats: number;
   occupiedGuestSeats: number;
   onSetStageRequestCapacity: (capacity: number) => void;
   seatRequests: readonly SeatRequest[];
+  stageInvitations: readonly StageInvitation[];
+  stageInvitationBusy?: boolean;
   stageRequestsBusy?: boolean;
   stageRequestCapacity: number;
   stage: readonly StagePerson[];
@@ -35,16 +43,20 @@ export type LiveStageDeskProps = {
 const haptic = () => void Haptics.selectionAsync().catch(() => undefined);
 
 export const LiveStageDesk = memo(function LiveStageDesk({
+  audience,
   backstage,
   expanded,
   onExpandedChange,
   onModerate,
+  onInviteToStage,
   onResolveSeat,
   onSetOnStage,
   maximumGuestSeats,
   occupiedGuestSeats,
   onSetStageRequestCapacity,
   seatRequests,
+  stageInvitations,
+  stageInvitationBusy = false,
   stageRequestsBusy = false,
   stageRequestCapacity,
   stage,
@@ -53,7 +65,18 @@ export const LiveStageDesk = memo(function LiveStageDesk({
   const visual = useLiveVisualTheme();
   const styles = useMemo(() => createStyles(visual), [visual]);
   const managedStage = stage.filter((participant) => participant.role !== 'host');
-  const waitingCount = seatRequests.length + backstage.length;
+  const waitingCount = seatRequests.length + backstage.length + audience.length;
+  const pendingInvitationUserIds = useMemo(
+    () => new Set(
+      stageInvitations
+        .filter((invitation) => invitation.status === 'pending')
+        .map((invitation) => invitation.userId),
+    ),
+    [stageInvitations],
+  );
+  const stageInvitationCapacityReached = (
+    occupiedGuestSeats + pendingInvitationUserIds.size >= maximumGuestSeats
+  );
   const confirmRemoval = (participant: StagePerson) => {
     Alert.alert(
       `Remove ${participant.fullName || 'this member'} from the Live?`,
@@ -172,7 +195,11 @@ export const LiveStageDesk = memo(function LiveStageDesk({
               : 'Open stage requests when you are ready to hear from the room.'}
           </Text>
         </View>
-      ) : <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.content}>
+      ) : null}
+      {seatRequests.length > 0 || backstage.length > 0 || managedStage.length > 0 ? (
+        <>
+          <Text style={styles.sectionLabel}>STAGE ACTIVITY</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.content}>
         {seatRequests.map((request) => (
           <View key={request.id} style={styles.card}>
             <Text numberOfLines={1} style={styles.name}>{request.fullName || 'Member'}</Text>
@@ -211,7 +238,72 @@ export const LiveStageDesk = memo(function LiveStageDesk({
             </View>
           </View>
         ))}
-      </ScrollView>}
+          </ScrollView>
+        </>
+      ) : null}
+      {audience.length > 0 ? (
+        <>
+          <Text style={styles.sectionLabel}>IN THE ROOM · {audience.length}</Text>
+          <ScrollView
+            accessibilityLabel="People watching this Live"
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.content}
+          >
+            {audience.map((participant) => {
+              const invitationPending = pendingInvitationUserIds.has(participant.userId);
+              const unavailable = stageInvitationBusy
+                || (!invitationPending && stageInvitationCapacityReached);
+              return (
+                <View key={participant.id} style={styles.card}>
+                  <View style={styles.memberRow}>
+                    {participant.avatarUrl ? (
+                      <Image
+                        accessibilityLabel={`${participant.fullName || 'Member'} profile photo`}
+                        contentFit="cover"
+                        source={{ uri: participant.avatarUrl }}
+                        style={styles.avatar}
+                        transition={120}
+                      />
+                    ) : (
+                      <View style={styles.avatarFallback}>
+                        <Text style={styles.avatarInitial}>
+                          {(participant.fullName || 'M').trim().charAt(0).toUpperCase()}
+                        </Text>
+                      </View>
+                    )}
+                    <View style={styles.memberCopy}>
+                      <Text numberOfLines={1} style={styles.name}>{participant.fullName || 'Member'}</Text>
+                      <Text style={styles.cardContext}>Watching live</Text>
+                    </View>
+                  </View>
+                  <Pressable
+                    accessibilityLabel={invitationPending
+                      ? `Stage invitation sent to ${participant.fullName || 'member'}`
+                      : `Invite ${participant.fullName || 'member'} to the stage`}
+                    accessibilityRole="button"
+                    accessibilityState={{ disabled: unavailable || invitationPending }}
+                    disabled={unavailable || invitationPending}
+                    onPress={() => onInviteToStage(participant.userId)}
+                    style={[
+                      styles.audienceInvite,
+                      invitationPending && styles.audienceInvitePending,
+                      unavailable && styles.actionDisabled,
+                    ]}
+                  >
+                    <Text style={[
+                      styles.primaryText,
+                      invitationPending && styles.audienceInvitePendingText,
+                    ]}>
+                      {invitationPending ? 'Invitation sent' : 'Invite to stage'}
+                    </Text>
+                  </Pressable>
+                </View>
+              );
+            })}
+          </ScrollView>
+        </>
+      ) : null}
     </LiveGlassSurface>
   );
 });
@@ -251,15 +343,25 @@ const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
   capacityOptionTextSelected: { color: visual.color.accentContrast },
   done: { color: visual.color.text, fontSize: 11, fontFamily: 'Manrope_700Bold' },
   content: { paddingHorizontal: 12, paddingTop: 8, gap: 8 },
+  sectionLabel: { marginTop: 14, paddingHorizontal: 14, color: visual.color.teal, fontSize: 8, letterSpacing: 1.2, fontFamily: 'Manrope_800ExtraBold' },
   emptyState: { paddingHorizontal: 16, paddingTop: 18, paddingBottom: 10 },
   emptyTitle: { color: visual.color.text, fontSize: 15, fontFamily: 'Manrope_700Bold' },
   emptyBody: { marginTop: 5, color: visual.color.textMuted, fontSize: 11, lineHeight: 17, fontFamily: 'Manrope_500Medium' },
   card: { width: 184, borderRadius: 16, padding: 11, backgroundColor: visual.color.surface, borderWidth: 1, borderColor: visual.color.borderStrong },
+  memberRow: { flexDirection: 'row', alignItems: 'center', gap: 9 },
+  memberCopy: { flex: 1, minWidth: 0 },
+  avatar: { width: 34, height: 34, borderRadius: 17, backgroundColor: visual.color.surfaceSoft },
+  avatarFallback: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.color.tealSoft, borderWidth: 1, borderColor: visual.color.borderStrong },
+  avatarInitial: { color: visual.color.teal, fontSize: 13, fontFamily: 'Manrope_800ExtraBold' },
   name: { color: visual.color.text, fontSize: 12, fontFamily: 'Manrope_700Bold' },
   cardContext: { color: visual.color.textMuted, fontSize: 9, fontFamily: 'Manrope_600SemiBold', marginTop: 2 },
   actions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 12, marginTop: 9 },
   secondary: { color: visual.color.textMuted, fontSize: 10, fontFamily: 'Manrope_700Bold' },
   remove: { color: visual.color.danger, fontSize: 9, fontFamily: 'Manrope_700Bold' },
   primary: { minHeight: 28, paddingHorizontal: 11, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.color.teal },
+  audienceInvite: { minHeight: 30, marginTop: 10, paddingHorizontal: 11, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.color.teal },
+  audienceInvitePending: { backgroundColor: visual.color.tealSoft, borderWidth: 1, borderColor: visual.color.borderStrong },
+  audienceInvitePendingText: { color: visual.color.teal },
+  actionDisabled: { opacity: 0.48 },
   primaryText: { color: visual.color.accentContrast, fontSize: 9, fontFamily: 'Manrope_800ExtraBold' },
 });

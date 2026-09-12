@@ -43,8 +43,11 @@ export function StudioMediaProvider({
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const bindingRef = useRef<MediaBinding | null>(null);
+  const kickUnsubscribeRef = useRef<(() => void) | null>(null);
 
   const disconnect = useCallback(async () => {
+    kickUnsubscribeRef.current?.();
+    kickUnsubscribeRef.current = null;
     const current = bindingRef.current;
     bindingRef.current = null;
     setBinding(null);
@@ -86,12 +89,17 @@ export function StudioMediaProvider({
       const next = { admission, client, call };
       bindingRef.current = next;
       setBinding(next);
+      kickUnsubscribeRef.current = call.on('call.kicked_user', (event) => {
+        if (event.user.id !== admission.user.id) return;
+        setError('Studio media was disconnected by the Live host.');
+        void disconnect();
+      });
     } catch (failure) {
       setError(errorMessage(failure, 'Studio media could not connect.'));
     } finally {
       setConnecting(false);
     }
-  }, [connecting, controllerInstanceId, sessionId]);
+  }, [connecting, controllerInstanceId, disconnect, sessionId]);
 
   useEffect(() => () => { void disconnect(); }, [disconnect]);
 

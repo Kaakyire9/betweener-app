@@ -10,15 +10,19 @@ with expected(version, purpose) as (values
   ('20260910123000', 'Browser media admission and recovery'),
   ('20260910124000', 'Audience-safe Program snapshot'),
   ('20260910125000', 'Studio maintenance clock'),
-  ('20260910130000', 'Phase 10F maintenance-chain repair')
+  ('20260910130000', 'Phase 10F maintenance-chain repair'),
+  ('20260911100000', 'Host Studio disconnect and five-input capacity'),
+  ('20260912080000', 'Host roster and consent-first stage invitations'),
+  ('20260912090000', 'Studio screen audio and Programme Music repeat transport'),
+  ('20260912100000', 'Studio media lifecycle and policy-safe recovery')
 )
 select expected.version, expected.purpose,
   exists (select 1 from supabase_migrations.schema_migrations migration
     where migration.version = expected.version) installed
 from expected order by expected.version;
 
--- 2. Closed-beta rollout. Screen audio may remain off until its separate
--- physical/browser validation is signed off.
+-- 2. Closed-beta rollout. This gate now includes screen audio because its
+-- browser/device validation is part of the current Studio acceptance pass.
 select
   configuration.betweener_studio_enabled,
   configuration.betweener_studio_control_enabled,
@@ -35,10 +39,11 @@ select
     and configuration.studio_session_discovery_enabled
     and configuration.studio_media_publishing_enabled
     and configuration.screen_share_enabled
+    and configuration.studio_screen_audio_enabled
     and configuration.studio_external_audio_enabled
     and configuration.studio_closed_beta
-    and configuration.studio_controller_lease_seconds between 15 and 120
-    and configuration.studio_controller_grace_seconds between 5 and 60
+    and configuration.studio_controller_lease_seconds between 90 and 120
+    and configuration.studio_controller_grace_seconds between 30 and 60
     as phase10g_rollout_healthy
 from public.live_odo_configuration configuration where configuration.id = true;
 
@@ -54,6 +59,12 @@ with expected(name, signature, authenticated_execute, service_execute) as (value
   ('upsert source', 'public.rpc_studio_upsert_live_program_source_v1(uuid,text,text,text,text,boolean,boolean,text,text,boolean,text)', true, true),
   ('end source', 'public.rpc_studio_end_live_program_source_v1(uuid,text,text)', true, true),
   ('resume Odo', 'public.rpc_studio_resume_live_odo_v1(uuid,uuid,bigint,uuid)', true, true),
+  ('host disconnect Studio', 'public.rpc_host_disconnect_live_studio_v1(uuid,uuid)', true, true),
+  ('invite audience member', 'public.rpc_invite_live_stage_member_v1(uuid,uuid,uuid)', true, true),
+  ('respond to stage invitation', 'public.rpc_respond_live_stage_invitation_v1(uuid,boolean)', true, true),
+  ('music repeat snapshot', 'public.rpc_get_live_music_repeat_mode_v1(uuid)', true, true),
+  ('music completion', 'public.rpc_service_complete_live_music_playback_v1(uuid,uuid,bigint)', false, true),
+  ('music repeat service', 'public.rpc_service_get_live_music_repeat_mode_v1(uuid)', false, true),
   ('media admission', 'public.rpc_get_live_studio_media_admission_v1(uuid,uuid,text)', true, true),
   ('audience program', 'public.rpc_get_live_program_snapshot_v2(uuid)', true, true),
   ('maintenance', 'public.rpc_service_maintain_live_studio_program_v1(integer)', false, true)
@@ -72,7 +83,8 @@ from resolved order by name;
 -- 4. Storage, direct-write and Realtime projection boundaries.
 with tables(name) as (values
   ('live_studio_access'), ('live_program_sources'),
-  ('live_program_command_events'), ('live_program_source_updates')
+  ('live_program_command_events'), ('live_program_source_updates'),
+  ('live_stage_invitations')
 )
 select tables.name, coalesce(metadata.relrowsecurity, false) rls_enabled,
   not has_table_privilege('authenticated', format('public.%I', tables.name), 'INSERT')
@@ -93,21 +105,29 @@ select
 -- 5. Operational state. These rows should clear through the maintenance clock.
 select
   (select count(*)::integer from public.live_odo_show_sessions show_session
+    join public.live_sessions session on session.id = show_session.session_id
     where show_session.control_source = 'studio_host'
+      and session.status in ('backstage','live','ending')
       and show_session.control_lease_expires_at
         <= now() - make_interval(secs => configuration.studio_controller_grace_seconds))
     as stale_studio_controllers,
   (select count(*)::integer from public.live_odo_show_sessions show_session
+    join public.live_sessions session on session.id = show_session.session_id
     where show_session.control_source = 'studio_host'
+      and session.status in ('backstage','live','ending')
       and show_session.control_lease_expires_at > now())
     as active_studio_controllers,
   (select count(*)::integer from public.live_program_sources source
+    join public.live_sessions session on session.id = source.session_id
     where source.source_key like 'studio:%'
+      and session.status in ('backstage','live','ending')
       and source.readiness in ('preparing','ready','live')
-      and source.last_seen_at < now() - interval '45 seconds')
+      and source.last_seen_at < now() - interval '120 seconds')
     as stale_studio_sources,
   (select count(*)::integer from public.live_program_sources source
+    join public.live_sessions session on session.id = source.session_id
     where source.health = 'lost'
+      and session.status in ('backstage','live','ending')
       and exists (select 1 from public.live_odo_show_sessions assigned
         where assigned.session_id = source.session_id
           and exists (select 1 from jsonb_each_text(assigned.source_assignments) item
@@ -121,7 +141,8 @@ with migration_blockers as (
   select count(*)::bigint affected from (values
     ('20260910120000'), ('20260910121000'), ('20260910122000'),
     ('20260910123000'), ('20260910124000'), ('20260910125000'),
-    ('20260910130000')
+    ('20260910130000'), ('20260911100000'), ('20260912080000'),
+    ('20260912090000'), ('20260912100000')
   ) expected(version)
   where not exists (select 1 from supabase_migrations.schema_migrations migration
     where migration.version = expected.version)
@@ -133,8 +154,11 @@ with migration_blockers as (
       and configuration.studio_session_discovery_enabled
       and configuration.studio_media_publishing_enabled
       and configuration.screen_share_enabled
+      and configuration.studio_screen_audio_enabled
       and configuration.studio_external_audio_enabled
       and configuration.studio_closed_beta
+      and configuration.studio_controller_lease_seconds between 90 and 120
+      and configuration.studio_controller_grace_seconds between 30 and 60
   ) then 0::bigint else 1::bigint end affected
 ), allowlist_blockers as (
   select case when exists (
@@ -152,6 +176,12 @@ with migration_blockers as (
     ('public.rpc_studio_upsert_live_program_source_v1(uuid,text,text,text,text,boolean,boolean,text,text,boolean,text)', true, true),
     ('public.rpc_studio_end_live_program_source_v1(uuid,text,text)', true, true),
     ('public.rpc_studio_resume_live_odo_v1(uuid,uuid,bigint,uuid)', true, true),
+    ('public.rpc_host_disconnect_live_studio_v1(uuid,uuid)', true, true),
+    ('public.rpc_invite_live_stage_member_v1(uuid,uuid,uuid)', true, true),
+    ('public.rpc_respond_live_stage_invitation_v1(uuid,boolean)', true, true),
+    ('public.rpc_get_live_music_repeat_mode_v1(uuid)', true, true),
+    ('public.rpc_service_complete_live_music_playback_v1(uuid,uuid,bigint)', false, true),
+    ('public.rpc_service_get_live_music_repeat_mode_v1(uuid)', false, true),
     ('public.rpc_get_live_studio_media_admission_v1(uuid,uuid,text)', true, true),
     ('public.rpc_get_live_program_snapshot_v2(uuid)', true, true),
     ('public.rpc_service_maintain_live_studio_program_v1(integer)', false, true)
@@ -164,7 +194,8 @@ with migration_blockers as (
 ), storage_blockers as (
   select count(*)::bigint affected from (values
     ('live_studio_access'), ('live_program_sources'),
-    ('live_program_command_events'), ('live_program_source_updates')
+    ('live_program_command_events'), ('live_program_source_updates'),
+    ('live_stage_invitations')
   ) expected(name)
   where not coalesce((select relrowsecurity from pg_class
       where oid = to_regclass(format('public.%I', expected.name))), false)
@@ -177,21 +208,43 @@ with migration_blockers as (
       and schemaname = 'public' and tablename = 'live_program_source_updates')
     and exists (select 1 from cron.job where jobname = 'live-maintenance' and active)
     then 0::bigint else 1::bigint end affected
+), capacity_blockers as (
+  select case when
+    position('program_visual_capacity_exceeded' in pg_get_functiondef(
+      to_regprocedure('public.live_program_assignment_error_v1(uuid,text,jsonb)')
+    )) > 0
+    and exists (
+      select 1 from pg_constraint constraint_row
+      where constraint_row.conrelid = 'public.live_sessions'::regclass
+        and constraint_row.contype = 'c'
+        and constraint_row.convalidated
+        and pg_get_constraintdef(constraint_row.oid) ilike '%maximum_publishers%'
+        and pg_get_constraintdef(constraint_row.oid) like '%<= 4%'
+    )
+    and not exists (select 1 from public.live_sessions session
+      where session.maximum_publishers not between 1 and 4)
+    then 0::bigint else 1::bigint end affected
 ), stale_controller_blockers as (
   select count(*)::bigint affected
   from public.live_odo_show_sessions show_session
+  join public.live_sessions session on session.id = show_session.session_id
   cross join public.live_odo_configuration configuration
   where configuration.id = true and show_session.control_source = 'studio_host'
+    and session.status in ('backstage','live','ending')
     and show_session.control_lease_expires_at
       <= now() - make_interval(secs => configuration.studio_controller_grace_seconds)
 ), stale_source_blockers as (
   select count(*)::bigint affected from public.live_program_sources source
+  join public.live_sessions session on session.id = source.session_id
   where source.source_key like 'studio:%'
+    and session.status in ('backstage','live','ending')
     and source.readiness in ('preparing','ready','live')
-    and source.last_seen_at < now() - interval '45 seconds'
+    and source.last_seen_at < now() - interval '120 seconds'
 ), unsafe_program_blockers as (
   select count(*)::bigint affected from public.live_odo_show_sessions show_session
-  where exists (
+  join public.live_sessions session on session.id = show_session.session_id
+  where session.status in ('backstage','live','ending')
+    and exists (
     select 1 from jsonb_each_text(show_session.source_assignments) assignment
     left join public.live_program_sources source
       on source.session_id = show_session.session_id
@@ -205,22 +258,24 @@ with migration_blockers as (
     boundary_blockers.affected boundary_release_blockers,
     storage_blockers.affected storage_release_blockers,
     protocol_blockers.affected protocol_release_blockers,
+    capacity_blockers.affected capacity_release_blockers,
     stale_controller_blockers.affected stale_controller_release_blockers,
     stale_source_blockers.affected stale_source_release_blockers,
     unsafe_program_blockers.affected unsafe_program_release_blockers
   from migration_blockers, configuration_blockers, allowlist_blockers,
     boundary_blockers, storage_blockers, protocol_blockers,
-    stale_controller_blockers, stale_source_blockers, unsafe_program_blockers
+    capacity_blockers, stale_controller_blockers, stale_source_blockers,
+    unsafe_program_blockers
 )
 select *,
   migration_release_blockers + configuration_release_blockers
     + allowlist_release_blockers + boundary_release_blockers
-    + storage_release_blockers + protocol_release_blockers
+    + storage_release_blockers + protocol_release_blockers + capacity_release_blockers
     + stale_controller_release_blockers + stale_source_release_blockers
     + unsafe_program_release_blockers as release_blockers,
   migration_release_blockers + configuration_release_blockers
     + allowlist_release_blockers + boundary_release_blockers
-    + storage_release_blockers + protocol_release_blockers
+    + storage_release_blockers + protocol_release_blockers + capacity_release_blockers
     + stale_controller_release_blockers + stale_source_release_blockers
     + unsafe_program_release_blockers = 0 as healthy
 from totals;

@@ -1,3 +1,8 @@
+export const LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT = 4;
+export const LIVE_STUDIO_VISUAL_PUBLISHER_RESERVE = 1;
+export const LIVE_PROGRAM_VIDEO_SOURCE_LIMIT = LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT
+  + LIVE_STUDIO_VISUAL_PUBLISHER_RESERVE;
+
 export const PROGRAM_CONTROLLER_SOURCES = [
   'odo',
   'mobile_host',
@@ -100,6 +105,9 @@ export const PROGRAM_SOURCE_SLOTS = [
 ] as const;
 export type ProgramSourceSlot = (typeof PROGRAM_SOURCE_SLOTS)[number];
 export type ProgramSourceAssignments = Partial<Record<ProgramSourceSlot, string>>;
+
+export const LIVE_MUSIC_REPEAT_MODES = ['off', 'one', 'all'] as const;
+export type LiveMusicRepeatMode = (typeof LIVE_MUSIC_REPEAT_MODES)[number];
 
 export type ProgramSource = {
   id: string;
@@ -244,6 +252,7 @@ export type StudioOperationalSnapshot = {
     playlistId: string | null;
     mood: string | null;
     volume: number;
+    repeatMode: LiveMusicRepeatMode;
     stateVersion: number;
   };
   audiencePulse: { open: boolean };

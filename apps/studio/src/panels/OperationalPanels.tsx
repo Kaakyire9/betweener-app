@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { StudioOperationalSnapshot } from '@betweener/live-program-domain';
 
 import { studioApi } from '../api/studio-api.ts';
@@ -33,6 +33,8 @@ export function OperationalPanels({
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [musicVolume, setMusicVolume] = useState(snapshot.music.volume);
+
+  useEffect(() => setMusicVolume(snapshot.music.volume), [snapshot.music.volume]);
 
   const run = async (name: string, operation: () => Promise<void>) => {
     setBusy(name);
@@ -102,7 +104,24 @@ export function OperationalPanels({
               sessionId: snapshot.session.id,
               action: snapshot.music.status === 'ducked' ? 'unduck' : 'duck',
             }))}>{snapshot.music.status === 'ducked' ? 'Unduck' : 'Duck'}</button>
+          <button className={`button ${snapshot.music.repeatMode === 'one' ? 'button-live' : 'button-quiet'}`}
+            aria-pressed={snapshot.music.repeatMode === 'one'}
+            disabled={!ownsControl || !snapshot.music.enabled || busy !== null}
+            onClick={() => void run('Repeat one', () => studioApi.controlMusic({
+              sessionId: snapshot.session.id,
+              action: snapshot.music.repeatMode === 'one' ? 'repeat_off' : 'repeat_one',
+            }))}>Repeat 1</button>
+          <button className={`button ${snapshot.music.repeatMode === 'all' ? 'button-live' : 'button-quiet'}`}
+            aria-pressed={snapshot.music.repeatMode === 'all'}
+            disabled={!ownsControl || !snapshot.music.enabled || busy !== null}
+            onClick={() => void run('Repeat all', () => studioApi.controlMusic({
+              sessionId: snapshot.session.id,
+              action: snapshot.music.repeatMode === 'all' ? 'repeat_off' : 'repeat_all',
+            }))}>Repeat All</button>
         </div>
+        {!snapshot.music.enabled ? (
+          <p className="notice-copy">Programme Music is off in the Odo rollout. Enable it only after at least one licensed catalogue track is approved.</p>
+        ) : null}
       </Panel>
 
       <Panel eyebrow="ROOM TOOLS" title="Pulse & Sparks" status={

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ProgramSourceType, StudioOperationalSnapshot } from '@betweener/live-program-domain';
 
 import { studioApi } from '../api/studio-api.ts';
@@ -27,10 +27,15 @@ export function StudioMediaControls({
   const [cameraOn, setCameraOn] = useState(false);
   const [microphoneOn, setMicrophoneOn] = useState(false);
   const [screenOn, setScreenOn] = useState(false);
+  const [screenAudioOn, setScreenAudioOn] = useState(false);
   const [includeScreenAudio, setIncludeScreenAudio] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const stoppingScreenRef = useRef(false);
   const microphoneLevel = useAudioMeter(call?.microphone.state.mediaStream);
+  const screenAudioLevel = useAudioMeter(
+    screenAudioOn ? call?.screenShare.state.mediaStream : undefined,
+  );
   const hostCameraKey = useMemo(
     () => sourceKey(controllerInstanceId, 'host_camera'),
     [controllerInstanceId],
@@ -48,6 +53,10 @@ export function StudioMediaControls({
     [controllerInstanceId],
   );
   const canShareAudio = admission?.capabilities.screenShareAudio === true;
+
+  useEffect(() => {
+    if (canShareAudio && !screenOn) setIncludeScreenAudio(true);
+  }, [canShareAudio, screenOn]);
 
   useEffect(() => {
     if (!call) {
@@ -87,15 +96,37 @@ export function StudioMediaControls({
   }, [admission, snapshot.session.id]);
 
   useEffect(() => {
-    if (!admission || (!cameraOn && !microphoneOn && !screenOn)) return undefined;
+    if (!admission || (!cameraOn && !microphoneOn && !screenOn && !screenAudioOn)) {
+      return undefined;
+    }
     const heartbeat = () => {
       if (cameraOn) void upsert({ key: hostCameraKey, type: 'host_camera', hasVideo: true, hasAudio: false });
       if (microphoneOn) void upsert({ key: hostMicrophoneKey, type: 'host_microphone', hasVideo: false, hasAudio: true });
       if (screenOn) void upsert({ key: screenKey, type: 'screen_share', hasVideo: true, hasAudio: false });
+      if (screenAudioOn) {
+        void upsert({
+          key: screenAudioKey,
+          type: 'screen_share_audio',
+          hasVideo: false,
+          hasAudio: true,
+        });
+      }
     };
     const timer = window.setInterval(heartbeat, 15_000);
-    return () => window.clearInterval(timer);
-  }, [admission, cameraOn, hostCameraKey, hostMicrophoneKey, microphoneOn, screenKey, screenOn, upsert]);
+    const heartbeatAfterLifecycleChange = () => { heartbeat(); };
+    document.addEventListener('visibilitychange', heartbeatAfterLifecycleChange);
+    window.addEventListener('focus', heartbeatAfterLifecycleChange);
+    window.addEventListener('online', heartbeatAfterLifecycleChange);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', heartbeatAfterLifecycleChange);
+      window.removeEventListener('focus', heartbeatAfterLifecycleChange);
+      window.removeEventListener('online', heartbeatAfterLifecycleChange);
+    };
+  }, [
+    admission, cameraOn, hostCameraKey, hostMicrophoneKey, microphoneOn,
+    screenAudioKey, screenAudioOn, screenKey, screenOn, upsert,
+  ]);
 
   const run = async (name: string, operation: () => Promise<void>) => {
     setBusy(name);
@@ -137,13 +168,20 @@ export function StudioMediaControls({
   });
 
   const stopScreenShare = useCallback(async (reasonCode = 'screen_share_stopped') => {
-    if (!call) return;
-    await call.screenShare.disable();
-    await studioApi.endSource(snapshot.session.id, screenKey, reasonCode).catch(() => undefined);
-    await studioApi.endSource(snapshot.session.id, screenAudioKey, reasonCode).catch(() => undefined);
+    if (stoppingScreenRef.current) return;
+    stoppingScreenRef.current = true;
     setScreenOn(false);
-    onChanged();
-  }, [call, onChanged, screenAudioKey, screenKey, snapshot.session.id]);
+    setScreenAudioOn(false);
+    try {
+      await call?.screenShare.disable().catch(() => undefined);
+      await Promise.allSettled([
+        studioApi.endSource(snapshot.session.id, screenKey, reasonCode),
+        studioApi.endSource(snapshot.session.id, screenAudioKey, reasonCode),
+      ]);
+    } finally {
+      stoppingScreenRef.current = false;
+    }
+  }, [call, screenAudioKey, screenKey, snapshot.session.id]);
 
   const toggleScreen = () => run('Screen share', async () => {
     if (!call || !admission) return;
@@ -166,10 +204,23 @@ export function StudioMediaControls({
         hasAudio: true,
       });
     }
+    setScreenAudioOn(hasAudio);
     stream?.getVideoTracks()[0]?.addEventListener('ended', () => {
-      void stopScreenShare('screen_share_ended_by_browser');
+      void stopScreenShare('screen_share_ended_by_browser').finally(onChanged);
+    }, { once: true });
+    stream?.getAudioTracks()[0]?.addEventListener('ended', () => {
+      if (stoppingScreenRef.current) return;
+      setScreenAudioOn(false);
+      void studioApi.endSource(
+        snapshot.session.id,
+        screenAudioKey,
+        'screen_audio_ended_by_browser',
+      ).catch(() => undefined);
     }, { once: true });
     setScreenOn(true);
+    if (includeScreenAudio && !hasAudio) {
+      setError('Screen video is live, but the browser did not provide laptop audio. Share a browser tab and enable Share tab audio (or Share system audio) in the browser picker.');
+    }
   });
 
   if (!snapshot.access.canPublish) {
@@ -232,7 +283,15 @@ export function StudioMediaControls({
           {!canShareAudio ? (
             <p className="notice-copy">Screen audio is unavailable by policy. Video sharing still works.</p>
           ) : includeScreenAudio ? (
-            <p className="notice-copy">Screen audio is sent directly by the browser once sharing starts. Keep it off while preparing Preview.</p>
+            <p className="notice-copy">In the browser picker, choose a source that supports audio and enable Share tab audio or Share system audio. Sound is distributed as soon as sharing starts.</p>
+          ) : null}
+          {screenOn && screenAudioOn ? (
+            <>
+              <AudioMeter level={screenAudioLevel} label="Screen audio" />
+              <p className="notice-copy" role="status">Screen audio is published. Play the shared source and confirm this meter moves; use an audience-only phone for the listening check.</p>
+            </>
+          ) : screenOn ? (
+            <p className="error-copy" role="alert">Screen video is live without an audio track. Stop sharing, share a Chrome/Edge tab, and enable Share tab audio in the browser picker.</p>
           ) : null}
           <button className={`button ${screenOn ? 'button-danger' : 'button-secondary'}`}
             disabled={busy !== null} onClick={() => void toggleScreen()}>

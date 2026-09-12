@@ -4,7 +4,10 @@ import test from 'node:test';
 import { evaluateLiveMusicPolicy } from '../features/live/odo/show/live-music-policy.ts';
 import { deriveOdoShowDecision } from '../features/live/odo/show/odo-show-state-machine.ts';
 import { parseOdoLiveProgramState, parseOdoShowDirectorState } from '../features/live/odo/show/odo-show-validation.ts';
-import { BETWEENER_STUDIO_COMMANDS } from '../features/live/odo/show/odo-show-contracts.ts';
+import {
+  BETWEENER_STUDIO_COMMANDS,
+  LIVE_MUSIC_ACTIONS,
+} from '../features/live/odo/show/odo-show-contracts.ts';
 
 const input = {
   sessionLive: true,
@@ -129,4 +132,10 @@ test('future Studio control is a closed shared command vocabulary', () => {
     'SET_MUSIC_VOLUME', 'ENABLE_AUTO_DUCK', 'DISABLE_AUTO_DUCK',
     'OPEN_AUDIENCE_PULSE', 'START_INTERMISSION', 'FINISH_CURRENT_CONNECTIONS',
   ]);
+});
+
+test('music repeat controls use a closed authoritative action vocabulary', () => {
+  assert.equal(LIVE_MUSIC_ACTIONS.includes('repeat_off'), true);
+  assert.equal(LIVE_MUSIC_ACTIONS.includes('repeat_one'), true);
+  assert.equal(LIVE_MUSIC_ACTIONS.includes('repeat_all'), true);
 });

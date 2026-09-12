@@ -1,4 +1,7 @@
 import {
+  LIVE_PROGRAM_VIDEO_SOURCE_LIMIT,
+  LIVE_MUSIC_REPEAT_MODES,
+  LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT,
   PROGRAM_CONTROLLER_SOURCES,
   PROGRAM_SCENES,
   PROGRAM_SOURCE_HEALTH,
@@ -33,6 +36,16 @@ export const parseProgramSourceAssignments = (value: unknown): ProgramSourceAssi
       || !SOURCE_KEY.test(sourceKey)) return null;
     parsed[slot] = sourceKey;
   }
+  const assignedSlots = Object.keys(parsed);
+  const visualSlotCount = assignedSlots.filter((slot) => [
+    'primary', 'host', 'guest_1', 'guest_2', 'guest_3',
+    'pair', 'pool', 'pulse', 'odo', 'pip',
+  ].includes(slot)).length;
+  const publicStageSlotCount = assignedSlots.filter((slot) => [
+    'host', 'guest_1', 'guest_2', 'guest_3',
+  ].includes(slot)).length;
+  if (visualSlotCount > LIVE_PROGRAM_VIDEO_SOURCE_LIMIT
+    || publicStageSlotCount > LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT) return null;
   return parsed;
 };
 
@@ -86,6 +99,7 @@ export const parseStudioOperationalSnapshot = (value: unknown): StudioOperationa
   const music = value.music;
   const audiencePulse = value.audiencePulse;
   const safety = value.safety;
+  const repeatMode = music.repeatMode ?? 'off';
   if (!program || sources.some((source) => !source)
     || !['canView', 'canControl', 'canPublish', 'canScreenShare',
       'canUseExternalAudio', 'canModerate'].every((key) => typeof access[key] === 'boolean')
@@ -105,7 +119,9 @@ export const parseStudioOperationalSnapshot = (value: unknown): StudioOperationa
     || typeof music.enabled !== 'boolean' || typeof music.status !== 'string'
     || !nullableString(music.trackId) || !nullableString(music.playlistId)
     || !nullableString(music.mood) || typeof music.volume !== 'number'
-    || music.volume < 0 || music.volume > 1 || !isVersion(music.stateVersion)
+    || music.volume < 0 || music.volume > 1
+    || !isMember(LIVE_MUSIC_REPEAT_MODES, repeatMode)
+    || !isVersion(music.stateVersion)
     || typeof audiencePulse.open !== 'boolean'
     || !isMember(['healthy', 'degraded'] as const, safety.status)
     || !isVersion(safety.activeHoldCount)) return null;
@@ -113,5 +129,6 @@ export const parseStudioOperationalSnapshot = (value: unknown): StudioOperationa
     ...value,
     program,
     sources: sources as ProgramSource[],
+    music: { ...music, repeatMode },
   } as unknown as StudioOperationalSnapshot;
 };

@@ -403,6 +403,13 @@ export const useLiveSessionController = (sessionId: string, currentUserId: strin
     withdrawSeat: () => runAction('withdraw-seat', () => liveRepository.withdrawSeatRequest(sessionId)),
     resolveSeat: (requestId: string, approve: boolean) =>
       runAction(`seat:${requestId}`, () => liveRepository.resolveSeat(requestId, approve)),
+    inviteToStage: (userId: string) =>
+      runAction(`invite-stage:${userId}`, () => liveRepository.inviteToStage(sessionId, userId)),
+    respondToStageInvitation: (invitationId: string, accept: boolean) =>
+      runAction(
+        `stage-invitation:${invitationId}`,
+        () => liveRepository.respondToStageInvitation(invitationId, accept),
+      ),
     setOnStage: (userId: string, onStage: boolean) =>
       runAction(`stage:${userId}`, () => liveRepository.setStageParticipant(sessionId, userId, onStage)),
     createComment,

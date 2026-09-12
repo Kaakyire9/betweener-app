@@ -39,6 +39,7 @@ export type StreamClientPort = {
 export type StreamLiveMediaBindings = {
   client: StreamClientPort;
   call: StreamCallPort;
+  configureAudioSession?: () => void;
   releaseClient?: () => Promise<void>;
 };
 
@@ -111,7 +112,7 @@ const createStreamBindings: StreamLiveMediaBindingsFactory = async ({
   admission,
   tokenProvider,
 }) => {
-  const { StreamVideoClient } = await loadStreamVideoSdk();
+  const { StreamVideoClient, callManager } = await loadStreamVideoSdk();
   const lease = streamVideoClientLeaseRegistry.acquire(
     `${admission.apiKey}:${admission.user.id}`,
     () => StreamVideoClient.getOrCreateInstance({
@@ -131,7 +132,17 @@ const createStreamBindings: StreamLiveMediaBindingsFactory = async ({
   );
   try {
     const call = lease.client.call(admission.call.type, admission.call.id);
-    return { client: lease.client, call, releaseClient: lease.release };
+    return {
+      client: lease.client,
+      call,
+      configureAudioSession: () => {
+        callManager.start({
+          audioRole: 'communicator',
+          deviceEndpointType: 'speaker',
+        });
+      },
+      releaseClient: lease.release,
+    };
   } catch (error) {
     await lease.release();
     throw error;
@@ -277,6 +288,12 @@ export class StreamLiveMediaProvider implements LiveMediaProvider {
       this.validateJoinOptions(options, this.admission);
       this.currentState = 'joining';
       try {
+        // The custom Betweener stage does not mount Stream's stock
+        // CallContent/ViewerLivestream surfaces, so it must configure native
+        // audio routing itself before join. Keep every public-room member on
+        // the speaker-routed communicator path because an audience member can
+        // be promoted to Stage without leaving and rejoining the call.
+        this.bindings.configureAudioSession?.();
         await Promise.all([
           this.bindings.call.microphone.disable(true),
           this.bindings.call.camera.disable(true),

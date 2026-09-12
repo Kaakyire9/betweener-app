@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  LIVE_PROGRAM_VIDEO_SOURCE_LIMIT,
+  LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT,
+  LIVE_STUDIO_VISUAL_PUBLISHER_RESERVE,
   PROGRAM_SCENES,
   buildStudioTakeCommand,
   chooseFallbackScene,
@@ -17,7 +20,11 @@ import {
   type ProgramSource,
   type ProgramState,
 } from '../packages/live-program-domain/src/index.ts';
-import { assignmentsForScene } from '../apps/studio/src/program/source-assignments.ts';
+import {
+  assignmentsContainTerminalSource,
+  assignmentsForScene,
+  isProgramSourceUsable,
+} from '../apps/studio/src/program/source-assignments.ts';
 import { parseLiveProgramSnapshotV2 } from '../features/live/odo/show/odo-show-validation.ts';
 
 const sessionId = '11111111-1111-4111-8111-111111111111';
@@ -78,6 +85,9 @@ const music = {
 };
 
 test('10G presentation scenes have deterministic source requirements and layouts', () => {
+  assert.equal(LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT, 4);
+  assert.equal(LIVE_STUDIO_VISUAL_PUBLISHER_RESERVE, 1);
+  assert.equal(LIVE_PROGRAM_VIDEO_SOURCE_LIMIT, 5);
   for (const scene of [
     'screen_full', 'screen_plus_host', 'screen_plus_pair', 'screen_plus_panel',
     'screen_discussion', 'screen_plus_pool', 'screen_plus_audience_pulse',
@@ -91,6 +101,7 @@ test('10G presentation scenes have deterministic source requirements and layouts
   assert.equal(isStudioPresentationScene('host_focus'), false);
   assert.deepEqual(requiredSlotsForScene('screen_plus_host'), ['primary', 'host']);
   assert.equal(resolveProgramLayout('screen_plus_host', 'portrait_9_16').regions[1]?.treatment, 'pip');
+  assert.equal(resolveProgramLayout('screen_plus_panel', 'landscape_16_9').regions.length, 5);
 });
 
 test('Screen Discussion only renders assigned people and divides the stage evenly', () => {
@@ -152,6 +163,7 @@ test('Screen Discussion auto-assigns distinct on-stage cameras', () => {
   });
   const assignments = assignmentsForScene('screen_discussion', [
     makeSource('studio:screen', 'screen_share', hostUserId),
+    makeSource('studio:screen_audio', 'screen_share_audio', hostUserId),
     makeSource('server.host', 'host_camera', hostUserId),
     makeSource('participant.host', 'participant_camera', hostUserId),
     makeSource('participant.guest1', 'participant_camera', guestOneId),
@@ -163,6 +175,7 @@ test('Screen Discussion auto-assigns distinct on-stage cameras', () => {
     host: 'server.host',
     guest_1: 'participant.guest1',
     guest_2: 'participant.guest2',
+    audio_screen: 'studio:screen_audio',
   });
 });
 
@@ -223,4 +236,21 @@ test('source loss always has a deterministic safe fallback', () => {
   assert.equal(chooseFallbackScene('screen_full', true), 'host_focus');
   assert.equal(chooseFallbackScene('screen_full', false), 'branded_intermission');
   assert.equal(chooseFallbackScene('dj_plus_pool', false), 'pool_focus');
+});
+
+test('terminal browser sources are removed from active Preview choices', () => {
+  const endedScreen: ProgramSource = {
+    ...source,
+    id: 'screen-ended',
+    key: 'studio:screen',
+    type: 'screen_share',
+    readiness: 'ended',
+    health: 'lost',
+  };
+  assert.equal(isProgramSourceUsable(endedScreen), false);
+  assert.equal(assignmentsContainTerminalSource(
+    { primary: endedScreen.key },
+    [source, endedScreen],
+  ), true);
+  assert.equal(assignmentsForScene('screen_full', [endedScreen], {}).primary, undefined);
 });

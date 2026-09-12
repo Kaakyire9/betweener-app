@@ -12,7 +12,7 @@ export class ExpoLiveMusicEngine implements LiveMusicEngine {
       { uri: command.uri },
       { updateInterval: 500, keepAudioSessionActive: false },
     );
-    player.loop = false;
+    player.loop = command.repeatOne;
     player.volume = Math.max(0, Math.min(0.5, command.volume));
     this.player = player;
     if (command.offsetSeconds > 0) await player.seekTo(command.offsetSeconds);
@@ -25,6 +25,9 @@ export class ExpoLiveMusicEngine implements LiveMusicEngine {
   }
   async setVolume(volume: number): Promise<void> {
     if (this.player) this.player.volume = Math.max(0, Math.min(0.5, volume));
+  }
+  async setRepeatOne(enabled: boolean): Promise<void> {
+    if (this.player) this.player.loop = enabled;
   }
   async stop(): Promise<void> {
     this.player?.pause();

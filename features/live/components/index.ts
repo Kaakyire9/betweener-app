@@ -18,6 +18,7 @@ export * from './LiveControlDock.tsx';
 export * from './LivePrivateSparkChrome.tsx';
 export * from './LiveStageDesk.tsx';
 export * from './LiveStageRequestTile.tsx';
+export * from './LiveStageInvitationPrompt.tsx';
 export * from './LiveRoomEventNotice.tsx';
 export * from './LiveMemberSummaryModal.tsx';
 export * from './PrivateSparkParticipantSurface.tsx';

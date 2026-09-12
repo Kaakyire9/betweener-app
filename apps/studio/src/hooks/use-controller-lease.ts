@@ -53,8 +53,18 @@ export const useControllerLease = ({
         setRenewing(false);
       }
     };
+    const renewAfterLifecycleChange = () => { void renew(); };
     const interval = window.setInterval(() => { void renew(); }, 10_000);
-    return () => window.clearInterval(interval);
+    document.addEventListener('visibilitychange', renewAfterLifecycleChange);
+    window.addEventListener('focus', renewAfterLifecycleChange);
+    window.addEventListener('online', renewAfterLifecycleChange);
+    void renew();
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', renewAfterLifecycleChange);
+      window.removeEventListener('focus', renewAfterLifecycleChange);
+      window.removeEventListener('online', renewAfterLifecycleChange);
+    };
   }, [controllerGeneration, controllerInstanceId, onLeaseLost, onLeaseRenewed, ownsControl, sessionId]);
 
   return { ownsControl, renewing };

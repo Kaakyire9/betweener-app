@@ -42,6 +42,7 @@ import {
   LiveQuickConnectPool,
   LiveQuickConnectStage,
   LiveRoomEventNotice,
+  LiveStageInvitationPrompt,
   LiveStudioModal,
 } from '@/features/live/components/index.ts';
 import type { LiveRoomEventNoticeKind } from '@/features/live/components/index.ts';
@@ -198,6 +199,7 @@ export default function LiveSessionScreen() {
     || (isQuickConnectLive && isRoomHost);
   const hasRequestedSeat = me?.state === 'stage_requested';
   const isOnStage = me?.state === 'on_stage' || me?.role === 'host';
+  const stageInvitation = snapshot?.myStageInvitation ?? null;
   const requestedStartAudio = params.startAudio === '1';
   const requestedStartVideo = params.startVideo === '1';
   const deviceNeedsAttention = media.state === 'joined' && media.error?.includes('_needs_attention') === true;
@@ -985,7 +987,13 @@ export default function LiveSessionScreen() {
           />
         </LiveGlassSurface>
 
-        {!keyboardVisible && (canManageStudio || canPublish || canManageStage || (!isRoomHost && isOnStage)) ? <LiveControlDock style={styles.controls}>
+        {!keyboardVisible && (canManageStudio || canPublish || canManageStage || (!isRoomHost && isOnStage) || stageInvitation) ? <LiveControlDock style={styles.controls}>
+          {stageInvitation ? (
+            <LiveStageInvitationPrompt
+              busy={controller.busyAction === `stage-invitation:${stageInvitation.id}`}
+              onRespond={(accept) => void controller.respondToStageInvitation(stageInvitation.id, accept)}
+            />
+          ) : null}
           {!isRoomHost && isOnStage ? (
             <Pressable
               accessibilityLabel="Leave stage"
@@ -1040,7 +1048,9 @@ export default function LiveSessionScreen() {
             controller.refresh(),
           ]).then(() => undefined)}
           stageDeskProps={{
+            audience: snapshot.audience,
             backstage: snapshot.backstage,
+            onInviteToStage: (userId) => void controller.inviteToStage(userId),
             onModerate: (userId, action) => void controller.moderateParticipant(userId, action),
             onResolveSeat: (requestId, approved) => void controller.resolveSeat(requestId, approved),
             onSetOnStage: (userId, onStage) => void controller.setOnStage(userId, onStage),
@@ -1049,6 +1059,8 @@ export default function LiveSessionScreen() {
             onSetStageRequestCapacity: (capacity) => void controller.setStageRequestCapacity(capacity),
             seatRequests: snapshot.seatRequests,
             stage: snapshot.stage,
+            stageInvitationBusy: controller.busyAction?.startsWith('invite-stage:') === true,
+            stageInvitations: snapshot.stageInvitations,
             stageRequestsBusy: controller.busyAction === 'stage-intake',
             stageRequestCapacity: snapshot.session.stageRequestCapacity,
           }}

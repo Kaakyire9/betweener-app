@@ -1,5 +1,5 @@
 import {
-  Bot, Music2, Pause, Play, Radio, ShieldCheck, SkipForward, Square,
+  Bot, MonitorOff, Music2, Pause, Play, Radio, ShieldCheck, SkipForward, Square,
 } from 'lucide-react-native';
 import { useMemo } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -29,6 +29,8 @@ export function OdoShowDirectorPanel({
   if (!state.available && !state.enabled) return null;
   const running = state.enabled && !state.pausedByHost
     && state.showState !== 'paused_by_policy';
+  const studioConnected = state.controlSource === 'studio_host'
+    || state.programSource === 'studio';
   const programmeLabel = state.showState === 'pair_forming'
     ? 'Forming the next eligible pair'
     : state.showState === 'low_liquidity'
@@ -45,6 +47,18 @@ export function OdoShowDirectorPanel({
     [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Start Show Director', onPress: () => void controller.enable() },
+    ],
+  );
+  const confirmStudioDisconnect = () => Alert.alert(
+    'Disconnect Betweener Studio?',
+    'Studio camera, microphone, screen share, and DJ sources will stop. The Live stays open and the programme returns safely to Odo or mobile Host control.',
+    [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Disconnect Studio',
+        style: 'destructive',
+        onPress: () => void controller.disconnectStudio(),
+      },
     ],
   );
 
@@ -150,6 +164,22 @@ export function OdoShowDirectorPanel({
           <Text style={styles.takeoverText}>Take Control</Text>
         </Pressable>
       )}
+
+      {studioConnected ? (
+        <Pressable
+          accessibilityHint="Stops Studio media and restores safe mobile programme control"
+          accessibilityLabel="Disconnect Betweener Studio"
+          accessibilityRole="button"
+          disabled={controller.busyAction !== null}
+          onPress={confirmStudioDisconnect}
+          style={[styles.disconnectButton, controller.busyAction !== null && styles.disabled]}
+        >
+          {controller.busyAction === 'disconnect-studio'
+            ? <ActivityIndicator color={visual.color.dangerText} size="small" />
+            : <MonitorOff color={visual.color.dangerText} size={16} />}
+          <Text style={styles.disconnectText}>Disconnect Studio</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -200,5 +230,7 @@ const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
   primaryText: { color: visual.color.accentContrast, fontSize: 10, fontFamily: 'Manrope_800ExtraBold' },
   takeoverButton: { marginTop: 15, minHeight: 46, borderRadius: 23, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.color.dangerSoft, borderWidth: 1, borderColor: visual.color.danger },
   takeoverText: { color: visual.color.dangerText, fontSize: 10, fontFamily: 'Manrope_800ExtraBold' },
+  disconnectButton: { minHeight: 44, marginTop: 12, borderRadius: 22, borderWidth: 1, borderColor: visual.color.danger, backgroundColor: visual.color.dangerSoft, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  disconnectText: { color: visual.color.dangerText, fontSize: 11, fontFamily: 'Manrope_800ExtraBold' },
   disabled: { opacity: 0.45 },
 });

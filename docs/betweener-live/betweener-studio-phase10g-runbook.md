@@ -17,6 +17,12 @@ Connect, AutoMatcher, Music and Audience Pulse as mobile.
 - A Studio controller has a short renewable lease and monotonic generation.
 - Camera, microphone, screen share and DJ/audio-interface inputs are explicit
   browser sources. Screen share is a source, never a fifth stage participant.
+- The public human stage remains capped at four people: one Host and up to
+  three guests. Studio screen share is one separate visual source, so supported
+  Program layouts may render five simultaneous video regions.
+- An active Host can disconnect Studio from the mobile Odo console without
+  ending the Live. Program cuts to a safe fallback and control returns to Odo
+  when healthy, otherwise to the mobile Host.
 - Studio receives operational aggregates only. It receives no compatibility
   graph, ballots, raw matching decisions or Private Spark media/content.
 - Room Pulse and the mobile footer remain outside Program ownership.
@@ -34,7 +40,9 @@ From the repository root:
 ```powershell
 npx.cmd supabase@latest db push --linked
 npx.cmd supabase@latest functions deploy live-studio-media-token
+npx.cmd supabase@latest functions deploy live-studio-disconnect
 npx.cmd supabase@latest functions deploy live-odo-show-director
+npx.cmd supabase@latest functions deploy live-music-playback
 npm.cmd run studio:build
 ```
 
@@ -64,11 +72,11 @@ $studioConfigBody = @{
     sessionDiscoveryEnabled = $true
     mediaPublishingEnabled = $true
     screenShareEnabled = $true
-    screenAudioEnabled = $false
+    screenAudioEnabled = $true
     externalAudioEnabled = $true
     closedBeta = $true
-    controllerLeaseSeconds = 30
-    controllerGraceSeconds = 10
+    controllerLeaseSeconds = 90
+    controllerGraceSeconds = 30
   }
 } | ConvertTo-Json -Depth 6
 
@@ -112,8 +120,39 @@ $studioAccessRequest = @{
 Invoke-RestMethod @studioAccessRequest | ConvertTo-Json -Depth 6
 ```
 
-Leave `screenAudioEnabled` false until the separate browser/OS screen-audio
-test passes. It is not required for screen video.
+`screenAudioEnabled` admits browser-provided tab/system audio; it does not bypass
+the browser picker. The producer must leave **Include screen audio** selected and
+also enable **Share tab audio** or **Share system audio** in Chrome/Edge. Prefer a
+browser tab for the first test because support for whole-device audio varies by
+browser and operating system.
+
+The 90-second controller lease and 30-second recovery grace tolerate normal
+Chrome/Edge background-tab throttling while a producer presents another tab.
+Studio also renews control and active sources immediately on visibility,
+focus, and network-reconnect events. A genuinely abandoned controller still
+falls back through server-authoritative maintenance.
+
+Programme Music is a different transport. It remains disabled until the private
+`live-program-music` bucket contains at least one enabled, approved, licensed
+catalogue track and the Phase 10E flags `musicEnabled`, `musicAutoEnabled`, and
+`musicDuckingEnabled` are enabled. Studio then exposes Pause/Resume, Next, Duck,
+Repeat 1, and Repeat All. Repeat 1 loops locally without a transition; Repeat All
+advances the active playlist (or the approved catalogue for a standalone track)
+and wraps deterministically.
+
+For Betweener-owned or appropriately licensed Suno exports, retain the plan,
+invoice/project reference, creation date, territories, and the exact version of
+the exported master outside the app. Upload the MP3 to the private
+`live-program-music` bucket and register that exact object path with
+`rpc_admin_upsert_live_music_track_v1` as documented in the Phase 10E runbook.
+Uploading the object alone does not approve it or enable Programme Music.
+
+The DJ input is intentionally separate from uploaded Programme Music. It only
+lists live `audioinput` devices exposed by the browser. An MP3 file will not
+appear there. Use a USB mixer/interface, operating-system loopback input, or a
+virtual audio cable, then select that input and click **Start DJ input**. The
+source remains silent in Preview and becomes audible only after TAKE assigns it
+to the scene's atmosphere audio slot.
 
 ## Automated gates
 
@@ -185,8 +224,9 @@ for both Host microphone and DJ input.
    Studio microphone off if the same Host is already publishing from mobile.
 3. Change Preview to **Screen + Host** without TAKE. Confirm mobile Program is
    unchanged.
-4. Start screen sharing with screen audio off. Choose the registered screen
-   source and Host source in Preview.
+4. Leave **Include screen audio** selected. Share a browser tab playing a
+   rights-cleared test clip and enable **Share tab audio** in the browser
+   picker. Choose the registered screen source and Host source in Preview.
 5. Click **TAKE**. Confirm all mobile viewers switch once to the same screen +
    Host layout. Room Pulse remains expanded and interactive.
 6. Click **CUT** to **Screen Full**. Confirm the screen is contained and the
@@ -195,6 +235,23 @@ for both Host microphone and DJ input.
 7. Stop sharing from the browser's native sharing indicator. Confirm Program
    falls back to Host or the branded safe scene and the lost screen never
    remains frozen on Program.
+8. Confirm an audience-only phone hears the laptop audio, while Preview stays
+   muted in Studio. Repeat with a video-only share and confirm Studio explains
+   that the browser supplied no audio track.
+
+### D2. Programme Music transport
+
+1. Confirm an approved catalogue track exists, then enable the three Phase 10E
+   music flags. Refresh Studio; the badge must change from **Disabled** to
+   **Policy ready**.
+2. Start an approved track or playlist using the existing Odo music flow.
+   Confirm audience-only phones hear it and publisher devices remain excluded.
+3. Select **Repeat 1** and confirm the current track loops without a gap-causing
+   server transition. Select it again to return to Repeat Off.
+4. Select **Repeat All**. Confirm completion advances to the next approved track
+   in the playlist, or in the approved catalogue when no playlist is active,
+   and wraps after the final track. The first accepted device completion wins;
+   duplicate completion signals must be harmless.
 
 ### E. Quick Connect and privacy while Studio directs
 
@@ -215,7 +272,23 @@ for both Host microphone and DJ input.
 3. Confirm Odo reconciles from current server state without recreating the
    session, Stream call, Quick Connect state or Music state.
 
-### G. Failure recovery
+### G. Host-only Studio disconnect and stage capacity
+
+1. Take Studio control again, connect camera and microphone, then TAKE
+   **Screen + Panel** with screen share active.
+2. Put the Host and three guests on the public stage. Confirm all four human
+   seats remain available and the screen occupies its own fifth visual region.
+3. On the Host phone, open **Live Studio > Odo**, tap **Disconnect Studio** and
+   confirm the warning. Guests and audience members must not see this control.
+4. Confirm the Live stays open, Program immediately cuts to the safe fallback,
+   and control returns to healthy Odo or otherwise to the mobile Host.
+5. Confirm Studio camera, microphone, screen share and DJ publications stop,
+   the browser reports that Studio media was disconnected, and no Studio
+   source heartbeat revives the released source rows.
+6. Confirm mobile stage controls still work and the four-person public stage
+   limit has not changed.
+
+### H. Failure recovery
 
 1. Take control again, TAKE a screen scene, then close the controlling browser
    tab without resuming Odo.
@@ -229,7 +302,7 @@ for both Host microphone and DJ input.
 5. Disable the producer's Studio allowlist while signed in. New control/media
    RPCs must be denied even if the old JWT remains valid.
 
-### H. External hardware sign-off
+### I. External hardware sign-off
 
 These checks cannot be replaced by automated tests:
 
@@ -250,7 +323,7 @@ Test current stable Chrome and Edge first. Then test the current Stream-supporte
 Safari and Firefox versions. Browser/OS wording must say “unavailable” when an
 input or screen-audio track is not actually exposed.
 
-### I. End and reports
+### J. End and reports
 
 1. Let Odo finish the current connections and close the system session under
    the existing 10F lifecycle policy.

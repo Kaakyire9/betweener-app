@@ -7,7 +7,8 @@ import type {
   OdoShowScene,
 } from './odo-show-contracts.ts';
 
-type BusyAction = 'enable' | 'takeover' | 'resume' | 'scene' | 'music' | null;
+type BusyAction = 'enable' | 'takeover' | 'resume' | 'disconnect-studio'
+  | 'scene' | 'music' | null;
 
 export type LiveOdoShowDirectorController = {
   state: OdoShowDirectorState | null;
@@ -18,6 +19,7 @@ export type LiveOdoShowDirectorController = {
   enable: () => Promise<void>;
   takeControl: () => Promise<void>;
   resume: () => Promise<void>;
+  disconnectStudio: () => Promise<void>;
   setScene: (scene: OdoShowScene) => Promise<void>;
   controlMusic: (action: LiveMusicAction, volume?: number) => Promise<void>;
 };
@@ -34,6 +36,9 @@ const friendlyError = (error: unknown): string => {
   }
   if (message.includes('approved_track_unavailable')) {
     return 'No approved, licensed track is available for that action.';
+  }
+  if (message.includes('studio_disconnect')) {
+    return 'Betweener Studio could not be disconnected. Refresh and try again.';
   }
   return 'Odo could not update the show. Try again.';
 };
@@ -133,6 +138,9 @@ export const useLiveOdoShowDirector = (options: {
   const resume = useCallback(() => perform('resume', () =>
     liveRepository.resumeOdoShow(options.sessionId)),
   [options.sessionId, perform]);
+  const disconnectStudio = useCallback(() => perform('disconnect-studio', () =>
+    liveRepository.disconnectLiveStudio(options.sessionId), false),
+  [options.sessionId, perform]);
   const setScene = useCallback((scene: OdoShowScene) => {
     if (!state) return Promise.resolve();
     return perform('scene', () => liveRepository.setLiveShowScene(
@@ -148,9 +156,9 @@ export const useLiveOdoShowDirector = (options: {
 
   return useMemo(() => ({
     state, loading, busyAction, error, refresh, enable, takeControl, resume,
-    setScene, controlMusic,
+    disconnectStudio, setScene, controlMusic,
   }), [
-    busyAction, controlMusic, enable, error, loading, refresh, resume,
+    busyAction, controlMusic, disconnectStudio, enable, error, loading, refresh, resume,
     setScene, state, takeControl,
   ]);
 };

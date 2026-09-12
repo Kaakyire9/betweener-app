@@ -1,5 +1,6 @@
 import {
   isStudioPresentationScene,
+  LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT,
   type ProgramSource,
   type ProgramState,
 } from '@betweener/live-program-domain';
@@ -223,7 +224,10 @@ const StageGrid = memo(function StageGrid({
     );
   }
 
-  const visualTileCount = Math.min(4, participants.length + visibleRequestSeats);
+  const visualTileCount = Math.min(
+    LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT,
+    participants.length + visibleRequestSeats,
+  );
   const isContainedMultiStage = visualTileCount > 1 && constrainMultiStage !== false;
   const stageGrid = (
     <View style={[styles.grid, presentation === 'private_spark' && styles.privateGrid]}>
