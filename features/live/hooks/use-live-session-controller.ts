@@ -15,7 +15,6 @@ import {
   type LiveComment,
   type LiveJoinNotice,
   type LiveAudiencePulseSnapshot,
-  type LiveReactionKind,
   type LiveSessionRealtimeStatus,
   type LiveSessionSnapshot,
   type LiveParticipantArrivalEvent,
@@ -432,12 +431,6 @@ export const useLiveSessionController = (sessionId: string, currentUserId: strin
       runAction(
         `report-comment:${comment.id}`,
         () => liveRepository.reportComment(sessionId, comment),
-        { refreshAfter: false },
-      ),
-    createReaction: (reaction: LiveReactionKind) =>
-      runAction(
-        `reaction:${reaction}`,
-        () => liveRepository.createReaction(sessionId, reaction),
         { refreshAfter: false },
       ),
     openAudiencePoll: (templateKey: string, durationSeconds = 90) =>

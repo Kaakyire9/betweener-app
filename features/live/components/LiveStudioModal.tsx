@@ -1,4 +1,4 @@
-import { BarChart3, Bot, ChevronLeft, RefreshCw, Share2, Shuffle, Sparkles, UsersRound } from 'lucide-react-native';
+import { BarChart3, Bot, ChevronLeft, Mic, MicOff, Music2, Palette, RefreshCw, Share2, Shuffle, Sparkles, UsersRound } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -21,13 +21,17 @@ import { OdoCopilotPanel } from './OdoCopilotPanel.tsx';
 import { OdoAutopilotPanel } from './OdoAutopilotPanel.tsx';
 import { OdoFullQuickConnectPanel } from './OdoFullQuickConnectPanel.tsx';
 import { OdoShowDirectorPanel } from './OdoShowDirectorPanel.tsx';
+import { LiveMusicLibraryPanel } from './LiveMusicLibraryPanel.tsx';
+import { LiveStageAtmospherePanel } from './LiveStageAtmosphere.tsx';
 import { type LiveVisualTheme, useLiveVisualTheme } from './live-visual-tokens.ts';
 import { useLiveOdoCopilot } from '../odo/copilot/use-live-odo-copilot.ts';
 import { useLiveOdoAutopilot } from '../odo/autopilot/use-live-odo-autopilot.ts';
 import { useLiveOdoFullQuickConnect } from '../odo/full-quick-connect/use-live-odo-full-quick-connect.ts';
 import { useLiveOdoShowDirector } from '../odo/show/use-live-odo-show-director.ts';
+import type { LiveStageAtmosphereController } from '../hooks/use-live-stage-atmosphere.ts';
 
-type LiveStudioTab = 'rotation' | 'stage' | 'match' | 'pulse' | 'odo' | 'invite';
+type LiveStudioTab = 'rotation' | 'stage' | 'match' | 'pulse' | 'music'
+  | 'atmosphere' | 'odo' | 'invite';
 
 export type LiveStudioModalProps = {
   visible: boolean;
@@ -36,6 +40,9 @@ export type LiveStudioModalProps = {
   onRefresh: () => void;
   sessionId: string;
   roomTitle: string;
+  microphoneEnabled: boolean;
+  microphoneControlEnabled: boolean;
+  onToggleMicrophone: () => void;
   stageDeskProps: Omit<LiveStageDeskProps, 'expanded' | 'onExpandedChange' | 'presentation'>;
   quickConnectProps?: LiveQuickConnectHostPanelProps | null;
   matchingProps?: LiveHostedMatchingPanelProps | null;
@@ -43,6 +50,7 @@ export type LiveStudioModalProps = {
   odoRoundId?: string | null;
   odoAutopilotOperational?: boolean;
   onOdoSuggestionUsed?: () => void | Promise<void>;
+  atmosphereController?: LiveStageAtmosphereController | null;
 };
 
 const TAB_META: Record<LiveStudioTab, { label: string; icon: LucideIcon }> = {
@@ -51,6 +59,8 @@ const TAB_META: Record<LiveStudioTab, { label: string; icon: LucideIcon }> = {
   match: { label: 'Match', icon: Sparkles },
   pulse: { label: 'Pulse', icon: BarChart3 },
   odo: { label: 'Odo', icon: Bot },
+  music: { label: 'Music', icon: Music2 },
+  atmosphere: { label: 'Mood', icon: Palette },
   invite: { label: 'Invite', icon: Share2 },
 };
 
@@ -61,6 +71,9 @@ export function LiveStudioModal({
   onRefresh,
   sessionId,
   roomTitle,
+  microphoneEnabled,
+  microphoneControlEnabled,
+  onToggleMicrophone,
   stageDeskProps,
   quickConnectProps = null,
   matchingProps = null,
@@ -68,6 +81,7 @@ export function LiveStudioModal({
   odoRoundId = null,
   odoAutopilotOperational = false,
   onOdoSuggestionUsed,
+  atmosphereController = null,
 }: LiveStudioModalProps) {
   const visual = useLiveVisualTheme();
   const styles = useMemo(() => createStyles(visual), [visual]);
@@ -106,10 +120,10 @@ export function LiveStudioModal({
     || hasShowDirector;
   const tabs = useMemo<readonly LiveStudioTab[]>(
     () => hasQuickConnectControls
-      ? ['rotation', 'stage', 'pulse', ...(hasOdo ? ['odo' as const] : []), 'invite']
+      ? ['rotation', 'stage', 'pulse', 'music', 'atmosphere', ...(hasOdo ? ['odo' as const] : []), 'invite']
       : hasMatchingControls
-        ? ['stage', 'match', 'pulse', ...(hasOdo ? ['odo' as const] : []), 'invite']
-        : ['stage', 'pulse', ...(hasOdo ? ['odo' as const] : []), 'invite'],
+        ? ['stage', 'match', 'pulse', 'music', 'atmosphere', ...(hasOdo ? ['odo' as const] : []), 'invite']
+        : ['stage', 'pulse', 'music', 'atmosphere', ...(hasOdo ? ['odo' as const] : []), 'invite'],
     [hasMatchingControls, hasOdo, hasQuickConnectControls],
   );
   const [selectedTab, setSelectedTab] = useState<LiveStudioTab>('stage');
@@ -149,24 +163,49 @@ export function LiveStudioModal({
             <Text style={styles.eyebrow}>PRIVATE HOST CONSOLE</Text>
             <Text style={styles.title}>Live Studio</Text>
           </View>
-          <Pressable
-            accessibilityLabel="Refresh Live Studio"
-            accessibilityRole="button"
-            disabled={studioRefreshing}
-            onPress={() => {
-              onRefresh();
-              void odo.refresh();
-              void autopilot.refresh();
-              void fullQuickConnect.refresh();
-              void showDirector.refresh();
-            }}
-            style={styles.iconButton}
-          >
-            {studioRefreshing ? <ActivityIndicator color={visual.color.teal} size="small" /> : <RefreshCw color={visual.color.teal} size={19} />}
-          </Pressable>
+          <View style={styles.headerActions}>
+            <Pressable
+              accessibilityLabel={microphoneEnabled ? 'Mute Host microphone' : 'Turn on Host microphone'}
+              accessibilityRole="button"
+              accessibilityState={{ disabled: !microphoneControlEnabled }}
+              disabled={!microphoneControlEnabled}
+              onPress={onToggleMicrophone}
+              style={[
+                styles.iconButton,
+                !microphoneEnabled && styles.microphoneOff,
+                !microphoneControlEnabled && styles.controlDisabled,
+              ]}
+            >
+              {microphoneEnabled
+                ? <Mic color={visual.color.teal} size={19} />
+                : <MicOff color={visual.color.dangerText} size={19} />}
+            </Pressable>
+            <Pressable
+              accessibilityLabel="Refresh Live Studio"
+              accessibilityRole="button"
+              disabled={studioRefreshing}
+              onPress={() => {
+                onRefresh();
+                void odo.refresh();
+                void autopilot.refresh();
+                void fullQuickConnect.refresh();
+                void showDirector.refresh();
+                void atmosphereController?.refresh();
+              }}
+              style={styles.iconButton}
+            >
+              {studioRefreshing ? <ActivityIndicator color={visual.color.teal} size="small" /> : <RefreshCw color={visual.color.teal} size={19} />}
+            </Pressable>
+          </View>
         </View>
 
-        <View accessibilityRole="tablist" style={styles.tabs}>
+        <ScrollView
+          accessibilityRole="tablist"
+          contentContainerStyle={styles.tabs}
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.tabsScroll}
+        >
           {tabs.map((tab) => {
             const Icon = TAB_META[tab].icon;
             const selected = activeTab === tab;
@@ -183,7 +222,7 @@ export function LiveStudioModal({
               </Pressable>
             );
           })}
-        </View>
+        </ScrollView>
 
         <ScrollView
           key={activeTab}
@@ -223,6 +262,22 @@ export function LiveStudioModal({
             </>
           ) : null}
 
+          {activeTab === 'music' ? (
+            <>
+              <Text style={styles.sectionTitle}>Soundtrack the room.</Text>
+              <Text style={styles.sectionBody}>Choose once from the global approved library. Betweener synchronizes playback for eligible audience devices.</Text>
+              <LiveMusicLibraryPanel controller={showDirector} />
+            </>
+          ) : null}
+
+          {activeTab === 'atmosphere' && atmosphereController ? (
+            <>
+              <Text style={styles.sectionTitle}>Set the atmosphere.</Text>
+              <Text style={styles.sectionBody}>Choose a branded canvas or bring the Live poster onto the public stage for everyone.</Text>
+              <LiveStageAtmospherePanel controller={atmosphereController} />
+            </>
+          ) : null}
+
           {activeTab === 'odo' && hasOdo ? (
             <>
               <Text style={styles.sectionTitle}>Thoughtful direction, under your control.</Text>
@@ -259,12 +314,16 @@ export function LiveStudioModal({
 const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
   root: { flex: 1, backgroundColor: visual.color.canvas },
   header: { minHeight: 72, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: visual.color.border, backgroundColor: visual.color.surface },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   iconButton: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.color.surfaceRaised, borderWidth: 1, borderColor: visual.color.border },
+  microphoneOff: { backgroundColor: visual.color.dangerSoft, borderColor: visual.color.dangerText },
+  controlDisabled: { opacity: 0.45 },
   headerCopy: { flex: 1, alignItems: 'center' },
   eyebrow: { color: visual.color.teal, fontSize: 9, letterSpacing: 1.5, fontFamily: 'Manrope_800ExtraBold' },
   title: { marginTop: 2, color: visual.color.text, fontSize: 22, fontFamily: 'PlayfairDisplay_700Bold' },
-  tabs: { marginHorizontal: 16, marginTop: 14, padding: 4, borderRadius: 19, flexDirection: 'row', backgroundColor: visual.color.surface, borderWidth: 1, borderColor: visual.color.border },
-  tab: { flex: 1, minHeight: 39, borderRadius: 15, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5 },
+  tabsScroll: { flexGrow: 0, marginTop: 14 },
+  tabs: { marginHorizontal: 16, padding: 4, borderRadius: 19, flexDirection: 'row', gap: 3, backgroundColor: visual.color.surface, borderWidth: 1, borderColor: visual.color.border },
+  tab: { width: 76, minHeight: 39, borderRadius: 15, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5 },
   tabSelected: { backgroundColor: visual.color.teal },
   odoTabSelected: { backgroundColor: visual.color.purple },
   tabText: { color: visual.color.textMuted, fontSize: 10, fontFamily: 'Manrope_700Bold' },

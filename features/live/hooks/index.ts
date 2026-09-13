@@ -16,3 +16,6 @@ export * from './use-live-quick-connect-host-control.ts';
 export * from './use-live-quick-connect-pool.ts';
 export * from './use-live-quorum-pooling.ts';
 export * from './use-circle-live.ts';
+export * from './use-live-stage-atmosphere.ts';
+export * from './use-live-private-activity.ts';
+export * from './use-live-reactions.ts';

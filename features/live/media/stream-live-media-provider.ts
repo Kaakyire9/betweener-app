@@ -57,8 +57,14 @@ const expectedTransportCloseCode = (message: string): number | null => {
 };
 
 const isTransportOwnedSdkMessage = (message: string): boolean => (
-  message.includes('[SfuClientWS]')
-  && message.includes('Signaling WS channel error')
+  (
+    message.includes('[SfuClientWS]')
+    && message.includes('Signaling WS channel error')
+  )
+  || (
+    message.includes('[KEEP_CALL_ALIVE_HEADLESS_TASK]')
+    && message.includes('callCid does not match active call; skipping')
+  )
 );
 
 export const streamLiveSdkLogSink = (
@@ -68,8 +74,9 @@ export const streamLiveSdkLogSink = (
   const closeCode = expectedTransportCloseCode(message);
   if (closeCode !== null || isTransportOwnedSdkMessage(message)) {
     // Stream closes its coordinator socket during backgrounding, disposal and
-    // endpoint migration. Our transport observer owns retry/failure telemetry,
-    // so suppress these expected SDK-level console warnings.
+    // endpoint migration. Android can also deliver the previous call's stopped
+    // foreground-task intent after the next call is active. Both are SDK-owned
+    // lifecycle races; our transport observer owns actionable telemetry.
     return;
   }
   // SDK diagnostics must not create a React Native red screen. Authoritative

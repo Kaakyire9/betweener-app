@@ -2,8 +2,9 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { ArrowLeft, Sparkles, Users } from 'lucide-react-native';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, BackHandler, Pressable, StyleSheet, Text, View } from 'react-native';
+import { BackHandler, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import BetweenerLoader from '@/components/ui/BetweenerLoader.tsx';
 import type {
   LiveParticipant,
   LiveQuickConnectPairing,
@@ -221,32 +222,49 @@ function QuickConnectConversation({
     onPictureInPictureModeChange(active);
   }, [onPictureInPictureModeChange]);
 
-  const stageContent = media.bindings && chemistryRevealed ? (
-    <LiveMediaStageBoundary resetKey={`${pairing.id}:${media.state}`}>
-      <Suspense fallback={<ActivityIndicator color={visual.teal} />}>
+  const stageContent = media.bindings ? (
+    <LiveMediaStageBoundary resetKey={pairing.id}>
+      <Suspense fallback={(
+        <BetweenerLoader
+          fullScreen={false}
+          label="Bringing your conversation into focus"
+          sublabel="Keeping this space private…"
+        />
+      )}>
         <QuickConnectStage
           bindings={media.bindings}
           stageParticipants={participants}
           localPublisherUserId={user?.id ?? null}
           constrainMultiStage={false}
           presentation="private_spark"
+          visualsConcealed={!chemistryRevealed}
           onPictureInPictureModeChange={handlePictureInPictureModeChange}
         />
       </Suspense>
     </LiveMediaStageBoundary>
   ) : (
     <View style={styles.stageLoading}>
-      <ActivityIndicator color={visual.teal} />
-      <Text style={styles.muted}>{pairing.state === 'reconnect_grace' ? 'Holding your place...' : 'Opening the conversation...'}</Text>
       {media.state === 'failed' ? (
-        <Pressable style={styles.outlineButton} onPress={() => void media.join({
-          mode: 'quick_connect',
-          audioEnabled: true,
-          videoEnabled: chemistryRevealed && videoIntentRef.current,
-        })}>
-          <Text style={styles.outlineButtonText}>Reconnect</Text>
-        </Pressable>
-      ) : null}
+        <>
+          <Text style={styles.panelTitle}>Your conversation needs a moment.</Text>
+          <Text style={styles.muted}>Your place is being held while you reconnect.</Text>
+          <Pressable style={styles.outlineButton} onPress={() => void media.join({
+            mode: 'quick_connect',
+            audioEnabled: true,
+            videoEnabled: chemistryRevealed && videoIntentRef.current,
+          })}>
+            <Text style={styles.outlineButtonText}>Reconnect</Text>
+          </Pressable>
+        </>
+      ) : (
+        <BetweenerLoader
+          fullScreen={false}
+          label="Opening your conversation"
+          sublabel={pairing.state === 'reconnect_grace'
+            ? 'Holding your place quietly…'
+            : 'Preparing a private space for two…'}
+        />
+      )}
     </View>
   );
 
@@ -393,13 +411,19 @@ export default function LiveQuickConnectScreen() {
     <LinearGradient colors={visual.isDark ? [visual.canvas, visual.surfaceSoft, visual.canvas] : [visual.canvas, visual.bgSubtle, visual.surface]} style={styles.root}>
       <Stack.Screen options={{ gestureEnabled: false }} />
       <SafeAreaView edges={pictureInPictureActive ? [] : undefined} style={styles.safe}>
-        <View style={[styles.header, pictureInPictureActive && styles.pictureInPictureHidden]}>
+        <LiveGlassSurface style={[styles.header, pictureInPictureActive && styles.pictureInPictureHidden]}>
           <Pressable accessibilityLabel="Back to Live room" accessibilityState={{ disabled: pendingSafety }} disabled={pendingSafety} onPress={handleBack} style={[styles.roundButton, pendingSafety && styles.disabled]}><ArrowLeft color={visual.text} size={22} /></Pressable>
           <View style={styles.headerCopy}><Text style={styles.eyebrow}>QUICK CONNECT</Text><Text style={styles.headerTitle}>A thoughtful three minutes</Text></View>
           <View style={styles.liveDot} />
-        </View>
+        </LiveGlassSurface>
         {controller.loading && !controller.snapshot ? (
-          <View style={styles.center}><ActivityIndicator color={visual.teal} /><Text style={styles.muted}>Finding the room...</Text></View>
+          <View style={styles.center}>
+            <BetweenerLoader
+              fullScreen={false}
+              label="Finding your Quick Connect"
+              sublabel="Preparing the next thoughtful introduction…"
+            />
+          </View>
         ) : controller.snapshot?.pairing ? (
           <QuickConnectConversation
             snapshot={controller.snapshot}
@@ -455,18 +479,18 @@ export default function LiveQuickConnectScreen() {
 
 const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
   root: { flex: 1 }, safe: { flex: 1 },
-  header: { minHeight: 76, marginHorizontal: 18, flexDirection: 'row', alignItems: 'center', gap: 13 },
-  roundButton: { width: 46, height: 46, borderRadius: 23, borderWidth: 1, borderColor: visual.border, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.surfaceTranslucent },
-  headerCopy: { flex: 1 }, eyebrow: { color: visual.teal, fontSize: 10, fontWeight: '800', letterSpacing: 2 },
-  headerTitle: { color: visual.text, fontSize: 18, fontWeight: '700', marginTop: 2 },
-  liveDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: visual.teal, shadowColor: visual.teal, shadowOpacity: 0.8, shadowRadius: 8 },
+  header: { minHeight: 64, marginHorizontal: 16, marginTop: 5, marginBottom: 8, paddingHorizontal: 8, borderRadius: 24, borderColor: visual.borderStrong, flexDirection: 'row', alignItems: 'center', gap: 11 },
+  roundButton: { width: 38, height: 38, borderRadius: 19, borderWidth: 0.75, borderColor: visual.border, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.surfaceRaised },
+  headerCopy: { flex: 1 }, eyebrow: { color: visual.teal, fontSize: 8, fontFamily: 'Manrope_800ExtraBold', letterSpacing: 1.7 },
+  headerTitle: { color: visual.text, fontSize: 16, fontFamily: 'PlayfairDisplay_700Bold', marginTop: 1 },
+  liveDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: visual.teal, shadowColor: visual.teal, shadowOpacity: 0.45, shadowRadius: 6 },
   conversation: { flex: 1, paddingHorizontal: 16, paddingBottom: 14 },
   pictureInPictureConversation: { paddingHorizontal: 0, paddingBottom: 0, overflow: 'hidden', backgroundColor: '#06110F' },
   pictureInPictureHidden: { display: 'none' },
   pictureInPictureStage: { minHeight: 0, maxHeight: '100%', borderRadius: 0, borderWidth: 0 },
-  timerPill: { alignSelf: 'center', borderWidth: 1, borderColor: visual.teal, backgroundColor: visual.tealSoft, borderRadius: 999, paddingHorizontal: 18, paddingVertical: 8, marginBottom: 10 },
-  timerText: { color: visual.teal, fontSize: 16, fontWeight: '800', fontVariant: ['tabular-nums'] },
-  stage: { flex: 1, minHeight: 330, maxHeight: 620, borderRadius: 28, overflow: 'hidden', borderWidth: 1, borderColor: visual.teal, backgroundColor: visual.videoChrome },
+  timerPill: { alignSelf: 'center', borderWidth: 0.75, borderColor: visual.borderStrong, backgroundColor: visual.tealSoft, borderRadius: 999, paddingHorizontal: 16, paddingVertical: 7, marginBottom: 10 },
+  timerText: { color: visual.teal, fontSize: 15, fontFamily: 'Manrope_800ExtraBold', fontVariant: ['tabular-nums'] },
+  stage: { flex: 1, minHeight: 330, maxHeight: 620, borderRadius: 28, overflow: 'hidden', borderWidth: 0.75, borderColor: visual.borderStrong, backgroundColor: visual.videoChrome },
   stageLoading: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
   odoSparkCard: { marginTop: 10, borderRadius: 20, paddingHorizontal: 15, paddingVertical: 12, borderColor: visual.purple, borderWidth: 1 },
   odoSparkHeading: { flexDirection: 'row', alignItems: 'center', gap: 7 },

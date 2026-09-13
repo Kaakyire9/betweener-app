@@ -1,5 +1,11 @@
 import * as Crypto from 'expo-crypto';
 import type { RealtimeChannel } from '@supabase/supabase-js';
+import {
+  LIVE_MUSIC_REPEAT_MODES,
+  parseLiveMusicCatalogue,
+  type LiveMusicCatalogue,
+  type LiveMusicRepeatMode,
+} from '@betweener/live-program-domain';
 import { supabase } from '@/lib/supabase';
 import { readFunctionErrorCode } from '../media/live-function-error.ts';
 import type {
@@ -43,14 +49,21 @@ import {
   parseOdoDirectorSnapshot,
 } from '../odo/domain/odo-validation.ts';
 import { getLiveSessionStartTarget } from '../domain/live-session-machine.ts';
+import {
+  parseLiveStageAtmosphere,
+  type LiveStageAtmosphere,
+  type LiveStageAtmospherePreset,
+} from '../stage/live-stage-atmosphere.ts';
 import type { LiveParticipantArrivalEvent } from './live-participant-arrivals.ts';
-import type { CircleLiveSnapshot, LiveAudiencePoll, LiveCancellationReason, LiveChemistrySnapshot, LiveComment, LiveEventMediaInput, LiveHostedMatchingSnapshot, LiveJoinNotice, LivePoolCandidatePreview, LivePrivateSpark, LivePrivateSparkExitDecision, LiveQuickConnectConcurrency, LiveQuickConnectDecision, LiveQuickConnectHostAction, LiveQuickConnectHostSnapshot, LiveQuickConnectIntent, LiveQuickConnectPoolSnapshot, LiveQuickConnectRoundSeconds, LiveQuickConnectSafetyExperience, LiveQuickConnectSafetyReason, LiveQuickConnectSnapshot, LiveQuickConnectStageLayout, LiveQuorumPoolingSnapshot, LiveReactionKind, LiveRoomPulseSnapshot, LiveSessionRecap, LiveSessionSnapshot, LiveSessionSummary, ScheduleCircleLiveSessionInput, ScheduleLiveSessionInput, ScheduleLiveStudioSessionInput, UpdateLiveStudioSessionInput } from './live-models.ts';
+import type { CircleLiveSnapshot, LiveAudiencePoll, LiveCancellationReason, LiveChemistrySnapshot, LiveComment, LiveEventMediaInput, LiveHostedMatchingSnapshot, LiveJoinNotice, LivePoolCandidatePreview, LivePrivateActivitySnapshot, LivePrivateSpark, LivePrivateSparkExitDecision, LiveQuickConnectConcurrency, LiveQuickConnectDecision, LiveQuickConnectHostAction, LiveQuickConnectHostSnapshot, LiveQuickConnectIntent, LiveQuickConnectPoolSnapshot, LiveQuickConnectRoundSeconds, LiveQuickConnectSafetyExperience, LiveQuickConnectSafetyReason, LiveQuickConnectSnapshot, LiveQuickConnectStageLayout, LiveQuorumPoolingSnapshot, LiveReactionEvent, LiveReactionKind, LiveReactionSummary, LiveRoomPulseSnapshot, LiveSessionRecap, LiveSessionSnapshot, LiveSessionSummary, ScheduleCircleLiveSessionInput, ScheduleLiveSessionInput, ScheduleLiveStudioSessionInput, UpdateLiveStudioSessionInput } from './live-models.ts';
+import { parseLiveReactionEvent, parseLiveReactionSummary } from './live-reactions.ts';
 import {
   parseLiveAudiencePoll,
   parseCircleLiveSnapshot,
   parseLiveComment,
   parseLiveChemistrySnapshot,
   parseLiveHostedMatchingSnapshot,
+  parseLivePrivateActivitySnapshot,
   parseLivePrivateSpark,
   parseLivePoolCandidatePreview,
   parseLiveQuickConnectSnapshot,
@@ -87,6 +100,12 @@ const invoke = async (name: string, args?: Record<string, unknown>): Promise<unk
 };
 
 export const liveRepository = {
+  async getPrivateActivity(sessionId: string): Promise<LivePrivateActivitySnapshot> {
+    return parseLivePrivateActivitySnapshot(await invoke('rpc_get_live_private_activity_v1', {
+      p_session_id: sessionId,
+    }));
+  },
+
   async getAlwaysOnQuickConnect(): Promise<LiveAlwaysOnSnapshot> {
     const parsed = parseLiveAlwaysOnSnapshot(
       await invoke('rpc_get_live_quick_connect_availability_v1'),
@@ -141,6 +160,55 @@ export const liveRepository = {
     ));
     if (parsed.ok === false) throw new Error(parsed.reasonCode);
     return parsed.value;
+  },
+
+  async getLiveMusicCatalogue(sessionId: string): Promise<LiveMusicCatalogue> {
+    const parsed = parseLiveMusicCatalogue(await invoke(
+      'rpc_get_live_music_catalogue_v1',
+      { p_session_id: sessionId },
+    ));
+    if (!parsed) throw new Error('live_music_catalogue_invalid');
+    return parsed;
+  },
+
+  async getLiveMusicRepeatMode(sessionId: string): Promise<LiveMusicRepeatMode> {
+    const value = await invoke('rpc_get_live_music_repeat_mode_v1', {
+      p_session_id: sessionId,
+    });
+    const repeatMode = value && typeof value === 'object' && 'repeatMode' in value
+      ? value.repeatMode : null;
+    if (typeof repeatMode !== 'string'
+      || !LIVE_MUSIC_REPEAT_MODES.includes(repeatMode as LiveMusicRepeatMode)) {
+      throw new Error('live_music_repeat_mode_invalid');
+    }
+    return repeatMode as LiveMusicRepeatMode;
+  },
+
+  async getLiveStageAtmosphere(sessionId: string): Promise<LiveStageAtmosphere> {
+    const parsed = parseLiveStageAtmosphere(await invoke(
+      'rpc_get_live_stage_atmosphere_v1',
+      { p_session_id: sessionId },
+    ));
+    if (!parsed) throw new Error('live_stage_atmosphere_invalid');
+    return parsed;
+  },
+
+  async setLiveStageAtmosphere(input: {
+    sessionId: string;
+    preset: LiveStageAtmospherePreset;
+    expectedVersion: number;
+  }): Promise<LiveStageAtmosphere> {
+    const parsed = parseLiveStageAtmosphere(await invoke(
+      'rpc_host_set_live_stage_atmosphere_v1',
+      {
+        p_session_id: input.sessionId,
+        p_preset: input.preset,
+        p_expected_version: input.expectedVersion,
+        p_request_id: Crypto.randomUUID(),
+      },
+    ));
+    if (!parsed) throw new Error('live_stage_atmosphere_invalid');
+    return parsed;
   },
 
   async getLiveProgram(sessionId: string): Promise<LiveProgramSnapshotV2> {
@@ -201,6 +269,24 @@ export const liveRepository = {
     if (!value || typeof value !== 'object' || !('changed' in value) || value.changed !== true) {
       throw new Error(value && typeof value === 'object' && 'reasonCode' in value
         && typeof value.reasonCode === 'string' ? value.reasonCode : 'odo_show_scene_failed');
+    }
+  },
+
+  async setLiveMusicStageVisible(
+    sessionId: string,
+    visible: boolean,
+    expectedVersion: number,
+  ): Promise<void> {
+    const value = await invoke('rpc_host_set_live_music_stage_v1', {
+      p_session_id: sessionId,
+      p_visible: visible,
+      p_expected_version: expectedVersion,
+      p_request_id: Crypto.randomUUID(),
+    });
+    if (!value || typeof value !== 'object' || !('changed' in value) || value.changed !== true) {
+      throw new Error(value && typeof value === 'object' && 'reasonCode' in value
+        && typeof value.reasonCode === 'string'
+        ? value.reasonCode : 'live_music_stage_failed');
     }
   },
 
@@ -1000,12 +1086,39 @@ export const liveRepository = {
     });
   },
 
-  async createReaction(sessionId: string, reaction: LiveReactionKind): Promise<void> {
-    await invoke('rpc_create_live_reaction', {
+  async createReaction(
+    sessionId: string,
+    clientEventId: string,
+    reaction: LiveReactionKind,
+  ): Promise<LiveReactionEvent> {
+    const receipt = await invoke('rpc_create_live_reaction', {
       p_session_id: sessionId,
-      p_client_event_id: Crypto.randomUUID(),
+      p_client_event_id: clientEventId,
       p_reaction: reaction,
     });
+    const legacyReceipt = receipt && typeof receipt === 'object' && !Array.isArray(receipt)
+      ? receipt as Record<string, unknown>
+      : null;
+    const event = parseLiveReactionEvent(receipt) ?? parseLiveReactionEvent({
+      eventId: legacyReceipt?.client_event_id,
+      sessionId: legacyReceipt?.session_id,
+      reaction: legacyReceipt?.reaction,
+      emittedAt: legacyReceipt?.created_at,
+    });
+    if (!event || event.sessionId !== sessionId || event.eventId !== clientEventId) {
+      throw new Error('live_reaction_receipt_invalid');
+    }
+    return event;
+  },
+
+  async getReactionSummary(sessionId: string): Promise<LiveReactionSummary> {
+    const summary = parseLiveReactionSummary(await invoke('rpc_get_live_reaction_summary', {
+      p_session_id: sessionId,
+    }));
+    if (!summary || summary.sessionId !== sessionId) {
+      throw new Error('live_reaction_summary_invalid');
+    }
+    return summary;
   },
 
   async openAudiencePoll(
@@ -1175,6 +1288,24 @@ export const liveRepository = {
     };
   },
 
+  subscribeReactions(
+    sessionId: string,
+    onReaction: (event: LiveReactionEvent) => void,
+    onStatus?: (status: LiveSessionRealtimeStatus) => void,
+  ): () => void {
+    const channel: RealtimeChannel = supabase.channel(`live-reactions:${sessionId}`, {
+      config: { private: true },
+    });
+    channel.on('broadcast', { event: 'reaction' }, ({ payload }) => {
+      const event = parseLiveReactionEvent(payload);
+      if (event?.sessionId === sessionId) onReaction(event);
+    });
+    channel.subscribe((status) => onStatus?.(status as LiveSessionRealtimeStatus));
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  },
+
   subscribeHostedMatching(sessionId: string, onChange: () => void): () => void {
     const channel: RealtimeChannel = supabase.channel(
       `live-hosted-matching:${sessionId}:${Crypto.randomUUID()}`,
@@ -1202,6 +1333,26 @@ export const liveRepository = {
     return () => {
       void supabase.removeChannel(channel);
     };
+  },
+
+  subscribePrivateActivity(sessionId: string, onChange: () => void): () => void {
+    const channel: RealtimeChannel = supabase.channel(
+      `live-private-activity:${sessionId}:${Crypto.randomUUID()}`,
+    );
+    channel.on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'live_match_round_updates', filter: `session_id=eq.${sessionId}` },
+      onChange,
+    );
+    channel.on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'live_quick_connect_updates', filter: `session_id=eq.${sessionId}` },
+      onChange,
+    );
+    channel.subscribe((status) => {
+      if (status === 'SUBSCRIBED') onChange();
+    });
+    return () => { void supabase.removeChannel(channel); };
   },
 
   subscribeLiveDirector(sessionId: string, onChange: () => void): () => void {
@@ -1278,6 +1429,26 @@ export const liveRepository = {
         event: '*',
         schema: 'public',
         table: 'live_odo_show_updates',
+        filter: `session_id=eq.${sessionId}`,
+      },
+      onChange,
+    );
+    channel.subscribe((status) => {
+      if (status === 'SUBSCRIBED') onChange();
+    });
+    return () => { void supabase.removeChannel(channel); };
+  },
+
+  subscribeLiveStageAtmosphere(sessionId: string, onChange: () => void): () => void {
+    const channel: RealtimeChannel = supabase.channel(
+      `live-stage-atmosphere:${sessionId}:${Crypto.randomUUID()}`,
+    );
+    channel.on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'live_stage_atmospheres',
         filter: `session_id=eq.${sessionId}`,
       },
       onChange,

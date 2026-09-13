@@ -19,7 +19,33 @@ export type LiveCancellationReason =
   | 'not_enough_people'
   | 'safety'
   | 'other';
-export type LiveReactionKind = 'heart' | 'spark' | 'applause' | 'support';
+export type LiveReactionKind =
+  | 'heart'
+  | 'spark'
+  | 'applause'
+  | 'support'
+  | 'joy'
+  | 'wow'
+  | 'insight'
+  | 'celebrate';
+
+export type LiveReactionCounts = Readonly<Record<LiveReactionKind, number>>;
+
+export type LiveReactionSummary = {
+  sessionId: string;
+  totalCount: number;
+  version: number;
+  updatedAt: string | null;
+  counts: LiveReactionCounts;
+};
+
+export type LiveReactionEvent = {
+  eventId: string;
+  sessionId: string;
+  reaction: LiveReactionKind;
+  emittedAt: string;
+  summary?: LiveReactionSummary;
+};
 export type LiveAudiencePollKind = 'question_poll' | 'room_poll';
 export type LiveAudiencePollState = 'open' | 'closed' | 'cancelled';
 
@@ -298,6 +324,18 @@ export type LiveSessionSnapshot = {
   myStageInvitation: LiveStageInvitation | null;
   comments: readonly LiveComment[];
   commentCount: number;
+};
+
+/** Aggregate-only public presence. It never identifies a private pair. */
+export type LivePrivateActivitySnapshot = {
+  sessionId: string;
+  hostedPairCount: number;
+  quickConnectPairCount: number;
+  activePairCount: number;
+  activePeopleCount: number;
+  latestHostedPairRoundId: string | null;
+  latestHostedPairActivatedAt: string | null;
+  serverNow: string;
 };
 
 export type LiveRoomPulseSnapshot = {

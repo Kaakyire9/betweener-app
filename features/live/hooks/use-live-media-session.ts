@@ -296,6 +296,9 @@ export const useLiveMediaSession = (
     backgroundedAtRef.current = null;
     admissionExpiresAtRef.current = null;
     desiredModeRef.current = null;
+    // Unmount StreamCall before releasing the provider so its Android
+    // keep-alive owner cannot overwrite the next room's active call.
+    setBindings(null);
     await providerRef.current?.leaveSession().catch(() => undefined);
     setAudioState(false);
     setVideoState(false);

@@ -30,6 +30,9 @@ export type LiveStageTilePlacement =
   | 'trio-lead'
   | 'trio-bottom-left'
   | 'trio-bottom-right'
+  | 'trio-lead-left'
+  | 'trio-top-right'
+  | 'trio-bottom-right-portrait'
   | 'quad-top-left'
   | 'quad-top-right'
   | 'quad-bottom-left'
@@ -87,8 +90,16 @@ export const countConnectedLiveParticipants = <T>(
  */
 export const selectLivePictureInPictureCandidate = <T>(
   candidates: readonly LiveStageCandidate<T>[],
+  options: { preferRemote?: boolean } = {},
 ): LiveStageCandidate<T> | null => {
   const score = (candidate: LiveStageCandidate<T>): number => {
+    if (options.preferRemote) {
+      if (!candidate.isLocalParticipant && candidate.hasVideo) return 0;
+      if (!candidate.isLocalParticipant && candidate.isSpeaking) return 1;
+      if (!candidate.isLocalParticipant) return 2;
+      if (candidate.hasVideo) return 3;
+      return 4;
+    }
     if (candidate.hasVideo && candidate.isSpeaking) return 0;
     if (!candidate.isLocalParticipant && candidate.hasVideo) return 1;
     if (candidate.isLocalParticipant && candidate.hasVideo) return 2;
@@ -243,4 +254,23 @@ export const liveStageTilePlacement = (
     'quad-bottom-right',
   ];
   return placements[Math.min(Math.max(index, 0), placements.length - 1)];
+};
+
+/**
+ * Keeps three portrait cameras useful inside a tall mobile Stage. The legacy
+ * top/bottom arrangement remains preferable when the Stage itself is wide.
+ */
+export const liveStageTilePlacementForViewport = (
+  participantCount: number,
+  index: number,
+  viewportWidth: number,
+  viewportHeight: number,
+): LiveStageTilePlacement => {
+  const supportsPortraitEditorialTrio = viewportWidth > 0
+    && viewportHeight >= viewportWidth * 0.72;
+  if (participantCount !== 3 || !supportsPortraitEditorialTrio) {
+    return liveStageTilePlacement(participantCount, index);
+  }
+  if (index === 0) return 'trio-lead-left';
+  return index === 1 ? 'trio-top-right' : 'trio-bottom-right-portrait';
 };

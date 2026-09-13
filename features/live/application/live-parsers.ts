@@ -33,6 +33,7 @@ import type {
   LiveMatchRoundPerson,
   LiveMatchRoundState,
   LiveParticipant,
+  LivePrivateActivitySnapshot,
   LivePrivateSpark,
   LivePoolCandidatePreview,
   LiveQuorumPoolingSnapshot,
@@ -418,6 +419,23 @@ export const parseLiveSessionSnapshot = (value: unknown): LiveSessionSnapshot =>
       : parseLiveStageInvitation(value.myStageInvitation),
     comments,
     commentCount: Math.max(asNumber(value.commentCount), comments.length),
+  };
+};
+
+export const parseLivePrivateActivitySnapshot = (value: unknown): LivePrivateActivitySnapshot => {
+  if (!isRecord(value)) throw new Error('live_private_activity_snapshot_invalid');
+  const hostedPairCount = Math.max(0, Math.floor(asNumber(value.hosted_pair_count)));
+  const quickConnectPairCount = Math.max(0, Math.floor(asNumber(value.quick_connect_pair_count)));
+  const activePairCount = hostedPairCount + quickConnectPairCount;
+  return {
+    sessionId: asString(value.session_id),
+    hostedPairCount,
+    quickConnectPairCount,
+    activePairCount,
+    activePeopleCount: activePairCount * 2,
+    latestHostedPairRoundId: asNullableString(value.latest_hosted_pair_round_id),
+    latestHostedPairActivatedAt: asNullableString(value.latest_hosted_pair_activated_at),
+    serverNow: asString(value.server_now, new Date().toISOString()),
   };
 };
 

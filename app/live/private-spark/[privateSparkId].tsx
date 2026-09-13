@@ -3,7 +3,6 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { LockKeyhole } from 'lucide-react-native';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   Animated,
   Pressable,
   StyleSheet,
@@ -11,6 +10,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import BetweenerLoader from '@/components/ui/BetweenerLoader.tsx';
 import type {
   LiveParticipant,
   LivePrivateSparkExitDecision,
@@ -298,7 +298,15 @@ export default function LivePrivateSparkScreen() {
   }, [otherPerson]);
 
   if (controller.loading && !spark) {
-    return <View style={styles.center}><ActivityIndicator color={visual.purple} /></View>;
+    return (
+      <View style={styles.center}>
+        <BetweenerLoader
+          fullScreen={false}
+          label="Opening your Private Spark"
+          sublabel="Preparing a quiet space for two…"
+        />
+      </View>
+    );
   }
   if (!spark || !spark.isParticipant) {
     return (
@@ -341,35 +349,50 @@ export default function LivePrivateSparkScreen() {
   return (
     <View style={styles.root}>
       <View style={styles.stage}>
-        {media.bindings && chemistryRevealed ? (
-          <LiveMediaStageBoundary resetKey={`${privateSparkId}:${media.state}`}>
-            <Suspense fallback={<ActivityIndicator color={visual.purple} />}>
+        {media.bindings ? (
+          <LiveMediaStageBoundary resetKey={privateSparkId}>
+            <Suspense fallback={(
+              <BetweenerLoader
+                fullScreen={false}
+                label="Bringing your conversation into focus"
+                sublabel="Your private space stays protected…"
+              />
+            )}>
               <PrivateSparkStage
                 bindings={media.bindings}
                 stageParticipants={participants}
                 localPublisherUserId={user?.id ?? null}
                 constrainMultiStage
                 presentation="private_spark"
+                visualsConcealed={!chemistryRevealed}
                 onPictureInPictureModeChange={handlePictureInPictureModeChange}
               />
             </Suspense>
           </LiveMediaStageBoundary>
         ) : (
           <View style={styles.center}>
-            <ActivityIndicator color={visual.purple} />
-            <Text style={styles.stateCopy}>Opening your private room…</Text>
             {media.state === 'failed' ? (
-              <Pressable
-                onPress={() => void media.join({
-                  mode: 'private_spark',
-                  audioEnabled: true,
-                  videoEnabled: chemistryRevealed && returnMediaIntentRef.current.videoEnabled,
-                })}
-                style={styles.secondaryButton}
-              >
-                <Text style={styles.secondaryText}>Try again</Text>
-              </Pressable>
-            ) : null}
+              <>
+                <Text style={styles.stateTitle}>Your private room needs a moment.</Text>
+                <Text style={styles.stateCopy}>Your place is safe. Reconnect when you’re ready.</Text>
+                <Pressable
+                  onPress={() => void media.join({
+                    mode: 'private_spark',
+                    audioEnabled: true,
+                    videoEnabled: chemistryRevealed && returnMediaIntentRef.current.videoEnabled,
+                  })}
+                  style={styles.secondaryButton}
+                >
+                  <Text style={styles.secondaryText}>Reconnect</Text>
+                </Pressable>
+              </>
+            ) : (
+              <BetweenerLoader
+                fullScreen={false}
+                label="Opening your private room"
+                sublabel="Preparing a quiet space for two…"
+              />
+            )}
           </View>
         )}
         <LiveChemistryOverlay

@@ -19,9 +19,12 @@ import {
 
 import type {
   LiveQuickConnectIntent,
+  LiveQuickConnectPoolMember,
   LiveQuickConnectPoolSnapshot,
 } from '../application/index.ts';
+import type { LivePairPortrait } from '../motion/live-private-spark-motion.ts';
 import { paginateLiveQuickConnectPool } from '../domain/index.ts';
+import { LivePrivateActivityIndicator } from './LivePrivateActivityIndicator.tsx';
 import { LiveQuickConnectConstellation } from './LiveQuickConnectConstellation.tsx';
 import { type LiveVisualTheme, useLiveVisualTheme } from './live-visual-tokens.ts';
 
@@ -36,6 +39,7 @@ export type LiveQuickConnectPoolProps = {
   onSignalInterest: (profileId: string) => void;
   layout: 'stacked' | 'side-by-side';
   onLayoutChange: (layout: 'stacked' | 'side-by-side') => void;
+  privateActivityCount?: number;
   embedded?: boolean;
 };
 
@@ -83,6 +87,7 @@ export function LiveQuickConnectPool({
   onSignalInterest,
   layout,
   onLayoutChange,
+  privateActivityCount = 0,
   embedded = false,
 }: LiveQuickConnectPoolProps) {
   const visual = useLiveVisualTheme();
@@ -94,11 +99,16 @@ export function LiveQuickConnectPool({
   const [reduceMotion, setReduceMotion] = useState(false);
   const [choosingIntent, setChoosingIntent] = useState(false);
   const [connectionIntent, setConnectionIntent] = useState<LiveQuickConnectIntent | null>(null);
+  const memberCacheRef = useRef(new Map<string, LiveQuickConnectPoolMember>());
 
   useEffect(() => {
     if (choosingIntent) return;
     setConnectionIntent(snapshot?.connectionIntent ?? null);
   }, [choosingIntent, snapshot?.connectionIntent]);
+
+  useEffect(() => {
+    snapshot?.members.forEach((member) => memberCacheRef.current.set(member.userId, member));
+  }, [snapshot?.members]);
 
   useEffect(() => {
     let mounted = true;
@@ -159,6 +169,25 @@ export function LiveQuickConnectPool({
       }).start(() => setPageAnimating(false));
     });
   };
+
+  const pairingPeople = useMemo<readonly LivePairPortrait[]>(() => {
+    const pairing = snapshot?.queue?.pairing;
+    if (!pairing || !currentUserId) return [];
+    const current = memberCacheRef.current.get(currentUserId);
+    const other = memberCacheRef.current.get(pairing.otherPerson.userId);
+    return [
+      {
+        userId: currentUserId,
+        fullName: current?.fullName ?? 'You',
+        avatarUrl: current?.avatarUrl ?? null,
+      },
+      {
+        userId: pairing.otherPerson.userId,
+        fullName: other?.fullName ?? pairing.otherPerson.fullName,
+        avatarUrl: other?.avatarUrl ?? pairing.otherPerson.avatarUrl,
+      },
+    ];
+  }, [currentUserId, snapshot?.queue?.pairing]);
 
   if (!snapshot) {
     return initialLoading ? (
@@ -275,6 +304,12 @@ export function LiveQuickConnectPool({
         </View>
       )}
 
+      <LivePrivateActivityIndicator
+        activePairCount={privateActivityCount}
+        compact={layout === 'side-by-side'}
+        style={styles.privateActivity}
+      />
+
       {!snapshot.isHost && !snapshot.isOptedIn && choosingIntent ? (
         <View style={styles.preferencePanel}>
           <Text style={styles.preferenceTitle}>What are you hoping to find?</Text>
@@ -316,6 +351,7 @@ export function LiveQuickConnectPool({
             members={poolPage.members}
             onSignalInterest={onSignalInterest}
             pageMotion={pageMotion}
+            pairingPeople={pairingPeople}
             pairingUserIds={pairingUserIds}
             reduceMotion={reduceMotion}
           />
@@ -422,4 +458,5 @@ const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
   leaveButton: { alignSelf: 'center', minHeight: 28, borderRadius: 14, flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: visual.color.surfaceRaised, paddingHorizontal: 12 },
   leaveText: { color: visual.color.textMuted, fontSize: 8, fontFamily: 'Manrope_800ExtraBold' },
   error: { color: visual.color.danger, fontSize: 8, textAlign: 'center', fontFamily: 'Manrope_600SemiBold' },
+  privateActivity: { alignSelf: 'center' },
 });

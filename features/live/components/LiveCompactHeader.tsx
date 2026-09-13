@@ -7,6 +7,8 @@ import { LiveGlassSurface } from './LiveGlassSurface.tsx';
 import { type LiveVisualTheme, useLiveVisualTheme } from './live-visual-tokens.ts';
 
 type LiveCompactHeaderProps = {
+  accentColor?: string;
+  accentBorderColor?: string;
   attendeeCount: number;
   hostAvatarUrl: string | null;
   hostName: string | null;
@@ -22,6 +24,8 @@ const initials = (name: string | null) => {
 
 /** Compact room identity chrome that leaves the stage as the visual focus. */
 export const LiveCompactHeader = memo(function LiveCompactHeader({
+  accentColor,
+  accentBorderColor,
   attendeeCount,
   hostAvatarUrl,
   hostName,
@@ -31,11 +35,13 @@ export const LiveCompactHeader = memo(function LiveCompactHeader({
   const visual = useLiveVisualTheme();
   const styles = useMemo(() => createStyles(visual), [visual]);
   const displayName = hostName?.trim() || 'Host';
+  const resolvedAccent = accentColor ?? visual.color.teal;
+  const resolvedBorder = accentBorderColor ?? visual.color.borderStrong;
 
   return (
-    <LiveGlassSurface intensity={48} style={styles.glass}>
+    <LiveGlassSurface intensity={58} style={[styles.glass, { borderColor: resolvedBorder }]}>
       <View style={styles.header}>
-        <View accessibilityLabel={`Hosted by ${displayName}`} style={styles.hostAvatarShell}>
+        <View accessibilityLabel={`Hosted by ${displayName}`} style={[styles.hostAvatarShell, { borderColor: resolvedBorder }]}>
           {hostAvatarUrl ? (
             <Image contentFit="cover" source={{ uri: hostAvatarUrl }} style={styles.hostAvatar} transition={120} />
           ) : (
@@ -47,7 +53,7 @@ export const LiveCompactHeader = memo(function LiveCompactHeader({
         <View style={styles.copy}>
           <View style={styles.hostRow}>
             <Text numberOfLines={1} style={styles.hostName}>{displayName}</Text>
-            <Text style={styles.hostLabel}>HOST</Text>
+            <Text style={[styles.hostLabel, { color: resolvedAccent }]}>HOST</Text>
           </View>
           <View style={styles.roomRow}>
             <View style={styles.liveDot} />
@@ -72,7 +78,13 @@ export const LiveCompactHeader = memo(function LiveCompactHeader({
 });
 
 const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
-  glass: { marginHorizontal: 10, marginTop: 4, borderRadius: 26 },
+  glass: {
+    marginHorizontal: 12,
+    marginTop: 5,
+    borderRadius: 27,
+    backgroundColor: visual.isDark ? '#081A17C9' : '#FFFDFCDD',
+    shadowOpacity: visual.isDark ? 0.26 : 0.15,
+  },
   header: {
     minHeight: 56,
     paddingHorizontal: 9,
