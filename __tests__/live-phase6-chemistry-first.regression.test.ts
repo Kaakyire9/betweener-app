@@ -41,6 +41,10 @@ const overlay = readFileSync(
   new URL('../features/live/components/LiveChemistryOverlay.tsx', import.meta.url),
   'utf8',
 );
+const concealedMediaStage = readFileSync(
+  new URL('../features/live/components/LiveConcealedMediaStage.tsx', import.meta.url),
+  'utf8',
+);
 const privateSparkRoute = readFileSync(
   new URL('../app/live/private-spark/[privateSparkId].tsx', import.meta.url),
   'utf8',
@@ -233,7 +237,12 @@ test('Chemistry First is nonvisual, premium and never timer-forced', () => {
   assert.match(overlay, /Stay with the conversation before the full picture appears\./);
   assert.match(overlay, /Keep talking a little longer\./);
   assert.match(overlay, /Haptics\.notificationAsync/);
-  assert.match(overlay, /duration: 700/);
+  assert.match(overlay, /LIVE_PRIVATE_SPARK_MOTION\.chemistryEntranceMs/);
+  assert.match(overlay, /LIVE_PRIVATE_SPARK_MOTION\.chemistryRevealMs/);
+  assert.match(overlay, /useReduceMotion/);
+  assert.match(overlay, /Animated\.multiply/);
+  assert.match(overlay, /LinearGradient/);
+  assert.match(overlay, /setDismissed\(true\)/);
   assert.match(overlay, /otherPersonContext\.(age|city|lookingFor)/);
   assert.match(overlay, /<ScrollView/);
   assert.match(overlay, /actionArea/);
@@ -242,8 +251,12 @@ test('Chemistry First is nonvisual, premium and never timer-forced', () => {
   assert.doesNotMatch(overlay, /setTimeout|countdown|forced reveal/i);
   assert.match(privateSparkRoute, /LiveChemistryOverlay/);
   assert.match(quickConnectRoute, /LiveChemistryOverlay/);
-  assert.match(privateSparkRoute, /media\.bindings && chemistryRevealed/);
-  assert.match(quickConnectRoute, /media\.bindings && chemistryRevealed/);
+  assert.match(privateSparkRoute, /media\.bindings \? \(/);
+  assert.match(quickConnectRoute, /media\.bindings \? \(/);
+  assert.match(privateSparkRoute, /visualsConcealed=\{!chemistryRevealed\}/);
+  assert.match(quickConnectRoute, /visualsConcealed=\{!chemistryRevealed\}/);
+  assert.match(concealedMediaStage, /Pictures stay concealed until you both choose/);
+  assert.doesNotMatch(concealedMediaStage, /\bImage\b/);
   assert.match(privateSparkRoute, /videoEnabled: chemistryRevealed &&/);
   assert.match(quickConnectRoute, /videoEnabled: chemistryRevealed &&/);
 });

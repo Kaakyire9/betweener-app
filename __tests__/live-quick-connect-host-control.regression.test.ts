@@ -163,7 +163,7 @@ test('Quick Connect is public-first and only a canonical pairing opens a private
     route,
     /if \(!isQuickConnectLive \|\| !quickConnectPairingId\) return;[\s\S]*?pathname: '\/live\/quick-connect\/\[sessionId\]'/i,
   );
-  assert.match(route, /Promise\.all\([\s\S]*?setTimeout\(resolve, 900\)/i);
+  assert.match(route, /Promise\.all\([\s\S]*?LIVE_PRIVATE_SPARK_MOTION\.handoffHoldMs/i);
   assert.match(route, /<LiveQuickConnectPool/i);
   assert.match(route, /quickConnectProps=\{isQuickConnectLive && isRoomHost/i);
 });
@@ -215,6 +215,11 @@ test('pool constellation displays four readable members and paginates determinis
   assert.match(constellation, /Easing\.inOut\(Easing\.sin\)/i);
   assert.match(constellation, /exitKind === 'pair'/i);
   assert.match(constellation, /pairing\.interpolate/i);
+  assert.match(constellation, /LivePairFormationCelebration/i);
+  assert.match(constellation, /formationDurationMs/i);
+  assert.match(pool, /pairingPeople/i);
+  assert.match(pool, /privateActivityCount/i);
+  assert.match(pool, /LivePrivateActivityIndicator/i);
   assert.match(pool, /pageMotion/i);
 });
 

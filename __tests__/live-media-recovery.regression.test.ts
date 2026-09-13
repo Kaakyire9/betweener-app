@@ -132,6 +132,10 @@ test('an intentional room handoff suppresses a stale public recovery failure', (
     mediaSessionHook,
     /const leave = useCallback[\s\S]+shouldMaintainConnectionRef\.current = false[\s\S]+joinAttemptRef\.current \+= 1/i,
   );
+  assert.match(
+    mediaSessionHook,
+    /desiredModeRef\.current = null;[\s\S]+setBindings\(null\);[\s\S]+await providerRef\.current\?\.leaveSession/i,
+  );
 });
 
 test('authority revocation becomes a terminal exit rather than a retry loop', () => {

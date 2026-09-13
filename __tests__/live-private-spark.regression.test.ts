@@ -68,6 +68,26 @@ const exitExperience = readFileSync(
   new URL('../features/live/components/LivePrivateSparkExitExperience.tsx', import.meta.url),
   'utf8',
 );
+const privateActivityMigration = readFileSync(
+  new URL('../supabase/migrations/20260913143000_live_private_activity_projection.sql', import.meta.url),
+  'utf8',
+);
+const formationCelebration = readFileSync(
+  new URL('../features/live/components/LivePairFormationCelebration.tsx', import.meta.url),
+  'utf8',
+);
+const privateActivityIndicator = readFileSync(
+  new URL('../features/live/components/LivePrivateActivityIndicator.tsx', import.meta.url),
+  'utf8',
+);
+const privateActivityHook = readFileSync(
+  new URL('../features/live/hooks/use-live-private-activity.ts', import.meta.url),
+  'utf8',
+);
+const privateActivityHealth = readFileSync(
+  new URL('../supabase/verification/live_private_activity_health.sql', import.meta.url),
+  'utf8',
+);
 
 test('completing a public introduction creates an idempotent private offer, not automatic admission', () => {
   assert.match(migration, /match_round_id uuid not null unique/i);
@@ -221,11 +241,39 @@ test('client refreshes the composed snapshot and exposes a dedicated private roo
   assert.match(route, /constrainMultiStage/i);
   assert.match(route, /if \(!spark \|\| !spark\.isParticipant\)/i);
   assert.match(publicRoute, /privateSpark\?\.state !== 'active'/i);
-  assert.match(publicRoute, /await media\.leave\(\)[\s\S]+private-spark/i);
+  assert.match(publicRoute, /await Promise\.all\([\s\S]+media\.leave\(\)[\s\S]+private-spark/i);
   assert.match(publicRoute, /if \(privateSparkHandoffRef\.current\) return/i);
   assert.match(route, /returnMediaIntentRef/i);
   assert.match(route, /startAudio: audioEnabled \? '1' : '0'/i);
   assert.match(route, /startVideo: videoEnabled \? '1' : '0'/i);
+});
+
+test('public rooms receive a private-activity atmosphere without private identities', () => {
+  assert.match(privateActivityMigration, /rpc_get_live_private_activity_v1/i);
+  assert.match(privateActivityMigration, /can_view_live_session/i);
+  assert.match(privateActivityMigration, /'hosted_pair_count'/i);
+  assert.match(privateActivityMigration, /'quick_connect_pair_count'/i);
+  assert.match(privateActivityMigration, /revoke all[\s\S]*from public, anon/i);
+  assert.match(privateActivityMigration, /grant execute[\s\S]*to authenticated, service_role/i);
+  assert.doesNotMatch(privateActivityMigration, /participant_[ab]_(?:user|profile)_id/i);
+  assert.match(repository, /getPrivateActivity[\s\S]*rpc_get_live_private_activity_v1/i);
+  assert.match(privateActivityHook, /subscribePrivateActivity/i);
+  assert.match(privateActivityHook, /sourceKeyRef\.current === requestedKey/i);
+  assert.match(privateActivityHook, /next\.sessionId === sessionId/i);
+  assert.match(privateActivityHook, /Aggregate presence is decorative/i);
+  assert.match(privateActivityIndicator, /people connecting privately/i);
+  assert.match(privateActivityHealth, /activity_rpc_present[\s\S]*anonymous_denied[\s\S]*authenticated_allowed as healthy/i);
+  assert.doesNotMatch(privateActivityHealth, /true as healthy/i);
+});
+
+test('hosted introductions resolve through a reduced-motion-safe formation ceremony', () => {
+  assert.match(publicRoute, /latestHostedPairRoundId/i);
+  assert.match(publicRoute, /lastPublicIntroductionRef/i);
+  assert.match(publicRoute, /LivePairFormationCelebration/i);
+  assert.match(publicRoute, /LIVE_PRIVATE_SPARK_MOTION\.handoffHoldMs/i);
+  assert.match(formationCelebration, /LIVE_PRIVATE_SPARK_MOTION\.formationDurationMs/i);
+  assert.match(formationCelebration, /Haptics\.NotificationFeedbackType\.Success/i);
+  assert.match(formationCelebration, /useReduceMotion/i);
 });
 
 test('ending a Spark revokes database admission and terminates the provider call', () => {

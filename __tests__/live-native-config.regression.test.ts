@@ -128,7 +128,11 @@ test('Live native config retains privacy permissions and blocks overlay permissi
 test('Android PiP controls are native, scoped and do not require overlay permission', () => {
   assert.match(guardPlugin, /class BetweenerLivePictureInPictureModule/);
   assert.match(guardPlugin, /PictureInPictureParams\.Builder/);
-  assert.match(guardPlugin, /val builder = PictureInPictureParams\.Builder\(\)\.apply/);
+  assert.match(guardPlugin, /PictureInPictureParams\.Builder\(\)\.setActions\(actions\)/);
+  assert.match(guardPlugin, /lastActionSignature == signature/);
+  assert.match(guardPlugin, /catch \(error: IllegalStateException\)/);
+  assert.doesNotMatch(guardPlugin, /setAspectRatio/);
+  assert.doesNotMatch(guardPlugin, /android\.util\.Rational/);
   assert.doesNotMatch(guardPlugin, /activity\.getPictureInPictureParams\(\)/);
   assert.doesNotMatch(guardPlugin, /activity\.pictureInPictureParams/);
   assert.match(guardPlugin, /RemoteAction/);
@@ -139,10 +143,13 @@ test('Android PiP controls are native, scoped and do not require overlay permiss
   assert.match(livePictureInPictureActions, /NativeEventEmitter/);
   assert.match(livePictureInPictureActions, /toggle_microphone/);
   assert.match(livePictureInPictureActions, /toggle_camera/);
+  assert.match(livePictureInPictureActions, /activeActionOwner === owner/);
+  assert.match(livePictureInPictureActions, /activeActionOwner !== owner/);
+  assert.match(liveStage, /callCid=\{call\.cid\}/);
 });
 
 test('custom Live stage activates platform PiP and foreground screen-awake protection', () => {
-  assert.match(liveStage, /useAutoEnterPiPEffect\(false\)/);
+  assert.match(liveStage, /useAutoEnterPiPEffect\(visualsConcealed\)/);
   assert.match(liveStage, /useIsInPiPMode\(\)/);
   assert.match(liveStage, /<RTCViewPipIOS[\s\S]+includeLocalParticipantVideo[\s\S]+onPiPChange=/);
   assert.match(liveStage, /pictureInPictureStage/);

@@ -11,6 +11,7 @@ import {
   isStudioPresentationScene,
   parseProgramSourceAssignments,
   parseProgramState,
+  parseLiveMusicCatalogue,
   previewFromProgram,
   reduceProgramPreview,
   requiredSlotsForScene,
@@ -26,6 +27,7 @@ import {
   isProgramSourceUsable,
 } from '../apps/studio/src/program/source-assignments.ts';
 import { parseLiveProgramSnapshotV2 } from '../features/live/odo/show/odo-show-validation.ts';
+import { parseLiveStageAtmosphere } from '../features/live/stage/live-stage-atmosphere.ts';
 
 const sessionId = '11111111-1111-4111-8111-111111111111';
 const controllerInstanceId = '22222222-2222-4222-8222-222222222222';
@@ -120,8 +122,8 @@ test('Screen Discussion only renders assigned people and divides the stage evenl
   assert.deepEqual(discussion.regions.map((region) => region.slot), ['primary', 'host', 'guest_1']);
   assert.equal(discussion.regions[1]?.width, 0.5);
   assert.equal(discussion.regions[2]?.x, 0.5);
-  assert.equal(discussion.regions[0]?.height, 0.42);
-  assert.ok(Math.abs((discussion.regions[1]?.height ?? 0) - 0.58) < 0.0001);
+  assert.equal(discussion.regions[0]?.height, 0.44);
+  assert.ok(Math.abs((discussion.regions[1]?.height ?? 0) - 0.56) < 0.0001);
   assert.deepEqual(visualSlotsForScene('screen_discussion'), [
     'primary', 'host', 'guest_1', 'guest_2', 'guest_3',
   ]);
@@ -131,10 +133,10 @@ test('Screen Discussion only renders assigned people and divides the stage evenl
     guest_2: 'participant.two', guest_3: 'participant.three',
   });
   const expectedPanel = [
-    { x: 0, y: 0.42, width: 0.5, height: 0.29 },
-    { x: 0.5, y: 0.42, width: 0.5, height: 0.29 },
-    { x: 0, y: 0.71, width: 0.5, height: 0.29 },
-    { x: 0.5, y: 0.71, width: 0.5, height: 0.29 },
+    { x: 0, y: 0.44, width: 0.5, height: 0.28 },
+    { x: 0.5, y: 0.44, width: 0.5, height: 0.28 },
+    { x: 0, y: 0.72, width: 0.5, height: 0.28 },
+    { x: 0.5, y: 0.72, width: 0.5, height: 0.28 },
   ];
   fullPanel.regions.slice(1).forEach((region, index) => {
     const expected = expectedPanel[index];
@@ -143,6 +145,36 @@ test('Screen Discussion only renders assigned people and divides the stage evenl
       assert.ok(Math.abs(region[key] - expected[key]) < 0.0001);
     });
   });
+});
+
+test('portrait screen-share scenes cover the full Stage without dead bands', () => {
+  const full = resolveProgramLayout('screen_full', 'portrait_9_16').regions;
+  assert.deepEqual(
+    full.map(({ x, y, width, height }) => ({ x, y, width, height })),
+    [{ x: 0, y: 0, width: 1, height: 1 }],
+  );
+
+  for (const scene of ['screen_plus_pair', 'screen_plus_pool', 'screen_plus_audience_pulse'] as const) {
+    const regions = resolveProgramLayout(scene, 'portrait_9_16').regions;
+    const [screen, supporting] = regions;
+    assert.deepEqual(
+      { x: screen?.x, y: screen?.y, width: screen?.width, height: screen?.height },
+      { x: 0, y: 0, width: 1, height: 0.68 },
+    );
+    assert.deepEqual(
+      { x: supporting?.x, y: supporting?.y, width: supporting?.width },
+      { x: 0, y: 0.68, width: 1 },
+    );
+    assert.ok(Math.abs((supporting?.height ?? 0) - 0.32) < 0.0001);
+    assert.ok(Math.abs((screen?.height ?? 0) + (supporting?.height ?? 0) - 1) < 0.0001);
+  }
+
+  const withHost = resolveProgramLayout('screen_plus_host', 'portrait_9_16').regions;
+  assert.deepEqual(
+    { x: withHost[0]?.x, y: withHost[0]?.y, width: withHost[0]?.width, height: withHost[0]?.height },
+    { x: 0, y: 0, width: 1, height: 1 },
+  );
+  assert.equal(withHost[1]?.treatment, 'pip');
 });
 
 test('Screen Discussion auto-assigns distinct on-stage cameras', () => {
@@ -253,4 +285,45 @@ test('terminal browser sources are removed from active Preview choices', () => {
     [source, endedScreen],
   ), true);
   assert.equal(assignmentsForScene('screen_full', [endedScreen], {}).primary, undefined);
+});
+
+test('Programme Music catalogue validation rejects storage and malformed track data', () => {
+  const catalogue = {
+    schemaVersion: 1,
+    canManageLibrary: true,
+    tracks: [{
+      id: sourceId,
+      title: 'Where Worlds Apart Feel Closer',
+      artist: 'Betweener',
+      mood: 'warm',
+      energy: 2,
+      durationSeconds: 180,
+      containsVocals: true,
+    }],
+    playlists: [{ id: controllerInstanceId, name: 'Welcome', mood: 'warm', trackIds: [sourceId] }],
+  };
+  assert.deepEqual(parseLiveMusicCatalogue(catalogue), catalogue);
+  assert.equal(parseLiveMusicCatalogue({
+    ...catalogue,
+    tracks: [{ ...catalogue.tracks[0], storagePath: '../../private.mp3' }],
+  }), null);
+  assert.equal(parseLiveMusicCatalogue({
+    ...catalogue,
+    tracks: [{ ...catalogue.tracks[0], durationSeconds: -1 }],
+  }), null);
+});
+
+test('Stage Atmosphere validation is exact and keeps poster state participant-safe', () => {
+  const atmosphere = {
+    schemaVersion: 1,
+    sessionId,
+    preset: 'live_poster',
+    posterPath: `${sessionId}/poster.jpg`,
+    hasPoster: true,
+    version: 4,
+    updatedAt: '2026-09-12T12:00:00.000Z',
+  } as const;
+  assert.deepEqual(parseLiveStageAtmosphere(atmosphere), atmosphere);
+  assert.equal(parseLiveStageAtmosphere({ ...atmosphere, updatedByUserId: sourceId }), null);
+  assert.equal(parseLiveStageAtmosphere({ ...atmosphere, preset: 'custom_url' }), null);
 });
