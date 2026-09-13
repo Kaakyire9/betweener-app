@@ -109,6 +109,30 @@ export type ProgramSourceAssignments = Partial<Record<ProgramSourceSlot, string>
 export const LIVE_MUSIC_REPEAT_MODES = ['off', 'one', 'all'] as const;
 export type LiveMusicRepeatMode = (typeof LIVE_MUSIC_REPEAT_MODES)[number];
 
+export type LiveMusicCatalogueTrack = {
+  id: string;
+  title: string;
+  artist: string;
+  mood: string;
+  energy: number;
+  durationSeconds: number;
+  containsVocals: boolean;
+};
+
+export type LiveMusicCataloguePlaylist = {
+  id: string;
+  name: string;
+  mood: string | null;
+  trackIds: readonly string[];
+};
+
+export type LiveMusicCatalogue = {
+  schemaVersion: 1;
+  canManageLibrary: boolean;
+  tracks: readonly LiveMusicCatalogueTrack[];
+  playlists: readonly LiveMusicCataloguePlaylist[];
+};
+
 export type ProgramSource = {
   id: string;
   key: string;

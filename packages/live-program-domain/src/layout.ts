@@ -80,22 +80,52 @@ const PRESENTATION_LAYOUTS: Partial<Record<ProgramScene, readonly ProgramRegion[
 export const isStudioPresentationScene = (scene: ProgramScene): boolean =>
   Object.prototype.hasOwnProperty.call(PRESENTATION_LAYOUTS, scene);
 
-const portraitPresentation = (regions: readonly ProgramRegion[]): readonly ProgramRegion[] =>
-  regions.map((item) => {
+const portraitPresentation = (
+  scene: ProgramScene,
+  regions: readonly ProgramRegion[],
+): readonly ProgramRegion[] => {
+  const screenDominantSplit = 0.68;
+  const screenDiscussionSplit = 0.44;
+
+  return regions.map((item) => {
     if (item.treatment === 'audio') return item;
-    if (item.slot === 'primary' && item.width >= 0.7) {
-      return { ...item, x: 0, y: 0, width: 1, height: item.height > 0.7 ? 0.72 : 0.62 };
+
+    if (item.slot === 'primary') {
+      if (scene === 'screen_full' || scene === 'screen_plus_host' || scene === 'screen_plus_odo') {
+        return { ...item, x: 0, y: 0, width: 1, height: 1 };
+      }
+      if (scene === 'screen_discussion') {
+        return { ...item, x: 0, y: 0, width: 1, height: screenDiscussionSplit };
+      }
+      return { ...item, x: 0, y: 0, width: 1, height: screenDominantSplit };
     }
+
     if (item.treatment === 'pip') {
       return { ...item, x: 0.58, y: 0.68, width: 0.38, height: 0.28 };
     }
-    if (item.x >= 0.68) {
+
+    if (scene === 'screen_plus_pair'
+      || scene === 'screen_plus_pool'
+      || scene === 'screen_plus_audience_pulse') {
+      return {
+        ...item,
+        x: 0,
+        y: screenDominantSplit,
+        width: 1,
+        height: 1 - screenDominantSplit,
+      };
+    }
+
+    if (scene === 'screen_plus_panel' || scene === 'screen_discussion') {
       const order = item.slot === 'host' ? 0 : item.slot === 'guest_1' ? 1
         : item.slot === 'guest_2' ? 2 : 3;
-      return { ...item, x: order * 0.25, y: 0.72, width: 0.25, height: 0.28 };
+      const y = scene === 'screen_discussion' ? screenDiscussionSplit : screenDominantSplit;
+      return { ...item, x: order * 0.25, y, width: 0.25, height: 1 - y };
     }
+
     return item;
   });
+};
 
 export const resolveProgramLayout = (
   scene: ProgramScene,
@@ -103,7 +133,7 @@ export const resolveProgramLayout = (
 ): ProgramLayout => {
   const base = CONVERSATION_LAYOUTS[scene] ?? PRESENTATION_LAYOUTS[scene] ?? [];
   const regions = canvas === 'portrait_9_16' && PRESENTATION_LAYOUTS[scene]
-    ? portraitPresentation(base)
+    ? portraitPresentation(scene, base)
     : base;
   return { scene, canvas, regions };
 };
@@ -133,16 +163,18 @@ export const resolveAssignedProgramLayout = (
   const required = new Set(requiredSlotsForScene(scene));
   const participants = layout.regions.filter((item) => PANEL_SLOTS.includes(item.slot)
     && (required.has(item.slot) || Boolean(assignments[item.slot])));
-  const discussionSplit = canvas === 'portrait_9_16' ? 0.42 : 0.62;
+  const participantStart = canvas === 'portrait_9_16'
+    ? scene === 'screen_discussion' ? 0.44 : 0.68
+    : scene === 'screen_discussion' ? 0.62 : 0;
   const retained = layout.regions
     .filter((item) => !PANEL_SLOTS.includes(item.slot))
     .map((item) => scene === 'screen_discussion' && item.slot === 'primary'
-      ? { ...item, height: discussionSplit }
+      ? { ...item, height: participantStart }
       : item);
 
   const participantRegions = participants.map((item, index) => {
     if (scene === 'screen_discussion' || canvas === 'portrait_9_16') {
-      const y = scene === 'screen_discussion' ? discussionSplit : 0.72;
+      const y = participantStart;
       const usePanelGrid = scene === 'screen_discussion'
         && canvas === 'portrait_9_16'
         && participants.length === 4;

@@ -135,6 +135,14 @@ input:focus, select:focus, button:focus-visible { outline: 2px solid var(--teal-
 .programme-visual strong { max-width: 18rem; font-family: Georgia, serif; font-size: clamp(1rem, 2vw, 2rem); }
 .programme-visual small { color: var(--muted); }
 .programme-orbit { position: absolute; width: 60%; aspect-ratio: 1; border: 1px solid rgba(84, 214, 205, 0.12); border-radius: 50%; }
+.program-transition { position: absolute; z-index: 99; inset: 0; pointer-events: none; background: linear-gradient(135deg, rgba(2, 16, 13, 0.42), rgba(95, 66, 135, 0.24), rgba(2, 16, 13, 0)); animation: program-transition-auto 480ms ease-out forwards; }
+.program-transition > span { position: absolute; top: 0.55rem; right: 0.55rem; max-width: 70%; overflow: hidden; padding: 0.34rem 0.55rem; border: 1px solid var(--line-strong); border-radius: 99px; background: rgba(1, 12, 10, 0.84); color: var(--teal-bright); font-size: 0.52rem; font-weight: 800; letter-spacing: 0.08em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; animation: program-cue-away 1.25s ease-in forwards; }
+.program-transition-cut { animation-name: program-transition-cut; animation-duration: 160ms; }
+.program-transition-fade { animation-name: program-transition-fade; animation-duration: 760ms; }
+@keyframes program-transition-auto { from { opacity: 1; } to { opacity: 0; } }
+@keyframes program-transition-cut { 0% { opacity: 0.3; } 100% { opacity: 0; } }
+@keyframes program-transition-fade { 0% { opacity: 1; background-color: rgba(2, 16, 13, 0.72); } 100% { opacity: 0; background-color: transparent; } }
+@keyframes program-cue-away { 0%, 68% { opacity: 1; transform: translateY(0); } 100% { opacity: 0; transform: translateY(-0.3rem); } }
 .canvas-safe-area { position: absolute; z-index: 100; inset: 5%; border: 1px dashed rgba(232, 221, 203, 0.14); pointer-events: none; }
 .canvas-badge, .monitor-note { position: absolute; z-index: 101; bottom: 0.4rem; padding: 0.28rem 0.45rem; border-radius: 0.3rem; background: rgba(0, 7, 6, 0.75); color: var(--muted); font-size: 0.58rem; }
 .canvas-badge { right: 0.4rem; }
@@ -169,6 +177,19 @@ input:focus, select:focus, button:focus-visible { outline: 2px solid var(--teal-
 .audio-meter { height: 0.35rem; overflow: hidden; border-radius: 1rem; background: rgba(232, 221, 203, 0.1); }
 .audio-meter > span { display: block; height: 100%; background: linear-gradient(90deg, var(--teal), var(--warning)); transition: width 80ms linear; }
 .audio-meter-label { display: flex; justify-content: space-between; color: var(--muted); font-size: 0.62rem; }
+.music-library-control { display: grid; grid-template-columns: 4.4rem 1fr; gap: 0.75rem; align-items: stretch; margin: 0.8rem 0; }
+.music-library-art { position: relative; min-height: 4.4rem; display: grid; place-content: center; justify-items: center; overflow: hidden; border-radius: 0.9rem; color: var(--oat); background: linear-gradient(145deg, var(--teal-deep), #173934 56%, #5a477c); }
+.music-library-art::after { content: ''; position: absolute; width: 4.8rem; height: 4.8rem; border: 1px solid rgba(232, 221, 203, 0.24); border-radius: 50%; }
+.music-library-art span { font-size: 1.35rem; line-height: 1; }
+.music-library-art strong { margin-top: 0.3rem; font-size: 0.42rem; letter-spacing: 0.16em; }
+.music-library-picker { min-width: 0; display: grid; gap: 0.55rem; }
+.music-library-picker select { min-width: 0; font-size: 0.72rem; }
+.music-library-picker .button { width: 100%; min-height: 2.2rem; padding-block: 0.45rem; font-size: 0.72rem; }
+.music-admin { display: grid; gap: 0.65rem; margin-top: 0.9rem; padding-top: 0.9rem; border-top: 1px solid var(--line); }
+.music-admin-form { display: grid; gap: 0.65rem; padding: 0.75rem; border: 1px solid var(--line); border-radius: 0.8rem; background: rgba(2, 17, 14, 0.38); }
+.music-admin-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.55rem; }
+.music-admin input[type='file'] { min-height: auto; padding: 0.45rem; font-size: 0.65rem; }
+.success-copy { margin: 0; color: var(--teal-bright); font-size: 0.72rem; line-height: 1.45; }
 
 .workspace-alert, .error-banner { padding: 0.75rem 1rem; border: 1px solid rgba(210, 110, 115, 0.55); background: rgba(103, 38, 43, 0.38); color: #ffd9db; }
 .workspace-alert { display: flex; align-items: center; justify-content: center; gap: 1rem; }

@@ -12,8 +12,23 @@ import {
 
 import { useStudioMedia } from '../media/studio-media-context.tsx';
 
-type RenderState = Pick<ProgramState, 'scene' | 'targetCanvas' | 'sourceAssignments'>
-  | Pick<ProgramPreviewState, 'scene' | 'targetCanvas' | 'sourceAssignments'>;
+type RenderState = Pick<ProgramState,
+  'scene' | 'targetCanvas' | 'sourceAssignments' | 'transition' | 'programVersion'>
+  | Pick<ProgramPreviewState,
+    'scene' | 'targetCanvas' | 'sourceAssignments' | 'transition' | 'baseProgramVersion'>;
+
+const transitionCue = (state: RenderState, label: string) => {
+  const version = 'programVersion' in state
+    ? state.programVersion
+    : `${state.baseProgramVersion}:${JSON.stringify(state.sourceAssignments)}`;
+  return <div
+    aria-hidden="true"
+    className={`program-transition program-transition-${state.transition}`}
+    key={`${version}:${state.scene}:${state.transition}`}
+  >
+    <span>{label} · {state.scene.replaceAll('_', ' ')}</span>
+  </div>;
+};
 
 const visualCopy = (source: ProgramSource | undefined) => {
   switch (source?.type) {
@@ -93,6 +108,7 @@ function ConnectedProgramRenderer({
           </div>
         );
       })}
+      {transitionCue(state, label)}
       <div className="canvas-safe-area" aria-hidden="true" />
       <div className="canvas-badge">{state.targetCanvas.replaceAll('_', ' · ')}</div>
       {studioParticipants.length === 0 ? <div className="monitor-note">Media monitor not connected</div> : null}
@@ -129,6 +145,7 @@ export function ProgramRenderer({
           <small>{source ? `${source.readiness} · ${source.health}` : 'Choose a source in Preview'}</small>
         </div></div>;
       })}
+      {transitionCue(state, label)}
       <div className="canvas-safe-area" aria-hidden="true" />
       <div className="monitor-note">Connect media for a live monitor</div>
     </div>

@@ -14,6 +14,7 @@ import {
   type ProgramSource,
   type ProgramSourceAssignments,
   type ProgramState,
+  type LiveMusicCatalogue,
   type StudioOperationalSnapshot,
 } from './contracts.ts';
 
@@ -27,6 +28,40 @@ const isVersion = (value: unknown): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 const nullableString = (value: unknown): value is string | null =>
   value === null || typeof value === 'string';
+const hasExactKeys = (value: Record<string, unknown>, keys: readonly string[]) => {
+  const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
+  return actual.length === expected.length
+    && actual.every((key, index) => key === expected[index]);
+};
+
+export const parseLiveMusicCatalogue = (value: unknown): LiveMusicCatalogue | null => {
+  if (!isRecord(value) || !hasExactKeys(value, [
+    'schemaVersion', 'canManageLibrary', 'tracks', 'playlists',
+  ])
+    || value.schemaVersion !== 1
+    || typeof value.canManageLibrary !== 'boolean'
+    || !Array.isArray(value.tracks) || !Array.isArray(value.playlists)) return null;
+  const tracksValid = value.tracks.every((track) => isRecord(track)
+    && hasExactKeys(track, [
+      'id', 'title', 'artist', 'mood', 'energy', 'durationSeconds', 'containsVocals',
+    ])
+    && typeof track.id === 'string' && UUID.test(track.id)
+    && typeof track.title === 'string' && track.title.length > 0
+    && typeof track.artist === 'string' && track.artist.length > 0
+    && typeof track.mood === 'string' && track.mood.length > 0
+    && isVersion(track.energy) && track.energy >= 1 && track.energy <= 5
+    && isVersion(track.durationSeconds) && track.durationSeconds > 0
+    && typeof track.containsVocals === 'boolean');
+  const playlistsValid = value.playlists.every((playlist) => isRecord(playlist)
+    && hasExactKeys(playlist, ['id', 'name', 'mood', 'trackIds'])
+    && typeof playlist.id === 'string' && UUID.test(playlist.id)
+    && typeof playlist.name === 'string' && playlist.name.length > 0
+    && nullableString(playlist.mood)
+    && Array.isArray(playlist.trackIds)
+    && playlist.trackIds.every((trackId) => typeof trackId === 'string' && UUID.test(trackId)));
+  return tracksValid && playlistsValid ? value as unknown as LiveMusicCatalogue : null;
+};
 
 export const parseProgramSourceAssignments = (value: unknown): ProgramSourceAssignments | null => {
   if (!isRecord(value) || Object.keys(value).length > PROGRAM_SOURCE_SLOTS.length) return null;

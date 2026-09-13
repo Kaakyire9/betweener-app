@@ -1,0 +1,14 @@
+{
+  "name": "@betweener/program-audio-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "24.x"
+  },
+  "scripts": {
+    "start": "node src/worker.mjs",
+    "check": "node --check src/program-audio.mjs && node --check src/worker.mjs",
+    "test": "node --test test/program-audio.test.mjs"
+  }
+}

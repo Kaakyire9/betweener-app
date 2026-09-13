@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
-import type { StudioOperationalSnapshot } from '@betweener/live-program-domain';
+import { useCallback, useEffect, useState } from 'react';
+import type { LiveMusicCatalogue, StudioOperationalSnapshot } from '@betweener/live-program-domain';
 
 import { studioApi } from '../api/studio-api.ts';
 import { errorMessage, friendlyReason } from '../lib/errors.ts';
+import { MusicLibraryAdminUpload } from './MusicLibraryAdminUpload.tsx';
 
 function Panel({
   eyebrow,
@@ -33,8 +34,38 @@ export function OperationalPanels({
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [musicVolume, setMusicVolume] = useState(snapshot.music.volume);
+  const [musicCatalogue, setMusicCatalogue] = useState<LiveMusicCatalogue | null>(null);
+  const [selectedMusic, setSelectedMusic] = useState('');
+  const programmeAudio = snapshot.sources.find(
+    (source) => source.key === 'system:programme_audio',
+  );
+  const musicActive = ['playing', 'ducked', 'fading'].includes(snapshot.music.status);
+  const programmeAudioStatus = !snapshot.music.enabled
+    ? 'Disabled'
+    : !musicActive
+      ? 'Ready'
+      : programmeAudio?.readiness === 'live' && programmeAudio.health === 'healthy'
+        ? 'On Stream'
+        : programmeAudio?.health === 'lost' || programmeAudio?.health === 'degraded'
+          ? 'Degraded'
+          : 'Starting';
+
+  const loadMusicCatalogue = useCallback(async () => {
+    const catalogue = await studioApi.getMusicCatalogue(snapshot.session.id);
+    setMusicCatalogue(catalogue);
+    setSelectedMusic((selected) => selected
+      || (snapshot.music.trackId ? `track:${snapshot.music.trackId}` : '')
+      || (catalogue.tracks[0] ? `track:${catalogue.tracks[0].id}` : '')
+      || (catalogue.playlists[0] ? `playlist:${catalogue.playlists[0].id}` : ''));
+  }, [snapshot.music.trackId, snapshot.session.id]);
 
   useEffect(() => setMusicVolume(snapshot.music.volume), [snapshot.music.volume]);
+  useEffect(() => {
+    void loadMusicCatalogue()
+      .catch((failure) => {
+        setError(errorMessage(failure, 'Music library failed to load.'));
+      });
+  }, [loadMusicCatalogue]);
 
   const run = async (name: string, operation: () => Promise<void>) => {
     setBusy(name);
@@ -77,9 +108,36 @@ export function OperationalPanels({
           ))}>Finish current connections</button>
       </Panel>
 
-      <Panel eyebrow="PROGRAMME MUSIC" title={snapshot.music.status} status={
-        snapshot.music.enabled ? 'Policy ready' : 'Disabled'
-      }>
+      <Panel eyebrow="PROGRAMME MUSIC" title={snapshot.music.status} status={programmeAudioStatus}>
+        <div className="music-library-control">
+          <div className="music-library-art" aria-hidden="true"><span>♫</span><strong>BETWEENER</strong></div>
+          <div className="music-library-picker">
+            <label className="field-label">Approved global library
+              <select value={selectedMusic} disabled={!ownsControl || !snapshot.music.enabled || busy !== null}
+                onChange={(event) => setSelectedMusic(event.target.value)}>
+                {musicCatalogue?.playlists.length ? <optgroup label="Playlists">
+                  {musicCatalogue.playlists.map((playlist) => (
+                    <option key={playlist.id} value={`playlist:${playlist.id}`}>{playlist.name}</option>
+                  ))}
+                </optgroup> : null}
+                <optgroup label="Tracks">
+                  {(musicCatalogue?.tracks ?? []).map((track) => (
+                    <option key={track.id} value={`track:${track.id}`}>{track.title} — {track.artist}</option>
+                  ))}
+                </optgroup>
+              </select>
+            </label>
+            <button className="button button-primary" disabled={!ownsControl || !snapshot.music.enabled || !selectedMusic || busy !== null}
+              onClick={() => void run('Music play', () => {
+                const [kind, id] = selectedMusic.split(':', 2);
+                return studioApi.controlMusic({
+                  sessionId: snapshot.session.id,
+                  action: kind === 'playlist' ? 'play_playlist' : 'play_track',
+                  ...(kind === 'playlist' ? { playlistId: id } : { trackId: id }),
+                });
+              })}>Play on programme</button>
+          </div>
+        </div>
         <label className="range-row">Programme level
           <input type="range" min="0" max="0.5" step="0.01" value={musicVolume}
             disabled={!ownsControl || !snapshot.music.enabled}
@@ -121,6 +179,15 @@ export function OperationalPanels({
         </div>
         {!snapshot.music.enabled ? (
           <p className="notice-copy">Programme Music is off in the Odo rollout. Enable it only after at least one licensed catalogue track is approved.</p>
+        ) : null}
+        {snapshot.music.enabled ? (
+          <p className="notice-copy">Programme Music is published once as a protected Stream audio source. Phones and Studio control it; audience devices only receive the shared call mix.</p>
+        ) : null}
+        {programmeAudio?.failureReasonCode ? (
+          <p className="error-banner" role="alert">Programme Audio: {friendlyReason(programmeAudio.failureReasonCode)}</p>
+        ) : null}
+        {musicCatalogue?.canManageLibrary ? (
+          <MusicLibraryAdminUpload onUploaded={() => void loadMusicCatalogue()} />
         ) : null}
       </Panel>
 

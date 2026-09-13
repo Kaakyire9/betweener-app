@@ -7634,6 +7634,59 @@ export type Database = {
           },
         ]
       }
+      live_reaction_totals: {
+        Row: {
+          applause_count: number
+          celebrate_count: number
+          heart_count: number
+          insight_count: number
+          joy_count: number
+          session_id: string
+          spark_count: number
+          support_count: number
+          total_count: number
+          updated_at: string
+          version: number
+          wow_count: number
+        }
+        Insert: {
+          applause_count?: number
+          celebrate_count?: number
+          heart_count?: number
+          insight_count?: number
+          joy_count?: number
+          session_id: string
+          spark_count?: number
+          support_count?: number
+          total_count?: number
+          updated_at?: string
+          version?: number
+          wow_count?: number
+        }
+        Update: {
+          applause_count?: number
+          celebrate_count?: number
+          heart_count?: number
+          insight_count?: number
+          joy_count?: number
+          session_id?: string
+          spark_count?: number
+          support_count?: number
+          total_count?: number
+          updated_at?: string
+          version?: number
+          wow_count?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_reaction_totals_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: true
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       live_reactions: {
         Row: {
           client_event_id: string
@@ -16391,21 +16444,7 @@ export type Database = {
           p_reaction: string
           p_session_id: string
         }
-        Returns: {
-          client_event_id: string
-          created_at: string
-          id: number
-          profile_id: string
-          reaction: string
-          session_id: string
-          user_id: string
-        }
-        SetofOptions: {
-          from: "*"
-          to: "live_reactions"
-          isOneToOne: true
-          isSetofReturn: false
-        }
+        Returns: Json
       }
       rpc_create_live_session: {
         Args: {
@@ -17572,6 +17611,10 @@ export type Database = {
         Returns: Json
       }
       rpc_get_live_quorum_pooling_snapshot: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      rpc_get_live_reaction_summary: {
         Args: { p_session_id: string }
         Returns: Json
       }
