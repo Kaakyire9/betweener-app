@@ -11,6 +11,10 @@ import type {
 } from './live-media-provider.ts';
 import { loadStreamVideoSdk } from './load-stream-video-sdk.ts';
 import { streamVideoClientLeaseRegistry } from './stream-video-client-leases.ts';
+import {
+  registerStreamVideoBackgroundClient,
+  unregisterStreamVideoBackgroundClient,
+} from './stream-video-background-client.ts';
 
 type StreamDevicePort = {
   enable(): Promise<void>;
@@ -139,6 +143,8 @@ const createStreamBindings: StreamLiveMediaBindingsFactory = async ({
   );
   try {
     const call = lease.client.call(admission.call.type, admission.call.id);
+    registerStreamVideoBackgroundClient(lease.client);
+    let released = false;
     return {
       client: lease.client,
       call,
@@ -148,7 +154,15 @@ const createStreamBindings: StreamLiveMediaBindingsFactory = async ({
           deviceEndpointType: 'speaker',
         });
       },
-      releaseClient: lease.release,
+      releaseClient: async () => {
+        if (released) return;
+        released = true;
+        try {
+          await lease.release();
+        } finally {
+          unregisterStreamVideoBackgroundClient(lease.client);
+        }
+      },
     };
   } catch (error) {
     await lease.release();

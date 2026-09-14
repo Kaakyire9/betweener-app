@@ -27,7 +27,13 @@ const guardPlugin = fs.readFileSync(
   'utf8',
 );
 const appJson = fs.readFileSync(path.join(root, 'app.json'), 'utf8');
+const appEntry = fs.readFileSync(path.join(root, 'index.js'), 'utf8');
+const packageJson = fs.readFileSync(path.join(root, 'package.json'), 'utf8');
 const metroConfig = fs.readFileSync(path.join(root, 'metro.config.js'), 'utf8');
+const backgroundClient = fs.readFileSync(
+  path.join(root, 'features/live/media/stream-video-background-client.ts'),
+  'utf8',
+);
 const liveStage = fs.readFileSync(
   path.join(root, 'features/live/components/StreamLiveStage.tsx'),
   'utf8',
@@ -59,6 +65,18 @@ test('Stream native setup enables active-call continuity and native PiP', () => 
   assert.match(appConfig, /enableNonRingingPushNotifications:\s*false/);
   assert.match(appConfig, /iOSEnableMultitaskingCameraAccess:\s*true/);
   assert.match(appConfig, /androidPictureInPicture:\s*true/);
+});
+
+test('Stream ongoing-call runtime is initialized once at the native app entry point', () => {
+  assert.match(packageJson, /"main": "index\.js"/);
+  assert.match(packageJson, /"@stream-io\/react-native-callingx": "0\.11\.3"/);
+  assert.match(appEntry, /StreamVideoRN\.setPushConfig/);
+  assert.match(appEntry, /android:[\s\S]*enableOngoingCalls: true/);
+  assert.match(appEntry, /ios:[\s\S]*enableOngoingCalls: true/);
+  assert.match(appEntry, /callsHistory: false/);
+  assert.match(appEntry, /createStreamVideoClient: async \(\) => getStreamVideoBackgroundClient\(\)/);
+  assert.match(backgroundClient, /registerStreamVideoBackgroundClient/);
+  assert.match(backgroundClient, /unregisterStreamVideoBackgroundClient/);
 });
 
 test('Windows Metro keeps the Stream module graph within a bounded handle budget', () => {
