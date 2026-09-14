@@ -67,6 +67,13 @@ test('Stream native setup enables active-call continuity and native PiP', () => 
   assert.match(appConfig, /androidPictureInPicture:\s*true/);
 });
 
+test('iOS Firebase uses CocoaPods with the existing static framework linkage', () => {
+  assert.match(appConfig, /'@react-native-firebase\/app'/);
+  assert.match(appConfig, /disableSPM:\s*true/);
+  assert.match(packageJson, /"@react-native-firebase\/app": "26\.4\.0"/);
+  assert.match(packageJson, /"@react-native-firebase\/messaging": "26\.4\.0"/);
+});
+
 test('Stream ongoing-call runtime is initialized once at the native app entry point', () => {
   assert.match(packageJson, /"main": "index\.js"/);
   assert.match(packageJson, /"@stream-io\/react-native-callingx": "0\.11\.3"/);
