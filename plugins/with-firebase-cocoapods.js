@@ -7,10 +7,24 @@ const pkg = {
 
 const podfileAnchor = 'prepare_react_native_project!';
 const disableSpmFlag = '$RNFirebaseDisableSPM = true';
+const modularHeadersFlag = 'use_modular_headers!';
 
 const withFirebaseCocoaPods = (config) =>
   withPodfile(config, (modConfig) => {
-    if (modConfig.modResults.contents.includes(disableSpmFlag)) {
+    const missingDirectives = [];
+    if (!modConfig.modResults.contents.includes(disableSpmFlag)) {
+      missingDirectives.push(
+        "# Firebase SPM is incompatible with the app's static linkage.",
+        disableSpmFlag,
+      );
+    }
+    if (!modConfig.modResults.contents.includes(modularHeadersFlag)) {
+      missingDirectives.push(
+        "# Firebase's Swift pods require module maps when integrated as static libraries.",
+        modularHeadersFlag,
+      );
+    }
+    if (missingDirectives.length === 0) {
       return modConfig;
     }
 
@@ -20,7 +34,7 @@ const withFirebaseCocoaPods = (config) =>
 
     modConfig.modResults.contents = modConfig.modResults.contents.replace(
       podfileAnchor,
-      `${podfileAnchor}\n\n# Firebase SPM is incompatible with the app's static framework linkage.\n${disableSpmFlag}`,
+      `${podfileAnchor}\n\n${missingDirectives.join('\n')}`,
     );
     return modConfig;
   });

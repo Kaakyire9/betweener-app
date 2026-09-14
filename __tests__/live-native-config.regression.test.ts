@@ -75,6 +75,7 @@ test('iOS Firebase uses CocoaPods with the existing static framework linkage', (
   assert.match(appConfig, /'\.\/plugins\/with-firebase-cocoapods\.js'/);
   assert.match(firebaseCocoaPodsPlugin, /withPodfile/);
   assert.match(firebaseCocoaPodsPlugin, /\$RNFirebaseDisableSPM = true/);
+  assert.match(firebaseCocoaPodsPlugin, /use_modular_headers!/);
   assert.match(firebaseCocoaPodsPlugin, /prepare_react_native_project!/);
   assert.match(packageJson, /"@react-native-firebase\/app": "26\.4\.0"/);
   assert.match(packageJson, /"@react-native-firebase\/messaging": "26\.4\.0"/);
