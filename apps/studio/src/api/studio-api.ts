@@ -37,6 +37,44 @@ export type StudioMediaAdmission = {
   };
 };
 
+export type LiveHostingManagement = {
+  schemaVersion: 1;
+  serverNow: string;
+  sessionId: string;
+  title: string;
+  status: string;
+  canDelegateHosts: boolean;
+  canExtend: boolean;
+  host: {
+    userId: string;
+    profileId: string;
+    fullName: string | null;
+    username: string | null;
+    avatarUrl: string | null;
+    delegated: boolean;
+  };
+  schedule: {
+    scheduledStart: string | null;
+    scheduledEnd: string | null;
+    runtimeEndAt: string | null;
+    durationMinutes: number;
+    endPolicy: 'scheduled' | 'manual';
+    lastExtendedAt: string | null;
+  };
+  traffic: { audienceNow: number; totalAttendees: number; reactions: number };
+};
+
+const parseHostingManagement = (value: unknown): LiveHostingManagement => {
+  const candidate = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+  if (candidate?.schemaVersion !== 1 || typeof candidate.sessionId !== 'string'
+    || !candidate.host || !candidate.schedule || !candidate.traffic) {
+    throw new Error('live_hosting_management_contract_invalid');
+  }
+  return candidate as LiveHostingManagement;
+};
+
 const rpc = async <T>(name: string, parameters: Record<string, unknown>): Promise<T> => {
   const { data, error } = await supabase.rpc(name, parameters);
   if (error) throw new Error(error.message || `${name}_failed`);
@@ -55,6 +93,35 @@ const parseCommandResult = (value: unknown): CommandResult => {
 };
 
 export const studioApi = {
+  async getHostingManagement(sessionId: string): Promise<LiveHostingManagement> {
+    return parseHostingManagement(await rpc('rpc_get_live_hosting_management_v1', {
+      p_session_id: sessionId,
+    }));
+  },
+
+  async delegateHost(sessionId: string, username: string): Promise<LiveHostingManagement> {
+    return parseHostingManagement(await rpc('rpc_admin_delegate_live_host_v1', {
+      p_session_id: sessionId,
+      p_username: username,
+    }));
+  },
+
+  async revokeHost(sessionId: string): Promise<LiveHostingManagement> {
+    return parseHostingManagement(await rpc('rpc_admin_revoke_live_host_v1', {
+      p_session_id: sessionId,
+    }));
+  },
+
+  async extendRuntime(
+    sessionId: string,
+    options: { minutes?: number; keepOpen?: boolean },
+  ): Promise<LiveHostingManagement> {
+    return parseHostingManagement(await rpc('rpc_extend_live_session_v1', {
+      p_session_id: sessionId,
+      p_extension_minutes: options.minutes ?? null,
+      p_keep_open: options.keepOpen === true,
+    }));
+  },
   async getMusicCatalogue(sessionId: string): Promise<LiveMusicCatalogue> {
     const parsed = parseLiveMusicCatalogue(await rpc(
       'rpc_get_live_music_catalogue_v1',

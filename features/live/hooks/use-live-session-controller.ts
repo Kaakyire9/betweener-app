@@ -18,6 +18,7 @@ import {
   type LiveSessionRealtimeStatus,
   type LiveSessionSnapshot,
   type LiveParticipantArrivalEvent,
+  type LiveReportReason,
 } from '../application/index.ts';
 
 export type LiveSessionControllerState = 'loading' | 'ready' | 'offline' | 'reconnecting' | 'error';
@@ -431,6 +432,18 @@ export const useLiveSessionController = (sessionId: string, currentUserId: strin
       runAction(
         `report-comment:${comment.id}`,
         () => liveRepository.reportComment(sessionId, comment),
+        { refreshAfter: false },
+      ),
+    reportLive: (reason: LiveReportReason) =>
+      runAction(
+        'report-live',
+        () => liveRepository.reportLive(sessionId, reason),
+        { refreshAfter: false },
+      ),
+    reportParticipant: (targetUserId: string, reason: LiveReportReason) =>
+      runAction(
+        `report-participant:${targetUserId}`,
+        () => liveRepository.reportParticipant(sessionId, targetUserId, reason),
         { refreshAfter: false },
       ),
     openAudiencePoll: (templateKey: string, durationSeconds = 90) =>

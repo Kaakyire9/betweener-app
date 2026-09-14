@@ -170,7 +170,7 @@ test('Room Pulse has responsive peek, standard, and expanded snap states', () =>
   assert.match(broadcastViewport, /\['peek', 'standard', 'expanded'\]/);
   assert.match(broadcastViewport, /viewportHeight < 720 \|\| viewportWidth > viewportHeight \? 'peek' : 'standard'/);
   assert.match(broadcastViewport, /mode === 'expanded'[\s\S]*safeHeight \* 0\.44/);
-  assert.match(conversationPanel, /comments\.slice\(-3\)/);
+  assert.match(conversationPanel, /comments\.slice\(-2\)/);
   assert.match(conversationPanel, /displayMode === 'peek'/);
   assert.match(conversationPanel, /const nextDisplayMode: LiveRoomPulseMode/);
   assert.equal((conversationPanel.match(/style=\{styles\.expandButton\}/g) ?? []).length, 0);
@@ -178,6 +178,8 @@ test('Room Pulse has responsive peek, standard, and expanded snap states', () =>
   assert.doesNotMatch(conversationPanel, /presentation="compact"/);
   assert.match(conversationPanel, /Minimize Room Pulse/);
   assert.match(conversationPanel, /Expand Room Pulse/);
+  assert.match(liveScreen, /roomPulseMode === 'expanded'[\s\S]{0,160}conversationGlassStageOverlay/);
+  assert.match(liveScreen, /conversationGlassStageOverlay:\s*\{[\s\S]*position: 'absolute'/);
 });
 
 test('Quick Connect always gives the host and pool equal stage space', () => {

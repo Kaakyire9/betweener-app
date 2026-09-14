@@ -100,6 +100,15 @@ input:focus, select:focus, button:focus-visible { outline: 2px solid var(--teal-
 .left-rail, .right-rail { max-height: calc(100vh - 6.35rem); overflow: auto; scrollbar-width: thin; }
 .production-desk { min-width: 0; }
 .panel { padding: 1rem; }
+.host-runtime-panel { display: grid; gap: 0.85rem; }
+.runtime-metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.45rem; }
+.runtime-metrics div { display: grid; gap: 0.15rem; padding: 0.7rem 0.45rem; text-align: center; border: 1px solid var(--line); border-radius: 0.75rem; background: rgba(232, 221, 203, 0.035); }
+.runtime-metrics strong { color: var(--ink); font-size: 1.05rem; }
+.runtime-metrics small { color: var(--muted); font-size: 0.58rem; text-transform: uppercase; letter-spacing: 0.07em; }
+.runtime-controls, .host-assignment { display: grid; gap: 0.65rem; padding-top: 0.8rem; border-top: 1px solid var(--line); }
+.host-assignment label { display: grid; gap: 0.4rem; }
+.host-assignment > .button { width: 100%; }
+.danger-text { color: #ef9b9f; text-align: left; }
 .studio-subsection { padding-top: 0.9rem; border-top: 1px solid var(--line); }
 .compact-heading { align-items: flex-start; }
 .section-heading h2, .section-heading h3 { margin-top: 0.18rem; }

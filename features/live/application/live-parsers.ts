@@ -22,6 +22,7 @@ import type {
   LiveConversationSpark,
   LiveHostedCandidate,
   LiveHostedMatchingSnapshot,
+  LiveHostingManagementSnapshot,
   LiveChemistrySnapshot,
   CircleLiveSnapshot,
   LiveQuickConnectDecision,
@@ -59,6 +60,49 @@ const asNumber = (value: unknown, fallback = 0) => {
 };
 const includes = <T extends string>(values: readonly T[], value: unknown): value is T =>
   typeof value === 'string' && values.includes(value as T);
+
+export const parseLiveHostingManagementSnapshot = (
+  value: unknown,
+): LiveHostingManagementSnapshot => {
+  if (!isRecord(value) || !isRecord(value.host) || !isRecord(value.schedule)
+    || !isRecord(value.traffic)) {
+    throw new Error('live_hosting_management_snapshot_invalid');
+  }
+  const endPolicy = value.schedule.endPolicy;
+  if (endPolicy !== 'scheduled' && endPolicy !== 'manual') {
+    throw new Error('live_hosting_management_end_policy_invalid');
+  }
+  return {
+    schemaVersion: 1,
+    serverNow: asString(value.serverNow),
+    sessionId: asString(value.sessionId),
+    title: asString(value.title),
+    status: asString(value.status),
+    canDelegateHosts: value.canDelegateHosts === true,
+    canExtend: value.canExtend === true,
+    host: {
+      userId: asString(value.host.userId),
+      profileId: asString(value.host.profileId),
+      fullName: asNullableString(value.host.fullName),
+      username: asNullableString(value.host.username),
+      avatarUrl: asNullableString(value.host.avatarUrl),
+      delegated: value.host.delegated === true,
+    },
+    schedule: {
+      scheduledStart: asNullableString(value.schedule.scheduledStart),
+      scheduledEnd: asNullableString(value.schedule.scheduledEnd),
+      runtimeEndAt: asNullableString(value.schedule.runtimeEndAt),
+      durationMinutes: Math.max(0, Math.floor(asNumber(value.schedule.durationMinutes))),
+      endPolicy,
+      lastExtendedAt: asNullableString(value.schedule.lastExtendedAt),
+    },
+    traffic: {
+      audienceNow: Math.max(0, Math.floor(asNumber(value.traffic.audienceNow))),
+      totalAttendees: Math.max(0, Math.floor(asNumber(value.traffic.totalAttendees))),
+      reactions: Math.max(0, Math.floor(asNumber(value.traffic.reactions))),
+    },
+  };
+};
 
 const RSVP_VALUES = ['none', 'invited', 'going', 'waitlisted', 'declined'] as const;
 const MATCH_ROUND_STATES = [
@@ -138,6 +182,7 @@ export const parseLiveParticipant = (value: unknown): LiveParticipant => {
     state: parseState(value.state),
     rsvpStatus: parseRsvp(value.rsvp_status),
     openToIntroductions: value.open_to_introductions === true,
+    introductionPreferenceDecidedAt: asNullableString(value.introduction_preference_decided_at),
     stageSlot: value.stage_slot == null ? null : asNumber(value.stage_slot),
     connectionQualityState: asString(value.connection_quality_state, 'unknown'),
     microphoneMutedByModerator: value.microphone_muted_by_moderator === true,
@@ -427,6 +472,9 @@ export const parseLivePrivateActivitySnapshot = (value: unknown): LivePrivateAct
   const hostedPairCount = Math.max(0, Math.floor(asNumber(value.hosted_pair_count)));
   const quickConnectPairCount = Math.max(0, Math.floor(asNumber(value.quick_connect_pair_count)));
   const activePairCount = hostedPairCount + quickConnectPairCount;
+  const formation = isRecord(value.latest_hosted_pair_formation)
+    ? value.latest_hosted_pair_formation
+    : null;
   return {
     sessionId: asString(value.session_id),
     hostedPairCount,
@@ -435,6 +483,12 @@ export const parseLivePrivateActivitySnapshot = (value: unknown): LivePrivateAct
     activePeopleCount: activePairCount * 2,
     latestHostedPairRoundId: asNullableString(value.latest_hosted_pair_round_id),
     latestHostedPairActivatedAt: asNullableString(value.latest_hosted_pair_activated_at),
+    latestHostedPairFormation: formation ? {
+      roundId: asString(formation.round_id),
+      activatedAt: asString(formation.activated_at),
+      participantA: parseMatchPerson(formation.participant_a),
+      participantB: parseMatchPerson(formation.participant_b),
+    } : null,
     serverNow: asString(value.server_now, new Date().toISOString()),
   };
 };
@@ -776,6 +830,7 @@ export const parseLiveQuickConnectPoolSnapshot = (value: unknown): LiveQuickConn
     throw new Error('live_quick_connect_pool_snapshot_invalid');
   }
   const members = Array.isArray(value.members) ? value.members : [];
+  const publicFormations = Array.isArray(value.public_formations) ? value.public_formations : [];
   return {
     sessionId: asString(value.session_id),
     stageLayout: includes(QUICK_STAGE_LAYOUTS, value.stage_layout)
@@ -808,6 +863,39 @@ export const parseLiveQuickConnectPoolSnapshot = (value: unknown): LiveQuickConn
         age: member.age == null ? null : asNumber(member.age),
         city: asNullableString(member.city),
         expressedInterest: member.expressed_interest === true,
+      }];
+    }),
+    publicFormations: publicFormations.flatMap((formation) => {
+      if (!isRecord(formation)
+        || !isRecord(formation.participant_a)
+        || !isRecord(formation.participant_b)) return [];
+      const pairingId = asString(formation.pairing_id);
+      const startsAt = asString(formation.starts_at);
+      const participantAUserId = asString(formation.participant_a.user_id);
+      const participantAProfileId = asString(formation.participant_a.profile_id);
+      const participantBUserId = asString(formation.participant_b.user_id);
+      const participantBProfileId = asString(formation.participant_b.profile_id);
+      if (!pairingId
+        || !startsAt
+        || !participantAUserId
+        || !participantAProfileId
+        || !participantBUserId
+        || !participantBProfileId) return [];
+      return [{
+        pairingId,
+        startsAt,
+        participantA: {
+          userId: participantAUserId,
+          profileId: participantAProfileId,
+          fullName: asNullableString(formation.participant_a.full_name),
+          avatarUrl: asNullableString(formation.participant_a.avatar_url),
+        },
+        participantB: {
+          userId: participantBUserId,
+          profileId: participantBProfileId,
+          fullName: asNullableString(formation.participant_b.full_name),
+          avatarUrl: asNullableString(formation.participant_b.avatar_url),
+        },
       }];
     }),
     queue: value.queue == null ? null : parseLiveQuickConnectSnapshot(value.queue),

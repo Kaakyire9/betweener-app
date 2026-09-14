@@ -33,6 +33,13 @@ const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
     justifyContent: 'center',
     gap: 9,
     backgroundColor: visual.color.warningSoft,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: visual.color.borderStrong,
+    shadowColor: '#000000',
+    shadowOpacity: 0.24,
+    shadowRadius: 16,
+    elevation: 9,
   },
   text: { color: visual.color.text, fontSize: 12, fontFamily: 'Manrope_600SemiBold' },
 });

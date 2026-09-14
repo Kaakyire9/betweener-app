@@ -1,4 +1,4 @@
-import { BarChart3, Bot, ChevronLeft, Mic, MicOff, Music2, Palette, RefreshCw, Share2, Shuffle, Sparkles, UsersRound } from 'lucide-react-native';
+import { BarChart3, Bot, CalendarClock, ChevronLeft, Mic, MicOff, Music2, Palette, RefreshCw, Share2, Shuffle, Sparkles, UsersRound } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -23,15 +23,17 @@ import { OdoFullQuickConnectPanel } from './OdoFullQuickConnectPanel.tsx';
 import { OdoShowDirectorPanel } from './OdoShowDirectorPanel.tsx';
 import { LiveMusicLibraryPanel } from './LiveMusicLibraryPanel.tsx';
 import { LiveStageAtmospherePanel } from './LiveStageAtmosphere.tsx';
+import { LiveHostingManagementPanel } from './LiveHostingManagementPanel.tsx';
 import { type LiveVisualTheme, useLiveVisualTheme } from './live-visual-tokens.ts';
 import { useLiveOdoCopilot } from '../odo/copilot/use-live-odo-copilot.ts';
 import { useLiveOdoAutopilot } from '../odo/autopilot/use-live-odo-autopilot.ts';
 import { useLiveOdoFullQuickConnect } from '../odo/full-quick-connect/use-live-odo-full-quick-connect.ts';
 import { useLiveOdoShowDirector } from '../odo/show/use-live-odo-show-director.ts';
 import type { LiveStageAtmosphereController } from '../hooks/use-live-stage-atmosphere.ts';
+import { useLiveHostingManagement } from '../hooks/use-live-hosting-management.ts';
 
 type LiveStudioTab = 'rotation' | 'stage' | 'match' | 'pulse' | 'music'
-  | 'atmosphere' | 'odo' | 'invite';
+  | 'atmosphere' | 'odo' | 'session' | 'invite';
 
 export type LiveStudioModalProps = {
   visible: boolean;
@@ -61,6 +63,7 @@ const TAB_META: Record<LiveStudioTab, { label: string; icon: LucideIcon }> = {
   odo: { label: 'Odo', icon: Bot },
   music: { label: 'Music', icon: Music2 },
   atmosphere: { label: 'Mood', icon: Palette },
+  session: { label: 'Session', icon: CalendarClock },
   invite: { label: 'Invite', icon: Share2 },
 };
 
@@ -90,6 +93,7 @@ export function LiveStudioModal({
   const bottomInset = Math.max(insets.bottom, initialWindowMetrics?.insets.bottom ?? 0);
   const hasQuickConnectControls = quickConnectProps != null;
   const hasMatchingControls = matchingProps != null;
+  const hosting = useLiveHostingManagement({ enabled: visible, sessionId });
   const odo = useLiveOdoCopilot({
     enabled: visible,
     sessionId,
@@ -120,16 +124,16 @@ export function LiveStudioModal({
     || hasShowDirector;
   const tabs = useMemo<readonly LiveStudioTab[]>(
     () => hasQuickConnectControls
-      ? ['rotation', 'stage', 'pulse', 'music', 'atmosphere', ...(hasOdo ? ['odo' as const] : []), 'invite']
+      ? ['rotation', 'stage', 'pulse', 'music', 'atmosphere', ...(hasOdo ? ['odo' as const] : []), 'session', 'invite']
       : hasMatchingControls
-        ? ['stage', 'match', 'pulse', 'music', 'atmosphere', ...(hasOdo ? ['odo' as const] : []), 'invite']
-        : ['stage', 'pulse', 'music', 'atmosphere', ...(hasOdo ? ['odo' as const] : []), 'invite'],
+        ? ['stage', 'match', 'pulse', 'music', 'atmosphere', ...(hasOdo ? ['odo' as const] : []), 'session', 'invite']
+        : ['stage', 'pulse', 'music', 'atmosphere', ...(hasOdo ? ['odo' as const] : []), 'session', 'invite'],
     [hasMatchingControls, hasOdo, hasQuickConnectControls],
   );
   const [selectedTab, setSelectedTab] = useState<LiveStudioTab>('stage');
   const activeTab = tabs.includes(selectedTab) ? selectedTab : tabs[0];
   const studioRefreshing = refreshing || odo.loading || autopilot.loading
-    || fullQuickConnect.loading || showDirector.loading;
+    || fullQuickConnect.loading || showDirector.loading || hosting.loading;
 
   useEffect(() => {
     if (visible && hasQuickConnectControls) setSelectedTab('rotation');
@@ -191,6 +195,7 @@ export function LiveStudioModal({
                 void fullQuickConnect.refresh();
                 void showDirector.refresh();
                 void atmosphereController?.refresh();
+                void hosting.refresh();
               }}
               style={styles.iconButton}
             >
@@ -291,6 +296,14 @@ export function LiveStudioModal({
                 ? <OdoFullQuickConnectPanel controller={fullQuickConnect} />
                 : <OdoAutopilotPanel controller={autopilot} />}
               {hasOdoCopilot ? <OdoCopilotPanel controller={odo} /> : null}
+            </>
+          ) : null}
+
+          {activeTab === 'session' ? (
+            <>
+              <Text style={styles.sectionTitle}>Run the room with confidence.</Text>
+              <Text style={styles.sectionBody}>See live traffic, extend the programme, or hand this one stage to a trusted Host without opening Live creation to everyone.</Text>
+              <LiveHostingManagementPanel controller={hosting} />
             </>
           ) : null}
 

@@ -76,6 +76,10 @@ const formationCelebration = readFileSync(
   new URL('../features/live/components/LivePairFormationCelebration.tsx', import.meta.url),
   'utf8',
 );
+const formationMotion = readFileSync(
+  new URL('../features/live/motion/live-private-spark-motion.ts', import.meta.url),
+  'utf8',
+);
 const privateActivityIndicator = readFileSync(
   new URL('../features/live/components/LivePrivateActivityIndicator.tsx', import.meta.url),
   'utf8',
@@ -274,6 +278,10 @@ test('hosted introductions resolve through a reduced-motion-safe formation cerem
   assert.match(formationCelebration, /LIVE_PRIVATE_SPARK_MOTION\.formationDurationMs/i);
   assert.match(formationCelebration, /Haptics\.NotificationFeedbackType\.Success/i);
   assert.match(formationCelebration, /useReduceMotion/i);
+  assert.match(formationMotion, /formationDurationMs: 3_600/);
+  assert.match(formationMotion, /handoffHoldMs: 3_900/);
+  assert.match(publicRoute, /style=\{\[styles\.privateActivityStage, \{ top: stageOverlayTopInset \}\]\}/);
+  assert.match(publicRoute, /stageOverlayTopInset = isFullPageSoloHost \? safeAreaInsets\.top \+ 76 : 10/);
 });
 
 test('ending a Spark revokes database admission and terminates the provider call', () => {

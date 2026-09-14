@@ -65,6 +65,8 @@ type NotificationPrefs = {
   gifts: boolean;
   boosts: boolean;
   verification: boolean;
+  live_reminders: boolean;
+  live_started: boolean;
   quiet_hours_enabled: boolean;
   quiet_hours_start: string | null;
   quiet_hours_end: string | null;
@@ -508,7 +510,7 @@ export default function InAppToasts() {
       const { data, error } = await supabase
         .from('notification_prefs')
         .select(
-          'inapp_enabled,preview_text,messages,message_reactions,profile_interest,reactions,circle_discussions,likes,superlikes,matches,moments,gifts,boosts,verification,quiet_hours_enabled,quiet_hours_start,quiet_hours_end,quiet_hours_tz',
+          'inapp_enabled,preview_text,messages,message_reactions,profile_interest,reactions,circle_discussions,likes,superlikes,matches,moments,gifts,boosts,verification,live_reminders,live_started,quiet_hours_enabled,quiet_hours_start,quiet_hours_end,quiet_hours_tz',
         )
         .eq('user_id', user.id)
         .maybeSingle();
@@ -534,6 +536,8 @@ export default function InAppToasts() {
           gifts: Boolean(data.gifts),
           boosts: Boolean(data.boosts),
           verification: Boolean((data as any).verification),
+          live_reminders: (data as any).live_reminders !== false,
+          live_started: (data as any).live_started !== false,
           quiet_hours_enabled: Boolean(data.quiet_hours_enabled),
           quiet_hours_start: data.quiet_hours_start ?? null,
           quiet_hours_end: data.quiet_hours_end ?? null,
@@ -575,6 +579,8 @@ export default function InAppToasts() {
             gifts: Boolean(row.gifts),
             boosts: Boolean(row.boosts),
             verification: Boolean(row.verification),
+            live_reminders: row.live_reminders !== false,
+            live_started: row.live_started !== false,
             quiet_hours_enabled: Boolean(row.quiet_hours_enabled),
             quiet_hours_start: row.quiet_hours_start ?? null,
             quiet_hours_end: row.quiet_hours_end ?? null,
@@ -1641,6 +1647,35 @@ export default function InAppToasts() {
 
   useEffect(() => {
     if (!user?.id) return;
+    const channel = supabase
+      .channel(`inapp_live_announcements:${user.id}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'live_in_app_announcements' },
+        (payload) => {
+          const row = payload.new as Record<string, unknown>;
+          const sessionId = typeof row.session_id === 'string' ? row.session_id : '';
+          const kind = row.kind === 'starting_soon' ? 'starting_soon' : row.kind === 'live_now' ? 'live_now' : null;
+          if (!sessionId || !kind) return;
+          if (!canInAppNotify(kind === 'starting_soon' ? 'live_reminders' : 'live_started')) return;
+          if (shouldSuppressToast(`live_${kind}:${sessionId}`, 60_000)) return;
+          pushToast({
+            id: `live-announcement-${String(row.id)}`,
+            title: typeof row.title === 'string' ? row.title : kind === 'live_now' ? 'Betweener Live is open' : 'Live starts soon',
+            body: typeof row.body === 'string' ? row.body : 'A Betweener Live room is ready for you.',
+            kind: 'system',
+            groupKey: `live:${sessionId}`,
+            route: kind === 'live_now' ? '/live/[sessionId]' : '/live/event/[sessionId]',
+            routeParams: { sessionId },
+          }, { durationMs: 7_500 });
+        },
+      )
+      .subscribe();
+    return () => { void supabase.removeChannel(channel); };
+  }, [canInAppNotify, pushToast, shouldSuppressToast, user?.id]);
+
+  useEffect(() => {
+    if (!user?.id) return;
 
     const channel = supabase
       .channel(`inapp_message_reactions:${user.id}`)
@@ -2009,6 +2044,25 @@ export default function InAppToasts() {
     const subscription = Notifications.addNotificationReceivedListener((notification) => {
       const data = notification.request.content.data as Record<string, any> | undefined;
       const pushType = typeof data?.type === 'string' ? data.type : '';
+      if (pushType === 'live_host_assigned' || pushType === 'live_host_revoked'
+        || pushType === 'live_starting_soon' || pushType === 'live_now') {
+        const preference = pushType === 'live_starting_soon' ? 'live_reminders' : 'live_started';
+        if (!canInAppNotify(preference)) return;
+        const sessionId = data?.session_id ? String(data.session_id) : '';
+        if (!sessionId || shouldSuppressToast(`${pushType}:${sessionId}`, 60_000)) return;
+        const isLiveNow = pushType === 'live_now';
+        const isRevoked = pushType === 'live_host_revoked';
+        pushToast({
+          id: `live-${pushType}-${sessionId}`,
+          title: notification.request.content.title || (isLiveNow ? 'Betweener Live is open' : 'Live update'),
+          body: notification.request.content.body || (isLiveNow ? 'Step into the room now.' : 'Your Live has an update.'),
+          kind: 'system',
+          groupKey: `live:${sessionId}`,
+          route: isRevoked ? '/live' : isLiveNow ? '/live/[sessionId]' : '/live/event/[sessionId]',
+          routeParams: isRevoked ? undefined : { sessionId },
+        }, { durationMs: 7_500 });
+        return;
+      }
       if (pushType === 'message') {
         if (!user?.id) return;
         if (!canInAppNotify('messages')) return;

@@ -68,6 +68,7 @@ type Props = {
 
 const CommentRow = memo(function CommentRow({
   comment,
+  compact,
   canModerate,
   currentUserId,
   onModerate,
@@ -75,6 +76,7 @@ const CommentRow = memo(function CommentRow({
   onOpenMember,
 }: {
   comment: LiveComment;
+  compact: boolean;
   canModerate: boolean;
   currentUserId: string | null;
   onModerate: (commentId: string) => Promise<unknown>;
@@ -116,7 +118,7 @@ const CommentRow = memo(function CommentRow({
   };
 
   return (
-    <View style={styles.commentRow}>
+    <View style={[styles.commentRow, compact && styles.commentRowCompact]}>
       <Pressable
         accessibilityLabel={`View ${comment.fullName || 'member'}`}
         accessibilityRole="button"
@@ -128,12 +130,12 @@ const CommentRow = memo(function CommentRow({
           avatarUrl: comment.avatarUrl,
           role: comment.role,
         })}
-        style={styles.commentAvatarShell}
+        style={[styles.commentAvatarShell, compact && styles.commentAvatarShellCompact]}
       >
         {comment.avatarUrl ? (
-          <Image contentFit="cover" source={{ uri: comment.avatarUrl }} style={styles.commentAvatar} transition={100} />
+          <Image contentFit="cover" source={{ uri: comment.avatarUrl }} style={[styles.commentAvatar, compact && styles.commentAvatarCompact]} transition={100} />
         ) : (
-          <Text style={styles.commentInitial}>{(comment.fullName?.trim()[0] || 'B').toUpperCase()}</Text>
+          <Text style={[styles.commentInitial, compact && styles.commentInitialCompact]}>{(comment.fullName?.trim()[0] || 'B').toUpperCase()}</Text>
         )}
       </Pressable>
       <Pressable
@@ -142,7 +144,7 @@ const CommentRow = memo(function CommentRow({
         onLongPress={canModerate || comment.userId !== currentUserId ? openActions : undefined}
         style={styles.commentCopy}
       >
-        <Text style={styles.comment}>
+        <Text numberOfLines={compact ? 2 : undefined} style={[styles.comment, compact && styles.commentCompact]}>
           <Text style={styles.name}>{comment.fullName || 'Member'}  </Text>
           {roleLabel ? <Text style={styles.roleBadge}>{roleLabel}  </Text> : null}
           {comment.body}
@@ -193,7 +195,7 @@ export const LiveConversationPanel = memo(function LiveConversationPanel({
   const expanded = displayMode === 'expanded';
   const hasEarlier = expanded && comments.length < commentCount;
   const data = useMemo(
-    () => expanded ? [...comments] : comments.slice(-3),
+    () => expanded ? [...comments] : comments.slice(-2),
     [comments, expanded],
   );
   const latestComment = comments.at(-1);
@@ -332,6 +334,7 @@ export const LiveConversationPanel = memo(function LiveConversationPanel({
         renderItem={({ item }) => (
           <CommentRow
             comment={item}
+            compact={!expanded}
             canModerate={canModerate}
             currentUserId={currentUserId}
             onModerate={onModerate}
@@ -427,7 +430,7 @@ export const LiveConversationPanel = memo(function LiveConversationPanel({
 });
 
 const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
-  panel: { flex: 1, minHeight: 0, backgroundColor: visual.color.surface, paddingHorizontal: 16, paddingTop: 14 },
+  panel: { flex: 1, minHeight: 0, backgroundColor: visual.color.surface, paddingHorizontal: 14, paddingTop: 12 },
   panelGlass: { backgroundColor: 'transparent' },
   panelPeek: { paddingHorizontal: 14, paddingTop: 7 },
   headingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
@@ -439,13 +442,18 @@ const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
   peekRow: { flex: 1, minHeight: 25, justifyContent: 'center', paddingBottom: 3 },
   peekText: { color: visual.color.textMuted, fontSize: 11, fontFamily: 'Manrope_500Medium' },
   list: { flex: 1, minHeight: 40 },
-  listContent: { paddingVertical: 10, gap: 2, flexGrow: 1 },
+  listContent: { paddingVertical: 7, gap: 2, flexGrow: 1 },
   commentRow: { paddingVertical: 4, minHeight: 31, flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+  commentRowCompact: { paddingVertical: 2, minHeight: 27, gap: 7 },
   commentCopy: { flex: 1, minHeight: 27, justifyContent: 'center' },
   commentAvatarShell: { width: 27, height: 27, borderRadius: 14, alignItems: 'center', justifyContent: 'center', overflow: 'hidden', backgroundColor: visual.color.tealSoft, borderWidth: 1, borderColor: visual.color.borderStrong },
   commentAvatar: { width: 27, height: 27, borderRadius: 14 },
+  commentAvatarShellCompact: { width: 24, height: 24, borderRadius: 12 },
+  commentAvatarCompact: { width: 24, height: 24, borderRadius: 12 },
   commentInitial: { color: visual.color.text, fontSize: 9, fontFamily: 'Manrope_800ExtraBold' },
+  commentInitialCompact: { fontSize: 8 },
   comment: { color: visual.color.text, fontSize: 13, lineHeight: 19, fontFamily: 'Manrope_400Regular' },
+  commentCompact: { fontSize: 12, lineHeight: 17 },
   name: { color: visual.color.text, fontFamily: 'Manrope_700Bold' },
   roleBadge: { color: visual.color.teal, fontSize: 9, letterSpacing: 0.7, fontFamily: 'Manrope_800ExtraBold' },
   empty: { color: visual.color.textMuted, fontSize: 12, marginTop: 12, fontFamily: 'Manrope_500Medium' },
@@ -466,9 +474,9 @@ const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
   keyboardToolbar: { height: 28, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 5 },
   keyboardToolbarLabel: { color: visual.color.textMuted, fontSize: 8, letterSpacing: 1.2, fontFamily: 'Manrope_800ExtraBold' },
   keyboardDone: { color: visual.color.teal, fontSize: 12, fontFamily: 'Manrope_800ExtraBold' },
-  composer: { flexDirection: 'row', alignItems: 'center', gap: 9, paddingBottom: 10 },
-  input: { flex: 1, height: 46, borderRadius: 23, paddingHorizontal: 17, paddingRight: 44, color: visual.color.text, backgroundColor: visual.color.surfaceRaised, borderWidth: 1, borderColor: visual.color.border, fontFamily: 'Manrope_500Medium' },
+  composer: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingBottom: 8 },
+  input: { flex: 1, height: 42, borderRadius: 21, paddingHorizontal: 15, paddingRight: 42, color: visual.color.text, backgroundColor: visual.color.surfaceRaised, borderWidth: 1, borderColor: visual.color.border, fontSize: 12, fontFamily: 'Manrope_500Medium' },
   characterCount: { position: 'absolute', right: 58, color: visual.color.textMuted, fontSize: 9, fontFamily: 'Manrope_600SemiBold' },
-  send: { width: 43, height: 43, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.color.teal },
+  send: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.color.teal },
   sendDisabled: { opacity: 0.45 },
 });

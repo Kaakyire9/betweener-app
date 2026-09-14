@@ -36,6 +36,10 @@ export type LiveQuickConnectConstellationProps = {
   canSignal: boolean;
   busyAction: string | null;
   layout: PoolLayout;
+  pairingEventKey: string | null;
+  pairingHaptic: boolean;
+  pairingInitialProgress: number;
+  pairingLabel: string;
   pairingUserIds: readonly string[];
   pairingPeople: readonly LivePairPortrait[];
   pageMotion: Animated.Value;
@@ -93,6 +97,10 @@ export function LiveQuickConnectConstellation({
   canSignal,
   busyAction,
   layout,
+  pairingEventKey,
+  pairingHaptic,
+  pairingInitialProgress,
+  pairingLabel,
   pairingUserIds,
   pairingPeople,
   pageMotion,
@@ -119,7 +127,7 @@ export function LiveQuickConnectConstellation({
         member,
         index,
         phase: 'active',
-        exitKind: 'departure',
+        exitKind: pairingIds.has(member.userId) ? 'pair' : 'departure',
       }));
       const exiting = previous
         .filter((entry) => !desiredIds.has(entry.member.profileId))
@@ -326,7 +334,7 @@ export function LiveQuickConnectConstellation({
             member={entry.member}
             onPress={() => onSignalInterest(entry.member.profileId)}
             pairingActive={pairingActive}
-            paired={pairingIds.has(entry.member.userId)}
+            paired={entry.exitKind === 'pair' || pairingIds.has(entry.member.userId)}
             phase={entry.phase}
             reduceMotion={reduceMotion}
           />
@@ -334,10 +342,12 @@ export function LiveQuickConnectConstellation({
       </Animated.View>
       {pairingActive && pairingPeople.length === 2 ? (
         <LivePairFormationCelebration
-          key={pairingKey}
+          key={pairingEventKey ?? pairingKey}
           compact
-          haptic
-          label="Your private conversation is ready"
+          eyebrow="ODO · PRIVATE SPARK"
+          haptic={pairingHaptic}
+          initialProgress={pairingInitialProgress}
+          label={pairingLabel}
           pair={pairingPeople as readonly [LivePairPortrait, LivePairPortrait]}
         />
       ) : null}
@@ -467,7 +477,7 @@ function ConstellationMember({
         }),
         Animated.timing(pairing, {
           toValue: 1,
-          duration: 1_280,
+          duration: LIVE_PRIVATE_SPARK_MOTION.fusionMomentMs - 420,
           delay: 180,
           easing: Easing.inOut(Easing.cubic),
           useNativeDriver: true,
@@ -607,7 +617,7 @@ function ConstellationMember({
       <Pressable
         accessibilityLabel={current ? `${firstName}, you` : `Privately prioritise ${firstName}`}
         accessibilityRole="button"
-        disabled={current || busy || !canSignal || phase === 'exiting'}
+        disabled={current || busy || !canSignal || phase === 'exiting' || paired}
         hitSlop={6}
         onPress={onPress}
         onPressIn={() => setPressed(1)}

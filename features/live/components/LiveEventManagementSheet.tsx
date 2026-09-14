@@ -22,6 +22,8 @@ import type {
   LiveCancellationReason,
   LiveSessionSummary,
 } from '../application/index.ts';
+import type { LiveHostingManagementController } from '../hooks/use-live-hosting-management.ts';
+import { LiveHostingManagementPanel } from './LiveHostingManagementPanel.tsx';
 import { type LiveVisualTheme, useLiveVisualTheme } from './live-visual-tokens.ts';
 
 const CANCELLATION_REASONS: readonly {
@@ -71,6 +73,7 @@ export function LiveEventManagementSheet({
   onDuplicate,
   onCancel,
   onArchive,
+  hostingController,
 }: {
   visible: boolean;
   session: LiveSessionSummary;
@@ -81,6 +84,7 @@ export function LiveEventManagementSheet({
   onDuplicate: () => void;
   onCancel: (reason: LiveCancellationReason) => void;
   onArchive: () => void;
+  hostingController: LiveHostingManagementController;
 }) {
   const visual = useLiveVisualTheme();
   const styles = useMemo(() => createStyles(visual), [visual]);
@@ -112,6 +116,7 @@ export function LiveEventManagementSheet({
             <Pressable accessibilityLabel="Close" onPress={onClose} style={styles.close}><X size={20} color={visual.text} /></Pressable>
           </View>
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
+            <LiveHostingManagementPanel controller={hostingController} />
             {editable ? (
               <>
                 <Action icon={<Pencil size={18} color={visual.teal} />} title="Edit details" description="Refine the story, poster, room settings, or time." onPress={onEdit} />

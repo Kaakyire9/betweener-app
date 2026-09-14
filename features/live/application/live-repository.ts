@@ -55,7 +55,7 @@ import {
   type LiveStageAtmospherePreset,
 } from '../stage/live-stage-atmosphere.ts';
 import type { LiveParticipantArrivalEvent } from './live-participant-arrivals.ts';
-import type { CircleLiveSnapshot, LiveAudiencePoll, LiveCancellationReason, LiveChemistrySnapshot, LiveComment, LiveEventMediaInput, LiveHostedMatchingSnapshot, LiveJoinNotice, LivePoolCandidatePreview, LivePrivateActivitySnapshot, LivePrivateSpark, LivePrivateSparkExitDecision, LiveQuickConnectConcurrency, LiveQuickConnectDecision, LiveQuickConnectHostAction, LiveQuickConnectHostSnapshot, LiveQuickConnectIntent, LiveQuickConnectPoolSnapshot, LiveQuickConnectRoundSeconds, LiveQuickConnectSafetyExperience, LiveQuickConnectSafetyReason, LiveQuickConnectSnapshot, LiveQuickConnectStageLayout, LiveQuorumPoolingSnapshot, LiveReactionEvent, LiveReactionKind, LiveReactionSummary, LiveRoomPulseSnapshot, LiveSessionRecap, LiveSessionSnapshot, LiveSessionSummary, ScheduleCircleLiveSessionInput, ScheduleLiveSessionInput, ScheduleLiveStudioSessionInput, UpdateLiveStudioSessionInput } from './live-models.ts';
+import type { CircleLiveSnapshot, LiveAudiencePoll, LiveCancellationReason, LiveChemistrySnapshot, LiveComment, LiveEventMediaInput, LiveHostedMatchingSnapshot, LiveHostingManagementSnapshot, LiveJoinNotice, LivePoolCandidatePreview, LivePrivateActivitySnapshot, LivePrivateSpark, LivePrivateSparkExitDecision, LiveQuickConnectConcurrency, LiveQuickConnectDecision, LiveQuickConnectHostAction, LiveQuickConnectHostSnapshot, LiveQuickConnectIntent, LiveQuickConnectPoolSnapshot, LiveQuickConnectRoundSeconds, LiveQuickConnectSafetyExperience, LiveQuickConnectSafetyReason, LiveQuickConnectSnapshot, LiveQuickConnectStageLayout, LiveQuorumPoolingSnapshot, LiveReactionEvent, LiveReactionKind, LiveReactionSummary, LiveReportReason, LiveRoomPulseSnapshot, LiveSessionRecap, LiveSessionSnapshot, LiveSessionSummary, ScheduleCircleLiveSessionInput, ScheduleLiveSessionInput, ScheduleLiveStudioSessionInput, UpdateLiveStudioSessionInput } from './live-models.ts';
 import { parseLiveReactionEvent, parseLiveReactionSummary } from './live-reactions.ts';
 import {
   parseLiveAudiencePoll,
@@ -63,6 +63,7 @@ import {
   parseLiveComment,
   parseLiveChemistrySnapshot,
   parseLiveHostedMatchingSnapshot,
+  parseLiveHostingManagementSnapshot,
   parseLivePrivateActivitySnapshot,
   parseLivePrivateSpark,
   parseLivePoolCandidatePreview,
@@ -100,6 +101,40 @@ const invoke = async (name: string, args?: Record<string, unknown>): Promise<unk
 };
 
 export const liveRepository = {
+  async getHostingManagement(sessionId: string): Promise<LiveHostingManagementSnapshot> {
+    return parseLiveHostingManagementSnapshot(await invoke(
+      'rpc_get_live_hosting_management_v1',
+      { p_session_id: sessionId },
+    ));
+  },
+
+  async delegateHost(sessionId: string, username: string): Promise<LiveHostingManagementSnapshot> {
+    return parseLiveHostingManagementSnapshot(await invoke(
+      'rpc_admin_delegate_live_host_v1',
+      { p_session_id: sessionId, p_username: username },
+    ));
+  },
+
+  async revokeDelegatedHost(sessionId: string): Promise<LiveHostingManagementSnapshot> {
+    return parseLiveHostingManagementSnapshot(await invoke(
+      'rpc_admin_revoke_live_host_v1',
+      { p_session_id: sessionId },
+    ));
+  },
+
+  async extendHostingRuntime(
+    sessionId: string,
+    options: { extensionMinutes?: number; keepOpen?: boolean },
+  ): Promise<LiveHostingManagementSnapshot> {
+    return parseLiveHostingManagementSnapshot(await invoke(
+      'rpc_extend_live_session_v1',
+      {
+        p_session_id: sessionId,
+        p_extension_minutes: options.extensionMinutes ?? null,
+        p_keep_open: options.keepOpen === true,
+      },
+    ));
+  },
   async getPrivateActivity(sessionId: string): Promise<LivePrivateActivitySnapshot> {
     return parseLivePrivateActivitySnapshot(await invoke('rpc_get_live_private_activity_v1', {
       p_session_id: sessionId,
@@ -1074,7 +1109,7 @@ export const liveRepository = {
   async reportComment(
     sessionId: string,
     comment: Pick<LiveComment, 'id' | 'userId'>,
-    reason: 'harassment' | 'hate' | 'sexual_content' | 'spam' | 'impersonation' | 'unsafe_behaviour' | 'other' = 'other',
+    reason: LiveReportReason = 'other',
   ): Promise<void> {
     await invoke('rpc_report_live_content', {
       p_session_id: sessionId,
@@ -1083,6 +1118,35 @@ export const liveRepository = {
       p_details: null,
       p_target_user_id: comment.userId,
       p_target_comment_id: comment.id,
+    });
+  },
+
+  async reportLive(
+    sessionId: string,
+    reason: LiveReportReason,
+  ): Promise<void> {
+    await invoke('rpc_report_live_content', {
+      p_session_id: sessionId,
+      p_client_report_id: Crypto.randomUUID(),
+      p_reason: reason,
+      p_details: 'Room-level Live report',
+      p_target_user_id: null,
+      p_target_comment_id: null,
+    });
+  },
+
+  async reportParticipant(
+    sessionId: string,
+    targetUserId: string,
+    reason: LiveReportReason,
+  ): Promise<void> {
+    await invoke('rpc_report_live_content', {
+      p_session_id: sessionId,
+      p_client_report_id: Crypto.randomUUID(),
+      p_reason: reason,
+      p_details: 'Live participant report',
+      p_target_user_id: targetUserId,
+      p_target_comment_id: null,
     });
   },
 
@@ -1471,6 +1535,21 @@ export const liveRepository = {
         table: 'live_quick_connect_opportunity_updates',
         filter: `user_id=eq.${userId}`,
       },
+      onChange,
+    );
+    channel.subscribe((status) => {
+      if (status === 'SUBSCRIBED') onChange();
+    });
+    return () => { void supabase.removeChannel(channel); };
+  },
+
+  subscribeLiveDiscovery(onChange: () => void): () => void {
+    const channel: RealtimeChannel = supabase.channel(
+      `live-discovery:${Crypto.randomUUID()}`,
+    );
+    channel.on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'live_discovery_updates' },
       onChange,
     );
     channel.subscribe((status) => {

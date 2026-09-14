@@ -85,6 +85,7 @@ const toParticipant = (
   state: 'private_spark',
   rsvpStatus: 'going',
   openToIntroductions: false,
+  introductionPreferenceDecidedAt: null,
   stageSlot,
   connectionQualityState: 'unknown',
   microphoneMutedByModerator: false,

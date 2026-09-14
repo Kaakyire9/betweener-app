@@ -11,6 +11,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useReduceMotion } from '@/hooks/useReduceMotion.ts';
 import type { LiveChemistrySnapshot } from '../application/index.ts';
@@ -42,6 +43,7 @@ export function LiveChemistryOverlay({
   const visual = useLiveVisualTheme();
   const styles = useMemo(() => createStyles(visual), [visual]);
   const reduceMotion = useReduceMotion();
+  const insets = useSafeAreaInsets();
   const entrance = useRef(new Animated.Value(reduceMotion ? 1 : 0)).current;
   const orbit = useRef(new Animated.Value(0)).current;
   const breathe = useRef(new Animated.Value(0)).current;
@@ -134,6 +136,10 @@ export function LiveChemistryOverlay({
       accessibilityLabel="Chemistry First. The private conversation is concealed until both people choose to reveal."
       style={[
         styles.overlay,
+        {
+          paddingTop: Math.max(insets.top, 16),
+          paddingBottom: Math.max(insets.bottom, 28),
+        },
         {
           opacity: rootOpacity,
           transform: [{ scale: reveal.interpolate({ inputRange: [0, 1], outputRange: [1, 1.025] }) }],

@@ -152,7 +152,7 @@ test('Reaction UX includes an expanded tray, haptics, reduced motion and a non-i
   assert.match(picker, /selectMoreReaction[\s\S]*setMoreOpen\(false\)/);
   assert.match(picker, /tray:\s*\{[^}]*position: 'absolute'[^}]*bottom: 52/);
   assert.match(picker, /hitSlop=\{5\}/);
-  assert.match(picker, /reaction:\s*\{[^}]*width: 38[^}]*height: 38/);
+  assert.match(picker, /reaction:\s*\{[^}]*width: 36[^}]*height: 36/);
   assert.match(picker, /presentation\.accent\}3D/);
   assert.match(picker, /reactionGlow:\s*\{[^}]*width: 24[^}]*height: 24/);
   assert.match(picker, /moreButtonOpen:[^\n]+tealSoft/);

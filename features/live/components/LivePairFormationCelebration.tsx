@@ -15,7 +15,9 @@ import { type LiveVisualTheme, useLiveVisualTheme } from './live-visual-tokens.t
 type Props = {
   pair: readonly [LivePairPortrait, LivePairPortrait];
   compact?: boolean;
+  eyebrow?: string;
   haptic?: boolean;
+  initialProgress?: number;
   label?: string;
   onComplete?: () => void;
 };
@@ -36,7 +38,9 @@ const BURST_POINTS = [
 export const LivePairFormationCelebration = memo(function LivePairFormationCelebration({
   pair,
   compact = false,
+  eyebrow = 'PRIVATE SPARK',
   haptic = false,
+  initialProgress = 0,
   label = 'A Private Spark is opening',
   onComplete,
 }: Props) {
@@ -45,6 +49,7 @@ export const LivePairFormationCelebration = memo(function LivePairFormationCeleb
   const reduceMotion = useReduceMotion();
   const timeline = useRef(new Animated.Value(0)).current;
   const didHapticRef = useRef(false);
+  const initialTimelineProgress = useRef(Math.min(0.98, Math.max(0, initialProgress))).current;
 
   useEffect(() => {
     timeline.stopAnimation();
@@ -53,10 +58,10 @@ export const LivePairFormationCelebration = memo(function LivePairFormationCeleb
       const timeout = setTimeout(() => onComplete?.(), 420);
       return () => clearTimeout(timeout);
     }
-    timeline.setValue(0);
+    timeline.setValue(initialTimelineProgress);
     const animation = Animated.timing(timeline, {
       toValue: 1,
-      duration: LIVE_PRIVATE_SPARK_MOTION.formationDurationMs,
+      duration: LIVE_PRIVATE_SPARK_MOTION.formationDurationMs * (1 - initialTimelineProgress),
       easing: Easing.inOut(Easing.cubic),
       useNativeDriver: true,
     });
@@ -64,16 +69,19 @@ export const LivePairFormationCelebration = memo(function LivePairFormationCeleb
       if (finished) onComplete?.();
     });
     return () => animation.stop();
-  }, [onComplete, reduceMotion, timeline]);
+  }, [initialTimelineProgress, onComplete, reduceMotion, timeline]);
 
   useEffect(() => {
     if (!haptic || didHapticRef.current || reduceMotion) return;
     didHapticRef.current = true;
+    const hapticDelay = LIVE_PRIVATE_SPARK_MOTION.fusionMomentMs
+      - (LIVE_PRIVATE_SPARK_MOTION.formationDurationMs * initialTimelineProgress);
+    if (hapticDelay <= 0) return;
     const timeout = setTimeout(() => {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
-    }, LIVE_PRIVATE_SPARK_MOTION.fusionMomentMs);
+    }, hapticDelay);
     return () => clearTimeout(timeout);
-  }, [haptic, reduceMotion]);
+  }, [haptic, initialTimelineProgress, reduceMotion]);
 
   const portraitWidth = compact ? 42 : 94;
   const portraitHeight = compact ? 42 : 122;
@@ -219,8 +227,13 @@ export const LivePairFormationCelebration = memo(function LivePairFormationCeleb
           }) }],
         },
       ]}>
-        <Text numberOfLines={1} style={[styles.eyebrow, compact && styles.eyebrowCompact]}>PRIVATE SPARK</Text>
-        {!compact ? <Text style={styles.label}>{label}</Text> : null}
+        <Text numberOfLines={1} style={[styles.eyebrow, compact && styles.eyebrowCompact]}>{eyebrow}</Text>
+        <Text
+          numberOfLines={compact ? 2 : 1}
+          style={[styles.label, compact && styles.labelCompact]}
+        >
+          {label}
+        </Text>
       </Animated.View>
     </View>
   );
@@ -320,8 +333,9 @@ const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
   },
   coreCompact: { width: 30, height: 30, marginLeft: -15, marginTop: -15, borderRadius: 15 },
   copy: { position: 'absolute', top: '68%', alignItems: 'center', gap: 4 },
-  copyCompact: { top: '79%' },
+  copyCompact: { top: '70%', left: 8, right: 8, gap: 1 },
   eyebrow: { color: visual.color.purple, fontSize: 9, letterSpacing: 2.1, fontFamily: 'Manrope_800ExtraBold' },
   eyebrowCompact: { fontSize: 6, letterSpacing: 1.35 },
   label: { color: visual.color.text, fontSize: 13, fontFamily: 'Manrope_700Bold' },
+  labelCompact: { fontSize: 8, lineHeight: 10, textAlign: 'center' },
 });

@@ -19,3 +19,4 @@ export * from './use-circle-live.ts';
 export * from './use-live-stage-atmosphere.ts';
 export * from './use-live-private-activity.ts';
 export * from './use-live-reactions.ts';
+export * from './use-live-hosting-management.ts';

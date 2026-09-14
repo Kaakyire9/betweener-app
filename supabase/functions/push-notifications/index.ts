@@ -7,10 +7,43 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { corsHeaders } from '../_shared/cors.ts'
 
 type PushRequest = {
-  user_id: string
+  user_id?: string
+  campaign_id?: string
+  title?: string
+  body?: string
+  data?: Record<string, unknown>
+}
+
+type LiveNotificationCampaign = {
+  id: string
+  sessionId: string
+  kind: 'starting_soon' | 'live_now'
   title: string
   body: string
-  data?: Record<string, unknown>
+  data: Record<string, unknown>
+  attemptCount: number
+}
+
+const LIVE_NOTIFICATIONS_MIN_APP_VERSION = (
+  Deno.env.get('LIVE_NOTIFICATIONS_MIN_APP_VERSION') || '1.2.0'
+).trim()
+
+const parseVersion = (value: unknown): [number, number, number] | null => {
+  if (typeof value !== 'string') return null
+  const match = value.trim().match(/^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/)
+  if (!match) return null
+  return [Number(match[1]), Number(match[2]), Number(match[3])]
+}
+
+const isVersionAtLeast = (value: unknown, minimum: string): boolean => {
+  const version = parseVersion(value)
+  const floor = parseVersion(minimum)
+  if (!version || !floor) return false
+  for (let index = 0; index < version.length; index += 1) {
+    if (version[index] > floor[index]) return true
+    if (version[index] < floor[index]) return false
+  }
+  return true
 }
 
 const asString = (v: unknown): string | null => {
@@ -100,6 +133,122 @@ const getUserBadgeCount = async (
   return Math.max(0, unreadChatSenders.size + (pendingIntents.count ?? 0))
 }
 
+const sendLiveNotificationCampaign = async (
+  service: ReturnType<typeof createClient>,
+  campaignId: string,
+) => {
+  const { data: claimed, error: claimError } = await service.rpc(
+    'rpc_service_claim_live_notification_campaign_v1',
+    { p_campaign_id: campaignId },
+  )
+  if (claimError) throw new Error(`campaign_claim_failed:${claimError.message}`)
+  if (!claimed) return { ok: true, skipped: true, recipients: 0, acceptedTickets: 0 }
+
+  const campaign = claimed as LiveNotificationCampaign
+  let lastTokenId: string | null = null
+  const recipientUserIds = new Set<string>()
+  let acceptedTickets = 0
+
+  try {
+    while (true) {
+      let tokenQuery = service
+        .from('push_tokens')
+        .select('id,user_id,token,app_version')
+        .order('id')
+        .limit(1000)
+      if (lastTokenId) tokenQuery = tokenQuery.gt('id', lastTokenId)
+      const { data: tokenRows, error: tokenError } = await tokenQuery
+      if (tokenError) throw new Error(`campaign_tokens_failed:${tokenError.message}`)
+      if (!tokenRows?.length) break
+
+      const userIds = [...new Set(tokenRows.map((row) => row.user_id).filter(Boolean))]
+      const { data: preferenceRows, error: preferenceError } = await service
+        .from('notification_prefs')
+        .select('user_id,live_reminders,live_started')
+        .in('user_id', userIds)
+      if (preferenceError) throw new Error(`campaign_preferences_failed:${preferenceError.message}`)
+
+      const preferences = new Map(
+        (preferenceRows || []).map((row) => [row.user_id, row]),
+      )
+      const seenTokens = new Set<string>()
+      const messages = tokenRows.flatMap((row) => {
+        const token = String(row.token || '').trim()
+        if (!token || seenTokens.has(token)) return []
+        seenTokens.add(token)
+        if (!isVersionAtLeast(row.app_version, LIVE_NOTIFICATIONS_MIN_APP_VERSION)) return []
+        const preference = preferences.get(row.user_id)
+        const allowed = campaign.kind === 'starting_soon'
+          ? preference?.live_reminders !== false
+          : preference?.live_started !== false
+        if (!allowed) return []
+        recipientUserIds.add(row.user_id)
+        return [{
+          to: token,
+          sound: 'default',
+          title: campaign.title,
+          body: campaign.body,
+          channelId: 'default',
+          categoryId: `bt_live_${campaign.kind}`,
+          data: campaign.data || {},
+        }]
+      })
+
+      console.log('push-notifications live campaign page', {
+        campaign_id: campaign.id,
+        minimum_app_version: LIVE_NOTIFICATIONS_MIN_APP_VERSION,
+        scanned_tokens: tokenRows.length,
+        eligible_tokens: messages.length,
+      })
+
+      const batches: Record<string, unknown>[][] = []
+      for (let index = 0; index < messages.length; index += 100) {
+        batches.push(messages.slice(index, index + 100))
+      }
+      for (let index = 0; index < batches.length; index += 5) {
+        const results = await Promise.all(batches.slice(index, index + 5).map(async (batch) => {
+          const response = await fetch('https://exp.host/--/api/v2/push/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(batch),
+          })
+          if (!response.ok) throw new Error(`expo_campaign_http_${response.status}`)
+          return response.json()
+        }))
+        acceptedTickets += results.reduce(
+          (total, result) => total + countAcceptedExpoTickets(result),
+          0,
+        )
+      }
+
+      lastTokenId = tokenRows[tokenRows.length - 1].id
+      if (tokenRows.length < 1000) break
+    }
+
+    const { error: completeError } = await service.rpc(
+      'rpc_service_complete_live_notification_campaign_v1',
+      {
+        p_campaign_id: campaign.id,
+        p_succeeded: true,
+        p_recipient_count: recipientUserIds.size,
+        p_accepted_ticket_count: acceptedTickets,
+        p_failure_reason: null,
+      },
+    )
+    if (completeError) throw new Error(`campaign_complete_failed:${completeError.message}`)
+    return { ok: true, skipped: false, recipients: recipientUserIds.size, acceptedTickets }
+  } catch (error) {
+    await service.rpc('rpc_service_complete_live_notification_campaign_v1', {
+      p_campaign_id: campaign.id,
+      p_succeeded: false,
+      p_recipient_count: recipientUserIds.size,
+      p_accepted_ticket_count: acceptedTickets,
+      p_failure_reason: String((error as any)?.message || error || 'campaign_delivery_failed'),
+    })
+    throw error
+  }
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -140,13 +289,13 @@ serve(async (req) => {
     }
 
     console.log('push-notifications payload', payload)
-    if (!payload?.user_id || !payload?.title || !payload?.body) {
+    if (!payload?.campaign_id && (!payload?.user_id || !payload?.title || !payload?.body)) {
       const keys =
         payload && typeof payload === 'object' && !Array.isArray(payload)
           ? Object.keys(payload as any).slice(0, 30)
           : null
       return new Response(JSON.stringify({
-        error: 'user_id, title, body are required',
+        error: 'campaign_id or user_id, title and body are required',
         details: {
           parsedType: Array.isArray(payload) ? 'array' : typeof payload,
           keys,
@@ -177,9 +326,17 @@ serve(async (req) => {
     }
     const service = createClient(supabaseUrl, supabaseServiceKey)
 
+    if (payload.campaign_id) {
+      const result = await sendLiveNotificationCampaign(service, payload.campaign_id)
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
     // The database historically sent profile IDs in some places; tolerate that here by
     // falling back to profiles.id -> profiles.user_id when no tokens exist for the given id.
-    let effectiveUserId = payload.user_id
+    let effectiveUserId = payload.user_id!
 
     let { data: tokens, error } = await service
       .from('push_tokens')
@@ -241,8 +398,8 @@ serve(async (req) => {
       const msg: Record<string, unknown> = {
         to: row.token,
         sound: 'default',
-        title: payload.title,
-        body: payload.body,
+        title: payload.title!,
+        body: payload.body!,
         // Make chat-style notifications feel consistent on Android.
         channelId: type === 'message' || type === 'message_reaction' ? 'messages' : 'default',
         data,

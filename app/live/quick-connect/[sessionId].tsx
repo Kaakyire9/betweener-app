@@ -76,7 +76,8 @@ const participant = (
     userId: person.id,
     profileId: person.profileId ?? '',
     role: 'participant', state: 'private_spark', rsvpStatus: 'going',
-    openToIntroductions: false, stageSlot: remote ? 1 : 0,
+    openToIntroductions: false, introductionPreferenceDecidedAt: null,
+    stageSlot: remote ? 1 : 0,
     connectionQualityState: 'unknown', microphoneMutedByModerator: false,
     fullName: person.fullName, avatarUrl: person.avatarUrl,
   };

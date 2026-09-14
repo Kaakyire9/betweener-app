@@ -176,14 +176,14 @@ export const LiveReactionPicker = memo(function LiveReactionPicker({
 });
 
 const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
-  root: { position: 'relative', zIndex: 20, paddingBottom: 10, gap: 7 },
-  primaryRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  reaction: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', overflow: 'hidden', backgroundColor: visual.isDark ? '#172A27B8' : '#FFFFFFB8', borderWidth: 0.75 },
+  root: { position: 'relative', zIndex: 20, paddingBottom: 7, gap: 6 },
+  primaryRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  reaction: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', overflow: 'hidden', backgroundColor: visual.isDark ? '#172A27B8' : '#FFFFFFB8', borderWidth: 0.75 },
   reactionGlow: { position: 'absolute', width: 24, height: 24, borderRadius: 12 },
   reactionRipple: { position: 'absolute', width: 30, height: 30, borderRadius: 15, borderWidth: 1.25 },
   reactionPressed: { opacity: 0.78 },
   disabled: { opacity: 0.42 },
-  moreButton: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.isDark ? '#172A27B8' : '#FFFFFFB8', borderWidth: 0.75, borderColor: visual.color.border },
+  moreButton: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.isDark ? '#172A27B8' : '#FFFFFFB8', borderWidth: 0.75, borderColor: visual.color.border },
   moreButtonOpen: { backgroundColor: visual.color.tealSoft, borderColor: visual.color.borderStrong },
   tray: { position: 'absolute', left: 0, right: 0, bottom: 52, zIndex: 40, borderRadius: 18, paddingHorizontal: 11, paddingTop: 9, paddingBottom: 8, backgroundColor: visual.color.surface, borderWidth: 1, borderColor: visual.color.borderStrong, shadowColor: '#000000', shadowOpacity: 0.3, shadowRadius: 18, shadowOffset: { width: 0, height: 10 }, elevation: 12 },
   trayHeadingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 7 },

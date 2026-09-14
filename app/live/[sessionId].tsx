@@ -48,12 +48,13 @@ import {
   LiveQuickConnectPool,
   LiveQuickConnectStage,
   LiveRoomEventNotice,
+  LiveSafetyReportSheet,
   LiveStageInvitationPrompt,
   LiveStudioModal,
 } from '@/features/live/components/index.ts';
 import type { LiveRoomEventNoticeKind } from '@/features/live/components/index.ts';
-import type { LiveMatchRound, LiveMemberPreview } from '@/features/live/application/index.ts';
-import { likeLiveMember } from '@/features/live/application/index.ts';
+import type { LiveMatchRound, LiveMemberPreview, LiveReportReason } from '@/features/live/application/index.ts';
+import { blockLiveMember, likeLiveMember } from '@/features/live/application/index.ts';
 import type { StreamLiveStageProps } from '@/features/live/components/StreamLiveStage.tsx';
 import {
   useLiveHostedMatching,
@@ -175,6 +176,8 @@ export default function LiveSessionScreen() {
   const [participantAdmissionReady, setParticipantAdmissionReady] = useState(false);
   const [participantAdmissionRetry, setParticipantAdmissionRetry] = useState(0);
   const [invitationOptionsOpen, setInvitationOptionsOpen] = useState(false);
+  const [safetyReportOpen, setSafetyReportOpen] = useState(false);
+  const [safetyReportTarget, setSafetyReportTarget] = useState<LiveMemberPreview | null>(null);
   const announcedSeatRequestsRef = useRef(new Set<string>());
   const announcedAudiencePollRef = useRef<string | null>(null);
   const announcedDirectorEventIdsRef = useRef(new Set<string>());
@@ -193,6 +196,8 @@ export default function LiveSessionScreen() {
   });
   const joinMedia = media.join;
   const snapshot = controller.snapshot;
+  const supportsIntroductions = snapshot?.session.format === 'hosted_match_night'
+    || snapshot?.session.format === 'circle_live';
   useEffect(() => {
     if (!snapshot || roomPulseHydratedSessionRef.current === sessionId) return;
     roomPulseHydratedSessionRef.current = sessionId;
@@ -204,7 +209,7 @@ export default function LiveSessionScreen() {
   }, [sessionId, snapshot, viewport.height, viewport.width]);
   const hostedMatching = useLiveHostedMatching(
     sessionId,
-    snapshot?.session.format === 'hosted_match_night' && snapshot.session.status === 'live',
+    supportsIntroductions && snapshot?.session.status === 'live',
   );
   const me = snapshot?.me ?? null;
   const canPublish = snapshot?.capabilities.includes('live.publish') === true;
@@ -212,6 +217,10 @@ export default function LiveSessionScreen() {
   const canModerateComments = snapshot?.capabilities.includes('live.moderate_comments') === true;
   const isRoomHost = me?.role === 'host'
     || snapshot?.session.createdByUserId === user?.id;
+  const canReportLive = !isRoomHost
+    && snapshot?.capabilities.includes('live.report') === true;
+  const canReportMembers = snapshot?.capabilities.includes('live.report') === true;
+  const canBlockMembers = snapshot?.capabilities.includes('live.block') === true;
   const isLive = snapshot?.session.status === 'live';
   const privateActivity = useLivePrivateActivity(sessionId, isLive);
   const reactions = useLiveReactions({
@@ -251,6 +260,11 @@ export default function LiveSessionScreen() {
   );
   const quickConnectLayout = quickConnectPool.snapshot?.stageLayout ?? 'stacked';
   const quickConnectPairingId = quickConnectPool.snapshot?.queue?.pairing?.id ?? null;
+  const quickConnectPairingFormationStartsAt = quickConnectPairingId
+    ? quickConnectPool.snapshot?.publicFormations.find(
+      (formation) => formation.pairingId === quickConnectPairingId,
+    )?.startsAt ?? null
+    : null;
   const canManageStudio = canManageStage
     || hostedMatching.snapshot?.canManage === true
     || controller.audiencePulse.canManage
@@ -303,26 +317,43 @@ export default function LiveSessionScreen() {
   }, [hostedMatching.snapshot?.activeRound]);
 
   useEffect(() => {
-    const roundId = privateActivity.snapshot?.latestHostedPairRoundId;
-    const round = lastPublicIntroductionRef.current;
-    if (!roundId || round?.id !== roundId || celebratedHostedPairIdsRef.current.has(roundId)) return;
+    const formation = privateActivity.snapshot?.latestHostedPairFormation;
+    const roundId = formation?.roundId ?? privateActivity.snapshot?.latestHostedPairRoundId;
+    const publicRound = lastPublicIntroductionRef.current;
+    if (!roundId || celebratedHostedPairIdsRef.current.has(roundId)) return;
+    const pair = formation ? [
+      {
+        userId: formation.participantA.userId,
+        fullName: formation.participantA.fullName,
+        avatarUrl: formation.participantA.avatarUrl,
+      },
+      {
+        userId: formation.participantB.userId,
+        fullName: formation.participantB.fullName,
+        avatarUrl: formation.participantB.avatarUrl,
+      },
+    ] as const : publicRound?.id === roundId ? [
+      {
+        userId: publicRound.participantA.userId,
+        fullName: publicRound.participantA.fullName,
+        avatarUrl: publicRound.participantA.avatarUrl,
+      },
+      {
+        userId: publicRound.participantB.userId,
+        fullName: publicRound.participantB.fullName,
+        avatarUrl: publicRound.participantB.avatarUrl,
+      },
+    ] as const : null;
+    if (!pair) return;
     celebratedHostedPairIdsRef.current.add(roundId);
     setHostedPairTransition({
       key: roundId,
-      pair: [
-        {
-          userId: round.participantA.userId,
-          fullName: round.participantA.fullName,
-          avatarUrl: round.participantA.avatarUrl,
-        },
-        {
-          userId: round.participantB.userId,
-          fullName: round.participantB.fullName,
-          avatarUrl: round.participantB.avatarUrl,
-        },
-      ],
+      pair,
     });
-  }, [privateActivity.snapshot?.latestHostedPairRoundId]);
+  }, [
+    privateActivity.snapshot?.latestHostedPairFormation,
+    privateActivity.snapshot?.latestHostedPairRoundId,
+  ]);
 
   useEffect(() => {
     announcedSeatRequestsRef.current.clear();
@@ -342,12 +373,17 @@ export default function LiveSessionScreen() {
     if (quickConnectPairingRouteRef.current === quickConnectPairingId) return;
     quickConnectPairingRouteRef.current = quickConnectPairingId;
 
+    const formationStartsAtMs = Date.parse(quickConnectPairingFormationStartsAt ?? '');
+    const snapshotServerNowMs = Date.parse(quickConnectPool.snapshot?.serverNow ?? '');
+    const formationWaitMs = Number.isFinite(formationStartsAtMs) && Number.isFinite(snapshotServerNowMs)
+      ? Math.max(0, formationStartsAtMs - snapshotServerNowMs)
+      : 0;
+    const wait = (durationMs: number) => new Promise((resolve) => setTimeout(resolve, durationMs));
+
     void Promise.all([
-      media.leave().catch(() => undefined),
-      new Promise((resolve) => setTimeout(
-        resolve,
-        reduceMotion ? 0 : LIVE_PRIVATE_SPARK_MOTION.handoffHoldMs,
-      )),
+      wait(reduceMotion ? 0 : formationWaitMs)
+        .then(() => media.leave().catch(() => undefined)),
+      wait(reduceMotion ? 0 : formationWaitMs + LIVE_PRIVATE_SPARK_MOTION.handoffHoldMs),
     ]).then(() => {
       if (quickConnectPairingRouteRef.current === quickConnectPairingId) {
         router.replace({
@@ -356,7 +392,16 @@ export default function LiveSessionScreen() {
         });
       }
     });
-  }, [isQuickConnectLive, liveReturnParams, media.leave, quickConnectPairingId, reduceMotion, sessionId]);
+  }, [
+    isQuickConnectLive,
+    liveReturnParams,
+    media.leave,
+    quickConnectPairingFormationStartsAt,
+    quickConnectPairingId,
+    quickConnectPool.snapshot?.serverNow,
+    reduceMotion,
+    sessionId,
+  ]);
 
   useEffect(() => {
     participantAdmissionGenerationRef.current += 1;
@@ -664,6 +709,15 @@ export default function LiveSessionScreen() {
   const stageFooterInset = isFullPageSoloHost
     ? roomPulseHeight + safeAreaInsets.bottom + (showControlDock ? 67 : 8)
     : 0;
+  const introductionPreferenceRequired = Boolean(
+    supportsIntroductions
+    && !isRoomHost
+    && hostedMatching.snapshot?.canManage === false
+    && me
+    && me.introductionPreferenceDecidedAt == null,
+  );
+  const stageOverlayTopInset = isFullPageSoloHost ? safeAreaInsets.top + 76 : 10;
+  const stageOverlayBottomInset = isFullPageSoloHost ? stageFooterInset + 10 : 10;
 
   const close = useCallback(async () => {
     const shouldPersistLeave = me && !['left', 'removed', 'banned'].includes(me.state);
@@ -754,6 +808,52 @@ export default function LiveSessionScreen() {
       setMemberActionBusy(false);
     }
   }, [memberActionBusy, profile?.id, selectedMember?.profileId, sessionId, user?.id]);
+  const reportSelectedMember = useCallback(() => {
+    if (!selectedMember) return;
+    setSafetyReportTarget(selectedMember);
+    setSelectedMember(null);
+    setSafetyReportOpen(true);
+  }, [selectedMember]);
+  const blockSelectedMember = useCallback(() => {
+    const target = selectedMember;
+    if (!target || !user?.id || memberActionBusy) return;
+    const targetName = target.fullName?.trim() || 'this member';
+    Alert.alert(
+      `Block ${targetName}?`,
+      'They will no longer be able to contact or match with you. This action is private.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Block',
+          style: 'destructive',
+          onPress: () => void (async () => {
+            setMemberActionBusy(true);
+            try {
+              await blockLiveMember({
+                blockerUserId: user.id,
+                blockedUserId: target.userId,
+              });
+              setSelectedMember(null);
+              Alert.alert('Member blocked', `${targetName} can no longer contact or match with you.`);
+            } catch {
+              Alert.alert('Could not block member', 'Check your connection and try again.');
+            } finally {
+              setMemberActionBusy(false);
+            }
+          })(),
+        },
+      ],
+    );
+  }, [memberActionBusy, selectedMember, user?.id]);
+  const submitSafetyReport = useCallback((reason: LiveReportReason) => (
+    safetyReportTarget
+      ? controller.reportParticipant(safetyReportTarget.userId, reason)
+      : controller.reportLive(reason)
+  ), [controller.reportLive, controller.reportParticipant, safetyReportTarget]);
+  const closeSafetyReport = useCallback(() => {
+    setSafetyReportOpen(false);
+    setSafetyReportTarget(null);
+  }, []);
   const dismissRoomNotice = useCallback(() => {
     setRoomEventNotices((current) => current.slice(1));
   }, []);
@@ -955,10 +1055,75 @@ export default function LiveSessionScreen() {
           )}
         </View>
       )}
+      {!isPictureInPicture ? (
+        <View
+          pointerEvents="box-none"
+          style={[styles.stageTopOverlay, { top: stageOverlayTopInset }]}
+        >
+          <LiveConnectionBanner state={controller.state} />
+          {roomEventNotices[0] && !keyboardVisible ? (
+            <LiveRoomEventNotice
+              actionLabel={roomEventNotices[0].actionLabel}
+              body={roomEventNotices[0].body}
+              kind={roomEventNotices[0].kind}
+              onAction={handleRoomNoticeAction}
+              onDismiss={dismissRoomNotice}
+              presentation="overlay"
+              title={roomEventNotices[0].title}
+            />
+          ) : null}
+          {!roomEventNotices[0] && !keyboardVisible && introductionPreferenceRequired ? (
+            <LiveAudiencePreferences
+              busy={hostedMatching.busyAction !== null}
+              onChange={handleIntroductionAvailability}
+              openToIntroductions={me?.openToIntroductions === true}
+              preferenceDecided={false}
+              presentation="compact"
+            />
+          ) : null}
+        </View>
+      ) : null}
+      {!isPictureInPicture && !keyboardVisible ? (
+        <View
+          pointerEvents="box-none"
+          style={[styles.stageBottomOverlay, { bottom: stageOverlayBottomInset }]}
+        >
+          {supportsIntroductions
+            && hostedMatching.snapshot
+            && !hostedMatching.snapshot.canManage ? (
+            <LiveHostedMatchingPanel
+              snapshot={hostedMatching.snapshot}
+              currentUserId={user?.id ?? null}
+              openToIntroductions={me?.openToIntroductions === true}
+              busyAction={hostedMatching.busyAction}
+              error={hostedMatching.error}
+              onSetAvailability={handleIntroductionAvailability}
+              onPropose={(userA, userB) => void hostedMatching.proposePair(userA, userB)}
+              onRespond={(roundId, accept) => void hostedMatching.respond(roundId, accept)}
+              onTransition={(roundId, targetState) => void hostedMatching.transition(roundId, targetState).then((saved) => {
+                if (saved) void controller.refresh();
+              })}
+              onRespondPrivateSpark={(privateSparkId, accept) => void hostedMatching.respondPrivateSpark(privateSparkId, accept)}
+              onEnterPrivateSpark={(privateSparkId) => router.push({
+                pathname: '/live/private-spark/[privateSparkId]',
+                params: { privateSparkId, ...liveReturnParams },
+              })}
+              onEndPrivateSpark={(privateSparkId) => void hostedMatching.endPrivateSpark(privateSparkId, 'host_safety_termination')}
+              showAvailabilityControl={false}
+            />
+          ) : null}
+          {hostedMatching.snapshot?.activeRound?.state === 'public_introduction' ? (
+            <LivePublicIntroductionCard
+              presentation="overlay"
+              round={hostedMatching.snapshot.activeRound}
+            />
+          ) : null}
+        </View>
+      ) : null}
       {!isQuickConnectLive && !isPictureInPicture ? (
         <LivePrivateActivityIndicator
           activePairCount={privateActivity.snapshot?.hostedPairCount ?? 0}
-          style={styles.privateActivityStage}
+          style={[styles.privateActivityStage, { top: stageOverlayTopInset }]}
         />
       ) : null}
       {!isQuickConnectLive && !isPictureInPicture && hostedPairTransition ? (
@@ -1040,61 +1205,9 @@ export default function LiveSessionScreen() {
           hostAvatarUrl={hostParticipant?.avatarUrl ?? null}
           hostName={hostParticipant?.fullName ?? null}
           onLeave={isRoomHost ? () => void close() : confirmLeaveLive}
+          onOpenSafety={canReportLive ? () => setSafetyReportOpen(true) : undefined}
           roomTitle={snapshot.session.title}
         />
-        <LiveConnectionBanner state={controller.state} />
-        {roomEventNotices[0] && !keyboardVisible ? (
-          <LiveRoomEventNotice
-            actionLabel={roomEventNotices[0].actionLabel}
-            body={roomEventNotices[0].body}
-            kind={roomEventNotices[0].kind}
-            onAction={handleRoomNoticeAction}
-            onDismiss={dismissRoomNotice}
-            title={roomEventNotices[0].title}
-          />
-        ) : null}
-
-        {!keyboardVisible
-          && snapshot.session.format === 'hosted_match_night'
-          && hostedMatching.snapshot
-          && !hostedMatching.snapshot.canManage ? (
-          <LiveAudiencePreferences
-            busy={hostedMatching.busyAction !== null}
-            onChange={handleIntroductionAvailability}
-            openToIntroductions={me?.openToIntroductions === true}
-          />
-        ) : null}
-
-        {!keyboardVisible
-          && snapshot.session.format === 'hosted_match_night'
-          && hostedMatching.snapshot
-          && !hostedMatching.snapshot.canManage ? (
-          <LiveHostedMatchingPanel
-            snapshot={hostedMatching.snapshot}
-            currentUserId={user?.id ?? null}
-            openToIntroductions={me?.openToIntroductions === true}
-            busyAction={hostedMatching.busyAction}
-            error={hostedMatching.error}
-            onSetAvailability={handleIntroductionAvailability}
-            onPropose={(userA, userB) => void hostedMatching.proposePair(userA, userB)}
-            onRespond={(roundId, accept) => void hostedMatching.respond(roundId, accept)}
-            onTransition={(roundId, targetState) => void hostedMatching.transition(roundId, targetState).then((saved) => {
-              if (saved) void controller.refresh();
-            })}
-            onRespondPrivateSpark={(privateSparkId, accept) => void hostedMatching.respondPrivateSpark(privateSparkId, accept)}
-            onEnterPrivateSpark={(privateSparkId) => router.push({
-              pathname: '/live/private-spark/[privateSparkId]',
-              params: { privateSparkId, ...liveReturnParams },
-            })}
-            onEndPrivateSpark={(privateSparkId) => void hostedMatching.endPrivateSpark(privateSparkId, 'host_safety_termination')}
-            showAvailabilityControl={false}
-          />
-        ) : null}
-
-        {hostedMatching.snapshot?.activeRound?.state === 'public_introduction' ? (
-          <LivePublicIntroductionCard round={hostedMatching.snapshot.activeRound} />
-        ) : null}
-
         {isQuickConnectLive && !keyboardVisible ? (
           <LiveQuickConnectStage
             hostSurface={renderMediaStage()}
@@ -1134,6 +1247,9 @@ export default function LiveSessionScreen() {
             { borderColor: chromeAccent.borderColor },
             roomPulseMode === 'peek' && styles.conversationGlassPeek,
             roomPulseMode === 'expanded' && styles.conversationGlassExpanded,
+            roomPulseMode === 'expanded'
+              && !keyboardVisible
+              && [styles.conversationGlassStageOverlay, { bottom: showControlDock ? 55 : 2 }],
             isQuickConnectLive && !keyboardVisible && styles.quickConnectConversationGlass,
             keyboardVisible && styles.conversationGlassKeyboard,
           ]}
@@ -1284,13 +1400,25 @@ export default function LiveSessionScreen() {
             onClose: controller.closeAudiencePoll,
           }}
         />
+        <LiveSafetyReportSheet
+          busy={controller.busyAction === 'report-live' || controller.busyAction?.startsWith('report-participant:') === true}
+          onClose={closeSafetyReport}
+          onSubmit={submitSafetyReport}
+          roomTitle={snapshot.session.title}
+          targetName={safetyReportTarget?.fullName}
+          visible={safetyReportOpen && (safetyReportTarget ? canReportMembers : canReportLive)}
+        />
         <LiveMemberSummaryModal
           busy={memberActionBusy}
+          canBlock={canBlockMembers}
+          canReport={canReportMembers}
           isLiked={selectedMember ? likedProfileIds.has(selectedMember.profileId) : false}
           isSelf={selectedMember?.userId === user?.id || selectedMember?.profileId === profile?.id}
           member={selectedMember}
+          onBlock={blockSelectedMember}
           onClose={() => setSelectedMember(null)}
           onLike={() => void likeSelectedMember()}
+          onReport={reportSelectedMember}
           onRequest={requestSelectedMember}
           roomTitle={snapshot.session.title}
           visible={selectedMember !== null}
@@ -1326,7 +1454,21 @@ const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
   iconButton: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.color.surfaceRaised, borderWidth: 1, borderColor: visual.color.border },
   stageLoading: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
   stageLoadingText: { color: visual.color.textMuted, fontSize: 12, fontFamily: 'Manrope_600SemiBold' },
-  privateActivityStage: { position: 'absolute', top: 10, right: 10, zIndex: 18 },
+  privateActivityStage: { position: 'absolute', right: 10, zIndex: 18 },
+  stageTopOverlay: {
+    position: 'absolute',
+    left: 12,
+    right: 12,
+    zIndex: 21,
+    gap: 7,
+  },
+  stageBottomOverlay: {
+    position: 'absolute',
+    left: 12,
+    right: 12,
+    zIndex: 20,
+    gap: 7,
+  },
   mediaRetry: { position: 'absolute', alignSelf: 'center', top: '46%', paddingHorizontal: 18, height: 40, justifyContent: 'center', borderRadius: 20, backgroundColor: visual.color.teal },
   mediaRetryText: { color: visual.color.accentContrast, fontFamily: 'Manrope_700Bold' },
   deviceNotice: {
@@ -1368,6 +1510,16 @@ const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
   conversationGlass: { flexShrink: 0, marginHorizontal: 16, marginBottom: 7, borderRadius: 25, backgroundColor: visual.isDark ? '#081A17C7' : '#FFFDFCD9', shadowOpacity: 0.25 },
   conversationGlassPeek: { borderRadius: 20 },
   conversationGlassExpanded: { borderColor: visual.color.teal },
+  conversationGlassStageOverlay: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    zIndex: 31,
+    shadowColor: '#000000',
+    shadowOpacity: 0.42,
+    shadowRadius: 26,
+    elevation: 18,
+  },
   quickConnectConversationGlass: { flexShrink: 0 },
   conversationGlassKeyboard: { flex: 1, height: 'auto', minHeight: 0, marginTop: 8, marginBottom: 4 },
   controls: { marginHorizontal: 16, marginBottom: 3 },
