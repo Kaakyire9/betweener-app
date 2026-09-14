@@ -67,6 +67,14 @@ test('public Live campaigns are durable, retryable and privacy bounded', () => {
   assert.match(pushWorker, /index \+= 5/i);
 });
 
+test('push delivery fails closed behind a header-only webhook secret', () => {
+  assert.match(pushWorker, /req\.method !== 'POST'/i);
+  assert.match(pushWorker, /if \(!secret\)[\s\S]*status: 503/i);
+  assert.match(pushWorker, /req\.headers\.get\('x-push-secret'\)/i);
+  assert.match(pushWorker, /timingSafeEqual\(providedSecret, secret\)/i);
+  assert.doesNotMatch(pushWorker, /searchParams\.get\(['"](?:x-push-secret|secret)['"]\)/i);
+});
+
 test('Circles receives content-free Live discovery invalidations', () => {
   assert.match(hostMigration, /create table public\.live_discovery_updates/i);
   assert.match(hostMigration, /alter publication supabase_realtime add table public\.live_discovery_updates/i);

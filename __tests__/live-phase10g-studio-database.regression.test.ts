@@ -8,8 +8,8 @@ const control = readFileSync('supabase/migrations/20260910122000_live_phase10g_p
 const recovery = readFileSync('supabase/migrations/20260910123000_live_phase10g_media_and_recovery.sql', 'utf8');
 const audience = readFileSync('supabase/migrations/20260910124000_live_phase10g_audience_program_snapshot.sql', 'utf8');
 const clock = readFileSync('supabase/migrations/20260910125000_live_phase10g_maintenance_clock.sql', 'utf8');
-const musicControlRepair = readFileSync(
-  'supabase/migrations/20260914121000_live_music_control_chain_repair.sql',
+const musicControlCoreRestore = readFileSync(
+  'supabase/migrations/20260914122000_live_music_control_core_restore.sql',
   'utf8',
 );
 const maintenanceRepair = readFileSync(
@@ -74,9 +74,11 @@ test('10G preserves the executable Phase 10F opportunity maintenance chain', () 
 });
 
 test('Programme Audio retains an executable private host music control chain', () => {
-  assert.match(musicControlRepair, /create or replace function public\.live_odo_host_music_control_base_10f_v1/i);
-  assert.match(musicControlRepair, /rpc_host_control_live_music_without_always_on_10f_v1/i);
-  assert.match(musicControlRepair, /revoke all on function[\s\S]*authenticated, service_role/i);
+  assert.match(musicControlCoreRestore, /create or replace function public\.live_odo_host_music_control_base_10f_v1/i);
+  assert.match(musicControlCoreRestore, /update public\.live_music_session_state/i);
+  assert.match(musicControlCoreRestore, /insert into public\.live_music_events/i);
+  assert.doesNotMatch(musicControlCoreRestore, /rpc_host_control_live_music_without_always_on_10f_v1/i);
+  assert.match(musicControlCoreRestore, /revoke all on function[\s\S]*authenticated, service_role/i);
 });
 
 test('Studio storage is RLS protected with no authenticated direct writes', () => {

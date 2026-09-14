@@ -51,6 +51,21 @@ const asString = (v: unknown): string | null => {
   return null
 }
 
+const timingSafeEqual = async (left: string, right: string): Promise<boolean> => {
+  const encoder = new TextEncoder()
+  const [leftHash, rightHash] = await Promise.all([
+    crypto.subtle.digest('SHA-256', encoder.encode(left)),
+    crypto.subtle.digest('SHA-256', encoder.encode(right)),
+  ])
+  const leftBytes = new Uint8Array(leftHash)
+  const rightBytes = new Uint8Array(rightHash)
+  let difference = 0
+  for (let index = 0; index < leftBytes.length; index += 1) {
+    difference |= leftBytes[index] ^ rightBytes[index]
+  }
+  return difference === 0
+}
+
 // Use the Expo Push Service "richContent.image" field when available.
 // Android renders this out of the box; iOS requires a Notification Service Extension
 // (still safe to send without the extension - iOS will just ignore the image).
@@ -254,21 +269,32 @@ serve(async (req) => {
     return new Response('ok', { headers: corsHeaders })
   }
 
+  if (req.method !== 'POST') {
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405,
+      headers: {
+        ...corsHeaders,
+        'Allow': 'POST, OPTIONS',
+        'Content-Type': 'application/json',
+      },
+    })
+  }
+
   try {
     const secret = (Deno.env.get('PUSH_WEBHOOK_SECRET') || '').trim()
-    if (secret) {
-      const url = new URL(req.url)
-      const headerSecret = req.headers.get('x-push-secret')
-      const querySecret =
-        url.searchParams.get('x-push-secret') ??
-        url.searchParams.get('secret')
-      const providedSecret = (headerSecret || querySecret || '').trim()
-      if (!providedSecret || providedSecret !== secret) {
-        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-          status: 401,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        })
-      }
+    if (!secret) {
+      console.error('push-notifications webhook authentication unavailable')
+      return new Response(JSON.stringify({ error: 'Service unavailable' }), {
+        status: 503,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+    const providedSecret = (req.headers.get('x-push-secret') || '').trim()
+    if (!providedSecret || !(await timingSafeEqual(providedSecret, secret))) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
     }
 
     const rawBody = await req.text()

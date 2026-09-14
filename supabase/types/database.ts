@@ -7,6 +7,11 @@ export type Json =
   | Json[]
 
 export type Database = {
+  // Allows to automatically instantiate createClient with right options
+  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
+  __InternalSupabase: {
+    PostgrestVersion: "14.5"
+  }
   public: {
     Tables: {
       account_deletion_requests: {
@@ -15981,6 +15986,10 @@ export type Database = {
         Args: { p_actor_user_id: string; p_session_id: string }
         Returns: Json
       }
+      live_odo_get_music_playback_base_10f_v1: {
+        Args: { p_session_id: string; p_user_id: string }
+        Returns: Json
+      }
       live_odo_guarded_action_allowed_v1: {
         Args: { p_action_type: string }
         Returns: boolean
@@ -16053,6 +16062,14 @@ export type Database = {
       }
       live_odo_prepare_always_on_session_base_10f_v1: {
         Args: { p_opportunity_id: string; p_worker_id: string }
+        Returns: Json
+      }
+      live_odo_reconcile_show_base_10f_v1: {
+        Args: {
+          p_lease_owner: string
+          p_requested_by_user_id: string
+          p_session_id: string
+        }
         Returns: Json
       }
       live_odo_show_host_allowed_v1: {
@@ -19442,18 +19459,6 @@ export type Database = {
         }
         Returns: Json
       }
-      rpc_host_control_live_music_without_always_on_10f_v1: {
-        Args: {
-          p_action: string
-          p_idempotency_key?: string
-          p_mood?: string
-          p_playlist_id?: string
-          p_session_id: string
-          p_track_id?: string
-          p_volume?: number
-        }
-        Returns: Json
-      }
       rpc_host_disconnect_live_studio_v1: {
         Args: { p_command_id: string; p_session_id: string }
         Returns: Json
@@ -21255,15 +21260,6 @@ export type Database = {
         }
         Returns: Json
       }
-      rpc_service_finalize_live_qc_opportunity_session_without_safety: {
-        Args: {
-          p_failure_reason_code?: string
-          p_opportunity_id: string
-          p_stream_ready: boolean
-          p_worker_id: string
-        }
-        Returns: Json
-      }
       rpc_service_finalize_live_quick_connect_opportunity_session_v1: {
         Args: {
           p_failure_reason_code?: string
@@ -21278,10 +21274,6 @@ export type Database = {
         Returns: Json
       }
       rpc_service_get_live_music_playback_v1: {
-        Args: { p_session_id: string; p_user_id: string }
-        Returns: Json
-      }
-      rpc_service_get_live_music_playback_without_always_on_10f_v1: {
         Args: { p_session_id: string; p_user_id: string }
         Returns: Json
       }
@@ -21373,10 +21365,6 @@ export type Database = {
         Args: { p_limit?: number }
         Returns: Json
       }
-      rpc_service_maintain_live_qc_opportunities_without_invalidation: {
-        Args: never
-        Returns: Json
-      }
       rpc_service_maintain_live_quick_connect_opportunities_v1: {
         Args: never
         Returns: Json
@@ -21387,10 +21375,6 @@ export type Database = {
       }
       rpc_service_pause_live_odo_policy_v1: {
         Args: { p_reason_code: string; p_session_id: string }
-        Returns: Json
-      }
-      rpc_service_prepare_live_qc_opportunity_session_without_safety_: {
-        Args: { p_opportunity_id: string; p_worker_id: string }
         Returns: Json
       }
       rpc_service_prepare_live_quick_connect_opportunity_session_v1: {
@@ -21406,14 +21390,6 @@ export type Database = {
         Returns: Json
       }
       rpc_service_reconcile_live_odo_show_v1: {
-        Args: {
-          p_lease_owner: string
-          p_requested_by_user_id: string
-          p_session_id: string
-        }
-        Returns: Json
-      }
-      rpc_service_reconcile_live_odo_show_without_always_on_music_10f: {
         Args: {
           p_lease_owner: string
           p_requested_by_user_id: string

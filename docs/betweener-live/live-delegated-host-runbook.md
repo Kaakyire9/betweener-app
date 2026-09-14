@@ -25,7 +25,7 @@ Host replacement and revocation are deliberately locked after the Live begins so
 ## Deployment
 
 ```powershell
-npx.cmd supabase@latest functions deploy push-notifications --project-ref jbyblhithbqwojhwlenv
+npx.cmd supabase@latest functions deploy push-notifications --project-ref jbyblhithbqwojhwlenv --no-verify-jwt
 npx.cmd supabase@latest db push --linked
 npx.cmd supabase@latest db query --linked --file supabase/verification/live_delegated_host_notifications_health.sql
 ```
@@ -35,6 +35,7 @@ Deploy the backward-compatible Edge Function first, then the database migrations
 ## Required operational checks
 
 - `push-notifications` retains `SUPABASE_SERVICE_ROLE_KEY` and the same `PUSH_WEBHOOK_SECRET` used by `private.send_push_webhook`.
+- JWT verification is intentionally disabled for the database webhook transport. The function fails closed when `PUSH_WEBHOOK_SECRET` is absent and accepts the secret only through the `x-push-secret` header.
 - `push-notifications` sets `LIVE_NOTIFICATIONS_MIN_APP_VERSION` to the first released binary that supports the Live routes (currently `1.2.0`).
 - `pg_cron` and the existing push webhook transport remain enabled.
 - Test one scheduled Host assignment, one T-15 foreground announcement, one background push, one Live-now Circles badge, a runtime extension, and automatic access expiry after End Live.
