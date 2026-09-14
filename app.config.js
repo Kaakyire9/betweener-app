@@ -57,17 +57,7 @@ module.exports = ({ config }) => {
           },
         },
       ],
-      [
-        '@react-native-firebase/app',
-        {
-          ios: {
-            // The notification service extension requires static framework
-            // linkage. Firebase SPM cannot share those products safely across
-            // static RNFirebase pods, so keep Firebase on CocoaPods.
-            disableSPM: true,
-          },
-        },
-      ],
+      './plugins/with-firebase-cocoapods.js',
       [
         'react-native-maps',
         {

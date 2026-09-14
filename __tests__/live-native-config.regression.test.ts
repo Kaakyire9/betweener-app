@@ -26,6 +26,10 @@ const guardPlugin = fs.readFileSync(
   path.join(root, 'plugins/with-betweener-live-webrtc.js'),
   'utf8',
 );
+const firebaseCocoaPodsPlugin = fs.readFileSync(
+  path.join(root, 'plugins/with-firebase-cocoapods.js'),
+  'utf8',
+);
 const appJson = fs.readFileSync(path.join(root, 'app.json'), 'utf8');
 const appEntry = fs.readFileSync(path.join(root, 'index.js'), 'utf8');
 const packageJson = fs.readFileSync(path.join(root, 'package.json'), 'utf8');
@@ -68,8 +72,10 @@ test('Stream native setup enables active-call continuity and native PiP', () => 
 });
 
 test('iOS Firebase uses CocoaPods with the existing static framework linkage', () => {
-  assert.match(appConfig, /'@react-native-firebase\/app'/);
-  assert.match(appConfig, /disableSPM:\s*true/);
+  assert.match(appConfig, /'\.\/plugins\/with-firebase-cocoapods\.js'/);
+  assert.match(firebaseCocoaPodsPlugin, /withPodfile/);
+  assert.match(firebaseCocoaPodsPlugin, /\$RNFirebaseDisableSPM = true/);
+  assert.match(firebaseCocoaPodsPlugin, /prepare_react_native_project!/);
   assert.match(packageJson, /"@react-native-firebase\/app": "26\.4\.0"/);
   assert.match(packageJson, /"@react-native-firebase\/messaging": "26\.4\.0"/);
 });
