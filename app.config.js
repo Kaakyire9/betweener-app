@@ -18,8 +18,6 @@ function withGooglePlayPackageVerificationAsset(config) {
 }
 
 module.exports = ({ config }) => {
-  const environment = String(process.env.EXPO_PUBLIC_ENVIRONMENT || '').trim().toLowerCase();
-  const isStaging = environment === 'staging';
   const androidMapsApiKey =
     process.env.EXPO_PUBLIC_GOOGLE_MAPS_ANDROID_API_KEY ||
     process.env.GOOGLE_MAPS_ANDROID_API_KEY ||
@@ -37,9 +35,6 @@ module.exports = ({ config }) => {
     process.env.EXPO_PUBLIC_ENVIRONMENT === 'development' ? 'development' : 'production';
   return {
     ...config,
-    // Keep the production application identity unchanged while making internal
-    // staging binaries unmistakable on a physical device.
-    name: isStaging ? 'Betweener Staging' : config.name,
     plugins: [
       // Keep this plugin first so the NSE target is present before other iOS plugins run.
       [
