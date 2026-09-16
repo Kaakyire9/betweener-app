@@ -7,6 +7,14 @@ project_id = "betweener-app"
 [functions.push-notifications]
 verify_jwt = false
 
+[functions.revenuecat-webhook]
+# RevenueCat authenticates with the function-owned shared webhook secret.
+verify_jwt = false
+
+[functions.live-program-audio-publisher]
+# The private audio worker authenticates with x-program-audio-worker-token.
+verify_jwt = false
+
 [functions.moderation-evidence-retention]
 # Scheduled requests authenticate with x-cron-secret; the database scheduler
 # cannot mint an end-user JWT.
