@@ -35,9 +35,9 @@ import {
   PREMIUM_ONBOARDING_OCCUPATIONS,
 } from '@/lib/onboarding/premium-onboarding.config';
 import {
-  drainOfflineMutationQueue,
   enqueueProfileInterestsUpdateMutation,
   enqueueProfileMediaSyncMutation,
+  syncProfileMediaNow,
 } from '@/lib/offline/mutation-queue';
 import { readMeProfileSnapshot, writeMeProfileSnapshot } from '@/lib/offline/me-store';
 import { cacheOfflineVideo, getOfflineVideoUri } from '@/lib/offline/video-store';
@@ -56,6 +56,10 @@ import {
   removeGalleryMediaAt,
   resolveProfileMediaDraft,
 } from '@/lib/profile/media-studio';
+import {
+  isProfileMediaGuardV1_2Runtime,
+  profileMediaGuardMessageV1_2,
+} from '@/lib/profile/profile-media-guard-v1-2';
 import {
   GHANA_ROOT_OPTIONS,
   GLOBAL_ROOT_OPTIONS,
@@ -1797,6 +1801,13 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
   };
 
   const pickProfileVideo = async () => {
+    if (isProfileMediaGuardV1_2Runtime()) {
+      Alert.alert(
+        'Profile videos are temporarily paused',
+        'New videos will return after frame-by-frame safety checks are ready. You can still remove an existing video.',
+      );
+      return;
+    }
     try {
       Alert.alert(
         'Add intro video',
@@ -2073,12 +2084,14 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       const hasLocalAvatar = isLocalMediaUri(formData.avatar_url);
       const hasLocalHeroImage = isLocalMediaUri(resolvedHeroImageUrl);
       const localPhotos = sanitizedPhotos.filter((photo) => isLocalMediaUri(photo));
+      const hasLocalProfileImage = hasLocalAvatar || hasLocalHeroImage || localPhotos.length > 0;
       const hasLocalVideo = isLocalMediaUri(formData.profile_video);
       const remotePhotos = sanitizedPhotos.filter((photo) => !isLocalMediaUri(photo));
       const mediaSyncPayload =
         user?.id && (hasLocalAvatar || hasLocalHeroImage || localPhotos.length > 0 || hasLocalVideo)
           ? {
               userId: user.id,
+              avatarUrl: formData.avatar_url || null,
               avatar: hasLocalAvatar
                 ? inferMediaUploadMeta(formData.avatar_url, 'profile-avatar', 'image/jpeg')
                 : null,
@@ -2086,7 +2099,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                 ? inferMediaUploadMeta(resolvedHeroImageUrl || '', 'profile-hero', 'image/jpeg')
                 : null,
               heroImageUrl: resolvedHeroImageUrl,
-              photos: localPhotos.length > 0 ? sanitizedPhotos : null,
+              photos: sanitizedPhotos,
               photoItems: localPhotos.map((photo, index) =>
                 inferMediaUploadMeta(photo, `profile-photo-${index + 1}`, 'image/jpeg'),
               ),
@@ -2097,6 +2110,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                   }
                 : null,
               updatedAt: new Date().toISOString(),
+              clientRequestId: `profile-media-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
             }
           : null;
 
@@ -2107,7 +2121,9 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         hero_image_url: hasLocalHeroImage
           ? ((profile as any)?.hero_image_url ?? null)
           : resolvedHeroImageUrl,
-        photos: remotePhotos,
+        photos: hasLocalProfileImage
+          ? normalizeGalleryPhotoList((profile as any)?.photos, (profile as any)?.avatar_url)
+          : remotePhotos,
         profile_video: hasLocalVideo
           ? ((profile as any)?.profile_video ?? null)
           : formData.profile_video && formData.profile_video.trim()
@@ -2428,17 +2444,29 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       // Save interests separately through profile_interests table
       const interestsResult = await saveUserInterests(selectedInterests);
       let mediaSyncPending = false;
+      let publishedMedia: Awaited<ReturnType<typeof syncProfileMediaNow>> | null = null;
       if (mediaSyncPayload) {
-        await enqueueProfileMediaSyncMutation(mediaSyncPayload);
-        if (!(await isOfflineNow())) {
-          try {
-            await drainOfflineMutationQueue();
-            await refreshProfile();
-          } catch {
-            mediaSyncPending = true;
-          }
-        } else {
+        if (await isOfflineNow()) {
+          await enqueueProfileMediaSyncMutation(mediaSyncPayload);
           mediaSyncPending = true;
+        } else {
+          try {
+            publishedMedia = await syncProfileMediaNow(mediaSyncPayload);
+            await refreshProfile();
+          } catch (mediaError) {
+            const guardMessage = profileMediaGuardMessageV1_2(mediaError);
+            if (guardMessage) {
+              setStatusTone('error');
+              setStatusMessage(guardMessage);
+              return;
+            }
+            if (isLikelyNetworkError(mediaError)) {
+              await enqueueProfileMediaSyncMutation(mediaSyncPayload);
+              mediaSyncPending = true;
+            } else {
+              throw mediaError;
+            }
+          }
         }
       }
 
@@ -2448,9 +2476,9 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       const snapshotProfileId = getSnapshotProfileId();
       if (snapshotProfileId) {
         void writeMeProfileSnapshot(snapshotProfileId, {
-          avatarUrl: formData.avatar_url || null,
-          heroImageUrl: resolvedHeroImageUrl,
-          photos: sanitizedPhotos,
+          avatarUrl: publishedMedia?.avatarUrl ?? formData.avatar_url ?? null,
+          heroImageUrl: publishedMedia?.heroImageUrl ?? resolvedHeroImageUrl,
+          photos: publishedMedia?.photos ?? sanitizedPhotos,
           profileVideo: formData.profile_video || null,
         });
       }
@@ -2462,9 +2490,9 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       );
       onSave({
         ...updateData,
-        __displayAvatarUrl: formData.avatar_url || null,
-        __displayHeroImageUrl: resolvedHeroImageUrl,
-        __displayPhotos: sanitizedPhotos,
+        __displayAvatarUrl: publishedMedia?.avatarUrl ?? formData.avatar_url ?? null,
+        __displayHeroImageUrl: publishedMedia?.heroImageUrl ?? resolvedHeroImageUrl,
+        __displayPhotos: publishedMedia?.photos ?? sanitizedPhotos,
         __displayProfileVideo: formData.profile_video || null,
         __interests: selectedInterests,
         __offlineQueued: queued,
@@ -2535,6 +2563,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
             profileInitials={avatarInitials}
             uploading={uploading || mediaStudioBusy}
             videoUploading={videoUploading || mediaStudioBusy}
+            videoUploadsEnabled={!isProfileMediaGuardV1_2Runtime()}
             onPickAvatar={() => void pickImage(true)}
             onPickGallery={() => void pickImage(false)}
             onPickVideo={() => void pickProfileVideo()}

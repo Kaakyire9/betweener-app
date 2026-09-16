@@ -35,6 +35,8 @@ import {
 } from '@/lib/offline/moments-store';
 import { useResponsiveMetrics } from '@/lib/responsive';
 import { getMomentOfflineMutationSnapshot, subscribeToOfflineMutationEvents } from '@/lib/offline/mutation-queue';
+import { reportUgcContent, type UgcReportReason } from '@/lib/safety/report-ugc-content';
+import { showBetweenerAlert } from '@/components/ui/BetweenerAlertHost';
 
 const PHOTO_MOMENT_DURATION = 5800;
 const TEXT_MOMENT_DURATION = 7000;
@@ -1137,6 +1139,41 @@ export default function MomentViewer({
 
   const isWideMoment = Boolean(isWidePhotoMoment && wideFrameMetrics);
 
+  const submitMomentReport = async (reason: UgcReportReason) => {
+    try {
+      await reportUgcContent({
+        contentType: 'moment',
+        contentId: currentMoment.id,
+        reason,
+        surface: 'moment_viewer',
+      });
+      showBetweenerAlert({
+        title: 'Report received',
+        message: 'Thanks. We will review this Moment and take action if needed.',
+        tone: 'success',
+      });
+    } catch {
+      showBetweenerAlert({
+        title: 'Could not send report',
+        message: 'Please check your connection and try again.',
+        tone: 'error',
+      });
+    }
+  };
+
+  const openMomentReport = () => showBetweenerAlert({
+    title: 'Report this Moment',
+    message: 'What is the main concern?',
+    tone: 'warning',
+    buttons: [
+      { text: 'Nudity or sexual content', onPress: () => void submitMomentReport('NUDITY_OR_SEXUAL_CONTENT') },
+      { text: 'Harassment or hate', onPress: () => void submitMomentReport('HARASSMENT_OR_HATE') },
+      { text: 'Scam or solicitation', onPress: () => void submitMomentReport('SCAM_OR_SOLICITATION') },
+      { text: 'Violence or danger', onPress: () => void submitMomentReport('VIOLENCE_OR_DANGER') },
+      { text: 'Cancel', style: 'cancel' },
+    ],
+  });
+
   return (
     <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose}>
       <View style={styles.container}>
@@ -1185,9 +1222,16 @@ export default function MomentViewer({
               ) : null}
             </View>
           </View>
-          <Pressable onPress={onClose} style={styles.closeButton}>
-            <MaterialCommunityIcons name="close" size={18} color="#fff" />
-          </Pressable>
+          <View style={styles.headerActions}>
+            {!currentUser.isOwn ? (
+              <Pressable accessibilityLabel="Report this Moment" onPress={openMomentReport} style={styles.closeButton}>
+                <MaterialCommunityIcons name="alert-outline" size={18} color="#fff" />
+              </Pressable>
+            ) : null}
+            <Pressable accessibilityLabel="Close Moment" onPress={onClose} style={styles.closeButton}>
+              <MaterialCommunityIcons name="close" size={18} color="#fff" />
+            </Pressable>
+          </View>
         </View>
 
         <View style={styles.mediaWrapper}>
@@ -1411,6 +1455,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     zIndex: 10,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   userInfo: { flexDirection: 'row', alignItems: 'center', gap: 9 },
   avatar: { width: 36, height: 36, borderRadius: 18, borderWidth: 1, borderColor: 'rgba(255,255,255,0.28)' },

@@ -5,8 +5,9 @@ import { corsHeaders } from '../_shared/cors.ts';
 import {
   assessPrivateMessageRules,
   classifyTextSolicitation,
-  mergeContentSafetyAssessments,
+  mergePrivateMessageSafetyAssessments,
   moderateWithOpenAI,
+  shouldClassifyPrivateMessageSolicitation,
 } from '../_shared/content-safety.ts';
 
 const json = (status: number, body: Record<string, unknown>) => new Response(JSON.stringify(body), {
@@ -102,11 +103,40 @@ serve(async (request) => {
 
   let assessment = assessPrivateMessageRules(text);
   if (messageType === 'text' && assessment.decision !== 'BLOCK') {
-    const [harm, solicitation] = await Promise.all([
-      moderateWithOpenAI(text),
-      classifyTextSolicitation(text),
-    ]);
-    assessment = mergeContentSafetyAssessments(assessment, harm, solicitation);
+    const harm = await moderateWithOpenAI(text);
+    if (harm.failureReason) {
+      console.error(JSON.stringify({
+        event: 'private_message_harm_scan_unavailable',
+        sender_user_id: authData.user.id,
+        action,
+        failure_reason: harm.failureReason,
+        provider_request_id: harm.providerRequestId,
+      }));
+      return json(503, { code: 'MESSAGE_GUARD_UNAVAILABLE', retryable: true });
+    }
+
+    const solicitation = shouldClassifyPrivateMessageSolicitation(text)
+      ? await classifyTextSolicitation(text)
+      : undefined;
+    assessment = mergePrivateMessageSafetyAssessments(assessment, harm, solicitation);
+
+    if (solicitation?.failureReason) {
+      console.warn(JSON.stringify({
+        event: 'private_message_solicitation_scan_degraded',
+        sender_user_id: authData.user.id,
+        action,
+        failure_reason: solicitation.failureReason,
+        provider_request_id: solicitation.providerRequestId,
+      }));
+    }
+  }
+
+  if (assessment.decision === 'REVIEW') {
+    return json(200, {
+      ok: false,
+      code: 'MESSAGE_REPHRASE_REQUIRED',
+      categories: assessment.categories,
+    });
   }
 
   const moderationArgs = {

@@ -55,6 +55,7 @@ import { useCirclePulse } from '@/lib/circles/pulse/use-circle-pulse';
 import { createSignedUrl as createMomentSignedUrl } from '@/lib/moments';
 import { showOpenSettingsPrompt } from '@/lib/permission-prompts';
 import { normalizeProfilePhotoUri } from '@/lib/profile/media';
+import { reportUgcContent, type UgcReportReason } from '@/lib/safety/report-ugc-content';
 import { supabase } from '@/lib/supabase';
 import { logger } from '@/lib/telemetry/logger';
 import { fetch as fetchNetInfo } from '@react-native-community/netinfo';
@@ -3633,6 +3634,42 @@ export default function CircleDetailScreen() {
     });
   }, [members, moments, openPulseMomentViewer, openPulseMomentViewerByIds]);
 
+  const reportPulseItem = useCallback((item: CirclePulseItem) => {
+    const submit = async (reason: UgcReportReason) => {
+      try {
+        await reportUgcContent({
+          contentType: 'circle_pulse_item',
+          contentId: item.id,
+          reason,
+          surface: 'circle_pulse',
+        });
+        showBetweenerAlert({
+          title: 'Report received',
+          message: 'Thanks. We will review this Circle post and take action if needed.',
+          tone: 'success',
+        });
+      } catch {
+        showBetweenerAlert({
+          title: 'Could not send report',
+          message: 'Please check your connection and try again.',
+          tone: 'error',
+        });
+      }
+    };
+    showBetweenerAlert({
+      title: 'Report this Circle post',
+      message: 'What is the main concern?',
+      tone: 'warning',
+      buttons: [
+        { text: 'Nudity or sexual content', onPress: () => void submit('NUDITY_OR_SEXUAL_CONTENT') },
+        { text: 'Harassment or hate', onPress: () => void submit('HARASSMENT_OR_HATE') },
+        { text: 'Scam or solicitation', onPress: () => void submit('SCAM_OR_SOLICITATION') },
+        { text: 'Violence or danger', onPress: () => void submit('VIOLENCE_OR_DANGER') },
+        { text: 'Cancel', style: 'cancel' },
+      ],
+    });
+  }, []);
+
   const handleEndLoveSeat = useCallback((item: CirclePulseItem) => {
     if (!item.loveSeatId || !currentProfileId) return;
     showBetweenerAlert({
@@ -4414,6 +4451,7 @@ export default function CircleDetailScreen() {
                 onOpenFeaturedProfile={openProfile}
                 onSendSignal={handleMemberConnection}
                 onEndLoveSeat={handleEndLoveSeat}
+                onReportItem={reportPulseItem}
               />
             ) : null}
 

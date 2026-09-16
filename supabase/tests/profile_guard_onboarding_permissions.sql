@@ -1,6 +1,8 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
+set local role postgres;
+set search_path = public, extensions, pg_catalog;
 select plan(8);
 
 select ok(
@@ -62,7 +64,7 @@ select is(
   true,
   'a canonical onboarding location passes derived validation'
 );
-reset role;
+set local role postgres;
 
 select * from finish();
 rollback;

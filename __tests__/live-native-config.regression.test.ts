@@ -91,6 +91,13 @@ test('Stream ongoing-call runtime is initialized once at the native app entry po
   assert.match(appEntry, /createStreamVideoClient: async \(\) => getStreamVideoBackgroundClient\(\)/);
   assert.match(backgroundClient, /registerStreamVideoBackgroundClient/);
   assert.match(backgroundClient, /unregisterStreamVideoBackgroundClient/);
+  assert.match(appEntry, /require\(["']expo-router\/entry["']\)/);
+  assert.doesNotMatch(appEntry, /@expo\/metro-runtime\/error-overlay/);
+  assert.doesNotMatch(appEntry, /expo-router\/build\/qualified-entry/);
+  assert.ok(
+    appEntry.indexOf('StreamVideoRN.setPushConfig')
+      < appEntry.indexOf('require("expo-router/entry")'),
+  );
 });
 
 test('Windows Metro keeps the Stream module graph within a bounded handle budget', () => {

@@ -38,6 +38,25 @@
         }
       }
     },
+    "staging": {
+      "node": "24.18.0",
+      "channel": "staging",
+      "distribution": "internal",
+      "environment": "preview",
+      "env": {
+        "EXPO_PUBLIC_ENVIRONMENT": "staging",
+        "EXPO_PUBLIC_ENABLE_INTERNAL_TOOLS": "false",
+        "EXPO_USE_POD_REPO_UPDATE": "1",
+        "SENTRY_DISABLE_AUTO_UPLOAD": "true",
+        "SENTRY_DISABLE_NATIVE_DEBUG_UPLOAD": "true"
+      },
+      "ios": {
+        "image": "latest",
+        "cache": {
+          "disabled": true
+        }
+      }
+    },
     "playInternal": {
       "node": "24.18.0",
       "channel": "preview",

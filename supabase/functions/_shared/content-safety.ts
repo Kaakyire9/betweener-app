@@ -46,7 +46,7 @@ export const assessPrivateMessageRules = (rawText: string): ContentSafetyAssessm
     || /(onlyfans|telegram|whatsapp|snapchat|instagram|cashapp|venmo|paypal)/.test(compact);
   const hasRedirection = /(message|text|call|dm|reach|contact|find|add|follow|subscribe|join|ask)\s+(me\s+)?(on|at|via|how|for)/.test(text)
     || /(off|away from|outside)\s+(this|the)\s+app/.test(text);
-  const hasPaidPromotion = /(subscribe|subscription|premium|exclusive|private content|private photos?|paid content|membership|tip me|pay me|my rates?|book me)/.test(text);
+  const hasPaidPromotion = /(?:paid|premium|exclusive|vip)\s+(?:photos?|videos?|content|subscription|access)|(?:subscribe|join)\s+(?:(?:to|through)\s+)?(?:my\s+)?(?:onlyfans|fansly|premium|private|vip)|subscribe\b.{0,80}\bprivate\s+(?:photos?|videos?|content)|(?:buy|access|unlock)\s+(?:my\s+)?private\s+(?:photos?|videos?|content)|(?:tip|pay)\s+me(?:\s+(?:for|to|and|in)\b|$)|(?:my\s+)?rates?\s+(?:are|start|for)\b|book\s+me\s+(?:for|at)\s+(?:an?\s+)?(?:session|service|appointment|massage|escort)\b/.test(text);
   const hasFinancialAsk = /(send|wire|transfer|pay)\s+(me\s+)?(money|cash|crypto|bitcoin|btc|usdt)|gift\s*cards?|investment opportunity|guaranteed return/.test(text);
   const hasSexualService = /(escort|meet for cash|pay for sex|sexual services?|full service|incall|outcall)/.test(text);
   const hasThreat = /(i will|i'll|gonna|going to)\s+(kill|hurt|attack|rape)\s+(you|them|him|her)/.test(text);
@@ -76,6 +76,20 @@ export const assessPrivateMessageRules = (rawText: string): ContentSafetyAssessm
     scores: Object.fromEntries([...categories].map((category) => [category, riskScore])),
     failureReason: null,
   };
+};
+
+/**
+ * The generative solicitation classifier is intentionally a second-stage
+ * check. Ordinary conversation receives the harm scan only; text with actual
+ * commercial, payment, or off-platform cues receives the additional scan.
+ */
+export const shouldClassifyPrivateMessageSolicitation = (rawText: string) => {
+  const text = normalizeForRules(rawText.slice(0, 5000));
+  const rules = assessPrivateMessageRules(rawText);
+  return rules.decision !== 'ALLOW'
+    || /(?:onlyfans|fansly|cashapp|venmo|paypal|telegram|whatsapp|snapchat|instagram|insta\b|kik\b|wechat)\b/.test(text)
+    || /(?:subscribe|subscription|paid\s+content|private\s+(?:photos?|videos?|content)|tip\s+me|pay\s+me|my\s+rates?|sexual\s+services?|escort|investment\s+opportunity|gift\s*cards?|crypto|bitcoin|btc|usdt)\b/.test(text)
+    || /(?:\$\s*\d|\d\s*(?:usd|gbp|eur|cedis?|ghs))\b/.test(text);
 };
 
 type OpenAIModerationResult = {
@@ -110,7 +124,12 @@ export async function moderateWithOpenAI(input: string | Array<Record<string, un
     };
   }
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 10_000);
+  // Image moderation routinely needs longer than text moderation because the
+  // provider must fetch and decode a signed object before classification.
+  const timeout = setTimeout(
+    () => controller.abort(),
+    typeof input === 'string' ? 10_000 : 30_000,
+  );
   try {
     const response = await fetch('https://api.openai.com/v1/moderations', {
       method: 'POST',
@@ -361,6 +380,34 @@ export const mergeContentSafetyAssessments = (
 };
 
 /**
+ * A successful harm scan is authoritative when only the supplemental
+ * solicitation classifier is unavailable. The degraded scan is observable in
+ * telemetry but is not persisted as member misconduct.
+ */
+export const mergePrivateMessageSafetyAssessments = (
+  rules: ContentSafetyAssessment,
+  harm: ContentSafetyAssessment,
+  solicitation?: ContentSafetyAssessment,
+): ContentSafetyAssessment => {
+  if (!solicitation) return mergeContentSafetyAssessments(rules, harm);
+  if (
+    harm.decision === 'ALLOW'
+    && !harm.failureReason
+    && solicitation.decision === 'REVIEW'
+    && Boolean(solicitation.failureReason)
+    && solicitation.categories.every((category) => category === 'provider_unavailable')
+  ) {
+    const merged = mergeContentSafetyAssessments(rules, harm);
+    return {
+      ...merged,
+      categories: [...new Set([...merged.categories, 'solicitation_scan_degraded'])],
+      failureReason: null,
+    };
+  }
+  return mergeContentSafetyAssessments(rules, harm, solicitation);
+};
+
+/**
  * Private chat media already receives the multimodal harm scan. If the
  * supplemental OCR/solicitation classifier alone is unavailable, retain the
  * successful harm result instead of treating infrastructure latency as member
@@ -380,7 +427,7 @@ export const mergeChatImageSafetyAssessments = (
     return {
       ...harm,
       categories: [...new Set([...harm.categories, 'solicitation_scan_degraded'])],
-      failureReason: solicitation.failureReason,
+      failureReason: null,
     };
   }
 

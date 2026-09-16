@@ -143,7 +143,7 @@ test('legacy attachment identities are repaired only when the mismatch is determ
 test('view-once photos are moderated before server-owned encryption', () => {
   assert.match(viewOnceModerationClient, /bucket: MODERATION_BUCKET/);
   assert.match(viewOnceModerationClient, /mode: 'finalize_view_once_plaintext'/);
-  assert.match(finalizeFunction, /await assessChatImage\(inspectionUrl\.signedUrl\)/);
+  assert.match(finalizeFunction, /await assessChatImage\(inspectionUrl\.signedUrl, plainBytes, mime\)/);
   assert.match(finalizeFunction, /exact downloaded bytes into a service-only, immutable object/);
   assert.match(finalizeFunction, /encryptApprovedViewOnceImage/);
   assert.match(finalizeFunction, /nacl\.secretbox\(plainBytes, mediaNonce, mediaKey\)/);

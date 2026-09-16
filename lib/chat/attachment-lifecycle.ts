@@ -11,7 +11,7 @@ export type ChatAttachmentFinalizeInput = {
   clientMessageId: string;
   attachmentId: string;
   attachmentType: ChatAttachmentKind;
-  bucketId: 'chat-media' | 'voice-messages';
+  bucketId: 'chat-media' | 'voice-messages' | 'chat-attachment-staging-v1-2';
   storagePath: string;
   originalName?: string | null;
   mimeType: string;

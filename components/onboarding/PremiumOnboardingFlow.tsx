@@ -42,6 +42,11 @@ import {
 } from "@/lib/location/countries";
 import { isLikelyNetworkError } from "@/lib/network";
 import { RELIGION_OPTIONS } from "@/lib/profile/religion";
+import {
+  guardAndPublishProfileMediaV1_2,
+  isProfileMediaGuardV1_2Runtime,
+  profileMediaGuardMessageV1_2,
+} from "@/lib/profile/profile-media-guard-v1-2";
 import { useResponsiveMetrics } from "@/lib/responsive";
 import {
   captureSignupContext,
@@ -492,14 +497,33 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
 
   const uploadImage = async (debugId: string, attempt: number, withTimeout: <T>(label: string, promise: PromiseLike<T>, ms: number) => Promise<T>) => {
     if (!image || !user?.id) return null;
-    const fileExt = image.split(".").pop() || "jpg";
+    const fileExt = image.split(/[?#]/)[0].split(".").pop()?.toLowerCase() || "jpg";
+    const contentType = fileExt === "png" ? "image/png" : fileExt === "webp" ? "image/webp" : "image/jpeg";
+
+    if (isProfileMediaGuardV1_2Runtime()) {
+      const result = await withTimeout(
+        "profile_media_guard",
+        guardAndPublishProfileMediaV1_2({
+          userId: user.id,
+          avatarUrl: image,
+          heroImageUrl: null,
+          photos: [],
+          localItems: [{ localUri: image, fileName: `onboarding-avatar.${fileExt}`, contentType }],
+          clientRequestId: `onboarding-${debugId.toLowerCase()}-${attempt}`,
+        }),
+        45_000,
+      );
+      if (!result.avatarUrl) throw new Error("PROFILE_MEDIA_SCAN_UNAVAILABLE");
+      return result.avatarUrl;
+    }
+
     const fileName = `${user.id}/${Date.now()}-${Math.random().toString(36).substring(2, 8)}.${fileExt}`;
     const response = await withTimeout("image_fetch", fetch(image), 8000);
     const arrayBuffer = await withTimeout("image_arraybuffer", response.arrayBuffer(), 8000);
     const fileBody = new Uint8Array(arrayBuffer);
     const { error: uploadError } = await withTimeout(
       "image_upload",
-      supabase.storage.from("profiles").upload(fileName, fileBody, { contentType: `image/${fileExt}` }),
+      supabase.storage.from("profiles").upload(fileName, fileBody, { contentType }),
       20_000,
     );
     if (uploadError) {
@@ -659,7 +683,11 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
         })();
       }, 550);
     } catch (error: any) {
-      if (isLikelyNetworkError(error)) {
+      const mediaGuardMessage = profileMediaGuardMessageV1_2(error);
+      if (mediaGuardMessage) {
+        setMessage(mediaGuardMessage);
+        setSaveNetworkError(null);
+      } else if (isLikelyNetworkError(error)) {
         setSaveNetworkError("We couldn't save your profile. Check your connection and try again.");
         setMessage("");
       } else {

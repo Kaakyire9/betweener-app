@@ -23,6 +23,10 @@ import {
 import { isLikelyNetworkError } from '@/lib/network';
 import { normalizeProfilePhotoUri } from '@/lib/profile/media';
 import {
+  guardAndPublishProfileMediaV1_2,
+  type LocalProfileMediaV1_2,
+} from '@/lib/profile/profile-media-guard-v1-2';
+import {
   readCirclePulseCommentsSnapshotState,
   removeCirclePulseCommentSnapshot,
   replaceCirclePulseCommentSnapshotId,
@@ -143,21 +147,19 @@ type ProfileInterestsUpdatePayload = {
   interests: string[];
 };
 
-type LocalProfileMediaUpload = {
-  localUri: string;
-  fileName: string;
-  contentType: string;
-};
+type LocalProfileMediaUpload = LocalProfileMediaV1_2;
 
-type ProfileMediaSyncPayload = {
+export type ProfileMediaSyncPayload = {
   userId: string;
   avatar?: LocalProfileMediaUpload | null;
+  avatarUrl?: string | null;
   hero?: LocalProfileMediaUpload | null;
   heroImageUrl?: string | null;
   photos?: string[] | null;
   photoItems?: LocalProfileMediaUpload[];
   video?: (LocalProfileMediaUpload & { previousPath?: string | null }) | null;
   updatedAt: string;
+  clientRequestId?: string;
 };
 
 type NotificationPrefsUpdatePayload = {
@@ -1829,18 +1831,6 @@ async function uploadQueuedStorageObject(params: {
   });
 }
 
-async function uploadQueuedProfilePhoto(userId: string, item: LocalProfileMediaUpload) {
-  const filePath = `${userId}/${Date.now()}-${item.fileName}`;
-  await uploadQueuedStorageObject({
-    bucket: 'profile-photos',
-    localUri: item.localUri,
-    filePath,
-    contentType: item.contentType,
-  });
-  const { data } = supabase.storage.from('profile-photos').getPublicUrl(filePath);
-  return data.publicUrl;
-}
-
 async function uploadQueuedProfileVideo(userId: string, item: LocalProfileMediaUpload) {
   const filePath = `${userId}/profile-video-${Date.now()}-${item.fileName}`;
   await uploadQueuedStorageObject({
@@ -1852,38 +1842,25 @@ async function uploadQueuedProfileVideo(userId: string, item: LocalProfileMediaU
   return filePath;
 }
 
-async function processProfileMediaSync(payload: ProfileMediaSyncPayload) {
+export async function syncProfileMediaNow(payload: ProfileMediaSyncPayload) {
+  let publishedMedia: Awaited<ReturnType<typeof guardAndPublishProfileMediaV1_2>> | null = null;
+  const imageItems = [payload.avatar, payload.hero, ...(payload.photoItems ?? [])]
+    .filter((item): item is LocalProfileMediaUpload => Boolean(item?.localUri));
+  if (imageItems.length > 0) {
+    publishedMedia = await guardAndPublishProfileMediaV1_2({
+      userId: payload.userId,
+      avatarUrl: normalizeProfilePhotoUri(payload.avatar?.localUri ?? payload.avatarUrl) || null,
+      heroImageUrl: normalizeProfilePhotoUri(payload.heroImageUrl) || null,
+      photos: (payload.photos ?? [])
+        .map((photo) => normalizeProfilePhotoUri(photo))
+        .filter((photo): photo is string => Boolean(photo)),
+      localItems: imageItems,
+      clientRequestId: payload.clientRequestId
+        || `profile-media-${Date.parse(payload.updatedAt) || Date.now()}`,
+    });
+  }
+
   const updates: Record<string, unknown> = {};
-  const replacementByLocalUri: Record<string, string> = {};
-
-  if (payload.avatar?.localUri) {
-    const uploadedAvatarUrl = await uploadQueuedProfilePhoto(payload.userId, payload.avatar);
-    replacementByLocalUri[payload.avatar.localUri] = uploadedAvatarUrl;
-    updates.avatar_url = uploadedAvatarUrl;
-  }
-
-  if (payload.hero?.localUri) {
-    const uploadedHeroUrl = await uploadQueuedProfilePhoto(payload.userId, payload.hero);
-    replacementByLocalUri[payload.hero.localUri] = uploadedHeroUrl;
-  }
-
-  const photoItems = payload.photoItems ?? [];
-  if (payload.photos && photoItems.length > 0) {
-    for (const item of photoItems) {
-      replacementByLocalUri[item.localUri] = await uploadQueuedProfilePhoto(payload.userId, item);
-    }
-    updates.photos = payload.photos
-      .map((photo) => replacementByLocalUri[photo] ?? photo)
-      .filter((photo) => typeof photo === 'string' && photo.length > 0);
-  }
-
-  if ('heroImageUrl' in payload) {
-    const normalizedHeroImageUrl = normalizeProfilePhotoUri(payload.heroImageUrl);
-    updates.hero_image_url = normalizedHeroImageUrl
-      ? replacementByLocalUri[normalizedHeroImageUrl] ?? normalizedHeroImageUrl
-      : null;
-  }
-
   if (payload.video?.localUri) {
     const nextPath = await uploadQueuedProfileVideo(payload.userId, payload.video);
     updates.profile_video = nextPath;
@@ -1896,7 +1873,7 @@ async function processProfileMediaSync(payload: ProfileMediaSyncPayload) {
     }
   }
 
-  if (Object.keys(updates).length === 0) return;
+  if (Object.keys(updates).length === 0) return publishedMedia;
 
   const { data, error } = await supabase.functions.invoke('profile-guard-update', {
     body: { updates },
@@ -1907,6 +1884,11 @@ async function processProfileMediaSync(payload: ProfileMediaSyncPayload) {
       code: data.code ?? 'PROFILE_MEDIA_NOT_ALLOWED',
     });
   }
+  return publishedMedia;
+}
+
+async function processProfileMediaSync(payload: ProfileMediaSyncPayload) {
+  await syncProfileMediaNow(payload);
 }
 
 async function processNotificationPrefsUpdate(payload: NotificationPrefsUpdatePayload) {

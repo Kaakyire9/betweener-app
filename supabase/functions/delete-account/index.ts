@@ -43,6 +43,10 @@ const STORAGE_BUCKETS_TO_CLEAN = [
   "chat-media",
   "verification-docs",
   "circle-images",
+  "moderated-profile-media",
+  "profile-media-staging-v1-2",
+  "chat-attachment-staging-v1-2",
+  "view-once-moderation",
 ] as const;
 
 const normalizeStoragePrefix = (prefix: string) => {

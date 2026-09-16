@@ -31,6 +31,11 @@ import type { Database } from '@/supabase/types/database';
 import { addBreadcrumb, setSentryUser } from '@/lib/telemetry/sentry';
 import { isSupabaseAccessTokenUsable } from '@/lib/auth/session-token';
 import { createPresenceWriteCoordinator } from '@/lib/presence-write-coordinator';
+import {
+  CURRENT_PRIVACY_VERSION,
+  CURRENT_TERMS_VERSION,
+  recordCurrentLegalAcceptance,
+} from '@/lib/legal/acceptance';
 
 type Profile = Database['public']['Tables']['profiles']['Row'];
 type FetchProfileOptions = { force?: boolean };
@@ -1552,6 +1557,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   ]);
 
   useEffect(() => {
+    if (!session?.user?.id || usingPersistedSessionFallback || authRecoveryPending) return;
+    void recordCurrentLegalAcceptance(session.user.id).catch((error) => {
+      console.warn('[legal] acceptance audit unavailable', error);
+    });
+  }, [authRecoveryPending, session?.user?.id, usingPersistedSessionFallback]);
+
+  useEffect(() => {
     const hasStableAccessNow =
       !!session &&
       !!user &&
@@ -1596,6 +1608,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         password,
         options: {
           emailRedirectTo: redirectUrl,
+          data: {
+            terms_version: CURRENT_TERMS_VERSION,
+            privacy_version: CURRENT_PRIVACY_VERSION,
+            legal_acceptance_source: 'password_signup',
+          },
         },
       });
       return { error };

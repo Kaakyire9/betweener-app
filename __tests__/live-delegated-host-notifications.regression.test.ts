@@ -11,6 +11,14 @@ const notificationMigration = readFileSync(
   'utf8',
 );
 const pushWorker = readFileSync('supabase/functions/push-notifications/index.ts', 'utf8');
+const pushCompatibility = readFileSync(
+  'supabase/functions/_shared/push-notification-compatibility.ts',
+  'utf8',
+);
+const pushSecurityMigration = readFileSync(
+  'supabase/migrations/20260914123000_push_notification_event_security.sql',
+  'utf8',
+);
 const repository = readFileSync('features/live/application/live-repository.ts', 'utf8');
 const studio = readFileSync('features/live/components/LiveStudioModal.tsx', 'utf8');
 const circles = readFileSync('app/(tabs)/explore.tsx', 'utf8');
@@ -61,17 +69,23 @@ test('public Live campaigns are durable, retryable and privacy bounded', () => {
   assert.match(notificationMigration, /live_in_app_announcements/i);
   assert.match(pushWorker, /rpc_service_claim_live_notification_campaign_v1/i);
   assert.match(pushWorker, /live_reminders,live_started/i);
-  assert.match(pushWorker, /LIVE_NOTIFICATIONS_MIN_APP_VERSION[\s\S]*1\.2\.0/i);
-  assert.match(pushWorker, /isVersionAtLeast\(row\.app_version, LIVE_NOTIFICATIONS_MIN_APP_VERSION\)/i);
-  assert.match(pushWorker, /index \+= 100/i);
-  assert.match(pushWorker, /index \+= 5/i);
+  assert.match(pushCompatibility, /LIVE_ROUTING_MINIMUM_APP_VERSION = '1\.2\.0'/i);
+  assert.match(pushWorker, /evaluatePushTokenCompatibility\([\s\S]*row\.app_version/i);
+  assert.match(pushWorker, /selectCompatiblePushTokensForDelivery\([\s\S]*MAX_TOKENS_PER_RECIPIENT/i);
+  assert.match(pushWorker, /EXPO_BATCH_SIZE = 100/i);
+  assert.match(pushWorker, /EXPO_BATCH_CONCURRENCY = 3/i);
 });
 
-test('push delivery fails closed behind a header-only webhook secret', () => {
-  assert.match(pushWorker, /req\.method !== 'POST'/i);
-  assert.match(pushWorker, /if \(!secret\)[\s\S]*status: 503/i);
-  assert.match(pushWorker, /req\.headers\.get\('x-push-secret'\)/i);
-  assert.match(pushWorker, /timingSafeEqual\(providedSecret, secret\)/i);
+test('push delivery fails closed behind a signed event-only envelope', () => {
+  assert.match(pushWorker, /request\.method !== 'POST'/i);
+  assert.match(pushWorker, /PUSH_HMAC_CURRENT_SECRET/i);
+  assert.match(pushWorker, /x-betweener-signature/i);
+  assert.match(pushWorker, /verifyPushWebhookRequest/i);
+  assert.match(pushWorker, /rpc_service_claim_push_notification_event_v1/i);
+  assert.match(pushSecurityMigration, /vault\.decrypted_secrets/i);
+  assert.match(pushSecurityMigration, /extensions\.hmac/i);
+  assert.match(pushSecurityMigration, /'claimStatus', 'duplicate'/i);
+  assert.doesNotMatch(pushWorker, /x-push-secret|PUSH_WEBHOOK_SECRET/i);
   assert.doesNotMatch(pushWorker, /searchParams\.get\(['"](?:x-push-secret|secret)['"]\)/i);
 });
 

@@ -1,8 +1,11 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
+set local role postgres;
+set search_path = public, extensions, pg_catalog;
 select plan(13);
 
+select set_config('request.jwt.claim.role', 'service_role', true);
 select set_config('app.profile_guard_write', 'on', true);
 insert into auth.users(id, email) values
   ('9a000000-0000-4000-8000-000000000001', 'legacy-safe@example.test'),
@@ -83,7 +86,7 @@ select lives_ok($sql$
   where user_id = '9a000000-0000-4000-8000-000000000002'
 $sql$, 'cross-account update is safely filtered by row-level security');
 
-reset role;
+set local role postgres;
 select is(
   (select full_name from public.profiles
    where user_id = '9a000000-0000-4000-8000-000000000002'),
@@ -164,6 +167,6 @@ $sql$, '42501', 'PROFILE_CONTENT_NOT_ALLOWED',
   'released-client upsert still blocks contact solicitation'
 );
 
-reset role;
+set local role postgres;
 select * from finish();
 rollback;

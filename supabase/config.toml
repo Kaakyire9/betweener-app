@@ -4,6 +4,14 @@
 # working directory name when running `supabase init`.
 project_id = "betweener-app"
 
+[functions.push-notifications]
+verify_jwt = false
+
+[functions.moderation-evidence-retention]
+# Scheduled requests authenticate with x-cron-secret; the database scheduler
+# cannot mint an end-user JWT.
+verify_jwt = false
+
 [api]
 enabled = true
 # Port to use for the API URL.

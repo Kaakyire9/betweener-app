@@ -1,6 +1,8 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
+set local role postgres;
+set search_path = public, extensions, pg_catalog;
 select plan(17);
 
 insert into auth.users(id) values
@@ -13,6 +15,7 @@ insert into auth.users(id) values
 -- This fixture runs as postgres and intentionally seeds complete profiles.
 -- Use the same transaction-local trusted-write marker as the service bridge so
 -- Profile Guard remains enforced for every untrusted write path.
+select set_config('request.jwt.claim.role', 'service_role', true);
 select set_config('app.profile_guard_write', 'on', true);
 
 insert into public.profiles(

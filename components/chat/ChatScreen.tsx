@@ -235,6 +235,7 @@ import {
   removeOfflineVideo,
 } from "@/lib/offline/video-store";
 import { showOpenSettingsPrompt } from "@/lib/permission-prompts";
+import { getMediaModerationCapabilities } from '@/lib/safety/media-moderation-capabilities';
 import { getSafeRemoteImageUri, getUserFacingDisplayName, hasLeftBetweener } from "@/lib/profile/display-name";
 import { useResponsiveMetrics } from "@/lib/responsive";
 import { supabase } from "@/lib/supabase";
@@ -5657,8 +5658,10 @@ const resolveQueuedVideoUri = async (
         error: {
           code: (error as { code?: string } | null)?.code ?? guardResult.code ?? 'retry_failed',
           message: (error as { message?: string } | null)?.message
-            ?? (guardResult.code === 'MESSAGE_REVIEW_REQUIRED'
-              ? 'Message held for safety review'
+            ?? (guardResult.code === 'MESSAGE_REPHRASE_REQUIRED'
+              ? 'Please rephrase this message before sending'
+              : guardResult.code === 'MESSAGE_REVIEW_REQUIRED'
+                ? 'Message held for safety review'
               : 'Message violates Betweener safety rules'),
         },
       }).catch((persistError) => console.log('[chat] persist failed retry text outbox error', persistError));
@@ -5669,8 +5672,10 @@ const resolveQueuedVideoUri = async (
       }));
       Alert.alert(
         guardResult.ok === false ? 'Message not sent' : 'Retry failed',
-        guardResult.code === 'MESSAGE_REVIEW_REQUIRED'
-          ? 'This message is being held for a safety review.'
+        guardResult.code === 'MESSAGE_REPHRASE_REQUIRED'
+          ? 'Please rephrase this message and try again. It was not sent or added to an admin queue.'
+          : guardResult.code === 'MESSAGE_REVIEW_REQUIRED'
+            ? 'This message is being held for a safety review.'
           : guardResult.ok === false
             ? 'Please remove solicitation, threats, scams, or unsafe content and try again.'
             : 'Unable to resend this message right now.',
@@ -6937,11 +6942,15 @@ const resolveQueuedVideoUri = async (
       console.log('[chat] edit message error', error);
       const moderationCode = String((error as { code?: string })?.code ?? '');
       Alert.alert(
-        moderationCode === 'MESSAGE_CONTENT_NOT_ALLOWED' || moderationCode === 'MESSAGE_REVIEW_REQUIRED'
+        moderationCode === 'MESSAGE_CONTENT_NOT_ALLOWED'
+          || moderationCode === 'MESSAGE_REVIEW_REQUIRED'
+          || moderationCode === 'MESSAGE_REPHRASE_REQUIRED'
           ? 'Edit not saved'
           : 'Edit message',
-        moderationCode === 'MESSAGE_REVIEW_REQUIRED'
-          ? 'This edit is being held for a safety review.'
+        moderationCode === 'MESSAGE_REPHRASE_REQUIRED'
+          ? 'Please rephrase this edit and try again. It was not added to an admin queue.'
+          : moderationCode === 'MESSAGE_REVIEW_REQUIRED'
+            ? 'This edit is being held for a safety review.'
           : moderationCode === 'MESSAGE_CONTENT_NOT_ALLOWED'
             ? 'Please remove solicitation, threats, scams, or unsafe content and try again.'
             : 'Unable to update this message right now.',
@@ -7609,6 +7618,14 @@ const resolveQueuedVideoUri = async (
   }, [networkReady, playingVoiceId, stopVoicePlayback]);
 
   const captureCameraMedia = useCallback(async (captureMode: 'image' | 'video' | 'mixed') => {
+    const capabilities = getMediaModerationCapabilities();
+    if (captureMode === 'video' && !capabilities.chatVideoUploads) {
+      Alert.alert(
+        'Video sharing is temporarily paused',
+        'Video sharing will return after frame-by-frame safety checks are ready. You can still send photos.',
+      );
+      return;
+    }
     if (mediaUploadStatus) {
       Alert.alert('Upload in progress', 'Please wait for the current media upload to finish.');
       return;
@@ -7627,7 +7644,7 @@ const resolveQueuedVideoUri = async (
           ? ['images']
           : captureMode === 'video'
           ? ['videos']
-          : PICKER_MEDIA_TYPES_ALL,
+          : capabilities.chatVideoUploads ? PICKER_MEDIA_TYPES_ALL : ['images'],
       quality: 0.85,
       videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,
       videoMaxDuration: 30,
@@ -7745,6 +7762,10 @@ const resolveQueuedVideoUri = async (
   ]);
 
   const handleCameraPress = useCallback(() => {
+    if (!getMediaModerationCapabilities().chatVideoUploads) {
+      void captureCameraMedia('image');
+      return;
+    }
     if (Platform.OS === 'android') {
       Alert.alert('Camera', 'Choose what you want to capture.', [
         { text: 'Photo', onPress: () => void captureCameraMedia('image') },
@@ -7757,6 +7778,7 @@ const resolveQueuedVideoUri = async (
   }, [captureCameraMedia]);
 
   const handleLibraryPress = useCallback(async () => {
+    const capabilities = getMediaModerationCapabilities();
     if (mediaUploadStatus) {
       Alert.alert('Upload in progress', 'Please wait for the current media upload to finish.');
       return;
@@ -7770,7 +7792,7 @@ const resolveQueuedVideoUri = async (
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: PICKER_MEDIA_TYPES_ALL,
+      mediaTypes: capabilities.chatVideoUploads ? PICKER_MEDIA_TYPES_ALL : ['images'],
       quality: 0.85,
       videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,
       allowsMultipleSelection: !viewOnceMode,
@@ -7780,6 +7802,13 @@ const resolveQueuedVideoUri = async (
     if (result.canceled) return;
     closeAttachmentSheet();
     const selectedAssets = (result.assets ?? []).filter((selectedAsset) => Boolean(selectedAsset.uri));
+    if (!capabilities.chatVideoUploads && selectedAssets.some((asset) => asset.type === 'video')) {
+      Alert.alert(
+        'Video sharing is temporarily paused',
+        'Choose photos for now. Video sharing will return after frame-by-frame safety checks are ready.',
+      );
+      return;
+    }
     if (!viewOnceMode && selectedAssets.length > 1) {
       const invalidAsset = selectedAssets.find((selectedAsset) => validateChatAttachment({
         kind: selectedAsset.type === 'video' ? 'video' : 'image',
@@ -7954,6 +7983,13 @@ const resolveQueuedVideoUri = async (
   ]);
 
   const handleDocumentPress = useCallback(async () => {
+    if (!getMediaModerationCapabilities().chatDocumentUploads) {
+      Alert.alert(
+        'File sharing is temporarily paused',
+        'Documents will return after malware and content scanning are ready.',
+      );
+      return;
+    }
     if (mediaUploadStatus) {
       Alert.alert('Upload in progress', 'Please wait for the current media upload to finish.');
       return;

@@ -184,7 +184,10 @@ type FlushResult = {
 const REMOTE_MESSAGE_SELECT =
   'id,client_message_id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,reply_to_message_id,audio_path,audio_duration,audio_waveform,storage_path,media_items,media_expected_count,media_group_id,media_caption,is_view_once,encrypted_media,encrypted_media_path,encrypted_key_sender,encrypted_key_receiver,encrypted_key_nonce,encrypted_media_nonce,encrypted_media_alg,encrypted_media_mime,encrypted_media_size';
 const CHAT_MEDIA_BUCKET = 'chat-media' as const;
+const CHAT_ATTACHMENT_STAGING_BUCKET = 'chat-attachment-staging-v1-2' as const;
 const VOICE_MESSAGES_BUCKET = 'voice-messages' as const;
+const uploadBucketForMedia = (mediaType: string | null | undefined) =>
+  mediaType === 'image' ? CHAT_ATTACHMENT_STAGING_BUCKET : CHAT_MEDIA_BUCKET;
 const DOCUMENT_TEXT_PREFIX = '\u{1F4CE}';
 const RETRY_DELAYS_MS = [5_000, 15_000, 45_000, 120_000, 300_000, 900_000, 1_800_000, 3_600_000];
 const DURABLE_OUTBOX_MAX_ATTEMPTS = 48;
@@ -357,7 +360,9 @@ const uploadQueuedPrivateChatMedia = async (
     mimeType: file.contentType,
   });
   await ChatUploadTransport.upload({
-    bucket: CHAT_MEDIA_BUCKET,
+    bucket: payload.kind === 'chat_media_send'
+      ? uploadBucketForMedia(file.contentType.startsWith('image/') ? 'image' : payload.mediaType)
+      : CHAT_MEDIA_BUCKET,
     objectPath: filePath,
     localUri: file.localUri,
     fileName: file.fileName,
@@ -528,7 +533,7 @@ const uploadQueuedPrivateChatPreview = async (
     attachmentId: file.attachmentId,
   });
   await ChatUploadTransport.upload({
-    bucket: CHAT_MEDIA_BUCKET,
+    bucket: uploadBucketForMedia(file.contentType.startsWith('image/') ? 'image' : 'video'),
     objectPath: path,
     localUri: file.previewLocalUri,
     fileName: `${file.attachmentId}-preview.jpg`,
@@ -968,8 +973,10 @@ const sendTextOutboxItem = async (item: ChatPendingOutboxRow) => {
   if (guardResult.ok === false) {
     await ChatRepository.markOutboxItemStatus(item.owner_user_id, item.local_message_id, 'failed', {
       code: guardResult.code ?? 'MESSAGE_CONTENT_NOT_ALLOWED',
-      message: guardResult.code === 'MESSAGE_REVIEW_REQUIRED'
-        ? 'Message held for safety review'
+      message: guardResult.code === 'MESSAGE_REPHRASE_REQUIRED'
+        ? 'Please rephrase this message before sending'
+        : guardResult.code === 'MESSAGE_REVIEW_REQUIRED'
+          ? 'Message held for safety review'
         : guardResult.code === 'MESSAGING_TEMPORARILY_RESTRICTED'
           ? 'Messaging is temporarily restricted'
           : 'Message violates Betweener safety rules',
@@ -1071,7 +1078,7 @@ const sendMediaOutboxItem = async (item: ChatPendingOutboxRow, payload: MediaOut
           clientMessageId,
           attachmentId: file.attachmentId,
           attachmentType: itemMediaType,
-          bucketId: CHAT_MEDIA_BUCKET,
+          bucketId: uploadBucketForMedia(itemMediaType),
           storagePath: buildDeterministicChatAttachmentPath({
             senderId: payload.senderId,
             receiverId: payload.receiverId,
@@ -1184,7 +1191,7 @@ const sendMediaOutboxItem = async (item: ChatPendingOutboxRow, payload: MediaOut
         clientMessageId,
         attachmentId: file.attachmentId,
         attachmentType: itemMediaType,
-        bucketId: CHAT_MEDIA_BUCKET,
+        bucketId: uploadBucketForMedia(itemMediaType),
         storagePath,
         originalName: payload.documentName || file.fileName,
         mimeType: file.contentType,
@@ -1314,7 +1321,7 @@ const sendMediaOutboxItem = async (item: ChatPendingOutboxRow, payload: MediaOut
       });
       const remoteAttachments = files.map((file) => ({
         attachmentId: file.attachmentId,
-        bucketId: CHAT_MEDIA_BUCKET,
+        bucketId: uploadBucketForMedia(file.mediaType ?? payload.mediaType),
         storagePath: buildDeterministicChatAttachmentPath({
           senderId: payload.senderId!,
           receiverId: payload.receiverId!,
@@ -1653,7 +1660,7 @@ export const ChatOutboxService = {
           : [];
       const remoteAttachments = files.map((file) => ({
         attachmentId: file.attachmentId,
-        bucketId: CHAT_MEDIA_BUCKET,
+        bucketId: uploadBucketForMedia(file.mediaType ?? payload.mediaType),
         storagePath: buildDeterministicChatAttachmentPath({
           senderId: ownerUserId,
           receiverId: payload.receiverId!,

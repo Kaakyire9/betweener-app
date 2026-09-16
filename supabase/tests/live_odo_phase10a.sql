@@ -1,6 +1,8 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
+set local role postgres;
+set search_path = public, extensions, pg_catalog;
 select plan(55);
 
 select has_table('public', 'live_odo_configuration', 'Odo configuration is installed');
@@ -80,6 +82,7 @@ select ok(not has_table_privilege('authenticated', 'public.live_odo_action_attem
 
 insert into auth.users(id, email) values
   ('9a000000-0000-4000-8000-000000000001', 'odo-host@example.test');
+select set_config('request.jwt.claim.role', 'service_role', true);
 select set_config('app.profile_guard_write', 'on', true);
 insert into public.profiles(
   id, user_id, full_name, age, gender, profile_completed, verification_level,

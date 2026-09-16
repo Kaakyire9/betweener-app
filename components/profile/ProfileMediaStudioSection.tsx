@@ -33,6 +33,7 @@ type Props = {
   profileInitials: string;
   uploading: boolean;
   videoUploading: boolean;
+  videoUploadsEnabled?: boolean;
   onPickAvatar: () => void;
   onPickGallery: () => void;
   onPickVideo: () => void;
@@ -53,6 +54,7 @@ export default function ProfileMediaStudioSection({
   profileInitials,
   uploading,
   videoUploading,
+  videoUploadsEnabled = true,
   onPickAvatar,
   onPickGallery,
   onPickVideo,
@@ -113,7 +115,7 @@ export default function ProfileMediaStudioSection({
       case 'video':
         if (draft.profileVideoUrl) {
           onRemoveVideo();
-        } else {
+        } else if (videoUploadsEnabled) {
           onPickVideo();
         }
         break;
@@ -286,9 +288,11 @@ export default function ProfileMediaStudioSection({
             <ProfileStudioActionTile
               theme={theme}
               title={draft.profileVideoUrl ? 'Edit video' : 'Add video'}
-              subtitle={draft.profileVideoUrl ? 'Motion layer' : 'Add motion'}
+              subtitle={videoUploadsEnabled
+                ? (draft.profileVideoUrl ? 'Motion layer' : 'Add motion')
+                : 'Safety checks coming soon'}
               icon={draft.profileVideoUrl ? 'video-outline' : 'video-plus'}
-              disabled={videoUploading}
+              disabled={videoUploading || !videoUploadsEnabled}
               onPress={handlePickVideo}
             />
           </View>

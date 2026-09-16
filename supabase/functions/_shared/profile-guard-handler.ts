@@ -382,6 +382,12 @@ export const handleProfileGuardRequest = async (
       : [],
   ).filter((url) => !existingMedia.has(url)))];
   if (proposedMedia.length > 10) return json({ code: 'TOO_MANY_PROFILE_IMAGES' }, 400);
+  // Media bytes must pass the dedicated v1.2 finalizer, including deterministic
+  // hash, OCR/contact, and QR checks. This text/profile endpoint may retain or
+  // remove existing references, but it cannot mint a newly approved URL.
+  if (proposedMedia.length > 0) {
+    return json({ code: 'PROFILE_MEDIA_GUARDED_CLIENT_REQUIRED' }, 409);
+  }
 
   const sourceMediaToRemove: Array<{ bucket: string; path: string }> = [];
 

@@ -635,6 +635,36 @@ export type Database = {
         }
         Relationships: []
       }
+      approved_profile_media_objects: {
+        Row: {
+          approved_at: string
+          byte_size: number
+          mime_type: string
+          object_path: string
+          public_url: string
+          sha256: string
+          user_id: string
+        }
+        Insert: {
+          approved_at?: string
+          byte_size: number
+          mime_type: string
+          object_path: string
+          public_url: string
+          sha256: string
+          user_id: string
+        }
+        Update: {
+          approved_at?: string
+          byte_size?: number
+          mime_type?: string
+          object_path?: string
+          public_url?: string
+          sha256?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       betweener_venues: {
         Row: {
           address: string
@@ -1127,6 +1157,62 @@ export type Database = {
           peer_user_id?: string
           typing_until?: string | null
           updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      child_safety_evidence_transitions: {
+        Row: {
+          actor_user_id: string | null
+          created_at: string
+          event_id: string
+          from_state: string | null
+          id: number
+          reason: string
+          to_state: string
+        }
+        Insert: {
+          actor_user_id?: string | null
+          created_at?: string
+          event_id: string
+          from_state?: string | null
+          id?: never
+          reason: string
+          to_state: string
+        }
+        Update: {
+          actor_user_id?: string | null
+          created_at?: string
+          event_id?: string
+          from_state?: string | null
+          id?: never
+          reason?: string
+          to_state?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "child_safety_evidence_transitions_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "content_moderation_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      child_safety_reviewers: {
+        Row: {
+          granted_at: string
+          granted_by: string | null
+          user_id: string
+        }
+        Insert: {
+          granted_at?: string
+          granted_by?: string | null
+          user_id: string
+        }
+        Update: {
+          granted_at?: string
+          granted_by?: string | null
           user_id?: string
         }
         Relationships: []
@@ -3009,11 +3095,21 @@ export type Database = {
           created_at: string
           decision: string
           detector_version: string
+          evidence_hold: boolean
           evidence_redacted_at: string | null
+          evidence_resolution_reason: string | null
+          evidence_resolved_at: string | null
+          evidence_resolved_by: string | null
+          evidence_retention_attempts: number
+          evidence_retention_claim_id: string | null
+          evidence_retention_claimed_at: string | null
+          evidence_retention_failure: string | null
           evidence_snapshot: Json
+          evidence_state: string
           extracted_text: string | null
           failure_reason: string | null
           id: string
+          legal_hold: boolean
           provider: string
           provider_model: string
           provider_request_id: string | null
@@ -3036,11 +3132,21 @@ export type Database = {
           created_at?: string
           decision: string
           detector_version?: string
+          evidence_hold?: boolean
           evidence_redacted_at?: string | null
+          evidence_resolution_reason?: string | null
+          evidence_resolved_at?: string | null
+          evidence_resolved_by?: string | null
+          evidence_retention_attempts?: number
+          evidence_retention_claim_id?: string | null
+          evidence_retention_claimed_at?: string | null
+          evidence_retention_failure?: string | null
           evidence_snapshot?: Json
+          evidence_state?: string
           extracted_text?: string | null
           failure_reason?: string | null
           id?: string
+          legal_hold?: boolean
           provider: string
           provider_model: string
           provider_request_id?: string | null
@@ -3063,11 +3169,21 @@ export type Database = {
           created_at?: string
           decision?: string
           detector_version?: string
+          evidence_hold?: boolean
           evidence_redacted_at?: string | null
+          evidence_resolution_reason?: string | null
+          evidence_resolved_at?: string | null
+          evidence_resolved_by?: string | null
+          evidence_retention_attempts?: number
+          evidence_retention_claim_id?: string | null
+          evidence_retention_claimed_at?: string | null
+          evidence_retention_failure?: string | null
           evidence_snapshot?: Json
+          evidence_state?: string
           extracted_text?: string | null
           failure_reason?: string | null
           id?: string
+          legal_hold?: boolean
           provider?: string
           provider_model?: string
           provider_request_id?: string | null
@@ -4046,6 +4162,33 @@ export type Database = {
           created_by?: string | null
           email?: string | null
           role?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      legal_acceptances: {
+        Row: {
+          accepted_at: string
+          app_version: string | null
+          privacy_version: string
+          source: string
+          terms_version: string
+          user_id: string
+        }
+        Insert: {
+          accepted_at?: string
+          app_version?: string | null
+          privacy_version: string
+          source?: string
+          terms_version: string
+          user_id: string
+        }
+        Update: {
+          accepted_at?: string
+          app_version?: string | null
+          privacy_version?: string
+          source?: string
+          terms_version?: string
           user_id?: string
         }
         Relationships: []
@@ -9771,6 +9914,51 @@ export type Database = {
           },
         ]
       }
+      media_hash_provider_capabilities: {
+        Row: {
+          enabled: boolean
+          exact_hash_matching: boolean
+          external_provider_connected: boolean
+          feed_version: string | null
+          last_successful_sync: string | null
+          perceptual_matching: boolean
+          provider_id: string
+          provider_kind: string
+          provider_status: string
+          stale_after: string | null
+          updated_at: string
+          video_matching: boolean
+        }
+        Insert: {
+          enabled?: boolean
+          exact_hash_matching?: boolean
+          external_provider_connected?: boolean
+          feed_version?: string | null
+          last_successful_sync?: string | null
+          perceptual_matching?: boolean
+          provider_id: string
+          provider_kind: string
+          provider_status: string
+          stale_after?: string | null
+          updated_at?: string
+          video_matching?: boolean
+        }
+        Update: {
+          enabled?: boolean
+          exact_hash_matching?: boolean
+          external_provider_connected?: boolean
+          feed_version?: string | null
+          last_successful_sync?: string | null
+          perceptual_matching?: boolean
+          provider_id?: string
+          provider_kind?: string
+          provider_status?: string
+          stale_after?: string | null
+          updated_at?: string
+          video_matching?: boolean
+        }
+        Relationships: []
+      }
       merged_accounts: {
         Row: {
           created_at: string
@@ -10322,6 +10510,69 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      moderation_evidence_retention_config: {
+        Row: {
+          cron_secret: string
+          enabled: boolean
+          endpoint: string
+          singleton: boolean
+          updated_at: string
+        }
+        Insert: {
+          cron_secret: string
+          enabled?: boolean
+          endpoint: string
+          singleton?: boolean
+          updated_at?: string
+        }
+        Update: {
+          cron_secret?: string
+          enabled?: boolean
+          endpoint?: string
+          singleton?: boolean
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      moderation_evidence_retention_runs: {
+        Row: {
+          completed_at: string | null
+          content_claimed: number
+          dead_letter_count: number
+          error: string | null
+          failed_count: number
+          id: string
+          profile_claimed: number
+          redacted_count: number
+          started_at: string
+          status: string
+        }
+        Insert: {
+          completed_at?: string | null
+          content_claimed?: number
+          dead_letter_count?: number
+          error?: string | null
+          failed_count?: number
+          id?: string
+          profile_claimed?: number
+          redacted_count?: number
+          started_at?: string
+          status?: string
+        }
+        Update: {
+          completed_at?: string | null
+          content_claimed?: number
+          dead_letter_count?: number
+          error?: string | null
+          failed_count?: number
+          id?: string
+          profile_claimed?: number
+          redacted_count?: number
+          started_at?: string
+          status?: string
+        }
+        Relationships: []
       }
       moment_comment_reactions: {
         Row: {
@@ -11261,6 +11512,69 @@ export type Database = {
           },
         ]
       }
+      profile_media_guard_events_v1_2: {
+        Row: {
+          byte_size: number | null
+          categories: string[]
+          client_request_id: string
+          created_at: string
+          decision: string
+          failure_reason: string | null
+          id: string
+          item_index: number
+          metadata: Json
+          mime_type: string | null
+          provider: string
+          provider_model: string
+          provider_request_id: string | null
+          reason_code: string
+          risk_score: number
+          sha256: string | null
+          slot: string
+          user_id: string
+        }
+        Insert: {
+          byte_size?: number | null
+          categories?: string[]
+          client_request_id: string
+          created_at?: string
+          decision: string
+          failure_reason?: string | null
+          id?: string
+          item_index?: number
+          metadata?: Json
+          mime_type?: string | null
+          provider?: string
+          provider_model?: string
+          provider_request_id?: string | null
+          reason_code: string
+          risk_score?: number
+          sha256?: string | null
+          slot: string
+          user_id: string
+        }
+        Update: {
+          byte_size?: number | null
+          categories?: string[]
+          client_request_id?: string
+          created_at?: string
+          decision?: string
+          failure_reason?: string | null
+          id?: string
+          item_index?: number
+          metadata?: Json
+          mime_type?: string | null
+          provider?: string
+          provider_model?: string
+          provider_request_id?: string | null
+          reason_code?: string
+          risk_score?: number
+          sha256?: string | null
+          slot?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       profile_moderation_events: {
         Row: {
           categories: string[]
@@ -11268,6 +11582,10 @@ export type Database = {
           decision: string
           detector_version: string
           evidence_redacted_at: string | null
+          evidence_retention_attempts: number
+          evidence_retention_claim_id: string | null
+          evidence_retention_claimed_at: string | null
+          evidence_retention_failure: string | null
           evidence_snapshot: Json
           field_names: string[]
           id: string
@@ -11287,6 +11605,10 @@ export type Database = {
           decision: string
           detector_version: string
           evidence_redacted_at?: string | null
+          evidence_retention_attempts?: number
+          evidence_retention_claim_id?: string | null
+          evidence_retention_claimed_at?: string | null
+          evidence_retention_failure?: string | null
           evidence_snapshot?: Json
           field_names?: string[]
           id?: string
@@ -11306,6 +11628,10 @@ export type Database = {
           decision?: string
           detector_version?: string
           evidence_redacted_at?: string | null
+          evidence_retention_attempts?: number
+          evidence_retention_claim_id?: string | null
+          evidence_retention_claimed_at?: string | null
+          evidence_retention_failure?: string | null
           evidence_snapshot?: Json
           field_names?: string[]
           id?: string
@@ -13196,6 +13522,36 @@ export type Database = {
         }
         Relationships: []
       }
+      unsafe_media_hash_blocklist: {
+        Row: {
+          category: string
+          created_at: string
+          disabled_at: string | null
+          enabled: boolean
+          sha256: string
+          source: string
+          source_reference: string | null
+        }
+        Insert: {
+          category: string
+          created_at?: string
+          disabled_at?: string | null
+          enabled?: boolean
+          sha256: string
+          source: string
+          source_reference?: string | null
+        }
+        Update: {
+          category?: string
+          created_at?: string
+          disabled_at?: string | null
+          enabled?: boolean
+          sha256?: string
+          source?: string
+          source_reference?: string | null
+        }
+        Relationships: []
+      }
       user_location_profiles: {
         Row: {
           created_at: string | null
@@ -14799,6 +15155,10 @@ export type Database = {
         Args: { p_cron_secret: string; p_endpoint: string }
         Returns: boolean
       }
+      configure_moderation_evidence_retention_worker: {
+        Args: { p_cron_secret: string; p_endpoint: string }
+        Returns: boolean
+      }
       content_safety_assess_private_message: {
         Args: { p_text: string }
         Returns: Json
@@ -14812,6 +15172,10 @@ export type Database = {
           is_traveling: boolean
           travel_mode: string
         }[]
+      }
+      disable_moderation_evidence_retention_worker: {
+        Args: never
+        Returns: boolean
       }
       disablelongtransactions: { Args: never; Returns: string }
       dropgeometrycolumn:
@@ -15520,6 +15884,10 @@ export type Database = {
         }[]
       }
       invoke_chat_attachment_retention_worker: { Args: never; Returns: number }
+      invoke_moderation_evidence_retention_worker: {
+        Args: never
+        Returns: number
+      }
       is_admin_user: { Args: { p_user_id?: string }; Returns: boolean }
       is_chat_attachment_object_mutable: {
         Args: {
@@ -15527,6 +15895,10 @@ export type Database = {
           p_sender_id: string
           p_storage_path: string
         }
+        Returns: boolean
+      }
+      is_child_safety_reviewer: {
+        Args: { p_user_id: string }
         Returns: boolean
       }
       is_circle_host: {
@@ -16312,6 +16684,10 @@ export type Database = {
           p_repeat_visit_count?: number
         }
         Returns: number
+      }
+      profile_media_reference_is_approved: {
+        Args: { p_url: string; p_user_id: string }
+        Returns: boolean
       }
       record_profile_country_verification_observation: {
         Args: {
@@ -17505,6 +17881,14 @@ export type Database = {
       rpc_cancel_signal: { Args: { p_signal_id: string }; Returns: string }
       rpc_check_profile_username_availability: {
         Args: { p_username: string }
+        Returns: Json
+      }
+      rpc_child_safety_resolve_evidence: {
+        Args: {
+          p_event_id: string
+          p_reason: string
+          p_release_legal_hold?: boolean
+        }
         Returns: Json
       }
       rpc_claim_chat_attachment_cleanup: {
@@ -20198,6 +20582,14 @@ export type Database = {
         }
         Returns: number
       }
+      rpc_record_current_legal_acceptance_v1: {
+        Args: {
+          p_app_version?: string
+          p_privacy_version: string
+          p_terms_version: string
+        }
+        Returns: boolean
+      }
       rpc_record_profile_guard_semantic_observation: {
         Args: { p_decision: string; p_reason_code: string; p_user_id: string }
         Returns: undefined
@@ -21065,6 +21457,16 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_service_apply_profile_media_v1_2: {
+        Args: {
+          p_avatar_url: string
+          p_client_request_id: string
+          p_hero_image_url: string
+          p_photos: string[]
+          p_user_id: string
+        }
+        Returns: Json
+      }
       rpc_service_begin_live_odo_call_v1: {
         Args: {
           p_action_id: string
@@ -21110,6 +21512,14 @@ export type Database = {
       }
       rpc_service_claim_live_program_audio_v1: {
         Args: { p_session_id: string; p_worker_instance_id: string }
+        Returns: Json
+      }
+      rpc_service_claim_moderation_evidence_retention: {
+        Args: { p_limit?: number; p_retention?: string }
+        Returns: Json
+      }
+      rpc_service_claim_push_notification_event_v1: {
+        Args: { p_event_id: string }
         Returns: Json
       }
       rpc_service_clear_live_odo_policy_pause_v1: {
@@ -21197,6 +21607,20 @@ export type Database = {
           p_user_id: string
         }
         Returns: Json
+      }
+      rpc_service_complete_push_notification_event_v1: {
+        Args: {
+          p_accepted_ticket_count?: number
+          p_event_id: string
+          p_outcome?: string
+          p_recipient_count?: number
+          p_succeeded: boolean
+        }
+        Returns: boolean
+      }
+      rpc_service_configure_test_hash_provider: {
+        Args: { p_enabled: boolean; p_environment: string }
+        Returns: boolean
       }
       rpc_service_consume_content_guard_rate_limit: {
         Args: { p_scope: string; p_user_id: string }
@@ -21289,6 +21713,7 @@ export type Database = {
         Args: { p_limit?: number }
         Returns: Json
       }
+      rpc_service_get_media_hash_capabilities: { Args: never; Returns: Json }
       rpc_service_heartbeat_live_program_audio_v1: {
         Args: {
           p_failure_reason_code?: string
@@ -21373,6 +21798,10 @@ export type Database = {
         Args: { p_limit?: number }
         Returns: Json
       }
+      rpc_service_match_unsafe_media_hash: {
+        Args: { p_sha256: string }
+        Returns: Json
+      }
       rpc_service_pause_live_odo_policy_v1: {
         Args: { p_reason_code: string; p_session_id: string }
         Returns: Json
@@ -21418,6 +21847,17 @@ export type Database = {
         }
         Returns: string
       }
+      rpc_service_register_approved_profile_media: {
+        Args: {
+          p_byte_size: number
+          p_mime_type: string
+          p_object_path: string
+          p_public_url: string
+          p_sha256: string
+          p_user_id: string
+        }
+        Returns: boolean
+      }
       rpc_service_release_live_program_audio_v1: {
         Args: {
           p_lease_generation: number
@@ -21434,6 +21874,12 @@ export type Database = {
           p_lease_owner: string
         }
         Returns: Json
+      }
+      rpc_service_reserve_push_notification_deliveries_v1: {
+        Args: { p_event_id: string; p_token_ids: string[] }
+        Returns: {
+          reserved_token_id: string
+        }[]
       }
       rpc_service_send_moderated_private_message: {
         Args: {
@@ -21931,6 +22377,15 @@ export type Database = {
           request_id: string
           status: string
         }[]
+      }
+      rpc_submit_ugc_content_report_v1: {
+        Args: {
+          p_client_evidence?: Json
+          p_content_id: string
+          p_content_type: string
+          p_reason: string
+        }
+        Returns: string
       }
       rpc_sync_moment_comment_reaction: {
         Args: { p_comment_id: string; p_reaction?: string }

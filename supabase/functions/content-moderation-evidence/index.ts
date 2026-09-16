@@ -40,10 +40,17 @@ serve(async (request) => {
 
   const { data: event, error } = await admin
     .from('content_moderation_events')
-    .select('id,content_type,status,storage_bucket,storage_path')
+    .select('id,content_type,status,storage_bucket,storage_path,categories,evidence_hold,legal_hold')
     .eq('id', body.event_id)
     .maybeSingle();
   if (error || !event) return json({ code: 'EVIDENCE_NOT_FOUND' }, 404);
+  if (event.evidence_hold || event.legal_hold
+      || (event.categories || []).some((category: string) =>
+        ['known_illegal_media', 'suspected_child_sexual_content'].includes(category))) {
+    const { data: reviewer } = await admin.from('child_safety_reviewers')
+      .select('user_id').eq('user_id', authData.user.id).maybeSingle();
+    if (!reviewer) return json({ code: 'CHILD_SAFETY_REVIEWER_REQUIRED' }, 403);
+  }
   if (!event.storage_bucket || !event.storage_path) {
     return json({ code: 'EVIDENCE_NOT_AVAILABLE' }, 404);
   }
