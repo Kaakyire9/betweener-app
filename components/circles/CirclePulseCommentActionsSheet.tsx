@@ -150,10 +150,10 @@ export default function CirclePulseCommentActionsSheet({
                         ]}
                       >
                         {moderationState.pinStatus === 'failed'
-                          ? 'Pin sync failed'
+                          ? 'Pin failed'
                           : comment.pinnedAt
-                            ? 'Pin syncing'
-                            : 'Unpin syncing'}
+                            ? 'Saving...'
+                            : 'Saving...'}
                       </Text>
                     </View>
                   ) : null}
@@ -175,7 +175,7 @@ export default function CirclePulseCommentActionsSheet({
                           { color: moderationState.reportStatus === 'failed' ? palette.purpleStrong : palette.teal },
                         ]}
                       >
-                        {moderationState.reportStatus === 'failed' ? 'Report sync failed' : 'Report syncing'}
+                        {moderationState.reportStatus === 'failed' ? 'Report failed' : 'Reporting...'}
                       </Text>
                     </View>
                   ) : null}

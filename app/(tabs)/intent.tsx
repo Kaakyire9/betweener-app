@@ -2058,12 +2058,12 @@ export default function IntentScreen() {
                   ? 'Pass failed'
                   : 'Cancel failed'
             : queuedAction === 'create'
-              ? 'Queued'
+              ? 'Sending…'
               : queuedAction === 'accept'
-                ? 'Accept queued'
+                ? 'Accepting…'
                 : queuedAction === 'pass'
-                  ? 'Pass queued'
-                  : 'Cancel queued'
+                  ? 'Passing…'
+                  : 'Cancelling…'
           : pendingExpired
           ? 'Expired'
           : item.status === 'pending'
@@ -2376,14 +2376,14 @@ export default function IntentScreen() {
               {hasQueuedAction ? (
                 <View style={styles.matchedHintRow}>
                   <MaterialCommunityIcons
-                    name={queuedFailed ? 'cloud-alert-outline' : 'cloud-sync-outline'}
+                    name={queuedFailed ? 'alert-circle-outline' : 'clock-outline'}
                     size={14}
                     color={queuedFailed ? theme.danger : theme.tint}
                   />
                   <Text style={styles.matchedHintText}>
                     {queuedFailed
-                      ? 'This queued action could not sync. Retry from the offline sync badge when your connection is stable.'
-                      : 'Queued. Betweener will sync this when your connection returns.'}
+                      ? 'This action could not be completed. Please try again when your connection is stable.'
+                      : 'We will finish this automatically when your connection returns.'}
                   </Text>
                 </View>
               ) : null}

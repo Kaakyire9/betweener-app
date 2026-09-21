@@ -547,7 +547,7 @@ export default function MomentViewer({
       }
     }
     const offlineSnapshot = await getMomentOfflineMutationSnapshot();
-    [...offlineSnapshot.failed, ...offlineSnapshot.pending].forEach((mutation) => {
+    offlineSnapshot.pending.forEach((mutation) => {
       if (mutation.kind !== 'moment_reaction_sync' || mutation.payload.momentId !== momentId || mutation.payload.userId !== user?.id) {
         return;
       }
@@ -585,7 +585,7 @@ export default function MomentViewer({
       nextCount = count ?? 0;
     }
     const offlineSnapshot = await getMomentOfflineMutationSnapshot();
-    [...offlineSnapshot.failed, ...offlineSnapshot.pending].forEach((mutation) => {
+    offlineSnapshot.pending.forEach((mutation) => {
       if (mutation.kind === 'moment_comment_create' && mutation.payload.momentId === momentId) {
         nextCount += 1;
         return;

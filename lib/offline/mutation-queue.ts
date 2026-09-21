@@ -22,6 +22,7 @@ import {
 } from '@/lib/moments';
 import { isLikelyNetworkError } from '@/lib/network';
 import { normalizeProfilePhotoUri } from '@/lib/profile/media';
+import { replaceProfileInterestsAtomic } from '@/lib/profile/interests';
 import {
   guardAndPublishProfileMediaV1_2,
   type LocalProfileMediaV1_2,
@@ -36,20 +37,34 @@ import {
   moveMomentCommentsSnapshot,
   moveMomentReactorsSnapshot,
   removeMomentCommentSnapshot,
+  removeMomentFromFeedSnapshot,
+  removeOwnMomentSnapshot,
   removeStagedOfflineMomentUpload,
   replaceMomentCommentSnapshotId,
   replaceMomentInFeedSnapshot,
   replaceOwnMomentSnapshot,
   upsertMomentCommentSnapshot,
 } from '@/lib/offline/moments-store';
-import { readOfflineData, writeOfflineEnvelope } from '@/lib/offline/core';
+import {
+  readOfflineData,
+  writeOfflineEnvelopeStrict,
+} from '@/lib/offline/core';
+import { isMissingIdempotentRpc } from '@/lib/offline/idempotent-rpc';
+import { selectNextReadyQueueItem } from '@/lib/offline/queue-scheduler';
+import {
+  isDatingNotEligibleError,
+  isTerminalDatingEligibilityMutation,
+} from '@/lib/offline/dating-eligibility-terminal';
 import { supabase } from '@/lib/supabase';
+import { captureException, captureMessage } from '@/lib/telemetry/sentry';
 import { prepareProfileGuardInvocation } from '@/lib/profile-guard/write-payload';
 
 const OFFLINE_MUTATION_QUEUE_KEY = 'offline:mutation-queue:v1';
 const OFFLINE_MUTATION_FAILED_KEY = 'offline:mutation-failed:v1';
+const OFFLINE_MUTATION_LEGACY_OWNER_KEY = 'offline:mutation-legacy-owner:v1';
 const MAX_MUTATION_ATTEMPTS = 8;
 const AUTO_DRAIN_INTERVAL_MS = 30_000;
+const FAILED_MUTATION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const DOCUMENT_TEXT_PREFIX = '\u{1F4CE}';
 const RETRY_DELAYS_MS = [
   5_000,
@@ -145,6 +160,7 @@ type ProfileUpdatePayload = {
 type ProfileInterestsUpdatePayload = {
   profileId: string;
   interests: string[];
+  clientOperationId?: string | null;
 };
 
 type LocalProfileMediaUpload = LocalProfileMediaV1_2;
@@ -184,6 +200,7 @@ type ProfileGiftArchivePayload = {
 };
 
 type ProfileBoostCreatePayload = {
+  clientOperationId?: string | null;
   ownerProfileId: string;
   boostType: BoostType;
   audienceMode: BoostAudienceMode;
@@ -193,6 +210,7 @@ type ProfileBoostCreatePayload = {
 
 export type MomentTextCreatePayload = {
   tempId: string;
+  clientOperationId?: string | null;
   userId: string;
   textBody: string;
   caption?: string | null;
@@ -204,6 +222,8 @@ export type MomentTextCreatePayload = {
 
 export type MomentMediaCreatePayload = {
   tempId: string;
+  clientOperationId?: string | null;
+  serverMomentId?: string | null;
   userId: string;
   type: 'photo' | 'video';
   localUri: string;
@@ -231,6 +251,7 @@ export type MomentReactionSyncPayload = {
 
 export type MomentCommentCreatePayload = {
   tempId: string;
+  clientOperationId?: string | null;
   momentId: string;
   userId: string;
   body: string;
@@ -264,6 +285,7 @@ export type MomentCommentReactionSyncPayload = {
 
 export type CirclePulseCommentCreatePayload = {
   tempId: string;
+  clientOperationId?: string | null;
   itemId: string;
   actorProfileId: string;
   body: string;
@@ -309,7 +331,10 @@ export type CirclePulseCommentReportSyncPayload = {
   syncedAt: string;
 };
 
-export type OfflineMutation =
+export type OfflineMutation = {
+  /** Auth user that owns this durable operation. Optional only for v1 migration. */
+  ownerUserId?: string | null;
+} & (
   | {
       id: string;
       dedupeKey: string;
@@ -650,7 +675,8 @@ export type OfflineMutation =
       nextAttemptAt?: number | null;
       lastError?: string | null;
       payload: CirclePulseCommentReportSyncPayload;
-    };
+    }
+);
 
 export type FailedOfflineMutation = OfflineMutation & {
   failedAt: number;
@@ -667,6 +693,16 @@ type QueueMutationListener = (event: QueueMutationEvent) => void;
 const listeners = new Set<QueueListener>();
 const mutationListeners = new Set<QueueMutationListener>();
 let drainInFlight: Promise<void> | null = null;
+let queueStateTail: Promise<unknown> = Promise.resolve();
+
+const withQueueStateLock = <T>(task: () => Promise<T>): Promise<T> => {
+  const run = queueStateTail.then(task, task);
+  queueStateTail = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+};
 
 const emitQueueSize = (size: number) => {
   listeners.forEach((listener) => {
@@ -686,6 +722,9 @@ const emitMutationEvent = (event: QueueMutationEvent) => {
       // ignore listener errors
     }
   });
+  if (event.type === 'queued') {
+    Promise.resolve().then(() => void drainOfflineMutationQueue());
+  }
 };
 
 const buildOfflineMutationId = () =>
@@ -870,6 +909,7 @@ const shouldDropStaleQueuedMutation = (
   mutation: OfflineMutation | FailedOfflineMutation,
   allMutations: (OfflineMutation | FailedOfflineMutation)[],
 ) => {
+  if (isTerminalDatingEligibilityMutation(mutation)) return true;
   if (isExpiredMomentCreateMutation(mutation)) return true;
 
   if (isMomentInteractionMutation(mutation)) {
@@ -930,22 +970,33 @@ const shouldDropStaleQueuedMutation = (
 };
 
 async function pruneStaleQueuedMutationsFromQueues() {
-  const [pendingQueue, failedQueue] = await Promise.all([
-    readMutationQueue(),
-    readFailedMutationQueue(),
-  ]);
-  const allMutations = [...pendingQueue, ...failedQueue];
-  const nextPending = pendingQueue.filter((mutation) => !shouldDropStaleQueuedMutation(mutation, allMutations));
-  const nextFailed = failedQueue.filter((mutation) => !shouldDropStaleQueuedMutation(mutation, allMutations));
+  return withQueueStateLock(async () => {
+    const [pendingQueue, failedQueue] = await Promise.all([
+      readMutationQueue(),
+      readFailedMutationQueue(),
+    ]);
+    const retainedFailedQueue = failedQueue.filter(
+      (mutation) => mutation.failedAt >= Date.now() - FAILED_MUTATION_RETENTION_MS,
+    );
+    const allMutations = [...pendingQueue, ...retainedFailedQueue];
+    const nextPending = pendingQueue.filter(
+      (mutation) => !shouldDropStaleQueuedMutation(mutation, allMutations),
+    );
+    const nextFailed = retainedFailedQueue.filter(
+      (mutation) => !shouldDropStaleQueuedMutation(mutation, allMutations),
+    );
 
-  if (nextPending.length !== pendingQueue.length) {
-    await writeMutationQueue(nextPending);
-  }
-  if (nextFailed.length !== failedQueue.length) {
-    await writeFailedMutationQueue(nextFailed);
-  }
+    await Promise.all([
+      nextPending.length === pendingQueue.length
+        ? Promise.resolve()
+        : writeMutationQueue(nextPending),
+      nextFailed.length === failedQueue.length
+        ? Promise.resolve()
+        : writeFailedMutationQueue(nextFailed),
+    ]);
 
-  return { pending: nextPending, failed: nextFailed };
+    return { pending: nextPending, failed: nextFailed };
+  });
 }
 
 const getRetryDelayMs = (attempts: number) => {
@@ -986,27 +1037,154 @@ const isBenignIntentQueueError = (error: unknown) => {
   );
 };
 
-async function readMutationQueue(): Promise<OfflineMutation[]> {
-  const data = await readOfflineData<OfflineMutation[]>(OFFLINE_MUTATION_QUEUE_KEY);
-  return Array.isArray(data)
-    ? (data.filter((item) => (item as { kind?: string } | null)?.kind !== 'profile_note_create') as OfflineMutation[])
+const removeRetiredMutations = <T extends OfflineMutation | FailedOfflineMutation>(data: unknown): T[] =>
+  Array.isArray(data)
+    ? (data.filter((item) => (item as { kind?: string } | null)?.kind !== 'profile_note_create') as T[])
     : [];
+
+async function readAllMutationQueue(): Promise<OfflineMutation[]> {
+  return removeRetiredMutations<OfflineMutation>(
+    await readOfflineData<OfflineMutation[]>(OFFLINE_MUTATION_QUEUE_KEY),
+  );
+}
+
+async function readAllFailedMutationQueue(): Promise<FailedOfflineMutation[]> {
+  return removeRetiredMutations<FailedOfflineMutation>(
+    await readOfflineData<FailedOfflineMutation[]>(OFFLINE_MUTATION_FAILED_KEY),
+  );
+}
+
+const getActiveQueueOwnerUserId = async () => {
+  const { data } = await supabase.auth.getSession();
+  return data.session?.user.id ?? null;
+};
+
+async function getLegacyQueueOwnerUserId(
+  activeOwnerUserId: string,
+  records: (OfflineMutation | FailedOfflineMutation)[],
+) {
+  if (!records.some((item) => !item.ownerUserId)) return null;
+  const stored = await readOfflineData<string>(OFFLINE_MUTATION_LEGACY_OWNER_KEY);
+  if (stored) return stored;
+  await writeOfflineEnvelopeStrict(
+    OFFLINE_MUTATION_LEGACY_OWNER_KEY,
+    activeOwnerUserId,
+    { kind: 'mutation-legacy-owner' },
+  );
+  return activeOwnerUserId;
+}
+
+async function scopeQueueToOwner<T extends OfflineMutation | FailedOfflineMutation>(
+  records: T[],
+  ownerUserId: string,
+): Promise<T[]> {
+  const legacyOwnerUserId = await getLegacyQueueOwnerUserId(ownerUserId, records);
+  return records.flatMap((item) => {
+    if (item.ownerUserId === ownerUserId) return [item];
+    if (!item.ownerUserId && legacyOwnerUserId === ownerUserId) {
+      return [{ ...item, ownerUserId } as T];
+    }
+    return [];
+  });
+}
+
+async function readMutationQueue(): Promise<OfflineMutation[]> {
+  const ownerUserId = await getActiveQueueOwnerUserId();
+  if (!ownerUserId) return [];
+  return scopeQueueToOwner(await readAllMutationQueue(), ownerUserId);
 }
 
 async function readFailedMutationQueue(): Promise<FailedOfflineMutation[]> {
-  const data = await readOfflineData<FailedOfflineMutation[]>(OFFLINE_MUTATION_FAILED_KEY);
-  return Array.isArray(data)
-    ? (data.filter((item) => (item as { kind?: string } | null)?.kind !== 'profile_note_create') as FailedOfflineMutation[])
-    : [];
+  const ownerUserId = await getActiveQueueOwnerUserId();
+  if (!ownerUserId) return [];
+  return scopeQueueToOwner(await readAllFailedMutationQueue(), ownerUserId);
+}
+
+async function mergeQueueForOwner<T extends OfflineMutation | FailedOfflineMutation>(
+  allRecords: T[],
+  ownerUserId: string,
+  ownerRecords: T[],
+) {
+  const legacyOwnerUserId = await getLegacyQueueOwnerUserId(ownerUserId, allRecords);
+  const otherOwners = allRecords.filter((item) => {
+    if (item.ownerUserId) return item.ownerUserId !== ownerUserId;
+    return legacyOwnerUserId !== ownerUserId;
+  });
+  return [
+    ...otherOwners,
+    ...ownerRecords.map((item) => ({ ...item, ownerUserId }) as T),
+  ];
 }
 
 async function writeMutationQueue(queue: OfflineMutation[]) {
-  await writeOfflineEnvelope(OFFLINE_MUTATION_QUEUE_KEY, queue, { kind: 'mutation-queue' });
+  const ownerUserId = await getActiveQueueOwnerUserId();
+  if (!ownerUserId) throw new Error('offline_queue_owner_unavailable');
+  const merged = await mergeQueueForOwner(await readAllMutationQueue(), ownerUserId, queue);
+  await writeOfflineEnvelopeStrict(OFFLINE_MUTATION_QUEUE_KEY, merged, { kind: 'mutation-queue' });
   emitQueueSize(queue.length);
 }
 
 async function writeFailedMutationQueue(queue: FailedOfflineMutation[]) {
-  await writeOfflineEnvelope(OFFLINE_MUTATION_FAILED_KEY, queue.slice(-100), { kind: 'mutation-failed' });
+  const ownerUserId = await getActiveQueueOwnerUserId();
+  if (!ownerUserId) throw new Error('offline_queue_owner_unavailable');
+  const cappedOwnerQueue = queue.slice(-100);
+  const merged = await mergeQueueForOwner(
+    await readAllFailedMutationQueue(),
+    ownerUserId,
+    cappedOwnerQueue,
+  );
+  await writeOfflineEnvelopeStrict(OFFLINE_MUTATION_FAILED_KEY, merged, { kind: 'mutation-failed' });
+}
+
+export async function clearOfflineMutationQueuesForOwner(ownerUserId: string) {
+  if (!ownerUserId) return;
+  await withQueueStateLock(async () => {
+    const [pending, failed, legacyOwnerUserId] = await Promise.all([
+      readAllMutationQueue(),
+      readAllFailedMutationQueue(),
+      readOfflineData<string>(OFFLINE_MUTATION_LEGACY_OWNER_KEY),
+    ]);
+    const keepOtherOwner = (item: OfflineMutation | FailedOfflineMutation) =>
+      item.ownerUserId
+        ? item.ownerUserId !== ownerUserId
+        : legacyOwnerUserId !== ownerUserId;
+    await Promise.all([
+      writeOfflineEnvelopeStrict(
+        OFFLINE_MUTATION_QUEUE_KEY,
+        pending.filter(keepOtherOwner),
+        { kind: 'mutation-queue' },
+      ),
+      writeOfflineEnvelopeStrict(
+        OFFLINE_MUTATION_FAILED_KEY,
+        failed.filter(keepOtherOwner),
+        { kind: 'mutation-failed' },
+      ),
+    ]);
+    emitQueueSize(0);
+  });
+}
+
+async function replaceQueuePair(
+  updater: (
+    pending: OfflineMutation[],
+    failed: FailedOfflineMutation[],
+  ) => {
+    pending: OfflineMutation[];
+    failed: FailedOfflineMutation[];
+  },
+) {
+  return withQueueStateLock(async () => {
+    const [pending, failed] = await Promise.all([
+      readMutationQueue(),
+      readFailedMutationQueue(),
+    ]);
+    const next = updater(pending, failed);
+    await Promise.all([
+      writeMutationQueue(next.pending),
+      writeFailedMutationQueue(next.failed),
+    ]);
+    return next;
+  });
 }
 
 type LegacyChatSendQueueMutation = Extract<
@@ -1228,10 +1406,10 @@ export async function migrateLegacyChatSendMutationsToSQLiteOutbox() {
     migrated += 1;
   }
 
-  await Promise.all([
-    writeMutationQueue(pendingQueue.filter((mutation) => !isLegacyChatSendMutation(mutation))),
-    writeFailedMutationQueue(failedQueue.filter((mutation) => !isLegacyChatSendMutation(mutation))),
-  ]);
+  await replaceQueuePair((pending, failed) => ({
+    pending: pending.filter((mutation) => !isLegacyChatSendMutation(mutation)),
+    failed: failed.filter((mutation) => !isLegacyChatSendMutation(mutation)),
+  }));
 
   return {
     migrated,
@@ -1241,11 +1419,6 @@ export async function migrateLegacyChatSendMutationsToSQLiteOutbox() {
 
 export async function clearMomentMutationArtifacts(momentId: string) {
   if (!momentId) return;
-
-  const [pendingQueue, failedQueue] = await Promise.all([
-    readMutationQueue(),
-    readFailedMutationQueue(),
-  ]);
 
   const shouldKeep = (item: OfflineMutation | FailedOfflineMutation) => {
     if (
@@ -1264,22 +1437,14 @@ export async function clearMomentMutationArtifacts(momentId: string) {
     return true;
   };
 
-  const nextPending = pendingQueue.filter(shouldKeep);
-  const nextFailed = failedQueue.filter(shouldKeep);
-
-  await Promise.all([
-    nextPending.length === pendingQueue.length ? Promise.resolve() : writeMutationQueue(nextPending),
-    nextFailed.length === failedQueue.length ? Promise.resolve() : writeFailedMutationQueue(nextFailed),
-  ]);
+  await replaceQueuePair((pending, failed) => ({
+    pending: pending.filter(shouldKeep),
+    failed: failed.filter(shouldKeep),
+  }));
 }
 
 export async function clearMomentCommentMutationArtifacts(commentId: string) {
   if (!commentId) return;
-
-  const [pendingQueue, failedQueue] = await Promise.all([
-    readMutationQueue(),
-    readFailedMutationQueue(),
-  ]);
 
   const shouldKeep = (item: OfflineMutation | FailedOfflineMutation) => {
     if (
@@ -1300,22 +1465,14 @@ export async function clearMomentCommentMutationArtifacts(commentId: string) {
     return true;
   };
 
-  const nextPending = pendingQueue.filter(shouldKeep);
-  const nextFailed = failedQueue.filter(shouldKeep);
-
-  await Promise.all([
-    nextPending.length === pendingQueue.length ? Promise.resolve() : writeMutationQueue(nextPending),
-    nextFailed.length === failedQueue.length ? Promise.resolve() : writeFailedMutationQueue(nextFailed),
-  ]);
+  await replaceQueuePair((pending, failed) => ({
+    pending: pending.filter(shouldKeep),
+    failed: failed.filter(shouldKeep),
+  }));
 }
 
 export async function clearCirclePulseCommentMutationArtifacts(commentId: string) {
   if (!commentId) return;
-
-  const [pendingQueue, failedQueue] = await Promise.all([
-    readMutationQueue(),
-    readFailedMutationQueue(),
-  ]);
 
   const shouldKeep = (item: OfflineMutation | FailedOfflineMutation) => {
     if (
@@ -1337,13 +1494,10 @@ export async function clearCirclePulseCommentMutationArtifacts(commentId: string
     return true;
   };
 
-  const nextPending = pendingQueue.filter(shouldKeep);
-  const nextFailed = failedQueue.filter(shouldKeep);
-
-  await Promise.all([
-    nextPending.length === pendingQueue.length ? Promise.resolve() : writeMutationQueue(nextPending),
-    nextFailed.length === failedQueue.length ? Promise.resolve() : writeFailedMutationQueue(nextFailed),
-  ]);
+  await replaceQueuePair((pending, failed) => ({
+    pending: pending.filter(shouldKeep),
+    failed: failed.filter(shouldKeep),
+  }));
 }
 
 const remapMomentReferenceOnMutation = (
@@ -1407,23 +1561,14 @@ const remapMomentReferenceOnMutation = (
 
 async function remapMomentReferenceAcrossQueues(tempMomentId: string, realMomentId: string) {
   if (!tempMomentId || !realMomentId || tempMomentId === realMomentId) return;
-
-  const [pendingQueue, failedQueue] = await Promise.all([
-    readMutationQueue(),
-    readFailedMutationQueue(),
-  ]);
-
-  const nextPending = pendingQueue.map((mutation) =>
-    remapMomentReferenceOnMutation(mutation, tempMomentId, realMomentId) as OfflineMutation,
-  );
-  const nextFailed = failedQueue.map((mutation) =>
-    remapMomentReferenceOnMutation(mutation, tempMomentId, realMomentId) as FailedOfflineMutation,
-  );
-
-  await Promise.all([
-    writeMutationQueue(nextPending),
-    writeFailedMutationQueue(nextFailed),
-  ]);
+  await replaceQueuePair((pending, failed) => ({
+    pending: pending.map((mutation) =>
+      remapMomentReferenceOnMutation(mutation, tempMomentId, realMomentId) as OfflineMutation,
+    ),
+    failed: failed.map((mutation) =>
+      remapMomentReferenceOnMutation(mutation, tempMomentId, realMomentId) as FailedOfflineMutation,
+    ),
+  }));
 }
 
 const remapCommentReferenceOnMutation = (
@@ -1570,66 +1715,108 @@ const remapCirclePulseCommentReferenceOnMutation = (
 
 async function remapCommentReferenceAcrossQueues(tempCommentId: string, realCommentId: string) {
   if (!tempCommentId || !realCommentId || tempCommentId === realCommentId) return;
-
-  const [pendingQueue, failedQueue] = await Promise.all([
-    readMutationQueue(),
-    readFailedMutationQueue(),
-  ]);
-
-  const nextPending = pendingQueue.map((mutation) =>
-    remapCommentReferenceOnMutation(mutation, tempCommentId, realCommentId) as OfflineMutation,
-  );
-  const nextFailed = failedQueue.map((mutation) =>
-    remapCommentReferenceOnMutation(mutation, tempCommentId, realCommentId) as FailedOfflineMutation,
-  );
-
-  await Promise.all([
-    writeMutationQueue(nextPending),
-    writeFailedMutationQueue(nextFailed),
-  ]);
+  await replaceQueuePair((pending, failed) => ({
+    pending: pending.map((mutation) =>
+      remapCommentReferenceOnMutation(mutation, tempCommentId, realCommentId) as OfflineMutation,
+    ),
+    failed: failed.map((mutation) =>
+      remapCommentReferenceOnMutation(mutation, tempCommentId, realCommentId) as FailedOfflineMutation,
+    ),
+  }));
 }
 
 async function remapCirclePulseCommentReferenceAcrossQueues(tempCommentId: string, realCommentId: string) {
   if (!tempCommentId || !realCommentId || tempCommentId === realCommentId) return;
-
-  const [pendingQueue, failedQueue] = await Promise.all([
-    readMutationQueue(),
-    readFailedMutationQueue(),
-  ]);
-
-  const nextPending = pendingQueue.map((mutation) =>
-    remapCirclePulseCommentReferenceOnMutation(mutation, tempCommentId, realCommentId) as OfflineMutation,
-  );
-  const nextFailed = failedQueue.map((mutation) =>
-    remapCirclePulseCommentReferenceOnMutation(mutation, tempCommentId, realCommentId) as FailedOfflineMutation,
-  );
-
-  await Promise.all([
-    writeMutationQueue(nextPending),
-    writeFailedMutationQueue(nextFailed),
-  ]);
+  await replaceQueuePair((pending, failed) => ({
+    pending: pending.map((mutation) =>
+      remapCirclePulseCommentReferenceOnMutation(
+        mutation,
+        tempCommentId,
+        realCommentId,
+      ) as OfflineMutation,
+    ),
+    failed: failed.map((mutation) =>
+      remapCirclePulseCommentReferenceOnMutation(
+        mutation,
+        tempCommentId,
+        realCommentId,
+      ) as FailedOfflineMutation,
+    ),
+  }));
 }
 
 async function replaceQueue(updater: (current: OfflineMutation[]) => OfflineMutation[]) {
-  const current = await readMutationQueue();
-  const next = updater(current);
-  await writeMutationQueue(next);
-  return next;
+  return withQueueStateLock(async () => {
+    const current = await readMutationQueue();
+    const next = updater(current);
+    await writeMutationQueue(next);
+    return next;
+  });
+}
+
+async function reconcileTerminalMutationFailure(mutation: FailedOfflineMutation) {
+  try {
+    if (mutation.kind === 'moment_text_create' || mutation.kind === 'moment_media_create') {
+      await Promise.all([
+        removeOwnMomentSnapshot(mutation.payload.userId, mutation.payload.tempId),
+        removeMomentFromFeedSnapshot(mutation.payload.userId, mutation.payload.tempId),
+        mutation.kind === 'moment_media_create'
+          ? removeStagedOfflineMomentUpload(mutation.payload.localUri)
+          : Promise.resolve(),
+      ]);
+      return;
+    }
+
+    if (mutation.kind === 'moment_comment_create') {
+      await removeMomentCommentSnapshot(
+        mutation.payload.userId,
+        mutation.payload.momentId,
+        mutation.payload.tempId,
+      );
+      return;
+    }
+
+    if (mutation.kind === 'circle_pulse_comment_create') {
+      await removeCirclePulseCommentSnapshot(
+        mutation.payload.itemId,
+        mutation.payload.actorProfileId,
+        mutation.payload.tempId,
+      );
+    }
+  } catch (error) {
+    captureException(error, {
+      area: 'offline_mutation_terminal_reconciliation',
+      mutationKind: mutation.kind,
+    });
+  }
 }
 
 async function moveMutationToFailed(mutation: OfflineMutation, failureReason: string) {
-  const failed = await readFailedMutationQueue();
-  const failedMutation = {
+  const failedMutation: FailedOfflineMutation = {
     ...mutation,
     failedAt: Date.now(),
     failureReason,
   };
-  await writeFailedMutationQueue([
-    ...failed,
-    failedMutation,
-  ]);
+  const nextPending = await withQueueStateLock(async () => {
+    const [pending, failed] = await Promise.all([
+      readMutationQueue(),
+      readFailedMutationQueue(),
+    ]);
+    const next = pending.filter((item) => item.id !== mutation.id);
+    await Promise.all([
+      writeMutationQueue(next),
+      writeFailedMutationQueue([...failed, failedMutation]),
+    ]);
+    return next;
+  });
+  await reconcileTerminalMutationFailure(failedMutation);
+  captureMessage('offline_mutation_terminal_failure', {
+    mutationKind: mutation.kind,
+    attempts: mutation.attempts,
+    queueAgeMs: Math.max(0, Date.now() - mutation.createdAt),
+  });
   emitMutationEvent({ type: 'failed', mutation: failedMutation });
-  return replaceQueue((existing) => existing.filter((item) => item.id !== mutation.id));
+  return nextPending;
 }
 
 async function canDrainNow() {
@@ -1654,7 +1841,10 @@ async function processSwipeSync(payload: SwipeSyncPayload) {
     ],
     { onConflict: 'swiper_id,target_id' },
   );
-  if (swipeError) throw swipeError;
+  if (swipeError) {
+    if (isDatingNotEligibleError(swipeError)) return;
+    throw swipeError;
+  }
 
   if (!payload.mirrorIntent) return;
 
@@ -1727,7 +1917,7 @@ async function processIntentRequestCreate(payload: IntentRequestCreatePayload) {
     p_suggested_place: payload.suggestedPlace ?? null,
     p_metadata: payload.metadata ?? {},
   });
-  if (error && !isBenignIntentQueueError(error)) throw error;
+  if (error && !isBenignIntentQueueError(error) && !isDatingNotEligibleError(error)) throw error;
 }
 
 async function processIntentRequestDecision(payload: IntentRequestDecisionPayload) {
@@ -1771,32 +1961,15 @@ async function processProfileUpdate(payload: ProfileUpdatePayload) {
   }
 }
 
-async function processProfileInterestsUpdate(payload: ProfileInterestsUpdatePayload) {
-  const { error: deleteError } = await supabase
-    .from('profile_interests')
-    .delete()
-    .eq('profile_id', payload.profileId);
-  if (deleteError) throw deleteError;
-
-  if (!payload.interests.length) return;
-
-  const { data: interestData, error: interestError } = await supabase
-    .from('interests')
-    .select('id, name')
-    .in('name', payload.interests);
-  if (interestError) throw interestError;
-
-  const profileInterests = (interestData ?? []).map((interest: any) => ({
-    profile_id: payload.profileId,
-    interest_id: interest.id,
-  }));
-
-  if (!profileInterests.length) return;
-
-  const { error: insertError } = await supabase
-    .from('profile_interests')
-    .insert(profileInterests);
-  if (insertError) throw insertError;
+async function processProfileInterestsUpdate(
+  payload: ProfileInterestsUpdatePayload,
+  fallbackOperationId: string,
+) {
+  await replaceProfileInterestsAtomic({
+    profileId: payload.profileId,
+    interests: payload.interests,
+    clientOperationId: payload.clientOperationId ?? fallbackOperationId,
+  });
 }
 
 async function uploadQueuedStorageObject(params: {
@@ -1905,12 +2078,19 @@ async function processNotificationPrefsUpdate(payload: NotificationPrefsUpdatePa
   if (error) throw error;
 }
 
-async function processProfileGiftSend(payload: ProfileGiftSendPayload) {
-  const { error } = await supabase.rpc('rpc_send_profile_gift' as any, {
+async function processProfileGiftSend(payload: ProfileGiftSendPayload, operationId: string) {
+  const rpcPayload = {
     p_recipient_profile_id: payload.recipientProfileId,
     p_gift_type: payload.giftType,
     p_include_sandbox_preview: Boolean(payload.includeSandboxPreview),
+  };
+  let { error } = await supabase.rpc('rpc_send_profile_gift_v2' as any, {
+    p_client_operation_id: payload.clientNonce || operationId,
+    ...rpcPayload,
   });
+  if (error && isMissingIdempotentRpc(error)) {
+    ({ error } = await supabase.rpc('rpc_send_profile_gift' as any, rpcPayload));
+  }
   if (error) throw error;
 }
 
@@ -1928,12 +2108,13 @@ async function processProfileGiftArchive(payload: ProfileGiftArchivePayload) {
   if (error) throw error;
 }
 
-async function processProfileBoostCreate(payload: ProfileBoostCreatePayload) {
+async function processProfileBoostCreate(payload: ProfileBoostCreatePayload, operationId: string) {
   await createProfileBoostV2({
     boostType: payload.boostType,
     audienceMode: payload.audienceMode,
     focusMode: payload.focusMode,
     metadata: payload.metadata ?? {},
+    clientOperationId: payload.clientOperationId ?? operationId,
   });
 }
 
@@ -1945,6 +2126,7 @@ async function processMomentTextCreate(payload: MomentTextCreatePayload) {
     caption: payload.caption ?? null,
     visibility: payload.visibility ?? 'matches',
     metadata: (payload.metadata as MomentMetadata | null | undefined) ?? {},
+    clientOperationId: payload.clientOperationId ?? null,
   });
 
   await Promise.all([
@@ -1984,6 +2166,8 @@ async function processMomentMediaCreate(payload: MomentMediaCreatePayload) {
     caption: payload.caption ?? null,
     visibility: payload.visibility ?? 'matches',
     metadata: (payload.metadata as MomentMetadata | null | undefined) ?? {},
+    clientOperationId: payload.clientOperationId ?? null,
+    momentId: payload.serverMomentId ?? null,
   });
 
   await Promise.all([
@@ -2038,12 +2222,22 @@ async function processMomentReactionSync(payload: MomentReactionSyncPayload) {
   if (data === false) return;
 }
 
-async function processMomentCommentCreate(payload: MomentCommentCreatePayload) {
-  const { data, error } = await supabase.rpc('rpc_create_moment_comment', {
+async function processMomentCommentCreate(
+  payload: MomentCommentCreatePayload,
+  fallbackOperationId: string,
+) {
+  const rpcPayload = {
     p_moment_id: payload.momentId,
     p_body: payload.body,
     p_parent_comment_id: payload.parentCommentId ?? null,
+  };
+  let { data, error } = await supabase.rpc('rpc_create_moment_comment_v2' as any, {
+    p_client_operation_id: payload.clientOperationId ?? fallbackOperationId,
+    ...rpcPayload,
   });
+  if (error && isMissingIdempotentRpc(error)) {
+    ({ data, error } = await supabase.rpc('rpc_create_moment_comment', rpcPayload));
+  }
   if (error) throw error;
   // A null return means the Moment is no longer actionable for this user.
   // Treat that as a benign stale-target outcome during replay.
@@ -2090,12 +2284,16 @@ async function processMomentCommentReactionSync(payload: MomentCommentReactionSy
   }
 }
 
-async function processCirclePulseCommentCreate(payload: CirclePulseCommentCreatePayload) {
+async function processCirclePulseCommentCreate(
+  payload: CirclePulseCommentCreatePayload,
+  fallbackOperationId: string,
+) {
   const comment = await createCirclePulseComment(
     payload.itemId,
     payload.actorProfileId,
     payload.body,
     payload.parentCommentId ?? null,
+    payload.clientOperationId ?? fallbackOperationId,
   );
   await Promise.all([
     replaceCirclePulseCommentSnapshotId(payload.itemId, payload.actorProfileId, payload.tempId, comment),
@@ -2221,7 +2419,7 @@ async function processMutation(mutation: OfflineMutation) {
       await processProfileUpdate(mutation.payload);
       return;
     case 'profile_interests_update':
-      await processProfileInterestsUpdate(mutation.payload);
+      await processProfileInterestsUpdate(mutation.payload, mutation.id);
       return;
     case 'profile_media_sync':
       await processProfileMediaSync(mutation.payload);
@@ -2230,7 +2428,7 @@ async function processMutation(mutation: OfflineMutation) {
       await processNotificationPrefsUpdate(mutation.payload);
       return;
     case 'profile_gift_send':
-      await processProfileGiftSend(mutation.payload);
+      await processProfileGiftSend(mutation.payload, mutation.id);
       return;
     case 'profile_gift_reveal':
       await processProfileGiftReveal(mutation.payload);
@@ -2239,7 +2437,7 @@ async function processMutation(mutation: OfflineMutation) {
       await processProfileGiftArchive(mutation.payload);
       return;
     case 'profile_boost_create':
-      await processProfileBoostCreate(mutation.payload);
+      await processProfileBoostCreate(mutation.payload, mutation.id);
       return;
     case 'moment_text_create':
       await processMomentTextCreate(mutation.payload);
@@ -2254,7 +2452,7 @@ async function processMutation(mutation: OfflineMutation) {
       await processMomentReactionSync(mutation.payload);
       return;
     case 'moment_comment_create':
-      await processMomentCommentCreate(mutation.payload);
+      await processMomentCommentCreate(mutation.payload, mutation.id);
       return;
     case 'moment_comment_update':
       await processMomentCommentUpdate(mutation.payload);
@@ -2266,7 +2464,7 @@ async function processMutation(mutation: OfflineMutation) {
       await processMomentCommentReactionSync(mutation.payload);
       return;
     case 'circle_pulse_comment_create':
-      await processCirclePulseCommentCreate(mutation.payload);
+      await processCirclePulseCommentCreate(mutation.payload, mutation.id);
       return;
     case 'circle_pulse_comment_update':
       await processCirclePulseCommentUpdate(mutation.payload);
@@ -2746,30 +2944,20 @@ export async function replacePendingMomentCommentCreateBody(commentId: string, b
         } as T)
       : mutation;
 
-  const [pendingQueue, failedQueue] = await Promise.all([
-    readMutationQueue(),
-    readFailedMutationQueue(),
-  ]);
-
-  await Promise.all([
-    writeMutationQueue(pendingQueue.map((mutation) => apply(mutation as OfflineMutation))),
-    writeFailedMutationQueue(failedQueue.map((mutation) => apply(mutation as FailedOfflineMutation))),
-  ]);
+  await replaceQueuePair((pending, failed) => ({
+    pending: pending.map((mutation) => apply(mutation)),
+    failed: failed.map((mutation) => apply(mutation)),
+  }));
 }
 
 export async function removePendingMomentCommentCreateMutation(commentId: string) {
-  const [pendingQueue, failedQueue] = await Promise.all([
-    readMutationQueue(),
-    readFailedMutationQueue(),
-  ]);
-
   const shouldKeep = (mutation: OfflineMutation | FailedOfflineMutation) =>
     !(mutation.kind === 'moment_comment_create' && mutation.payload.tempId === commentId);
 
-  await Promise.all([
-    writeMutationQueue(pendingQueue.filter(shouldKeep)),
-    writeFailedMutationQueue(failedQueue.filter(shouldKeep)),
-  ]);
+  await replaceQueuePair((pending, failed) => ({
+    pending: pending.filter(shouldKeep),
+    failed: failed.filter(shouldKeep),
+  }));
 }
 
 export async function enqueueCirclePulseCommentCreateMutation(payload: CirclePulseCommentCreatePayload) {
@@ -2893,30 +3081,20 @@ export async function replacePendingCirclePulseCommentCreateBody(commentId: stri
         } as T)
       : mutation;
 
-  const [pendingQueue, failedQueue] = await Promise.all([
-    readMutationQueue(),
-    readFailedMutationQueue(),
-  ]);
-
-  await Promise.all([
-    writeMutationQueue(pendingQueue.map((mutation) => apply(mutation as OfflineMutation))),
-    writeFailedMutationQueue(failedQueue.map((mutation) => apply(mutation as FailedOfflineMutation))),
-  ]);
+  await replaceQueuePair((pending, failed) => ({
+    pending: pending.map((mutation) => apply(mutation)),
+    failed: failed.map((mutation) => apply(mutation)),
+  }));
 }
 
 export async function removePendingCirclePulseCommentCreateMutation(commentId: string) {
-  const [pendingQueue, failedQueue] = await Promise.all([
-    readMutationQueue(),
-    readFailedMutationQueue(),
-  ]);
-
   const shouldKeep = (mutation: OfflineMutation | FailedOfflineMutation) =>
     !(mutation.kind === 'circle_pulse_comment_create' && mutation.payload.tempId === commentId);
 
-  await Promise.all([
-    writeMutationQueue(pendingQueue.filter(shouldKeep)),
-    writeFailedMutationQueue(failedQueue.filter(shouldKeep)),
-  ]);
+  await replaceQueuePair((pending, failed) => ({
+    pending: pending.filter(shouldKeep),
+    failed: failed.filter(shouldKeep),
+  }));
 }
 
 export async function hasPendingSwipeSyncMutation(
@@ -3049,50 +3227,144 @@ export async function getBoostOfflineMutationSnapshot(profileId?: string) {
 }
 
 export async function retryFailedOfflineMutation(mutationId: string) {
-  const failedQueue = await readFailedMutationQueue();
-  const target = failedQueue.find((item) => item.id === mutationId);
-  if (!target) return false;
+  const retriedMutation = await withQueueStateLock(async () => {
+    const [pendingQueue, failedQueue] = await Promise.all([
+      readMutationQueue(),
+      readFailedMutationQueue(),
+    ]);
+    const target = failedQueue.find((item) => item.id === mutationId);
+    if (!target) return null;
 
-  const { failedAt: _failedAt, failureReason: _failureReason, ...baseMutation } = target;
-  const retriedMutation: OfflineMutation = {
-    ...baseMutation,
-    attempts: 0,
-    lastAttemptAt: null,
-    nextAttemptAt: null,
-    lastError: null,
-  };
-
-  await writeFailedMutationQueue(failedQueue.filter((item) => item.id !== mutationId));
-  await replaceQueue((current) => [...current, retriedMutation]);
-  emitMutationEvent({ type: 'queued', mutation: retriedMutation });
-  void drainOfflineMutationQueue();
-  return true;
-}
-
-export async function retryFailedOfflineMutations(filter?: (mutation: FailedOfflineMutation) => boolean) {
-  const failedQueue = await readFailedMutationQueue();
-  const selected = failedQueue.filter((mutation) => (filter ? filter(mutation) : true));
-  if (selected.length === 0) return 0;
-
-  const retriedMutations: OfflineMutation[] = selected.map((target) => {
     const { failedAt: _failedAt, failureReason: _failureReason, ...baseMutation } = target;
-    return {
+    const retried: OfflineMutation = {
       ...baseMutation,
       attempts: 0,
       lastAttemptAt: null,
       nextAttemptAt: null,
       lastError: null,
     };
+    await Promise.all([
+      writeMutationQueue([...pendingQueue, retried]),
+      writeFailedMutationQueue(failedQueue.filter((item) => item.id !== mutationId)),
+    ]);
+    return retried;
   });
+  if (!retriedMutation) return false;
+  emitMutationEvent({ type: 'queued', mutation: retriedMutation });
+  void drainOfflineMutationQueue();
+  return true;
+}
 
-  await writeFailedMutationQueue(
-    failedQueue.filter((mutation) => !selected.some((item) => item.id === mutation.id)),
-  );
-  await replaceQueue((current) => [...current, ...retriedMutations]);
+export async function retryFailedOfflineMutations(filter?: (mutation: FailedOfflineMutation) => boolean) {
+  const retriedMutations = await withQueueStateLock(async () => {
+    const [pendingQueue, failedQueue] = await Promise.all([
+      readMutationQueue(),
+      readFailedMutationQueue(),
+    ]);
+    const selected = failedQueue.filter((mutation) => (filter ? filter(mutation) : true));
+    if (selected.length === 0) return [];
+
+    const retried: OfflineMutation[] = selected.map((target) => {
+      const { failedAt: _failedAt, failureReason: _failureReason, ...baseMutation } = target;
+      return {
+        ...baseMutation,
+        attempts: 0,
+        lastAttemptAt: null,
+        nextAttemptAt: null,
+        lastError: null,
+      };
+    });
+    const selectedIds = new Set(selected.map((mutation) => mutation.id));
+    await Promise.all([
+      writeMutationQueue([...pendingQueue, ...retried]),
+      writeFailedMutationQueue(failedQueue.filter((mutation) => !selectedIds.has(mutation.id))),
+    ]);
+    return retried;
+  });
+  if (retriedMutations.length === 0) return 0;
   retriedMutations.forEach((mutation) => emitMutationEvent({ type: 'queued', mutation }));
   void drainOfflineMutationQueue();
   return retriedMutations.length;
 }
+
+const hasEarlierMutationDependency = (
+  mutation: OfflineMutation,
+  earlierMutations: OfflineMutation[],
+) => {
+  const hasMomentCreate = (momentId: string) =>
+    earlierMutations.some(
+      (item) => isMomentCreateMutation(item) && item.payload.tempId === momentId,
+    );
+  const hasMomentCommentCreate = (commentId: string) =>
+    earlierMutations.some(
+      (item) =>
+        item.kind === 'moment_comment_create' && item.payload.tempId === commentId,
+    );
+  const hasCircleCommentCreate = (commentId: string) =>
+    earlierMutations.some(
+      (item) =>
+        item.kind === 'circle_pulse_comment_create' && item.payload.tempId === commentId,
+    );
+
+  if (
+    (isMomentInteractionMutation(mutation) || isMomentDeleteMutation(mutation)) &&
+    isOfflineMomentId(mutation.payload.momentId) &&
+    hasMomentCreate(mutation.payload.momentId)
+  ) {
+    return true;
+  }
+
+  if (mutation.kind === 'moment_comment_create' && mutation.payload.parentCommentId) {
+    if (
+      isOfflineMomentCommentId(mutation.payload.parentCommentId) &&
+      hasMomentCommentCreate(mutation.payload.parentCommentId)
+    ) {
+      return true;
+    }
+  }
+
+  if (
+    (mutation.kind === 'moment_comment_update' ||
+      mutation.kind === 'moment_comment_delete' ||
+      mutation.kind === 'moment_comment_reaction_sync') &&
+    isOfflineMomentCommentId(mutation.payload.commentId) &&
+    hasMomentCommentCreate(mutation.payload.commentId)
+  ) {
+    return true;
+  }
+
+  if (mutation.kind === 'circle_pulse_comment_create' && mutation.payload.parentCommentId) {
+    if (
+      isOfflineCirclePulseCommentId(mutation.payload.parentCommentId) &&
+      hasCircleCommentCreate(mutation.payload.parentCommentId)
+    ) {
+      return true;
+    }
+  }
+
+  if (
+    (mutation.kind === 'circle_pulse_comment_update' ||
+      mutation.kind === 'circle_pulse_comment_delete' ||
+      mutation.kind === 'circle_pulse_comment_reaction_sync' ||
+      mutation.kind === 'circle_pulse_comment_pin_sync' ||
+      mutation.kind === 'circle_pulse_comment_report_sync') &&
+    isOfflineCirclePulseCommentId(mutation.payload.commentId) &&
+    hasCircleCommentCreate(mutation.payload.commentId)
+  ) {
+    return true;
+  }
+
+  return false;
+};
+
+export const selectNextReadyOfflineMutation = (
+  queue: OfflineMutation[],
+  now = Date.now(),
+) =>
+  selectNextReadyQueueItem(queue, now, {
+    isExpired: isExpiredMomentCreateMutation,
+    dependsOnEarlier: hasEarlierMutationDependency,
+  });
 
 export async function drainOfflineMutationQueue() {
   if (drainInFlight) return drainInFlight;
@@ -3104,7 +3376,10 @@ export async function drainOfflineMutationQueue() {
     if (!queue.length) return;
 
     while (queue.length > 0) {
-      const current = queue[0]!;
+      const current = selectNextReadyOfflineMutation(queue);
+      if (!current) break;
+      const activeOwnerUserId = await getActiveQueueOwnerUserId();
+      if (!activeOwnerUserId || current.ownerUserId !== activeOwnerUserId) break;
       if (isExpiredMomentCreateMutation(current)) {
         if (current.kind === 'moment_media_create') {
           await removeStagedOfflineMomentUpload(current.payload.localUri);
@@ -3112,10 +3387,6 @@ export async function drainOfflineMutationQueue() {
         queue = await replaceQueue((existing) => existing.filter((item) => item.id !== current.id));
         continue;
       }
-      if (current.nextAttemptAt && current.nextAttemptAt > Date.now()) {
-        break;
-      }
-
       const nextCurrent = {
         ...current,
         attempts: current.attempts + 1,
@@ -3125,14 +3396,18 @@ export async function drainOfflineMutationQueue() {
       } as OfflineMutation;
 
       await replaceQueue((existing) => {
-        if (!existing.length) return existing;
-        const [head, ...rest] = existing;
-        if (!head || head.id !== current.id) return existing;
-        return [nextCurrent, ...rest];
+        return existing.map((item) => (item.id === current.id ? nextCurrent : item));
       });
 
       try {
         await processMutation(nextCurrent);
+        if (nextCurrent.attempts > 1) {
+          captureMessage('offline_mutation_recovered_after_retry', {
+            mutationKind: nextCurrent.kind,
+            attempts: nextCurrent.attempts,
+            queueAgeMs: Math.max(0, Date.now() - nextCurrent.createdAt),
+          });
+        }
         emitMutationEvent({ type: 'completed', mutation: nextCurrent });
         queue = await replaceQueue((existing) => existing.filter((item) => item.id !== current.id));
       } catch (error) {
@@ -3154,7 +3429,8 @@ export async function drainOfflineMutationQueue() {
                 : item,
             ),
           );
-          break;
+          queue = await readMutationQueue();
+          continue;
         }
 
         if (nextCurrent.attempts >= MAX_MUTATION_ATTEMPTS) {
@@ -3165,7 +3441,9 @@ export async function drainOfflineMutationQueue() {
         queue = await moveMutationToFailed(failedCurrent, failureReason);
       }
     }
-  })().finally(() => {
+  })().catch((error) => {
+    captureException(error, { area: 'offline_mutation_drain' });
+  }).finally(() => {
     drainInFlight = null;
   });
 

@@ -19,6 +19,11 @@ import useSignalAccess from "@/hooks/useSignalAccess";
 import useVibesFeed, { applyVibesFilters, type VibesFilters } from "@/hooks/useVibesFeed";
 import { useAuth } from "@/lib/auth-context";
 import { haptics } from "@/lib/haptics";
+import {
+  consumePendingOnboardingCelebration,
+  consumeRecentOnboardingCompletion,
+  markOnboardingCelebrationSeen,
+} from "@/lib/onboarding/premium-onboarding.celebration";
 import { cancelIntentRequestOfflineSafe } from "@/lib/intents/offline-actions";
 import { cacheOfflineVideo, getOfflineVideoUri } from "@/lib/offline/video-store";
 import { subscribeToNetworkRestored } from "@/lib/network-recovery";
@@ -130,7 +135,19 @@ type VibesActionHistoryEntry =
 
 export default function ExploreScreen() {
   const { onboardingCelebration } = useLocalSearchParams<{ onboardingCelebration?: string }>();
+  const { profile, user, refreshProfile, authRecoveryPending, usingPersistedSessionFallback } = useAuth();
   const [showOnboardingCelebration, setShowOnboardingCelebration] = useState(false);
+  const onboardingCelebrationHandledRef = useRef(false);
+  const dismissOnboardingCelebration = useCallback(() => {
+    setShowOnboardingCelebration(false);
+    logger.info('[onboarding] arrival_celebration_completed');
+  }, []);
+  const presentOnboardingCelebration = useCallback(() => {
+    if (onboardingCelebrationHandledRef.current) return;
+    onboardingCelebrationHandledRef.current = true;
+    setShowOnboardingCelebration(true);
+    logger.info('[onboarding] arrival_celebration_viewed');
+  }, []);
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
@@ -140,13 +157,34 @@ export default function ExploreScreen() {
   const vibesActionRailGap = layoutMetrics.device.compactHeight ? 18 : 24;
 
   useEffect(() => {
-    if (onboardingCelebration !== "1") return;
-    setShowOnboardingCelebration(true);
-    router.setParams({ onboardingCelebration: undefined });
-  }, [onboardingCelebration]);
+    let cancelled = false;
+    const routeRequested = onboardingCelebration === "1";
+    if (routeRequested) {
+      presentOnboardingCelebration();
+      router.setParams({ onboardingCelebration: undefined });
+    }
+    if (!user?.id) return () => { cancelled = true; };
+
+    void (async () => {
+      if (routeRequested) await markOnboardingCelebrationSeen(user.id);
+      const pending = await consumePendingOnboardingCelebration(user.id);
+      const recentCompletion = pending || routeRequested
+        ? false
+        : await consumeRecentOnboardingCompletion({
+          userId: user.id,
+          onboardingCompletedAt: (profile as any)?.onboarding_completed_at,
+        });
+      if (!cancelled && (pending || recentCompletion)) presentOnboardingCelebration();
+    })()
+      .catch((error) => {
+        logger.warn('[onboarding] arrival_celebration_handoff_failed', {
+          message: String((error as Error)?.message || error),
+        });
+      });
+    return () => { cancelled = true; };
+  }, [onboardingCelebration, presentOnboardingCelebration, profile, user?.id]);
   const vibesStackVisualReserve = layoutMetrics.device.compactHeight ? 18 : 22;
   const momentsCapsuleMetrics = useMomentsCapsuleMetrics();
-  const { profile, user, refreshProfile, authRecoveryPending, usingPersistedSessionFallback } = useAuth();
   const showingRecoveredSnapshot = authRecoveryPending || usingPersistedSessionFallback;
   const { profileId: resolvedProfileId } = useResolvedProfileId(user?.id ?? null, profile?.id ?? null);
   const isGhanaianDiaspora = isGhanaianDiasporaProfile(profile);
@@ -3964,7 +4002,10 @@ export default function ExploreScreen() {
         />
         <OnboardingArrivalCelebration
           visible={showOnboardingCelebration}
-          onDismiss={() => setShowOnboardingCelebration(false)}
+          avatarUrl={(profile as any)?.avatar_url ?? null}
+          location={(profile as any)?.city || profile?.location || (profile as any)?.current_country || null}
+          name={(profile as any)?.full_name ?? null}
+          onDismiss={dismissOnboardingCelebration}
         />
       </SafeAreaView>
       </DepthBackground>

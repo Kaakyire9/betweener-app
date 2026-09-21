@@ -1,6 +1,8 @@
 import { fetch as fetchNetInfo } from '@react-native-community/netinfo';
+import * as ExpoCrypto from 'expo-crypto';
 
 import { isLikelyNetworkError } from '@/lib/network';
+import { isMissingIdempotentRpc } from '@/lib/offline/idempotent-rpc';
 import {
   clearMomentCommentMutationArtifacts,
   enqueueMomentCommentCreateMutation,
@@ -65,8 +67,10 @@ export async function createMomentCommentOfflineSafe(params: {
   body: string;
   parentCommentId?: string | null;
 }) {
+  const clientOperationId = ExpoCrypto.randomUUID();
   const payload = {
     tempId: buildOfflineCommentId(),
+    clientOperationId,
     momentId: params.momentId,
     userId: params.userId,
     body: params.body,
@@ -91,11 +95,18 @@ export async function createMomentCommentOfflineSafe(params: {
   }
 
   try {
-    const { data, error } = await supabase.rpc('rpc_create_moment_comment', {
+    const rpcPayload = {
       p_moment_id: params.momentId,
       p_body: params.body,
       p_parent_comment_id: params.parentCommentId ?? null,
+    };
+    let { data, error } = await supabase.rpc('rpc_create_moment_comment_v2' as any, {
+      p_client_operation_id: clientOperationId,
+      ...rpcPayload,
     });
+    if (error && isMissingIdempotentRpc(error)) {
+      ({ data, error } = await supabase.rpc('rpc_create_moment_comment', rpcPayload));
+    }
     if (error || !data) throw error ?? new Error('comment_insert_failed');
     return { status: 'synced' as const, comment: data };
   } catch (error) {

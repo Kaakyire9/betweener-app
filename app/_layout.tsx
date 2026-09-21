@@ -21,8 +21,6 @@ import RecoveryMergeSuggestionNotice from "@/components/RecoveryMergeSuggestionN
 import InAppToasts from "@/components/InAppToasts";
 import IntentResponseReminder from "@/components/IntentResponseReminder";
 import NetworkStatusBanner from "@/components/NetworkStatusBanner";
-import OfflineSyncHistoryHydrator from "@/components/OfflineSyncHistoryHydrator";
-import OfflineSyncStatusPill from "@/components/OfflineSyncStatusPill";
 import AppVersionGateHost from "@/components/updates/AppVersionGateHost";
 import BetweenerAlertHost from "@/components/ui/BetweenerAlertHost";
 import ScreenAwakeSafetyGuard from "@/components/system/ScreenAwakeSafetyGuard";
@@ -788,7 +786,6 @@ function RootLayout() {
           <OfflineMutationQueueHydrator />
           <VibesTelemetryQueueHydrator />
           <ChatOutboxHydrator />
-          <OfflineSyncHistoryHydrator />
           <NetworkRecoveryHydrator />
           <ScreenAwakeSafetyGuard />
           <ChatRealtimeHydrator />
@@ -798,7 +795,6 @@ function RootLayout() {
           <InAppToasts />
           <IntentResponseReminder />
           <NetworkStatusBanner />
-          <OfflineSyncStatusPill />
           <AccountRecoveryNotice />
           <RecoveryMergeSuggestionNotice />
           <AppVersionGateHost />
