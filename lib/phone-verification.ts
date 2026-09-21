@@ -245,7 +245,11 @@ export class PhoneVerificationService {
           console.log('[phone] send-verification failed', { status: response.status, body: raw });
         }
         if (data?.code === 'missing_config') {
-          return { success: false, error: 'Backend configuration missing. Please update/reinstall this build.' };
+          return {
+            success: false,
+            error: 'Phone verification is temporarily unavailable. Please try again later or contact support.',
+            code: 'missing_config',
+          };
         }
         if (data?.code === 'network_timeout') {
           return { success: false, error: 'Network timeout. Please try again.' };
@@ -265,11 +269,17 @@ export class PhoneVerificationService {
             'SMS to this country is currently blocked on our provider. Please try again later or contact support.';
         }
         if (
+          twilioMessage.includes('unverified') ||
+          twilioMessage.includes('service not found') ||
+          twilioCode.includes('20404') ||
+          twilioCode.includes('21608')
+        ) {
+          errorMessage =
+            'Phone verification is temporarily unavailable for this number. Please contact support.';
+        } else if (
           twilioMessage.includes('invalid') ||
           twilioMessage.includes('not a valid') ||
-          twilioMessage.includes('unverified') ||
-          twilioCode.includes('60200') ||
-          twilioCode.includes('20404')
+          twilioCode.includes('60200')
         ) {
           errorMessage = 'That phone number looks invalid. Please check the country code and number.';
         }

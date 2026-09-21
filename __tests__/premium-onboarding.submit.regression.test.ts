@@ -49,7 +49,23 @@ test("global payload preserves explicit residence and optional Ghana backfill ru
   assert.equal(payload.location_precision, "REGION");
   assert.equal(payload.origin_country, null);
   assert.equal(payload.onboarding_variant, "global");
+  assert.deepEqual(payload.roots, ["African"]);
+  assert.equal(payload.roots_visibility, "MATCHES_ONLY");
+  assert.equal(payload.years_in_diaspora, null);
   assert.equal(payload.age_preference_confirmed_at, payload.onboarding_completed_at);
+});
+
+test("prefer not to say keeps faith off the persisted profile", () => {
+  const payload = buildPremiumOnboardingProfileData({
+    variant: "global",
+    form: { ...baseForm(), religion: "Prefer not to say" },
+    customOccupation: "",
+    customTribe: "",
+    imageUrl: "https://cdn.test/avatar.jpg",
+    phoneNumber: "+447700900123",
+  });
+
+  assert.equal(payload.religion, null);
 });
 
 test("ghana payload stays country-locked and normalizes roots", () => {

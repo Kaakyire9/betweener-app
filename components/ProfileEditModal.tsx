@@ -48,6 +48,8 @@ import {
   normalizeGalleryPhotoList,
   normalizeProfilePhotoUri,
 } from '@/lib/profile/media';
+import { PROFILE_EDUCATION_OPTIONS } from '@/lib/profile/education-options';
+import { replaceProfileInterestsAtomic } from '@/lib/profile/interests';
 import {
   appendGalleryMedia,
   MAX_PROFILE_GALLERY_ITEMS,
@@ -57,6 +59,7 @@ import {
   resolveProfileMediaDraft,
 } from '@/lib/profile/media-studio';
 import {
+  guardAndPublishProfileMediaV1_2,
   isProfileMediaGuardV1_2Runtime,
   profileMediaGuardMessageV1_2,
 } from '@/lib/profile/profile-media-guard-v1-2';
@@ -68,7 +71,13 @@ import {
 import { RELIGION_LABELS, formatReligionLabel, isReligionEnumError, normalizeReligionForProfile } from '@/lib/profile/religion';
 import { getProfileInitials } from '@/lib/profile-placeholders';
 import { buildProfileLocationUpdate } from '@/lib/profile/profile-location-update';
-import { moderatePublicProfileText } from '@/lib/profile-guard';
+import {
+  getPublicProfileFieldError,
+  isPublicProfileTextField,
+  PUBLIC_PROFILE_GUARD_MESSAGE,
+  type PublicProfileTextField,
+  validatePublicProfileFields,
+} from '@/lib/profile-guard/public-profile-fields';
 import { usesGhanaOnboardingExperience } from '@/lib/profile/onboarding-experience';
 import { type ResponsiveMetrics, useResponsiveMetrics } from '@/lib/responsive';
 import { supabase } from '@/lib/supabase';
@@ -78,6 +87,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import * as FileSystem from 'expo-file-system/legacy';
+import * as ExpoCrypto from 'expo-crypto';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Video as VideoCompressor, getRealPath } from 'react-native-compressor';
 import {
@@ -132,12 +142,6 @@ const HEIGHT_OPTIONS = [
 ];
 
 const ONBOARDING_OCCUPATION_OPTIONS = [...PREMIUM_ONBOARDING_OCCUPATIONS, 'Other'];
-
-const EDUCATION_OPTIONS = [
-  "High School", "Some College", "Bachelor's Degree", "Master's Degree", 
-  "PhD", "Trade School", "University of Ghana", "KNUST", "UCC", "UPSA",
-  "Ashesi University", "Central University", "Valley View University", "Other"
-];
 
 const LEGACY_LOOKING_FOR_OPTIONS = [
   'Long-term relationship', 'Short-term dating', 'Friendship', 'Networking',
@@ -586,6 +590,21 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
   const [distanceUnit, setDistanceUnit] = useState<DistanceUnit>('auto');
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [statusTone, setStatusTone] = useState<'error' | 'success' | null>(null);
+  const [guardFieldErrors, setGuardFieldErrors] = useState<
+    Partial<Record<PublicProfileTextField, string>>
+  >({});
+  const [aggregateGuardError, setAggregateGuardError] = useState(false);
+
+  useEffect(() => {
+    if (
+      !aggregateGuardError
+      && Object.keys(guardFieldErrors).length === 0
+      && statusMessage === PUBLIC_PROFILE_GUARD_MESSAGE
+    ) {
+      setStatusMessage(null);
+      setStatusTone(null);
+    }
+  }, [aggregateGuardError, guardFieldErrors, statusMessage]);
   
   // Interests states
   const [availableInterests, setAvailableInterests] = useState<string[]>([]);
@@ -978,6 +997,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       agePreferenceTouchedRef.current = false;
       setStatusMessage(null);
       setStatusTone(null);
+      setGuardFieldErrors({});
+      setAggregateGuardError(false);
       const normalizedLanguages = normalizeLanguages(
         (profile as any).languages_spoken || []
       );
@@ -1151,10 +1172,46 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     if (field === 'min_age_interest' || field === 'max_age_interest') {
       agePreferenceTouchedRef.current = true;
     }
+    if (isPublicProfileTextField(field)) {
+      setAggregateGuardError(false);
+      const error = getPublicProfileFieldError(field, value);
+      setGuardFieldErrors((current) => {
+        if (error) return { ...current, [field]: error };
+        if (!current[field]) return current;
+        const next = { ...current };
+        delete next[field];
+        return next;
+      });
+      if (error) {
+        setStatusTone('error');
+        setStatusMessage(PUBLIC_PROFILE_GUARD_MESSAGE);
+      }
+    }
     setFormData(prev => ({
       ...prev,
       [field]: value
     }));
+  };
+
+  const handleGuardedCustomTextChange = (
+    field: PublicProfileTextField,
+    value: string,
+    setter: (next: string) => void,
+  ) => {
+    setter(value);
+    setAggregateGuardError(false);
+    const error = getPublicProfileFieldError(field, value);
+    setGuardFieldErrors((current) => {
+      if (error) return { ...current, [field]: error };
+      if (!current[field]) return current;
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
+    if (error) {
+      setStatusTone('error');
+      setStatusMessage(PUBLIC_PROFILE_GUARD_MESSAGE);
+    }
   };
 
   const selectCountry = (country: CountryOption) => {
@@ -1234,8 +1291,75 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     });
   };
 
+  const approveProfileMediaDraft = async (input: {
+    avatarUrl: string | null;
+    heroImageUrl: string | null;
+    photos: string[];
+    localUris: string[];
+  }) => {
+    if (!user?.id) {
+      throw Object.assign(new Error('PROFILE_MEDIA_SCAN_UNAVAILABLE'), {
+        code: 'PROFILE_MEDIA_SCAN_UNAVAILABLE',
+      });
+    }
+
+    const localItems = [...new Set([
+      ...input.localUris,
+      input.avatarUrl,
+      input.heroImageUrl,
+      ...input.photos,
+    ].filter((value): value is string => Boolean(value && isLocalMediaUri(value))))];
+
+    const approved = await guardAndPublishProfileMediaV1_2({
+      userId: user.id,
+      avatarUrl: input.avatarUrl,
+      heroImageUrl: input.heroImageUrl,
+      photos: input.photos,
+      localItems: localItems.map((uri, index) =>
+        inferMediaUploadMeta(uri, `profile-photo-${index + 1}`, 'image/jpeg'),
+      ),
+      clientRequestId: `profile-edit-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+    });
+
+    const nextMedia = {
+      avatar_url: approved.avatarUrl || '',
+      hero_image_url: approved.heroImageUrl || '',
+      photos: normalizeGalleryPhotoList(approved.photos, approved.avatarUrl),
+    };
+    setFormData((current) => ({ ...current, ...nextMedia }));
+    persistDraftSnapshot(nextMedia);
+    setStatusTone('success');
+    setStatusMessage('Photo approved and protected. Tap Save to apply your remaining profile changes.');
+    return approved;
+  };
+
+  const presentProfileMediaError = (error: unknown) => {
+    const message = profileMediaGuardMessageV1_2(error);
+    if (!message) return false;
+    setStatusTone('error');
+    setStatusMessage(message);
+    return true;
+  };
+
   const stageImageOffline = async (uri: string, isAvatar: boolean) => {
     const stableUri = await persistProfileMediaUri(uri, isAvatar ? 'profile-avatar' : 'profile-photo', 'image/jpeg');
+    if (isProfileMediaGuardV1_2Runtime()) {
+      const nextAvatar = isAvatar ? stableUri : (formData.avatar_url || stableUri);
+      const nextPhotos = isAvatar
+        ? normalizeGalleryPhotoList(formData.photos, stableUri)
+        : appendGalleryMedia(
+            formData.photos,
+            formData.avatar_url ? [stableUri] : [],
+            nextAvatar,
+          );
+      await approveProfileMediaDraft({
+        avatarUrl: nextAvatar,
+        heroImageUrl: formData.hero_image_url || null,
+        photos: nextPhotos,
+        localUris: [stableUri],
+      });
+      return;
+    }
     if (isAvatar) {
       setFormData(prev => {
         const nextPhotos = normalizeGalleryPhotoList(prev.photos, stableUri);
@@ -1268,6 +1392,29 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       )
     ).filter(Boolean);
     if (stagedUris.length === 0) return;
+
+    if (isProfileMediaGuardV1_2Runtime()) {
+      const shouldSeedAvatar = !formData.avatar_url;
+      const nextAvatar = shouldSeedAvatar ? stagedUris[0] : formData.avatar_url;
+      const nextPhotos = appendGalleryMedia(
+        formData.photos,
+        shouldSeedAvatar ? stagedUris.slice(1) : stagedUris,
+        nextAvatar,
+      );
+      await approveProfileMediaDraft({
+        avatarUrl: nextAvatar || null,
+        heroImageUrl: formData.hero_image_url || null,
+        photos: nextPhotos,
+        localUris: stagedUris,
+      });
+      Alert.alert(
+        'Photos approved',
+        shouldSeedAvatar
+          ? 'The first photo is your profile picture and the remaining approved photos are ready in your gallery.'
+          : `${stagedUris.length} approved photo${stagedUris.length === 1 ? ' is' : 's are'} ready in your gallery.`,
+      );
+      return;
+    }
 
     let promotedToAvatar = false;
     setFormData((prev) => {
@@ -1338,6 +1485,16 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     try {
       setMediaStudioBusy(true);
       const derivedAvatarUrl = await createDerivedSlotMedia(sourceUri, 'avatar', focus);
+      if (isProfileMediaGuardV1_2Runtime()) {
+        await approveProfileMediaDraft({
+          avatarUrl: derivedAvatarUrl,
+          heroImageUrl: formData.hero_image_url || null,
+          photos: normalizeGalleryPhotoList(formData.photos, derivedAvatarUrl),
+          localUris: [derivedAvatarUrl],
+        });
+        Alert.alert('Avatar approved', 'Your refined profile picture passed the safety check and is ready to save.');
+        return;
+      }
       setFormData((prev) => {
         const nextState = {
           ...prev,
@@ -1348,6 +1505,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       });
       Alert.alert('Avatar refined', 'A square avatar crop is staged. Save when it feels right.');
     } catch (error) {
+      if (presentProfileMediaError(error)) return;
       console.error('Error refining avatar media:', error);
       Alert.alert('Refine failed', 'We could not prepare that avatar crop right now.');
     } finally {
@@ -1364,6 +1522,17 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     try {
       setMediaStudioBusy(true);
       const derivedHeroUrl = await createDerivedSlotMedia(sourceUri, 'hero', focus);
+      if (isProfileMediaGuardV1_2Runtime()) {
+        const nextPhotos = promoteGalleryMediaToHero(formData.photos, index);
+        await approveProfileMediaDraft({
+          avatarUrl: formData.avatar_url || null,
+          heroImageUrl: derivedHeroUrl,
+          photos: nextPhotos,
+          localUris: [derivedHeroUrl],
+        });
+        Alert.alert('Hero approved', 'Your refined hero image passed the safety check and is ready to save.');
+        return;
+      }
       setFormData((prev) => {
         const nextPhotos = promoteGalleryMediaToHero(prev.photos, index);
         const nextState = {
@@ -1376,6 +1545,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       });
       Alert.alert('Hero refined', 'A wider hero crop is staged and the source scene is moved to the front.');
     } catch (error) {
+      if (presentProfileMediaError(error)) return;
       console.error('Error refining hero media:', error);
       Alert.alert('Refine failed', 'We could not prepare that hero crop right now.');
     } finally {
@@ -1587,36 +1757,13 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       return { queued: false };
     }
     
+    const clientOperationId = ExpoCrypto.randomUUID();
     try {
-      let profileInterests: { profile_id: string; interest_id: string }[] = [];
-      if (interests.length > 0) {
-        const { data: interestData, error: interestError } = await supabase
-          .from('interests')
-          .select('id, name')
-          .in('name', interests);
-        if (interestError) throw interestError;
-
-        if ((interestData?.length ?? 0) !== interests.length) {
-          throw new Error('The interest catalog is still syncing. Please try again shortly.');
-        }
-        profileInterests = interestData?.map(interest => ({
-          profile_id: pid,
-          interest_id: interest.id,
-        })) || [];
-      }
-
-      const { error: deleteError } = await supabase
-        .from('profile_interests')
-        .delete()
-        .eq('profile_id', pid);
-      if (deleteError) throw deleteError;
-
-      if (profileInterests.length > 0) {
-        const { error: insertError } = await supabase
-          .from('profile_interests')
-          .insert(profileInterests);
-        if (insertError) throw insertError;
-      }
+      await replaceProfileInterestsAtomic({
+        profileId: pid,
+        interests,
+        clientOperationId,
+      });
       return { queued: false };
     } catch (error) {
       if (isLikelyNetworkError(error)) {
@@ -1626,6 +1773,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         await enqueueProfileInterestsUpdateMutation({
           profileId: pid,
           interests,
+          clientOperationId,
         });
         return { queued: true };
       }
@@ -1715,6 +1863,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
 
   const openGallery = async (isAvatar: boolean) => {
     try {
+      setUploading(true);
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: 'images',
         allowsEditing: isAvatar,
@@ -1734,8 +1883,11 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         }
       }
     } catch (error) {
+      if (presentProfileMediaError(error)) return;
       console.error('Error opening gallery:', error);
       Alert.alert('Error', 'Failed to open gallery');
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -1744,6 +1896,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       setUploading(true);
       await stageImageOffline(uri, isAvatar);
     } catch (error) {
+      if (presentProfileMediaError(error)) return;
       console.error('Error uploading image:', error);
       const errorMessage = error instanceof Error ? error.message : 'Failed to upload image';
       Alert.alert('Error', `Upload failed: ${errorMessage}`);
@@ -2026,21 +2179,18 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         return;
       }
 
-      // Fast feedback only. The same content is authoritatively checked in the
-      // database before it can be published.
-      const publicTextCheck = moderatePublicProfileText([
-        formData.full_name,
-        formData.bio,
-        formData.occupation,
-        formData.education,
-        formData.looking_for,
-        formData.roots_note,
-        formData.future_ghana_plans,
-      ].filter(Boolean).join(' '));
+      // Field-level feedback is immediate; this aggregate preflight also catches
+      // contact details split across multiple public profile fields. The server
+      // remains authoritative before publication.
+      const publicTextCheck = validatePublicProfileFields(formData);
+      setGuardFieldErrors(publicTextCheck.fieldErrors);
+      setAggregateGuardError(Boolean(publicTextCheck.aggregateError));
       if (!publicTextCheck.allowed) {
+        setStatusTone('error');
+        setStatusMessage(PUBLIC_PROFILE_GUARD_MESSAGE);
         Alert.alert(
           'Keep your profile personal',
-          "For your safety, contact details, external links and promotional content can't appear on public profiles. You can exchange contact information privately once you've connected.",
+          `${PUBLIC_PROFILE_GUARD_MESSAGE} You can exchange contact information privately once you've connected.`,
         );
         return;
       }
@@ -2485,7 +2635,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       Alert.alert(
         queued ? 'Saved' : 'Success',
         queued
-          ? 'Your profile is updated here. Some media may still finish syncing in the background.'
+          ? 'Your profile is saved and will update automatically when your connection returns.'
           : 'Profile updated successfully!',
       );
       onSave({
@@ -2599,12 +2749,15 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
             <View style={styles.inputContainer}>
               <Text style={styles.inputLabel}>Full Name *</Text>
               <TextInput
-                style={styles.textInput}
+                style={[styles.textInput, guardFieldErrors.full_name && styles.guardedInputError]}
                 value={formData.full_name}
                 onChangeText={(text) => handleInputChange('full_name', text)}
                 placeholder="Enter your full name"
                 maxLength={50}
               />
+              {guardFieldErrors.full_name ? (
+                <Text style={styles.guardedFieldError}>{guardFieldErrors.full_name}</Text>
+              ) : null}
             </View>
 
             {showLegacyCoreFields ? <View style={styles.inputContainer}>
@@ -2682,7 +2835,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                   <TextInput
                     style={[styles.textInput, { marginTop: 8 }]}
                     value={customHeight}
-                    onChangeText={setCustomHeight}
+                    onChangeText={(value) => handleGuardedCustomTextChange('height', value, setCustomHeight)}
                     placeholder="Enter your height"
                     maxLength={10}
                     onBlur={() => {
@@ -3016,6 +3169,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
               loadingInterests={loadingInterests}
               customOccupation={customOccupation}
               setCustomOccupation={setCustomOccupation}
+              guardFieldErrors={guardFieldErrors}
+              onGuardedCustomTextChange={handleGuardedCustomTextChange}
               handleInputChange={handleInputChange}
               handleRootToggle={handleRootToggle}
               setShowOccupationPicker={setShowOccupationPicker}
@@ -3060,7 +3215,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                   style={styles.sectionIcon}
                 />
               </View>
-              <Text style={styles.sectionTitle}>{formIsGhanaProfile ? 'Education' : 'Professional'}</Text>
+              <Text style={styles.sectionTitle}>Education</Text>
             </View>
             
             {showLegacyCoreFields ? <View style={styles.inputContainer}>
@@ -3081,7 +3236,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                 <TextInput
                   style={[styles.textInput, { marginTop: 8 }]}
                   value={customOccupation}
-                  onChangeText={setCustomOccupation}
+                  onChangeText={(value) => handleGuardedCustomTextChange('occupation', value, setCustomOccupation)}
                   placeholder="Enter your occupation"
                   maxLength={100}
                   onBlur={() => {
@@ -3094,7 +3249,10 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
             </View> : null}
 
             <View style={styles.inputContainer}>
-              <Text style={styles.inputLabel}>Education</Text>
+              <Text style={styles.inputLabel}>Education level</Text>
+              <Text style={styles.toggleHelper}>
+                Choose the closest level, or use Other to add a school or qualification.
+              </Text>
               <TouchableOpacity
                 style={styles.selectButton}
                 onPress={() => setShowEducationPicker(true)}
@@ -3102,17 +3260,17 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                 <Text style={[
                   formData.education ? styles.selectButtonText : styles.selectButtonPlaceholder
                 ]}>
-                  {formData.education || 'Select your education'}
+                  {formData.education || 'Select education level'}
                 </Text>
                 <MaterialCommunityIcons name="chevron-down" size={20} color={theme.textMuted} />
               </TouchableOpacity>
               
               {formData.education === 'Other' && (
                 <TextInput
-                  style={[styles.textInput, { marginTop: 8 }]}
+                  style={[styles.textInput, { marginTop: 8 }, guardFieldErrors.education && styles.guardedInputError]}
                   value={customEducation}
-                  onChangeText={setCustomEducation}
-                  placeholder="Enter your education"
+                  onChangeText={(value) => handleGuardedCustomTextChange('education', value, setCustomEducation)}
+                  placeholder="School, institution or qualification"
                   maxLength={100}
                   onBlur={() => {
                     if (customEducation.trim()) {
@@ -3121,6 +3279,9 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                   }}
                 />
               )}
+              {guardFieldErrors.education ? (
+                <Text style={styles.guardedFieldError}>{guardFieldErrors.education}</Text>
+              ) : null}
             </View>
           </View>
 
@@ -3156,7 +3317,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                 <TextInput
                   style={[styles.textInput, { marginTop: 8 }]}
                   value={customLookingFor}
-                  onChangeText={setCustomLookingFor}
+                  onChangeText={(value) => handleGuardedCustomTextChange('looking_for', value, setCustomLookingFor)}
                   placeholder="What are you looking for?"
                   maxLength={100}
                   onBlur={() => {
@@ -3326,7 +3487,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                 <TextInput
                   style={[styles.textInput, { marginTop: 8 }]}
                   value={customExercise}
-                  onChangeText={setCustomExercise}
+                  onChangeText={(value) => handleGuardedCustomTextChange('exercise_frequency', value, setCustomExercise)}
                   placeholder="Enter your exercise frequency"
                   maxLength={50}
                   onBlur={() => {
@@ -3357,7 +3518,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                   <TextInput
                     style={[styles.textInput, { marginTop: 8 }]}
                     value={customSmoking}
-                    onChangeText={setCustomSmoking}
+                    onChangeText={(value) => handleGuardedCustomTextChange('smoking', value, setCustomSmoking)}
                     placeholder="Smoking habits"
                     maxLength={50}
                     onBlur={() => {
@@ -3387,7 +3548,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                   <TextInput
                     style={[styles.textInput, { marginTop: 8 }]}
                     value={customDrinking}
-                    onChangeText={setCustomDrinking}
+                    onChangeText={(value) => handleGuardedCustomTextChange('drinking', value, setCustomDrinking)}
                     placeholder="Drinking habits"
                     maxLength={50}
                     onBlur={() => {
@@ -3434,7 +3595,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                   <TextInput
                     style={[styles.textInput, { marginTop: 8 }]}
                     value={customHasChildren}
-                    onChangeText={setCustomHasChildren}
+                    onChangeText={(value) => handleGuardedCustomTextChange('has_children', value, setCustomHasChildren)}
                     placeholder="Children status"
                     maxLength={50}
                     onBlur={() => {
@@ -3464,7 +3625,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                   <TextInput
                     style={[styles.textInput, { marginTop: 8 }]}
                     value={customWantsChildren}
-                    onChangeText={setCustomWantsChildren}
+                    onChangeText={(value) => handleGuardedCustomTextChange('wants_children', value, setCustomWantsChildren)}
                     placeholder="Future children"
                     maxLength={50}
                     onBlur={() => {
@@ -3501,7 +3662,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                   <TextInput
                     style={[styles.textInput, { marginTop: 8 }]}
                     value={customPersonality}
-                    onChangeText={setCustomPersonality}
+                    onChangeText={(value) => handleGuardedCustomTextChange('personality_type', value, setCustomPersonality)}
                     placeholder="Personality type"
                     maxLength={50}
                     onBlur={() => {
@@ -3531,7 +3692,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                   <TextInput
                     style={[styles.textInput, { marginTop: 8 }]}
                     value={customLoveLanguage}
-                    onChangeText={setCustomLoveLanguage}
+                    onChangeText={(value) => handleGuardedCustomTextChange('love_language', value, setCustomLoveLanguage)}
                     placeholder="Love language"
                     maxLength={50}
                     onBlur={() => {
@@ -3568,7 +3729,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                   <TextInput
                     style={[styles.textInput, { marginTop: 8 }]}
                     value={customLivingSituation}
-                    onChangeText={setCustomLivingSituation}
+                    onChangeText={(value) => handleGuardedCustomTextChange('living_situation', value, setCustomLivingSituation)}
                     placeholder="Living situation"
                     maxLength={50}
                     onBlur={() => {
@@ -3598,7 +3759,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                   <TextInput
                     style={[styles.textInput, { marginTop: 8 }]}
                     value={customPets}
-                    onChangeText={setCustomPets}
+                    onChangeText={(value) => handleGuardedCustomTextChange('pets', value, setCustomPets)}
                     placeholder="Pet preference"
                     maxLength={50}
                     onBlur={() => {
@@ -3634,7 +3795,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                 <TextInput
                   style={[styles.textInput, { marginTop: 8 }]}
                   value={customLanguage}
-                  onChangeText={setCustomLanguage}
+                  onChangeText={(value) => handleGuardedCustomTextChange('languages_spoken', value, setCustomLanguage)}
                   placeholder="Enter other language"
                   maxLength={50}
                   onBlur={() => {
@@ -3768,7 +3929,9 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                           ? ` ${Math.round(videoUploadProgress * 100)}%`
                           : ''
                       }`
-                    : 'Uploading photo...'}
+                    : isProfileMediaGuardV1_2Runtime()
+                      ? 'Checking photo safety...'
+                      : 'Uploading photo...'}
                 </Text>
               </View>
             </View>
@@ -4089,8 +4252,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
 
       {/* Education Picker */}
       <FieldPicker
-        title="Select Education"
-        options={EDUCATION_OPTIONS}
+        title="Select education level"
+        options={[...PROFILE_EDUCATION_OPTIONS]}
         visible={showEducationPicker}
         onClose={() => setShowEducationPicker(false)}
         onSelect={(value) => {
@@ -5291,6 +5454,17 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
     },
     statusBannerTextSuccess: {
       color: theme.tint,
+    },
+    guardedInputError: {
+      borderColor: theme.danger,
+      borderWidth: 1.5,
+    },
+    guardedFieldError: {
+      marginTop: responsive.space(6, { min: 5, max: 8 }),
+      color: theme.danger,
+      fontSize: responsive.font(12, { min: 11, max: 13 }),
+      fontFamily: 'Manrope_500Medium',
+      lineHeight: responsive.font(17, { min: 16, max: 19 }),
     },
     statusDisplay: {
       padding: responsive.space(16, { min: 14, max: 18 }),

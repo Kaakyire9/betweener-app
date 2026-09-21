@@ -17,6 +17,10 @@ test('v1.2 onboarding media uses the guarded staging contract', () => {
   assert.match(onboarding, /guardAndPublishProfileMediaV1_2/);
   assert.match(onboarding, /isProfileMediaGuardV1_2Runtime/);
   assert.match(onboarding, /profileMediaGuardMessageV1_2/);
+  assert.match(onboarding, /currentStep\.key === "photo" && !await approveCurrentPhoto\(\)/);
+  assert.match(onboarding, /approvedAvatar\?\.localUri === image/);
+  const photoGate = onboarding.indexOf('await approveCurrentPhoto()');
+  assert.ok(photoGate < onboarding.indexOf('setStepIndex((value) => Math.min(value + 1', photoGate));
 });
 
 test('public UGC reports snapshot server-owned evidence', () => {

@@ -122,7 +122,7 @@ export function PremiumOnboardingStepFrame({
   const welcomeAssurance = (
     <View style={styles.welcomeFooterAssurance}>
       <MaterialCommunityIcons name="shield-check-outline" size={13} color={styles.tokens.muted.color} importantForAccessibility="no" />
-      <Text style={styles.welcomeFooterAssuranceText}>About 2 minutes · You can change anything later</Text>
+      <Text style={styles.welcomeFooterAssuranceText}>A few thoughtful steps · You can change things later</Text>
     </View>
   );
 
@@ -144,7 +144,7 @@ export function PremiumOnboardingStepFrame({
             {stepKey === "welcome" ? modeLabel : stepKey.replace(/_/g, " ").toUpperCase()}
           </Text>
           <Text
-            accessibilityRole={isWelcomeStep ? "header" : undefined}
+            accessibilityRole="header"
             style={[
               styles.title,
               stepKey === "current_location" && styles.locationStepTitle,

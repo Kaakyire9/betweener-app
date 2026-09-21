@@ -97,6 +97,40 @@ test("dating preferences keep max above min", () => {
   assert.equal(errors.maxAgeInterest, "Keep the maximum age above the minimum.");
 });
 
+test("age is bounded to the supported adult discovery range", () => {
+  const tooHigh = validatePremiumOnboardingStep({
+    step: "about",
+    form: { ...baseForm(), age: "100" },
+    variant: "global",
+    customOccupation: "",
+    customTribe: "",
+    hasImage: true,
+  });
+  assert.equal(tooHigh.age, "Enter an age from 18 to 99.");
+});
+
+test("global cultural identity and faith can remain private", () => {
+  const rootsErrors = validatePremiumOnboardingStep({
+    step: "roots",
+    form: { ...baseForm(), originCountry: "Nigeria", tribe: "" },
+    variant: "global",
+    customOccupation: "",
+    customTribe: "",
+    hasImage: true,
+  });
+  const valuesErrors = validatePremiumOnboardingStep({
+    step: "values",
+    form: { ...baseForm(), religion: "" },
+    variant: "global",
+    customOccupation: "",
+    customTribe: "",
+    hasImage: true,
+  });
+
+  assert.deepEqual(rootsErrors, {});
+  assert.deepEqual(valuesErrors, {});
+});
+
 test("photo step only errors when no image exists", () => {
   const noImageErrors = validatePremiumOnboardingStep({
     step: "photo",
@@ -117,4 +151,52 @@ test("photo step only errors when no image exists", () => {
 
   assert.equal(noImageErrors.profilePic, "Choose a clear profile photo to continue.");
   assert.equal("profilePic" in imageErrors, false);
+});
+
+test("bio step blocks contact details before advancing", () => {
+  const errors = validatePremiumOnboardingStep({
+    step: "bio",
+    form: { ...baseForm(), bio: "WhatsApp me at +44 7700 900123" },
+    variant: "global",
+    customOccupation: "",
+    customTribe: "",
+    hasImage: true,
+  });
+
+  assert.match(errors.bio, /Remove contact details/i);
+});
+
+test("bio step allows ordinary numbers and profile text", () => {
+  const errors = validatePremiumOnboardingStep({
+    step: "bio",
+    form: { ...baseForm(), bio: "I moved here in 2024 and have 2 dogs." },
+    variant: "global",
+    customOccupation: "",
+    customTribe: "",
+    hasImage: true,
+  });
+
+  assert.equal("bio" in errors, false);
+});
+
+test("custom occupation and roots text use the same step-level guard", () => {
+  const occupationErrors = validatePremiumOnboardingStep({
+    step: "occupation",
+    form: { ...baseForm(), occupation: "Other" },
+    variant: "global",
+    customOccupation: "Visit example.com",
+    customTribe: "",
+    hasImage: true,
+  });
+  const rootsErrors = validatePremiumOnboardingStep({
+    step: "roots",
+    form: { ...baseForm(), originCountry: "Nigeria", roots: [], tribe: "Other" },
+    variant: "global",
+    customOccupation: "",
+    customTribe: "tester@example.com",
+    hasImage: true,
+  });
+
+  assert.match(occupationErrors.occupation, /Remove contact details/i);
+  assert.match(rootsErrors.tribe, /Remove contact details/i);
 });

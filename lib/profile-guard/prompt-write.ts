@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { validatePublicProfilePrompt } from './public-profile-fields';
 
 export type GuardedProfilePromptInput = {
   prompt_key: string;
@@ -12,6 +13,19 @@ export type GuardedProfilePromptInput = {
 };
 
 export const insertGuardedProfilePrompt = async (prompt: GuardedProfilePromptInput) => {
+  const preflight = validatePublicProfilePrompt({
+    title: prompt.prompt_title,
+    answer: prompt.answer,
+    hint: prompt.hint_text,
+    options: prompt.guess_options,
+  });
+  if (!preflight.allowed) {
+    return {
+      error: Object.assign(new Error(preflight.message), {
+        code: 'PROFILE_CONTENT_NOT_ALLOWED',
+      }),
+    };
+  }
   const { data, error } = await supabase.functions.invoke('profile-guard-update', {
     body: { updates: {}, prompt },
   });

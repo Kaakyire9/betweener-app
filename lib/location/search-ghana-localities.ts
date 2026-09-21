@@ -80,6 +80,7 @@ export async function searchGhanaLocalities({
   const normalizedLimit = Math.max(1, Math.min(limit, 120));
   const cacheKey = `${normalizedRegion}::${normalizedQuery ?? "__empty__"}::${normalizedLimit}`;
   const cached = SEARCH_CACHE.get(cacheKey);
+  let catalogueUnavailable = false;
 
   if (cached) {
     return cached;
@@ -124,6 +125,7 @@ export async function searchGhanaLocalities({
       }
     }
   } catch {
+    catalogueUnavailable = true;
     // Fall through to the country-wide GeoNames search for neighbourhoods or
     // newer settlements that have not reached the Ghana catalogue yet.
   }
@@ -155,9 +157,12 @@ export async function searchGhanaLocalities({
       SEARCH_CACHE.set(cacheKey, fallback);
       return fallback;
     } catch {
-      return [];
+      throw new Error("GHANA_LOCALITY_PROVIDER_UNAVAILABLE");
     }
   }
 
+  if (catalogueUnavailable) {
+    throw new Error("GHANA_LOCALITY_PROVIDER_UNAVAILABLE");
+  }
   return [];
 }

@@ -77,7 +77,8 @@ export function PremiumOccupationSelector({
         <MaterialCommunityIcons name="magnify" size={21} color={styles.tokens.muted.color} />
         <TextInput
           value={query}
-          onChangeText={setQuery}
+          onChangeText={(value) => setQuery(value.slice(0, 80))}
+          maxLength={80}
           placeholder="Search or describe what you do"
           placeholderTextColor={styles.tokens.muted.color}
           style={styles.occupationSearchInput}

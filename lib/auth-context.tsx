@@ -19,7 +19,11 @@ import {
 } from '@/lib/supabase';
 import { isLikelyNetworkError } from '@/lib/network';
 import { isNetworkConnectionAvailable } from '@/lib/network-state';
-import { enqueueProfileUpdateMutation } from '@/lib/offline/mutation-queue';
+import {
+  clearOfflineMutationQueuesForOwner,
+  enqueueProfileUpdateMutation,
+  subscribeToOfflineMutationEvents,
+} from '@/lib/offline/mutation-queue';
 import { prepareProfileGuardInvocation } from '@/lib/profile-guard/write-payload';
 import { fetchUserPresence, overlayPresence, setCurrentUserPresence } from '@/lib/user-presence';
 import { Session, User } from '@supabase/supabase-js';
@@ -853,6 +857,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               clearChatAttachmentPreviewsForOwner(previousUserId),
               clearStagedOfflineChatUploadsForOwner(previousUserId),
               ChatUploadTransport.clearForOwner(previousUserId),
+              clearOfflineMutationQueuesForOwner(previousUserId),
             ]).catch((clearError) => {
               console.warn('[chat] clear local data on account switch failed', clearError);
             });
@@ -1156,6 +1161,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     return null;
   };
+
+  useEffect(() => {
+    if (!user?.id) return;
+    return subscribeToOfflineMutationEvents((event) => {
+      if (
+        event.type === 'failed' &&
+        event.mutation.kind === 'profile_update' &&
+        event.mutation.payload.userId === user.id
+      ) {
+        void fetchProfile(user.id, { force: true });
+      }
+    });
+  }, [user?.id]);
 
   const refreshPhoneState = async (): Promise<boolean> => {
     if (phoneRefreshInFlightRef.current && phoneRefreshPromiseRef.current) {
@@ -1658,6 +1676,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           clearChatAttachmentPreviewsForOwner(signedOutUserId),
           clearStagedOfflineChatUploadsForOwner(signedOutUserId),
           ChatUploadTransport.clearForOwner(signedOutUserId),
+          clearOfflineMutationQueuesForOwner(signedOutUserId),
         ]);
         clearChatBootCacheForUser(signedOutUserId);
         await clearAppIconBadgeCount();

@@ -25,8 +25,17 @@ import {
 } from "@/lib/onboarding/premium-onboarding.config";
 import {
   buildPremiumOnboardingProfileData,
-  updateProfileWithFallbacks,
 } from "@/lib/onboarding/premium-onboarding.submit";
+import {
+  completePremiumOnboardingV2,
+  premiumOnboardingCompletionMessage,
+} from "@/lib/onboarding/premium-onboarding.complete";
+import { markPendingOnboardingCelebration } from "@/lib/onboarding/premium-onboarding.celebration";
+import {
+  clearPremiumOnboardingDraft,
+  loadPremiumOnboardingDraft,
+  savePremiumOnboardingDraft,
+} from "@/lib/onboarding/premium-onboarding.draft";
 import {
   type PremiumOnboardingFormState as FormState,
   type PremiumOnboardingStepKey as StepKey,
@@ -59,6 +68,7 @@ import {
 import { supabase } from "@/lib/supabase";
 import { logger } from "@/lib/telemetry/logger";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import * as Crypto from "expo-crypto";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import { LinearGradient } from "expo-linear-gradient";
 import * as ImagePicker from "expo-image-picker";
@@ -66,6 +76,7 @@ import { router } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  AccessibilityInfo,
   Alert,
   Animated,
   KeyboardAvoidingView,
@@ -75,43 +86,87 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+const ONBOARDING_RELIGION_OPTIONS = [
+  ...RELIGION_OPTIONS,
+  { value: "PREFER_NOT_TO_SAY", label: "Prefer not to say" },
+] as const;
+
+const createInitialForm = (): FormState => ({
+  fullName: "",
+  age: "",
+  gender: "",
+  bio: "",
+  occupation: "",
+  currentCountry: "",
+  originCountry: "",
+  region: "",
+  city: "",
+  cityDistrict: "",
+  cityLocalityGeonameId: null,
+  cityAdmin1Code: "",
+  cityLatitude: null,
+  cityLongitude: null,
+  tribe: "",
+  roots: [],
+  rootsNote: "",
+  rootsVisibility: "VISIBLE",
+  religion: "",
+  interests: [],
+  lookingFor: "",
+  minAgeInterest: "24",
+  maxAgeInterest: "34",
+});
+
+const PROFILE_FIELD_STEP: Partial<Record<string, StepKey>> = {
+  full_name: "name",
+  age: "about",
+  gender: "about",
+  occupation: "occupation",
+  bio: "bio",
+  avatar_url: "photo",
+  current_country: "current_location",
+  location: "current_location",
+  city: "current_location",
+  region: "current_location",
+  tribe: "roots",
+  roots: "roots",
+  roots_note: "roots",
+  religion: "values",
+  interests: "interests",
+  looking_for: "relationship_intent",
+  min_age_interest: "dating_preferences",
+  max_age_interest: "dating_preferences",
+};
+
+const PROFILE_FIELD_FORM_KEY: Record<string, string> = {
+  full_name: "fullName",
+  avatar_url: "profilePic",
+  current_country: "currentCountry",
+  location: "city",
+  roots_note: "rootsNote",
+  looking_for: "lookingFor",
+  min_age_interest: "minAgeInterest",
+  max_age_interest: "maxAgeInterest",
+};
+
 export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
   const fontsLoaded = useAppFonts();
   const responsive = useResponsiveMetrics();
   const meta = PREMIUM_ONBOARDING_ROUTE_META[variant];
   const steps = useMemo(() => getPremiumOnboardingSteps(variant), [variant]);
   const styles = useMemo(() => createPremiumOnboardingStyles(responsive, meta.dark), [meta.dark, responsive]);
-  const { updateProfile, user, profile, signOut, refreshProfile, phoneVerified } = useAuth();
+  const { user, profile, signOut, refreshProfile, phoneVerified } = useAuth();
   const [routeValidated, setRouteValidated] = useState(false);
   const [stepIndex, setStepIndex] = useState(0);
-  const [form, setForm] = useState<FormState>({
-    fullName: "",
-    age: "",
-    gender: "",
-    bio: "",
-    occupation: "",
-    currentCountry: "",
-    originCountry: "",
-    region: "",
-    city: "",
-    cityDistrict: "",
-    cityLocalityGeonameId: null,
-    cityAdmin1Code: "",
-    cityLatitude: null,
-    cityLongitude: null,
-    tribe: "",
-    roots: [],
-    rootsNote: "",
-    rootsVisibility: "VISIBLE",
-    religion: "",
-    interests: [],
-    lookingFor: "",
-    minAgeInterest: "24",
-    maxAgeInterest: "34",
-  });
+  const [form, setForm] = useState<FormState>(createInitialForm);
   const [customOccupation, setCustomOccupation] = useState("");
   const [customTribe, setCustomTribe] = useState("");
   const [image, setImage] = useState<string | null>(null);
+  const [approvedAvatar, setApprovedAvatar] = useState<{
+    localUri: string;
+    publicUrl: string;
+  } | null>(null);
+  const [photoChecking, setPhotoChecking] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
@@ -122,9 +177,12 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
   const [countrySearch, setCountrySearch] = useState("");
   const [signingOut, setSigningOut] = useState(false);
   const [signOutMenuVisible, setSignOutMenuVisible] = useState(false);
+  const [draftReady, setDraftReady] = useState(false);
+  const [completionRequestId, setCompletionRequestId] = useState(() => Crypto.randomUUID());
   const progressAnim = useRef(new Animated.Value(0)).current;
   const transitionDirectionRef = useRef<"forward" | "back">("forward");
   const submitAttemptRef = useRef(0);
+  const draftHydrationKeyRef = useRef<string | null>(null);
   const currentCountrySearchTrackedRef = useRef(false);
   const currentLocationTelemetryRef = useRef({
     enteredAt: 0,
@@ -179,10 +237,132 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
   }, [profile, variant]);
 
   useEffect(() => {
+    if (!routeValidated || !user?.id) return;
+    const hydrationKey = `${user.id}:${variant}`;
+    if (draftHydrationKeyRef.current === hydrationKey) return;
+    draftHydrationKeyRef.current = hydrationKey;
+    setDraftReady(false);
+    let active = true;
+
+    void (async () => {
+      try {
+        const draft = await loadPremiumOnboardingDraft(user.id, variant);
+        if (!active) return;
+        if (draft) {
+          setForm({ ...createInitialForm(), ...draft.form });
+          setCustomOccupation(draft.customOccupation);
+          setCustomTribe(draft.customTribe);
+          const existingApprovedAvatar = String((profile as any)?.avatar_url || "").trim() || null;
+          const approvedAvatarUrl = draft.approvedAvatarUrl || existingApprovedAvatar;
+          const restoredImage = approvedAvatarUrl || draft.imageUri;
+          setImage(restoredImage);
+          setApprovedAvatar(
+            approvedAvatarUrl
+              ? { localUri: approvedAvatarUrl, publicUrl: approvedAvatarUrl }
+              : null,
+          );
+          setCompletionRequestId(draft.completionRequestId);
+          setStepIndex(Math.max(0, Math.min(draft.stepIndex, steps.length - 1)));
+          logger.info("[onboarding] draft_restored", {
+            variant,
+            stepIndex: draft.stepIndex,
+            ageMs: Date.now() - draft.savedAt,
+          });
+        } else {
+          const existingApprovedAvatar = String((profile as any)?.avatar_url || "").trim();
+          if (existingApprovedAvatar) {
+            setImage(existingApprovedAvatar);
+            setApprovedAvatar({
+              localUri: existingApprovedAvatar,
+              publicUrl: existingApprovedAvatar,
+            });
+          }
+        }
+      } catch (error) {
+        logger.warn("[onboarding] draft_restore_failed", { variant, error });
+      } finally {
+        if (active) setDraftReady(true);
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [profile, routeValidated, steps.length, user?.id, variant]);
+
+  useEffect(() => {
+    if (!draftReady || !user?.id || profileCreated) return;
+    const timeout = setTimeout(() => {
+      void savePremiumOnboardingDraft({
+        userId: user.id,
+        variant,
+        stepIndex,
+        form,
+        customOccupation,
+        customTribe,
+        imageUri: approvedAvatar?.publicUrl ? null : image,
+        approvedAvatarUrl: approvedAvatar?.publicUrl ?? null,
+        completionRequestId,
+      }).catch((error) => {
+        logger.warn("[onboarding] draft_save_failed", { variant, error });
+      });
+    }, 350);
+    return () => clearTimeout(timeout);
+  }, [
+    approvedAvatar?.publicUrl,
+    completionRequestId,
+    customOccupation,
+    customTribe,
+    draftReady,
+    form,
+    image,
+    profileCreated,
+    stepIndex,
+    user?.id,
+    variant,
+  ]);
+
+  useEffect(() => {
+    if (!draftReady || image) return;
+    const existingApprovedAvatar = String((profile as any)?.avatar_url || "").trim();
+    if (!existingApprovedAvatar) return;
+    setImage(existingApprovedAvatar);
+    setApprovedAvatar({
+      localUri: existingApprovedAvatar,
+      publicUrl: existingApprovedAvatar,
+    });
+  }, [draftReady, image, profile]);
+
+  useEffect(() => {
     if (routeValidated && variant === "ghana") {
       logger.info("[onboarding] ghana_onboarding_welcome_viewed", { variant });
     }
   }, [routeValidated, variant]);
+
+  useEffect(() => {
+    if (!draftReady || !currentStep) return;
+    const viewedAt = Date.now();
+    logger.info("[onboarding] step_viewed", {
+      variant,
+      stepKey: currentStep.key,
+      stepIndex,
+      resumed: stepIndex > 0,
+    });
+    const timeout = setTimeout(() => {
+      AccessibilityInfo.announceForAccessibility(
+        `${currentStep.title}. Step ${stepIndex + 1} of ${steps.length}.`,
+      );
+    }, 250);
+    return () => {
+      clearTimeout(timeout);
+      logger.info("[onboarding] step_exited", {
+        variant,
+        stepKey: currentStep.key,
+        stepIndex,
+        dwellMs: Date.now() - viewedAt,
+      });
+    };
+  }, [currentStep, draftReady, stepIndex, steps.length, variant]);
 
   useEffect(() => {
     Animated.timing(progressAnim, {
@@ -202,7 +382,7 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
     };
 
     void (async () => {
-      if (form.fullName.trim()) return;
+      if (!draftReady || form.fullName.trim()) return;
       const signupMetadata = await consumeSignupMetadata();
       if (!active) return;
       const nextFullName =
@@ -215,10 +395,10 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
     return () => {
       active = false;
     };
-  }, [form.fullName, profile?.full_name, user?.user_metadata]);
+  }, [draftReady, form.fullName, profile?.full_name, user?.user_metadata]);
 
   useEffect(() => {
-    if (variant !== "global" || form.currentCountry) return;
+    if (!draftReady || variant !== "global" || form.currentCountry) return;
     let active = true;
     void (async () => {
       try {
@@ -241,7 +421,7 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
     return () => {
       active = false;
     };
-  }, [form.currentCountry, variant]);
+  }, [draftReady, form.currentCountry, variant]);
 
   useEffect(() => {
     if (currentStep.key !== "current_location") return;
@@ -286,7 +466,20 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
   }, [currentStep.key, stepIndex, variant]);
 
   const updateForm = <K extends keyof FormState>(key: K, value: FormState[K]) => {
-    setForm((prev) => ({ ...prev, [key]: value }));
+    setForm((prev) => {
+      if (key === "age" && prev.minAgeInterest === "24" && prev.maxAgeInterest === "34") {
+        const age = Number(value);
+        if (Number.isInteger(age) && age >= 18 && age <= 99) {
+          return {
+            ...prev,
+            age: value as FormState["age"],
+            minAgeInterest: String(Math.max(18, age - 6)),
+            maxAgeInterest: String(Math.min(99, age + 6)),
+          };
+        }
+      }
+      return { ...prev, [key]: value };
+    });
     setErrors((prev) => ({ ...prev, [key]: "" }));
   };
 
@@ -303,6 +496,9 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
             city: "",
             cityDistrict: "",
             cityLocalityGeonameId: null,
+            cityAdmin1Code: "",
+            cityLatitude: null,
+            cityLongitude: null,
           };
         }
       }
@@ -316,6 +512,9 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
             city: "",
             cityDistrict: "",
             cityLocalityGeonameId: null,
+            cityAdmin1Code: "",
+            cityLatitude: "",
+            cityLongitude: "",
           }
         : {}),
     }));
@@ -336,6 +535,7 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
           { compress: 0.86, format: SaveFormat.JPEG },
         );
         setImage(manipulatedImage.uri);
+        setApprovedAvatar(null);
         setErrors((prev) => ({ ...prev, profilePic: "" }));
       }
     } catch {
@@ -353,7 +553,77 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
       hasImage: !!image,
     });
     setErrors(nextErrors);
+    const firstError = Object.values(nextErrors).find(Boolean);
+    if (firstError) {
+      logger.info("[onboarding] step_validation_blocked", {
+        variant,
+        stepKey: step,
+        fieldNames: Object.keys(nextErrors),
+      });
+      AccessibilityInfo.announceForAccessibility(firstError);
+    }
     return Object.keys(nextErrors).length === 0;
+  };
+
+  const approveCurrentPhoto = async () => {
+    if (!image) return false;
+    if (!user?.id) {
+      setErrors((prev) => ({ ...prev, profilePic: "Sign in again before verifying your photo." }));
+      return false;
+    }
+    if (!isProfileMediaGuardV1_2Runtime()) return true;
+    if (approvedAvatar?.localUri === image) return true;
+    if (photoChecking) return false;
+    if (/^https?:\/\//i.test(image)) {
+      const message = "For your safety, choose this profile photo again so we can verify its original image.";
+      setErrors((prev) => ({ ...prev, profilePic: message }));
+      AccessibilityInfo.announceForAccessibility(message);
+      return false;
+    }
+
+    const fileExt = image.split(/[?#]/)[0].split(".").pop()?.toLowerCase() || "jpg";
+    const contentType = fileExt === "png" ? "image/png" : fileExt === "webp" ? "image/webp" : "image/jpeg";
+    setPhotoChecking(true);
+    setErrors((prev) => ({ ...prev, profilePic: "" }));
+
+    try {
+      const result = await Promise.race([
+        guardAndPublishProfileMediaV1_2({
+          userId: user.id,
+          avatarUrl: image,
+          heroImageUrl: null,
+          photos: [],
+          localItems: [{ localUri: image, fileName: `onboarding-avatar.${fileExt}`, contentType }],
+          clientRequestId: `onboarding-photo-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+        }),
+        new Promise<never>((_, reject) => {
+          setTimeout(() => reject(Object.assign(new Error("PROFILE_MEDIA_SCAN_UNAVAILABLE"), {
+            code: "PROFILE_MEDIA_SCAN_UNAVAILABLE",
+            retryable: true,
+          })), 45_000);
+        }),
+      ]);
+      if (!result.avatarUrl) {
+        throw Object.assign(new Error("PROFILE_MEDIA_SCAN_UNAVAILABLE"), {
+          code: "PROFILE_MEDIA_SCAN_UNAVAILABLE",
+          retryable: true,
+        });
+      }
+      setApprovedAvatar({ localUri: image, publicUrl: result.avatarUrl });
+      return true;
+    } catch (error) {
+      const guardMessage = profileMediaGuardMessageV1_2(error)
+        || "We couldn't verify this photo. Choose another photo or try again.";
+      setErrors((prev) => ({ ...prev, profilePic: guardMessage }));
+      logger.warn("[onboarding] photo_step_guard_rejected", {
+        variant,
+        code: String((error as any)?.code || "UNKNOWN"),
+        reason: String((error as any)?.reason || "UNKNOWN"),
+      });
+      return false;
+    } finally {
+      setPhotoChecking(false);
+    }
   };
 
   const handleCurrentLocationAnalyticsEvent = (event: string, payload?: Record<string, unknown>) => {
@@ -395,7 +665,7 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
     });
   };
 
-  const next = () => {
+  const next = async () => {
     transitionDirectionRef.current = "forward";
     if (currentStep.key === "welcome") {
       if (variant === "ghana") logger.info("[onboarding] ghana_onboarding_started", { variant });
@@ -404,6 +674,7 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
       return;
     }
     if (!validateStep(currentStep.key)) return;
+    if (currentStep.key === "photo" && !await approveCurrentPhoto()) return;
     if (currentStep.key === "complete") {
       void submit();
       return;
@@ -411,6 +682,11 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
     if (currentStep.key === "current_location") {
       currentLocationTelemetryRef.current.exitReason = "continue";
     }
+    logger.info("[onboarding] step_completed", {
+      variant,
+      stepKey: currentStep.key,
+      stepIndex,
+    });
     setStepIndex((value) => Math.min(value + 1, steps.length - 1));
   };
 
@@ -484,6 +760,7 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
     try {
       if (variant === "ghana") logger.info("[onboarding] ghana_onboarding_sign_out_selected", { variant });
       await haptics.light();
+      if (user?.id) await clearPremiumOnboardingDraft(user.id, variant);
       await clearSignupSession();
       await signOut();
       router.replace("/(auth)/welcome");
@@ -497,6 +774,7 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
 
   const uploadImage = async (debugId: string, attempt: number, withTimeout: <T>(label: string, promise: PromiseLike<T>, ms: number) => Promise<T>) => {
     if (!image || !user?.id) return null;
+    if (approvedAvatar?.localUri === image) return approvedAvatar.publicUrl;
     const fileExt = image.split(/[?#]/)[0].split(".").pop()?.toLowerCase() || "jpg";
     const contentType = fileExt === "png" ? "image/png" : fileExt === "webp" ? "image/webp" : "image/jpeg";
 
@@ -552,18 +830,24 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
       logger.info("[onboarding] submit start", { debugId, attempt, variant, hasUser: !!user?.id, hasImage: !!image });
       const withTimeout = async <T,>(label: string, promise: PromiseLike<T>, ms: number): Promise<T> => {
         const start = Date.now();
-        const result = await Promise.race([
-          Promise.resolve(promise),
-          new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`${label}_timeout_${ms}ms`)), ms)),
-        ]);
-        logger.debug("[onboarding] step ok", { debugId, attempt, label, ms: Date.now() - start });
-        return result;
+        let timeout: ReturnType<typeof setTimeout> | null = null;
+        try {
+          const result = await Promise.race([
+            Promise.resolve(promise),
+            new Promise<T>((_, reject) => {
+              timeout = setTimeout(() => reject(new Error(`${label}_timeout_${ms}ms`)), ms);
+            }),
+          ]);
+          logger.debug("[onboarding] step ok", { debugId, attempt, label, ms: Date.now() - start });
+          return result;
+        } finally {
+          if (timeout) clearTimeout(timeout);
+        }
       };
 
       watchdog = setTimeout(() => {
         if (submitAttemptRef.current !== attempt) return;
-        setSaveNetworkError("This is taking longer than expected. Please check your connection and tap Retry.");
-        setLoading(false);
+        setMessage("Still securely creating your profile. Please keep Betweener open.");
       }, 25_000);
 
       if (!user) throw new Error("User not authenticated. Please log in again.");
@@ -613,85 +897,72 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
         phoneNumber,
       });
 
-      const updateError = await withTimeout(
-        "profile_upsert",
-        updateProfileWithFallbacks(updateProfile, profileData),
-        20_000,
+      const completion = await withTimeout(
+        "profile_onboarding_v2",
+        completePremiumOnboardingV2({
+          updates: profileData,
+          interestNames: form.interests,
+          completionRequestId,
+        }),
+        35_000,
       );
-      if (updateError) throw new Error(`Profile creation failed: ${updateError.message}`);
+      if (!completion.committed) throw new Error("ONBOARDING_COMPLETION_NOT_COMMITTED");
 
-      if (variant === "ghana" && form.interests.length > 0) {
-        let onboardingProfileId = profile?.id ?? null;
-        if (!onboardingProfileId) {
-          const { data: profileRow, error: profileLookupError } = await withTimeout(
-            "profile_interest_profile_lookup",
-            supabase.from("profiles").select("id").eq("user_id", user.id).single(),
-            8000,
-          );
-          if (profileLookupError) throw new Error(`Interest profile lookup failed: ${profileLookupError.message}`);
-          onboardingProfileId = profileRow?.id ?? null;
-        }
-        if (!onboardingProfileId) throw new Error("Unable to attach interests to your profile.");
-
-        const { data: interestRows, error: interestLookupError } = await withTimeout(
-          "profile_interest_lookup",
-          supabase.from("interests").select("id,name").in("name", form.interests),
-          8000,
-        );
-        if (interestLookupError) throw new Error(`Interest lookup failed: ${interestLookupError.message}`);
-        const selectedInterestRows = interestRows ?? [];
-        if (selectedInterestRows.length !== form.interests.length) {
-          const found = new Set(selectedInterestRows.map((item) => item.name));
-          const missing = form.interests.filter((name) => !found.has(name));
-          logger.error("[onboarding] interest_catalog_out_of_sync", { variant, missing });
-          throw new Error("Some selected interests are not available yet. Please try again after updating the app.");
-        }
-
-        const { error: interestDeleteError } = await withTimeout(
-          "profile_interest_clear",
-          supabase.from("profile_interests").delete().eq("profile_id", onboardingProfileId),
-          8000,
-        );
-        if (interestDeleteError) throw new Error(`Interest update failed: ${interestDeleteError.message}`);
-
-        const { error: interestInsertError } = await withTimeout(
-          "profile_interest_insert",
-          supabase.from("profile_interests").insert(
-            selectedInterestRows.map((interest) => ({
-              profile_id: onboardingProfileId as string,
-              interest_id: interest.id,
-            })),
-          ),
-          8000,
-        );
-        if (interestInsertError) throw new Error(`Interest update failed: ${interestInsertError.message}`);
-      }
-
-      await withTimeout("finalize_signup_verification", finalizeSignupPhoneVerification(), 6000);
-      await withTimeout("clear_signup_session", clearSignupSession(), 4000);
+      await Promise.allSettled([
+        markPendingOnboardingCelebration({
+          userId: user.id,
+          completionRequestId: completion.completionRequestId,
+        }),
+        clearPremiumOnboardingDraft(user.id, variant),
+        finalizeSignupPhoneVerification(),
+        clearSignupSession(),
+      ]);
       setProfileCreated(true);
       setMessage("Profile ready.");
+      logger.info("[onboarding] completion_committed", {
+        variant,
+        attempt,
+        alreadyCompleted: completion.alreadyCompleted,
+        interestCount: form.interests.length,
+      });
       void haptics.success();
       setTimeout(() => {
         void (async () => {
-          try {
-            await Promise.race([refreshProfile(), new Promise<void>((resolve) => setTimeout(resolve, 2500))]);
-          } finally {
-            router.dismissAll();
-            router.replace({ pathname: "/(tabs)/vibes", params: { onboardingCelebration: "1" } });
-          }
+           try {
+             await Promise.race([refreshProfile(), new Promise<void>((resolve) => setTimeout(resolve, 2500))]);
+           } finally {
+             router.replace({ pathname: "/(tabs)/vibes", params: { onboardingCelebration: "1" } });
+           }
         })();
-      }, 550);
+      }, 1500);
     } catch (error: any) {
       const mediaGuardMessage = profileMediaGuardMessageV1_2(error);
       if (mediaGuardMessage) {
-        setMessage(mediaGuardMessage);
+        setErrors((current) => ({ ...current, profilePic: mediaGuardMessage }));
+        setStepIndex(steps.findIndex((step) => step.key === "photo"));
+        setMessage("");
         setSaveNetworkError(null);
-      } else if (isLikelyNetworkError(error)) {
+        AccessibilityInfo.announceForAccessibility(mediaGuardMessage);
+      } else if (error?.retryable === true || isLikelyNetworkError(error)) {
         setSaveNetworkError("We couldn't save your profile. Check your connection and try again.");
         setMessage("");
       } else {
-        setMessage(error?.message || "An error occurred");
+        const completionMessage = premiumOnboardingCompletionMessage(error);
+        const fieldNames = Array.isArray(error?.fieldNames) ? error.fieldNames : [];
+        if (fieldNames.includes("avatar_url")) setApprovedAvatar(null);
+        const targetField = fieldNames.find((field: string) => PROFILE_FIELD_STEP[field]);
+        const targetStep = targetField ? PROFILE_FIELD_STEP[targetField] : null;
+        if (targetStep) {
+          const nextErrors = Object.fromEntries(
+            fieldNames.map((field: string) => [PROFILE_FIELD_FORM_KEY[field] || field, completionMessage]),
+          );
+          setErrors(nextErrors);
+          setStepIndex(steps.findIndex((step) => step.key === targetStep));
+          setMessage("");
+          AccessibilityInfo.announceForAccessibility(completionMessage);
+        } else {
+          setMessage(completionMessage);
+        }
       }
       logger.error("[onboarding] submit failed", error, { debugId, attempt, variant, likelyNetwork: isLikelyNetworkError(error) });
     } finally {
@@ -700,7 +971,15 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
     }
   };
 
-  const renderError = (key: string) => (errors[key] ? <Text style={styles.errorText}>{errors[key]}</Text> : null);
+  const renderError = (key: string) => (
+    errors[key]
+      ? (
+        <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={styles.errorText}>
+          {errors[key]}
+        </Text>
+      )
+      : null
+  );
 
   const renderChoice = (label: string, selected: boolean, onPress: () => void, icon?: string) => (
     <Pressable
@@ -732,6 +1011,8 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
             form={form}
             customOccupation={customOccupation}
             image={image}
+            photoChecking={photoChecking}
+            photoApproved={approvedAvatar?.localUri === image}
             errors={errors}
             styles={styles}
             responsiveCompact={responsive.compactHeight}
@@ -788,7 +1069,7 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
             tribes={PREMIUM_ONBOARDING_TRIBES}
             interests={PREMIUM_ONBOARDING_INTERESTS}
             intents={PREMIUM_ONBOARDING_INTENTS}
-            religionOptions={RELIGION_OPTIONS}
+            religionOptions={ONBOARDING_RELIGION_OPTIONS}
             rootsVisibility={PREMIUM_ONBOARDING_ROOTS_VISIBILITY}
             onCurrentLocationAnalyticsEvent={
               currentStep.key === "current_location" ? handleCurrentLocationAnalyticsEvent : undefined
@@ -798,9 +1079,11 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
       case "complete":
         return (
           <PremiumOnboardingCompleteStep
-            subtitle={currentStep.subtitle}
             saveNetworkError={saveNetworkError}
             loading={loading}
+            profileCreated={profileCreated}
+            avatarUri={approvedAvatar?.publicUrl || image}
+            firstName={form.fullName.trim().split(/\s+/)[0] || null}
             message={message}
             onRetry={submit}
             styles={styles}
@@ -811,7 +1094,7 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
     }
   };
 
-  if (!fontsLoaded || !routeValidated) {
+  if (!fontsLoaded || !routeValidated || !draftReady) {
     return (
       <SafeAreaView style={[styles.background, styles.loadingCenter]}>
         <ActivityIndicator color={styles.tokens.accent.color} />
@@ -821,7 +1104,11 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
 
   const isWelcomeStep = currentStep.key === "welcome";
   const isGhanaWelcomeStep = isWelcomeStep && variant === "ghana";
-  const ctaText = stepIndex === 0 ? meta.cta : currentStep.key === "complete" ? "Enter Betweener" : "Continue";
+  const ctaText = stepIndex === 0
+    ? meta.cta
+    : currentStep.key === "complete"
+      ? "Create my profile"
+      : "Continue";
   const primaryDisabled =
     currentStep.key === "current_location" &&
     variant === "ghana" &&
@@ -870,7 +1157,7 @@ export function PremiumOnboardingFlow({ variant }: { variant: Variant }) {
             title={currentStep.title}
             subtitle={currentStep.subtitle}
             ctaText={ctaText}
-            loading={loading}
+            loading={loading || photoChecking}
             profileCreated={profileCreated}
             primaryDisabled={primaryDisabled}
             dark={meta.dark}

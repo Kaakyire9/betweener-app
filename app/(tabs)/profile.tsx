@@ -18,7 +18,6 @@ import { VerificationNotifications } from "@/components/VerificationNotification
 import ProfileVideoModal from "@/components/ProfileVideoModal";
 import { Colors } from "@/constants/theme";
 import { useColorScheme, useColorSchemePreference } from "@/hooks/use-color-scheme";
-import { usePremiumOfflineQueueStatus } from "@/hooks/usePremiumOfflineQueueStatus";
 import { useVerificationStatus } from "@/hooks/use-verification-status";
 import { useAuth } from "@/lib/auth-context";
 import { logProfileGiftEvent } from "@/lib/gifts/events";
@@ -43,7 +42,6 @@ import {
 import {
   enqueueProfileGiftRevealMutation,
   enqueueNotificationPrefsUpdateMutation,
-  getOfflineMutationQueueSnapshot,
   getPendingProfileMediaSyncMutation,
   subscribeToOfflineMutationEvents,
 } from "@/lib/offline/mutation-queue";
@@ -57,6 +55,10 @@ import {
 import { resolveProfileMediaDraft } from "@/lib/profile/media-studio";
 import { getPresenceDisplay } from "@/lib/presence";
 import { insertGuardedProfilePrompt } from "@/lib/profile-guard/prompt-write";
+import {
+  PUBLIC_PROFILE_GUARD_MESSAGE,
+  validatePublicProfilePrompt,
+} from "@/lib/profile-guard/public-profile-fields";
 import {
   DISTANCE_UNIT_OPTIONS,
   GIFT_SYSTEM_ENTITY_TYPES,
@@ -186,7 +188,6 @@ export default function ProfileScreen() {
   const { status: verificationStatus, refreshStatus } = useVerificationStatus(profile?.user_id);
   const { preference: themePreference, setPreference: setThemePreference } = useColorSchemePreference();
   const { currentPlan, currentPlanEndsAt } = usePremiumState();
-  const premiumQueue = usePremiumOfflineQueueStatus();
   
   const [selectedPrompts, setSelectedPrompts] = useState<Record<string, number>>({
     two_truths_lie: 0,
@@ -345,8 +346,6 @@ export default function ProfileScreen() {
   const [receivedGifts, setReceivedGifts] = useState<ReceivedGiftItem[]>([]);
   const [selectedReceivedGift, setSelectedReceivedGift] = useState<ReceivedGiftItem | null>(null);
   const [matchQuality, setMatchQuality] = useState<number | null>(null);
-  const [profileSyncPending, setProfileSyncPending] = useState(false);
-  const [profileSyncFailed, setProfileSyncFailed] = useState(false);
   const profileStatsRef = useRef<MeProfileStatsSnapshot>({
     likesCount: 0,
     matchesCount: 0,
@@ -589,32 +588,6 @@ export default function ProfileScreen() {
     }
   };
 
-  const refreshProfileSyncState = useCallback(async () => {
-    const snapshot = await getOfflineMutationQueueSnapshot();
-    const isProfileMutation = (item: { kind: string }) =>
-      item.kind === 'profile_update' ||
-      item.kind === 'profile_interests_update' ||
-      item.kind === 'profile_media_sync';
-    setProfileSyncPending(snapshot.pending.some(isProfileMutation));
-    setProfileSyncFailed(snapshot.failed.some(isProfileMutation));
-  }, []);
-
-  useEffect(() => {
-    void refreshProfileSyncState();
-    return subscribeToOfflineMutationEvents((event) => {
-      if (
-        event.mutation.kind === 'profile_update' ||
-        event.mutation.kind === 'profile_interests_update' ||
-        event.mutation.kind === 'profile_media_sync'
-      ) {
-        void refreshProfileSyncState();
-        if (event.type === 'completed') {
-          void refreshProfile();
-        }
-      }
-    });
-  }, [refreshProfile, refreshProfileSyncState]);
-
   const applyPromptAnswers = useCallback(
     (rows: ProfilePromptAnswer[]) => {
       setPromptAnswers(rows);
@@ -648,6 +621,46 @@ export default function ProfileScreen() {
     },
     [cacheProfileId],
   );
+
+  useEffect(() => {
+    if (!user?.id) return;
+    return subscribeToOfflineMutationEvents((event) => {
+      if (
+        event.type !== 'failed' ||
+        event.mutation.kind !== 'profile_media_sync' ||
+        event.mutation.payload.userId !== user.id
+      ) {
+        return;
+      }
+
+      const stableAvatarUrl = normalizeProfilePhotoUri(profile?.avatar_url) || null;
+      const stableHeroImageUrl =
+        normalizeProfilePhotoUri((profile as any)?.hero_image_url) || null;
+      const stablePhotos = normalizeGalleryPhotoList(
+        (profile as any)?.photos || [],
+        stableAvatarUrl,
+      );
+      const stableProfileVideo = String(
+        (profile as any)?.profile_video || (profile as any)?.profileVideo || '',
+      ).trim() || null;
+
+      setDisplayAvatarUrl(stableAvatarUrl);
+      setDisplayHeroImageUrl(stableHeroImageUrl);
+      setDisplayProfileVideo(stableProfileVideo);
+      setUserPhotos(stablePhotos);
+      writeMeSnapshot({
+        avatarUrl: stableAvatarUrl,
+        heroImageUrl: stableHeroImageUrl,
+        photos: stablePhotos,
+        profileVideo: stableProfileVideo,
+      });
+      void refreshProfile();
+      Alert.alert(
+        'Profile media not updated',
+        'We restored your last saved profile. Please choose the photos again when your connection is stable.',
+      );
+    });
+  }, [profile, refreshProfile, user?.id, writeMeSnapshot]);
 
   const persistAccountSnapshot = useCallback(
     (patch: Partial<MeAccountSnapshot>) => {
@@ -1464,6 +1477,10 @@ export default function ProfileScreen() {
     const title = customPromptTitle.trim();
     const answer = customPromptAnswer.trim();
     if (!title || !answer) return;
+    if (!validatePublicProfilePrompt({ title, answer }).allowed) {
+      Alert.alert('Keep your profile personal', PUBLIC_PROFILE_GUARD_MESSAGE);
+      return;
+    }
     setCustomPromptSaving(true);
     const { error } = await insertGuardedProfilePrompt({
       prompt_key: 'custom',
@@ -1473,6 +1490,12 @@ export default function ProfileScreen() {
     setCustomPromptSaving(false);
     if (error) {
       console.log('[profile] custom prompt insert error', error);
+      Alert.alert(
+        'Prompt not saved',
+        (error as any)?.code === 'PROFILE_CONTENT_NOT_ALLOWED'
+          ? PUBLIC_PROFILE_GUARD_MESSAGE
+          : 'We could not save this prompt. Please try again.',
+      );
       return;
     }
     setCustomPromptTitle('');
@@ -1501,24 +1524,22 @@ export default function ProfileScreen() {
 
     if (guessPromptMode === 'multiple_choice' && (!options || options.length < 2)) return;
 
+    if (!validatePublicProfilePrompt({
+      title,
+      answer,
+      hint: guessPromptHint.trim() || null,
+      options,
+    }).allowed) {
+      Alert.alert('Keep your profile personal', PUBLIC_PROFILE_GUARD_MESSAGE);
+      return;
+    }
+
     setGuessPromptSaving(true);
     try {
       const existingGuessIds = promptAnswers
         .filter((row) => row.promptType === 'guess')
         .map((row) => row.id)
         .filter(Boolean);
-
-      if (existingGuessIds.length > 0) {
-        const { error: deleteError } = await supabase
-          .from('profile_prompts')
-          .delete()
-          .eq('profile_id', profile.id)
-          .in('id', existingGuessIds);
-        if (deleteError) {
-          console.log('[profile] guess prompt cleanup error', deleteError);
-          return;
-        }
-      }
 
       const { error } = await insertGuardedProfilePrompt({
         prompt_key: 'guess',
@@ -1533,7 +1554,26 @@ export default function ProfileScreen() {
 
       if (error) {
         console.log('[profile] guess prompt insert error', error);
+        Alert.alert(
+          'Prompt not saved',
+          (error as any)?.code === 'PROFILE_CONTENT_NOT_ALLOWED'
+            ? PUBLIC_PROFILE_GUARD_MESSAGE
+            : 'We could not save this prompt. Please try again.',
+        );
         return;
+      }
+
+      // Publish the approved replacement before removing the prior guess. A
+      // provider outage or server rejection must never erase valid content.
+      if (existingGuessIds.length > 0) {
+        const { error: deleteError } = await supabase
+          .from('profile_prompts')
+          .delete()
+          .eq('profile_id', profile.id)
+          .in('id', existingGuessIds);
+        if (deleteError) {
+          console.log('[profile] guess prompt cleanup error', deleteError);
+        }
       }
 
       resetGuessPromptComposer();
@@ -3481,11 +3521,7 @@ export default function ProfileScreen() {
             theme={theme}
             isDark={isDark}
             premiumExpiryReminder={premiumExpiryReminder}
-            premiumQueue={premiumQueue}
-            profileSyncPending={profileSyncPending}
-            profileSyncFailed={profileSyncFailed}
             onReviewPremium={() => router.push('/premium-plans')}
-            onOpenSyncActivity={() => router.push('/sync-activity')}
           />
 
           <MeReceivedGiftsCard
@@ -4283,8 +4319,6 @@ export default function ProfileScreen() {
               });
             }
             if (updatedProfile?.__offlineQueued) {
-              setProfileSyncPending(true);
-              setProfileSyncFailed(false);
               setShowEditModal(false);
               return;
             }
