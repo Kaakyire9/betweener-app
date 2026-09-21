@@ -194,6 +194,7 @@ export const localRowToChatMessage = (row: ChatMessageRow): MessageType => {
         return {
           ...hydrated,
           status: structuredStatus,
+          sendErrorCode: row.error_code ?? null,
           deletedForAll: row.status === 'deleted',
           deletedAt: row.deleted_at ? new Date(row.deleted_at) : hydrated.deletedAt ?? null,
           editedAt: row.edited_at ? new Date(row.edited_at) : hydrated.editedAt ?? null,
@@ -214,6 +215,7 @@ export const localRowToChatMessage = (row: ChatMessageRow): MessageType => {
     type: row.message_type === 'audio' ? 'voice' : (row.message_type as MessageType['type']),
     reactions: [],
     status: structuredStatus,
+    sendErrorCode: row.error_code ?? null,
     deletedForAll: row.status === 'deleted',
     deletedAt: row.deleted_at ? new Date(row.deleted_at) : null,
     isViewOnce: row.is_view_once === 1,

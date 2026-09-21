@@ -1,6 +1,21 @@
 export const CHAT_MEDIA_ALBUM_MAX_ITEMS = 10;
 export const CHAT_MEDIA_ALBUM_PREVIEW_ITEMS = 4;
-export const CHAT_MEDIA_ALBUM_UPLOAD_CONCURRENCY = 2;
+export const CHAT_MEDIA_ALBUM_DEFAULT_UPLOAD_CONCURRENCY = 2;
+export const CHAT_MEDIA_ALBUM_MAX_UPLOAD_CONCURRENCY = 4;
+
+export const resolveChatMediaAlbumUploadConcurrency = (value: unknown): number => {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(parsed)) return CHAT_MEDIA_ALBUM_DEFAULT_UPLOAD_CONCURRENCY;
+  return Math.max(1, Math.min(CHAT_MEDIA_ALBUM_MAX_UPLOAD_CONCURRENCY, Math.trunc(parsed)));
+};
+
+export const CHAT_MEDIA_ALBUM_UPLOAD_CONCURRENCY = resolveChatMediaAlbumUploadConcurrency(
+  process.env.EXPO_PUBLIC_CHAT_ALBUM_UPLOAD_CONCURRENCY,
+);
+
+export type ChatAlbumUploadBucket =
+  | 'chat-attachment-staging-v1-2'
+  | 'chat-media';
 
 export type ChatAlbumMediaType = 'image' | 'video';
 
@@ -9,6 +24,7 @@ export type ChatAlbumItemTransferState =
   | 'preparing'
   | 'uploading'
   | 'uploaded'
+  | 'cancelling'
   | 'retryable_failed'
   | 'terminal_failed'
   | 'cancelled';
@@ -22,7 +38,78 @@ export type DurableChatAlbumItem = {
   contentType: string;
   transferState: ChatAlbumItemTransferState;
   attemptCount: number;
+  uploadProgress?: number | null;
   lastError?: string | null;
+};
+
+export const resolveChatAlbumItemMediaType = (item: {
+  mediaType?: ChatAlbumMediaType;
+  contentType: string;
+}): ChatAlbumMediaType => item.mediaType ?? (
+  item.contentType.toLowerCase().startsWith('video/') ? 'video' : 'image'
+);
+
+/**
+ * Images enter the v1.2 moderation staging bucket. Videos remain in the private
+ * media bucket. This must be resolved per item: using the album's first item
+ * makes mixed albums selection-order dependent.
+ */
+export const resolveChatAlbumUploadBucket = (
+  item: { mediaType?: ChatAlbumMediaType; contentType: string },
+): ChatAlbumUploadBucket => resolveChatAlbumItemMediaType(item) === 'image'
+  ? 'chat-attachment-staging-v1-2'
+  : 'chat-media';
+
+export const clampChatAlbumUploadProgress = (value: unknown): number => {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.min(1, parsed));
+};
+
+export const updateChatAlbumItemTransfer = <T extends {
+  attachmentId: string;
+  transferState?: ChatAlbumItemTransferState;
+  uploadProgress?: number | null;
+  lastError?: string | null;
+}>(
+  items: readonly T[],
+  attachmentId: string,
+  patch: Partial<T>,
+): T[] => items.map((item) => item.attachmentId === attachmentId
+  ? { ...item, ...patch }
+  : item);
+
+export const removeChatAlbumItemFromComposition = <T extends {
+  attachmentId: string;
+  index?: number;
+}>(items: readonly T[], attachmentId: string): (T & { index: number })[] => {
+  if (!items.some((item) => item.attachmentId === attachmentId)) {
+    throw new Error('chat_album_attachment_not_found');
+  }
+  const remaining = items.filter((item) => item.attachmentId !== attachmentId);
+  if (remaining.length < 1) throw new Error('chat_album_cannot_remove_last_item');
+  return remaining.map((item, index) => ({ ...item, index }));
+};
+
+export const prepareChatAlbumItemsForAttempt = <T extends {
+  attachmentId: string;
+  transferState?: ChatAlbumItemTransferState;
+  uploadProgress?: number | null;
+  attemptCount?: number;
+  lastError?: string | null;
+}>(items: readonly T[], retryAttachmentIds?: readonly string[]): T[] => {
+  const retrySet = retryAttachmentIds?.length ? new Set(retryAttachmentIds) : null;
+  return items.map((item) => {
+    const shouldAttempt = !retrySet || retrySet.has(item.attachmentId);
+    if (item.transferState === 'uploaded' || !shouldAttempt) return { ...item };
+    return {
+      ...item,
+      transferState: 'uploading',
+      uploadProgress: 0,
+      attemptCount: (item.attemptCount ?? 0) + 1,
+      lastError: null,
+    };
+  });
 };
 
 export type ChatAlbumLayout =
@@ -58,7 +145,7 @@ export const normalizeDurableChatAlbumItems = <T extends {
       throw new Error('chat_album_attachment_identity_invalid');
     }
     seen.add(item.attachmentId);
-    const mediaType = item.mediaType ?? (item.contentType.startsWith('video/') ? 'video' : 'image');
+    const mediaType = resolveChatAlbumItemMediaType(item);
     if (mediaType !== 'image' && mediaType !== 'video') {
       throw new Error('chat_album_media_type_invalid');
     }
@@ -78,6 +165,12 @@ export class ChatAlbumWorkError extends Error {
     this.failures = failures;
   }
 }
+
+/** Preserves the actionable cause when the bounded worker handled one item. */
+export const unwrapSingleChatAlbumWorkError = (error: unknown): unknown =>
+  error instanceof ChatAlbumWorkError && error.failures.length === 1
+    ? error.failures[0].error
+    : error;
 
 /** Runs work concurrently while preserving the exact input order in the result. */
 export const mapChatAlbumItemsBounded = async <T, R>(

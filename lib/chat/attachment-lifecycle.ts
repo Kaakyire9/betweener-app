@@ -49,6 +49,69 @@ export type ChatAttachmentBatchFinalizeInput = {
   mediaGroupId?: string | null;
 };
 
+type FunctionErrorPayload = {
+  error?: unknown;
+  code?: unknown;
+  message?: unknown;
+  categories?: unknown;
+  retry_after_seconds?: unknown;
+};
+
+export class ChatAttachmentFunctionError extends Error {
+  readonly code: string;
+  readonly status: number | null;
+  readonly categories: string[];
+  readonly retryAfterSeconds: number | null;
+
+  constructor(args: {
+    code: string;
+    status?: number | null;
+    categories?: string[];
+    retryAfterSeconds?: number | null;
+  }) {
+    super(args.code);
+    this.name = 'ChatAttachmentFunctionError';
+    this.code = args.code;
+    this.status = args.status ?? null;
+    this.categories = args.categories ?? [];
+    this.retryAfterSeconds = args.retryAfterSeconds ?? null;
+  }
+}
+
+const extractInvokeErrorDetails = async (error: unknown) => {
+  const context = (error as { context?: Response })?.context;
+  const status = typeof context?.status === 'number' ? context.status : null;
+  let payload: FunctionErrorPayload | null = null;
+  if (context && typeof context.clone === 'function') {
+    try {
+      const raw = await context.clone().text();
+      if (raw) payload = JSON.parse(raw) as FunctionErrorPayload;
+    } catch {}
+  }
+  const payloadCode = [payload?.error, payload?.code, payload?.message]
+    .find((value) => typeof value === 'string' && value.trim());
+  const inheritedCode = (error as { code?: unknown })?.code;
+  const code = typeof payloadCode === 'string'
+    ? payloadCode.trim()
+    : typeof inheritedCode === 'string' && inheritedCode.trim()
+      ? inheritedCode.trim()
+      : status
+        ? `attachment_finalize_http_${status}`
+        : 'attachment_finalize_failed';
+  const categories = Array.isArray(payload?.categories)
+    ? payload.categories.filter((value): value is string => typeof value === 'string')
+    : [];
+  const parsedRetryAfter = Number(payload?.retry_after_seconds);
+  return {
+    code,
+    status,
+    categories,
+    retryAfterSeconds: Number.isFinite(parsedRetryAfter) && parsedRetryAfter > 0
+      ? parsedRetryAfter
+      : null,
+  };
+};
+
 const SAFE_EXTENSION = /^[a-z0-9]{1,8}$/;
 
 export const createChatAttachmentId = () => Crypto.randomUUID();
@@ -165,10 +228,7 @@ export const finalizeChatAttachmentBatch = async (
     },
   });
   if (error) {
-    const errorCode = await extractInvokeErrorCode(error);
-    const batchError = new Error(errorCode ?? error.message ?? 'attachment_batch_finalize_failed');
-    (batchError as Error & { code?: string }).code = errorCode ?? undefined;
-    throw batchError;
+    throw new ChatAttachmentFunctionError(await extractInvokeErrorDetails(error));
   }
   const message = (data as { message?: CanonicalChatAttachmentMessage } | null)?.message;
   if (!message) throw new Error('attachment_batch_finalize_missing_message');
@@ -198,14 +258,8 @@ export const cancelChatAttachmentItem = async (input: {
 };
 
 const extractInvokeErrorCode = async (error: unknown) => {
-  const context = (error as { context?: Response }).context;
-  if (context && typeof context.clone === 'function') {
-    try {
-      const detail = await context.clone().json() as { error?: string };
-      return detail?.error ?? null;
-    } catch {}
-  }
-  return null;
+  const details = await extractInvokeErrorDetails(error);
+  return details.code === 'attachment_finalize_failed' ? null : details.code;
 };
 
 export const prepareViewOnceAttachment = async (messageId: string) => {

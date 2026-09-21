@@ -3,6 +3,7 @@ import {
   buildDeterministicChatAttachmentPath,
   consumeViewOnceAttachment,
   finalizeChatAttachment,
+  finalizeChatAttachmentBatch,
 } from '@/lib/chat/attachment-lifecycle';
 
 jest.mock('@/lib/supabase', () => ({
@@ -63,6 +64,68 @@ describe('chat attachment lifecycle', () => {
     await expect(consumeViewOnceAttachment('message-id')).rejects.toMatchObject({
       code: 'view_once_already_consumed',
       message: 'view_once_already_consumed',
+    });
+  });
+
+  it('preserves moderation details when a batch finalization is rejected', async () => {
+    mockInvoke.mockResolvedValue({
+      data: null,
+      error: {
+        context: new Response(JSON.stringify({
+          error: 'image_content_not_allowed',
+          categories: ['sexual'],
+        }), {
+          status: 422,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      },
+    });
+
+    await expect(finalizeChatAttachmentBatch({
+      receiverId: 'receiver-id',
+      clientMessageId: 'client-id',
+      attachmentType: 'image',
+      attachments: [{
+        receiverId: 'receiver-id',
+        clientMessageId: 'client-id',
+        attachmentId: 'attachment-id',
+        attachmentType: 'image',
+        bucketId: 'chat-attachment-staging-v1-2',
+        storagePath: 'sender/receiver-id/client-id/attachment-id-attachment.jpg',
+        mimeType: 'image/jpeg',
+      }],
+    })).rejects.toMatchObject({
+      code: 'image_content_not_allowed',
+      status: 422,
+      categories: ['sexual'],
+      message: 'image_content_not_allowed',
+    });
+  });
+
+  it('preserves an HTTP classification when the gateway response is not JSON', async () => {
+    mockInvoke.mockResolvedValue({
+      data: null,
+      error: {
+        context: new Response('gateway unavailable', { status: 503 }),
+      },
+    });
+
+    await expect(finalizeChatAttachmentBatch({
+      receiverId: 'receiver-id',
+      clientMessageId: 'client-id',
+      attachmentType: 'image',
+      attachments: [{
+        receiverId: 'receiver-id',
+        clientMessageId: 'client-id',
+        attachmentId: 'attachment-id',
+        attachmentType: 'image',
+        bucketId: 'chat-attachment-staging-v1-2',
+        storagePath: 'sender/receiver-id/client-id/attachment-id-attachment.jpg',
+        mimeType: 'image/jpeg',
+      }],
+    })).rejects.toMatchObject({
+      code: 'attachment_finalize_http_503',
+      status: 503,
     });
   });
 

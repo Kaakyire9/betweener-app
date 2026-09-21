@@ -21,6 +21,7 @@ export type ChatMediaItem = {
     | 'preparing'
     | 'uploading'
     | 'uploaded'
+    | 'cancelling'
     | 'retryable_failed'
     | 'terminal_failed'
     | 'cancelled';
@@ -55,6 +56,7 @@ export type MessageType = {
   mediaCaption?: string | null;
   reactions: { userId: string; emoji: string; }[];
   status?: 'queued' | 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
+  sendErrorCode?: string | null;
   readAt?: Date;
   deletedForAll?: boolean;
   isSystem?: boolean;

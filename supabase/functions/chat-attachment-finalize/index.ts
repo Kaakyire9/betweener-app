@@ -770,12 +770,9 @@ serve(async (req) => {
           !['chat-media', CHAT_ATTACHMENT_STAGING_BUCKET].includes(bucket) || paths.length < 1) {
         return json(400, { error: 'invalid_cancel_item_request' })
       }
-      if (bucket === CHAT_ATTACHMENT_STAGING_BUCKET) {
-        const { error: cleanupError } = await service.storage.from(bucket).remove([...new Set(paths)])
-        return cleanupError
-          ? json(503, { error: 'attachment_item_cleanup_failed' })
-          : json(200, { cancelled: true, attachmentId })
-      }
+      // Always commit the cancellation tombstone before deleting bytes. Images
+      // live in the moderation staging bucket before publication, but a stale
+      // worker must still be prevented from finalising that removed item.
       const { error: cancellationError } = await service.rpc('rpc_cancel_chat_media_album_item', {
         p_sender_id: user.id,
         p_receiver_id: receiverId,
@@ -798,7 +795,6 @@ serve(async (req) => {
         return json(400, { error: 'invalid_cancel_request' })
       }
       const paths = new Map<string, string[]>()
-      let stagingOnly = true
       for (const raw of attachments) {
         const attachmentId = String(raw?.attachmentId || '')
         const bucket = String(raw?.bucketId || '')
@@ -809,7 +805,6 @@ serve(async (req) => {
         if (!attachmentId || !['chat-media', 'voice-messages', CHAT_ATTACHMENT_STAGING_BUCKET].includes(bucket) || candidates.length === 0) {
           return json(400, { error: 'invalid_cancel_attachment' })
         }
-        if (bucket !== CHAT_ATTACHMENT_STAGING_BUCKET) stagingOnly = false
         for (const candidate of candidates) {
           const targetBucket = bucket === CHAT_ATTACHMENT_STAGING_BUCKET
             ? CHAT_ATTACHMENT_STAGING_BUCKET
@@ -817,21 +812,21 @@ serve(async (req) => {
           paths.set(targetBucket, [...(paths.get(targetBucket) || []), candidate])
         }
       }
-      if (!stagingOnly) {
-        const { error: cancellationError } = await service.rpc('rpc_cancel_chat_attachment_batch', {
-          p_sender_id: user.id,
-          p_receiver_id: receiverId,
-          p_client_message_id: clientMessageId,
-          p_attachments: attachments,
+      // Tombstone every batch before deleting bytes, including all-image
+      // batches that still live entirely in the v1.2 moderation staging bucket.
+      const { error: cancellationError } = await service.rpc('rpc_cancel_chat_attachment_batch', {
+        p_sender_id: user.id,
+        p_receiver_id: receiverId,
+        p_client_message_id: clientMessageId,
+        p_attachments: attachments,
+      })
+      if (cancellationError) {
+        console.log('[chat-attachment-finalize] cancellation-rpc-error', {
+          clientMessageId,
+          code: cancellationError.code ?? null,
+          message: cancellationError.message,
         })
-        if (cancellationError) {
-          console.log('[chat-attachment-finalize] cancellation-rpc-error', {
-            clientMessageId,
-            code: cancellationError.code ?? null,
-            message: cancellationError.message,
-          })
-          return json(409, { error: cancellationError.message || 'attachment_cancel_rejected' })
-        }
+        return json(409, { error: cancellationError.message || 'attachment_cancel_rejected' })
       }
       for (const [bucket, bucketPaths] of paths) {
         const { error } = await service.storage.from(bucket).remove([...new Set(bucketPaths)])

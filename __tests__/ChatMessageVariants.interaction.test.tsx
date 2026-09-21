@@ -90,6 +90,92 @@ describe("Chat message variant interactions", () => {
     expect(onViewImage).toHaveBeenCalledWith("https://example.com/image.jpg");
   }, 15_000);
 
+  it("explains terminal image moderation failures without offering a futile retry", async () => {
+    const onRetryFailedMessage = jest.fn();
+    const item = {
+      id: "rejected-image",
+      clientMessageId: "rejected-image",
+      text: "",
+      senderId: "me",
+      timestamp: new Date("2026-09-20T12:00:00.000Z"),
+      type: "image",
+      imageUrl: "file:///rejected-image.jpg",
+      status: "failed",
+      sendErrorCode: "image_content_not_allowed",
+      reactions: [],
+    };
+
+    const { getByLabelText, getByText } = await render(
+      <MediaMessageContent
+        item={item}
+        isMyMessage
+        timeLabel="12:00"
+        styles={styles}
+        theme={Colors.light}
+        isDark={false}
+        receiptPulseStyle={{}}
+        onRetryFailedMessage={onRetryFailedMessage}
+      />
+    );
+
+    expect(getByText("Not sent · Choose another")).toBeTruthy();
+    expect(getByText(/appears to contain nudity/)).toBeTruthy();
+    await fireEvent.press(getByLabelText("Open photo"));
+    expect(onRetryFailedMessage).not.toHaveBeenCalled();
+  });
+
+  it("renders album progress and opens or manages the hidden +N item by stable index", async () => {
+    const onViewImage = jest.fn();
+    const onManageAlbumItem = jest.fn();
+    const mediaItems = Array.from({ length: 5 }, (_, index) => ({
+      attachmentId: `attachment-${index}`,
+      index,
+      type: "image",
+      storagePath: "",
+      localUri: `file:///album-${index}.jpg`,
+      width: index % 2 === 0 ? 900 : 600,
+      height: index % 2 === 0 ? 600 : 900,
+      transferState: index === 0 ? "uploading" : "queued",
+      uploadProgress: index === 0 ? 0.42 : 0,
+    }));
+    const item = {
+      id: "album-5",
+      clientMessageId: "album-5",
+      text: "Album caption",
+      senderId: "me",
+      timestamp: new Date("2026-09-19T12:00:00.000Z"),
+      type: "image",
+      status: "sending",
+      mediaItems,
+      mediaExpectedCount: 5,
+      reactions: [],
+    };
+
+    const { getByLabelText, getByText } = await render(
+      <MediaMessageContent
+        item={item}
+        isMyMessage
+        timeLabel="12:00"
+        styles={styles}
+        theme={Colors.light}
+        isDark={false}
+        receiptPulseStyle={{}}
+        onViewImage={onViewImage}
+        onManageAlbumItem={onManageAlbumItem}
+      />
+    );
+
+    expect(getByText("42%")).toBeTruthy();
+    expect(getByText("+1")).toBeTruthy();
+    const moreTile = getByLabelText("Open 1 more photo");
+
+    await fireEvent.press(moreTile);
+    expect(onViewImage).toHaveBeenCalledWith(item, "file:///album-4.jpg", 4);
+
+    fireEvent(moreTile, "longPress");
+    expect(onManageAlbumItem).toHaveBeenCalledWith(item, 4);
+  });
+
   it("opens documents from the bubble press path", async () => {
     const onOpenDocument = jest.fn();
     const item = {

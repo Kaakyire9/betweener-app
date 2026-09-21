@@ -22,8 +22,9 @@ export type QueuedAttachmentFile = {
   previewHeight?: number | null;
   index?: number;
   mediaType?: 'image' | 'video';
-  transferState?: 'queued' | 'preparing' | 'uploading' | 'uploaded' | 'retryable_failed' | 'terminal_failed' | 'cancelled';
+  transferState?: 'queued' | 'preparing' | 'uploading' | 'uploaded' | 'cancelling' | 'retryable_failed' | 'terminal_failed' | 'cancelled';
   attemptCount?: number;
+  uploadProgress?: number | null;
   lastError?: string | null;
 };
 
@@ -140,6 +141,7 @@ export const createQueuedMediaOutboxRow = ({
       mediaType,
       ...(mediaGroupId ? { mediaGroupId } : {}),
       ...(albumCaption ? { albumCaption } : {}),
+      ...(albumItems?.length ? { compositionRevision: 0 } : {}),
       attachmentId: file.attachmentId,
       byteSize: file.byteSize ?? null,
       width: file.width ?? null,
@@ -161,6 +163,7 @@ export const createQueuedMediaOutboxRow = ({
             mediaType: item.mediaType ?? (item.contentType.startsWith('video/') ? 'video' : 'image'),
             transferState: item.transferState ?? 'queued',
             attemptCount: item.attemptCount ?? 0,
+            uploadProgress: item.uploadProgress ?? 0,
             lastError: item.lastError ?? null,
           }))
         : undefined,

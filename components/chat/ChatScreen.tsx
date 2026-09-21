@@ -8,10 +8,13 @@ import { MessageRowItem } from '@/components/chat/MessageRowItem';
 import { ChatVideoViewer } from "@/components/chat/media/ChatVideoViewer";
 import { ChatDocumentViewer } from '@/components/chat/media/ChatDocumentViewer';
 import { ChatImmersiveVideoViewer } from '@/components/chat/media/ChatImmersiveVideoViewer';
+import { ChatImageViewer } from '@/components/chat/media/ChatImageViewer';
+import { ChatLocationPicker } from '@/components/chat/location/ChatLocationPicker';
+import { ChatLocationViewer } from '@/components/chat/location/ChatLocationViewer';
 import ChatMessageActionsSheet from "@/components/chat/ChatMessageActionsSheet";
 import ChatReactionSummarySheet from "@/components/chat/ChatReactionSummarySheet";
 import ChatSafetyModal from "@/components/chat/ChatSafetyModal";
-import type { ChatMediaItem, DatePlanResponseKind, DatePlanStatus, MessageType } from "@/components/chat/types";
+import type { ChatMediaItem, DatePlanResponseKind, MessageType } from "@/components/chat/types";
 import { Colors } from "@/constants/theme";
 import {
   ATTACHMENT_SHEET_MAX_HEIGHT,
@@ -27,18 +30,13 @@ import {
   DATE_PLAN_TEXT_PREFIX,
   DEFAULT_VOICE_WAVEFORM,
   DOCUMENT_TEXT_PREFIX,
-  DURABLE_CHAT_OUTBOX_MAX_ATTEMPTS,
   FALLBACK_BETWEENER_DATE_PICKS,
-  GOOGLE_MAPS_MAP_ID,
   GOOGLE_MAPS_WEB_API_KEY,
   HEADER_HINT_STORAGE_KEY,
   LEGACY_MESSAGE_SELECT_FIELDS,
-  LIVE_LOCATION_PRESETS,
   LOCAL_CHAT_OPERATION_TIMEOUT_MS,
   LOCATION_LIVE_PREFIX,
   LOCATION_TEXT_PREFIX,
-  MAP_STYLE_DARK,
-  MAP_STYLE_LIGHT,
   MESSAGE_SELECT_FIELDS,
   PAGE_SIZE,
   PICKER_MEDIA_TYPES_ALL,
@@ -54,6 +52,22 @@ import {
   setActiveChatThread,
 } from "@/lib/chat/active-thread";
 import { ChatThreadActionsService } from "@/lib/chat/chat-thread-actions-service";
+import {
+  buildDateInvitePayload,
+  buildDateQuickSlots,
+  getDatePlaceExperience,
+  mergeDateInviteWithPlanRow,
+  parseDateInviteMessage,
+  type DatePlaceOption,
+} from '@/lib/chat/date-plan/chat-date-plan-payload';
+import {
+  buildLocationMessageText,
+  buildMapsLink,
+  getStaticMapUrl,
+  parseLocationMessage,
+  type PlaceResult,
+  type PlaceSuggestion,
+} from '@/lib/chat/location/chat-location-payload';
 import {
   CHAT_ATTACHMENT_LIMITS,
   CHAT_DOCUMENT_PICKER_MIME_TYPES,
@@ -71,6 +85,7 @@ import {
   createChatAttachmentPreview,
   removeChatAttachmentPreview,
 } from "@/lib/chat/attachments/chat-attachment-preview";
+import { getChatAttachmentFailurePresentation } from '@/lib/chat/attachments/chat-attachment-error';
 import {
   getAttachmentUploadErrorMessage,
   isRetryableUploadError,
@@ -88,6 +103,7 @@ import {
   normalizeChatMediaItems,
 } from "@/lib/chat/media-album";
 import { selectChatImageGalleryItem } from '@/lib/chat/media/chat-image-gallery';
+import { normalizeHeicImage } from '@/lib/chat/media/chat-image-preparation';
 import { acknowledgeIncomingMessagesDelivered } from "@/lib/chat/delivery-receipts";
 import { useChatMessages } from "@/lib/chat/hooks/use-chat-messages";
 import { useChatThreadBrowseUi } from "@/lib/chat/hooks/use-chat-thread-browse-ui";
@@ -97,7 +113,8 @@ import { useChatThreadStateSync } from "@/lib/chat/hooks/use-chat-thread-state-s
 import { useChatThreadLocalState } from "@/lib/chat/hooks/use-chat-thread-local-state";
 import { useChatThreadController } from "@/lib/chat/hooks/use-chat-thread-controller";
 import { useChatMediaAccess } from "@/lib/chat/hooks/use-chat-media-access";
-import { ChatRepository, type ChatMessageRow, type ChatPendingOutboxRow } from "@/lib/chat/local/chat-db";
+import { useChatAlbumActions } from '@/lib/chat/hooks/use-chat-album-actions';
+import { ChatRepository, type ChatMessageRow } from "@/lib/chat/local/chat-db";
 import { ChatThreadRemoteService } from "@/lib/chat/chat-thread-remote-service";
 import { mergeViewOnceStatus } from '@/lib/chat/view-once-status';
 import {
@@ -127,6 +144,10 @@ import {
 import { reconcileFetchedThreadRows } from "@/lib/chat/loading/thread-fetch-reconciler";
 import { mergeIncrementalThreadMessages } from "@/lib/chat/loading/thread-message-state-merge";
 import {
+  mergeFetchedMessagesWithLocalPending,
+  mergeOfflineMediaIntoMessage,
+} from '@/lib/chat/loading/chat-thread-local-merge';
+import {
   buildRetryFailedTextPayload,
   CHAT_READ_RECEIPT_DELAY_MS,
   createDatePlanDraftFromInvite,
@@ -136,6 +157,12 @@ import {
   shouldScheduleMessageRead,
 } from "@/lib/chat/thread-behavior";
 import { ChatOutboxService } from "@/lib/chat/outbox/chat-outbox-service";
+import {
+  buildVoiceOutboxRow,
+  flushLocalTextOutbox,
+  markLocalTextOutboxStatus,
+  persistLocalTextOutboxState,
+} from '@/lib/chat/outbox/chat-outbox-drafts';
 import {
   chronologicalIndexToListIndex,
   getChronologicalListDistanceToBottom,
@@ -164,7 +191,6 @@ import {
   formatDateInviteWhen,
   formatIntentExpiresIn,
   formatIntentTypeLabel,
-  formatRemainingTime,
   getFileTypeLabel,
 } from "@/lib/chat/ui/message-formatters";
 import {
@@ -226,6 +252,7 @@ import {
 } from "@/lib/offline/chat-store";
 import {
   enqueueChatReactionSyncMutation,
+  subscribeToOfflineMutationEvents,
 } from "@/lib/offline/mutation-queue";
 import {
   cacheOfflineVideo,
@@ -289,420 +316,23 @@ import {
     TouchableOpacity,
     View,
 } from "react-native";
-import { PinchGestureHandler, State } from "react-native-gesture-handler";
+import { State } from "react-native-gesture-handler";
 import { scheduleIdleTask } from "@/lib/scheduling/idle-task";
 import {
   chatMessageToLocalRow,
   deserializeCachedMessages,
   localRowToChatMessage,
-  safeJsonStringify,
   serializeCachedMessages,
   type CachedMessageType,
   type MessageDatabaseRow,
 } from '@/lib/chat/message-mappers';
-import MapView, { Marker, PROVIDER_GOOGLE, Region } from "react-native-maps";
-import { Image as NativeImageCompressor } from 'react-native-compressor';
+import MapView, { type Region } from "react-native-maps";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 // Message type definition
 type BetweenerVenueRow = Database["public"]["Tables"]["betweener_venues"]["Row"];
 type DatePlanRow = Database["public"]["Tables"]["date_plans"]["Row"];
-const buildTextOutboxRow = ({
-  ownerUserId,
-  threadId,
-  message,
-  status,
-  error,
-}: {
-  ownerUserId: string;
-  threadId: string;
-  message: MessageType;
-  status: ChatPendingOutboxRow['status'];
-  error?: { code?: string | null; message?: string | null };
-}): ChatPendingOutboxRow => {
-  const now = new Date().toISOString();
-  const localMessageId = message.clientMessageId ?? message.id;
-  const durableOutboxStatus: ChatPendingOutboxRow['status'] = status === 'sending' ? 'queued' : status;
-  return {
-    id: localMessageId,
-    local_message_id: localMessageId,
-    thread_id: threadId,
-    owner_user_id: ownerUserId,
-    payload_json:
-      safeJsonStringify({
-        kind: 'chat_text_send',
-        senderId: ownerUserId,
-        receiverId: threadId,
-        text:
-          message.type === 'image'
-            ? message.storagePath ? '' : message.imageUrl ?? message.text
-            : message.type === 'video'
-            ? message.storagePath ? '' : message.videoUrl ?? message.text
-            : message.text,
-        messageType: message.type,
-        clientMessageId: localMessageId,
-        replyToMessageId: message.replyToId ?? null,
-        storagePath: message.storagePath ?? null,
-        metadataJson: safeJsonStringify(message),
-    }) ?? '{}',
-    attempt_count: 0,
-    max_attempts: DURABLE_CHAT_OUTBOX_MAX_ATTEMPTS,
-    next_retry_at: null,
-    status: durableOutboxStatus,
-    error_code: error?.code ?? null,
-    error_message: error?.message ?? null,
-    created_at: now,
-    updated_at: now,
-  };
-};
 
-const persistLocalTextOutboxState = async ({
-  ownerUserId,
-  threadId,
-  message,
-  outboxStatus,
-  error,
-}: {
-  ownerUserId: string;
-  threadId: string;
-  message: MessageType;
-  outboxStatus: ChatPendingOutboxRow['status'];
-  error?: { code?: string | null; message?: string | null };
-}) => {
-  await ChatRepository.upsertMessages(ownerUserId, threadId, [
-    chatMessageToLocalRow(ownerUserId, threadId, message),
-  ]);
-  await ChatRepository.upsertPendingOutboxItem(
-    ownerUserId,
-    buildTextOutboxRow({ ownerUserId, threadId, message, status: outboxStatus, error }),
-  );
-};
-
-const markLocalTextOutboxStatus = async ({
-  ownerUserId,
-  localMessageId,
-  status,
-  error,
-}: {
-  ownerUserId: string;
-  localMessageId: string;
-  status: ChatPendingOutboxRow['status'];
-  error?: { code?: string | null; message?: string | null };
-}) => {
-  await ChatRepository.markOutboxItemStatus(ownerUserId, localMessageId, status, error);
-};
-
-const flushLocalTextOutbox = async (ownerUserId: string) => {
-  await ChatOutboxService.flushPending(ownerUserId);
-};
-
-const _buildMediaOutboxRow = ({
-  ownerUserId,
-  threadId,
-  message,
-  localUri,
-  fileName,
-  contentType,
-  mediaType,
-  documentSizeLabel,
-  documentTypeLabel,
-  byteSize,
-  width,
-  height,
-  durationMs,
-  attachmentId,
-  albumItems,
-}: {
-  ownerUserId: string;
-  threadId: string;
-  message: MessageType;
-  localUri: string;
-  fileName: string;
-  contentType: string;
-  mediaType: 'image' | 'video' | 'document';
-  documentSizeLabel?: string | null;
-  documentTypeLabel?: string | null;
-  byteSize?: number | null;
-  width?: number | null;
-  height?: number | null;
-  durationMs?: number | null;
-  attachmentId?: string | null;
-  albumItems?: {
-    localUri: string;
-    fileName: string;
-    contentType: string;
-    attachmentId: string;
-    byteSize?: number | null;
-    width?: number | null;
-    height?: number | null;
-    durationMs?: number | null;
-  }[];
-}): ChatPendingOutboxRow => {
-  const now = new Date().toISOString();
-  const localMessageId = message.clientMessageId ?? message.id;
-  return {
-    id: localMessageId,
-    local_message_id: localMessageId,
-    thread_id: threadId,
-    owner_user_id: ownerUserId,
-    payload_json:
-      safeJsonStringify({
-        kind: 'chat_media_send',
-        senderId: ownerUserId,
-        receiverId: threadId,
-        clientMessageId: localMessageId,
-        localUri,
-        fileName,
-        contentType,
-        mediaType,
-        attachmentId: attachmentId ?? createChatAttachmentId(),
-        byteSize: byteSize ?? null,
-        width: width ?? null,
-        height: height ?? null,
-        durationMs: durationMs ?? null,
-        replyToMessageId: message.replyToId ?? null,
-        documentName: mediaType === 'document' ? fileName : null,
-        documentSizeLabel: documentSizeLabel ?? null,
-        documentTypeLabel: documentTypeLabel ?? null,
-        albumItems: albumItems?.length ? albumItems : undefined,
-      }) ?? '{}',
-    attempt_count: 0,
-    max_attempts: DURABLE_CHAT_OUTBOX_MAX_ATTEMPTS,
-    next_retry_at: null,
-    status: 'queued',
-    error_code: null,
-    error_message: null,
-    created_at: now,
-    updated_at: now,
-  };
-};
-
-const buildVoiceOutboxRow = ({
-  ownerUserId,
-  threadId,
-  message,
-  localUri,
-  fileName,
-  contentType,
-  durationSeconds,
-  waveform,
-}: {
-  ownerUserId: string;
-  threadId: string;
-  message: MessageType;
-  localUri: string;
-  fileName: string;
-  contentType: string;
-  durationSeconds: number;
-  waveform: number[];
-}): ChatPendingOutboxRow => {
-  const now = new Date().toISOString();
-  const localMessageId = message.clientMessageId ?? message.id;
-  return {
-    id: localMessageId,
-    local_message_id: localMessageId,
-    thread_id: threadId,
-    owner_user_id: ownerUserId,
-    payload_json:
-      safeJsonStringify({
-        kind: 'chat_voice_send',
-        senderId: ownerUserId,
-        receiverId: threadId,
-        clientMessageId: localMessageId,
-        localUri,
-        fileName,
-        contentType,
-        attachmentId: createChatAttachmentId(),
-        durationSeconds,
-        waveform,
-        replyToMessageId: message.replyToId ?? null,
-      }) ?? '{}',
-    attempt_count: 0,
-    max_attempts: DURABLE_CHAT_OUTBOX_MAX_ATTEMPTS,
-    next_retry_at: null,
-    status: 'queued',
-    error_code: null,
-    error_message: null,
-    created_at: now,
-    updated_at: now,
-  };
-};
-
-const mergeOfflineMediaIntoMessage = (nextMessage: MessageType, previous?: MessageType | null): MessageType => {
-  if (!previous) return nextMessage;
-  if (nextMessage.type === 'image' && (nextMessage.mediaItems?.length || previous.mediaItems?.length)) {
-    const previousByAttachment = new Map(
-      (previous.mediaItems ?? []).map((mediaItem) => [mediaItem.attachmentId, mediaItem]),
-    );
-    const nextItems = (nextMessage.mediaItems ?? previous.mediaItems ?? []).map((mediaItem) => {
-      const previousItem = previousByAttachment.get(mediaItem.attachmentId);
-      return {
-        ...mediaItem,
-        localUri: mediaItem.localUri ?? previousItem?.localUri,
-        signedUrl: mediaItem.signedUrl ?? previousItem?.signedUrl,
-      };
-    });
-    return {
-      ...nextMessage,
-      mediaItems: nextItems,
-      offlineImageUri: nextMessage.offlineImageUri ?? previous.offlineImageUri ?? nextItems[0]?.localUri,
-    };
-  }
-  if (nextMessage.type === 'image' && !nextMessage.offlineImageUri && previous.offlineImageUri) {
-    return { ...nextMessage, offlineImageUri: previous.offlineImageUri };
-  }
-  if (nextMessage.type === 'video' && !nextMessage.offlineVideoUri && previous.offlineVideoUri) {
-    return { ...nextMessage, offlineVideoUri: previous.offlineVideoUri };
-  }
-  return nextMessage;
-};
-
-const PENDING_LOCAL_MESSAGE_STATUSES: ReadonlySet<NonNullable<MessageType['status']>> = new Set([
-  'sending',
-  'queued',
-  'failed',
-]);
-
-const hasLikelyServerMatch = (
-  localMessage: MessageType,
-  serverMessages: MessageType[],
-  currentUserId: string,
-) => {
-  if (localMessage.senderId !== currentUserId) return false;
-  if (localMessage.clientMessageId) {
-    return serverMessages.some(
-      (serverMessage) =>
-        serverMessage.senderId === currentUserId &&
-        serverMessage.clientMessageId === localMessage.clientMessageId,
-    );
-  }
-  const localTimestamp = localMessage.timestamp.getTime();
-  return serverMessages.some((serverMessage) => {
-    if (serverMessage.senderId !== currentUserId) return false;
-    if (serverMessage.type !== localMessage.type) return false;
-    if ((serverMessage.replyToId ?? null) !== (localMessage.replyToId ?? null)) return false;
-    if (Math.abs(serverMessage.timestamp.getTime() - localTimestamp) > 120000) return false;
-
-    switch (localMessage.type) {
-      case 'voice':
-        return true;
-      case 'image':
-        return Boolean(localMessage.imageUrl) ? localMessage.imageUrl === serverMessage.imageUrl : true;
-      case 'video':
-        return Boolean(localMessage.videoUrl) ? localMessage.videoUrl === serverMessage.videoUrl : true;
-      case 'document':
-        return localMessage.document?.name
-          ? localMessage.document.name === serverMessage.document?.name
-          : localMessage.text === serverMessage.text;
-      case 'location':
-      case 'date_plan':
-      case 'mood_sticker':
-      case 'text':
-        return localMessage.text === serverMessage.text;
-      case 'system':
-        return false;
-      default:
-        return localMessage.text === serverMessage.text;
-    }
-  });
-};
-
-const mergeFetchedMessagesWithLocalPending = ({
-  fetchedMessages,
-  previousMessages,
-  currentUserId,
-  debug,
-}: {
-  fetchedMessages: MessageType[];
-  previousMessages: MessageType[];
-  currentUserId: string;
-  debug?: (payload: {
-    preservedPendingCount: number;
-    droppedPendingCount: number;
-    preservedPendingIds: string[];
-    droppedPendingIds: string[];
-    preservedPendingTypes: string[];
-    droppedPendingTypes: string[];
-  }) => void;
-}) => {
-  const fetchedIds = new Set(fetchedMessages.map((message) => message.id));
-  const preservedPending: MessageType[] = [];
-  const droppedPending: MessageType[] = [];
-  const pendingLocals = previousMessages.filter((message) => {
-    if (fetchedIds.has(message.id)) return false;
-    if (!message.status || !PENDING_LOCAL_MESSAGE_STATUSES.has(message.status)) return false;
-    if (message.senderId !== currentUserId) return false;
-    if (message.type === 'system' || message.isSystem) return false;
-    const shouldKeep = !message.id.startsWith('temp-')
-      ? message.status === 'failed'
-      : !hasLikelyServerMatch(message, fetchedMessages, currentUserId);
-    if (shouldKeep) preservedPending.push(message);
-    else droppedPending.push(message);
-    return shouldKeep;
-  });
-
-  if (debug && (preservedPending.length > 0 || droppedPending.length > 0)) {
-    debug({
-      preservedPendingCount: preservedPending.length,
-      droppedPendingCount: droppedPending.length,
-      preservedPendingIds: preservedPending.map((message) => message.id),
-      droppedPendingIds: droppedPending.map((message) => message.id),
-      preservedPendingTypes: preservedPending.map((message) => `${message.type}:${message.status ?? 'none'}`),
-      droppedPendingTypes: droppedPending.map((message) => `${message.type}:${message.status ?? 'none'}`),
-    });
-  }
-
-  if (pendingLocals.length === 0) return fetchedMessages;
-
-  return [...fetchedMessages, ...pendingLocals].sort(
-    (a, b) => a.timestamp.getTime() - b.timestamp.getTime(),
-  );
-};
-
-const _mergeIncrementalFetchedMessages = (
-  previousMessages: MessageType[],
-  fetchedMessages: MessageType[],
-) => {
-  if (fetchedMessages.length === 0) return previousMessages;
-  const byId = new Map(previousMessages.map((message) => [message.id, message] as const));
-  const findExistingIdByClientMessageId = (clientMessageId: string, nextId: string) => {
-    for (const [id, message] of byId.entries()) {
-      if (id !== nextId && message.clientMessageId === clientMessageId) {
-        return id;
-      }
-    }
-    return null;
-  };
-
-  fetchedMessages.forEach((message) => {
-    const existingClientId = message.clientMessageId
-      ? findExistingIdByClientMessageId(message.clientMessageId, message.id)
-      : null;
-    const previous = byId.get(existingClientId ?? message.id);
-    if (existingClientId) {
-      byId.delete(existingClientId);
-    }
-    byId.set(
-      message.id,
-      previous
-        ? {
-            ...previous,
-            ...message,
-            reactions: message.reactions?.length ? message.reactions : previous.reactions,
-            replyTo: message.replyTo ?? previous.replyTo,
-            offlineImageUri: message.offlineImageUri ?? previous.offlineImageUri,
-            offlineVideoUri: message.offlineVideoUri ?? previous.offlineVideoUri,
-            voiceMessage:
-              message.voiceMessage && previous.voiceMessage
-                ? { ...message.voiceMessage, isPlaying: previous.voiceMessage.isPlaying }
-                : message.voiceMessage ?? previous.voiceMessage,
-          }
-        : message,
-    );
-  });
-
-  return Array.from(byId.values()).sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-};
 
 type MediaUploadStatus = {
   id: number;
@@ -756,206 +386,6 @@ type ReactionRow = {
 };
 
 // Quick reactions
-const buildMapsLink = (lat: number, lng: number) =>
-  `https://maps.google.com/?q=${lat},${lng}`;
-
-const parseCoordsFromMapsUrl = (url?: string | null) => {
-  if (!url) return null;
-  const match = url.match(/q=([-0-9.]+),([-0-9.]+)/);
-  if (!match) return null;
-  const lat = Number(match[1]);
-  const lng = Number(match[2]);
-  if (Number.isNaN(lat) || Number.isNaN(lng)) return null;
-  return { lat, lng };
-};
-
-const getStaticMapUrl = (lat: number, lng: number) => {
-  if (!GOOGLE_MAPS_WEB_API_KEY) return null;
-  const base = 'https://maps.googleapis.com/maps/api/staticmap';
-  const center = `${lat},${lng}`;
-  const marker = `color:0x0ea5a0|${center}`;
-  const mapId = GOOGLE_MAPS_MAP_ID ? `&map_id=${encodeURIComponent(GOOGLE_MAPS_MAP_ID)}` : '';
-  return `${base}?center=${center}&zoom=15&size=640x360&scale=2&markers=${encodeURIComponent(marker)}&key=${GOOGLE_MAPS_WEB_API_KEY}${mapId}`;
-};
-
-const parseCoordsLine = (value?: string | null) => {
-  if (!value) return null;
-  const match = value.match(/(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/);
-  if (!match) return null;
-  const lat = Number(match[1]);
-  const lng = Number(match[2]);
-  if (Number.isNaN(lat) || Number.isNaN(lng)) return null;
-  return { lat, lng };
-};
-
-const parseLocationMessage = (rawText: string): MessageType['location'] | null => {
-  const lines = rawText.split('\n').map((line) => line.trim()).filter(Boolean);
-  if (lines.length === 0) return null;
-  const first = lines[0] ?? '';
-  const isLive = first.startsWith(LOCATION_LIVE_PREFIX);
-  const isPinned = first.startsWith(LOCATION_TEXT_PREFIX);
-  if (!isLive && !isPinned) return null;
-
-  let label = '';
-  let address = '';
-  let coordsLine = '';
-  let mapLink = '';
-  let expiresAt: Date | null = null;
-
-  if (isLive) {
-    const rawExpiry = first.slice(LOCATION_LIVE_PREFIX.length).trim();
-    if (rawExpiry) {
-      const parsed = new Date(rawExpiry);
-      if (!Number.isNaN(parsed.getTime())) {
-        expiresAt = parsed;
-      }
-    }
-    coordsLine = lines[1] ?? '';
-    label = lines[2] ?? '';
-    address = lines[3] ?? '';
-    mapLink = lines.find((line) => line.includes('maps.google.com') || line.startsWith('http')) ?? '';
-  } else {
-    label = first.replace(LOCATION_TEXT_PREFIX, '').trim();
-    coordsLine = lines[1] ?? '';
-    mapLink = lines.find((line) => line.includes('maps.google.com') || line.startsWith('http')) ?? '';
-    if (lines.length > 2 && lines[2] !== mapLink) {
-      address = lines[2];
-    }
-  }
-
-  const coords = parseCoordsLine(coordsLine) ?? parseCoordsFromMapsUrl(mapLink);
-  if (!coords) return null;
-  const resolvedLabel = label || address || `${coords.lat.toFixed(4)}, ${coords.lng.toFixed(4)}`;
-  const mapUrl = getStaticMapUrl(coords.lat, coords.lng);
-
-  return {
-    lat: coords.lat,
-    lng: coords.lng,
-    label: resolvedLabel,
-    address: address || undefined,
-    mapUrl: mapUrl || undefined,
-    mapLink: mapLink || buildMapsLink(coords.lat, coords.lng),
-    live: isLive,
-    expiresAt,
-  };
-};
-
-const buildDateInvitePayload = ({
-  planId,
-  parentPlanId,
-  scheduledFor,
-  place,
-  note,
-  status = 'pending',
-  conciergeRequested = false,
-  responseKind = 'initial',
-}: {
-  planId?: string | null;
-  parentPlanId?: string | null;
-  scheduledFor: Date;
-  place: DatePlaceOption;
-  note?: string | null;
-  status?: DatePlanStatus;
-  conciergeRequested?: boolean;
-  responseKind?: DatePlanResponseKind;
-}) =>
-  `${DATE_PLAN_TEXT_PREFIX}${JSON.stringify({
-    planId: planId || null,
-    parentPlanId: parentPlanId || null,
-    venueId: place.venueId ?? null,
-    scheduledFor: scheduledFor.toISOString(),
-    placeName: place.name,
-    placeAddress: place.address ?? null,
-    source: place.source,
-    badges: place.badges ?? [],
-    summary: place.summary ?? null,
-    city: place.city ?? null,
-    lat: place.lat,
-    lng: place.lng,
-    note: note?.trim() || null,
-    responseKind,
-    status,
-    conciergeRequested,
-  })}`;
-
-const parseDateInviteMessage = (rawText: string): MessageType['dateInvite'] | null => {
-  if (!rawText?.startsWith(DATE_PLAN_TEXT_PREFIX)) return null;
-  try {
-    const parsed = JSON.parse(rawText.slice(DATE_PLAN_TEXT_PREFIX.length));
-    const scheduledFor = new Date(parsed?.scheduledFor);
-    if (!parsed?.placeName || Number.isNaN(scheduledFor.getTime())) return null;
-    const lat = typeof parsed?.lat === 'number' ? parsed.lat : null;
-    const lng = typeof parsed?.lng === 'number' ? parsed.lng : null;
-    const mapUrl = lat != null && lng != null ? getStaticMapUrl(lat, lng) : null;
-    const mapLink = lat != null && lng != null ? buildMapsLink(lat, lng) : null;
-    return {
-      planId: typeof parsed?.planId === 'string' ? parsed.planId : null,
-      parentPlanId: typeof parsed?.parentPlanId === 'string' ? parsed.parentPlanId : null,
-      venueId: typeof parsed?.venueId === 'string' ? parsed.venueId : null,
-      scheduledFor,
-      placeName: String(parsed.placeName),
-      placeAddress: typeof parsed?.placeAddress === 'string' ? parsed.placeAddress : undefined,
-      note: typeof parsed?.note === 'string' ? parsed.note : undefined,
-      source: (parsed?.source as DatePlaceSource) || 'search',
-      badges: Array.isArray(parsed?.badges) ? parsed.badges.filter((value: unknown) => typeof value === 'string') : [],
-      summary: typeof parsed?.summary === 'string' ? parsed.summary : null,
-      city: typeof parsed?.city === 'string' ? parsed.city : null,
-      lat,
-      lng,
-      mapUrl,
-      mapLink,
-      responseKind:
-        parsed?.responseKind === 'counter_time' ||
-        parsed?.responseKind === 'counter_place' ||
-        parsed?.responseKind === 'counter_both'
-          ? parsed.responseKind
-          : 'initial',
-      status:
-        parsed?.status === 'accepted' ||
-        parsed?.status === 'declined' ||
-        parsed?.status === 'cancelled' ||
-        parsed?.status === 'countered'
-          ? parsed.status
-          : 'pending',
-      conciergeRequested: Boolean(parsed?.conciergeRequested),
-    };
-  } catch (error) {
-    console.log('[chat] date invite parse error', error);
-    return null;
-  }
-};
-
-const mergeDateInviteWithPlanRow = (
-  invite: MessageType['dateInvite'],
-  plan: DatePlanRow,
-): MessageType['dateInvite'] => {
-  if (!invite) return invite;
-  const lat = typeof plan.lat === 'number' ? plan.lat : invite.lat ?? null;
-  const lng = typeof plan.lng === 'number' ? plan.lng : invite.lng ?? null;
-  return {
-    ...invite,
-    planId: plan.id,
-    parentPlanId: plan.parent_plan_id,
-    venueId: plan.venue_id,
-    scheduledFor: new Date(plan.scheduled_for),
-    placeName: plan.place_name,
-    placeAddress: plan.place_address || undefined,
-    note: plan.note || undefined,
-    source: (plan.place_source as DatePlaceSource) || invite.source,
-    badges: Array.isArray(plan.place_badges)
-      ? plan.place_badges.filter((value): value is string => typeof value === 'string')
-      : invite.badges ?? [],
-    summary: plan.place_summary,
-    city: plan.city,
-    lat,
-    lng,
-    mapUrl: lat != null && lng != null ? getStaticMapUrl(lat, lng) : null,
-    mapLink: lat != null && lng != null ? buildMapsLink(lat, lng) : null,
-    status: (plan.status as DatePlanStatus) || invite.status || 'pending',
-    conciergeRequested: Boolean(plan.concierge_requested),
-    responseKind: (plan.response_kind as DatePlanResponseKind) || invite.responseKind || 'initial',
-  };
-};
 
 const dedupeMessagesById = (items: MessageType[]) => {
   if (items.length <= 1) return items;
@@ -991,196 +421,7 @@ type MessageRenderMeta = {
   isActionPinned: boolean;
 };
 
-const buildDateQuickSlots = (baseNow: Date) => {
-  const tonight = new Date(baseNow);
-  tonight.setHours(baseNow.getHours() < 18 ? 19 : 20, 0, 0, 0);
-  if (tonight.getTime() <= baseNow.getTime()) {
-    tonight.setDate(tonight.getDate() + 1);
-    tonight.setHours(19, 0, 0, 0);
-  }
 
-  const tomorrow = new Date(baseNow);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  tomorrow.setHours(19, 0, 0, 0);
-
-  const saturdayBrunch = new Date(baseNow);
-  const daysUntilSaturday = (6 - saturdayBrunch.getDay() + 7) % 7 || 7;
-  saturdayBrunch.setDate(saturdayBrunch.getDate() + daysUntilSaturday);
-  saturdayBrunch.setHours(11, 30, 0, 0);
-
-  return [
-    {
-      id: 'tonight',
-      label: tonight.getDate() === baseNow.getDate() ? 'Tonight' : 'Next evening',
-      caption: tonight.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
-      date: tonight,
-    },
-    {
-      id: 'tomorrow',
-      label: 'Tomorrow',
-      caption: 'Dinner time',
-      date: tomorrow,
-    },
-    {
-      id: 'saturday_brunch',
-      label: 'Saturday brunch',
-      caption: '11:30 AM',
-      date: saturdayBrunch,
-    },
-  ] as const;
-};
-
-const getMetadataStringArray = (metadata: Record<string, unknown> | null | undefined, key: string) => {
-  const value = metadata?.[key];
-  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0) : [];
-};
-
-
-const getDatePlaceExperience = (place: DatePlaceOption | null) => {
-  if (!place) {
-    return {
-      vibe: null as string | null,
-      trustReasons: [] as string[],
-      perks: [] as string[],
-      conciergeServices: [] as string[],
-    };
-  }
-
-  const metadata = place.metadata ?? null;
-  const vibe =
-    typeof metadata?.date_vibe === 'string' && metadata.date_vibe.trim().length > 0
-      ? metadata.date_vibe
-      : place.source === 'betweener_pick'
-      ? 'First-date ready'
-      : place.source === 'preferred'
-      ? 'Closer to their side'
-      : place.source === 'nearby'
-      ? 'Easy to get to'
-      : 'Flexible meet-up';
-
-  const defaultTrustReasons =
-    place.source === 'betweener_pick'
-      ? ['Public, easy-to-find venue', 'Comfort-first setup', 'Good for a first meeting']
-      : ['Public location', 'Easy to find on Maps', 'Simple to adjust if plans shift'];
-
-  const trustReasons = getMetadataStringArray(metadata, 'trust_reasons');
-  const conciergeServices = getMetadataStringArray(metadata, 'concierge_services');
-  const perks = [
-    ...((place.badges ?? []).filter((badge) => badge !== 'Betweener Safe Venue')),
-    ...(conciergeServices.length > 0 ? ['Betweener help available'] : []),
-  ];
-
-  return {
-    vibe,
-    trustReasons: trustReasons.length > 0 ? trustReasons : defaultTrustReasons,
-    perks,
-    conciergeServices,
-  };
-};
-
-const buildLocationMessageText = ({
-  lat,
-  lng,
-  label,
-  address,
-  live,
-  expiresAt,
-}: {
-  lat: number;
-  lng: number;
-  label: string;
-  address?: string | null;
-  live?: boolean;
-  expiresAt?: Date | null;
-}) => {
-  const safeLabel = label?.trim() || `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
-  const mapLink = buildMapsLink(lat, lng);
-  if (live && expiresAt) {
-    return [
-      `${LOCATION_LIVE_PREFIX}${expiresAt.toISOString()}`,
-      `${lat},${lng}`,
-      safeLabel,
-      address?.trim() || '',
-      mapLink,
-    ]
-      .filter(Boolean)
-      .join('\n');
-  }
-  return [
-    `${LOCATION_TEXT_PREFIX} ${safeLabel}`,
-    `${lat},${lng}`,
-    address?.trim() || '',
-    mapLink,
-  ]
-    .filter(Boolean)
-    .join('\n');
-};
-
-type PlaceSuggestion = {
-  id: string;
-  primary: string;
-  secondary?: string | null;
-};
-
-type PlaceResult = {
-  id: string;
-  name: string;
-  address?: string | null;
-  lat: number;
-  lng: number;
-};
-
-type DatePlaceSource = 'betweener_pick' | 'nearby' | 'search' | 'preferred';
-
-type DatePlaceOption = PlaceResult & {
-  source: DatePlaceSource;
-  badges?: string[];
-  summary?: string | null;
-  city?: string | null;
-  venueId?: string | null;
-  metadata?: Record<string, unknown> | null;
-};
-
-const normalizeHeicImage = async (
-  asset: ImagePicker.ImagePickerAsset,
-  fallbackName: string
-) => {
-  const mime = asset.mimeType?.toLowerCase() ?? '';
-  const name = fallbackName || `image-${Date.now()}`;
-  const lowerName = name.toLowerCase();
-  const isHeic =
-    mime === 'image/heic' ||
-    mime === 'image/heif' ||
-    lowerName.endsWith('.heic') ||
-    lowerName.endsWith('.heif');
-
-  if (!isHeic) {
-    return {
-      uri: asset.uri,
-      fileName: name,
-      contentType: mime || 'image/jpeg',
-    };
-  }
-
-  const convertedUri = await NativeImageCompressor.compress(asset.uri, {
-    compressionMethod: 'manual',
-    maxWidth: 4096,
-    maxHeight: 4096,
-    quality: 0.92,
-    input: 'uri',
-    output: 'jpg',
-    returnableOutputType: 'uri',
-  });
-  let jpegName = name.replace(/\.(heic|heif)$/i, '.jpg');
-  if (!/\.[a-z0-9]+$/i.test(jpegName)) {
-    jpegName = `${jpegName}.jpg`;
-  }
-  return {
-    uri: convertedUri,
-    fileName: jpegName,
-    contentType: 'image/jpeg',
-  };
-};
 
 export default function ConversationScreen() {
   const insets = useSafeAreaInsets();
@@ -1341,10 +582,35 @@ export default function ConversationScreen() {
 
   const [messages, setMessages] = useState<MessageType[]>([]);
   const [messagesLoaded, setMessagesLoaded] = useState(false);
+  const attachmentFailureAlertsReadyRef = useRef(false);
+  const announcedAttachmentFailuresRef = useRef<Set<string>>(new Set());
   const [threadBootstrapSettled, setThreadBootstrapSettled] = useState(false);
   const [remoteMessagesChecked, setRemoteMessagesChecked] = useState(false);
   const [chatSafetyVisible, setChatSafetyVisible] = useState(false);
   const [networkReady, setNetworkReady] = useState(true);
+
+  useEffect(() => {
+    if (!messagesLoaded || !user?.id) return;
+    const failedAttachments = messages.filter((message) =>
+      message.senderId === user.id &&
+      message.status === 'failed' &&
+      (message.type === 'image' || message.type === 'video'),
+    );
+    if (!attachmentFailureAlertsReadyRef.current) {
+      failedAttachments.forEach((message) => announcedAttachmentFailuresRef.current.add(message.id));
+      attachmentFailureAlertsReadyRef.current = true;
+      return;
+    }
+    const newlyFailed = failedAttachments.filter(
+      (message) => !announcedAttachmentFailuresRef.current.has(message.id),
+    );
+    if (newlyFailed.length === 0) return;
+    newlyFailed.forEach((message) => announcedAttachmentFailuresRef.current.add(message.id));
+    const failure = getChatAttachmentFailurePresentation(
+      newlyFailed[newlyFailed.length - 1]?.sendErrorCode,
+    );
+    Alert.alert(failure.title, failure.message);
+  }, [messages, messagesLoaded, user?.id]);
   const signChatMediaUrl = useCallback(async (storagePath: string) => {
     const { data, error } = await supabase.storage
       .from(CHAT_MEDIA_BUCKET)
@@ -2205,7 +1471,6 @@ export default function ConversationScreen() {
   const imagePinchScale = useRef(new Animated.Value(1)).current;
   const imageScaleRef = useRef(1);
   const imageViewerRequestRef = useRef(0);
-  const imageViewerSwipeStartXRef = useRef<number | null>(null);
   const imageViewerSourceRef = useRef<{
     message: MessageType;
     renderedUrl: string;
@@ -5364,6 +4629,26 @@ const resolveQueuedVideoUri = async (
     activePeerMessageUserIdRef.current = activePeerMessageUserId ?? null;
   }, [activePeerMessageUserId]);
 
+  useEffect(() => {
+    if (!user?.id) return;
+    return subscribeToOfflineMutationEvents((event) => {
+      if (
+        event.type !== 'failed' ||
+        event.mutation.kind !== 'chat_reaction_sync' ||
+        event.mutation.payload.userId !== user.id
+      ) {
+        return;
+      }
+      const failedMessageId = event.mutation.payload.messageId;
+      if (!messagesRef.current.some((message) => message.id === failedMessageId)) return;
+      void fetchMessages();
+      Alert.alert(
+        'Reaction not updated',
+        'We restored the reaction saved in the conversation. Please try again.',
+      );
+    });
+  }, [fetchMessages, user?.id]);
+
   const startThreadSynchronization = useCallback(() => {
     if (!user?.id || !activePeerMessageUserId) return;
 
@@ -5713,6 +4998,13 @@ const resolveQueuedVideoUri = async (
       await retryFailedTextMessage(message.id);
       return;
     }
+    if (message.type === 'image' || message.type === 'video') {
+      const failure = getChatAttachmentFailurePresentation(message.sendErrorCode);
+      if (!failure.retryable) {
+        Alert.alert(failure.title, failure.message);
+        return;
+      }
+    }
     const localMessageId = message.clientMessageId ?? message.id;
     if ((message.mediaItems?.length ?? 0) > 1) {
       Alert.alert(
@@ -5792,58 +5084,11 @@ const resolveQueuedVideoUri = async (
     await retryFailedMessage(message);
   }, [retryFailedMessage]);
 
-  const manageFailedAlbumItem = useCallback((message: MessageType, albumIndex: number) => {
-    if (!user?.id || message.status !== 'failed') return;
-    const mediaItem = message.mediaItems?.find((entry) => entry.index === albumIndex);
-    if (!mediaItem) return;
-    const localMessageId = message.clientMessageId ?? message.id;
-    Alert.alert(
-      'Album item',
-      `Choose what to do with item ${albumIndex + 1} of ${message.mediaItems?.length ?? 1}.`,
-      [
-        { text: 'Not now', style: 'cancel' },
-        {
-          text: 'Remove item',
-          style: 'destructive',
-          onPress: () => {
-            void ChatOutboxService.removeAlbumItem(user.id, localMessageId, mediaItem.attachmentId)
-              .then((result) => {
-                if (!result.changed) {
-                  Alert.alert('Album locked', 'This album is already being finalised and can no longer be changed.');
-                  return;
-                }
-                setMessages((current) => current.map((entry) => entry.id === message.id
-                  ? {
-                      ...entry,
-                      mediaExpectedCount: result.remainingCount,
-                      mediaItems: entry.mediaItems
-                        ?.filter((candidate) => candidate.attachmentId !== mediaItem.attachmentId)
-                        .map((candidate, index) => ({ ...candidate, index })),
-                    }
-                  : entry));
-              });
-          },
-        },
-        {
-          text: 'Retry this item',
-          onPress: () => {
-            setMessages((current) => current.map((entry) => entry.id === message.id
-              ? {
-                  ...transitionMessageLifecycleRecord({ message: entry, event: networkReady ? 'send_started' : 'retry_requested' }),
-                  mediaItems: entry.mediaItems?.map((candidate) => candidate.attachmentId === mediaItem.attachmentId
-                    ? { ...candidate, transferState: 'queued', transferError: null }
-                    : candidate),
-                }
-              : entry));
-            void ChatOutboxService.retryAlbumItem(user.id, localMessageId, mediaItem.attachmentId)
-              .then((requeued) => {
-                if (!requeued) Alert.alert('Retry unavailable', 'This item can no longer be retried from this device.');
-              });
-          },
-        },
-      ],
-    );
-  }, [networkReady, user?.id]);
+  const manageAlbumItem = useChatAlbumActions({
+    networkReady,
+    setMessages,
+    userId: user?.id,
+  });
 
   useEffect(() => {
     if (!messagesLoaded) return;
@@ -8949,13 +8194,42 @@ const resolveQueuedVideoUri = async (
     [reportEvidenceMessage]
   );
 
+  const dismissPendingLocalMessage = useCallback(async (message: MessageType) => {
+    if (!user?.id || !activePeerMessageUserId) return false;
+    const localMessageId = message.clientMessageId ?? message.id;
+    try {
+      const cancelled = await ChatOutboxService.cancelMessage(user.id, localMessageId);
+      const remaining = cancelled
+        ? null
+        : await ChatRepository.getOutboxItem(user.id, localMessageId);
+      if (!cancelled && remaining && remaining.status !== 'cancelled') {
+        Alert.alert(
+          'Unable to remove message',
+          'The upload is still being cancelled. Check your connection and try again.',
+        );
+        return false;
+      }
+      await ChatRepository.deleteMessages(
+        user.id,
+        activePeerMessageUserId,
+        [message.id, localMessageId],
+      );
+      setMessages((current) => current.filter((entry) => entry.id !== message.id));
+      return true;
+    } catch (error) {
+      console.log('[chat] dismiss pending local message error', error);
+      Alert.alert('Unable to remove message', 'Please check your connection and try again.');
+      return false;
+    }
+  }, [activePeerMessageUserId, user?.id]);
+
   const hideMessageForMe = useCallback(async (message: MessageType) => {
     if (!user?.id || !activePeerMessageUserId) return;
     closeMessageActions();
     setShowReactions(null);
 
     if (message.id.startsWith('temp-')) {
-      setMessages((prev) => prev.filter((msg) => msg.id !== message.id));
+      await dismissPendingLocalMessage(message);
       return;
     }
 
@@ -8981,7 +8255,7 @@ const resolveQueuedVideoUri = async (
     void ChatRepository.deleteMessages(user.id, activePeerMessageUserId, [message.id]).catch((deleteError) =>
       console.log('[chat] delete hidden local message error', deleteError),
     );
-  }, [activePeerMessageUserId, closeMessageActions, fetchHiddenMessages, refreshThread, updateHiddenMessageIds, user?.id]);
+  }, [activePeerMessageUserId, closeMessageActions, dismissPendingLocalMessage, fetchHiddenMessages, refreshThread, updateHiddenMessageIds, user?.id]);
 
   const deleteMessageForEveryone = useCallback(async (message: MessageType) => {
     if (!user?.id) return;
@@ -8990,7 +8264,7 @@ const resolveQueuedVideoUri = async (
     setShowReactions(null);
 
     if (message.id.startsWith('temp-')) {
-      setMessages((prev) => prev.filter((msg) => msg.id !== message.id));
+      await dismissPendingLocalMessage(message);
       return;
     }
 
@@ -9039,7 +8313,7 @@ const resolveQueuedVideoUri = async (
       void removeOfflineImage(message.storagePath);
       void removeOfflineVideo(message.storagePath);
     }
-  }, [closeMessageActions, conversationId, refreshThread, user?.id]);
+  }, [closeMessageActions, conversationId, dismissPendingLocalMessage, refreshThread, user?.id]);
 
   const pinMessage = useCallback(async (message: MessageType) => {
     if (!user?.id || !conversationId) return;
@@ -9262,7 +8536,7 @@ const resolveQueuedVideoUri = async (
             onViewVideo={(message, url, albumIndex) => {
               void openVideoViewer(message, url, albumIndex);
             }}
-            onManageAlbumItem={manageFailedAlbumItem}
+            onManageAlbumItem={manageAlbumItem}
             onOpenDocument={handleOpenDocument}
             onRefreshMedia={refreshChatMediaMessage}
             onMediaLoadSuccess={persistRenderedChatMedia}
@@ -9317,7 +8591,7 @@ const resolveQueuedVideoUri = async (
       handleOpenDocument,
       refreshChatMediaMessage,
       retryChatMediaMessage,
-      manageFailedAlbumItem,
+      manageAlbumItem,
       handleSuggestAnotherTime,
       handleSuggestAnotherPlace,
       handleSuggestBoth,
@@ -10920,136 +10194,49 @@ const resolveQueuedVideoUri = async (
         </KeyboardAvoidingView>
       </Modal>
 
-      <Modal
-        transparent
+      <ChatImageViewer
         visible={imageViewerVisible}
-        animationType="fade"
-        presentationStyle="overFullScreen"
-        statusBarTranslucent
-        onRequestClose={closeImageViewer}
-      >
-        <View style={styles.imageViewerBackdrop}>
-          <Pressable
-            style={StyleSheet.absoluteFill}
-            onPress={closeImageViewer}
-          />
-          {imageViewerUrl && (
-            <PinchGestureHandler
-              onGestureEvent={onImagePinchEvent}
-              onHandlerStateChange={onImagePinchStateChange}
-            >
-              <Animated.View
-                style={[
-                  styles.imageViewerImage,
-                  { transform: [{ scale: imageScale }] },
-                ]}
-                onTouchStart={(event) => {
-                  imageViewerSwipeStartXRef.current = imageViewerAlbumCount > 1
-                    ? event.nativeEvent.pageX
-                    : null;
-                }}
-                onTouchEnd={(event) => {
-                  const startX = imageViewerSwipeStartXRef.current;
-                  imageViewerSwipeStartXRef.current = null;
-                  if (startX === null) return;
-                  const delta = event.nativeEvent.pageX - startX;
-                  if (Math.abs(delta) < 56) return;
-                  moveMediaViewer(delta < 0 ? 1 : -1);
-                }}
-              >
-                <ExpoImage
-                  source={{ uri: imageViewerUrl }}
-                  style={StyleSheet.absoluteFill}
-                  cachePolicy="disk"
-                  contentFit="contain"
-                  transition={120}
-                  onLoadStart={() => {
-                    setImageViewerLoading(true);
-                    setImageViewerError(false);
-                  }}
-                  onLoad={() => {
-                    setImageViewerLoading(false);
-                    setImageViewerError(false);
-                  }}
-                  onError={() => {
-                    setImageViewerLoading(false);
-                    setImageViewerError(true);
-                  }}
-                />
-              </Animated.View>
-            </PinchGestureHandler>
-          )}
-          {imageViewerAlbumCount > 1 ? (
-            <>
-              <View
-                pointerEvents="none"
-                style={[
-                  styles.imageViewerCounter,
-                  { top: Math.max(insets.top + 17, 25) },
-                ]}
-              >
-                <Text style={styles.imageViewerCounterText}>
-                  {imageViewerAlbumIndex + 1} / {imageViewerAlbumCount}
-                </Text>
-              </View>
-              <TouchableOpacity
-                style={[
-                  styles.imageViewerPrevious,
-                  imageViewerAlbumIndex === 0 && styles.imageViewerNavigationDisabled,
-                ]}
-                onPress={() => moveMediaViewer(-1)}
-                disabled={imageViewerAlbumIndex === 0}
-                accessibilityRole="button"
-                accessibilityLabel="Previous photo"
-              >
-                <MaterialCommunityIcons name="chevron-left" size={30} color="#FFFFFF" />
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.imageViewerNext,
-                  imageViewerAlbumIndex >= imageViewerAlbumCount - 1 &&
-                    styles.imageViewerNavigationDisabled,
-                ]}
-                onPress={() => moveMediaViewer(1)}
-                disabled={imageViewerAlbumIndex >= imageViewerAlbumCount - 1}
-                accessibilityRole="button"
-                accessibilityLabel="Next photo"
-              >
-                <MaterialCommunityIcons name="chevron-right" size={30} color="#FFFFFF" />
-              </TouchableOpacity>
-            </>
-          ) : null}
-          {imageViewerLoading ? (
-            <View pointerEvents="none" style={styles.imageViewerStatus}>
-              <ActivityIndicator size="small" color={Colors.light.background} />
-              <Text style={styles.imageViewerStatusText}>Opening photo…</Text>
-            </View>
-          ) : null}
-          {imageViewerError ? (
-            <TouchableOpacity style={styles.imageViewerRetry} onPress={retryImageViewer}>
-              <MaterialCommunityIcons name="refresh" size={20} color={Colors.light.background} />
-              <Text style={styles.imageViewerRetryText}>Try again</Text>
-            </TouchableOpacity>
-          ) : null}
-          {imageViewerSourceRef.current?.message.mediaCaption || imageViewerSourceRef.current?.message.text ? (
-            <View
-              pointerEvents="none"
-              style={[styles.imageViewerCaption, { bottom: Math.max(insets.bottom + 18, 26) }]}
-            >
-              <Text style={styles.imageViewerCaptionText}>
-                {imageViewerSourceRef.current.message.mediaCaption
-                  ?? imageViewerSourceRef.current.message.text}
-              </Text>
-            </View>
-          ) : null}
-          <TouchableOpacity
-            style={[styles.imageViewerClose, { top: Math.max(insets.top + 10, 18), right: 16 }]}
-            onPress={closeImageViewer}
-          >
-            <MaterialCommunityIcons name="close" size={20} color={Colors.light.background} />
-          </TouchableOpacity>
-        </View>
-      </Modal>
+        uri={imageViewerUrl}
+        loading={imageViewerLoading}
+        hasError={imageViewerError}
+        currentIndex={imageViewerAlbumIndex}
+        itemCount={imageViewerAlbumCount}
+        caption={imageViewerSourceRef.current?.message.mediaCaption
+          ?? imageViewerSourceRef.current?.message.text
+          ?? null}
+        topInset={insets.top}
+        bottomInset={insets.bottom}
+        scale={imageScale}
+        styles={styles}
+        onPinchGesture={onImagePinchEvent}
+        onPinchStateChange={onImagePinchStateChange}
+        onClose={closeImageViewer}
+        onMove={moveMediaViewer}
+        onRetry={retryImageViewer}
+        onManage={
+          imageViewerSourceRef.current?.message.senderId === user?.id
+          && ['queued', 'sending', 'failed'].includes(imageViewerSourceRef.current?.message.status ?? '')
+          && imageViewerAlbumCount > 1
+            ? () => {
+                const source = imageViewerSourceRef.current;
+                if (!source) return;
+                manageAlbumItem(source.message, source.albumIndex);
+              }
+            : undefined
+        }
+        onLoadStart={() => {
+          setImageViewerLoading(true);
+          setImageViewerError(false);
+        }}
+        onLoad={() => {
+          setImageViewerLoading(false);
+          setImageViewerError(false);
+        }}
+        onError={() => {
+          setImageViewerLoading(false);
+          setImageViewerError(true);
+        }}
+      />
 
       <ChatImmersiveVideoViewer
         visible={Boolean(videoViewerUrl)}
@@ -11063,6 +10250,17 @@ const resolveQueuedVideoUri = async (
         onPrevious={() => moveMediaViewer(-1)}
         onNext={() => moveMediaViewer(1)}
         onRetry={retryCurrentAlbumViewerItem}
+        onManage={
+          imageViewerSourceRef.current?.message.senderId === user?.id &&
+          ['queued', 'sending', 'failed'].includes(imageViewerSourceRef.current?.message.status ?? '') &&
+          imageViewerAlbumCount > 1
+            ? () => {
+                const source = imageViewerSourceRef.current;
+                if (!source) return;
+                manageAlbumItem(source.message, source.albumIndex);
+              }
+            : undefined
+        }
       />
 
       <ChatDocumentViewer
@@ -11073,365 +10271,45 @@ const resolveQueuedVideoUri = async (
         onClose={closeDocumentViewer}
       />
 
-      <Modal
-        visible={Boolean(locationViewerMessage?.location)}
-        onRequestClose={closeLocationViewer}
-        animationType="slide"
-      >
-        <View style={styles.locationViewerContainer}>
-          {locationViewerMessage?.location ? (
-            <>
-              <MapView
-                key={`${locationViewerMessage.location.lat}-${locationViewerMessage.location.lng}`}
-                style={StyleSheet.absoluteFill}
-                provider={Platform.OS === 'web' ? undefined : PROVIDER_GOOGLE}
-                googleMapId={GOOGLE_MAPS_MAP_ID || undefined}
-                mapPadding={{ top: 120, right: 20, bottom: 220, left: 20 }}
-                customMapStyle={GOOGLE_MAPS_MAP_ID ? undefined : isDark ? MAP_STYLE_DARK : MAP_STYLE_LIGHT}
-                initialRegion={{
-                  latitude: locationViewerMessage.location.lat,
-                  longitude: locationViewerMessage.location.lng,
-                  latitudeDelta: 0.012,
-                  longitudeDelta: 0.012,
-                }}
-                showsPointsOfInterests
-                showsBuildings
-              >
-                <Marker
-                  coordinate={{
-                    latitude: locationViewerMessage.location.lat,
-                    longitude: locationViewerMessage.location.lng,
-                  }}
-                  title={locationViewerMessage.location.label}
-                  pinColor={theme.tint}
-                />
-              </MapView>
-              <View style={styles.locationViewerHeader}>
-                <TouchableOpacity
-                  style={styles.locationViewerClose}
-                  onPress={closeLocationViewer}
-                >
-                  <MaterialCommunityIcons name="close" size={20} color={theme.text} />
-                </TouchableOpacity>
-                <View style={styles.locationViewerText}>
-                  <Text style={styles.locationViewerTitle} numberOfLines={1}>
-                    {locationViewerMessage.location.label}
-                  </Text>
-                  {locationViewerMessage.location.address ? (
-                    <Text style={styles.locationViewerSubtitle} numberOfLines={1}>
-                      {locationViewerMessage.location.address}
-                    </Text>
-                  ) : null}
-                </View>
-              </View>
-              <View style={styles.locationViewerFooter}>
-                {locationViewerMessage.location.live && (
-                  <View style={styles.locationViewerLiveRow}>
-                    <View style={styles.locationLiveBadge}>
-                      <Text style={styles.locationLiveBadgeText}>Live</Text>
-                    </View>
-                    <Text style={styles.locationLiveText}>
-                      {formatRemainingTime(locationViewerMessage.location.expiresAt, nowTick)}
-                    </Text>
-                    {locationViewerMessage.senderId === user?.id &&
-                      locationViewerMessage.location.expiresAt &&
-                      locationViewerMessage.location.expiresAt.getTime() > nowTick && (
-                        <TouchableOpacity
-                          style={styles.locationStopButton}
-                          onPress={() => stopLiveSharing(locationViewerMessage.id)}
-                        >
-                          <Text style={styles.locationStopText}>Stop sharing</Text>
-                        </TouchableOpacity>
-                      )}
-                  </View>
-                )}
-                <TouchableOpacity
-                  style={styles.locationViewerAction}
-                  onPress={() => {
-                    const link = locationViewerMessage.location.mapLink || buildMapsLink(locationViewerMessage.location.lat, locationViewerMessage.location.lng);
-                    Linking.openURL(link);
-                  }}
-                >
-                  <MaterialCommunityIcons name="directions" size={18} color={theme.text} />
-                  <Text style={styles.locationViewerActionText}>Open in Maps</Text>
-                </TouchableOpacity>
-              </View>
-            </>
-          ) : null}
-        </View>
-      </Modal>
+      <ChatLocationViewer
+        message={locationViewerMessage}
+        currentUserId={user?.id}
+        now={nowTick}
+        isDark={isDark}
+        theme={theme}
+        styles={styles}
+        onClose={closeLocationViewer}
+        onStopSharing={stopLiveSharing}
+      />
 
-      <Modal
+      <ChatLocationPicker
         visible={locationModalVisible}
-        onRequestClose={closeLocationModal}
-        animationType="slide"
-      >
-        <View style={styles.locationModalContainer}>
-          <MapView
-            ref={mapRef}
-            style={StyleSheet.absoluteFill}
-            provider={Platform.OS === 'web' ? undefined : PROVIDER_GOOGLE}
-            googleMapId={GOOGLE_MAPS_MAP_ID || undefined}
-            mapPadding={{ top: 160, right: 20, bottom: 320, left: 20 }}
-            customMapStyle={GOOGLE_MAPS_MAP_ID ? undefined : isDark ? MAP_STYLE_DARK : MAP_STYLE_LIGHT}
-            initialRegion={mapInitialRegion}
-            onPress={handleMapPress}
-            showsUserLocation={locationStatus === 'granted'}
-            showsMyLocationButton={locationStatus === 'granted'}
-            showsPointsOfInterests
-            showsBuildings
-          >
-            {selectedPlace && (
-              <Marker
-                coordinate={{ latitude: selectedPlace.lat, longitude: selectedPlace.lng }}
-                title={selectedPlace.name}
-                pinColor={theme.tint}
-              />
-            )}
-          </MapView>
-
-          <Animated.View
-            style={[
-              styles.locationTopBar,
-              {
-                opacity: locationSheetAnim,
-                transform: [
-                  {
-                    translateY: locationSheetAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [-12, 0],
-                    }),
-                  },
-                ],
-              },
-            ]}
-          >
-            <BlurView
-              intensity={45}
-              tint={isDark ? 'dark' : 'light'}
-              style={styles.locationGlass}
-              pointerEvents="none"
-            />
-            <View style={styles.locationTopContent}>
-              <TouchableOpacity
-                style={styles.locationTopButton}
-                onPress={closeLocationModal}
-              >
-                <MaterialCommunityIcons name="chevron-left" size={22} color={theme.text} />
-              </TouchableOpacity>
-              <View>
-                <Text style={styles.locationTopTitle}>Share location</Text>
-                <Text style={styles.locationTopSubtitle}>Pick a place to send</Text>
-              </View>
-              <View style={styles.locationTopSpacer} />
-            </View>
-          </Animated.View>
-
-          <Animated.View
-            style={[
-              styles.locationSearchWrap,
-              {
-                opacity: locationSheetAnim,
-                transform: [
-                  {
-                    translateY: locationSheetAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [-6, 0],
-                    }),
-                  },
-                ],
-              },
-            ]}
-          >
-            <BlurView
-              intensity={45}
-              tint={isDark ? 'dark' : 'light'}
-              style={styles.locationGlass}
-              pointerEvents="none"
-            />
-            <View style={styles.locationSearchContent}>
-              <MaterialCommunityIcons name="magnify" size={18} color={theme.textMuted} />
-              <TextInput
-                style={styles.locationSearchInput}
-                placeholder="Search places"
-                placeholderTextColor={theme.textMuted}
-                value={locationSearchQuery}
-                onChangeText={setLocationSearchQuery}
-              />
-              {searchLoading ? (
-                <ActivityIndicator size="small" color={theme.textMuted} />
-              ) : locationSearchQuery.length > 0 ? (
-                <TouchableOpacity onPress={() => setLocationSearchQuery('')}>
-                  <MaterialCommunityIcons name="close-circle" size={18} color={theme.textMuted} />
-                </TouchableOpacity>
-              ) : null}
-            </View>
-          </Animated.View>
-
-          {locationSuggestions.length > 0 && (
-            <View style={styles.locationSuggestionsPanel}>
-              <ScrollView showsVerticalScrollIndicator={false}>
-                {locationSuggestions.map((suggestion) => (
-                  <TouchableOpacity
-                    key={suggestion.id}
-                    style={styles.locationSuggestionRow}
-                    onPress={() => handleSuggestionPress(suggestion)}
-                  >
-                    <MaterialCommunityIcons name="map-marker-outline" size={16} color={theme.textMuted} />
-                    <View style={styles.locationSuggestionText}>
-                      <Text style={styles.locationSuggestionTitle}>{suggestion.primary}</Text>
-                      {suggestion.secondary ? (
-                        <Text style={styles.locationSuggestionSubtitle}>{suggestion.secondary}</Text>
-                      ) : null}
-                    </View>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            </View>
-          )}
-
-          <Animated.View
-            style={[
-              styles.locationBottomSheet,
-              {
-                opacity: locationSheetAnim,
-                transform: [
-                  {
-                    translateY: locationSheetAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [40, 0],
-                    }),
-                  },
-                ],
-              },
-            ]}
-          >
-            <BlurView
-              intensity={55}
-              tint={isDark ? 'dark' : 'light'}
-              style={styles.locationGlass}
-              pointerEvents="none"
-            />
-            <View style={styles.locationSheetContent}>
-              <View style={styles.locationSheetHandle} />
-              <View style={styles.locationSelectedRow}>
-              <Text style={styles.locationSectionTitle}>Selected</Text>
-              <Text style={styles.locationSelectedValue} numberOfLines={1}>
-                {selectedPlace?.name || 'Tap the map or search'}
-              </Text>
-              {selectedPlace?.address ? (
-                <Text style={styles.locationSelectedSubtitle} numberOfLines={1}>
-                  {selectedPlace.address}
-                </Text>
-              ) : null}
-              </View>
-
-              <View style={styles.locationNearbyRow}>
-                <View style={styles.locationNearbyHeader}>
-                  <Text style={styles.locationSectionTitle}>Nearby</Text>
-                  {placesLoading ? (
-                    <ActivityIndicator size="small" color={theme.textMuted} />
-                  ) : null}
-                </View>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  {nearbyPlaces.map((place) => (
-                    <TouchableOpacity
-                      key={place.id}
-                      style={styles.locationNearbyCard}
-                      onPress={() => selectPlace(place)}
-                    >
-                      <View style={styles.locationNearbyIcon}>
-                        <MaterialCommunityIcons name="map-marker-outline" size={16} color={theme.tint} />
-                      </View>
-                      <View style={styles.locationNearbyMeta}>
-                        <Text style={styles.locationNearbyName} numberOfLines={1}>
-                          {place.name}
-                        </Text>
-                        {place.address ? (
-                          <Text style={styles.locationNearbyAddress} numberOfLines={1}>
-                            {place.address}
-                          </Text>
-                        ) : null}
-                      </View>
-                    </TouchableOpacity>
-                  ))}
-                  {!hasPlacesKey && (
-                    <View style={styles.locationNearbyCard}>
-                      <View style={styles.locationNearbyIcon}>
-                        <MaterialCommunityIcons name="alert-circle-outline" size={16} color={theme.textMuted} />
-                      </View>
-                      <View style={styles.locationNearbyMeta}>
-                        <Text style={styles.locationNearbyName}>Add Google Maps key</Text>
-                        <Text style={styles.locationNearbyAddress}>Places search disabled</Text>
-                      </View>
-                    </View>
-                  )}
-                </ScrollView>
-              </View>
-
-              <View style={styles.locationLiveSection}>
-                <Text style={styles.locationSectionTitle}>Live location</Text>
-                <View style={styles.locationPresetRow}>
-                  {LIVE_LOCATION_PRESETS.map((preset) => (
-                    <TouchableOpacity
-                      key={preset}
-                      style={[
-                        styles.locationPresetChip,
-                        liveDurationMinutes === preset && styles.locationPresetChipActive,
-                      ]}
-                      onPress={() => setLiveDurationMinutes(preset)}
-                    >
-                      <Text
-                        style={[
-                          styles.locationPresetText,
-                          liveDurationMinutes === preset && styles.locationPresetTextActive,
-                        ]}
-                      >
-                        {preset === 60
-                          ? '1 hour'
-                          : preset === 480
-                          ? '8 hours'
-                          : `${preset} min`}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-                <Text style={styles.locationLiveHint}>
-                  Remaining time is always visible and you can stop sharing anytime.
-                </Text>
-              </View>
-
-              {locationError ? (
-                <Text style={styles.locationErrorText}>{locationError}</Text>
-              ) : null}
-
-              <View style={styles.locationActionRow}>
-                <TouchableOpacity
-                  style={styles.locationGhostButton}
-                  onPress={handleSendLocation}
-                >
-                  <MaterialCommunityIcons name="map-marker-outline" size={18} color={theme.text} />
-                  <Text style={styles.locationGhostText}>Send pin</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.locationPrimaryButton}
-                  onPress={handleSendLiveLocation}
-                >
-                  <MaterialCommunityIcons name="map-marker-radius-outline" size={18} color={Colors.light.background} />
-                  <Text style={styles.locationPrimaryText}>Share live</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </Animated.View>
-
-          {showLocationLoading && (
-            <View style={styles.locationLoadingOverlay}>
-              <ActivityIndicator size="large" color={theme.tint} />
-              <Text style={styles.locationLoadingText}>Finding your location...</Text>
-            </View>
-          )}
-        </View>
-      </Modal>
+        mapRef={mapRef}
+        mapInitialRegion={mapInitialRegion}
+        selectedPlace={selectedPlace}
+        locationStatus={locationStatus}
+        sheetAnimation={locationSheetAnim}
+        searchQuery={locationSearchQuery}
+        searchLoading={searchLoading}
+        suggestions={locationSuggestions}
+        nearbyPlaces={nearbyPlaces}
+        placesLoading={placesLoading}
+        hasPlacesKey={hasPlacesKey}
+        liveDurationMinutes={liveDurationMinutes}
+        locationError={locationError}
+        showLoading={showLocationLoading}
+        isDark={isDark}
+        theme={theme}
+        styles={styles}
+        onClose={closeLocationModal}
+        onMapPress={handleMapPress}
+        onSearchQueryChange={setLocationSearchQuery}
+        onSuggestionPress={handleSuggestionPress}
+        onSelectPlace={selectPlace}
+        onLiveDurationChange={setLiveDurationMinutes}
+        onSendPin={handleSendLocation}
+        onSendLive={handleSendLiveLocation}
+      />
 
       {momentViewerVisible && momentUsersWithContent.length > 0 ? (
         <MomentViewer

@@ -160,11 +160,42 @@ const OUTGOING_MESSAGE_PROGRESS: Readonly<Record<OutgoingMessageState, number>> 
   read: 5,
   deleted: 6,
 };
+const ACKNOWLEDGED_OUTGOING_MESSAGE_STATES: ReadonlySet<OutgoingMessageState> = new Set([
+  'sent',
+  'delivered',
+  'read',
+  'deleted',
+]);
+const FAILED_OUTGOING_MESSAGE_STATES: ReadonlySet<OutgoingMessageState> = new Set([
+  'retryable_failed',
+  'terminal_failed',
+  'cancelled',
+]);
 
 /** Reconciles stale cache/realtime snapshots without allowing receipt regressions. */
 export const mergeOutgoingMessageLifecycleState = (
   current: OutgoingMessageState,
   incoming: OutgoingMessageState,
-) => OUTGOING_MESSAGE_PROGRESS[current] >= OUTGOING_MESSAGE_PROGRESS[incoming]
-  ? current
-  : incoming;
+) => {
+  // A local outbox snapshot is authoritative while a message is still being
+  // sent. In particular, queued/sending -> failed is a real transition, not a
+  // receipt regression. Once the server has acknowledged a message, only a
+  // more advanced acknowledged receipt may replace it.
+  if (ACKNOWLEDGED_OUTGOING_MESSAGE_STATES.has(current)) {
+    return ACKNOWLEDGED_OUTGOING_MESSAGE_STATES.has(incoming) &&
+      OUTGOING_MESSAGE_PROGRESS[incoming] > OUTGOING_MESSAGE_PROGRESS[current]
+      ? incoming
+      : current;
+  }
+  if (ACKNOWLEDGED_OUTGOING_MESSAGE_STATES.has(incoming)) return incoming;
+  if (current === 'cancelled' || current === 'terminal_failed') return current;
+
+  if (FAILED_OUTGOING_MESSAGE_STATES.has(incoming)) {
+    return incoming;
+  }
+  if (FAILED_OUTGOING_MESSAGE_STATES.has(current)) return incoming;
+
+  return OUTGOING_MESSAGE_PROGRESS[current] >= OUTGOING_MESSAGE_PROGRESS[incoming]
+    ? current
+    : incoming;
+};

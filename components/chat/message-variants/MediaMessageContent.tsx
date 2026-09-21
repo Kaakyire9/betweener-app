@@ -10,6 +10,10 @@ import VideoPreview from "@/components/chat/message-variants/VideoPreview";
 import { resolveChatImageUri, resolveChatVideoUri } from "@/lib/chat/media-uri";
 import { getMessageImageItems } from "@/lib/chat/media-album";
 import type { ChatMediaAccessFailure } from "@/lib/chat/media/chat-media-access";
+import {
+  getChatAttachmentFailurePresentation,
+  getChatAttachmentRetryLabel,
+} from "@/lib/chat/attachments/chat-attachment-error";
 
 type MediaMessageContentProps = {
   item: MessageType;
@@ -59,6 +63,13 @@ const MediaMessageContent = memo(
     onViewVideo,
     onManageAlbumItem,
   }: MediaMessageContentProps) => {
+    const attachmentFailure = isMyMessage && item.status === 'failed'
+      ? getChatAttachmentFailurePresentation(item.sendErrorCode)
+      : null;
+    const attachmentRetryLabel =
+      isMyMessage && item.status === 'queued' && item.sendErrorCode
+        ? getChatAttachmentRetryLabel(item.sendErrorCode)
+        : null;
     const reportLoadedImage = (
       message: MessageType,
       renderedUri: string,
@@ -92,11 +103,13 @@ const MediaMessageContent = memo(
         : null;
     const deliveryLabel =
       isMyMessage && item.status === 'queued'
-        ? 'Waiting to send'
+        ? attachmentRetryLabel ?? 'Waiting to send'
         : isMyMessage && item.status === 'sending'
           ? 'Sending…'
-        : isMyMessage && item.status === 'failed'
-          ? 'Couldn’t send · Tap to retry'
+        : attachmentFailure
+          ? attachmentFailure.retryable
+            ? 'Couldn’t send · Tap to retry'
+            : 'Not sent · Choose another'
           : null;
     const deliveryBadge = deliveryLabel ? (
       <View
@@ -193,6 +206,7 @@ const MediaMessageContent = memo(
         // failed bubble must retry the durable command rather than opening the
         // viewer and making the visible retry affordance ineffective.
         if (isMyMessage && item.status === 'failed') {
+          if (attachmentFailure?.retryable === false) return;
           onRetryFailedMessage?.(item.id);
           return;
         }
@@ -233,11 +247,22 @@ const MediaMessageContent = memo(
               if (isMyMessage && item.status === 'failed') event.stopPropagation();
               openTile(openItem, openUri, openIndex);
             }}
+            onLongPress={
+              isMyMessage && isAlbum && ['queued', 'sending', 'failed'].includes(item.status ?? '')
+                ? () => onManageAlbumItem?.(item, openIndex)
+                : undefined
+            }
+            delayLongPress={350}
             accessibilityRole="button"
             accessibilityLabel={
               remaining > 0
                 ? `Open ${remaining} more ${remaining === 1 ? 'photo' : 'photos'}`
                 : `Open photo ${tileIndex + 1} of ${mediaItems.length}`
+            }
+            accessibilityHint={
+              isMyMessage && isAlbum && ['queued', 'sending', 'failed'].includes(item.status ?? '')
+                ? 'Press and hold to cancel this item or the whole album.'
+                : undefined
             }
           >
             {uri ? (
@@ -286,7 +311,14 @@ const MediaMessageContent = memo(
             {mediaItem.transferState === 'retryable_failed' || mediaItem.transferState === 'terminal_failed' ? (
               <View pointerEvents="none" style={albumStyles.itemStateBadge}>
                 <MaterialCommunityIcons name="alert-circle-outline" size={15} color="#FFFFFF" />
-                <Text style={albumStyles.itemStateText}>Tap to retry</Text>
+                <Text style={albumStyles.itemStateText}>
+                  {mediaItem.transferState === 'terminal_failed' ? 'Choose another' : 'Tap to retry'}
+                </Text>
+              </View>
+            ) : mediaItem.transferState === 'cancelling' ? (
+              <View pointerEvents="none" style={albumStyles.itemStateBadge}>
+                <MaterialCommunityIcons name="close-circle-outline" size={15} color="#FFFFFF" />
+                <Text style={albumStyles.itemStateText}>Cancelling</Text>
               </View>
             ) : mediaItem.transferState === 'uploading' ? (
               <View pointerEvents="none" style={albumStyles.itemStateBadge}>
@@ -414,6 +446,12 @@ const MediaMessageContent = memo(
               </Text>
             </View>
           ) : null}
+          {attachmentFailure ? (
+            <View style={deliveryStyles.failureCard}>
+              <MaterialCommunityIcons name="alert-circle-outline" size={16} color="#FF9C9C" />
+              <Text style={deliveryStyles.failureCopy}>{attachmentFailure.message}</Text>
+            </View>
+          ) : null}
         </View>
       );
     }
@@ -457,7 +495,7 @@ const MediaMessageContent = memo(
             </Pressable>
           )}
           {deliveryBadge}
-          {isMyMessage && item.status === 'failed' ? (
+          {isMyMessage && item.status === 'failed' && attachmentFailure?.retryable !== false ? (
             <Pressable
               style={deliveryStyles.retryHitTarget}
               onPress={(event) => {
@@ -511,6 +549,12 @@ const MediaMessageContent = memo(
               </Text>
             </View>
           ) : null}
+          {attachmentFailure ? (
+            <View style={deliveryStyles.failureCard}>
+              <MaterialCommunityIcons name="alert-circle-outline" size={16} color="#FF9C9C" />
+              <Text style={deliveryStyles.failureCopy}>{attachmentFailure.message}</Text>
+            </View>
+          ) : null}
         </View>
       );
     }
@@ -552,6 +596,21 @@ const deliveryStyles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 11,
     fontFamily: 'Manrope_700Bold',
+  },
+  failureCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 7,
+    paddingHorizontal: 11,
+    paddingVertical: 10,
+    backgroundColor: 'rgba(92, 25, 32, 0.92)',
+  },
+  failureCopy: {
+    flex: 1,
+    color: '#FFE8E8',
+    fontSize: 11,
+    lineHeight: 16,
+    fontFamily: 'Manrope_600SemiBold',
   },
 });
 

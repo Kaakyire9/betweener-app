@@ -6,10 +6,18 @@ import { selectChatImageGalleryItem } from '../lib/chat/media/chat-image-gallery
 import {
   ChatAlbumWorkError,
   CHAT_MEDIA_ALBUM_MAX_ITEMS,
+  clampChatAlbumUploadProgress,
   getChatAlbumLayout,
   mapChatAlbumItemsBounded,
   normalizeDurableChatAlbumItems,
+  prepareChatAlbumItemsForAttempt,
+  removeChatAlbumItemFromComposition,
+  resolveChatAlbumUploadBucket,
+  resolveChatMediaAlbumUploadConcurrency,
+  updateChatAlbumItemTransfer,
+  unwrapSingleChatAlbumWorkError,
 } from '../lib/chat/album/chat-media-album.ts';
+import type { DurableChatAlbumItem } from '../lib/chat/album/chat-media-album.ts';
 
 test('normalizes and orders server-owned chat album metadata', () => {
   const items = normalizeChatMediaItems([
@@ -21,6 +29,21 @@ test('normalizes and orders server-owned chat album metadata', () => {
   assert.deepEqual(items.map((item) => item.attachmentId), ['first', 'second']);
   assert.equal(items[0].width, 600);
   assert.equal(items[0].height, 800);
+});
+
+test('preserves the underlying error for a single-image worker failure', () => {
+  const cause = Object.assign(new Error('image_content_not_allowed'), {
+    code: 'image_content_not_allowed',
+  });
+  const wrapped = new ChatAlbumWorkError([{ index: 0, error: cause }]);
+
+  assert.equal(unwrapSingleChatAlbumWorkError(wrapped), cause);
+  const multiple = unwrapSingleChatAlbumWorkError(new ChatAlbumWorkError([
+    { index: 0, error: cause },
+    { index: 1, error: new Error('upload_failed') },
+  ]));
+  assert.ok(multiple instanceof ChatAlbumWorkError);
+  assert.equal(multiple.message, 'chat_album_item_work_failed');
 });
 
 test('uses deterministic portrait, square and landscape frames', () => {
@@ -89,6 +112,84 @@ test('normalizes mixed image/video albums without changing selection order', () 
     { attachmentId: 'one', index: 0, mediaType: 'video' },
     { attachmentId: 'two', index: 1, mediaType: 'image' },
   ]);
+});
+
+test('routes every mixed album item by its own type in either selection order', () => {
+  const image = { attachmentId: 'image', contentType: 'image/jpeg', mediaType: 'image' as const };
+  const video = { attachmentId: 'video', contentType: 'video/mp4', mediaType: 'video' as const };
+
+  assert.deepEqual(
+    [image, video].map(resolveChatAlbumUploadBucket),
+    ['chat-attachment-staging-v1-2', 'chat-media'],
+  );
+  assert.deepEqual(
+    [video, image].map(resolveChatAlbumUploadBucket),
+    ['chat-media', 'chat-attachment-staging-v1-2'],
+  );
+});
+
+test('album upload concurrency is configurable but remains safely bounded', () => {
+  assert.equal(resolveChatMediaAlbumUploadConcurrency(undefined), 2);
+  assert.equal(resolveChatMediaAlbumUploadConcurrency('3'), 3);
+  assert.equal(resolveChatMediaAlbumUploadConcurrency(0), 1);
+  assert.equal(resolveChatMediaAlbumUploadConcurrency(99), 4);
+});
+
+test('persists real per-item progress without mutating sibling items', () => {
+  const items = [
+    { attachmentId: 'one', transferState: 'uploading' as const, uploadProgress: 0 },
+    { attachmentId: 'two', transferState: 'uploading' as const, uploadProgress: 0.2 },
+  ];
+  const updated = updateChatAlbumItemTransfer(items, 'one', {
+    uploadProgress: clampChatAlbumUploadProgress(0.625),
+  });
+  assert.equal(updated[0].uploadProgress, 0.625);
+  assert.equal(updated[1], items[1]);
+  assert.equal(clampChatAlbumUploadProgress(4), 1);
+  assert.equal(clampChatAlbumUploadProgress(-2), 0);
+});
+
+test('retry after restart preserves completed items and retries only requested failures', () => {
+  const persisted = JSON.stringify([
+    {
+      attachmentId: 'uploaded', index: 0, contentType: 'image/jpeg', mediaType: 'image',
+      transferState: 'uploaded', uploadProgress: 1, attemptCount: 1, lastError: null,
+    },
+    {
+      attachmentId: 'failed-one', index: 1, contentType: 'video/mp4', mediaType: 'video',
+      transferState: 'retryable_failed', uploadProgress: null, attemptCount: 1, lastError: 'network',
+    },
+    {
+      attachmentId: 'failed-two', index: 2, contentType: 'image/jpeg', mediaType: 'image',
+      transferState: 'retryable_failed', uploadProgress: null, attemptCount: 1, lastError: 'timeout',
+    },
+  ]);
+  const restored = normalizeDurableChatAlbumItems<DurableChatAlbumItem>(JSON.parse(persisted));
+  const next = prepareChatAlbumItemsForAttempt(restored, ['failed-two']);
+
+  assert.equal(next[0].transferState, 'uploaded');
+  assert.equal(next[0].attemptCount, 1);
+  assert.equal(next[1].transferState, 'retryable_failed');
+  assert.equal(next[1].attemptCount, 1);
+  assert.equal(next[2].transferState, 'uploading');
+  assert.equal(next[2].uploadProgress, 0);
+  assert.equal(next[2].attemptCount, 2);
+});
+
+test('item cancellation removes exactly one identity and reindexes the composition', () => {
+  const remaining = removeChatAlbumItemFromComposition([
+    { attachmentId: 'one', index: 0 },
+    { attachmentId: 'two', index: 1 },
+    { attachmentId: 'three', index: 2 },
+  ], 'two');
+  assert.deepEqual(remaining, [
+    { attachmentId: 'one', index: 0 },
+    { attachmentId: 'three', index: 1 },
+  ]);
+  assert.throws(
+    () => removeChatAlbumItemFromComposition([{ attachmentId: 'one', index: 0 }], 'one'),
+    /chat_album_cannot_remove_last_item/,
+  );
 });
 
 test('rejects duplicate identities, invalid order and more than ten items', () => {
@@ -161,6 +262,58 @@ test('prompt 4 migration and edge finalizer enforce atomic media albums', async 
   assert.match(edge, /rpc_finalize_chat_media_album_v4/);
   assert.match(edge, /rpc_cancel_chat_media_album_item/);
   assert.match(edge, /isMediaAlbum/);
+});
+
+test('active cancellation tombstones staging uploads before byte cleanup', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const edge = await readFile(
+    new URL('../supabase/functions/chat-attachment-finalize/index.ts', import.meta.url),
+    'utf8',
+  );
+  const cancellationMigration = await readFile(
+    new URL('../supabase/migrations/20260919120000_chat_album_cancellation_staging_hardening.sql', import.meta.url),
+    'utf8',
+  );
+  const outbox = await readFile(
+    new URL('../lib/chat/outbox/chat-outbox-service.ts', import.meta.url),
+    'utf8',
+  );
+
+  assert.match(edge, /Tombstone every batch before deleting bytes/);
+  assert.match(edge, /Always commit the cancellation tombstone before deleting bytes/);
+  assert.match(cancellationMigration, /chat-attachment-staging-v1-2/);
+  assert.match(cancellationMigration, /pg_advisory_xact_lock/);
+  assert.match(cancellationMigration, /create or replace function public\.rpc_cancel_chat_attachment_batch\(/);
+  assert.doesNotMatch(cancellationMigration, /drop\s+(?:function|table|column|policy)/i);
+  assert.match(outbox, /assertAlbumCompositionCurrent/);
+  assert.match(outbox, /activeAlbumItemCancellations/);
+});
+
+test('v1.2 album client changes are isolated from the production 1.1.1 runtime', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const appConfig = JSON.parse(await readFile(new URL('../app.json', import.meta.url), 'utf8'));
+  const cancellationMigration = await readFile(
+    new URL('../supabase/migrations/20260919120000_chat_album_cancellation_staging_hardening.sql', import.meta.url),
+    'utf8',
+  );
+
+  assert.equal(appConfig.expo.version, '1.2.0');
+  assert.equal(appConfig.expo.runtimeVersion?.policy, 'appVersion');
+  assert.match(cancellationMigration, /grant execute[\s\S]*to service_role/i);
+  assert.match(cancellationMigration, /'chat-media', 'voice-messages', 'chat-attachment-staging-v1-2'/);
+});
+
+test('album outbox wires item progress and per-item bucket routing into the real upload path', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const outbox = await readFile(
+    new URL('../lib/chat/outbox/chat-outbox-service.ts', import.meta.url),
+    'utf8',
+  );
+  assert.match(outbox, /resolveChatAlbumUploadBucket\(file\)/);
+  assert.match(outbox, /onProgress: onProgress/);
+  assert.match(outbox, /ALBUM_PROGRESS_PERSIST_INTERVAL_MS/);
+  assert.match(outbox, /updateAlbumTransferSnapshot/);
+  assert.match(outbox, /album_items_incomplete/);
 });
 
 test('album lifecycle audit events are accepted by the database contract', async () => {

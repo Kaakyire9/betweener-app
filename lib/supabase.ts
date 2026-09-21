@@ -17,6 +17,7 @@ const IS_PROD = EXPO_ENV === 'production' || (!IS_DEV && EXPO_ENV !== 'developme
 // Give release builds a bit more time on slower mobile networks, while still
 // protecting against the "fetch hangs forever after resume" issue.
 const SUPABASE_FETCH_TIMEOUT_MS = IS_DEV ? 15_000 : 30_000;
+const SAFETY_FUNCTION_FETCH_TIMEOUT_MS = 35_000;
 
 // Extra safety: protect against rare hangs that occur *before* fetch is invoked.
 // (Historically observed around auth/session plumbing on some iOS builds.)
@@ -89,6 +90,11 @@ const safeUrlPath = (input: RequestInfo | URL) => {
     return '';
   }
 };
+
+const resolveFetchTimeoutMs = (path: string) =>
+  path.endsWith('/functions/v1/chat-attachment-finalize')
+    ? Math.max(SUPABASE_FETCH_TIMEOUT_MS, SAFETY_FUNCTION_FETCH_TIMEOUT_MS)
+    : SUPABASE_FETCH_TIMEOUT_MS;
 
 const logFetchIssueThrottled = (key: string, context: Record<string, unknown>, throttleKey?: string) => {
   const now = Date.now();
@@ -326,6 +332,7 @@ const logResponseIssue = (method: string, path: string, status: number, ms: numb
 const fetchWithRaceTimeout: typeof fetch = async (input, init) => {
   const start = Date.now();
   const path = safeUrlPath(input);
+  const timeoutMs = resolveFetchTimeoutMs(path);
   const method = String((init as any)?.method || 'GET').toUpperCase();
 
   if (!SUPABASE_IS_CONFIGURED) {
@@ -340,7 +347,7 @@ const fetchWithRaceTimeout: typeof fetch = async (input, init) => {
     const res = (await Promise.race([
       fetch(input, init as any),
       new Promise<Response>((resolve) =>
-        setTimeout(() => resolve(makeSyntheticResponse('timeout', 'network_timeout')), SUPABASE_FETCH_TIMEOUT_MS),
+        setTimeout(() => resolve(makeSyntheticResponse('timeout', 'network_timeout')), timeoutMs),
       ),
     ])) as Response;
 
@@ -368,6 +375,7 @@ const fetchWithRaceTimeout: typeof fetch = async (input, init) => {
 const fetchWithTimeout: typeof fetch = async (input, init) => {
   const start = Date.now();
   const path = safeUrlPath(input);
+  const timeoutMs = resolveFetchTimeoutMs(path);
   const method = String((init as any)?.method || 'GET').toUpperCase();
 
   if (!SUPABASE_IS_CONFIGURED) {
@@ -407,7 +415,7 @@ const fetchWithTimeout: typeof fetch = async (input, init) => {
           // ignore abort errors
         }
         resolve(makeSyntheticResponse('timeout', 'network_timeout'));
-      }, SUPABASE_FETCH_TIMEOUT_MS);
+      }, timeoutMs);
     });
 
     const fetchPromise = (async (): Promise<Response> => {
