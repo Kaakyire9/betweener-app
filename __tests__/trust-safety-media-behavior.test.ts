@@ -156,6 +156,21 @@ test('surface-aware OCR text policy enforces public contact rules without overbl
   assert.equal(assessMediaExtractedText('Subscribe to my private page', 'private_chat_media').decision, 'BLOCK');
 });
 
+test('OCR policy normalizes international decimal digits and invisible separators', () => {
+  assert.equal(
+    assessMediaExtractedText('WhatsApp +٤٤​ ٧١٢٣ ٤٥٦٧٨٩', 'public_profile_media').decision,
+    'BLOCK',
+  );
+  assert.equal(
+    assessMediaExtractedText('WhatsApp +۴۴ ۷۱۲۳ ۴۵۶۷۸۹', 'public_profile_media').decision,
+    'BLOCK',
+  );
+  assert.equal(
+    assessMediaExtractedText('WhatsApp +４４ ７１２３ ４５６７８９', 'public_profile_media').decision,
+    'BLOCK',
+  );
+});
+
 test('deterministic QR decoder exposes an external contact URL to public-profile policy', async () => {
   const png = await QRCode.toBuffer('https://example.com/private', { type: 'png', width: 320 });
   const decoded = await decodeQrPayloads(new Uint8Array(png), 'image/png');

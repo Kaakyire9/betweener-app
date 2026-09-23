@@ -17,6 +17,11 @@ with expected(version, purpose) as (values
   ('20260915135000', 'profile media approval provenance'),
   ('20260915140000', 'admin profile-review guarded write context'),
   ('20260915141000', 'admin profile-review system-field context')
+  ,('20260921120000', 'chat image moderation receipts')
+  ,('20260921121000', 'weighted rolling actor enforcement')
+  ,('20260921122000', 'legacy profile media remediation')
+  ,('20260921123000', 'chat media publication provenance')
+  ,('20260922100000', 'atomic chat image album rate limit')
 )
 select expected.version, expected.purpose, exists (
   select 1 from supabase_migrations.schema_migrations migration
@@ -47,7 +52,15 @@ with expected(name, signature, authenticated_execute, service_execute) as (value
   ('child-safety resolution',
     'public.rpc_child_safety_resolve_evidence(uuid,text,boolean)', true, true),
   ('profile media approval registration',
-    'public.rpc_service_register_approved_profile_media(uuid,text,text,text,bigint,text)', false, true)
+    'public.rpc_service_register_approved_profile_media(uuid,text,text,text,bigint,text)', false, true),
+  ('chat media approval registration',
+    'public.rpc_service_register_approved_chat_media(uuid,uuid,text,uuid,text,text,text,bigint,text)', false, true),
+  ('legacy media remediation claim',
+    'public.rpc_service_claim_profile_media_remediation(integer)', false, true),
+  ('legacy media remediation resolve',
+    'public.rpc_service_resolve_profile_media_remediation(uuid,uuid,text,text,text[],text)', false, true),
+  ('actor appeal reversal',
+    'public.rpc_admin_reverse_content_moderation_event(uuid,text)', true, true)
 ), resolved as (
   select expected.*, to_regprocedure(expected.signature) as oid from expected
 )
@@ -93,7 +106,12 @@ select
     as profile_media_provenance_registry_installed,
   not has_table_privilege('authenticated',
     'public.approved_profile_media_objects', 'SELECT')
-    as profile_media_provenance_registry_private;
+    as profile_media_provenance_registry_private,
+  to_regclass('public.approved_chat_media_objects') is not null
+    as chat_media_provenance_registry_installed,
+  not has_table_privilege('authenticated',
+    'public.approved_chat_media_objects', 'SELECT')
+    as chat_media_provenance_registry_private;
 
 -- 4. Provider degradation is operational telemetry, not an admin queue.
 select
@@ -145,6 +163,18 @@ select
   max(capability.stale_after) as stale_after
 from public.media_hash_provider_capabilities capability;
 
+-- 6b. Legacy profile-media remediation. Dead letters and cleanup-pending rows
+-- require operator attention before broad 1.2 rollout.
+select
+  count(*) filter (where job.status in ('PENDING', 'RETRY'))::integer as queued,
+  count(*) filter (where job.status = 'PROCESSING'
+    and job.claimed_at < now() - interval '15 minutes')::integer as stuck_claims,
+  count(*) filter (where job.status = 'DEAD_LETTER')::integer as dead_letters,
+  count(*) filter (where job.needs_source_cleanup)::integer as cleanup_pending,
+  count(*) filter (where job.status = 'REMOVED')::integer as removed,
+  count(*) filter (where job.status = 'SAFE')::integer as safe
+from public.profile_media_remediation_jobs job;
+
 -- 7. Retention worker. A configured scheduler and recent successful run are
 -- required after the first production scheduling window.
 select
@@ -179,9 +209,25 @@ with boundaries as (
     and to_regprocedure(
       'public.rpc_service_register_approved_profile_media(uuid,text,text,text,bigint,text)'
     ) is not null
+    and to_regprocedure(
+      'public.rpc_service_register_approved_chat_media(uuid,uuid,text,uuid,text,text,text,bigint,text)'
+    ) is not null
+    and to_regprocedure(
+      'public.rpc_service_claim_profile_media_remediation(integer)'
+    ) is not null
+    and to_regprocedure(
+      'public.rpc_service_resolve_profile_media_remediation(uuid,uuid,text,text,text[],text)'
+    ) is not null
+    and to_regprocedure(
+      'public.rpc_admin_reverse_content_moderation_event(uuid,text)'
+    ) is not null
     and to_regclass('public.approved_profile_media_objects') is not null
     and not has_table_privilege(
       'authenticated', 'public.approved_profile_media_objects', 'SELECT'
+    )
+    and to_regclass('public.approved_chat_media_objects') is not null
+    and not has_table_privilege(
+      'authenticated', 'public.approved_chat_media_objects', 'SELECT'
     )
     and exists (select 1 from pg_trigger where tgrelid = 'public.profiles'::regclass
       and tgname = 'enforce_profile_media_provenance_v1_2' and not tgisinternal)

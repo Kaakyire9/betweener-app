@@ -12,18 +12,38 @@ const ZERO_WIDTH = /[\u200B-\u200D\u2060\uFEFF]/gu;
 const KEYCAPS = /([0-9])\uFE0F?\u20E3/gu;
 const SPACES = /\s+/gu;
 
-const DIGIT_MAP: Record<string, string> = {
-  '٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4',
-  '٥': '5', '٦': '6', '٧': '7', '٨': '8', '٩': '9',
-  '۰': '0', '۱': '1', '۲': '2', '۳': '3', '۴': '4',
-  '۵': '5', '۶': '6', '۷': '7', '۸': '8', '۹': '9',
+const DECIMAL_DIGIT_ZERO_CODE_POINTS = [
+  0x0030, // ASCII
+  0x0660, // Arabic-Indic
+  0x06f0, // Extended Arabic-Indic
+  0x0966, // Devanagari
+  0x09e6, // Bengali
+  0x0a66, // Gurmukhi
+  0x0ae6, // Gujarati
+  0x0b66, // Oriya
+  0x0be6, // Tamil
+  0x0c66, // Telugu
+  0x0ce6, // Kannada
+  0x0d66, // Malayalam
+  0x0e50, // Thai
+  0x0ed0, // Lao
+  0xff10, // Fullwidth
+] as const;
+
+const normalizeDecimalDigit = (digit: string) => {
+  const codePoint = digit.codePointAt(0);
+  if (codePoint === undefined) return digit;
+  for (const zero of DECIMAL_DIGIT_ZERO_CODE_POINTS) {
+    if (codePoint >= zero && codePoint <= zero + 9) return String(codePoint - zero);
+  }
+  return digit;
 };
 
 export const normalizeMediaExtractedText = (value: unknown) => String(value ?? '')
   .normalize('NFKC')
   .replace(ZERO_WIDTH, '')
   .replace(KEYCAPS, '$1')
-  .replace(/[٠-٩۰-۹]/gu, (digit) => DIGIT_MAP[digit] ?? digit)
+  .replace(/\p{Nd}/gu, normalizeDecimalDigit)
   .replace(SPACES, ' ')
   .trim()
   .toLowerCase();

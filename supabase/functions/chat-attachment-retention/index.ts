@@ -44,6 +44,11 @@ serve(async (req) => {
       { p_limit: 250 },
     )
     if (staleModerationError) throw staleModerationError
+    const { data: expiredModerationReceipts, error: receiptPurgeError } = await service.rpc(
+      'rpc_service_purge_expired_chat_image_moderation_receipts',
+      { p_limit: 2000 },
+    )
+    if (receiptPurgeError) throw receiptPurgeError
     let moderationStagingDeleted = 0
     for (const row of staleModerationRows || []) {
       const storagePath = String(row.storage_path || '')
@@ -94,6 +99,7 @@ serve(async (req) => {
       deadLetter,
       abandonedFinalizations: Number(abandonedData || 0),
       moderationStagingDeleted,
+      expiredModerationReceipts: Number(expiredModerationReceipts || 0),
     })
   } catch (error) {
     await failRun(error)

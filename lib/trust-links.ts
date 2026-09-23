@@ -6,6 +6,7 @@ export const TRUST_LINKS = {
   terms: process.env.EXPO_PUBLIC_TERMS_URL || "https://getbetweener.com/terms",
   cookies: process.env.EXPO_PUBLIC_COOKIES_URL || "https://getbetweener.com/cookies",
   childSafety: process.env.EXPO_PUBLIC_CHILD_SAFETY_URL || "https://getbetweener.com/child-safety",
+  communityGuidelines: process.env.EXPO_PUBLIC_COMMUNITY_GUIDELINES_URL || "https://getbetweener.com/community-guidelines",
   supportSite: process.env.EXPO_PUBLIC_SUPPORT_URL || "https://getbetweener.com/support",
   supportEmail: process.env.EXPO_PUBLIC_SUPPORT_EMAIL || "support@getbetweener.com",
   childSafetyEmail: process.env.EXPO_PUBLIC_CHILD_SAFETY_EMAIL || "hello@getbetweener.com",

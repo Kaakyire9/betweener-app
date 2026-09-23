@@ -20,6 +20,10 @@ verify_jwt = false
 # cannot mint an end-user JWT.
 verify_jwt = false
 
+[functions.profile-media-remediation-v1-2]
+# Scheduled requests authenticate with a function-owned secret.
+verify_jwt = false
+
 [api]
 enabled = true
 # Port to use for the API URL.

@@ -3,6 +3,11 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { hasLocalStorageCapacity } from '../lib/offline/storage-capacity-policy.ts';
+import {
+  isTransientContentSafetyFailure,
+  runWithTransientContentSafetyRetry,
+} from '../supabase/functions/_shared/content-safety-retry.ts';
+import { shouldTrackNetworkQualityRequest } from '../lib/network-quality-monitor.ts';
 
 const migration = readFileSync(
   'supabase/migrations/20260731160000_production_harden_chat_attachments.sql',
@@ -18,6 +23,10 @@ const legacyIdentityRepairMigration = readFileSync(
 );
 const finalizeFunction = readFileSync(
   'supabase/functions/chat-attachment-finalize/index.ts',
+  'utf8',
+);
+const contentSafety = readFileSync(
+  'supabase/functions/_shared/content-safety.ts',
   'utf8',
 );
 const consumeFunction = readFileSync(
@@ -37,11 +46,25 @@ const viewOnceModerationClient = readFileSync(
   'utf8',
 );
 const chatScreen = readFileSync('components/chat/ChatScreen.tsx', 'utf8');
+const babelConfig = readFileSync('babel.config.js', 'utf8');
+const chatMediaProvenanceMigration = readFileSync(
+  'supabase/migrations/20260921123000_chat_media_publication_provenance.sql',
+  'utf8',
+);
+const chatImageAlbumRateLimitMigration = readFileSync(
+  'supabase/migrations/20260922100000_chat_image_album_rate_limit.sql',
+  'utf8',
+);
 
 test('finalized attachment objects are immutable to authenticated clients', () => {
   assert.match(migration, /is_chat_attachment_object_mutable/);
   assert.match(migration, /lifecycle_status in \('ready', 'quarantined', 'expired'\)/);
   assert.match(migration, /drop policy if exists "Chat senders can delete media"/);
+});
+
+test('production bundles remove diagnostic console output and raw identifiers', () => {
+  assert.match(babelConfig, /process\.env\.NODE_ENV === ["']production["']/);
+  assert.match(babelConfig, /transform-remove-console/);
 });
 
 test('server finalization claims one exact payload per client message', () => {
@@ -165,4 +188,216 @@ test('view-once plaintext has bounded storage and crash cleanup', () => {
   assert.match(finalizeFunction, /storage\.from\(stagingBucket\)\.remove\(\[stagingPath\]\)/);
   assert.match(retentionFunction, /rpc_service_list_stale_view_once_moderation_objects/);
   assert.match(retentionFunction, /moderationStagingDeleted/);
+});
+
+test('v1.2 attachment calls carry an explicit safety contract without changing legacy callers', () => {
+  const lifecycle = readFileSync('lib/chat/attachment-lifecycle.ts', 'utf8');
+  assert.match(lifecycle, /CHAT_ATTACHMENT_GUARD_CONTRACT_V1_2 = '1\.2\.0'/);
+  assert.match(lifecycle, /body: \{ contractVersion: CHAT_ATTACHMENT_GUARD_CONTRACT_V1_2, \.\.\.input \}/);
+  assert.match(finalizeFunction, /hardenedContract/);
+  assert.match(finalizeFunction, /hardenedContract && \['video', 'document'\]\.includes/);
+});
+
+test('album moderation is receipt-backed, resumable, and cleans partial publication', () => {
+  const lifecycle = readFileSync('lib/chat/attachment-lifecycle.ts', 'utf8');
+  const receiptMigration = readFileSync(
+    'supabase/migrations/20260921120000_chat_image_moderation_receipts.sql',
+    'utf8',
+  );
+  assert.match(finalizeFunction, /preflightChatImageModeration/);
+  assert.match(finalizeFunction, /readImageModerationReceipt/);
+  assert.match(finalizeFunction, /storeImageModerationReceipt/);
+  assert.match(finalizeFunction, /const receiptStored = await storeImageModerationReceipt/);
+  assert.match(finalizeFunction, /image_moderation_receipt_unavailable/);
+  assert.match(finalizeFunction, /image_moderation_receipt_required/);
+  assert.match(
+    finalizeFunction,
+    /onConflict: 'sender_user_id,client_message_id,attachment_id,sha256,mime_type,policy_version'/,
+  );
+  assert.doesNotMatch(finalizeFunction, /mapBounded\(moderationTasks, 3/);
+  assert.match(finalizeFunction, /allowExistingExact: true/);
+  assert.match(finalizeFunction, /const failBatch = async/);
+  assert.match(finalizeFunction, /removeApprovedChatImages\(service, publishedObjects\)/);
+  assert.match(receiptMigration, /primary key \(sender_user_id, client_message_id, attachment_id, sha256, mime_type, policy_version\)/);
+  assert.match(receiptMigration, /revoke all on table public\.chat_image_moderation_receipts/);
+  assert.match(finalizeFunction, /mode === 'moderate_image_item'/);
+  assert.match(finalizeFunction, /mode === 'moderate_image_batch'/);
+  assert.match(finalizeFunction, /CHAT_IMAGE_PREPARATION_CONCURRENCY = 4/);
+  assert.match(finalizeFunction, /CHAT_IMAGE_PROVIDER_CONCURRENCY = 4/);
+  assert.match(finalizeFunction, /runWithTransientContentSafetyRetry/);
+  assert.match(finalizeFunction, /image-assessment-retry/);
+  assert.match(finalizeFunction, /deferFreshAssessment: true/);
+  assert.match(finalizeFunction, /completeDeferredChatImagePairModeration/);
+  assert.match(finalizeFunction, /holds\[missingIndexes\[0\]\]\.bytes = new Uint8Array/);
+  assert.match(finalizeFunction, /albumRateLimitPromise/);
+  assert.match(finalizeFunction, /rateLimitGate: consumeAlbumRateLimit/);
+  assert.match(finalizeFunction, /consumeContentGuardRateLimit\(service, user\.id, 'chat_image_album'\)/);
+  assert.match(chatImageAlbumRateLimitMigration, /when p_scope = 'chat_image_album' then 6/);
+  assert.match(chatImageAlbumRateLimitMigration, /auth\.role\(\) <> 'service_role'/);
+  assert.match(finalizeFunction, /preflightChatImagePairModeration/);
+  assert.match(finalizeFunction, /await assessChatImagesWithRetry\(missingIndexes\.map/);
+  assert.match(finalizeFunction, /const priorReviews = await Promise\.all/);
+  assert.match(finalizeFunction, /const hashResults = await Promise\.all/);
+  assert.match(finalizeFunction, /readReceiptBackedApprovedImage/);
+  assert.match(finalizeFunction, /const \[originalResult, previewResult\] = await Promise\.all/);
+  assert.match(finalizeFunction, /const cleanupByBucket = new Map/);
+  assert.match(finalizeFunction, /const hardenedImagePreparations = new Map/);
+  assert.match(finalizeFunction, /const preparationResults = await mapBounded\(imageCandidates, 4/);
+  assert.match(finalizeFunction, /url: harmAsset\.imageUrl/);
+  assert.match(finalizeFunction, /classifyImageSolicitation\(\s*solicitationAsset\.imageUrl/);
+  assert.match(finalizeFunction, /decodeQrPayloads\(solicitationAsset\.bytes/);
+  assert.match(finalizeFunction, /harm\.decision === 'BLOCK'[\s\S]*solicitationController\.abort\(\)/);
+  assert.match(contentSafety, /CONTENT_SAFETY_VISION_MODEL'\) \|\| 'gpt-5\.6-terra'/);
+  assert.match(contentSafety, /reasoning: \{ effort: 'none' \}/);
+  assert.match(contentSafety, /detail: 'high'/);
+  assert.match(finalizeFunction, /const results = await mapBounded\(tasks, 1/);
+  assert.match(lifecycle, /assetRole: 'pair'/);
+  assert.doesNotMatch(lifecycle, /for \(const assetRole of \['original', 'preview'\] as const\)/);
+  assert.match(finalizeFunction, /const captured = await readChatImageBytes/);
+  assert.match(finalizeFunction, /p_sender_user_id: user\.id/);
+  assert.match(finalizeFunction, /consumeRateLimit: false/);
+});
+
+test('album moderation retries only transient provider failures with bounded jitter', async () => {
+  assert.equal(isTransientContentSafetyFailure('OPENAI_MODERATION_TIMEOUT'), true);
+  assert.equal(isTransientContentSafetyFailure('OPENAI_VISION_INVALID_RESPONSE'), true);
+  assert.equal(isTransientContentSafetyFailure('OPENAI_MODERATION_HTTP_429'), true);
+  assert.equal(isTransientContentSafetyFailure('OPENAI_VISION_HTTP_503'), true);
+  assert.equal(isTransientContentSafetyFailure('OPENAI_API_KEY_MISSING'), false);
+  assert.equal(isTransientContentSafetyFailure('OPENAI_VISION_HTTP_401'), false);
+  assert.equal(isTransientContentSafetyFailure('OPENAI_MODERATION_CANCELLED'), false);
+
+  let attempts = 0;
+  const delays: number[] = [];
+  const result = await runWithTransientContentSafetyRetry(
+    async () => {
+      attempts += 1;
+      return attempts === 1
+        ? { decision: 'REVIEW', failureReason: 'OPENAI_MODERATION_HTTP_429' }
+        : { decision: 'ALLOW', failureReason: null };
+    },
+    {
+      maxRetries: 1,
+      minDelayMs: 250,
+      maxDelayMs: 750,
+      random: () => 0.5,
+      sleep: async (delayMs) => { delays.push(delayMs); },
+    },
+  );
+
+  assert.equal(attempts, 2);
+  assert.deepEqual(delays, [500]);
+  assert.equal(result.failureReason, null);
+});
+
+test('album moderation does not retry permanent provider configuration failures', async () => {
+  let attempts = 0;
+  const result = await runWithTransientContentSafetyRetry(
+    async () => {
+      attempts += 1;
+      return { decision: 'REVIEW', failureReason: 'OPENAI_API_KEY_MISSING' };
+    },
+    { sleep: async () => assert.fail('permanent failures must not sleep or retry') },
+  );
+
+  assert.equal(attempts, 1);
+  assert.equal(result.failureReason, 'OPENAI_API_KEY_MISSING');
+});
+
+test('expected media work does not masquerade as a slow connection', () => {
+  assert.equal(shouldTrackNetworkQualityRequest(
+    'https://project.supabase.co/functions/v1/chat-attachment-finalize',
+  ), false);
+  assert.equal(shouldTrackNetworkQualityRequest(
+    'https://project.supabase.co/storage/v1/object/chat-attachment-staging-v1-2/path.jpg',
+  ), false);
+  assert.equal(shouldTrackNetworkQualityRequest(
+    'https://project.storage.supabase.co/storage/v1/upload/resumable',
+  ), false);
+  assert.equal(shouldTrackNetworkQualityRequest(
+    'https://project.supabase.co/rest/v1/messages?select=*',
+  ), true);
+});
+
+test('album failures preserve exact item identity and caption recovery is durable', () => {
+  const lifecycle = readFileSync('lib/chat/attachment-lifecycle.ts', 'utf8');
+  const outbox = readFileSync('lib/chat/outbox/chat-outbox-service.ts', 'utf8');
+  const repository = readFileSync('lib/chat/local/chat-repository.ts', 'utf8');
+  const screen = readFileSync('components/chat/ChatScreen.tsx', 'utf8');
+  assert.match(lifecycle, /readonly attachmentId: string \| null/);
+  assert.match(lifecycle, /readonly attachmentIndex: number \| null/);
+  assert.match(outbox, /serverItemFailure\.attachmentId/);
+  assert.match(outbox, /updateAlbumCaption/);
+  assert.match(repository, /updateQueuedAlbumCaption/);
+  assert.match(screen, /ChatAlbumCaptionEditor/);
+  assert.match(finalizeFunction, /caption_too_long/);
+});
+
+test('immutable staging retries reuse completed deterministic uploads without requesting overwrite access', () => {
+  const queue = readFileSync('lib/chat/attachments/chat-attachment-queue.ts', 'utf8');
+  const outbox = readFileSync('lib/chat/outbox/chat-outbox-service.ts', 'utf8');
+  const transport = readFileSync('lib/chat/transfer/chat-upload-transport.ts', 'utf8');
+
+  assert.match(queue, /const durableMediaItems = albumItems\?\.length/);
+  assert.match(outbox, /payload\.albumItems && payload\.albumItems\.length > 0/);
+  assert.match(transport, /const upsert = request\.upsert \?\? false/);
+  assert.match(transport, /isImmutableObjectAlreadyPresentError/);
+  assert.match(transport, /server still downloads and validates the authoritative bytes/);
+  assert.match(outbox, /file\.uploadCompleted === true/);
+  assert.match(outbox, /canonicalAfterFailure/);
+  assert.match(outbox, /media-send-reconciled/);
+});
+
+test('service-published moderated chat images require exact private provenance', () => {
+  assert.match(chatMediaProvenanceMigration, /approved_chat_media_objects/);
+  assert.match(chatMediaProvenanceMigration, /rpc_service_register_approved_chat_media/);
+  assert.match(chatMediaProvenanceMigration, /p_object_path is distinct from v_expected_path/);
+  assert.match(chatMediaProvenanceMigration, /object_row\.bucket_id = 'chat-media'/);
+  assert.match(chatMediaProvenanceMigration, /v_object\.owner_id::text is distinct from new\.sender_id::text[\s\S]*and not v_object_approved/);
+  assert.match(chatMediaProvenanceMigration, /v_preview\.owner_id::text is distinct from new\.sender_id::text[\s\S]*and not v_preview_approved/);
+  assert.match(chatMediaProvenanceMigration, /revoke all on table public\.approved_chat_media_objects[\s\S]*authenticated/);
+  assert.match(finalizeFunction, /rpc_service_register_approved_chat_media/);
+  assert.match(finalizeFunction, /approved_chat_media_provenance_registration_failed/);
+  assert.match(finalizeFunction, /removeApprovedChatImages/);
+  assert.match(finalizeFunction, /const encryptedSha256 = await sha256Hex\(encrypted\.cipherBytes\)/);
+  assert.match(finalizeFunction, /const encryptedPath = approvedChatImagePath/);
+  assert.match(
+    finalizeFunction,
+    /p_object_path: encryptedPath,[\s\S]*p_sha256: encryptedSha256,[\s\S]*p_byte_size: encrypted\.cipherBytes\.length/,
+  );
+  assert.match(finalizeFunction, /await removeApprovedChatImages\(service, \[encryptedPath\]\)/);
+});
+
+test('v1.2 photo sends expose Standard and HD preparation plus stage timings', () => {
+  const imagePreparation = readFileSync('lib/chat/media/chat-image-preparation.ts', 'utf8');
+  const attachmentPreview = readFileSync('lib/chat/attachments/chat-attachment-preview.ts', 'utf8');
+  const qualityPolicy = readFileSync('lib/chat/media/chat-image-quality-policy.ts', 'utf8');
+  const outbox = readFileSync('lib/chat/outbox/chat-outbox-service.ts', 'utf8');
+  const screen = readFileSync('components/chat/ChatScreen.tsx', 'utf8');
+  assert.match(qualityPolicy, /standard:[\s\S]*maxEdge: 1920[\s\S]*targetBytes: 2 \* 1024 \* 1024/);
+  assert.match(qualityPolicy, /hd:[\s\S]*maxEdge: 4096/);
+  assert.match(imagePreparation, /prepareChatImageForSend/);
+  assert.match(imagePreparation, /preservedAnimation/);
+  assert.match(screen, /accessibilityLabel="Send photos in HD"/);
+  assert.match(screen, /styles\.imagePickerOptionMotion/);
+  assert.doesNotMatch(screen, /styles\.imagePickerSubLabel/);
+  assert.match(screen, /mapChatAlbumItemsBounded\(selectedAssets/);
+  assert.match(outbox, /media-upload-completed/);
+  assert.match(outbox, /media-send-ready/);
+  assert.match(outbox, /media-moderation-preflight-completed/);
+  assert.match(outbox, /preflightChatImageAttachmentBatch/);
+  assert.match(finalizeFunction, /image-assessment-timing/);
+  assert.match(finalizeFunction, /approved-publication-timing/);
+  assert.match(finalizeFunction, /totalDurationMs/);
+  assert.match(attachmentPreview, /CHAT_ATTACHMENT_PREVIEW_TARGET_BYTES = 160 \* 1024/);
+  assert.match(attachmentPreview, /CHAT_ATTACHMENT_PREVIEW_MAX_BYTES = 256 \* 1024/);
+  assert.match(attachmentPreview, /for \(const profile of PREVIEW_PROFILES\)/);
+  assert.match(attachmentPreview, /Math\.floor\(sourceByteSize \* 0\.75\)/);
+  assert.match(attachmentPreview, /byteSize <= effectiveTargetBytes/);
+  assert.match(attachmentPreview, /softMaxExceeded/);
+  assert.doesNotMatch(attachmentPreview, /chat_preview_size_budget_exceeded/);
+  assert.match(attachmentPreview, /manipulateAsync/);
+  assert.match(finalizeFunction, /if \(itemKind !== 'image'\)/);
+  assert.match(finalizeFunction, /const publicationResults = await Promise\.allSettled/);
+  assert.match(finalizeFunction, /approved_image_publication_failed/);
 });

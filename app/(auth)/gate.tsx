@@ -149,7 +149,11 @@ export default function AuthGateScreen() {
     if (!profileSnapshot?.id || profileSnapshot.profile_completed === true) return;
     try {
       const { error } = await supabase.functions.invoke("profile-guard-update", {
-        body: { updates: {}, complete_onboarding: true },
+        body: {
+          updates: {},
+          complete_onboarding: true,
+          safety_contract_version: "1.2.0",
+        },
       });
 
       if (error && typeof __DEV__ !== "undefined" && __DEV__) {

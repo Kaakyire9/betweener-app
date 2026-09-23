@@ -536,6 +536,30 @@ export type Database = {
         }
         Relationships: []
       }
+      app_mutation_receipts: {
+        Row: {
+          created_at: string
+          mutation_kind: string
+          operation_id: string
+          result: Json
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          mutation_kind: string
+          operation_id: string
+          result?: Json
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          mutation_kind?: string
+          operation_id?: string
+          result?: Json
+          user_id?: string
+        }
+        Relationships: []
+      }
       app_version_history: {
         Row: {
           build_number: number
@@ -1088,6 +1112,54 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      chat_image_moderation_receipts: {
+        Row: {
+          attachment_id: string
+          categories: string[]
+          client_message_id: string
+          created_at: string
+          decision: string
+          expires_at: string
+          mime_type: string
+          policy_version: string
+          provider: string
+          provider_model: string
+          risk_score: number
+          sender_user_id: string
+          sha256: string
+        }
+        Insert: {
+          attachment_id: string
+          categories?: string[]
+          client_message_id: string
+          created_at?: string
+          decision: string
+          expires_at?: string
+          mime_type: string
+          policy_version: string
+          provider: string
+          provider_model: string
+          risk_score?: number
+          sender_user_id: string
+          sha256: string
+        }
+        Update: {
+          attachment_id?: string
+          categories?: string[]
+          client_message_id?: string
+          created_at?: string
+          decision?: string
+          expires_at?: string
+          mime_type?: string
+          policy_version?: string
+          provider?: string
+          provider_model?: string
+          risk_score?: number
+          sender_user_id?: string
+          sha256?: string
+        }
+        Relationships: []
       }
       chat_media_album_item_cancellations: {
         Row: {
@@ -3202,6 +3274,9 @@ export type Database = {
       content_safety_actor_state: {
         Row: {
           blocked_attempts: number
+          enforcement_points_30d: number
+          enforcement_recalculated_at: string | null
+          enforcement_tier: string
           last_incident_at: string | null
           restricted_until: string | null
           review_attempts: number
@@ -3210,6 +3285,9 @@ export type Database = {
         }
         Insert: {
           blocked_attempts?: number
+          enforcement_points_30d?: number
+          enforcement_recalculated_at?: string | null
+          enforcement_tier?: string
           last_incident_at?: string | null
           restricted_until?: string | null
           review_attempts?: number
@@ -3218,6 +3296,9 @@ export type Database = {
         }
         Update: {
           blocked_attempts?: number
+          enforcement_points_30d?: number
+          enforcement_recalculated_at?: string | null
+          enforcement_tier?: string
           last_incident_at?: string | null
           restricted_until?: string | null
           review_attempts?: number
@@ -11575,6 +11656,111 @@ export type Database = {
         }
         Relationships: []
       }
+      profile_media_remediation_config: {
+        Row: {
+          cron_secret: string
+          enabled: boolean
+          endpoint: string
+          singleton: boolean
+          updated_at: string
+        }
+        Insert: {
+          cron_secret: string
+          enabled?: boolean
+          endpoint: string
+          singleton?: boolean
+          updated_at?: string
+        }
+        Update: {
+          cron_secret?: string
+          enabled?: boolean
+          endpoint?: string
+          singleton?: boolean
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      profile_media_remediation_jobs: {
+        Row: {
+          attempt_count: number
+          claim_token: string | null
+          claimed_at: string | null
+          completed_at: string | null
+          created_at: string
+          decision_categories: string[]
+          field_name: string
+          id: string
+          item_index: number
+          last_error: string | null
+          needs_source_cleanup: boolean
+          next_retry_at: string | null
+          priority: number
+          profile_id: string
+          sha256: string | null
+          source_url: string
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          attempt_count?: number
+          claim_token?: string | null
+          claimed_at?: string | null
+          completed_at?: string | null
+          created_at?: string
+          decision_categories?: string[]
+          field_name: string
+          id?: string
+          item_index?: number
+          last_error?: string | null
+          needs_source_cleanup?: boolean
+          next_retry_at?: string | null
+          priority?: number
+          profile_id: string
+          sha256?: string | null
+          source_url: string
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          attempt_count?: number
+          claim_token?: string | null
+          claimed_at?: string | null
+          completed_at?: string | null
+          created_at?: string
+          decision_categories?: string[]
+          field_name?: string
+          id?: string
+          item_index?: number
+          last_error?: string | null
+          needs_source_cleanup?: boolean
+          next_retry_at?: string | null
+          priority?: number
+          profile_id?: string
+          sha256?: string | null
+          source_url?: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "profile_media_remediation_jobs_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "profile_media_remediation_jobs_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profile_moderation_events: {
         Row: {
           categories: string[]
@@ -11694,6 +11880,48 @@ export type Database = {
           },
           {
             foreignKeyName: "profile_notes_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      profile_onboarding_completion_receipts_v2: {
+        Row: {
+          committed_at: string
+          completion_request_id: string
+          interest_ids: string[]
+          onboarding_variant: string
+          profile_id: string
+          user_id: string
+        }
+        Insert: {
+          committed_at?: string
+          completion_request_id: string
+          interest_ids: string[]
+          onboarding_variant: string
+          profile_id: string
+          user_id: string
+        }
+        Update: {
+          committed_at?: string
+          completion_request_id?: string
+          interest_ids?: string[]
+          onboarding_variant?: string
+          profile_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "profile_onboarding_completion_receipts_v2_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "profile_onboarding_completion_receipts_v2_profile_id_fkey"
             columns: ["profile_id"]
             isOneToOne: false
             referencedRelation: "profiles"
@@ -15119,6 +15347,10 @@ export type Database = {
         Returns: Json
       }
       clean_expired_distance_cache: { Args: never; Returns: number }
+      cleanup_app_mutation_receipts_v1: {
+        Args: { p_limit?: number }
+        Returns: number
+      }
       cleanup_live_ephemeral_activity: { Args: never; Returns: Json }
       cleanup_live_match_rounds: { Args: never; Returns: number }
       cleanup_live_operational_events_v1: {
@@ -15159,9 +15391,22 @@ export type Database = {
         Args: { p_cron_secret: string; p_endpoint: string }
         Returns: boolean
       }
+      configure_profile_media_remediation_worker: {
+        Args: { p_cron_secret: string; p_endpoint: string }
+        Returns: boolean
+      }
       content_safety_assess_private_message: {
         Args: { p_text: string }
         Returns: Json
+      }
+      content_safety_event_weight: {
+        Args: {
+          p_categories: string[]
+          p_decision: string
+          p_failure_reason: string
+          p_status: string
+        }
+        Returns: number
       }
       decrement_superlike: { Args: { p_profile_id: string }; Returns: number }
       detect_travel_for_user: {
@@ -15174,6 +15419,10 @@ export type Database = {
         }[]
       }
       disable_moderation_evidence_retention_worker: {
+        Args: never
+        Returns: boolean
+      }
+      disable_profile_media_remediation_worker: {
         Args: never
         Returns: boolean
       }
@@ -15840,6 +16089,45 @@ export type Database = {
           verified: boolean
         }[]
       }
+      get_vibes_recommendations_v5_3_unfiltered: {
+        Args: {
+          p_active_window_minutes?: number
+          p_client_session_id?: string
+          p_limit?: number
+          p_refresh_ordinal?: number
+          p_request_id?: string
+          p_segment?: string
+          p_user_id: string
+        }
+        Returns: {
+          age: number
+          ai_score: number
+          avatar_url: string
+          bio: string
+          city: string
+          current_country: string
+          current_country_code: string
+          distance_km: number
+          full_name: string
+          id: string
+          is_active: boolean
+          last_active: string
+          latitude: number
+          location: string
+          location_precision: string
+          longitude: number
+          online: boolean
+          personality_type: string
+          profile_video: string
+          recommendation_reasons: Json
+          region: string
+          religion: string
+          tribe: string
+          user_id: string
+          verification_level: number
+          verified: boolean
+        }[]
+      }
       get_viewed_profile_prompts: {
         Args: { p_profile_id: string; p_viewer_profile_id?: string }
         Returns: {
@@ -15888,6 +16176,7 @@ export type Database = {
         Args: never
         Returns: number
       }
+      invoke_profile_media_remediation_worker: { Args: never; Returns: number }
       is_admin_user: { Args: { p_user_id?: string }; Returns: boolean }
       is_chat_attachment_object_mutable: {
         Args: {
@@ -16689,6 +16978,10 @@ export type Database = {
         Args: { p_url: string; p_user_id: string }
         Returns: boolean
       }
+      recalculate_content_safety_actor_state: {
+        Args: { p_user_id: string }
+        Returns: undefined
+      }
       record_profile_country_verification_observation: {
         Args: {
           p_accuracy_meters: number
@@ -17307,6 +17600,10 @@ export type Database = {
           p_review_id: string
           p_state: string
         }
+        Returns: Json
+      }
+      rpc_admin_reverse_content_moderation_event: {
+        Args: { p_event_id: string; p_reason: string }
         Returns: Json
       }
       rpc_admin_review_verification_request: {
@@ -18072,6 +18369,16 @@ export type Database = {
           updated_at: string
         }[]
       }
+      rpc_create_circle_pulse_comment_v2: {
+        Args: {
+          p_body: string
+          p_client_operation_id: string
+          p_parent_comment_id?: string
+          p_profile_id: string
+          p_pulse_item_id: string
+        }
+        Returns: Json
+      }
       rpc_create_circle_relationship_gist: {
         Args: {
           p_actor_profile_id: string
@@ -18402,6 +18709,18 @@ export type Database = {
         }
         Returns: string
       }
+      rpc_create_media_moment_v2: {
+        Args: {
+          p_caption?: string
+          p_client_operation_id: string
+          p_media_url: string
+          p_metadata?: Json
+          p_moment_id: string
+          p_type: string
+          p_visibility?: string
+        }
+        Returns: string
+      }
       rpc_create_moment: {
         Args: {
           p_caption?: string
@@ -18453,6 +18772,15 @@ export type Database = {
               isSetofReturn: false
             }
           }
+      rpc_create_moment_comment_v2: {
+        Args: {
+          p_body: string
+          p_client_operation_id: string
+          p_moment_id: string
+          p_parent_comment_id?: string
+        }
+        Returns: Json
+      }
       rpc_create_profile_boost: { Args: never; Returns: Json }
       rpc_create_profile_boost_v2: {
         Args: {
@@ -18462,6 +18790,26 @@ export type Database = {
           p_metadata?: Json
         }
         Returns: Json
+      }
+      rpc_create_profile_boost_v3: {
+        Args: {
+          p_audience_mode?: string
+          p_boost_type?: string
+          p_client_operation_id: string
+          p_focus_mode?: string
+          p_metadata?: Json
+        }
+        Returns: Json
+      }
+      rpc_create_text_moment_v2: {
+        Args: {
+          p_caption?: string
+          p_client_operation_id: string
+          p_metadata?: Json
+          p_text_body: string
+          p_visibility?: string
+        }
+        Returns: string
       }
       rpc_create_warm_introduction: {
         Args: {
@@ -20732,6 +21080,14 @@ export type Database = {
         }
         Returns: number
       }
+      rpc_replace_profile_interests_v2: {
+        Args: {
+          p_client_operation_id: string
+          p_interest_names: string[]
+          p_profile_id: string
+        }
+        Returns: string[]
+      }
       rpc_report_circle_pulse_comment: {
         Args: { p_comment_id: string; p_profile_id: string; p_reason?: string }
         Returns: boolean
@@ -21447,6 +21803,15 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_send_profile_gift_v2: {
+        Args: {
+          p_client_operation_id: string
+          p_gift_type: string
+          p_include_sandbox_preview?: boolean
+          p_recipient_profile_id: string
+        }
+        Returns: Json
+      }
       rpc_send_signal: {
         Args: {
           p_note?: string
@@ -21517,6 +21882,20 @@ export type Database = {
       rpc_service_claim_moderation_evidence_retention: {
         Args: { p_limit?: number; p_retention?: string }
         Returns: Json
+      }
+      rpc_service_claim_profile_media_remediation: {
+        Args: { p_limit?: number }
+        Returns: {
+          attempt_count: number
+          claim_token: string
+          field_name: string
+          id: string
+          item_index: number
+          needs_source_cleanup: boolean
+          profile_id: string
+          source_url: string
+          user_id: string
+        }[]
       }
       rpc_service_claim_push_notification_event_v1: {
         Args: { p_event_id: string }
@@ -21596,6 +21975,17 @@ export type Database = {
           p_lease_generation: number
           p_session_id: string
           p_worker_instance_id: string
+        }
+        Returns: Json
+      }
+      rpc_service_complete_profile_onboarding_v2: {
+        Args: {
+          p_completion_request_id: string
+          p_evidence_snapshot?: Json
+          p_expected_updated_at: string
+          p_interest_names: string[]
+          p_updates: Json
+          p_user_id: string
         }
         Returns: Json
       }
@@ -21810,6 +22200,10 @@ export type Database = {
         Args: { p_opportunity_id: string; p_worker_id: string }
         Returns: Json
       }
+      rpc_service_purge_expired_chat_image_moderation_receipts: {
+        Args: { p_limit?: number }
+        Returns: number
+      }
       rpc_service_reconcile_live_odo_full_quick_connect_v1: {
         Args: {
           p_lease_owner: string
@@ -21880,6 +22274,17 @@ export type Database = {
         Returns: {
           reserved_token_id: string
         }[]
+      }
+      rpc_service_resolve_profile_media_remediation: {
+        Args: {
+          p_categories?: string[]
+          p_claim_token: string
+          p_error?: string
+          p_job_id: string
+          p_outcome: string
+          p_sha256?: string
+        }
+        Returns: Json
       }
       rpc_service_send_moderated_private_message: {
         Args: {

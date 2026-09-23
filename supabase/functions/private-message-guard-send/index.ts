@@ -19,7 +19,9 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const STICKER_NAMES = new Set([
   'Happy', 'Loved', 'Excited', 'Cool', 'Adorable', 'Motivated', 'Fire', 'Electric',
   'Sparkle', 'Star', 'Love', 'Hearts', 'Sparkling Heart', 'Rose', 'Party',
-  'Confetti', 'Celebrate', 'Balloon',
+  'Confetti', 'Celebrate', 'Balloon', 'Great Flow', 'Warm Spark', 'Perfect Match',
+  'Date Energy', 'Thinking of You', 'Chemistry', 'Good Morning', 'Sweet Dreams',
+  'You Got This', 'Let\'s Go', 'Applause',
 ]);
 
 const validStickerPayload = (text: string) => {

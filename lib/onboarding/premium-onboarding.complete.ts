@@ -1,4 +1,7 @@
-import { prepareProfileGuardWrite } from "@/lib/profile-guard/write-payload";
+import {
+  prepareProfileGuardWrite,
+  PROFILE_GUARD_SAFETY_CONTRACT_V1_2,
+} from "@/lib/profile-guard/write-payload";
 import { supabase } from "@/lib/supabase";
 
 export const PREMIUM_ONBOARDING_COMPLETION_CONTRACT = "2.0";
@@ -57,6 +60,7 @@ export async function completePremiumOnboardingV2(args: {
     {
       body: {
         contract_version: PREMIUM_ONBOARDING_COMPLETION_CONTRACT,
+        safety_contract_version: PROFILE_GUARD_SAFETY_CONTRACT_V1_2,
         updates: write.updates,
         interest_names: args.interestNames,
         completion_request_id: args.completionRequestId,

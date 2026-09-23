@@ -26,6 +26,8 @@ test('only escalates messages with actual solicitation cues to the semantic clas
   assert.equal(shouldClassifyPrivateMessageSolicitation('Can you book me a table?'), false);
   assert.equal(shouldClassifyPrivateMessageSolicitation('My rate is 50 GBP for a private session'), true);
   assert.equal(shouldClassifyPrivateMessageSolicitation('Message me on Telegram'), true);
+  assert.equal(shouldClassifyPrivateMessageSolicitation('Here is https://example.com/our-date'), true);
+  assert.equal(assessPrivateMessageRules('Here is https://example.com/our-date').decision, 'ALLOW');
 });
 
 for (const text of [
@@ -117,5 +119,11 @@ test('still blocks harmful private images when the OCR provider times out', () =
     failureReason: 'OPENAI_VISION_TIMEOUT',
   };
 
-  assert.equal(mergeChatImageSafetyAssessments(harmful, timeout).decision, 'BLOCK');
+  const result = mergeChatImageSafetyAssessments(harmful, timeout);
+
+  assert.equal(result.decision, 'BLOCK');
+  assert.equal(result.riskScore, 0.99);
+  assert.equal(result.failureReason, null);
+  assert.ok(result.categories.includes('violence'));
+  assert.ok(result.categories.includes('solicitation_scan_degraded'));
 });

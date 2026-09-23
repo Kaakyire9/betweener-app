@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { validatePublicProfilePrompt } from './public-profile-fields';
+import { PROFILE_GUARD_SAFETY_CONTRACT_V1_2 } from './write-payload';
 
 export type GuardedProfilePromptInput = {
   prompt_key: string;
@@ -27,7 +28,11 @@ export const insertGuardedProfilePrompt = async (prompt: GuardedProfilePromptInp
     };
   }
   const { data, error } = await supabase.functions.invoke('profile-guard-update', {
-    body: { updates: {}, prompt },
+    body: {
+      updates: {},
+      prompt,
+      safety_contract_version: PROFILE_GUARD_SAFETY_CONTRACT_V1_2,
+    },
   });
   if (error) return { error };
   if (data?.ok === false) {

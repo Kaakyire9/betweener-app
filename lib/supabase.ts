@@ -17,7 +17,9 @@ const IS_PROD = EXPO_ENV === 'production' || (!IS_DEV && EXPO_ENV !== 'developme
 // Give release builds a bit more time on slower mobile networks, while still
 // protecting against the "fetch hangs forever after resume" issue.
 const SUPABASE_FETCH_TIMEOUT_MS = IS_DEV ? 15_000 : 30_000;
-const SAFETY_FUNCTION_FETCH_TIMEOUT_MS = 35_000;
+// Image moderation has its own bounded provider deadline (30s). Allow enough
+// transport headroom for receipt persistence and a fast canonical commit.
+const SAFETY_FUNCTION_FETCH_TIMEOUT_MS = 60_000;
 
 // Extra safety: protect against rare hangs that occur *before* fetch is invoked.
 // (Historically observed around auth/session plumbing on some iOS builds.)

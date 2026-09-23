@@ -76,3 +76,51 @@ test('the Trust Center exposes published child-safety standards and contact', ()
   assert.match(trustCenter, /Urgent child-safety concern/);
   assert.match(standards, /zero tolerance for child sexual abuse and exploitation/);
 });
+
+test('v1.2 profile writes require semantic review without changing the legacy contract', () => {
+  const handler = read('supabase/functions/_shared/profile-guard-handler.ts');
+  const payload = read('lib/profile-guard/write-payload.ts');
+  assert.match(payload, /PROFILE_GUARD_SAFETY_CONTRACT_V1_2 = '1\.2\.0'/);
+  assert.match(payload, /safety_contract_version: PROFILE_GUARD_SAFETY_CONTRACT_V1_2/);
+  assert.match(handler, /hardenedSafetyContract = body\?\.safety_contract_version === '1\.2\.0'/);
+  assert.match(handler, /hardenedSafetyContract[\s\S]*semanticEnabled: true/);
+  assert.match(handler, /semanticConfig\.semanticEnabled && !environmentSemanticEnabled/);
+});
+
+test('legacy profile media has a resumable service-only remediation worker', () => {
+  const migration = read('supabase/migrations/20260921122000_legacy_profile_media_remediation.sql');
+  const worker = read('supabase/functions/profile-media-remediation-v1-2/index.ts');
+  const config = read('supabase/config.toml');
+  assert.match(migration, /profile_media_remediation_jobs/);
+  assert.match(migration, /for update skip locked/);
+  assert.match(migration, /needs_source_cleanup/);
+  assert.match(migration, /rpc_service_claim_profile_media_remediation/);
+  assert.match(migration, /rpc_service_resolve_profile_media_remediation/);
+  assert.match(worker, /rpc_service_match_unsafe_media_hash/);
+  assert.match(worker, /classifyProfileMediaV1_2/);
+  assert.match(worker, /rpc_service_record_content_moderation_event/);
+  assert.match(worker, /job\.needs_source_cleanup === true/);
+  assert.match(config, /\[functions\.profile-media-remediation-v1-2\][\s\S]*verify_jwt = false/);
+});
+
+test('actor enforcement is weighted, rolling, and reversible after appeal', () => {
+  const migration = read('supabase/migrations/20260921121000_content_safety_weighted_enforcement.sql');
+  assert.match(migration, /enforcement_points_30d/);
+  assert.match(migration, /interval '30 days'/);
+  assert.match(migration, /known_illegal_media', 'csam'[\s\S]*then 10/);
+  assert.match(migration, /p_status = 'APPROVED'.*then 0/);
+  assert.match(migration, /rpc_admin_reverse_content_moderation_event/);
+  assert.match(migration, /recalculate_content_safety_actor_state_on_event/);
+});
+
+test('moderated chat publication is provenance-bound instead of trusting service ownership', () => {
+  const migration = read('supabase/migrations/20260921123000_chat_media_publication_provenance.sql');
+  const finalize = read('supabase/functions/chat-attachment-finalize/index.ts');
+  const health = read('supabase/verification/v1.2.0_solicitation_guard_health.sql');
+  assert.match(migration, /approved_chat_media_objects/);
+  assert.match(migration, /unique \(sender_id, client_message_id, attachment_id, variant\)/);
+  assert.match(migration, /grant execute on function public\.rpc_service_register_approved_chat_media[\s\S]*to service_role/);
+  assert.match(finalize, /p_variant: preview \? 'preview' : 'original'/);
+  assert.match(health, /chat media publication provenance/);
+  assert.match(health, /chat_media_provenance_registry_private/);
+});

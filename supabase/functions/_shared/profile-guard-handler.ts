@@ -318,6 +318,7 @@ export const handleProfileGuardRequest = async (
   }
   const updateRecord = updates as Record<string, unknown>;
   const promptRecord = hasPrompt ? prompt as Record<string, unknown> : null;
+  const hardenedSafetyContract = body?.safety_contract_version === '1.2.0';
   const onboardingV2 = options.onboardingContractVersion === 2;
   const interestNames = Array.isArray(body.interest_names)
     ? body.interest_names.filter((value): value is string => typeof value === 'string')
@@ -397,6 +398,9 @@ export const handleProfileGuardRequest = async (
     .eq('id', true)
     .maybeSingle();
   const config = resolveGuardConfiguration(configError ? null : configRow);
+  const semanticConfig = hardenedSafetyContract
+    ? { ...config, semanticEnabled: true }
+    : config;
   const configurationMissing = Boolean(configError || !configRow);
 
   const { data: currentProfile, error: profileError } = await admin
@@ -605,7 +609,7 @@ export const handleProfileGuardRequest = async (
   const semanticInvoked = shouldInvokeSemantic(
     deterministicDecision,
     semanticReviewRequired,
-    config,
+    semanticConfig,
     environmentSemanticEnabled,
   );
   if (semanticInvoked) {
@@ -631,7 +635,7 @@ export const handleProfileGuardRequest = async (
   }
 
   if (semanticInvoked && !scores) {
-    const fallback = semanticFailureFallback(deterministicDecision, ambiguous, config);
+    const fallback = semanticFailureFallback(deterministicDecision, ambiguous, semanticConfig);
     await admin.rpc('rpc_record_profile_guard_semantic_observation', {
       p_user_id: authData.user.id,
       p_decision: fallback,
@@ -693,10 +697,10 @@ export const handleProfileGuardRequest = async (
   // closed for ambiguous ENFORCE writes.
   if (
     ambiguous
-    && config.enabled
-    && (configurationMissing || (config.semanticEnabled && !environmentSemanticEnabled))
+    && semanticConfig.enabled
+    && (configurationMissing || (semanticConfig.semanticEnabled && !environmentSemanticEnabled))
   ) {
-    const fallback = semanticFailureFallback(deterministicDecision, true, config);
+    const fallback = semanticFailureFallback(deterministicDecision, true, semanticConfig);
     if (fallback === 'REQUIRE_REWRITE') {
       return json({
         ok: false,

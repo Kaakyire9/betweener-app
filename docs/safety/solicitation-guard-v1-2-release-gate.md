@@ -6,19 +6,24 @@ continues on its compatibility path.
 
 ## Deployment order
 
-1. Apply migrations `20260915120000` through `20260915141000` in staging.
+1. Apply migrations `20260915120000` through `20260921122000` in staging.
 2. Deploy `profile-media-guard-v1-2`, `private-message-guard-send`,
    `chat-attachment-finalize`, `delete-account`, and
-   `moderation-evidence-retention` in staging.
-3. Configure `OPENAI_API_KEY`, moderation model variables, and
-   `MODERATION_RETENTION_SECRET` in the server secret store.
+   `moderation-evidence-retention`, `chat-attachment-retention`, and
+   `profile-media-remediation-v1-2` in staging.
+3. Configure `OPENAI_API_KEY`, `PROFILE_GUARD_SEMANTIC_ENABLED=true`, moderation
+   model variables, `MODERATION_RETENTION_SECRET`, and a separate
+   `PROFILE_MEDIA_REMEDIATION_SECRET` in the server secret store.
 4. Configure the server-owned daily schedule with
    `public.configure_moderation_evidence_retention_worker(...)`. It posts
    `{ "execute": true }` with the secret in `x-cron-secret`.
-5. Run `v1.2.0_profile_media_guard_health.sql` and
+5. Configure the legacy-media worker with
+   `public.configure_profile_media_remediation_worker(...)`. It processes at
+   most four immutable snapshots per invocation and can be stopped independently.
+6. Run `v1.2.0_profile_media_guard_health.sql` and
    `v1.2.0_solicitation_guard_health.sql`.
-6. Complete physical-device acceptance on iOS and Android.
-7. Repeat the same migration/function/health order in production before the
+7. Complete physical-device acceptance on iOS and Android.
+8. Repeat the same migration/function/health order in production before the
    first 1.2 binary or OTA is available.
 
 ## Device acceptance
@@ -52,6 +57,8 @@ continues on its compatibility path.
   deferred integration, not a v1.2 staging claim.
 - Run approve/reject/retry tests against staging with non-production accounts.
 - Review moderation queues and provider-failure rate daily during rollout.
+- Watch `profile_media_remediation_jobs` for dead letters. Confirm that unsafe
+  legacy URLs reach `REMOVED` only after their public source object is deleted.
 
 ## Current modality policy
 
