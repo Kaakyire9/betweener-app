@@ -15,14 +15,14 @@
     "@betweener/live-program-domain": "0.1.0",
     "@stream-io/video-react-sdk": "^1.43.0",
     "@supabase/supabase-js": "2.117.1",
-    "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
   },
   "devDependencies": {
-    "@types/react": "~19.2.10",
-    "@types/react-dom": "~19.2.0",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "^6.1.1",
-    "typescript": "~6.0.3",
+    "typescript": "7.0.2",
     "vite": "^8.2.2"
   }
 }
