@@ -2049,7 +2049,10 @@ export async function syncProfileMediaNow(payload: ProfileMediaSyncPayload) {
   if (Object.keys(updates).length === 0) return publishedMedia;
 
   const { data, error } = await supabase.functions.invoke('profile-guard-update', {
-    body: { updates },
+    body: {
+      updates,
+      safety_contract_version: '1.2.0',
+    },
   });
   if (error) throw error;
   if (data?.ok === false) {

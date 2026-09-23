@@ -13,6 +13,34 @@ import {
 const TUS_URL_STORAGE_KEY = 'chat:tus-upload-urls:v1';
 const TUS_RETRY_DELAYS_MS = [0, 2_000, 5_000, 10_000, 20_000];
 
+const isImmutableObjectAlreadyPresentError = (error: unknown) => {
+  const text = [
+    (error as { message?: unknown } | null)?.message,
+    (error as { originalResponse?: { getStatus?: () => unknown; getBody?: () => unknown } } | null)
+      ?.originalResponse?.getStatus?.(),
+    (error as { originalResponse?: { getBody?: () => unknown } } | null)
+      ?.originalResponse?.getBody?.(),
+    error,
+  ]
+    .map((value) => {
+      if (typeof value === 'string' || typeof value === 'number') return String(value);
+      try {
+        return value ? JSON.stringify(value) : '';
+      } catch {
+        return '';
+      }
+    })
+    .join(' ')
+    .toLowerCase();
+
+  return (
+    /(?:response code|status)[^0-9]*409\b/.test(text) ||
+    text.includes('resource already exists') ||
+    text.includes('object already exists') ||
+    text.includes('duplicate')
+  );
+};
+
 type StoredUploadEntry = PreviousUpload & {
   fingerprint: string;
   ownerUserId?: string;
@@ -152,7 +180,9 @@ const uploadTus = async (
     contentType: request.contentType,
   });
   let resumed = false;
-  const upsert = request.upsert ?? true;
+  // Attachment paths are deterministic idempotency keys and staging is
+  // intentionally immutable. Never request UPDATE permission by default.
+  const upsert = request.upsert ?? false;
   const existingPromise = activeUploadPromises.get(fingerprint);
   if (existingPromise) return existingPromise;
   const requestUrlStorage = new ChatTusUrlStorage(
@@ -196,6 +226,14 @@ const uploadTus = async (
         },
         onError: (error) => {
           activeUploads.delete(fingerprint);
+          if (!upsert && isImmutableObjectAlreadyPresentError(error)) {
+            // A prior attempt completed the immutable upload but lost the
+            // response or failed during finalisation. Reuse that exact path;
+            // the server still downloads and validates the authoritative bytes.
+            resumed = true;
+            resolve({ objectPath: request.objectPath, transport: 'tus', resumed });
+            return;
+          }
           reject(error);
         },
         onSuccess: () => {

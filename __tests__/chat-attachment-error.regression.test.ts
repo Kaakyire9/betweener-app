@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   getChatAttachmentFailurePresentation,
   getChatAttachmentRetryLabel,
+  isChatMediaProviderUnavailable,
   isTerminalChatAttachmentError,
 } from '../lib/chat/attachments/chat-attachment-error.ts';
 
@@ -21,11 +22,22 @@ test('keeps temporary moderation failures retryable', () => {
 
   assert.equal(isTerminalChatAttachmentError('image_moderation_unavailable'), false);
   assert.equal(failure.retryable, true);
-  assert.equal(failure.title, 'Safety check unavailable');
+  assert.equal(failure.title, 'Couldn’t check this photo');
+  assert.equal(failure.message, 'Something interrupted the safety check. Try again.');
+  assert.equal(isChatMediaProviderUnavailable('image_moderation_unavailable'), true);
+  assert.equal(isChatMediaProviderUnavailable('encrypted_image_moderation_unavailable'), true);
   assert.equal(
     getChatAttachmentRetryLabel('attachment_finalize_http_503'),
     'Safety check delayed · Retrying',
   );
+});
+
+test('explains incomplete albums without blaming the network', () => {
+  const failure = getChatAttachmentFailurePresentation('album_items_incomplete');
+
+  assert.equal(failure.retryable, true);
+  assert.equal(failure.title, 'Album needs attention');
+  assert.doesNotMatch(failure.message, /connection/i);
 });
 
 test('treats non-retryable HTTP failures as terminal without blocking rate limits', () => {
@@ -45,4 +57,14 @@ test('explains staging upload authorization failures without offering a futile r
   assert.equal(failure.retryable, false);
   assert.equal(failure.title, 'Photo upload unavailable');
   assert.match(failure.message, /Sign in again/);
+});
+
+test('caption moderation failures explain edit recovery without retrying unchanged content', () => {
+  const rejected = getChatAttachmentFailurePresentation('caption_rephrase_required');
+  const tooLong = getChatAttachmentFailurePresentation('caption_too_long');
+
+  assert.equal(rejected.retryable, false);
+  assert.match(rejected.message, /Edit the album caption/);
+  assert.equal(tooLong.retryable, false);
+  assert.match(tooLong.message, /2,000/);
 });

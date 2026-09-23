@@ -1,5 +1,34 @@
 import type { MessageType } from '@/components/chat/types';
 
+const MAX_REPLY_TARGETS_PER_FETCH = 50;
+
+export const collectMissingReplyTargetIds = ({
+  rows,
+  currentMessages,
+}: {
+  rows: { id: string; reply_to_message_id?: string | null }[];
+  currentMessages: MessageType[];
+}): string[] => {
+  const availableIds = new Set<string>();
+  rows.forEach((row) => availableIds.add(row.id));
+  currentMessages.forEach((message) => {
+    availableIds.add(message.id);
+    if (message.replyTo?.id) availableIds.add(message.replyTo.id);
+  });
+
+  const requestedIds = new Set<string>();
+  rows.forEach((row) => {
+    if (row.reply_to_message_id) requestedIds.add(row.reply_to_message_id);
+  });
+  currentMessages.forEach((message) => {
+    if (message.replyToId && !message.replyTo) requestedIds.add(message.replyToId);
+  });
+
+  return [...requestedIds]
+    .filter((id) => !availableIds.has(id))
+    .slice(0, MAX_REPLY_TARGETS_PER_FETCH);
+};
+
 const isPersistedRemoteMessage = (message: MessageType) =>
   !message.isSystem &&
   message.type !== 'system' &&

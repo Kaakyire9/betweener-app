@@ -1,10 +1,13 @@
 import type * as ImagePicker from 'expo-image-picker';
 import { Platform } from 'react-native';
 
-export const ATTACHMENT_SHEET_MIN_HEIGHT = 300;
-export const ATTACHMENT_SHEET_MAX_HEIGHT = 420;
-export const ATTACHMENT_SHEET_SCREEN_RATIO = 0.46;
+export const ATTACHMENT_SHEET_MIN_HEIGHT = 270;
+export const ATTACHMENT_SHEET_MAX_HEIGHT = 308;
+export const ATTACHMENT_SHEET_SCREEN_RATIO = 0.34;
 export const CHAT_MEDIA_BUCKET = 'chat-media';
+export const CHAT_MEDIA_FRAME_WIDTH_RATIO = 0.76;
+export const CHAT_MEDIA_BUBBLE_WIDTH_RATIO = 0.8;
+export const CHAT_MEDIA_FRAME_MAX_WIDTH = 340;
 export const LOCATION_TEXT_PREFIX = '\u{1F4CD}';
 export const LOCATION_LIVE_PREFIX = 'LIVE:';
 export const CHAT_BUBBLE_TAIL_PATH =

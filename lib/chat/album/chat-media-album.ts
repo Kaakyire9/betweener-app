@@ -40,6 +40,7 @@ export type DurableChatAlbumItem = {
   attemptCount: number;
   uploadProgress?: number | null;
   lastError?: string | null;
+  uploadCompleted?: boolean;
 };
 
 export const resolveChatAlbumItemMediaType = (item: {
@@ -64,6 +65,34 @@ export const clampChatAlbumUploadProgress = (value: unknown): number => {
   const parsed = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(parsed)) return 0;
   return Math.max(0, Math.min(1, parsed));
+};
+
+export type ChatAlbumSendStage =
+  | { kind: 'preparing'; progress: 0 }
+  | { kind: 'uploading'; progress: number }
+  | { kind: 'checking_safety'; progress: 1 };
+
+/** Derives user-facing progress from the durable per-item transfer snapshot. */
+export const getChatAlbumSendStage = (items: readonly {
+  transferState?: ChatAlbumItemTransferState;
+  uploadProgress?: number | null;
+}[]): ChatAlbumSendStage | null => {
+  const trackedItems = items.filter((item) => item.transferState !== undefined);
+  if (trackedItems.length === 0) return null;
+  if (trackedItems.some((item) => item.transferState === 'preparing')) {
+    return { kind: 'preparing', progress: 0 };
+  }
+  if (trackedItems.every((item) => item.transferState === 'uploaded')) {
+    return { kind: 'checking_safety', progress: 1 };
+  }
+  const progress = trackedItems.reduce((total, item) => {
+    if (item.transferState === 'uploaded') return total + 1;
+    if (item.transferState === 'uploading') {
+      return total + clampChatAlbumUploadProgress(item.uploadProgress);
+    }
+    return total;
+  }, 0) / trackedItems.length;
+  return { kind: 'uploading', progress };
 };
 
 export const updateChatAlbumItemTransfer = <T extends {
@@ -97,11 +126,21 @@ export const prepareChatAlbumItemsForAttempt = <T extends {
   uploadProgress?: number | null;
   attemptCount?: number;
   lastError?: string | null;
+  uploadCompleted?: boolean;
 }>(items: readonly T[], retryAttachmentIds?: readonly string[]): T[] => {
   const retrySet = retryAttachmentIds?.length ? new Set(retryAttachmentIds) : null;
   return items.map((item) => {
     const shouldAttempt = !retrySet || retrySet.has(item.attachmentId);
-    if (item.transferState === 'uploaded' || !shouldAttempt) return { ...item };
+    if (item.transferState === 'uploaded') return { ...item };
+    if (item.uploadCompleted === true && shouldAttempt) {
+      return {
+        ...item,
+        transferState: 'uploaded',
+        uploadProgress: 1,
+        lastError: null,
+      };
+    }
+    if (!shouldAttempt) return { ...item };
     return {
       ...item,
       transferState: 'uploading',

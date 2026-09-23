@@ -1,6 +1,7 @@
 // @ts-nocheck
 import test from 'node:test';
 import {
+  collectMissingReplyTargetIds,
   isMissingOptionalChatMediaColumnsError,
   resolveThreadSyncCursor,
   shouldFetchThreadIncrementally,
@@ -9,6 +10,15 @@ import { createCoalescedAsyncRunner } from '../lib/chat/local/coalesced-async-ru
 import { createPriorityOperationScheduler } from '../lib/chat/local/priority-operation-scheduler.ts';
 import { buildChatThreadLocalRevision } from '../lib/chat/local/chat-thread-local-revision.ts';
 import { shouldPersistThreadReadState } from '../lib/chat/read-state/thread-read-persistence-policy.ts';
+import {
+  clampReplySwipeDistance,
+  shouldClaimReplySwipe,
+  shouldCommitReplySwipe,
+} from '../lib/chat/swipe-reply-policy.ts';
+import {
+  extractChatLinks,
+  normalizeChatLink,
+} from '../lib/chat/links/chat-link-policy.ts';
 import {
   chronologicalIndexToListIndex,
   getChronologicalListDistanceToBottom,
@@ -41,6 +51,53 @@ const baseMessage = {
   type: 'text',
   reactions: [],
 };
+
+test('reply hydration requests only originals missing from the visible page and safe snapshots', () => {
+  const rows = [
+    { id: 'message-3', reply_to_message_id: 'message-1' },
+    { id: 'message-4', reply_to_message_id: 'message-2' },
+  ];
+  const currentMessages = [
+    {
+      ...baseMessage,
+      id: 'message-2',
+    },
+    {
+      ...baseMessage,
+      id: 'message-5',
+      replyToId: 'message-0',
+      replyTo: {
+        ...baseMessage,
+        id: 'message-0',
+      },
+    },
+  ];
+
+  assert.deepEqual(collectMissingReplyTargetIds({ rows, currentMessages }), ['message-1']);
+});
+
+test('reply swipe claims deliberate right drags and uses a bounded premium motion', () => {
+  assert.equal(shouldClaimReplySwipe(16, 4), true);
+  assert.equal(shouldClaimReplySwipe(16, 14), false);
+  assert.equal(shouldClaimReplySwipe(-16, 2), false);
+  assert.equal(shouldCommitReplySwipe(52, 0.1), true);
+  assert.equal(shouldCommitReplySwipe(30, 0.7), true);
+  assert.equal(shouldCommitReplySwipe(30, 0.2), false);
+  assert.equal(clampReplySwipeDistance(120), 72);
+  assert.equal(clampReplySwipeDistance(-10), 0);
+});
+
+test('chat links accept only normalized web destinations and trim message punctuation', () => {
+  const links = extractChatLinks(
+    'Try https://example.com/path?q=1, or www.betweener.com/help.',
+  );
+  assert.deepEqual(links.map((link) => link.normalizedUrl), [
+    'https://example.com/path?q=1',
+    'https://www.betweener.com/help',
+  ]);
+  assert.equal(normalizeChatLink('javascript:alert(1)'), null);
+  assert.equal(normalizeChatLink('https://user:password@example.com/private'), null);
+});
 
 test('chat read receipt delay stays stable', () => {
   assert.equal(CHAT_READ_RECEIPT_DELAY_MS, 700);

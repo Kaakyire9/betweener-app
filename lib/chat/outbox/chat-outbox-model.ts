@@ -35,6 +35,12 @@ export type MediaOutboxPayload = {
   albumCaption?: string | null;
   retryAttachmentIds?: string[];
   compositionRevision?: number;
+  uploadCompleted?: boolean;
+  previewLocalUri?: string | null;
+  previewContentType?: 'image/jpeg' | null;
+  previewByteSize?: number | null;
+  previewWidth?: number | null;
+  previewHeight?: number | null;
 };
 
 export type MediaOutboxFile = {
@@ -57,6 +63,8 @@ export type MediaOutboxFile = {
   attemptCount?: number;
   uploadProgress?: number | null;
   lastError?: string | null;
+  /** Durable proof that deterministic original and preview uploads completed. */
+  uploadCompleted?: boolean;
 };
 
 export type VoiceOutboxPayload = {

@@ -26,6 +26,7 @@ export type QueuedAttachmentFile = {
   attemptCount?: number;
   uploadProgress?: number | null;
   lastError?: string | null;
+  uploadCompleted?: boolean;
 };
 
 export type QueuedViewOnceAttachment = {
@@ -53,6 +54,71 @@ export type CreateQueuedMediaMessageInput = {
   documentTypeLabel?: string | null;
   previewUri?: string | null;
   now?: Date;
+};
+
+export type PreparingMediaItem = {
+  attachmentId: string;
+  type: 'image' | 'video';
+  localUri: string;
+  mimeType?: string | null;
+  width?: number | null;
+  height?: number | null;
+  byteSize?: number | null;
+  durationMs?: number | null;
+};
+
+export const createPreparingMediaMessage = ({
+  id,
+  senderId,
+  items,
+  replyTo,
+  caption = '',
+  mediaGroupId,
+  now = new Date(),
+}: {
+  id: string;
+  senderId: string;
+  items: PreparingMediaItem[];
+  replyTo?: MessageType;
+  caption?: string;
+  mediaGroupId?: string | null;
+  now?: Date;
+}): MessageType => {
+  const first = items[0];
+  const messageType = items.length > 1 || first?.type === 'image' ? 'image' : 'video';
+  return {
+    id,
+    clientMessageId: id,
+    text: caption.trim(),
+    senderId,
+    timestamp: now,
+    type: messageType,
+    reactions: [],
+    status: 'sending',
+    imageUrl: messageType === 'image' ? first?.localUri : undefined,
+    videoUrl: messageType === 'video' ? first?.localUri : undefined,
+    offlineImageUri: messageType === 'image' ? first?.localUri : undefined,
+    offlineVideoUri: messageType === 'video' ? first?.localUri : undefined,
+    mediaItems: items.map((item, index) => ({
+      attachmentId: item.attachmentId,
+      index,
+      type: item.type,
+      storagePath: '',
+      mimeType: item.mimeType ?? null,
+      width: item.width ?? null,
+      height: item.height ?? null,
+      byteSize: item.byteSize ?? null,
+      durationMs: item.durationMs ?? null,
+      localUri: item.localUri,
+      transferState: 'preparing',
+      uploadProgress: 0,
+    })),
+    mediaExpectedCount: items.length,
+    mediaGroupId: mediaGroupId ?? null,
+    mediaCaption: caption.trim() || null,
+    replyToId: replyTo?.id ?? null,
+    replyTo,
+  };
 };
 
 export const createQueuedMediaMessage = ({
@@ -125,6 +191,15 @@ export const createQueuedMediaOutboxRow = ({
 }): ChatPendingOutboxRow => {
   const localMessageId = message.clientMessageId ?? message.id;
   const createdAt = now.toISOString();
+  // Keep visual attachments in the same durable per-item state machine even
+  // when there is only one item. A successful immutable upload must survive a
+  // later moderation/finalisation retry without attempting to overwrite the
+  // staging object.
+  const durableMediaItems = albumItems?.length
+    ? albumItems
+    : mediaType === 'image' || mediaType === 'video'
+      ? [file]
+      : undefined;
   return {
     id: localMessageId,
     local_message_id: localMessageId,
@@ -141,7 +216,7 @@ export const createQueuedMediaOutboxRow = ({
       mediaType,
       ...(mediaGroupId ? { mediaGroupId } : {}),
       ...(albumCaption ? { albumCaption } : {}),
-      ...(albumItems?.length ? { compositionRevision: 0 } : {}),
+      ...(durableMediaItems?.length ? { compositionRevision: 0 } : {}),
       attachmentId: file.attachmentId,
       byteSize: file.byteSize ?? null,
       width: file.width ?? null,
@@ -156,8 +231,8 @@ export const createQueuedMediaOutboxRow = ({
       documentName: mediaType === 'document' ? file.fileName : null,
       documentSizeLabel: documentSizeLabel ?? null,
       documentTypeLabel: documentTypeLabel ?? null,
-      albumItems: albumItems?.length
-        ? albumItems.map((item, index) => ({
+      albumItems: durableMediaItems?.length
+        ? durableMediaItems.map((item, index) => ({
             ...item,
             index,
             mediaType: item.mediaType ?? (item.contentType.startsWith('video/') ? 'video' : 'image'),
@@ -165,6 +240,7 @@ export const createQueuedMediaOutboxRow = ({
             attemptCount: item.attemptCount ?? 0,
             uploadProgress: item.uploadProgress ?? 0,
             lastError: item.lastError ?? null,
+            uploadCompleted: item.uploadCompleted ?? false,
           }))
         : undefined,
     }),

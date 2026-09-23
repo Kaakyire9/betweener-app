@@ -7,6 +7,7 @@ import {
   ChatAlbumWorkError,
   CHAT_MEDIA_ALBUM_MAX_ITEMS,
   clampChatAlbumUploadProgress,
+  getChatAlbumSendStage,
   getChatAlbumLayout,
   mapChatAlbumItemsBounded,
   normalizeDurableChatAlbumItems,
@@ -149,6 +150,22 @@ test('persists real per-item progress without mutating sibling items', () => {
   assert.equal(clampChatAlbumUploadProgress(-2), 0);
 });
 
+test('exposes uploading and safety-checking as separate album send stages', () => {
+  assert.deepEqual(getChatAlbumSendStage([
+    { transferState: 'preparing', uploadProgress: 0 },
+  ]), { kind: 'preparing', progress: 0 });
+  assert.deepEqual(getChatAlbumSendStage([
+    { transferState: 'uploaded', uploadProgress: 1 },
+    { transferState: 'uploading', uploadProgress: 0.5 },
+    { transferState: 'queued', uploadProgress: 0 },
+  ]), { kind: 'uploading', progress: 0.5 });
+  assert.deepEqual(getChatAlbumSendStage([
+    { transferState: 'uploaded', uploadProgress: 1 },
+    { transferState: 'uploaded', uploadProgress: 1 },
+  ]), { kind: 'checking_safety', progress: 1 });
+  assert.equal(getChatAlbumSendStage([]), null);
+});
+
 test('retry after restart preserves completed items and retries only requested failures', () => {
   const persisted = JSON.stringify([
     {
@@ -174,6 +191,29 @@ test('retry after restart preserves completed items and retries only requested f
   assert.equal(next[2].transferState, 'uploading');
   assert.equal(next[2].uploadProgress, 0);
   assert.equal(next[2].attemptCount, 2);
+});
+
+test('moderation retry reuses durable uploads instead of uploading the item again', () => {
+  const restored = normalizeDurableChatAlbumItems<DurableChatAlbumItem>([{
+    attachmentId: 'moderation-timeout',
+    index: 0,
+    localUri: 'file:///moderation-timeout.jpg',
+    fileName: 'moderation-timeout.jpg',
+    contentType: 'image/jpeg',
+    mediaType: 'image',
+    transferState: 'retryable_failed',
+    uploadProgress: 1,
+    uploadCompleted: true,
+    attemptCount: 1,
+    lastError: 'image_moderation_unavailable',
+  }]);
+
+  const next = prepareChatAlbumItemsForAttempt(restored, ['moderation-timeout']);
+  assert.equal(next[0].transferState, 'uploaded');
+  assert.equal(next[0].uploadProgress, 1);
+  assert.equal(next[0].uploadCompleted, true);
+  assert.equal(next[0].attemptCount, 1);
+  assert.equal(next[0].lastError, null);
 });
 
 test('item cancellation removes exactly one identity and reindexes the composition', () => {

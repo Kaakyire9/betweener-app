@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  createPreparingMediaMessage,
   createQueuedMediaMessage,
   createQueuedMediaOutboxRow,
   createQueuedViewOnceOutboxRow,
@@ -10,6 +11,27 @@ import {
   buildPendingOutboxDueQueryParams,
   CHAT_PENDING_OUTBOX_DUE_QUERY,
 } from '../lib/chat/local/chat-outbox-query.ts';
+
+test('creates an immediate preparing bubble from picker-local media', () => {
+  const message = createPreparingMediaMessage({
+    id: 'temp-image-1',
+    senderId: 'sender',
+    items: [{
+      attachmentId: 'attachment-1',
+      type: 'image',
+      localUri: 'file://picker/photo.jpg',
+      mimeType: 'image/jpeg',
+      width: 800,
+      height: 1200,
+    }],
+    now: new Date('2026-01-01T00:00:00.000Z'),
+  });
+
+  assert.equal(message.imageUrl, 'file://picker/photo.jpg');
+  assert.equal(message.status, 'sending');
+  assert.equal(message.mediaItems?.[0]?.transferState, 'preparing');
+  assert.equal(message.mediaItems?.[0]?.attachmentId, 'attachment-1');
+});
 
 test('creates a durable queued document message and outbox contract', () => {
   const message = createQueuedMediaMessage({
@@ -68,6 +90,34 @@ test('persists encrypted view-once delivery metadata in the durable outbox', () 
   assert.equal(payload.localUri, 'file://cipher/photo.jpg.enc');
   assert.equal(payload.encryptedMediaAlg, 'nacl-secretbox');
   assert.equal(payload.senderPublicKey, 'sender-public-key');
+});
+
+test('persists one-photo upload state so finalisation retries do not overwrite immutable staging', () => {
+  const message = createQueuedMediaMessage({
+    id: 'temp-image-1', senderId: 'sender', mediaType: 'image',
+    stagedUri: 'file://chat/photo.jpg', fileName: 'photo.jpg',
+    now: new Date('2026-01-01T00:00:00.000Z'),
+  });
+  const row = createQueuedMediaOutboxRow({
+    ownerUserId: 'sender',
+    threadId: 'receiver',
+    message,
+    mediaType: 'image',
+    file: {
+      localUri: 'file://chat/photo.jpg',
+      fileName: 'photo.jpg',
+      contentType: 'image/jpeg',
+      attachmentId: 'attachment-1',
+      byteSize: 128,
+    },
+    now: new Date('2026-01-01T00:00:00.000Z'),
+  });
+  const payload = JSON.parse(row.payload_json);
+
+  assert.equal(payload.compositionRevision, 0);
+  assert.equal(payload.albumItems.length, 1);
+  assert.equal(payload.albumItems[0].attachmentId, 'attachment-1');
+  assert.equal(payload.albumItems[0].transferState, 'queued');
 });
 
 test('builds an index-friendly due outbox query without date wrappers or a cross-status OR scan', () => {

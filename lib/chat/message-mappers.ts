@@ -1,6 +1,30 @@
 import type { MessageType } from '@/components/chat/types';
 import type { ChatMessageRow } from '@/lib/chat/local/chat-db';
 
+type CachedReplyTarget = {
+  id: string;
+  text: string;
+  senderId: string;
+  timestamp: string;
+  type: MessageType['type'];
+  deletedForAll?: boolean;
+  isViewOnce?: boolean;
+  imageUrl?: string;
+  offlineImageUri?: string;
+  storagePath?: string | null;
+  previewStoragePath?: string | null;
+  offlinePreviewUri?: string | null;
+  previewUrl?: string | null;
+  document?: MessageType['document'];
+  location?: Omit<NonNullable<MessageType['location']>, 'expiresAt'> & {
+    expiresAt?: string | null;
+  };
+  dateInvite?: Omit<NonNullable<MessageType['dateInvite']>, 'scheduledFor'> & {
+    scheduledFor: string;
+  };
+  sticker?: MessageType['sticker'];
+};
+
 export type CachedMessageType = Omit<
   MessageType,
   'timestamp' | 'readAt' | 'deletedAt' | 'editedAt' | 'replyTo' | 'location' | 'dateInvite'
@@ -15,6 +39,7 @@ export type CachedMessageType = Omit<
   dateInvite?: Omit<NonNullable<MessageType['dateInvite']>, 'scheduledFor'> & {
     scheduledFor: string;
   };
+  replyTo?: CachedReplyTarget;
 };
 
 export type MessageDatabaseRow = {
@@ -52,6 +77,86 @@ export type MessageDatabaseRow = {
   media_caption?: string | null;
 };
 
+const serializeReplyTarget = (message: MessageType | undefined): CachedReplyTarget | undefined => {
+  if (!message) return undefined;
+  const timestamp = message.timestamp instanceof Date
+    ? message.timestamp.toISOString()
+    : new Date().toISOString();
+  if (message.deletedForAll) {
+    return {
+      id: message.id,
+      text: 'Message deleted',
+      senderId: message.senderId,
+      timestamp,
+      type: 'text',
+      deletedForAll: true,
+    };
+  }
+  const isPrivateViewOnce = Boolean(
+    message.isViewOnce && (message.type === 'image' || message.type === 'video'),
+  );
+  return {
+    id: message.id,
+    text: isPrivateViewOnce ? '' : message.text,
+    senderId: message.senderId,
+    timestamp,
+    type: message.type,
+    isViewOnce: message.isViewOnce,
+    imageUrl: isPrivateViewOnce ? undefined : message.imageUrl,
+    offlineImageUri: isPrivateViewOnce ? undefined : message.offlineImageUri,
+    storagePath: isPrivateViewOnce ? undefined : message.storagePath,
+    previewStoragePath: isPrivateViewOnce ? undefined : message.previewStoragePath,
+    offlinePreviewUri: isPrivateViewOnce ? undefined : message.offlinePreviewUri,
+    previewUrl: isPrivateViewOnce ? undefined : message.previewUrl,
+    document: isPrivateViewOnce ? undefined : message.document,
+    location: isPrivateViewOnce
+      ? undefined
+      : message.location
+        ? {
+            ...message.location,
+            expiresAt: message.location.expiresAt instanceof Date
+              ? message.location.expiresAt.toISOString()
+              : (message.location.expiresAt ?? null),
+          }
+        : undefined,
+    dateInvite: isPrivateViewOnce
+      ? undefined
+      : message.dateInvite
+        ? {
+            ...message.dateInvite,
+            scheduledFor: message.dateInvite.scheduledFor instanceof Date
+              ? message.dateInvite.scheduledFor.toISOString()
+              : new Date().toISOString(),
+          }
+        : undefined,
+    sticker: isPrivateViewOnce ? undefined : message.sticker,
+  };
+};
+
+const deserializeReplyTarget = (message: CachedReplyTarget | undefined): MessageType | undefined => {
+  if (!message) return undefined;
+  return {
+    ...message,
+    timestamp: message.timestamp ? new Date(message.timestamp) : new Date(),
+    reactions: [],
+    status: 'sent',
+    location: message.location
+      ? {
+          ...message.location,
+          expiresAt: message.location.expiresAt ? new Date(message.location.expiresAt) : null,
+        }
+      : undefined,
+    dateInvite: message.dateInvite
+      ? {
+          ...message.dateInvite,
+          scheduledFor: message.dateInvite.scheduledFor
+            ? new Date(message.dateInvite.scheduledFor)
+            : new Date(),
+        }
+      : undefined,
+  };
+};
+
 export const serializeCachedMessages = (messages: MessageType[]): CachedMessageType[] =>
   (messages || []).map((message) => ({
     ...message,
@@ -76,7 +181,7 @@ export const serializeCachedMessages = (messages: MessageType[]): CachedMessageT
               : new Date().toISOString(),
         }
       : undefined,
-    replyTo: undefined,
+    replyTo: serializeReplyTarget(message.replyTo),
   }));
 
 export const deserializeCachedMessages = (raw: unknown): MessageType[] => {
@@ -101,7 +206,7 @@ export const deserializeCachedMessages = (raw: unknown): MessageType[] => {
             : new Date(),
         }
       : undefined,
-    replyTo: undefined,
+    replyTo: deserializeReplyTarget(message.replyTo),
   }));
 };
 
