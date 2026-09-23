@@ -1,6 +1,8 @@
 import ChatFailedRetryHint from '@/components/chat/ChatFailedRetryHint';
+import ChatLinkifiedText from '@/components/chat/ChatLinkifiedText';
 import ChatMessageBubblePressable from '@/components/chat/ChatMessageBubblePressable';
 import ChatQuickReactionsBar from '@/components/chat/ChatQuickReactionsBar';
+import ChatSwipeReplyRow from '@/components/chat/ChatSwipeReplyRow';
 import { areMessageRowPropsEqual } from '@/components/chat/message-row-memo';
 import type { MessageRowItemProps } from '@/components/chat/message-row-contract';
 import { DatePlanMessageContent } from '@/components/chat/message-variants/DatePlanMessageContent';
@@ -17,7 +19,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { Image as ExpoImage } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
-import type { ComponentProps, ReactNode } from 'react';
+import type { ComponentProps } from 'react';
 import { memo, useEffect, useMemo, useRef } from 'react';
 import { Animated, Easing, Image, Linking, Pressable, Text, View } from 'react-native';
 import RNSvg, { Path } from 'react-native-svg';
@@ -26,7 +28,6 @@ type ReplyMeta = {
   icon: ComponentProps<typeof MaterialCommunityIcons>['name'];
   label: string;
   preview: string;
-  time: string;
   canJump: boolean;
   thumbnailUri?: string | null;
   thumbnailKind?: 'image' | 'video' | 'location' | 'date_plan' | null;
@@ -79,6 +80,7 @@ export const MessageRowItem = memo(
     onRefreshMedia,
     onMediaLoadSuccess,
     onRetryMedia,
+    onOpenLink,
     onOpenLocation,
     onStopLiveShare,
     onOpenViewOnce,
@@ -408,6 +410,8 @@ export const MessageRowItem = memo(
       item.isViewOnce && item.encryptedMedia && (item.type === 'image' || item.type === 'video')
     );
     const canOpenViewOnce = !isMyMessage && !viewOnceViewedByMe && isEncryptedViewOnce;
+    const shouldCenterMedia =
+      (item.type === 'image' || item.type === 'video') && !isEncryptedViewOnce;
     const mediaLabel = item.type === 'video' ? 'Video' : 'Photo';
     const viewOnceTitle = isMyMessage
       ? viewOnceViewedByPeer
@@ -424,21 +428,14 @@ export const MessageRowItem = memo(
           icon: 'reply' as ReplyMeta['icon'],
           label: 'Reply',
           preview: 'Original message unavailable',
-          time: '',
           canJump: false,
         };
       }
-      const replyTime = item.replyTo.timestamp.toLocaleTimeString('en-US', {
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false,
-      });
       if (item.replyTo.deletedForAll) {
         return {
           icon: 'message-bulleted-off' as ReplyMeta['icon'],
           label: item.replyTo.senderId === currentUserId ? 'You' : peerName || 'User',
           preview: 'Message deleted',
-          time: replyTime,
           canJump: true,
         };
       }
@@ -468,7 +465,31 @@ export const MessageRowItem = memo(
           break;
         case 'image':
           preview = 'Photo';
-          thumbnailUri = item.replyTo.offlineImageUri ?? item.replyTo.imageUrl ?? null;
+          {
+            const replyMedia = item.replyTo.mediaItems?.find((mediaItem) => mediaItem.type === 'image');
+            thumbnailUri =
+              item.replyTo.offlinePreviewUri ??
+              (item.replyTo.previewStoragePath
+                ? mediaUrisByPath?.[item.replyTo.previewStoragePath]
+                : undefined) ??
+              replyMedia?.localPreviewUri ??
+              (replyMedia?.previewStoragePath
+                ? mediaUrisByPath?.[replyMedia.previewStoragePath]
+                : undefined) ??
+              replyMedia?.previewSignedUrl ??
+              item.replyTo.offlineImageUri ??
+              (item.replyTo.storagePath
+                ? mediaUrisByPath?.[item.replyTo.storagePath]
+                : undefined) ??
+              (replyMedia?.storagePath
+                ? mediaUrisByPath?.[replyMedia.storagePath]
+                : undefined) ??
+              replyMedia?.localUri ??
+              replyMedia?.signedUrl ??
+              item.replyTo.previewUrl ??
+              item.replyTo.imageUrl ??
+              null;
+          }
           thumbnailKind = 'image';
           break;
         case 'video':
@@ -502,7 +523,6 @@ export const MessageRowItem = memo(
           icon: 'lock-outline' as ReplyMeta['icon'],
           label: item.replyTo.senderId === currentUserId ? 'You' : peerName || 'User',
           preview: replyLabel,
-          time: replyTime,
           canJump: true,
           thumbnailUri: null,
           thumbnailKind: null,
@@ -512,12 +532,11 @@ export const MessageRowItem = memo(
         icon: iconMap[item.replyTo.type],
         label: item.replyTo.senderId === currentUserId ? 'You' : peerName || 'User',
         preview,
-        time: replyTime,
         canJump: true,
         thumbnailUri,
         thumbnailKind,
       };
-    }, [currentUserId, item.replyTo, item.replyToId, peerName]);
+    }, [currentUserId, item.replyTo, item.replyToId, mediaUrisByPath, peerName]);
 
     const messageTextNode = useMemo(() => {
       const text = item.text || '';
@@ -528,38 +547,24 @@ export const MessageRowItem = memo(
         isMyMessage ? styles.myMessageText : styles.theirMessageText,
         item.deletedForAll && styles.deletedMessageText,
       ];
-      const query = highlightQuery?.trim();
-      if (!query || item.deletedForAll) {
-        return <Text style={baseStyle}>{text}</Text>;
-      }
-      const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const regex = new RegExp(escaped, 'ig');
-      const parts = text.split(regex);
-      const matches = text.match(regex);
-      if (!matches) {
-        return <Text style={baseStyle}>{text}</Text>;
-      }
-      const nodes: ReactNode[] = [];
-      parts.forEach((part, index) => {
-        if (part) nodes.push(part);
-        const match = matches[index];
-        if (match) {
-          nodes.push(
-            <Text
-              key={`${match}-${index}`}
-              style={[
-                styles.messageTextHighlight,
-                isMyMessage ? styles.messageTextHighlightMy : styles.messageTextHighlightTheir,
-              ]}
-              onPress={() => onHighlightPress?.(item.id)}
-            >
-              {match}
-            </Text>
-          );
-        }
-      });
-      return <Text style={baseStyle}>{nodes}</Text>;
-    }, [highlightQuery, isMyMessage, item.deletedForAll, item.text, styles]);
+      return (
+        <ChatLinkifiedText
+          text={text}
+          style={baseStyle}
+          linkStyle={[
+            styles.messageLink,
+            isMyMessage ? styles.messageLinkMy : styles.messageLinkTheir,
+          ]}
+          highlightQuery={item.deletedForAll ? undefined : highlightQuery}
+          highlightStyle={[
+            styles.messageTextHighlight,
+            isMyMessage ? styles.messageTextHighlightMy : styles.messageTextHighlightTheir,
+          ]}
+          onHighlightPress={() => onHighlightPress?.(item.id)}
+          onOpenLink={onOpenLink}
+        />
+      );
+    }, [highlightQuery, isMyMessage, item.deletedForAll, item.id, item.text, onHighlightPress, onOpenLink, styles]);
 
     if (isSystemRow) {
       return (
@@ -605,11 +610,18 @@ export const MessageRowItem = memo(
             />
           </Animated.View>
         ) : null}
-        <ChatMessageBubblePressable
+        <ChatSwipeReplyRow
+          disabled={Boolean(item.deletedForAll)}
+          styles={styles}
+          iconColor={theme.tint}
+          onReply={() => onReply(item)}
+        >
+          <ChatMessageBubblePressable
           messageId={item.id}
           canRetryFailedText={canRetryFailedText}
           styles={styles}
           isMyMessage={isMyMessage}
+          centerContent={shouldCenterMedia}
           onFocus={onFocus}
           onRetryFailedMessage={onRetryFailedMessage}
           onLongPress={() => onLongPress(item.id)}
@@ -650,7 +662,7 @@ export const MessageRowItem = memo(
             userAvatar ? (
               <ExpoImage
                 source={{ uri: userAvatar }}
-                style={styles.messageAvatar}
+                style={[styles.messageAvatar, shouldCenterMedia && styles.centeredMediaAvatar]}
                 cachePolicy="disk"
                 contentFit="cover"
                 transition={0}
@@ -658,15 +670,16 @@ export const MessageRowItem = memo(
             ) : (
               <Image
                 source={BLOCKED_AVATAR_SOURCE}
-                style={styles.messageAvatar}
+                style={[styles.messageAvatar, shouldCenterMedia && styles.centeredMediaAvatar]}
               />
             )
-            ) : showAvatarSpacer ? (
+            ) : showAvatarSpacer && !shouldCenterMedia ? (
             <View style={styles.messageAvatarSpacer} />
           ) : null}
 
           <Animated.View style={[
             styles.messageBubble,
+            replyMeta && styles.messageBubbleWithReply,
             isMyMessage ? styles.myMessageBubble : styles.theirMessageBubble,
             isMyMessage
               ? (isGroupedWithPrev ? styles.myMessageBubbleGroupedTop : null)
@@ -678,6 +691,7 @@ export const MessageRowItem = memo(
             item.type === 'mood_sticker' && styles.stickerBubble,
             item.type === 'mood_sticker' && (isMyMessage ? styles.stickerBubbleMy : styles.stickerBubbleTheir),
             item.type === 'voice' && styles.voiceBubble,
+            (item.type === 'image' || item.type === 'video') && !isEncryptedViewOnce && styles.mediaMessageBubble,
             item.type === 'image' && !isEncryptedViewOnce && styles.imageBubble,
             item.type === 'video' && !isEncryptedViewOnce && styles.videoBubble,
             item.type === 'document' && styles.documentBubble,
@@ -777,20 +791,6 @@ export const MessageRowItem = memo(
                 ) : null}
                 <View style={styles.replyChipContent}>
                   <View style={styles.replyChipHeader}>
-                    {!replyMeta.thumbnailKind ? (
-                      <View
-                        style={[
-                          styles.replyChipIconWrap,
-                          isMyMessage ? styles.replyChipIconWrapMy : styles.replyChipIconWrapTheir,
-                        ]}
-                      >
-                        <MaterialCommunityIcons
-                          name={replyMeta.icon}
-                          size={12}
-                          color={isMyMessage ? Colors.light.background : theme.text}
-                        />
-                      </View>
-                    ) : null}
                     <Text
                       style={[
                         styles.replyChipLabel,
@@ -800,16 +800,6 @@ export const MessageRowItem = memo(
                     >
                       {replyMeta.label}
                     </Text>
-                    {replyMeta.time ? (
-                      <Text
-                        style={[
-                          styles.replyChipTime,
-                          isMyMessage && styles.replyChipTimeMy,
-                        ]}
-                      >
-                        {replyMeta.time}
-                      </Text>
-                    ) : null}
                   </View>
                   <Text
                     style={[
@@ -1094,7 +1084,8 @@ export const MessageRowItem = memo(
               </View>
             ) : null}
           </Animated.View>
-        </ChatMessageBubblePressable>
+          </ChatMessageBubblePressable>
+        </ChatSwipeReplyRow>
 
         {isReactionOpen ? (
           <ChatQuickReactionsBar

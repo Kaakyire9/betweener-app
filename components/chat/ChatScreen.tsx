@@ -1,5 +1,8 @@
 import MomentViewer from "@/components/MomentViewer";
+import { ChatBackground } from '@/components/chat/ChatBackground';
 import ChatComposer from "@/components/chat/ChatComposer";
+import ChatExpressionTray from '@/components/chat/ChatExpressionTray';
+import ChatMediaSafetyNotice from '@/components/chat/ChatMediaSafetyNotice';
 import { ChatMessageList } from "@/components/chat/ChatMessageList";
 import { ChatThreadView } from "@/components/chat/ChatThreadView";
 import { createChatScreenStyles } from '@/components/chat/styles/chat-screen.styles';
@@ -9,6 +12,7 @@ import { ChatVideoViewer } from "@/components/chat/media/ChatVideoViewer";
 import { ChatDocumentViewer } from '@/components/chat/media/ChatDocumentViewer';
 import { ChatImmersiveVideoViewer } from '@/components/chat/media/ChatImmersiveVideoViewer';
 import { ChatImageViewer } from '@/components/chat/media/ChatImageViewer';
+import { ChatAlbumCaptionEditor } from '@/components/chat/media/ChatAlbumCaptionEditor';
 import { ChatLocationPicker } from '@/components/chat/location/ChatLocationPicker';
 import { ChatLocationViewer } from '@/components/chat/location/ChatLocationViewer';
 import ChatMessageActionsSheet from "@/components/chat/ChatMessageActionsSheet";
@@ -24,6 +28,8 @@ import {
   BLOCKED_BY_ME,
   BLOCKED_BY_THEM,
   CHAT_MEDIA_BUCKET,
+  CHAT_MEDIA_FRAME_MAX_WIDTH,
+  CHAT_MEDIA_FRAME_WIDTH_RATIO,
   CHAT_PREFS_STORAGE_KEY,
   CHAT_SAFETY_SEEN_KEY,
   CONCIERGE_SERVICE_OPTIONS,
@@ -77,6 +83,7 @@ import {
   createChatAttachmentId,
 } from "@/lib/chat/attachment-lifecycle";
 import {
+  createPreparingMediaMessage,
   createQueuedMediaMessage,
   createQueuedMediaOutboxRow,
   createQueuedViewOnceOutboxRow,
@@ -85,7 +92,16 @@ import {
   createChatAttachmentPreview,
   removeChatAttachmentPreview,
 } from "@/lib/chat/attachments/chat-attachment-preview";
-import { getChatAttachmentFailurePresentation } from '@/lib/chat/attachments/chat-attachment-error';
+import {
+  getChatAttachmentFailurePresentation,
+  isChatMediaModerationRejection,
+} from '@/lib/chat/attachments/chat-attachment-error';
+import {
+  publishChatMediaRejectionNotice,
+  subscribeChatMediaRejectionNotices,
+  type ChatMediaRejectionNotice,
+} from '@/lib/chat/moderation/chat-media-rejection-notice';
+import { getChatGuardFailurePresentation } from '@/lib/chat/moderation/chat-guard-error-presentation';
 import {
   getAttachmentUploadErrorMessage,
   isRetryableUploadError,
@@ -102,8 +118,22 @@ import {
   getStableChatImageFrame,
   normalizeChatMediaItems,
 } from "@/lib/chat/media-album";
+import { mapChatAlbumItemsBounded } from '@/lib/chat/album/chat-media-album';
 import { selectChatImageGalleryItem } from '@/lib/chat/media/chat-image-gallery';
-import { normalizeHeicImage } from '@/lib/chat/media/chat-image-preparation';
+import { getChatMessageVisualMediaPaths } from '@/lib/chat/media/chat-media-paths';
+import { normalizeChatLink } from '@/lib/chat/links/chat-link-policy';
+import {
+  insertChatEmoji,
+  type TextSelection,
+} from '@/lib/chat/expressions/chat-expression-catalog';
+import {
+  isApprovedChatGifUrl,
+  type ChatGifResult,
+} from '@/lib/chat/expressions/chat-gif-provider';
+import {
+  prepareChatImageForSend,
+  type ChatImageSendQuality,
+} from '@/lib/chat/media/chat-image-preparation';
 import { acknowledgeIncomingMessagesDelivered } from "@/lib/chat/delivery-receipts";
 import { useChatMessages } from "@/lib/chat/hooks/use-chat-messages";
 import { useChatThreadBrowseUi } from "@/lib/chat/hooks/use-chat-thread-browse-ui";
@@ -195,7 +225,7 @@ import {
 } from "@/lib/chat/ui/message-formatters";
 import {
   buildStickerPayload,
-  MOOD_STICKERS,
+  type ChatStickerDefinition,
   parseStickerFallback,
   parseStickerPayload,
   STICKER_COLORS,
@@ -305,7 +335,6 @@ import {
     Image,
     Keyboard,
     KeyboardAvoidingView,
-    Linking,
     Modal,
     Platform,
     Pressable,
@@ -329,6 +358,18 @@ import {
 import MapView, { type Region } from "react-native-maps";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+const resolvePreparedMediaDimension = (
+  prepared: unknown,
+  dimension: 'width' | 'height',
+  fallback: number | null | undefined,
+) => {
+  if (!prepared || typeof prepared !== 'object') return fallback ?? null;
+  const value = (prepared as Record<string, unknown>)[dimension];
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? value
+    : fallback ?? null;
+};
+
 // Message type definition
 type BetweenerVenueRow = Database["public"]["Tables"]["betweener_venues"]["Row"];
 type DatePlanRow = Database["public"]["Tables"]["date_plans"]["Row"];
@@ -339,6 +380,12 @@ type MediaUploadStatus = {
   title: string;
   subtitle: string;
   icon: ComponentProps<typeof MaterialCommunityIcons>['name'];
+};
+
+type PreparingMediaBubble = {
+  message: MessageType;
+  attachmentIds: string[];
+  mediaGroupId: string | null;
 };
 
 const getReportEvidencePreview = (message?: MessageType | null) => {
@@ -588,13 +635,16 @@ export default function ConversationScreen() {
   const [remoteMessagesChecked, setRemoteMessagesChecked] = useState(false);
   const [chatSafetyVisible, setChatSafetyVisible] = useState(false);
   const [networkReady, setNetworkReady] = useState(true);
+  const [albumCaptionEditorMessage, setAlbumCaptionEditorMessage] = useState<MessageType | null>(null);
+  const [albumCaptionSaving, setAlbumCaptionSaving] = useState(false);
 
   useEffect(() => {
     if (!messagesLoaded || !user?.id) return;
     const failedAttachments = messages.filter((message) =>
       message.senderId === user.id &&
       message.status === 'failed' &&
-      (message.type === 'image' || message.type === 'video'),
+      (message.type === 'image' || message.type === 'video') &&
+      !isChatMediaModerationRejection(message.sendErrorCode),
     );
     if (!attachmentFailureAlertsReadyRef.current) {
       failedAttachments.forEach((message) => announcedAttachmentFailuresRef.current.add(message.id));
@@ -750,6 +800,7 @@ export default function ConversationScreen() {
     setThreadBootstrapSettled(hasWarmThreadSnapshot);
     setRemoteMessagesChecked(false);
     setChatSafetyVisible(false);
+    setMediaSafetyNotice(null);
     seededMessageAnimationsRef.current = false;
     animatedMessageIdsRef.current.clear();
   }, [routeId]);
@@ -768,9 +819,11 @@ export default function ConversationScreen() {
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [isUploadingVoice, setIsUploadingVoice] = useState(false);
   const [mediaUploadStatus, setMediaUploadStatus] = useState<MediaUploadStatus | null>(null);
+  const [mediaSafetyNotice, setMediaSafetyNotice] = useState<ChatMediaRejectionNotice | null>(null);
   const [isInputFocused, setIsInputFocused] = useState(false);
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
   const [showImagePicker, setShowImagePicker] = useState(false);
+  const [imageSendQuality, setImageSendQuality] = useState<ChatImageSendQuality>('standard');
   const [replyingTo, setReplyingTo] = useState<MessageType | null>(null);
   const [editingMessage, setEditingMessage] = useState<MessageType | null>(null);
   const [viewOnceMode, setViewOnceMode] = useState(false);
@@ -789,6 +842,14 @@ export default function ConversationScreen() {
   const [imageViewerAlbumIndex, setImageViewerAlbumIndex] = useState(0);
   const [imageViewerAlbumCount, setImageViewerAlbumCount] = useState(1);
   const [videoViewerUrl, setVideoViewerUrl] = useState<string | null>(null);
+  useEffect(() => subscribeChatMediaRejectionNotices((notice) => {
+    if (notice.ownerUserId !== user?.id || notice.threadId !== activePeerMessageUserId) return;
+    setMessages((current) => current.filter((message) =>
+      message.id !== notice.localMessageId &&
+      message.clientMessageId !== notice.localMessageId,
+    ));
+    setMediaSafetyNotice(notice);
+  }), [activePeerMessageUserId, user?.id]);
   const [cachedImageUris, setCachedImageUris] = useState<Record<string, string>>({});
   const [cachedVideoUris, setCachedVideoUris] = useState<Record<string, string>>({});
   const [documentViewer, setDocumentViewer] = useState<
@@ -1352,7 +1413,26 @@ export default function ConversationScreen() {
     return availablePicks.filter((venue) => preferredCity.includes(venue.city.toLowerCase()));
   }, [betweenerVenues, peerProfile?.city, peerProfile?.location, peerProfile?.region]);
 
-  const renderedMessages = useMemo(() => dedupeMessagesById(messages), [messages]);
+  const renderedMessages = useMemo(
+    () => dedupeMessagesById(messages).filter(
+      (message) => !(
+        message.status === 'failed' &&
+        (message.type === 'image' || message.type === 'video') &&
+        isChatMediaModerationRejection(message.sendErrorCode)
+      ),
+    ),
+    [messages],
+  );
+  const shouldDismissMediaSafetyNotice = useMemo(
+    () => Boolean(mediaSafetyNotice && renderedMessages.some((message) =>
+      message.senderId === user?.id &&
+      message.timestamp.getTime() > mediaSafetyNotice.createdAt &&
+      message.status !== 'sending' &&
+      message.status !== 'queued' &&
+      message.status !== 'failed',
+    )),
+    [mediaSafetyNotice, renderedMessages, user?.id],
+  );
   const pinnedMessageIdSet = useMemo(() => new Set(pinnedMessageIds), [pinnedMessageIds]);
   const chatMessageCount = useMemo(
     () => renderedMessages.filter((message) => !message.isSystem).length,
@@ -1491,6 +1571,7 @@ export default function ConversationScreen() {
   const voicePreviewSoundRef = useRef<AudioPlayer | null>(null);
   const mapRef = useRef<MapView>(null);
   const inputRef = useRef<TextInput>(null);
+  const inputSelectionRef = useRef<TextSelection>({ start: 0, end: 0 });
   const reconnectToastOpacity = useRef(new Animated.Value(0)).current;
   const chatActionToastOpacity = useRef(new Animated.Value(0)).current;
   const momentPulse = useRef(new Animated.Value(0)).current;
@@ -2143,9 +2224,10 @@ const resolveQueuedVideoUri = async (
     };
   }, []);
 
-  const linkReplies = useCallback((items: MessageType[]) => {
+  const linkReplies = useCallback((items: MessageType[], additionalTargets: MessageType[] = []) => {
     if (items.length === 0) return items;
-    const map = new Map(items.map((msg) => [msg.id, msg]));
+    const map = new Map(additionalTargets.map((msg) => [msg.id, msg]));
+    items.forEach((msg) => map.set(msg.id, msg));
     return items.map((msg) => {
       if (!msg.replyToId) return msg;
       const target = map.get(msg.replyToId);
@@ -2212,13 +2294,13 @@ const resolveQueuedVideoUri = async (
     }
 
     if (isFirstLocalApply || hasMessageChanges) {
-      console.log('[chat][thread][local] observer-apply', {
-        currentUserId: user.id,
-        peerUserId: activePeerMessageUserId,
-        messageCount: localThreadState.mergedMessages.length,
-        hasMore: localThreadState.hasMore,
-        remoteMessagesChecked,
-      });
+      if (__DEV__) {
+        console.log('[chat][thread][local] observer-apply', {
+          messageCount: localThreadState.mergedMessages.length,
+          hasMore: localThreadState.hasMore,
+          remoteMessagesChecked,
+        });
+      }
     }
 
     if (hasMessageChanges) {
@@ -3335,7 +3417,21 @@ const resolveQueuedVideoUri = async (
           code: (err as { code?: string })?.code ?? null,
           message: err instanceof Error ? err.message : String(err),
         }, err);
-        Alert.alert('View once', getViewOnceUploadErrorMessage(kind, err));
+        if (
+          isChatMediaModerationRejection((err as { code?: string })?.code) ||
+          isChatMediaModerationRejection(err instanceof Error ? err.message : err)
+        ) {
+          publishChatMediaRejectionNotice({
+            ownerUserId: user.id,
+            threadId: activePeerMessageUserId,
+            localMessageId: tempId,
+            attachmentType: 'image',
+            reasonCategory: 'MEDIA_POLICY_REJECTED',
+            viewOnce: true,
+          });
+        } else {
+          Alert.alert('View once', getViewOnceUploadErrorMessage(kind, err));
+        }
       }
       return;
     }
@@ -3520,6 +3616,51 @@ const resolveQueuedVideoUri = async (
     });
   }, [activePeerMessageUserId, conversationId, isBlockedByMe, isChatBlocked, networkReady, replyingTo, user?.id]);
 
+  const beginPreparingMediaBubble = useCallback((items: {
+    localUri: string;
+    mediaType: 'image' | 'video';
+    contentType?: string | null;
+    width?: number | null;
+    height?: number | null;
+    byteSize?: number | null;
+    durationMs?: number | null;
+  }[], caption = ''): PreparingMediaBubble | null => {
+    if (!user?.id || items.length === 0) return null;
+    const attachmentIds = items.map(() => createChatAttachmentId());
+    const mediaGroupId = items.length > 1 ? createChatAttachmentId() : null;
+    const clientMessageId = mediaGroupId
+      ? `temp-album-${mediaGroupId}`
+      : `temp-${items[0].mediaType}-${Date.now()}`;
+    const message = createPreparingMediaMessage({
+      id: clientMessageId,
+      senderId: user.id,
+      caption,
+      mediaGroupId,
+      replyTo: replyingTo || undefined,
+      items: items.map((item, index) => ({
+        attachmentId: attachmentIds[index],
+        type: item.mediaType,
+        localUri: item.localUri,
+        mimeType: item.contentType ?? null,
+        width: item.width ?? null,
+        height: item.height ?? null,
+        byteSize: item.byteSize ?? null,
+        durationMs: item.durationMs ?? null,
+      })),
+    });
+    setMessages((current) => appendMessage(current, message));
+    setReplyingTo(null);
+    setEditingMessage(null);
+    setViewOnceMode(false);
+    requestAnimationFrame(() => flatListRef.current?.scrollToEnd({ animated: true }));
+    return { message, attachmentIds, mediaGroupId };
+  }, [replyingTo, user?.id]);
+
+  const discardPreparingMediaBubble = useCallback((bubble: PreparingMediaBubble | null) => {
+    if (!bubble) return;
+    setMessages((current) => current.filter((message) => message.id !== bubble.message.id));
+  }, []);
+
   const queueMediaAttachment = useCallback(async ({
     localUri,
     fileName,
@@ -3531,6 +3672,7 @@ const resolveQueuedVideoUri = async (
     width,
     height,
     durationMs,
+    preparingBubble,
   }: {
     localUri: string;
     fileName: string;
@@ -3542,10 +3684,11 @@ const resolveQueuedVideoUri = async (
     width?: number | null;
     height?: number | null;
     durationMs?: number | null;
+    preparingBubble?: PreparingMediaBubble | null;
   }) => {
     if (!user?.id || !conversationId) return;
     const stagedUri = await stageOfflineChatUpload(localUri, fileName);
-    const attachmentId = createChatAttachmentId();
+    const attachmentId = preparingBubble?.attachmentIds[0] ?? createChatAttachmentId();
     let preview: Awaited<ReturnType<typeof createChatAttachmentPreview>>;
     try {
       preview = await createChatAttachmentPreview({
@@ -3559,24 +3702,53 @@ const resolveQueuedVideoUri = async (
       await removeStagedOfflineChatUpload(stagedUri);
       throw error;
     }
-    const tempId = `temp-${mediaType}-${Date.now()}`;
+    const tempId = preparingBubble?.message.id ?? `temp-${mediaType}-${Date.now()}`;
     const clientMessageId = tempId;
-    const optimistic = createQueuedMediaMessage({
+    const queuedMessage = createQueuedMediaMessage({
       id: clientMessageId,
       senderId: user.id,
       mediaType,
       stagedUri,
       fileName,
-      replyTo: replyingTo || undefined,
+      replyTo: preparingBubble?.message.replyTo ?? replyingTo ?? undefined,
       documentSizeLabel,
       documentTypeLabel,
       previewUri: preview?.localUri ?? null,
     });
+    const optimistic: MessageType = mediaType === 'image' || mediaType === 'video'
+      ? {
+          ...queuedMessage,
+          mediaItems: [{
+            attachmentId,
+            index: 0,
+            type: mediaType,
+            storagePath: '',
+            mimeType: contentType,
+            width: width ?? null,
+            height: height ?? null,
+            byteSize: byteSize ?? null,
+            durationMs: durationMs ?? null,
+            localUri: stagedUri,
+            localPreviewUri: preview?.localUri ?? null,
+            transferState: 'queued',
+            uploadProgress: 0,
+          }],
+          mediaExpectedCount: 1,
+        }
+      : queuedMessage;
 
-    setMessages((prev) => [...prev, optimistic]);
-    setReplyingTo(null);
-    setEditingMessage(null);
-    setViewOnceMode(false);
+    setMessages((current) => {
+      const existingIndex = current.findIndex((message) => message.id === clientMessageId);
+      if (existingIndex < 0) return appendMessage(current, optimistic);
+      const next = current.slice();
+      next[existingIndex] = optimistic;
+      return next;
+    });
+    if (!preparingBubble) {
+      setReplyingTo(null);
+      setEditingMessage(null);
+      setViewOnceMode(false);
+    }
 
     try {
       await ChatRepository.enqueueMessageWithOutbox(
@@ -3624,7 +3796,7 @@ const resolveQueuedVideoUri = async (
     setTimeout(() => {
       flatListRef.current?.scrollToEnd({ animated: true });
     }, 100);
-  }, [activePeerMessageUserId, replyingTo, user?.id]);
+  }, [activePeerMessageUserId, conversationId, replyingTo, user?.id]);
 
   const queueMediaAlbum = useCallback(async (items: {
     localUri: string;
@@ -3635,7 +3807,7 @@ const resolveQueuedVideoUri = async (
     width?: number | null;
     height?: number | null;
     durationMs?: number | null;
-  }[], caption = '') => {
+  }[], caption = '', preparingBubble?: PreparingMediaBubble | null) => {
     if (!user?.id || !activePeerMessageUserId || items.length < 2) return;
     const selectedItems = items.slice(0, 10);
     const stagedItems: {
@@ -3657,7 +3829,7 @@ const resolveQueuedVideoUri = async (
     try {
       for (let index = 0; index < selectedItems.length; index += 1) {
         const mediaItem = selectedItems[index];
-        const attachmentId = createChatAttachmentId();
+        const attachmentId = preparingBubble?.attachmentIds[index] ?? createChatAttachmentId();
         const localUri = await stageOfflineChatUpload(mediaItem.localUri, `${index}-${mediaItem.fileName}`);
         try {
           const preview = await createChatAttachmentPreview({
@@ -3678,6 +3850,14 @@ const resolveQueuedVideoUri = async (
             previewHeight: preview?.height ?? null,
           });
         } catch (error) {
+          if (__DEV__) {
+            console.log('[chat][album] staging-failed', {
+              attachmentIndex: index,
+              attachmentId,
+              stage: 'preview_generation',
+              code: error instanceof Error ? error.message : String(error),
+            });
+          }
           await removeStagedOfflineChatUpload(localUri);
           throw error;
         }
@@ -3689,8 +3869,8 @@ const resolveQueuedVideoUri = async (
       ]));
       throw error;
     }
-    const mediaGroupId = createChatAttachmentId();
-    const clientMessageId = `temp-album-${mediaGroupId}`;
+    const mediaGroupId = preparingBubble?.mediaGroupId ?? createChatAttachmentId();
+    const clientMessageId = preparingBubble?.message.id ?? `temp-album-${mediaGroupId}`;
     const mediaItems: ChatMediaItem[] = stagedItems.map((mediaItem, index) => ({
       attachmentId: mediaItem.attachmentId,
       index,
@@ -3722,13 +3902,21 @@ const resolveQueuedVideoUri = async (
       mediaExpectedCount: stagedItems.length,
       mediaGroupId,
       mediaCaption: caption.trim() || null,
-      replyToId: replyingTo?.id ?? null,
-      replyTo: replyingTo || undefined,
+      replyToId: preparingBubble?.message.replyToId ?? replyingTo?.id ?? null,
+      replyTo: preparingBubble?.message.replyTo ?? replyingTo ?? undefined,
     };
-    setMessages((current) => [...current, optimistic]);
-    setReplyingTo(null);
-    setEditingMessage(null);
-    setViewOnceMode(false);
+    setMessages((current) => {
+      const existingIndex = current.findIndex((message) => message.id === clientMessageId);
+      if (existingIndex < 0) return appendMessage(current, optimistic);
+      const next = current.slice();
+      next[existingIndex] = optimistic;
+      return next;
+    });
+    if (!preparingBubble) {
+      setReplyingTo(null);
+      setEditingMessage(null);
+      setViewOnceMode(false);
+    }
 
     try {
       await ChatRepository.enqueueMessageWithOutbox(
@@ -4175,6 +4363,7 @@ const resolveQueuedVideoUri = async (
     }).start(({ finished }) => {
       if (finished) {
         setShowImagePicker(false);
+        setImageSendQuality('standard');
       }
     });
   }, [attachmentAnim, isBlockedByMe, isChatBlocked]);
@@ -4192,6 +4381,7 @@ const resolveQueuedVideoUri = async (
     if (showImagePicker) {
       closeAttachmentSheet();
     }
+    Keyboard.dismiss();
     setShowMoodStickers((prev) => !prev);
   }, [closeAttachmentSheet, showImagePicker]);
 
@@ -4308,6 +4498,7 @@ const resolveQueuedVideoUri = async (
 
   const handleInputFocus = useCallback(() => {
     setIsInputFocused(true);
+    setShowMoodStickers(false);
     if (showImagePicker) {
       closeAttachmentSheet();
     }
@@ -4396,7 +4587,7 @@ const resolveQueuedVideoUri = async (
       // the canonical message delta so a slower system query cannot extend
       // thread reconciliation by running serially after the message request.
       const systemRowsPromise = fetchSystemMessages();
-      const { data, error, isIncrementalFetch, threadSyncCursor } = await fetchRemoteThreadMessages({
+      const { data, replyTargetRows, error, isIncrementalFetch, threadSyncCursor } = await fetchRemoteThreadMessages({
         currentUserId: user.id,
         peerUserId: activePeerMessageUserId,
         pageSize: PAGE_SIZE,
@@ -4489,12 +4680,17 @@ const resolveQueuedVideoUri = async (
         mergeOfflineMedia: mergeOfflineMediaIntoMessage,
         mergeReceipt: mergeMessageWithMonotonicReceipt,
       });
+      const replyTargetMessages = (replyTargetRows || []).map((row) =>
+        mapRowToMessage(row as MessageDatabaseRow),
+      );
+      const orderedWithReplies = linkReplies(ordered, replyTargetMessages);
       console.log('[chat][thread][remote] success', {
         currentUserId: user.id,
         peerUserId: activePeerMessageUserId,
         durationMs: Date.now() - startedAt,
         remoteRowCount: (data || []).length,
         orderedMessageCount: ordered.length,
+        replyTargetCount: replyTargetMessages.length,
         isIncrementalFetch,
       });
       const systemRows = await systemRowsPromise;
@@ -4505,8 +4701,8 @@ const resolveQueuedVideoUri = async (
         });
         return;
       }
-      const combined = [...ordered, ...systemRows].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-      const linked = reconcileDeliveredFallback(linkReplies(combined));
+      const combined = [...orderedWithReplies, ...systemRows].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+      const linked = reconcileDeliveredFallback(linkReplies(combined, replyTargetMessages));
       let mergedForState: MessageType[] = linked;
       setMessages((prev) => {
         if (!isIncrementalFetch && linked.length === 0 && prev.length > 0) {
@@ -4526,6 +4722,7 @@ const resolveQueuedVideoUri = async (
               previousMessages: prev,
               currentUserId: user.id,
             }),
+            replyTargetMessages,
           ),
         );
         mergedForState = preserveUnchangedMessageReferences(
@@ -4553,14 +4750,14 @@ const resolveQueuedVideoUri = async (
         fetchedMessageCount: linked.length,
         threadSyncCursor,
       });
-      if (ordered.length > 0) {
+      if (orderedWithReplies.length > 0) {
         void (async () => {
           try {
             const { timedOut } = await withLocalOperationTimeout(
               ChatRepository.upsertMessages(
                 user.id,
                 activePeerMessageUserId,
-                ordered.map((message) =>
+                orderedWithReplies.map((message) =>
                   chatMessageToLocalRow(user.id, activePeerMessageUserId, message),
                 ),
                 { priority: 'background' },
@@ -4573,13 +4770,13 @@ const resolveQueuedVideoUri = async (
                 currentUserId: user.id,
                 peerUserId: activePeerMessageUserId,
                 timeoutMs: LOCAL_CHAT_OPERATION_TIMEOUT_MS,
-                messageCount: ordered.length,
+                messageCount: orderedWithReplies.length,
               });
             } else {
               console.log('[chat][thread][remote] local-persist-success', {
                 currentUserId: user.id,
                 peerUserId: activePeerMessageUserId,
-                messageCount: ordered.length,
+                messageCount: orderedWithReplies.length,
               });
             }
           } catch (localPersistError) {
@@ -4908,6 +5105,7 @@ const resolveQueuedVideoUri = async (
       ok?: boolean;
       code?: string;
       message?: MessageDatabaseRow;
+      restricted_until?: string | null;
     };
     const data = guardResult.message ?? null;
 
@@ -4931,6 +5129,14 @@ const resolveQueuedVideoUri = async (
         return;
       }
       console.log('[chat] retry failed message error', error ?? guardResult.code);
+      const failureCode = (error as { code?: string } | null)?.code
+        ?? guardResult.code
+        ?? 'retry_failed';
+      const failure = getChatGuardFailurePresentation({
+        action: 'retry',
+        code: failureCode,
+        restrictedUntil: guardResult.restricted_until,
+      });
       const failedRetryMessage = transitionMessageLifecycleRecord({
         message: sendingRetryMessage,
         event: 'retryable_failure',
@@ -4941,13 +5147,10 @@ const resolveQueuedVideoUri = async (
         message: failedRetryMessage,
         outboxStatus: 'failed',
         error: {
-          code: (error as { code?: string } | null)?.code ?? guardResult.code ?? 'retry_failed',
-          message: (error as { message?: string } | null)?.message
-            ?? (guardResult.code === 'MESSAGE_REPHRASE_REQUIRED'
-              ? 'Please rephrase this message before sending'
-              : guardResult.code === 'MESSAGE_REVIEW_REQUIRED'
-                ? 'Message held for safety review'
-              : 'Message violates Betweener safety rules'),
+          code: failureCode,
+          message: guardResult.ok === false
+            ? failure.outboxMessage
+            : (error as { message?: string } | null)?.message ?? failure.outboxMessage,
         },
       }).catch((persistError) => console.log('[chat] persist failed retry text outbox error', persistError));
       setMessages((prev) => transitionMessageLifecycle({
@@ -4955,16 +5158,7 @@ const resolveQueuedVideoUri = async (
         messageId,
         event: 'retryable_failure',
       }));
-      Alert.alert(
-        guardResult.ok === false ? 'Message not sent' : 'Retry failed',
-        guardResult.code === 'MESSAGE_REPHRASE_REQUIRED'
-          ? 'Please rephrase this message and try again. It was not sent or added to an admin queue.'
-          : guardResult.code === 'MESSAGE_REVIEW_REQUIRED'
-            ? 'This message is being held for a safety review.'
-          : guardResult.ok === false
-            ? 'Please remove solicitation, threats, scams, or unsafe content and try again.'
-            : 'Unable to resend this message right now.',
-      );
+      Alert.alert(failure.title, failure.message);
       return;
     }
 
@@ -4999,6 +5193,13 @@ const resolveQueuedVideoUri = async (
       return;
     }
     if (message.type === 'image' || message.type === 'video') {
+      if (
+        message.sendErrorCode?.startsWith('caption_') &&
+        (Boolean(message.mediaGroupId) || (message.mediaItems?.length ?? 0) > 1)
+      ) {
+        setAlbumCaptionEditorMessage(message);
+        return;
+      }
       const failure = getChatAttachmentFailurePresentation(message.sendErrorCode);
       if (!failure.retryable) {
         Alert.alert(failure.title, failure.message);
@@ -5077,6 +5278,32 @@ const resolveQueuedVideoUri = async (
       }
     }
   }, [isChatBlocked, networkReady, retryFailedTextMessage, user?.id]);
+
+  const saveAlbumCaptionAndRetry = useCallback(async (caption: string) => {
+    if (!user?.id || !albumCaptionEditorMessage || albumCaptionSaving) return;
+    setAlbumCaptionSaving(true);
+    const localMessageId = albumCaptionEditorMessage.clientMessageId ?? albumCaptionEditorMessage.id;
+    try {
+      const requeued = await ChatOutboxService.updateAlbumCaption(user.id, localMessageId, caption);
+      if (!requeued) {
+        Alert.alert('Caption unchanged', 'This album may already be finalised or is no longer available on this device.');
+        return;
+      }
+      setMessages((current) => current.map((entry) => entry.id === albumCaptionEditorMessage.id
+        ? {
+            ...entry,
+            mediaCaption: caption.trim() || null,
+            sendErrorCode: null,
+            status: 'queued',
+          }
+        : entry));
+      setAlbumCaptionEditorMessage(null);
+    } catch {
+      Alert.alert('Unable to update caption', 'Check your connection and try again.');
+    } finally {
+      setAlbumCaptionSaving(false);
+    }
+  }, [albumCaptionEditorMessage, albumCaptionSaving, user?.id]);
 
   const retryFailedMessageById = useCallback(async (messageId: string) => {
     const message = messagesRef.current.find((entry) => entry.id === messageId);
@@ -5832,14 +6059,7 @@ const resolveQueuedVideoUri = async (
       const showAvatar = !isSystemMessage && !isMyMessage && !isChatBlocked && !isGroupedWithNext;
       const showAvatarSpacer =
         !isSystemMessage && !isMyMessage && !isChatBlocked && isGroupedWithNext;
-      const mediaPaths = [
-        item.storagePath,
-        item.previewStoragePath,
-        ...(item.mediaItems ?? []).flatMap((mediaItem) => [
-          mediaItem.storagePath,
-          mediaItem.previewStoragePath,
-        ]),
-      ].filter((path): path is string => Boolean(path));
+      const mediaPaths = getChatMessageVisualMediaPaths(item);
       const mediaUrisByPath = Object.fromEntries(
         mediaPaths
           .map((path) => [path, chatMediaUrisByPath[path]] as const)
@@ -5858,7 +6078,11 @@ const resolveQueuedVideoUri = async (
         showDateSeparator: !prevMessage || !isSameDay(prevMessage.timestamp, item.timestamp),
         timeLabel: formatTime(item.timestamp),
         imageSize: item.type === 'image'
-          ? getStableChatImageFrame(item.mediaItems?.[0]?.width, item.mediaItems?.[0]?.height, Math.min(responsive.width * 0.72, 340))
+          ? getStableChatImageFrame(
+              item.mediaItems?.[0]?.width,
+              item.mediaItems?.[0]?.height,
+              Math.min(responsive.width * CHAT_MEDIA_FRAME_WIDTH_RATIO, CHAT_MEDIA_FRAME_MAX_WIDTH),
+            )
           : undefined,
         cachedImageUrl:
           item.type === 'image'
@@ -6077,6 +6301,7 @@ const resolveQueuedVideoUri = async (
     pinnedMessageCount,
     primaryPinnedMessage,
     jumpToMessage,
+    mediaUrisByPath: chatMediaUrisByPath,
   });
 
   useEffect(() => {
@@ -6154,6 +6379,20 @@ const resolveQueuedVideoUri = async (
     updateTyping(text);
   };
 
+  const handleInputSelectionChange = useCallback((selection: TextSelection) => {
+    inputSelectionRef.current = selection;
+  }, []);
+
+  const insertEmojiIntoComposer = useCallback((emoji: string) => {
+    const insertion = insertChatEmoji(inputText, emoji, inputSelectionRef.current);
+    inputSelectionRef.current = insertion.selection;
+    setInputText(insertion.text);
+    updateTyping(insertion.text);
+    requestAnimationFrame(() => {
+      inputRef.current?.setNativeProps({ selection: insertion.selection });
+    });
+  }, [inputText, updateTyping]);
+
   const submitEditMessage = useCallback(async () => {
     if (!editingMessage || !user?.id) return;
     const trimmed = inputText.trim();
@@ -6185,21 +6424,13 @@ const resolveQueuedVideoUri = async (
 
     if (error) {
       console.log('[chat] edit message error', error);
-      const moderationCode = String((error as { code?: string })?.code ?? '');
-      Alert.alert(
-        moderationCode === 'MESSAGE_CONTENT_NOT_ALLOWED'
-          || moderationCode === 'MESSAGE_REVIEW_REQUIRED'
-          || moderationCode === 'MESSAGE_REPHRASE_REQUIRED'
-          ? 'Edit not saved'
-          : 'Edit message',
-        moderationCode === 'MESSAGE_REPHRASE_REQUIRED'
-          ? 'Please rephrase this edit and try again. It was not added to an admin queue.'
-          : moderationCode === 'MESSAGE_REVIEW_REQUIRED'
-            ? 'This edit is being held for a safety review.'
-          : moderationCode === 'MESSAGE_CONTENT_NOT_ALLOWED'
-            ? 'Please remove solicitation, threats, scams, or unsafe content and try again.'
-            : 'Unable to update this message right now.',
-      );
+      const guardError = error as { code?: string; restrictedUntil?: string | null };
+      const failure = getChatGuardFailurePresentation({
+        action: 'edit',
+        code: guardError.code,
+        restrictedUntil: guardError.restrictedUntil,
+      });
+      Alert.alert(failure.title, failure.message);
       await refreshThread();
       return;
     }
@@ -6296,7 +6527,7 @@ const resolveQueuedVideoUri = async (
     }, 100);
   };
 
-  const sendMoodSticker = useCallback(async (sticker: (typeof MOOD_STICKERS)[number]) => {
+  const sendMoodSticker = useCallback(async (sticker: ChatStickerDefinition) => {
     if (isChatBlocked) {
       Alert.alert('Messaging unavailable', isBlockedByMe ? 'Unblock to send messages.' : 'You can\'t message this user.');
       return;
@@ -6363,6 +6594,99 @@ const resolveQueuedVideoUri = async (
       }
     });
   }, [peerResolved, activePeerMessageUserId, isBlockedByMe, isChatBlocked, networkReady, replyingTo, user?.id]);
+
+  const sendProviderGif = useCallback(async (gif: ChatGifResult) => {
+    if (isChatBlocked) {
+      Alert.alert('Messaging unavailable', isBlockedByMe ? 'Unblock to send messages.' : 'You can\'t message this user.');
+      return;
+    }
+    if (!networkReady) {
+      Alert.alert('Connection required', 'Reconnect to prepare and check this GIF.');
+      return;
+    }
+    if (mediaUploadStatus) {
+      Alert.alert('Upload in progress', 'Please wait for the current media upload to finish.');
+      return;
+    }
+    if (!isApprovedChatGifUrl(gif.originalUrl) || !FileSystem.cacheDirectory) {
+      Alert.alert('GIF unavailable', 'This GIF source could not be verified.');
+      return;
+    }
+
+    setShowMoodStickers(false);
+    const uploadStatusId = beginMediaUploadStatus(
+      'Preparing GIF…',
+      'Downloading a safe copy for Betweener inspection.',
+      'file-gif-box',
+    );
+    const safeId = gif.id.replace(/[^a-z0-9_-]/gi, '').slice(0, 80) || `${Date.now()}`;
+    const temporaryUri = `${FileSystem.cacheDirectory}betweener-gif-${safeId}-${Date.now()}.gif`;
+    let preparingBubble: PreparingMediaBubble | null = null;
+    try {
+      const downloaded = await FileSystem.downloadAsync(gif.originalUrl, temporaryUri);
+      if (downloaded.status < 200 || downloaded.status >= 300) {
+        throw new Error(`chat_gif_download_${downloaded.status}`);
+      }
+      const info = await FileSystem.getInfoAsync(temporaryUri);
+      const byteSize = info.exists && 'size' in info && typeof info.size === 'number'
+        ? info.size
+        : gif.byteSize;
+      const validationError = validateChatAttachment({
+        kind: 'image',
+        fileName: `giphy-${safeId}.gif`,
+        mimeType: 'image/gif',
+        sizeBytes: byteSize,
+      });
+      if (validationError) throw new Error(validationError);
+
+      preparingBubble = beginPreparingMediaBubble([{
+        localUri: temporaryUri,
+        mediaType: 'image',
+        contentType: 'image/gif',
+        width: gif.width,
+        height: gif.height,
+        byteSize,
+      }]);
+      updateMediaUploadStatus(
+        uploadStatusId,
+        'Checking GIF…',
+        'Betweener is verifying this animation before it is shared.',
+        'shield-check-outline',
+      );
+      await queueMediaAttachment({
+        localUri: temporaryUri,
+        fileName: `giphy-${safeId}.gif`,
+        contentType: 'image/gif',
+        mediaType: 'image',
+        byteSize,
+        width: gif.width,
+        height: gif.height,
+        preparingBubble,
+      });
+    } catch (error) {
+      discardPreparingMediaBubble(preparingBubble);
+      Alert.alert(
+        'GIF not sent',
+        error instanceof Error && error.message.startsWith('Choose an image')
+          ? error.message
+          : 'This GIF could not be prepared safely. Please choose another one.',
+      );
+    } finally {
+      clearMediaUploadStatus(uploadStatusId);
+      void FileSystem.deleteAsync(temporaryUri, { idempotent: true }).catch(() => {});
+    }
+  }, [
+    beginMediaUploadStatus,
+    beginPreparingMediaBubble,
+    clearMediaUploadStatus,
+    discardPreparingMediaBubble,
+    isBlockedByMe,
+    isChatBlocked,
+    mediaUploadStatus,
+    networkReady,
+    queueMediaAttachment,
+    updateMediaUploadStatus,
+  ]);
 
   const addReaction = useCallback(async (messageId: string, emoji: string) => {
     if (!user?.id) return;
@@ -6890,7 +7214,9 @@ const resolveQueuedVideoUri = async (
           : captureMode === 'video'
           ? ['videos']
           : capabilities.chatVideoUploads ? PICKER_MEDIA_TYPES_ALL : ['images'],
-      quality: 0.85,
+      // Preserve picker bytes; v1.2 applies one deterministic Standard/HD
+      // preparation pass before durable staging.
+      quality: 1,
       videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,
       videoMaxDuration: 30,
     });
@@ -6909,6 +7235,17 @@ const resolveQueuedVideoUri = async (
       Alert.alert('Attachment unavailable', attachmentError);
       return;
     }
+    const preparingBubble = !viewOnceMode
+      ? beginPreparingMediaBubble([{
+          localUri: asset.uri,
+          mediaType: asset.type === 'video' ? 'video' : 'image',
+          contentType: asset.mimeType,
+          width: asset.width,
+          height: asset.height,
+          byteSize: asset.fileSize,
+          durationMs: asset.duration,
+        }])
+      : null;
     const mediaKind = asset.type === 'video' ? 'video' : 'photo';
     const uploadStatusId = beginMediaUploadStatus(
       viewOnceMode ? `Securing private ${mediaKind}...` : `Uploading ${mediaKind}...`,
@@ -6921,13 +7258,15 @@ const resolveQueuedVideoUri = async (
       contentType: string;
       mediaType: 'image' | 'video';
       byteSize?: number | null;
+      width?: number | null;
+      height?: number | null;
     } | null = null;
     try {
       const fallbackName = asset.fileName ?? asset.uri.split('/').pop() ?? `camera-${Date.now()}`;
       const baseContentType = asset.mimeType ?? (asset.type === 'video' ? 'video/mp4' : 'image/jpeg');
       const normalized =
         asset.type === 'image'
-          ? await normalizeHeicImage(asset, fallbackName)
+          ? await prepareChatImageForSend(asset, fallbackName, imageSendQuality)
           : await prepareChatVideo({
               uri: asset.uri,
               fileName: fallbackName,
@@ -6950,6 +7289,8 @@ const resolveQueuedVideoUri = async (
           'sizeBytes' in normalized && typeof normalized.sizeBytes === 'number'
             ? normalized.sizeBytes
             : asset.fileSize,
+        width: resolvePreparedMediaDimension(normalized, 'width', asset.width),
+        height: resolvePreparedMediaDimension(normalized, 'height', asset.height),
       };
 
       if (viewOnceMode) {
@@ -6976,9 +7317,10 @@ const resolveQueuedVideoUri = async (
           contentType: queueCandidate.contentType,
           mediaType: queueCandidate.mediaType,
           byteSize: queueCandidate.byteSize ?? null,
-          width: asset.width ?? null,
-          height: asset.height ?? null,
+          width: queueCandidate.width ?? null,
+          height: queueCandidate.height ?? null,
           durationMs: asset.duration ?? null,
+          preparingBubble,
         });
       }
     } catch (error) {
@@ -6988,8 +7330,14 @@ const resolveQueuedVideoUri = async (
           fileName: queueCandidate.fileName,
           contentType: queueCandidate.contentType,
           mediaType: queueCandidate.mediaType,
+          byteSize: queueCandidate.byteSize ?? null,
+          width: queueCandidate.width ?? null,
+          height: queueCandidate.height ?? null,
+          durationMs: asset.duration ?? null,
+          preparingBubble,
         });
       } else {
+        discardPreparingMediaBubble(preparingBubble);
         Alert.alert('Attachment', getAttachmentUploadErrorMessage(error));
       }
     } finally {
@@ -6997,8 +7345,11 @@ const resolveQueuedVideoUri = async (
     }
   }, [
     beginMediaUploadStatus,
+    beginPreparingMediaBubble,
     clearMediaUploadStatus,
     closeAttachmentSheet,
+    discardPreparingMediaBubble,
+    imageSendQuality,
     mediaUploadStatus,
     sendEncryptedMediaAttachment,
     queueMediaAttachment,
@@ -7028,6 +7379,7 @@ const resolveQueuedVideoUri = async (
       Alert.alert('Upload in progress', 'Please wait for the current media upload to finish.');
       return;
     }
+    setMediaSafetyNotice(null);
     const libraryStatus = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!libraryStatus.granted) {
       showOpenSettingsPrompt(
@@ -7038,7 +7390,7 @@ const resolveQueuedVideoUri = async (
     }
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: capabilities.chatVideoUploads ? PICKER_MEDIA_TYPES_ALL : ['images'],
-      quality: 0.85,
+      quality: 1,
       videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,
       allowsMultipleSelection: !viewOnceMode,
       selectionLimit: viewOnceMode ? 1 : 10,
@@ -7072,13 +7424,26 @@ const resolveQueuedVideoUri = async (
         }) ?? 'One of these items could not be prepared.');
         return;
       }
+      const albumCaption = inputText.trim();
+      const preparingBubble = beginPreparingMediaBubble(
+        selectedAssets.map((selectedAsset) => ({
+          localUri: selectedAsset.uri,
+          mediaType: selectedAsset.type === 'video' ? 'video' : 'image',
+          contentType: selectedAsset.mimeType,
+          width: selectedAsset.width,
+          height: selectedAsset.height,
+          byteSize: selectedAsset.fileSize,
+          durationMs: selectedAsset.duration,
+        })),
+        albumCaption,
+      );
       const uploadStatusId = beginMediaUploadStatus(
         `Preparing ${selectedAssets.length} items...`,
         'Building one ordered, secure media album.',
         'image-multiple-outline',
       );
       try {
-        const normalizedAssets = await Promise.all(selectedAssets.map(async (selectedAsset, index) => {
+        const normalizedAssets = await mapChatAlbumItemsBounded(selectedAssets, async (selectedAsset, index) => {
           const isVideo = selectedAsset.type === 'video';
           const fallbackName = selectedAsset.fileName ?? selectedAsset.uri.split('/').pop()
             ?? `${isVideo ? 'video' : 'photo'}-${index + 1}.${isVideo ? 'mp4' : 'jpg'}`;
@@ -7090,7 +7455,7 @@ const resolveQueuedVideoUri = async (
                 sizeBytes: selectedAsset.fileSize,
                 durationMs: selectedAsset.duration,
               })
-            : await normalizeHeicImage(selectedAsset, fallbackName);
+            : await prepareChatImageForSend(selectedAsset, fallbackName, imageSendQuality);
           return {
             localUri: normalized.uri,
             fileName: normalized.fileName,
@@ -7099,16 +7464,16 @@ const resolveQueuedVideoUri = async (
             byteSize: 'sizeBytes' in normalized && typeof normalized.sizeBytes === 'number'
               ? normalized.sizeBytes
               : selectedAsset.fileSize ?? null,
-            width: selectedAsset.width ?? null,
-            height: selectedAsset.height ?? null,
+            width: resolvePreparedMediaDimension(normalized, 'width', selectedAsset.width),
+            height: resolvePreparedMediaDimension(normalized, 'height', selectedAsset.height),
             durationMs: selectedAsset.duration ?? null,
           };
-        }));
+        }, 2);
         updateMediaUploadStatus(uploadStatusId, 'Queueing media album...', 'Everything will appear together in one message.', 'clock-outline');
-        const albumCaption = inputText.trim();
-        await queueMediaAlbum(normalizedAssets, albumCaption);
+        await queueMediaAlbum(normalizedAssets, albumCaption, preparingBubble);
         if (albumCaption) setInputText('');
       } catch (error) {
+        discardPreparingMediaBubble(preparingBubble);
         Alert.alert('Media album', getAttachmentUploadErrorMessage(error));
       } finally {
         clearMediaUploadStatus(uploadStatusId);
@@ -7128,6 +7493,17 @@ const resolveQueuedVideoUri = async (
       Alert.alert('Attachment unavailable', attachmentError);
       return;
     }
+    const preparingBubble = !viewOnceMode
+      ? beginPreparingMediaBubble([{
+          localUri: asset.uri,
+          mediaType: asset.type === 'video' ? 'video' : 'image',
+          contentType: asset.mimeType,
+          width: asset.width,
+          height: asset.height,
+          byteSize: asset.fileSize,
+          durationMs: asset.duration,
+        }])
+      : null;
     const mediaKind = asset.type === 'video' ? 'video' : 'photo';
     const uploadStatusId = beginMediaUploadStatus(
       viewOnceMode ? `Securing private ${mediaKind}...` : `Uploading ${mediaKind}...`,
@@ -7140,13 +7516,15 @@ const resolveQueuedVideoUri = async (
       contentType: string;
       mediaType: 'image' | 'video';
       byteSize?: number | null;
+      width?: number | null;
+      height?: number | null;
     } | null = null;
     try {
       const fallbackName = asset.fileName ?? asset.uri.split('/').pop() ?? `library-${Date.now()}`;
       const baseContentType = asset.mimeType ?? (asset.type === 'video' ? 'video/mp4' : 'image/jpeg');
       const normalized =
         asset.type === 'image'
-          ? await normalizeHeicImage(asset, fallbackName)
+          ? await prepareChatImageForSend(asset, fallbackName, imageSendQuality)
           : await prepareChatVideo({
               uri: asset.uri,
               fileName: fallbackName,
@@ -7169,6 +7547,8 @@ const resolveQueuedVideoUri = async (
           'sizeBytes' in normalized && typeof normalized.sizeBytes === 'number'
             ? normalized.sizeBytes
             : asset.fileSize,
+        width: resolvePreparedMediaDimension(normalized, 'width', asset.width),
+        height: resolvePreparedMediaDimension(normalized, 'height', asset.height),
       };
 
       if (viewOnceMode) {
@@ -7195,9 +7575,10 @@ const resolveQueuedVideoUri = async (
           contentType: queueCandidate.contentType,
           mediaType: queueCandidate.mediaType,
           byteSize: queueCandidate.byteSize ?? null,
-          width: asset.width ?? null,
-          height: asset.height ?? null,
+          width: queueCandidate.width ?? null,
+          height: queueCandidate.height ?? null,
           durationMs: asset.duration ?? null,
+          preparingBubble,
         });
       }
     } catch (error) {
@@ -7207,8 +7588,14 @@ const resolveQueuedVideoUri = async (
           fileName: queueCandidate.fileName,
           contentType: queueCandidate.contentType,
           mediaType: queueCandidate.mediaType,
+          byteSize: queueCandidate.byteSize ?? null,
+          width: queueCandidate.width ?? null,
+          height: queueCandidate.height ?? null,
+          durationMs: asset.duration ?? null,
+          preparingBubble,
         });
       } else {
+        discardPreparingMediaBubble(preparingBubble);
         Alert.alert('Attachment', getAttachmentUploadErrorMessage(error));
       }
     } finally {
@@ -7216,8 +7603,11 @@ const resolveQueuedVideoUri = async (
     }
   }, [
     beginMediaUploadStatus,
+    beginPreparingMediaBubble,
     clearMediaUploadStatus,
     closeAttachmentSheet,
+    discardPreparingMediaBubble,
+    imageSendQuality,
     mediaUploadStatus,
     inputText,
     sendEncryptedMediaAttachment,
@@ -7969,6 +8359,35 @@ const resolveQueuedVideoUri = async (
     });
   }, [createFreshChatMediaUrl, networkReady, openVideoViewer, theme.tint]);
 
+  const openChatExternalLink = useCallback((rawUrl: string) => {
+    const link = normalizeChatLink(rawUrl);
+    if (!link) {
+      Alert.alert('Link unavailable', 'Betweener could not verify this link.');
+      return;
+    }
+    const transportWarning = link.secure
+      ? 'This link opens outside Betweener. Continue only if you trust the destination.'
+      : 'This connection is not encrypted. Continue only if you recognise and trust the destination.';
+    Alert.alert(
+      'Open external link?',
+      `${link.host}\n\n${transportWarning}`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Open link',
+          onPress: () => {
+            void WebBrowser.openBrowserAsync(link.normalizedUrl, {
+              presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN,
+              controlsColor: theme.tint,
+            }).catch(() => {
+              Alert.alert('Link unavailable', 'This link could not be opened.');
+            });
+          },
+        },
+      ],
+    );
+  }, [theme.tint]);
+
   const onViewableItemsChanged = useCallback(
     ({
       viewableItems,
@@ -8541,6 +8960,7 @@ const resolveQueuedVideoUri = async (
             onRefreshMedia={refreshChatMediaMessage}
             onMediaLoadSuccess={persistRenderedChatMedia}
             onRetryMedia={retryChatMediaMessage}
+            onOpenLink={openChatExternalLink}
             onOpenLocation={openLocationViewer}
             onStopLiveShare={stopLiveSharing}
             onOpenViewOnce={openViewOnceMessage}
@@ -8591,6 +9011,7 @@ const resolveQueuedVideoUri = async (
       handleOpenDocument,
       refreshChatMediaMessage,
       retryChatMediaMessage,
+      openChatExternalLink,
       manageAlbumItem,
       handleSuggestAnotherTime,
       handleSuggestAnotherPlace,
@@ -8644,65 +9065,52 @@ const resolveQueuedVideoUri = async (
   };
 
   const handleOpenMediaItem = useCallback(
-    (item: { type: 'image' | 'video'; url?: string | null; message: MessageType }) => {
+    (item: {
+      type: 'image' | 'video';
+      url?: string | null;
+      albumIndex: number;
+      message: MessageType;
+    }) => {
       closeMediaHub();
       if (item.type === 'image') {
-        if (!item.url) return;
-        void openImageViewer(item.message, item.url);
+        void openImageViewer(item.message, item.url || '', item.albumIndex);
       } else {
-        void openVideoViewer(item.message, item.url || '');
+        void openVideoViewer(item.message, item.url || '', item.albumIndex);
       }
     },
     [closeMediaHub, openImageViewer, openVideoViewer]
   );
 
   const renderMoodStickersPanel = () => {
-    if (!showMoodStickers) return null;
-
-    const categories = [...new Set(MOOD_STICKERS.map(s => s.category))];
-
     return (
-      <View style={styles.moodStickersPanel}>
-        <View style={styles.moodStickerHeader}>
-          <Text style={styles.moodStickerTitle}>Mood Stickers</Text>
-          <TouchableOpacity onPress={() => setShowMoodStickers(false)}>
-            <MaterialCommunityIcons name="close" size={24} color={theme.textMuted} />
-          </TouchableOpacity>
-        </View>
-
-        <ScrollView
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.moodStickersContent}
-        >
-          {categories.map(category => (
-            <View key={category} style={styles.stickerCategory}>
-              <Text style={styles.categoryTitle}>
-                {category.charAt(0).toUpperCase() + category.slice(1)}
-              </Text>
-              <View style={styles.stickersGrid}>
-                {MOOD_STICKERS.filter(s => s.category === category).map((sticker, idx) => (
-                  <TouchableOpacity
-                    key={idx}
-                    style={styles.stickerButton}
-                    onPress={() => sendMoodSticker(sticker)}
-                  >
-                    <Text style={styles.stickerEmoji}>{sticker.emoji}</Text>
-                    <Text style={styles.stickerName}>
-                      {sticker.name}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-          ))}
-        </ScrollView>
-      </View>
+      <ChatExpressionTray
+        visible={showMoodStickers}
+        theme={theme}
+        isDark={isDark}
+        onClose={() => setShowMoodStickers(false)}
+        onInsertEmoji={insertEmojiIntoComposer}
+        onSendSticker={(sticker) => {
+          void sendMoodSticker(sticker);
+        }}
+        onSendGif={(gif) => {
+          void sendProviderGif(gif);
+        }}
+      />
     );
   };
 
   return (
     <ChatThreadView style={styles.container}>
       <ChatSafetyModal visible={chatSafetyVisible} onGotIt={dismissChatSafety} />
+      <ChatAlbumCaptionEditor
+        visible={Boolean(albumCaptionEditorMessage)}
+        initialCaption={albumCaptionEditorMessage?.mediaCaption}
+        saving={albumCaptionSaving}
+        onClose={() => {
+          if (!albumCaptionSaving) setAlbumCaptionEditorMessage(null);
+        }}
+        onSave={saveAlbumCaptionAndRetry}
+      />
       <View style={styles.reconnectToastHost} pointerEvents="none">
         <Animated.View
           style={[
@@ -9821,9 +10229,9 @@ const resolveQueuedVideoUri = async (
                         style={styles.mediaTile}
                         onPress={() => handleOpenMediaItem(item)}
                       >
-                        {item.type === 'image' && item.url ? (
+                        {item.thumbnailUrl || (item.type === 'image' && item.url) ? (
                           <ExpoImage
-                            source={{ uri: item.url }}
+                            source={{ uri: item.thumbnailUrl || item.url || '' }}
                             style={styles.mediaTileImage}
                             cachePolicy="disk"
                             contentFit="cover"
@@ -9831,10 +10239,21 @@ const resolveQueuedVideoUri = async (
                           />
                         ) : (
                           <View style={styles.mediaTilePlaceholder}>
-                            <MaterialCommunityIcons name="play-circle" size={26} color={theme.textMuted} />
-                            <Text style={styles.mediaTileLabel}>Video</Text>
+                            <MaterialCommunityIcons
+                              name={item.type === 'video' ? 'play-circle' : 'image-outline'}
+                              size={26}
+                              color={theme.textMuted}
+                            />
+                            <Text style={styles.mediaTileLabel}>
+                              {item.type === 'video' ? 'Video' : 'Photo'}
+                            </Text>
                           </View>
                         )}
+                        {item.type === 'video' && item.thumbnailUrl ? (
+                          <View pointerEvents="none" style={styles.mediaTileVideoBadge}>
+                            <MaterialCommunityIcons name="play" size={16} color={Colors.light.background} />
+                          </View>
+                        ) : null}
                       </Pressable>
                     ))}
                   </View>
@@ -9848,7 +10267,7 @@ const resolveQueuedVideoUri = async (
                       <Pressable
                         key={`${item.id}-${idx}`}
                         style={styles.mediaListItem}
-                        onPress={() => Linking.openURL(item.url)}
+                        onPress={() => openChatExternalLink(item.url)}
                       >
                         <MaterialCommunityIcons name="link-variant" size={18} color={theme.tint} />
                         <View style={styles.mediaListText}>
@@ -10337,6 +10756,7 @@ const resolveQueuedVideoUri = async (
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={0}
       >
+        <ChatBackground tone={isDark ? 'dark' : 'light'} />
         {showJumpToBottom && !showThreadBootstrapLoader && (
           <Pressable
             style={[
@@ -10401,6 +10821,24 @@ const resolveQueuedVideoUri = async (
           </View>
         ) : null}
 
+        {mediaSafetyNotice ? (
+          <ChatMediaSafetyNotice
+            key={mediaSafetyNotice.id}
+            notice={mediaSafetyNotice}
+            theme={theme}
+            isDark={isDark}
+            dismissWhenContinued={shouldDismissMediaSafetyNotice}
+            onDismiss={() => {
+              setMediaSafetyNotice((current) =>
+                current?.id === mediaSafetyNotice.id ? null : current,
+              );
+            }}
+            onChooseAnother={() => {
+              void handleLibraryPress();
+            }}
+          />
+        ) : null}
+
         {!needsRouteIdentityResolution ? (
           <ChatComposer
             styles={styles}
@@ -10409,6 +10847,7 @@ const resolveQueuedVideoUri = async (
             inputRef={inputRef}
             inputText={inputText}
             onChangeText={handleInputChange}
+            onSelectionChange={handleInputSelectionChange}
             onFocus={handleInputFocus}
             onBlur={handleInputBlur}
             placeholderTextColor={withAlpha(theme.textMuted, isDark ? 0.66 : 0.72)}
@@ -10468,12 +10907,46 @@ const resolveQueuedVideoUri = async (
             <View style={styles.attachmentHandle} />
             <View style={styles.imagePickerHeader}>
               <Text style={styles.imagePickerTitle}>Share</Text>
-              <TouchableOpacity
-                style={styles.imagePickerClose}
-                onPress={closeAttachmentSheet}
-              >
-                <MaterialCommunityIcons name="close" size={18} color={theme.textMuted} />
-              </TouchableOpacity>
+              <View style={styles.imagePickerHeaderActions}>
+                <TouchableOpacity
+                  accessibilityRole="switch"
+                  accessibilityLabel="Send photos in HD"
+                  accessibilityHint="Uses more data and preserves more image detail"
+                  accessibilityState={{ checked: imageSendQuality === 'hd' }}
+                  hitSlop={6}
+                  style={[
+                    styles.imageQualityButton,
+                    imageSendQuality === 'hd' && styles.imageQualityButtonActive,
+                  ]}
+                  onPress={() => {
+                    Haptics.selectionAsync().catch(() => {});
+                    setImageSendQuality((current) => current === 'hd' ? 'standard' : 'hd');
+                  }}
+                >
+                  <MaterialCommunityIcons
+                    name="high-definition-box"
+                    size={17}
+                    color={imageSendQuality === 'hd' ? theme.tint : theme.textMuted}
+                  />
+                  <Text
+                    style={[
+                      styles.imageQualityButtonText,
+                      imageSendQuality === 'hd' && styles.imageQualityButtonTextActive,
+                    ]}
+                  >
+                    HD
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  accessibilityLabel="Close share options"
+                  hitSlop={6}
+                  style={styles.imagePickerClose}
+                  onPress={closeAttachmentSheet}
+                >
+                  <MaterialCommunityIcons name="close" size={18} color={theme.textMuted} />
+                </TouchableOpacity>
+              </View>
             </View>
 
             <ScrollView
@@ -10483,108 +10956,199 @@ const resolveQueuedVideoUri = async (
               bounces={false}
               keyboardShouldPersistTaps="handled"
             >
-              <TouchableOpacity
-                style={[
-                  styles.viewOnceAttachmentRow,
-                  viewOnceMode && styles.viewOnceAttachmentRowActive,
-                ]}
-                onPress={async () => {
-                  Haptics.selectionAsync().catch(() => {});
-                  if (!viewOnceMode) {
-                    const keys = await ensureViewOnceKeys();
-                    if (!keys) return;
-                  }
-                  setViewOnceMode((prev) => !prev);
+              <Animated.View
+                style={{
+                  opacity: attachmentAnim.interpolate({
+                    inputRange: [0.08, 0.42, 1],
+                    outputRange: [0, 1, 1],
+                    extrapolate: 'clamp',
+                  }),
+                  transform: [{
+                    translateY: attachmentAnim.interpolate({
+                      inputRange: [0.08, 0.48, 1],
+                      outputRange: [8, 0, 0],
+                      extrapolate: 'clamp',
+                    }),
+                  }],
                 }}
               >
-                <View style={styles.viewOnceAttachmentLeft}>
-                  <View
-                    style={[
-                      styles.viewOnceAttachmentIcon,
-                      viewOnceMode && styles.viewOnceAttachmentIconActive,
-                    ]}
-                  >
-                    <MaterialCommunityIcons
-                      name={viewOnceMode ? 'shield-lock' : 'shield-lock-outline'}
-                      size={18}
-                      color={viewOnceMode ? Colors.light.background : theme.textMuted}
-                    />
-                  </View>
-                  <View>
-                    <Text style={styles.viewOnceAttachmentTitle}>View once (encrypted)</Text>
-                    <Text style={styles.viewOnceAttachmentSubtitle}>Only for photos & videos</Text>
-                  </View>
-                </View>
-                <View
+                <TouchableOpacity
+                  accessibilityRole="switch"
+                  accessibilityLabel="View once encrypted media"
+                  accessibilityHint="Applies to the next photo or video"
+                  accessibilityState={{ checked: viewOnceMode }}
                   style={[
-                    styles.viewOnceAttachmentToggle,
-                    viewOnceMode && styles.viewOnceAttachmentToggleActive,
+                    styles.viewOnceAttachmentChip,
+                    viewOnceMode && styles.viewOnceAttachmentChipActive,
                   ]}
+                  onPress={async () => {
+                    Haptics.selectionAsync().catch(() => {});
+                    if (!viewOnceMode) {
+                      const keys = await ensureViewOnceKeys();
+                      if (!keys) return;
+                    }
+                    setViewOnceMode((prev) => !prev);
+                  }}
                 >
                   <MaterialCommunityIcons
-                    name={viewOnceMode ? 'lock' : 'lock-open-variant'}
-                    size={16}
-                    color={viewOnceMode ? Colors.light.background : theme.textMuted}
+                    name={viewOnceMode ? 'shield-lock' : 'shield-lock-outline'}
+                    size={17}
+                    color={viewOnceMode ? theme.tint : theme.textMuted}
                   />
-                </View>
-              </TouchableOpacity>
+                  <Text
+                    style={[
+                      styles.viewOnceAttachmentChipText,
+                      viewOnceMode && styles.viewOnceAttachmentChipTextActive,
+                    ]}
+                  >
+                    View once
+                  </Text>
+                  {viewOnceMode ? (
+                    <MaterialCommunityIcons name="check" size={14} color={theme.tint} />
+                  ) : null}
+                </TouchableOpacity>
+              </Animated.View>
 
               <View style={styles.imagePickerGrid}>
-                <TouchableOpacity
-                  style={styles.imagePickerOption}
-                  onPress={handleCameraPress}
+                <Animated.View
+                  style={[
+                    styles.imagePickerOptionMotion,
+                    {
+                      opacity: attachmentAnim.interpolate({
+                        inputRange: [0.16, 0.5, 1],
+                        outputRange: [0, 1, 1],
+                        extrapolate: 'clamp',
+                      }),
+                      transform: [{
+                        translateY: attachmentAnim.interpolate({
+                          inputRange: [0.16, 0.56, 1],
+                          outputRange: [12, 0, 0],
+                          extrapolate: 'clamp',
+                        }),
+                      }],
+                    },
+                  ]}
                 >
-                  <View style={styles.imagePickerIcon}>
-                    <MaterialCommunityIcons name="camera-outline" size={22} color={theme.tint} />
-                  </View>
-                  {viewOnceMode && (
-                    <View style={styles.viewOnceMediaBadge}>
-                      <MaterialCommunityIcons name="lock" size={12} color={Colors.light.background} />
-                      <Text style={styles.viewOnceMediaBadgeText}>Once</Text>
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    accessibilityLabel="Camera"
+                    style={styles.imagePickerOption}
+                    onPress={handleCameraPress}
+                  >
+                    <View style={styles.imagePickerIcon}>
+                      <MaterialCommunityIcons name="camera-outline" size={23} color={theme.tint} />
                     </View>
-                  )}
-                  <Text style={styles.imagePickerLabel}>Camera</Text>
-                  <Text style={styles.imagePickerSubLabel}>Photo & video</Text>
-                </TouchableOpacity>
+                    {viewOnceMode && (
+                      <View style={styles.viewOnceMediaBadge}>
+                        <MaterialCommunityIcons name="lock" size={12} color={Colors.light.background} />
+                        <Text style={styles.viewOnceMediaBadgeText}>Once</Text>
+                      </View>
+                    )}
+                    <Text style={styles.imagePickerLabel}>Camera</Text>
+                  </TouchableOpacity>
+                </Animated.View>
 
-                <TouchableOpacity
-                  style={styles.imagePickerOption}
-                  onPress={handleLibraryPress}
+                <Animated.View
+                  style={[
+                    styles.imagePickerOptionMotion,
+                    {
+                      opacity: attachmentAnim.interpolate({
+                        inputRange: [0.24, 0.58, 1],
+                        outputRange: [0, 1, 1],
+                        extrapolate: 'clamp',
+                      }),
+                      transform: [{
+                        translateY: attachmentAnim.interpolate({
+                          inputRange: [0.24, 0.64, 1],
+                          outputRange: [12, 0, 0],
+                          extrapolate: 'clamp',
+                        }),
+                      }],
+                    },
+                  ]}
                 >
-                  <View style={styles.imagePickerIcon}>
-                    <MaterialCommunityIcons name="image-multiple-outline" size={22} color={theme.tint} />
-                  </View>
-                  {viewOnceMode && (
-                    <View style={styles.viewOnceMediaBadge}>
-                      <MaterialCommunityIcons name="lock" size={12} color={Colors.light.background} />
-                      <Text style={styles.viewOnceMediaBadgeText}>Once</Text>
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    accessibilityLabel="Photos"
+                    style={styles.imagePickerOption}
+                    onPress={handleLibraryPress}
+                  >
+                    <View style={styles.imagePickerIcon}>
+                      <MaterialCommunityIcons name="image-multiple-outline" size={23} color={theme.tint} />
                     </View>
-                  )}
-                  <Text style={styles.imagePickerLabel}>Photos</Text>
-                  <Text style={styles.imagePickerSubLabel}>Library</Text>
-                </TouchableOpacity>
+                    {viewOnceMode && (
+                      <View style={styles.viewOnceMediaBadge}>
+                        <MaterialCommunityIcons name="lock" size={12} color={Colors.light.background} />
+                        <Text style={styles.viewOnceMediaBadgeText}>Once</Text>
+                      </View>
+                    )}
+                    <Text style={styles.imagePickerLabel}>Photos</Text>
+                  </TouchableOpacity>
+                </Animated.View>
 
-                <TouchableOpacity
-                  style={styles.imagePickerOption}
-                  onPress={handleDocumentPress}
+                <Animated.View
+                  style={[
+                    styles.imagePickerOptionMotion,
+                    {
+                      opacity: attachmentAnim.interpolate({
+                        inputRange: [0.32, 0.66, 1],
+                        outputRange: [0, 1, 1],
+                        extrapolate: 'clamp',
+                      }),
+                      transform: [{
+                        translateY: attachmentAnim.interpolate({
+                          inputRange: [0.32, 0.72, 1],
+                          outputRange: [12, 0, 0],
+                          extrapolate: 'clamp',
+                        }),
+                      }],
+                    },
+                  ]}
                 >
-                  <View style={styles.imagePickerIcon}>
-                    <MaterialCommunityIcons name="file-document-outline" size={22} color={theme.tint} />
-                  </View>
-                  <Text style={styles.imagePickerLabel}>Documents</Text>
-                  <Text style={styles.imagePickerSubLabel}>Files & media</Text>
-                </TouchableOpacity>
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    accessibilityLabel="Documents"
+                    style={styles.imagePickerOption}
+                    onPress={handleDocumentPress}
+                  >
+                    <View style={styles.imagePickerIcon}>
+                      <MaterialCommunityIcons name="file-document-outline" size={23} color={theme.tint} />
+                    </View>
+                    <Text style={styles.imagePickerLabel}>Documents</Text>
+                  </TouchableOpacity>
+                </Animated.View>
 
-                <TouchableOpacity
-                  style={styles.imagePickerOption}
-                  onPress={handleLocationPress}
+                <Animated.View
+                  style={[
+                    styles.imagePickerOptionMotion,
+                    {
+                      opacity: attachmentAnim.interpolate({
+                        inputRange: [0.4, 0.74, 1],
+                        outputRange: [0, 1, 1],
+                        extrapolate: 'clamp',
+                      }),
+                      transform: [{
+                        translateY: attachmentAnim.interpolate({
+                          inputRange: [0.4, 0.8, 1],
+                          outputRange: [12, 0, 0],
+                          extrapolate: 'clamp',
+                        }),
+                      }],
+                    },
+                  ]}
                 >
-                  <View style={styles.imagePickerIcon}>
-                    <MaterialCommunityIcons name="map-marker-outline" size={22} color={theme.tint} />
-                  </View>
-                  <Text style={styles.imagePickerLabel}>Location</Text>
-                  <Text style={styles.imagePickerSubLabel}>Send a pin</Text>
-                </TouchableOpacity>
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    accessibilityLabel="Location"
+                    style={styles.imagePickerOption}
+                    onPress={handleLocationPress}
+                  >
+                    <View style={styles.imagePickerIcon}>
+                      <MaterialCommunityIcons name="map-marker-outline" size={23} color={theme.tint} />
+                    </View>
+                    <Text style={styles.imagePickerLabel}>Location</Text>
+                  </TouchableOpacity>
+                </Animated.View>
               </View>
             </ScrollView>
           </Animated.View>

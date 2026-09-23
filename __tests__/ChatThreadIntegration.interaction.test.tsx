@@ -7,10 +7,20 @@ import ChatFailedRetryHint from "@/components/chat/ChatFailedRetryHint";
 import ChatMessageBubblePressable from "@/components/chat/ChatMessageBubblePressable";
 import ChatQuickReactionsBar from "@/components/chat/ChatQuickReactionsBar";
 import ChatReactionSummarySheet from "@/components/chat/ChatReactionSummarySheet";
+import { MessageRowItem } from "@/components/chat/MessageRowItem";
 import { Colors } from "@/constants/theme";
 import { applyLocalReactionToggle } from "@/lib/chat/message-actions";
 import { reconcileMessageWithServer, transitionMessageLifecycle } from "@/lib/chat/message-state";
 import { canRetryFailedTextMessage } from "@/lib/chat/thread-behavior";
+
+jest.mock("@/lib/motion", () => ({
+  Motion: {
+    duration: { fast: 120, base: 180, slow: 240 },
+    easing: { outCubic: jest.fn() },
+    spring: { damping: 20, stiffness: 190, mass: 1 },
+    transform: { pressScale: 0.98, pressOpacity: 0.92, popScale: 1.02 },
+  },
+}));
 
 const styles = new Proxy(
   {},
@@ -157,6 +167,95 @@ function ReactionSummaryIntegrationHarness() {
 }
 
 describe("Chat thread integration flows", () => {
+  it("renders a compact reply preview without duplicating the original timestamp", async () => {
+    const originalText = "The complete original message remains readable in the reply preview.";
+    const item = {
+      id: "reply-1",
+      text: "That makes sense",
+      senderId: "me",
+      timestamp: new Date("2026-09-22T19:18:00.000Z"),
+      type: "text",
+      reactions: [],
+      status: "sent",
+      replyToId: "original-1",
+      replyTo: {
+        id: "original-1",
+        text: originalText,
+        senderId: "peer-1",
+        timestamp: new Date("2026-09-22T08:45:00.000Z"),
+        type: "text",
+        reactions: [],
+        status: "sent",
+      },
+    };
+    const noop = jest.fn();
+
+    const { getByText, queryByText } = await render(
+      <MessageRowItem
+        item={item}
+        isMyMessage
+        showAvatar={false}
+        showAvatarSpacer={false}
+        isGroupedWithPrev={false}
+        isGroupedWithNext={false}
+        shouldAnimateEntry={false}
+        isPlaying={false}
+        isReactionOpen={false}
+        isFocused={false}
+        focusToken={0}
+        timeLabel="19:18"
+        userAvatar={null}
+        currentUserId="me"
+        peerName="Maame Ama"
+        theme={Colors.light}
+        isDark={false}
+        styles={styles}
+        onLongPress={noop}
+        onRetryFailedMessage={noop}
+        onToggleVoice={noop}
+        onFocus={noop}
+        onReply={noop}
+        onReplyJump={noop}
+        onEditMessage={noop}
+        onAddReaction={noop}
+        onCloseReactions={noop}
+        onOpenEditHistory={noop}
+        onCopyMessage={noop}
+        onTogglePin={noop}
+        onDeleteMessage={noop}
+        isActionPinned={false}
+        onOpenReactionSheet={noop}
+        onViewImage={noop}
+        onViewVideo={noop}
+        onManageAlbumItem={noop}
+        onOpenDocument={noop}
+        onRefreshMedia={noop}
+        onMediaLoadSuccess={noop}
+        onRetryMedia={noop}
+        onOpenLink={noop}
+        onOpenLocation={noop}
+        onStopLiveShare={noop}
+        onOpenViewOnce={noop}
+        onAcceptDatePlan={noop}
+        onSuggestAnotherTime={noop}
+        onSuggestAnotherPlace={noop}
+        onSuggestBoth={noop}
+        onRescheduleDatePlan={noop}
+        onCancelDatePlan={noop}
+        onRequestDatePlanConcierge={noop}
+        onAddDatePlanToCalendar={noop}
+        datePlanActionId={null}
+        datePlanCalendarActionId={null}
+        viewOnceViewedByMe={false}
+        viewOnceViewedByPeer={false}
+      />
+    );
+
+    expect(getByText("Maame Ama")).toBeTruthy();
+    expect(getByText(originalText).props.numberOfLines).toBe(2);
+    expect(queryByText("08:45")).toBeNull();
+  });
+
   it("retries a failed message and reconciles it with the server state", async () => {
     const { getByTestId, queryByTestId } = await render(<RetryAndReconcileHarness />);
 

@@ -35,7 +35,8 @@
     "lint": "eslint .",
     "lint:expo": "expo lint",
     "test:rn": "node --no-deprecation ./node_modules/jest/bin/jest.js --runInBand --config jest.config.js",
-    "test:chat-logic": "node --no-warnings=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test __tests__/chat-message-mappers.regression.test.ts __tests__/chat-thread-behavior.regression.test.ts __tests__/chat-message-state.regression.test.ts __tests__/chat-message-actions.regression.test.ts __tests__/chat-message-list-reconciliation.regression.test.ts __tests__/chat-list-message-merge.regression.test.ts __tests__/chat-list-enrichment-plan.regression.test.ts __tests__/chat-db-lock-policy.regression.test.ts __tests__/chat-presence.regression.test.ts __tests__/chat-media-album.regression.test.ts __tests__/thread-realtime-message-processor.regression.test.ts __tests__/chat-media-access.regression.test.ts __tests__/chat-attachment-metadata.regression.test.ts __tests__/chat-attachment-queue.regression.test.ts __tests__/chat-attachment-state.regression.test.ts __tests__/chat-attachment-production-hardening.regression.test.ts __tests__/chat-upload-policy.regression.test.ts __tests__/chat-upload-error-policy.regression.test.ts __tests__/chat-media-download-policy.regression.test.ts __tests__/chat-voice-recording.regression.test.ts __tests__/view-once-attachment.regression.test.ts __tests__/view-once-send-service.regression.test.ts",
+    "test:chat-media-rejection": "node --no-warnings=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test __tests__/chat-media-rejection-notice.regression.test.ts",
+    "test:chat-logic": "node --no-warnings=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test __tests__/chat-expressions.regression.test.ts __tests__/chat-image-quality-policy.regression.test.ts __tests__/chat-message-mappers.regression.test.ts __tests__/chat-thread-behavior.regression.test.ts __tests__/chat-message-state.regression.test.ts __tests__/chat-message-actions.regression.test.ts __tests__/chat-message-list-reconciliation.regression.test.ts __tests__/chat-list-message-merge.regression.test.ts __tests__/chat-list-enrichment-plan.regression.test.ts __tests__/chat-db-lock-policy.regression.test.ts __tests__/chat-receipt-write-buffer.regression.test.ts __tests__/chat-presence.regression.test.ts __tests__/chat-media-album.regression.test.ts __tests__/thread-realtime-message-processor.regression.test.ts __tests__/chat-media-access.regression.test.ts __tests__/chat-attachment-metadata.regression.test.ts __tests__/chat-attachment-queue.regression.test.ts __tests__/chat-attachment-state.regression.test.ts __tests__/chat-attachment-production-hardening.regression.test.ts __tests__/chat-upload-policy.regression.test.ts __tests__/chat-upload-error-policy.regression.test.ts __tests__/chat-media-download-policy.regression.test.ts __tests__/chat-voice-recording.regression.test.ts __tests__/view-once-attachment.regression.test.ts __tests__/view-once-send-service.regression.test.ts",
     "test:vibes-logic": "node --no-warnings=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test __tests__/location-display.regression.test.ts __tests__/profile-location-update.regression.test.ts __tests__/vibes-discovery.regression.test.ts __tests__/vibes-practice-walkthrough.regression.test.ts __tests__/vibes-v5-3-learning.regression.test.ts __tests__/reanimated-animation-safety.regression.test.ts __tests__/react-native-fabric-animation-patch.regression.test.ts",
     "test:liveness-logic": "node --no-warnings=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test __tests__/liveness-engine.regression.test.ts",
     "test:trust-safety-behavior": "node --no-warnings=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test __tests__/trust-safety-media-behavior.test.ts",
@@ -49,7 +50,7 @@
     "test:live-phase10g": "node --no-warnings=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test __tests__/live-phase10g-studio-domain.regression.test.ts __tests__/live-phase10g-studio-database.regression.test.ts __tests__/live-phase10g-studio-media.regression.test.ts",
     "test:live-creation": "node --no-warnings=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test __tests__/live-creation-draft.regression.test.ts",
     "test:push-expiry": "node --no-warnings=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test __tests__/push-notification-expiry-lifecycle.regression.test.ts",
-    "test:logic": "npm run test:chat-logic && npm run test:vibes-logic && npm run test:liveness-logic && npm run test:live-logic && npm run test:live-creation && npm run test:push-expiry",
+    "test:logic": "npm run test:chat-media-rejection && npm run test:chat-logic && npm run test:vibes-logic && npm run test:liveness-logic && npm run test:live-logic && npm run test:live-creation && npm run test:push-expiry",
     "test:all": "npm run test:rn && npm run test:logic",
     "assets:optimize:onboarding": "node ./scripts/optimize-onboarding-assets.cjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -63,6 +64,7 @@
     "@expo-google-fonts/playfair-display": "^0.4.2",
     "@expo/metro-runtime": "~57.0.12",
     "@expo/vector-icons": "^15.1.1",
+    "@giphy/react-native-sdk": "^6.0.3",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-community/datetimepicker": "9.1.0",
     "@react-native-community/netinfo": "12.0.1",
@@ -73,7 +75,7 @@
     "@stream-io/react-native-callingx": "0.11.3",
     "@stream-io/react-native-webrtc": "145.3.1",
     "@stream-io/video-react-native-sdk": "1.45.1",
-    "@supabase/supabase-js": "2.116.0",
+    "@supabase/supabase-js": "2.117.1",
     "expo": "~57.0.23",
     "expo-apple-authentication": "~57.0.2",
     "expo-application": "~57.0.3",
@@ -167,7 +169,7 @@
     "react-refresh": "^0.14.2",
     "sharp": "^0.35.3",
     "supabase": "2.117.0",
-    "test-renderer": "^1.2.0",
+    "test-renderer": "1.2.0",
     "typescript": "~6.0.3"
   },
   "expo": {
@@ -188,6 +190,8 @@
   "private": true,
   "allowScripts": {
     "@sentry/cli@2.58.4": true,
+    "@firebase/util@1.15.2": true,
+    "protobufjs@7.6.6": true,
     "unrs-resolver@1.12.2": true,
     "@parcel/watcher@2.6.0": true
   }

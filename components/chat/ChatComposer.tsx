@@ -21,6 +21,7 @@ type Props = {
   inputRef: RefObject<TextInput | null>;
   inputText: string;
   onChangeText: (text: string) => void;
+  onSelectionChange?: (selection: { start: number; end: number }) => void;
   onFocus: () => void;
   onBlur: () => void;
   placeholderTextColor: string;
@@ -68,6 +69,7 @@ export default function ChatComposer({
   inputRef,
   inputText,
   onChangeText,
+  onSelectionChange,
   onFocus,
   onBlur,
   placeholderTextColor,
@@ -185,6 +187,7 @@ export default function ChatComposer({
                 accessibilityRole="button"
                 accessibilityLabel={showImagePicker ? "Close attachment options" : "Add an attachment"}
                 accessibilityState={{ expanded: showImagePicker }}
+                hitSlop={6}
                 style={[
                   styles.inputActionButton,
                   showImagePicker && styles.inputActionButtonActive,
@@ -203,6 +206,7 @@ export default function ChatComposer({
                 accessibilityRole="button"
                 accessibilityLabel={showMoodStickers ? "Close mood stickers" : "Add a mood sticker"}
                 accessibilityState={{ expanded: showMoodStickers }}
+                hitSlop={6}
                 style={[
                   styles.inputActionButton,
                   showMoodStickers && styles.inputActionButtonSecondaryActive,
@@ -225,6 +229,7 @@ export default function ChatComposer({
               style={styles.textInput}
               value={inputText}
               onChangeText={onChangeText}
+              onSelectionChange={(event) => onSelectionChange?.(event.nativeEvent.selection)}
               onFocus={onFocus}
               onBlur={onBlur}
               placeholder={
@@ -232,7 +237,7 @@ export default function ChatComposer({
                   ? "Recording voice..."
                   : replyingTo
                   ? "Reply..."
-                  : "Say something thoughtful..."
+                  : ""
               }
               placeholderTextColor={placeholderTextColor}
               multiline
@@ -247,6 +252,7 @@ export default function ChatComposer({
                     testID="chat-composer-start-voice"
                     accessibilityRole="button"
                     accessibilityLabel="Record a voice message"
+                    hitSlop={4}
                     style={styles.voiceButton}
                     onPress={onStartVoiceRecording}
                   >

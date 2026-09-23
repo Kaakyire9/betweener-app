@@ -136,6 +136,7 @@
       ],
       "expo-font",
       "expo-video",
+      "@giphy/react-native-sdk",
       [
         "@sentry/react-native/expo",
         {

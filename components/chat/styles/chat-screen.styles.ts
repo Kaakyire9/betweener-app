@@ -1,3 +1,8 @@
+import {
+  CHAT_MEDIA_BUBBLE_WIDTH_RATIO,
+  CHAT_MEDIA_FRAME_MAX_WIDTH,
+  CHAT_MEDIA_FRAME_WIDTH_RATIO,
+} from '@/constants/chat';
 import { Colors } from '@/constants/theme';
 import type { ResponsiveMetrics } from '@/lib/responsive';
 import { withAlpha } from '@/lib/chat/ui/color-utils';
@@ -1608,6 +1613,21 @@ export const createChatScreenStyles = (
       justifyContent: 'center',
       gap: 6,
     },
+    mediaTileVideoBadge: {
+      position: 'absolute',
+      top: '50%',
+      left: '50%',
+      width: 32,
+      height: 32,
+      marginTop: -16,
+      marginLeft: -16,
+      borderRadius: 16,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: 'rgba(4,18,19,0.68)',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.24)',
+    },
     mediaTileLabel: {
       fontSize: 11,
       fontFamily: 'Manrope_600SemiBold',
@@ -2111,6 +2131,8 @@ export const createChatScreenStyles = (
     chatContainer: {
       flex: 1,
       backgroundColor: theme.background,
+      overflow: 'hidden',
+      position: 'relative',
     },
     threadBootstrapLoader: {
       flex: 1,
@@ -2207,6 +2229,29 @@ export const createChatScreenStyles = (
     messageContainerWithReaction: {
       marginBottom: 24,
     },
+    swipeReplyRow: {
+      position: 'relative',
+      overflow: 'visible',
+    },
+    swipeReplyAction: {
+      position: 'absolute',
+      left: 12,
+      top: 0,
+      bottom: 0,
+      width: 40,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    swipeReplyActionIcon: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.18 : 0.1),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, isDark ? 0.34 : 0.2),
+    },
     messageRowSpotlight: {
       position: 'absolute',
       top: -8,
@@ -2240,6 +2285,9 @@ export const createChatScreenStyles = (
     theirMessageContainer: {
       justifyContent: 'flex-start',
     },
+    centeredMessageContainer: {
+      justifyContent: 'center',
+    },
     messageAvatar: {
       width: 28,
       height: 28,
@@ -2253,6 +2301,13 @@ export const createChatScreenStyles = (
       alignSelf: 'flex-end',
       height: 28,
     },
+    centeredMediaAvatar: {
+      position: 'absolute',
+      left: 0,
+      bottom: 0,
+      zIndex: 2,
+      marginRight: 0,
+    },
     messageBubble: {
       maxWidth: screenWidth * 0.76,
       paddingHorizontal: 14,
@@ -2260,6 +2315,11 @@ export const createChatScreenStyles = (
       borderRadius: 18,
       position: 'relative',
       overflow: 'visible',
+    },
+    messageBubbleWithReply: {
+      width: screenWidth * 0.84,
+      maxWidth: screenWidth * 0.84,
+      paddingVertical: 6,
     },
     messageFocusSpotlight: {
       position: 'absolute',
@@ -2368,7 +2428,7 @@ export const createChatScreenStyles = (
     theirMessageBubble: {
       backgroundColor: theme.backgroundSubtle,
       borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
+      borderColor: withAlpha(theme.text, isDark ? 0.15 : 0.09),
     },
     theirMessageBubbleGroupedTop: {
       borderTopLeftRadius: 10,
@@ -2423,6 +2483,19 @@ export const createChatScreenStyles = (
     messageTextHighlightTheir: {
       backgroundColor: withAlpha(theme.tint, isDark ? 0.28 : 0.16),
       color: theme.text,
+    },
+    messageLink: {
+      textDecorationLine: 'underline',
+      textDecorationStyle: 'solid',
+      fontFamily: 'Manrope_600SemiBold',
+    },
+    messageLinkMy: {
+      color: Colors.light.background,
+      textDecorationColor: withAlpha(Colors.light.background, 0.68),
+    },
+    messageLinkTheir: {
+      color: theme.tint,
+      textDecorationColor: withAlpha(theme.tint, 0.56),
     },
     myMessageText: {
       color: Colors.light.background,
@@ -2963,8 +3036,8 @@ export const createChatScreenStyles = (
     // Input Area
     inputContainer: {
       paddingHorizontal: 16,
-      paddingTop: 9,
-      paddingBottom: 12,
+      paddingTop: 6,
+      paddingBottom: 8,
       backgroundColor: theme.background,
       borderTopWidth: 1,
       borderTopColor: withAlpha(theme.text, isDark ? 0.14 : 0.1),
@@ -2972,10 +3045,10 @@ export const createChatScreenStyles = (
     composerShell: {
       flexDirection: 'row',
       alignItems: 'flex-end',
-      gap: 10,
-      paddingHorizontal: 10,
-      paddingVertical: 8,
-      borderRadius: 22,
+      gap: 8,
+      paddingHorizontal: 8,
+      paddingVertical: 5,
+      borderRadius: 20,
       backgroundColor: isDark ? withAlpha(theme.backgroundSubtle, 0.92) : withAlpha('#fffaf5', 0.96),
       borderWidth: 1,
       borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
@@ -3047,10 +3120,10 @@ export const createChatScreenStyles = (
     },
     textInput: {
       flex: 1,
-      minHeight: 40,
+      minHeight: 36,
       paddingHorizontal: 4,
-      paddingTop: 9,
-      paddingBottom: 8,
+      paddingTop: 7,
+      paddingBottom: 6,
       fontSize: 15.5,
       fontFamily: 'Manrope_400Regular',
       color: theme.text,
@@ -3199,6 +3272,9 @@ export const createChatScreenStyles = (
     },
 
     // Image Messages
+    mediaMessageBubble: {
+      maxWidth: screenWidth * CHAT_MEDIA_BUBBLE_WIDTH_RATIO,
+    },
     imageBubble: {
       padding: 4,
       backgroundColor: 'transparent',
@@ -3218,7 +3294,7 @@ export const createChatScreenStyles = (
       elevation: 2,
     },
     messageImage: {
-      width: Math.min(screenWidth * 0.72, 340),
+      width: Math.min(screenWidth * CHAT_MEDIA_FRAME_WIDTH_RATIO, CHAT_MEDIA_FRAME_MAX_WIDTH),
       height: Math.min(screenWidth * 0.9, 420),
       borderRadius: 14,
       backgroundColor: theme.backgroundSubtle,
@@ -3263,7 +3339,7 @@ export const createChatScreenStyles = (
       fontFamily: 'Manrope_500Medium',
     },
     messageVideo: {
-      width: Math.min(screenWidth * 0.72, 340),
+      width: Math.min(screenWidth * CHAT_MEDIA_FRAME_WIDTH_RATIO, CHAT_MEDIA_FRAME_MAX_WIDTH),
       height: Math.min(screenWidth * 0.9, 420),
       borderRadius: 14,
       backgroundColor: theme.backgroundSubtle,
@@ -3882,18 +3958,17 @@ export const createChatScreenStyles = (
     replyChip: {
       flexDirection: 'row',
       alignItems: 'flex-start',
-      gap: 10,
-      minWidth: 158,
+      gap: 8,
       maxWidth: '100%',
-      paddingHorizontal: 12,
-      paddingVertical: 10,
-      borderRadius: 18,
-      marginBottom: 10,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 13,
+      marginBottom: 6,
       borderWidth: 1,
-      shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: 0.08,
-      shadowRadius: 12,
-      elevation: 2,
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.035,
+      shadowRadius: 6,
+      elevation: 0,
     },
     replyChipMy: {
       backgroundColor: withAlpha(Colors.light.background, 0.13),
@@ -3907,13 +3982,13 @@ export const createChatScreenStyles = (
     },
     replyChipLine: {
       width: 3,
-      minHeight: 42,
+      minHeight: 34,
       borderRadius: 999,
     },
     replyChipThumb: {
-      width: 46,
-      height: 46,
-      borderRadius: 14,
+      width: 36,
+      height: 36,
+      borderRadius: 10,
       overflow: 'hidden',
       borderWidth: 1,
       position: 'relative',
@@ -3965,49 +4040,26 @@ export const createChatScreenStyles = (
     },
     replyChipContent: {
       flex: 1,
-      gap: 4,
+      gap: 2,
     },
     replyChipHeader: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 6,
-    },
-    replyChipIconWrap: {
-      width: 20,
-      height: 20,
-      borderRadius: 10,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    replyChipIconWrapMy: {
-      backgroundColor: withAlpha(Colors.light.background, 0.18),
-    },
-    replyChipIconWrapTheir: {
-      backgroundColor: withAlpha(theme.tint, isDark ? 0.14 : 0.08),
     },
     replyChipLabel: {
       flexShrink: 1,
-      fontSize: 10,
-      fontFamily: 'Manrope_600SemiBold',
+      fontSize: 11.5,
+      lineHeight: 15,
+      fontFamily: 'Manrope_700Bold',
       color: theme.textMuted,
-      textTransform: 'uppercase',
-      letterSpacing: 0.6,
+      letterSpacing: 0.1,
     },
     replyChipLabelMy: {
       color: withAlpha(Colors.light.background, 0.76),
     },
-    replyChipTime: {
-      marginLeft: 'auto',
-      fontSize: 9,
-      fontFamily: 'Manrope_500Medium',
-      color: withAlpha(theme.textMuted, 0.86),
-    },
-    replyChipTimeMy: {
-      color: withAlpha(Colors.light.background, 0.62),
-    },
     replyChipPreview: {
-      fontSize: 13,
-      lineHeight: 18,
+      fontSize: 13.5,
+      lineHeight: 19,
       fontFamily: 'Manrope_500Medium',
       color: theme.text,
     },
@@ -4107,20 +4159,20 @@ export const createChatScreenStyles = (
     // Enhanced Input Area
     inputLeftActions: {
       flexDirection: 'row',
-      gap: 8,
+      gap: 6,
       alignItems: 'flex-end',
       paddingBottom: 1,
     },
     inputRightActions: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 8,
+      gap: 6,
       paddingBottom: 1,
     },
     inputActionButton: {
-      width: 34,
-      height: 34,
-      borderRadius: 17,
+      width: 32,
+      height: 32,
+      borderRadius: 16,
       backgroundColor: isDark ? withAlpha(theme.background, 0.48) : withAlpha(theme.background, 0.86),
       borderWidth: 1,
       borderColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
@@ -4152,9 +4204,9 @@ export const createChatScreenStyles = (
 
     // Voice Recording
     voiceButton: {
-      width: 42,
-      height: 42,
-      borderRadius: 21,
+      width: 38,
+      height: 38,
+      borderRadius: 19,
       backgroundColor: theme.tint,
       justifyContent: 'center',
       alignItems: 'center',
@@ -4263,7 +4315,7 @@ export const createChatScreenStyles = (
       paddingTop: 12,
       paddingBottom: Math.max(bottomInset + 12, 24),
       gap: 12,
-      maxHeight: attachmentSheetHeight,
+      height: attachmentSheetHeight,
       position: 'absolute',
       left: 0,
       right: 0,
@@ -4296,6 +4348,11 @@ export const createChatScreenStyles = (
       alignItems: 'center',
       justifyContent: 'space-between',
     },
+    imagePickerHeaderActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
     imagePickerTitle: {
       fontSize: 16,
       fontFamily: 'Archivo_700Bold',
@@ -4311,81 +4368,82 @@ export const createChatScreenStyles = (
       alignItems: 'center',
       justifyContent: 'center',
     },
-    viewOnceAttachmentRow: {
+    imageQualityButton: {
+      minWidth: 42,
+      height: 30,
+      paddingHorizontal: 9,
+      borderRadius: 15,
       flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'space-between',
-      paddingVertical: 10,
-      paddingHorizontal: 10,
-      borderRadius: 12,
+      justifyContent: 'center',
+      gap: 4,
+      backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.34)',
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,61,62,0.08)',
+    },
+    imageQualityButtonActive: {
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.2 : 0.1),
+      borderColor: withAlpha(theme.tint, isDark ? 0.54 : 0.36),
+    },
+    imageQualityButtonText: {
+      fontSize: 11,
+      fontFamily: 'Manrope_800ExtraBold',
+      color: theme.textMuted,
+      letterSpacing: 0.25,
+    },
+    imageQualityButtonTextActive: {
+      color: theme.tint,
+    },
+    viewOnceAttachmentChip: {
+      alignSelf: 'flex-start',
+      minHeight: 36,
+      paddingHorizontal: 12,
+      paddingVertical: 7,
+      borderRadius: 18,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 7,
       borderWidth: 1,
       borderColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
       backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.28)',
     },
-    viewOnceAttachmentRowActive: {
+    viewOnceAttachmentChipActive: {
       borderColor: withAlpha(theme.tint, 0.4),
       backgroundColor: isDark ? withAlpha(theme.tint, 0.18) : 'rgba(232,249,246,0.7)',
     },
-    viewOnceAttachmentLeft: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 10,
-    },
-    viewOnceAttachmentIcon: {
-      width: 32,
-      height: 32,
-      borderRadius: 16,
-      backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.38)',
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    viewOnceAttachmentIconActive: {
-      backgroundColor: theme.tint,
-    },
-    viewOnceAttachmentTitle: {
+    viewOnceAttachmentChipText: {
       fontSize: 12,
-      fontFamily: 'Manrope_600SemiBold',
+      fontFamily: 'Manrope_700Bold',
       color: theme.text,
     },
-    viewOnceAttachmentSubtitle: {
-      fontSize: 10,
-      fontFamily: 'Manrope_400Regular',
-      color: theme.textMuted,
-    },
-    viewOnceAttachmentToggle: {
-      width: 32,
-      height: 32,
-      borderRadius: 16,
-      backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.38)',
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    viewOnceAttachmentToggleActive: {
-      backgroundColor: theme.tint,
+    viewOnceAttachmentChipTextActive: {
+      color: theme.tint,
     },
     imagePickerGrid: {
       flexDirection: 'row',
-      flexWrap: 'wrap',
-      justifyContent: 'space-between',
-      gap: 12,
+      justifyContent: 'space-around',
+      alignItems: 'flex-start',
+      gap: 6,
+    },
+    imagePickerOptionMotion: {
+      width: '23%',
     },
     imagePickerOption: {
-      width: '48%',
-      paddingVertical: 12,
-      paddingHorizontal: 10,
-      borderRadius: 14,
-      borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
-      backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.32)',
+      width: '100%',
+      minHeight: 76,
+      paddingVertical: 5,
+      alignItems: 'center',
     },
     imagePickerIcon: {
-      width: 36,
-      height: 36,
-      borderRadius: 18,
+      width: 48,
+      height: 48,
+      borderRadius: 24,
       backgroundColor: withAlpha(theme.tint, isDark ? 0.16 : 0.12),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, isDark ? 0.22 : 0.12),
       alignItems: 'center',
       justifyContent: 'center',
-      marginBottom: 6,
+      marginBottom: 7,
     },
     viewOnceMediaBadge: {
       position: 'absolute',
@@ -4405,17 +4463,11 @@ export const createChatScreenStyles = (
       color: Colors.light.background,
     },
     imagePickerLabel: {
-      fontSize: 13,
-      fontFamily: 'Manrope_600SemiBold',
+      fontSize: 11.5,
+      fontFamily: 'Manrope_700Bold',
       color: theme.text,
+      textAlign: 'center',
     },
-    imagePickerSubLabel: {
-      fontSize: 11,
-      fontFamily: 'Manrope_400Regular',
-      color: theme.textMuted,
-      marginTop: 2,
-    },
-
     // Reconnect toast
     reconnectToastHost: {
       position: 'absolute',

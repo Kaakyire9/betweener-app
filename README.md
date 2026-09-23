@@ -32,6 +32,9 @@ npm install
 ```bash
 EXPO_PUBLIC_SUPABASE_URL=your_supabase_url
 EXPO_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+EXPO_PUBLIC_GIPHY_IOS_API_KEY=your_ios_giphy_api_key # optional; enables moderated chat GIF search
+EXPO_PUBLIC_GIPHY_ANDROID_API_KEY=your_android_giphy_api_key
+EXPO_PUBLIC_GIPHY_WEB_API_KEY=your_web_giphy_api_key
 ```
 
 3. Start Expo

@@ -124,6 +124,77 @@ describe("Chat message variant interactions", () => {
     expect(onRetryFailedMessage).not.toHaveBeenCalled();
   });
 
+  it("keeps provider outages retryable without policy-violation copy", async () => {
+    const item = {
+      id: "provider-unavailable-image",
+      clientMessageId: "provider-unavailable-image",
+      text: "",
+      senderId: "me",
+      timestamp: new Date("2026-09-20T12:00:00.000Z"),
+      type: "image",
+      imageUrl: "file:///retryable-image.jpg",
+      status: "failed",
+      sendErrorCode: "image_moderation_unavailable",
+      reactions: [],
+    };
+
+    const screen = await render(
+      <MediaMessageContent
+        item={item}
+        isMyMessage
+        timeLabel="12:00"
+        styles={styles}
+        theme={Colors.light}
+        isDark={false}
+        receiptPulseStyle={{}}
+        onRetryFailedMessage={jest.fn()}
+      />
+    );
+
+    expect(screen.getByText("Couldn’t check this photo · Try again")).toBeTruthy();
+    expect(screen.getByText("Something interrupted the safety check. Try again.")).toBeTruthy();
+    expect(screen.queryByText(/doesn’t meet Betweener’s media guidelines/i)).toBeNull();
+  });
+
+  it("renders a picker-local preview while media is being prepared", async () => {
+    const item = {
+      id: "preparing-image",
+      clientMessageId: "preparing-image",
+      text: "",
+      senderId: "me",
+      timestamp: new Date("2026-09-22T12:00:00.000Z"),
+      type: "image",
+      imageUrl: "file:///picker-image.jpg",
+      offlineImageUri: "file:///picker-image.jpg",
+      status: "sending",
+      mediaItems: [{
+        attachmentId: "attachment-preparing",
+        index: 0,
+        type: "image",
+        storagePath: "",
+        localUri: "file:///picker-image.jpg",
+        transferState: "preparing",
+        uploadProgress: 0,
+      }],
+      reactions: [],
+    };
+
+    const screen = await render(
+      <MediaMessageContent
+        item={item}
+        isMyMessage
+        timeLabel="12:00"
+        styles={styles}
+        theme={Colors.light}
+        isDark={false}
+        receiptPulseStyle={{}}
+      />
+    );
+
+    expect(screen.getByText("Preparing...")).toBeTruthy();
+    expect(screen.getByLabelText("Open photo")).toBeTruthy();
+  });
+
   it("renders album progress and opens or manages the hidden +N item by stable index", async () => {
     const onViewImage = jest.fn();
     const onManageAlbumItem = jest.fn();

@@ -41,6 +41,36 @@ export const Colors = {
   },
 };
 
+/** Static three-layer treatment for the private chat canvas. */
+export const ChatWallpaper = {
+  dark: {
+    foundation: Colors.dark.background,
+    symbolOpacity: 0.2975,
+    atmosphereOpacity: 1,
+    atmosphere: [
+      'rgba(0, 128, 128, 0.025)',
+      'rgba(8, 22, 23, 0.02)',
+      'rgba(112, 76, 145, 0.025)',
+    ] as const,
+  },
+  light: {
+    foundation: Colors.light.background,
+    symbolOpacity: 0.259,
+    atmosphereOpacity: 1,
+    atmosphere: [
+      'rgba(255, 253, 249, 0.09)',
+      'rgba(0, 128, 128, 0.012)',
+      'rgba(112, 76, 145, 0.018)',
+    ] as const,
+  },
+  intensityMultipliers: {
+    subtle: 0.76,
+    balanced: 1,
+    rich: 1.16,
+  },
+  geometryId: 'betweener-initial-wallpaper-v1',
+} as const;
+
 export const Fonts = Platform.select({
   ios: {
     /** iOS `UIFontDescriptorSystemDesignDefault` */

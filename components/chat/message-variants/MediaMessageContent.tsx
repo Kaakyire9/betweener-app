@@ -13,7 +13,9 @@ import type { ChatMediaAccessFailure } from "@/lib/chat/media/chat-media-access"
 import {
   getChatAttachmentFailurePresentation,
   getChatAttachmentRetryLabel,
+  isChatMediaProviderUnavailable,
 } from "@/lib/chat/attachments/chat-attachment-error";
+import { getChatAlbumSendStage } from '@/lib/chat/album/chat-media-album';
 
 type MediaMessageContentProps = {
   item: MessageType;
@@ -70,6 +72,8 @@ const MediaMessageContent = memo(
       isMyMessage && item.status === 'queued' && item.sendErrorCode
         ? getChatAttachmentRetryLabel(item.sendErrorCode)
         : null;
+    const providerUnavailable = isMyMessage && item.status === 'failed' &&
+      isChatMediaProviderUnavailable(item.sendErrorCode);
     const reportLoadedImage = (
       message: MessageType,
       renderedUri: string,
@@ -101,17 +105,28 @@ const MediaMessageContent = memo(
       item.type === 'video'
         ? resolveChatVideoUri(item, cachedVideoUrl)
         : null;
+    const albumSendStage = getChatAlbumSendStage(item.mediaItems ?? []);
+    const activeSendLabel = albumSendStage?.kind === 'preparing'
+      ? 'Preparing...'
+      : albumSendStage?.kind === 'checking_safety'
+        ? 'Checking safety...'
+        : albumSendStage?.kind === 'uploading'
+          ? `Uploading ${Math.round(albumSendStage.progress * 100)}%`
+          : 'Sending...';
     const deliveryLabel =
       isMyMessage && item.status === 'queued'
         ? attachmentRetryLabel ?? 'Waiting to send'
         : isMyMessage && item.status === 'sending'
-          ? 'Sending…'
+          ? activeSendLabel
         : attachmentFailure
           ? attachmentFailure.retryable
             ? 'Couldn’t send · Tap to retry'
             : 'Not sent · Choose another'
           : null;
-    const deliveryBadge = deliveryLabel ? (
+    const resolvedDeliveryLabel = providerUnavailable
+      ? 'Couldn’t check this photo · Try again'
+      : deliveryLabel;
+    const deliveryBadge = resolvedDeliveryLabel ? (
       <View
         style={[
           deliveryStyles.badge,
@@ -124,13 +139,17 @@ const MediaMessageContent = memo(
             item.status === 'failed'
               ? 'alert-circle-outline'
               : item.status === 'sending'
-                ? 'cloud-upload-outline'
+                ? albumSendStage?.kind === 'preparing'
+                  ? 'clock-outline'
+                  : albumSendStage?.kind === 'checking_safety'
+                    ? 'shield-check-outline'
+                    : 'cloud-upload-outline'
                 : 'clock-outline'
           }
           size={13}
           color="#FFFFFF"
         />
-        <Text style={deliveryStyles.label}>{deliveryLabel}</Text>
+        <Text style={deliveryStyles.label}>{resolvedDeliveryLabel}</Text>
       </View>
     ) : null;
     const mediaReceiptToneStyle = useMemo(() => {
