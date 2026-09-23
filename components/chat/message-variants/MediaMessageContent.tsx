@@ -16,6 +16,7 @@ import {
   isChatMediaProviderUnavailable,
 } from "@/lib/chat/attachments/chat-attachment-error";
 import { getChatAlbumSendStage } from '@/lib/chat/album/chat-media-album';
+import { isTransparentChatExpression } from '@/lib/chat/expressions/chat-expression-presentation';
 
 type MediaMessageContentProps = {
   item: MessageType;
@@ -185,6 +186,7 @@ const MediaMessageContent = memo(
           : undefined);
       const visibleItems = mediaItems.slice(0, 4);
       const isAlbum = mediaItems.length > 1;
+      const transparentExpression = isTransparentChatExpression(item.mediaKind);
       const frameWidth = imageSize?.width ?? 340;
       const frameHeight = isAlbum ? Math.round(frameWidth * 0.86) : (imageSize?.height ?? 340);
       const resolveTileUri = (mediaItem: (typeof mediaItems)[number], tileIndex: number) => {
@@ -353,7 +355,14 @@ const MediaMessageContent = memo(
         );
       };
       return (
-        <View style={[styles.imageMessageContainer, styles.mediaSurface, { width: frameWidth }]}>
+        <View
+          style={[
+            styles.imageMessageContainer,
+            styles.mediaSurface,
+            transparentExpression && expressionStyles.transparentSurface,
+            { width: frameWidth },
+          ]}
+        >
           {isAlbum ? (
             <View style={[albumStyles.album, { height: frameHeight }]}>
               {visibleItems.length === 2 ? (
@@ -390,7 +399,7 @@ const MediaMessageContent = memo(
                   }}
                   style={StyleSheet.absoluteFill}
                   cachePolicy="memory-disk"
-                  contentFit="cover"
+                  contentFit={transparentExpression ? 'contain' : 'cover'}
                   transition={100}
                   onLoad={() => reportLoadedImage(
                     {
@@ -585,6 +594,16 @@ const MediaMessageContent = memo(
 MediaMessageContent.displayName = "MediaMessageContent";
 
 export default MediaMessageContent;
+
+const expressionStyles = StyleSheet.create({
+  transparentSurface: {
+    backgroundColor: 'transparent',
+    borderWidth: 0,
+    shadowOpacity: 0,
+    elevation: 0,
+    overflow: 'visible',
+  },
+});
 
 const deliveryStyles = StyleSheet.create({
   badge: {

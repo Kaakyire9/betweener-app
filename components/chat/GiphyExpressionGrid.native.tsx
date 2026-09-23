@@ -41,8 +41,19 @@ const configureSdk = (sdk: GiphySdkModule | null, apiKey: string) => {
   return true;
 };
 
-const mapSelectedMedia = (media: GiphyMedia, fallbackTitle: string) => {
-  const parsed = parseChatGifProviderResult(media.data);
+const MEDIA_KIND_BY_MODE = {
+  gifs: 'giphy_gif',
+  stickers: 'giphy_sticker',
+  emoji: 'giphy_emoji',
+  'animated-text': 'giphy_text',
+} as const;
+
+const mapSelectedMedia = (
+  media: GiphyMedia,
+  fallbackTitle: string,
+  mode: GiphyExpressionGridProps['mode'],
+) => {
+  const parsed = parseChatGifProviderResult(media.data, MEDIA_KIND_BY_MODE[mode]);
   if (!parsed) return null;
   return {
     ...parsed,
@@ -89,6 +100,18 @@ export default function GiphyExpressionGrid({
         ? sdk.GiphyContent.animate({ searchQuery: settledQuery, rating: sdk.GiphyRating.G })
         : undefined;
     }
+    if (mode === 'emoji') {
+      return sdk.GiphyContent.emoji({ rating: sdk.GiphyRating.G });
+    }
+    if (mode === 'stickers') {
+      return settledQuery
+        ? sdk.GiphyContent.search({
+          searchQuery: settledQuery,
+          mediaType: sdk.GiphyMediaType.Sticker,
+          rating: sdk.GiphyRating.G,
+        })
+        : sdk.GiphyContent.trendingStickers({ rating: sdk.GiphyRating.G });
+    }
     return settledQuery
       ? sdk.GiphyContent.search({
         searchQuery: settledQuery,
@@ -110,14 +133,14 @@ export default function GiphyExpressionGrid({
   }), [isDark, textColor, tint]);
 
   const selectMedia = useCallback((event: NativeSyntheticEvent<{ media: GiphyMedia }>) => {
-    const gif = mapSelectedMedia(event.nativeEvent.media, settledQuery || 'Animated reaction');
+    const gif = mapSelectedMedia(event.nativeEvent.media, settledQuery || 'Animated reaction', mode);
     if (!gif) {
       setSelectionError(true);
       return;
     }
     setSelectionError(false);
     onSelect(gif);
-  }, [onSelect, settledQuery]);
+  }, [mode, onSelect, settledQuery]);
 
   if (!configured || !sdk) {
     return (
@@ -159,8 +182,8 @@ export default function GiphyExpressionGrid({
           onContentUpdate={(event) => setHasResults(event.nativeEvent.resultCount > 0)}
           onMediaSelect={selectMedia}
           renditionType="fixed_width"
-          showCheckeredBackground={mode === 'animated-text'}
-          spanCount={2}
+          showCheckeredBackground={false}
+          spanCount={mode === 'emoji' ? 3 : 2}
           style={styles.grid}
           theme={sdkTheme}
         />

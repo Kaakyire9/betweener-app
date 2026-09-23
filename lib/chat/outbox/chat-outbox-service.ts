@@ -1279,6 +1279,7 @@ const sendMediaOutboxItem = async (item: ChatPendingOutboxRow, payload: MediaOut
       clientMessageId,
       attachmentType: files.length > 1 ? finalizedAttachments[0].attachmentType : payload.mediaType,
       mediaGroupId: payload.mediaGroupId ?? (files.length > 1 ? clientMessageId.replace(/^temp-(?:image|video|album)-/, '') : null),
+      ...(payload.mediaKind ? { mediaKind: payload.mediaKind } : {}),
       caption: payload.mediaType === 'document'
         ? `${DOCUMENT_TEXT_PREFIX} ${[
             payload.documentName || payload.fileName,

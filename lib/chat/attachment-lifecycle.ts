@@ -48,6 +48,7 @@ export type ChatAttachmentBatchFinalizeInput = {
   replyToMessageId?: string | null;
   attachments: ChatAttachmentFinalizeInput[];
   mediaGroupId?: string | null;
+  mediaKind?: 'giphy_gif' | 'giphy_sticker' | 'giphy_emoji' | 'giphy_text' | null;
 };
 
 export type ChatImageModerationPreflightInput = {

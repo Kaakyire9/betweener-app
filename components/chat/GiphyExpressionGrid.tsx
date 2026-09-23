@@ -45,12 +45,17 @@ export default function GiphyExpressionGrid({
   }, [mode, reveal]);
 
   useEffect(() => {
-    if (mode === 'animated-text') return;
+    if (mode === 'animated-text' || mode === 'emoji') return;
     const controller = new AbortController();
     const timer = setTimeout(() => {
       setLoading(true);
       setFailed(false);
-      void fetchChatGifs({ query, signal: controller.signal, platform: 'web' })
+      void fetchChatGifs({
+        query,
+        signal: controller.signal,
+        platform: 'web',
+        kind: mode === 'stickers' ? 'giphy_sticker' : 'giphy_gif',
+      })
         .then(setResults)
         .catch((error) => {
           if ((error as Error)?.name !== 'AbortError') setFailed(true);
@@ -65,10 +70,10 @@ export default function GiphyExpressionGrid({
     };
   }, [mode, query]);
 
-  if (mode === 'animated-text') {
+  if (mode === 'animated-text' || mode === 'emoji') {
     return (
       <View style={styles.state}>
-        <Text style={[styles.stateTitle, { color: textColor }]}>Animated text is mobile-first</Text>
+        <Text style={[styles.stateTitle, { color: textColor }]}>Animated expressions are mobile-first</Text>
         <Text style={[styles.stateCopy, { color: mutedTextColor }]}>
           Open Betweener on iOS or Android to turn your words into animated reactions.
         </Text>
@@ -118,7 +123,7 @@ export default function GiphyExpressionGrid({
               <ExpoImage
                 source={{ uri: gif.previewUrl }}
                 style={styles.image}
-                contentFit="cover"
+                contentFit={mode === 'stickers' ? 'contain' : 'cover'}
                 cachePolicy="memory-disk"
                 transition={140}
                 autoplay

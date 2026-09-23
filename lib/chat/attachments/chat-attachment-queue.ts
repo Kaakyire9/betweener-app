@@ -214,6 +214,7 @@ export const createQueuedMediaOutboxRow = ({
       fileName: file.fileName,
       contentType: file.contentType,
       mediaType,
+      ...(message.mediaKind ? { mediaKind: message.mediaKind } : {}),
       ...(mediaGroupId ? { mediaGroupId } : {}),
       ...(albumCaption ? { albumCaption } : {}),
       ...(durableMediaItems?.length ? { compositionRevision: 0 } : {}),

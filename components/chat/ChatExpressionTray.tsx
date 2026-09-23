@@ -40,6 +40,8 @@ import { MOOD_STICKERS } from '@/lib/chat-stickers';
 import { withAlpha } from '@/lib/chat/ui/color-utils';
 
 type ExpressionTab = 'emoji' | 'stickers' | 'gifs';
+type EmojiSource = 'classic' | 'animated';
+type StickerSource = 'betweener' | 'animated';
 type Theme = typeof Colors.light;
 
 type Props = {
@@ -85,6 +87,8 @@ export default function ChatExpressionTray({
   const [mounted, setMounted] = useState(visible);
   const [activeTab, setActiveTab] = useState<ExpressionTab>('stickers');
   const [giphyMode, setGiphyMode] = useState<GiphyExpressionMode>('gifs');
+  const [emojiSource, setEmojiSource] = useState<EmojiSource>('classic');
+  const [stickerSource, setStickerSource] = useState<StickerSource>('animated');
   const [query, setQuery] = useState('');
   const [selectedEmojiGroupId, setSelectedEmojiGroupId] = useState('smileys');
   const [preferences, setPreferences] = useState<ChatExpressionPreferences>(
@@ -99,6 +103,16 @@ export default function ChatExpressionTray({
   const availableTabs = gifProviderConfigured
     ? TABS
     : TABS.filter((tab) => tab.id !== 'gifs');
+  const providerMode: GiphyExpressionMode = activeTab === 'emoji'
+    ? 'emoji'
+    : activeTab === 'stickers'
+      ? 'stickers'
+      : giphyMode;
+  const showProviderGrid = gifProviderConfigured && (
+    activeTab === 'gifs'
+    || (activeTab === 'emoji' && emojiSource === 'animated')
+    || (activeTab === 'stickers' && stickerSource === 'animated')
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -264,7 +278,11 @@ export default function ChatExpressionTray({
           onChangeText={setQuery}
           placeholder={activeTab === 'gifs'
             ? giphyMode === 'animated-text' ? 'Type words to animate' : 'Search GIFs'
-            : `Search ${activeTab}`}
+            : activeTab === 'stickers' && gifProviderConfigured && stickerSource === 'animated'
+              ? 'Search animated stickers'
+              : activeTab === 'emoji' && gifProviderConfigured && emojiSource === 'animated'
+                ? 'Search animated emoji'
+                : `Search ${activeTab}`}
           placeholderTextColor={withAlpha(theme.textMuted, 0.72)}
           style={styles.searchInput}
           autoCapitalize="none"
@@ -278,23 +296,40 @@ export default function ChatExpressionTray({
         ) : null}
       </View>
 
-      {activeTab === 'gifs' && gifProviderConfigured ? (
+      {gifProviderConfigured ? (
         <View style={styles.giphyModes} accessibilityRole="tablist">
-          {([
-            { id: 'gifs', label: 'GIFs', icon: 'file-gif-box' },
-            { id: 'animated-text', label: 'Animated text', icon: 'format-letter-case' },
-          ] as const).map((mode) => {
-            const selected = giphyMode === mode.id;
+          {(activeTab === 'emoji'
+            ? ([
+                { id: 'classic', label: 'Classic', icon: 'emoticon-happy-outline' },
+                { id: 'animated', label: 'Animated', icon: 'motion-play-outline' },
+              ] as const)
+            : activeTab === 'stickers'
+              ? ([
+                  { id: 'betweener', label: 'Betweener', icon: 'creation' },
+                  { id: 'animated', label: 'Animated', icon: 'motion-play-outline' },
+                ] as const)
+              : ([
+                  { id: 'gifs', label: 'GIFs', icon: 'file-gif-box' },
+                  { id: 'animated-text', label: 'Animated text', icon: 'format-letter-case' },
+                ] as const)
+          ).map((mode) => {
+            const selected = activeTab === 'emoji'
+              ? emojiSource === mode.id
+              : activeTab === 'stickers'
+                ? stickerSource === mode.id
+                : giphyMode === mode.id;
             return (
               <Pressable
                 key={mode.id}
-                testID={`chat-expression-giphy-mode-${mode.id}`}
+                testID={`chat-expression-mode-${activeTab}-${mode.id}`}
                 accessibilityRole="tab"
                 accessibilityState={{ selected }}
                 style={[styles.giphyMode, selected && styles.giphyModeSelected]}
                 onPress={() => {
                   Haptics.selectionAsync().catch(() => {});
-                  setGiphyMode(mode.id);
+                  if (activeTab === 'emoji') setEmojiSource(mode.id as EmojiSource);
+                  else if (activeTab === 'stickers') setStickerSource(mode.id as StickerSource);
+                  else setGiphyMode(mode.id as GiphyExpressionMode);
                 }}
               >
                 <MaterialCommunityIcons
@@ -311,7 +346,18 @@ export default function ChatExpressionTray({
         </View>
       ) : null}
 
-      {activeTab === 'emoji' ? (
+      {showProviderGrid ? (
+        <GiphyExpressionGrid
+          apiKey={gifApiKey}
+          query={query}
+          mode={providerMode}
+          isDark={isDark}
+          tint={theme.tint}
+          textColor={theme.text}
+          mutedTextColor={theme.textMuted}
+          onSelect={onSendGif}
+        />
+      ) : activeTab === 'emoji' ? (
         <View style={styles.flex}>
           <ScrollView
             horizontal
@@ -414,18 +460,7 @@ export default function ChatExpressionTray({
             Stickers and emoji are ready now. GIFs will appear here when the curated catalogue is available.
           </Text>
         </View>
-      ) : (
-        <GiphyExpressionGrid
-          apiKey={gifApiKey}
-          query={query}
-          mode={giphyMode}
-          isDark={isDark}
-          tint={theme.tint}
-          textColor={theme.text}
-          mutedTextColor={theme.textMuted}
-          onSelect={onSendGif}
-        />
-      )}
+      ) : null}
     </Animated.View>
   );
 }

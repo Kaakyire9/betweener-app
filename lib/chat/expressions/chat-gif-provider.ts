@@ -1,5 +1,7 @@
 import { CHAT_ATTACHMENT_LIMITS } from '../attachment-policy.ts';
 
+export type ChatExpressionMediaKind = 'giphy_gif' | 'giphy_sticker' | 'giphy_emoji' | 'giphy_text';
+
 export type ChatGifResult = {
   id: string;
   title: string;
@@ -8,6 +10,7 @@ export type ChatGifResult = {
   width: number | null;
   height: number | null;
   byteSize: number | null;
+  kind: ChatExpressionMediaKind;
 };
 
 export type ChatGifPlatform = 'ios' | 'android' | 'web' | 'unknown';
@@ -19,7 +22,7 @@ type GiphyRendition = {
   size?: unknown;
 };
 
-const GIPHY_API_ROOT = 'https://api.giphy.com/v1/gifs';
+const GIPHY_API_ROOT = 'https://api.giphy.com/v1';
 const GIPHY_MEDIA_HOST = /(^|\.)giphy\.com$/iu;
 
 const finiteNumber = (value: unknown) => {
@@ -51,7 +54,10 @@ export const isChatGifProviderConfigured = (platform: ChatGifPlatform = 'unknown
   getChatGifApiKey(platform),
 );
 
-export const parseChatGifProviderResult = (value: unknown): ChatGifResult | null => {
+export const parseChatGifProviderResult = (
+  value: unknown,
+  kind: ChatExpressionMediaKind = 'giphy_gif',
+): ChatGifResult | null => {
   if (!value || typeof value !== 'object') return null;
   const record = value as Record<string, unknown>;
   const images = record.images && typeof record.images === 'object'
@@ -79,6 +85,7 @@ export const parseChatGifProviderResult = (value: unknown): ChatGifResult | null
     width: finiteNumber(original?.width),
     height: finiteNumber(original?.height),
     byteSize,
+    kind,
   };
 };
 
@@ -87,11 +94,13 @@ export const fetchChatGifs = async ({
   signal,
   limit = 24,
   platform = 'unknown',
+  kind = 'giphy_gif',
 }: {
   query: string;
   signal?: AbortSignal;
   limit?: number;
   platform?: ChatGifPlatform;
+  kind?: Extract<ChatExpressionMediaKind, 'giphy_gif' | 'giphy_sticker'>;
 }): Promise<ChatGifResult[]> => {
   const apiKey = getChatGifApiKey(platform);
   if (!apiKey) return [];
@@ -107,10 +116,13 @@ export const fetchChatGifs = async ({
     params.set('q', normalizedQuery);
     params.set('lang', 'en');
   }
-  const response = await fetch(`${GIPHY_API_ROOT}/${endpoint}?${params.toString()}`, { signal });
+  const catalogue = kind === 'giphy_sticker' ? 'stickers' : 'gifs';
+  const response = await fetch(`${GIPHY_API_ROOT}/${catalogue}/${endpoint}?${params.toString()}`, { signal });
   if (!response.ok) throw new Error(`chat_gif_provider_${response.status}`);
   const payload = await response.json() as { data?: unknown };
   return Array.isArray(payload.data)
-    ? payload.data.map(parseChatGifProviderResult).filter((item): item is ChatGifResult => Boolean(item))
+    ? payload.data
+      .map((item) => parseChatGifProviderResult(item, kind))
+      .filter((item): item is ChatGifResult => Boolean(item))
     : [];
 };

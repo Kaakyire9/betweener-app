@@ -9,6 +9,7 @@ import {
   isApprovedChatGifUrl,
   parseChatGifProviderResult,
 } from '../lib/chat/expressions/chat-gif-provider.ts';
+import { getChatExpressionFrame } from '../lib/chat/expressions/chat-expression-presentation.ts';
 import {
   buildStickerPayload,
   MOOD_STICKERS,
@@ -70,7 +71,35 @@ test('maps native GIPHY SDK media data into the existing safe send contract', ()
     width: 500,
     height: 400,
     byteSize: 1200000,
+    kind: 'giphy_gif',
   });
+});
+
+test('preserves expression kind and uses compact premium chat frames', () => {
+  const sticker = parseChatGifProviderResult({
+    id: 'sticker-1',
+    images: {
+      fixed_width_small: { url: 'https://media2.giphy.com/a.gif' },
+      downsized: {
+        url: 'https://media2.giphy.com/b.gif',
+        width: '500',
+        height: '400',
+      },
+    },
+  }, 'giphy_sticker');
+  assert.equal(sticker?.kind, 'giphy_sticker');
+  assert.deepEqual(getChatExpressionFrame({
+    kind: 'giphy_gif',
+    sourceWidth: 500,
+    sourceHeight: 400,
+    availableWidth: 340,
+  }), { width: 260, height: 208 });
+  assert.deepEqual(getChatExpressionFrame({
+    kind: 'giphy_emoji',
+    sourceWidth: 500,
+    sourceHeight: 400,
+    availableWidth: 340,
+  }), { width: 184, height: 147 });
 });
 
 test('every curated sticker has a stable identity and round-trips through the wire payload', () => {

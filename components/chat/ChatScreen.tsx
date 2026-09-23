@@ -131,6 +131,10 @@ import {
   type ChatGifResult,
 } from '@/lib/chat/expressions/chat-gif-provider';
 import {
+  getChatExpressionFrame,
+  parseChatExpressionMediaKind,
+} from '@/lib/chat/expressions/chat-expression-presentation';
+import {
   prepareChatImageForSend,
   type ChatImageSendQuality,
 } from '@/lib/chat/media/chat-image-preparation';
@@ -2150,6 +2154,7 @@ const resolveQueuedVideoUri = async (
         mediaExpectedCount: row.media_expected_count ?? null,
         mediaGroupId: row.media_group_id ?? null,
         mediaCaption: row.media_caption ?? null,
+        mediaKind: parseChatExpressionMediaKind(row.media_kind),
         previewStoragePath: mediaItems[0]?.previewStoragePath ?? null,
         imageUrl,
         videoUrl,
@@ -3624,30 +3629,33 @@ const resolveQueuedVideoUri = async (
     height?: number | null;
     byteSize?: number | null;
     durationMs?: number | null;
-  }[], caption = ''): PreparingMediaBubble | null => {
+  }[], caption = '', mediaKind: MessageType['mediaKind'] = null): PreparingMediaBubble | null => {
     if (!user?.id || items.length === 0) return null;
     const attachmentIds = items.map(() => createChatAttachmentId());
     const mediaGroupId = items.length > 1 ? createChatAttachmentId() : null;
     const clientMessageId = mediaGroupId
       ? `temp-album-${mediaGroupId}`
       : `temp-${items[0].mediaType}-${Date.now()}`;
-    const message = createPreparingMediaMessage({
-      id: clientMessageId,
-      senderId: user.id,
-      caption,
-      mediaGroupId,
-      replyTo: replyingTo || undefined,
-      items: items.map((item, index) => ({
-        attachmentId: attachmentIds[index],
-        type: item.mediaType,
-        localUri: item.localUri,
-        mimeType: item.contentType ?? null,
-        width: item.width ?? null,
-        height: item.height ?? null,
-        byteSize: item.byteSize ?? null,
-        durationMs: item.durationMs ?? null,
-      })),
-    });
+    const message = {
+      ...createPreparingMediaMessage({
+        id: clientMessageId,
+        senderId: user.id,
+        caption,
+        mediaGroupId,
+        replyTo: replyingTo || undefined,
+        items: items.map((item, index) => ({
+          attachmentId: attachmentIds[index],
+          type: item.mediaType,
+          localUri: item.localUri,
+          mimeType: item.contentType ?? null,
+          width: item.width ?? null,
+          height: item.height ?? null,
+          byteSize: item.byteSize ?? null,
+          durationMs: item.durationMs ?? null,
+        })),
+      }),
+      mediaKind,
+    };
     setMessages((current) => appendMessage(current, message));
     setReplyingTo(null);
     setEditingMessage(null);
@@ -3673,6 +3681,7 @@ const resolveQueuedVideoUri = async (
     height,
     durationMs,
     preparingBubble,
+    mediaKind,
   }: {
     localUri: string;
     fileName: string;
@@ -3685,6 +3694,7 @@ const resolveQueuedVideoUri = async (
     height?: number | null;
     durationMs?: number | null;
     preparingBubble?: PreparingMediaBubble | null;
+    mediaKind?: MessageType['mediaKind'];
   }) => {
     if (!user?.id || !conversationId) return;
     const stagedUri = await stageOfflineChatUpload(localUri, fileName);
@@ -3718,6 +3728,7 @@ const resolveQueuedVideoUri = async (
     const optimistic: MessageType = mediaType === 'image' || mediaType === 'video'
       ? {
           ...queuedMessage,
+          mediaKind: mediaKind ?? preparingBubble?.message.mediaKind ?? null,
           mediaItems: [{
             attachmentId,
             index: 0,
@@ -6078,11 +6089,21 @@ const resolveQueuedVideoUri = async (
         showDateSeparator: !prevMessage || !isSameDay(prevMessage.timestamp, item.timestamp),
         timeLabel: formatTime(item.timestamp),
         imageSize: item.type === 'image'
-          ? getStableChatImageFrame(
-              item.mediaItems?.[0]?.width,
-              item.mediaItems?.[0]?.height,
-              Math.min(responsive.width * CHAT_MEDIA_FRAME_WIDTH_RATIO, CHAT_MEDIA_FRAME_MAX_WIDTH),
-            )
+          ? item.mediaKind
+            ? getChatExpressionFrame({
+                kind: item.mediaKind,
+                sourceWidth: item.mediaItems?.[0]?.width,
+                sourceHeight: item.mediaItems?.[0]?.height,
+                availableWidth: Math.min(
+                  responsive.width * CHAT_MEDIA_FRAME_WIDTH_RATIO,
+                  CHAT_MEDIA_FRAME_MAX_WIDTH,
+                ),
+              })
+            : getStableChatImageFrame(
+                item.mediaItems?.[0]?.width,
+                item.mediaItems?.[0]?.height,
+                Math.min(responsive.width * CHAT_MEDIA_FRAME_WIDTH_RATIO, CHAT_MEDIA_FRAME_MAX_WIDTH),
+              )
           : undefined,
         cachedImageUrl:
           item.type === 'image'
@@ -6596,12 +6617,19 @@ const resolveQueuedVideoUri = async (
   }, [peerResolved, activePeerMessageUserId, isBlockedByMe, isChatBlocked, networkReady, replyingTo, user?.id]);
 
   const sendProviderGif = useCallback(async (gif: ChatGifResult) => {
+    const expressionLabel = gif.kind === 'giphy_sticker'
+      ? 'sticker'
+      : gif.kind === 'giphy_emoji'
+        ? 'animated emoji'
+        : gif.kind === 'giphy_text'
+          ? 'animated text'
+          : 'GIF';
     if (isChatBlocked) {
       Alert.alert('Messaging unavailable', isBlockedByMe ? 'Unblock to send messages.' : 'You can\'t message this user.');
       return;
     }
     if (!networkReady) {
-      Alert.alert('Connection required', 'Reconnect to prepare and check this GIF.');
+      Alert.alert('Connection required', `Reconnect to prepare and check this ${expressionLabel}.`);
       return;
     }
     if (mediaUploadStatus) {
@@ -6609,7 +6637,7 @@ const resolveQueuedVideoUri = async (
       return;
     }
     if (!isApprovedChatGifUrl(gif.originalUrl) || !FileSystem.cacheDirectory) {
-      Alert.alert('GIF unavailable', 'This GIF source could not be verified.');
+      Alert.alert('Expression unavailable', `This ${expressionLabel} source could not be verified.`);
       return;
     }
 
@@ -6631,9 +6659,10 @@ const resolveQueuedVideoUri = async (
       const byteSize = info.exists && 'size' in info && typeof info.size === 'number'
         ? info.size
         : gif.byteSize;
+      const providerPrefix = gif.kind.replace('giphy_', '').replace(/[^a-z]/g, '') || 'gif';
       const validationError = validateChatAttachment({
         kind: 'image',
-        fileName: `giphy-${safeId}.gif`,
+        fileName: `giphy-${providerPrefix}-${safeId}.gif`,
         mimeType: 'image/gif',
         sizeBytes: byteSize,
       });
@@ -6646,7 +6675,7 @@ const resolveQueuedVideoUri = async (
         width: gif.width,
         height: gif.height,
         byteSize,
-      }]);
+      }], '', gif.kind);
       updateMediaUploadStatus(
         uploadStatusId,
         'Checking GIF…',
@@ -6655,21 +6684,22 @@ const resolveQueuedVideoUri = async (
       );
       await queueMediaAttachment({
         localUri: temporaryUri,
-        fileName: `giphy-${safeId}.gif`,
+        fileName: `giphy-${providerPrefix}-${safeId}.gif`,
         contentType: 'image/gif',
         mediaType: 'image',
         byteSize,
         width: gif.width,
         height: gif.height,
         preparingBubble,
+        mediaKind: gif.kind,
       });
     } catch (error) {
       discardPreparingMediaBubble(preparingBubble);
       Alert.alert(
-        'GIF not sent',
+        'Expression not sent',
         error instanceof Error && error.message.startsWith('Choose an image')
           ? error.message
-          : 'This GIF could not be prepared safely. Please choose another one.',
+          : `This ${expressionLabel} could not be prepared safely. Please choose another one.`,
       );
     } finally {
       clearMediaUploadStatus(uploadStatusId);

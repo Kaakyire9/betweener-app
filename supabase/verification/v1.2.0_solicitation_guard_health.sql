@@ -22,6 +22,7 @@ with expected(version, purpose) as (values
   ,('20260921122000', 'legacy profile media remediation')
   ,('20260921123000', 'chat media publication provenance')
   ,('20260922100000', 'atomic chat image album rate limit')
+  ,('20260923220000', 'chat expression media presentation')
 )
 select expected.version, expected.purpose, exists (
   select 1 from supabase_migrations.schema_migrations migration
@@ -61,6 +62,8 @@ with expected(name, signature, authenticated_execute, service_execute) as (value
     'public.rpc_service_resolve_profile_media_remediation(uuid,uuid,text,text,text[],text)', false, true),
   ('actor appeal reversal',
     'public.rpc_admin_reverse_content_moderation_event(uuid,text)', true, true)
+  ,('chat expression publication',
+    'public.rpc_finalize_chat_attachment_batch_v4(uuid,uuid,text,text,smallint,jsonb,text,uuid,text,jsonb)', false, true)
 ), resolved as (
   select expected.*, to_regprocedure(expected.signature) as oid from expected
 )
@@ -220,6 +223,9 @@ with boundaries as (
     ) is not null
     and to_regprocedure(
       'public.rpc_admin_reverse_content_moderation_event(uuid,text)'
+    ) is not null
+    and to_regprocedure(
+      'public.rpc_finalize_chat_attachment_batch_v4(uuid,uuid,text,text,smallint,jsonb,text,uuid,text,jsonb)'
     ) is not null
     and to_regclass('public.approved_profile_media_objects') is not null
     and not has_table_privilege(

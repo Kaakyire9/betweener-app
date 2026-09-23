@@ -1,3 +1,5 @@
+import type { ChatExpressionMediaKind } from '@/lib/chat/expressions/chat-gif-provider';
+
 export type DatePlanStatus = 'pending' | 'accepted' | 'declined' | 'cancelled' | 'countered';
 export type DatePlanResponseKind = 'initial' | 'counter_time' | 'counter_place' | 'counter_both';
 
@@ -54,6 +56,8 @@ export type MessageType = {
   mediaGroupId?: string | null;
   /** Captions are message/album scoped. Per-item captions are intentionally unsupported. */
   mediaCaption?: string | null;
+  /** Presentation metadata for provider-backed animated expressions. */
+  mediaKind?: ChatExpressionMediaKind | null;
   reactions: { userId: string; emoji: string; }[];
   status?: 'queued' | 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
   sendErrorCode?: string | null;

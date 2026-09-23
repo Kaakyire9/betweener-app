@@ -8,6 +8,8 @@ module.exports = {
     animate: (options) => request('animate', options),
     search: (options) => request('search', options),
     trendingGifs: (options) => request('trending', options),
+    trendingStickers: (options) => request('trendingStickers', options),
+    emoji: (options) => request('emoji', options),
   },
   GiphyGridView: ({ children, ...props }) => React.createElement(View, props, children),
   GiphyMediaType: { Gif: 'gif', Sticker: 'sticker', Text: 'text', Video: 'video' },

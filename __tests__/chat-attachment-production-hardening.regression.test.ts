@@ -55,6 +55,10 @@ const chatImageAlbumRateLimitMigration = readFileSync(
   'supabase/migrations/20260922100000_chat_image_album_rate_limit.sql',
   'utf8',
 );
+const chatExpressionPresentationMigration = readFileSync(
+  'supabase/migrations/20260923220000_chat_expression_media_presentation.sql',
+  'utf8',
+);
 
 test('finalized attachment objects are immutable to authenticated clients', () => {
   assert.match(migration, /is_chat_attachment_object_mutable/);
@@ -109,6 +113,14 @@ test('finalisation claim and canonical publication share one database transactio
   assert.match(finalizeFunction, /rpc_finalize_chat_attachment_batch_v3/);
   assert.match(finalizeFunction, /rpc_finalize_chat_attachment_v3/);
   assert.match(finalizeFunction, /CHAT_ATTACHMENT_ATOMIC_FINALIZATION_ENABLED/);
+});
+
+test('animated-expression presentation is allowlisted and committed atomically', () => {
+  assert.match(chatExpressionPresentationMigration, /rpc_finalize_chat_attachment_batch_v4/);
+  assert.match(chatExpressionPresentationMigration, /giphy_sticker/);
+  assert.match(chatExpressionPresentationMigration, /set media_kind = p_media_kind/);
+  assert.match(finalizeFunction, /chat_expression_presentation_unavailable/);
+  assert.match(finalizeFunction, /p_media_kind: mediaKind/);
 });
 
 test('duplicate and response-loss retries resolve to one canonical identity', () => {

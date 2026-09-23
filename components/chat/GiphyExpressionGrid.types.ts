@@ -1,6 +1,6 @@
 import type { ChatGifResult } from '@/lib/chat/expressions/chat-gif-provider';
 
-export type GiphyExpressionMode = 'gifs' | 'animated-text';
+export type GiphyExpressionMode = 'gifs' | 'stickers' | 'emoji' | 'animated-text';
 
 export type GiphyExpressionGridProps = {
   apiKey: string;

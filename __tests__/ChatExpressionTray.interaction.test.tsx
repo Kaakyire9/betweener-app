@@ -84,10 +84,36 @@ describe('ChatExpressionTray', () => {
       );
 
       await fireEvent.press(screen.getByTestId('chat-expression-tab-gifs'));
-      await fireEvent.press(screen.getByTestId('chat-expression-giphy-mode-animated-text'));
+      await fireEvent.press(screen.getByTestId('chat-expression-mode-gifs-animated-text'));
 
       expect(screen.getByPlaceholderText('Type words to animate')).toBeTruthy();
       expect(screen.getByText('Animate your words')).toBeTruthy();
+    } finally {
+      if (previous === undefined) delete process.env.EXPO_PUBLIC_GIPHY_IOS_API_KEY;
+      else process.env.EXPO_PUBLIC_GIPHY_IOS_API_KEY = previous;
+    }
+  });
+
+  it('offers animated sticker and emoji catalogues from the native SDK', async () => {
+    const previous = process.env.EXPO_PUBLIC_GIPHY_IOS_API_KEY;
+    process.env.EXPO_PUBLIC_GIPHY_IOS_API_KEY = 'test-ios-sdk-key';
+    try {
+      const screen = await render(
+        <ChatExpressionTray
+          visible
+          theme={Colors.dark}
+          isDark
+          onClose={jest.fn()}
+          onInsertEmoji={jest.fn()}
+          onSendSticker={jest.fn()}
+          onSendGif={jest.fn()}
+        />,
+      );
+
+      expect(screen.getByPlaceholderText('Search animated stickers')).toBeTruthy();
+      await fireEvent.press(screen.getByTestId('chat-expression-tab-emoji'));
+      await fireEvent.press(screen.getByTestId('chat-expression-mode-emoji-animated'));
+      expect(screen.getByPlaceholderText('Search animated emoji')).toBeTruthy();
     } finally {
       if (previous === undefined) delete process.env.EXPO_PUBLIC_GIPHY_IOS_API_KEY;
       else process.env.EXPO_PUBLIC_GIPHY_IOS_API_KEY = previous;

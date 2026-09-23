@@ -1020,6 +1020,7 @@ const isMissingAtomicFinalizationRpc = (error: RpcError | null) =>
       error.code === 'PGRST202' ||
       error.code === '42883' ||
       String(error.message || '').includes('rpc_finalize_chat_attachment_batch_v3') ||
+      String(error.message || '').includes('rpc_finalize_chat_attachment_batch_v4') ||
       String(error.message || '').includes('rpc_finalize_chat_attachment_v3')
     )
   )
@@ -1838,13 +1839,18 @@ serve(async (req) => {
       const clientMessageId = String(input.clientMessageId || '')
       const kind = String(input.attachmentType || '')
       const mediaGroupId = String(input.mediaGroupId || '')
+      const mediaKind = input.mediaKind == null ? null : String(input.mediaKind)
       const attachments = Array.isArray(input.attachments) ? input.attachments : []
       const expectedCount = Number(input.expectedCount || attachments.length)
       const isMediaAlbum = expectedCount > 1 && Boolean(mediaGroupId)
       if (
         !receiverId || !clientMessageId || !['image', 'video', 'document', 'audio'].includes(kind) ||
         expectedCount !== attachments.length || expectedCount < 1 || expectedCount > 10 ||
-        (expectedCount > 1 && !isMediaAlbum)
+        (expectedCount > 1 && !isMediaAlbum) ||
+        (mediaKind !== null && (
+          kind !== 'image' || expectedCount !== 1 ||
+          !['giphy_gif', 'giphy_sticker', 'giphy_emoji', 'giphy_text'].includes(mediaKind)
+        ))
       ) {
         return json(400, { error: 'invalid_attachment_batch' })
       }
@@ -2552,6 +2558,7 @@ serve(async (req) => {
         clientMessageId, attachmentType: isMediaAlbum ? 'album' : kind, mediaGroupId: mediaGroupId || null, expectedCount,
         caption: String(input.caption || ''),
         replyToMessageId: input.replyToMessageId || null,
+        ...(mediaKind ? { mediaKind } : {}),
         // Keep the idempotency payload byte-for-byte compatible with the v2
         // server contract. Verification evidence is authoritative server data
         // and is persisted separately on message_attachments.
@@ -2590,12 +2597,22 @@ serve(async (req) => {
         data = albumResult.data
         error = albumResult.error
       } else if (atomicFinalizationEnabled) {
-        const atomicResult = await service.rpc('rpc_finalize_chat_attachment_batch_v3', {
-          ...batchRpcInput,
-          p_request_payload: batchFinalizationPayload,
-        })
+        const atomicResult = await service.rpc(
+          mediaKind ? 'rpc_finalize_chat_attachment_batch_v4' : 'rpc_finalize_chat_attachment_batch_v3',
+          {
+            ...batchRpcInput,
+            ...(mediaKind ? { p_media_kind: mediaKind } : {}),
+            p_request_payload: batchFinalizationPayload,
+          },
+        )
         data = atomicResult.data
         error = atomicResult.error
+      }
+      if (mediaKind && isMissingAtomicFinalizationRpc(error)) {
+        return await failBatch(503, {
+          error: 'chat_expression_presentation_unavailable',
+          retryable: true,
+        })
       }
       if ((!atomicFinalizationEnabled || isMissingAtomicFinalizationRpc(error)) && !isMediaAlbum) {
         const { error: keyError } = await service.rpc('rpc_claim_chat_attachment_finalization', {
