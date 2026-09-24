@@ -3279,6 +3279,13 @@ export const createChatScreenStyles = (
       padding: 4,
       backgroundColor: 'transparent',
     },
+    expressionBubble: {
+      padding: 0,
+      backgroundColor: 'transparent',
+      borderWidth: 0,
+      shadowOpacity: 0,
+      elevation: 0,
+    },
     imageMessageContainer: {
       borderRadius: 16,
       overflow: 'hidden',

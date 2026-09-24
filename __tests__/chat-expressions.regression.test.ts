@@ -93,13 +93,42 @@ test('preserves expression kind and uses compact premium chat frames', () => {
     sourceWidth: 500,
     sourceHeight: 400,
     availableWidth: 340,
-  }), { width: 260, height: 208 });
+  }), { width: 244, height: 195 });
   assert.deepEqual(getChatExpressionFrame({
     kind: 'giphy_emoji',
     sourceWidth: 500,
     sourceHeight: 400,
     availableWidth: 340,
-  }), { width: 184, height: 147 });
+  }), { width: 136, height: 109 });
+});
+
+test('accepts animated emoji renditions when GIPHY omits the usual GIF sizes', () => {
+  const emoji = parseChatGifProviderResult({
+    id: 'emoji-1',
+    images: {
+      fixed_height_small: {
+        url: 'https://media2.giphy.com/media/emoji-1/100.gif',
+        width: '100',
+        height: '100',
+      },
+      fixed_height: {
+        url: 'https://media2.giphy.com/media/emoji-1/200.gif',
+        width: '200',
+        height: '200',
+      },
+    },
+  }, 'giphy_emoji');
+
+  assert.deepEqual(emoji, {
+    id: 'emoji-1',
+    title: 'GIF',
+    previewUrl: 'https://media2.giphy.com/media/emoji-1/100.gif',
+    originalUrl: 'https://media2.giphy.com/media/emoji-1/200.gif',
+    width: 200,
+    height: 200,
+    byteSize: null,
+    kind: 'giphy_emoji',
+  });
 });
 
 test('every curated sticker has a stable identity and round-trips through the wire payload', () => {

@@ -63,8 +63,30 @@ export const parseChatGifProviderResult = (
   const images = record.images && typeof record.images === 'object'
     ? record.images as Record<string, GiphyRendition>
     : {};
-  const preview = images.fixed_width_small ?? images.fixed_width ?? images.downsized;
-  const original = images.downsized_medium ?? images.downsized ?? images.original;
+  const previewCandidates = [
+    images.fixed_width_small,
+    images.fixed_height_small,
+    images.fixed_width,
+    images.fixed_height,
+    images.downsized,
+    images.downsized_medium,
+    images.original,
+  ];
+  const originalCandidates = [
+    images.downsized_medium,
+    images.downsized,
+    images.original,
+    images.fixed_width,
+    images.fixed_height,
+    images.fixed_width_small,
+    images.fixed_height_small,
+  ];
+  const preview = previewCandidates.find((rendition) => (
+    typeof rendition?.url === 'string' && isApprovedChatGifUrl(rendition.url)
+  ));
+  const original = originalCandidates.find((rendition) => (
+    typeof rendition?.url === 'string' && isApprovedChatGifUrl(rendition.url)
+  ));
   const id = typeof record.id === 'string' ? record.id.trim() : '';
   const previewUrl = typeof preview?.url === 'string' ? preview.url : '';
   const originalUrl = typeof original?.url === 'string' ? original.url : '';

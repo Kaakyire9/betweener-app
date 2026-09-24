@@ -19,6 +19,10 @@ export const isTransparentChatExpression = (kind: unknown) => (
   kind === 'giphy_sticker' || kind === 'giphy_emoji' || kind === 'giphy_text'
 );
 
+export const isChatExpression = (kind: unknown): kind is ChatExpressionMediaKind => (
+  KINDS.has(kind as ChatExpressionMediaKind)
+);
+
 export const getChatExpressionFrame = ({
   kind,
   sourceWidth,
@@ -31,19 +35,19 @@ export const getChatExpressionFrame = ({
   availableWidth: number;
 }) => {
   const maxWidth = Math.min(availableWidth, kind === 'giphy_gif'
-    ? 260
+    ? 244
     : kind === 'giphy_text'
-      ? 238
+      ? 196
       : kind === 'giphy_sticker'
-        ? 210
-        : 184);
+        ? 172
+        : 136);
   const rawRatio = Number(sourceWidth) > 0 && Number(sourceHeight) > 0
     ? Number(sourceWidth) / Number(sourceHeight)
     : 1;
   const ratio = Math.max(0.72, Math.min(rawRatio, 1.65));
   const rawHeight = maxWidth / ratio;
   const maxHeight = kind === 'giphy_gif' ? 260 : maxWidth;
-  const minHeight = kind === 'giphy_gif' ? 138 : Math.min(140, maxWidth);
+  const minHeight = kind === 'giphy_gif' ? 132 : Math.min(96, maxWidth);
   return {
     width: Math.round(maxWidth),
     height: Math.round(Math.max(minHeight, Math.min(rawHeight, maxHeight))),

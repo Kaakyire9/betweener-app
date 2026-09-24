@@ -84,6 +84,8 @@ export default function GiphyExpressionGrid({
   }, [query]);
 
   useEffect(() => {
+    setHasResults(true);
+    setSelectionError(false);
     reveal.setValue(0);
     Animated.timing(reveal, {
       toValue: 1,
@@ -179,7 +181,12 @@ export default function GiphyExpressionGrid({
           content={content}
           cellPadding={4}
           fixedSizeCells={false}
-          onContentUpdate={(event) => setHasResults(event.nativeEvent.resultCount > 0)}
+          onContentUpdate={(event) => {
+            // GIPHY's emoji catalogue can report a transient zero while its
+            // native grid already contains cells. It is not a searchable
+            // result set, so that count must not drive our empty state.
+            if (mode !== 'emoji') setHasResults(event.nativeEvent.resultCount > 0);
+          }}
           onMediaSelect={selectMedia}
           renditionType="fixed_width"
           showCheckeredBackground={false}
@@ -188,14 +195,14 @@ export default function GiphyExpressionGrid({
           theme={sdkTheme}
         />
       ) : null}
-      {!hasResults ? (
+      {mode !== 'emoji' && !hasResults ? (
         <View pointerEvents="none" style={styles.emptyOverlay}>
           <Text style={[styles.stateTitle, { color: textColor }]}>No expressions found</Text>
           <Text style={[styles.stateCopy, { color: mutedTextColor }]}>Try a shorter or more familiar phrase.</Text>
         </View>
       ) : null}
       {selectionError ? (
-        <Text accessibilityLiveRegion="polite" style={[styles.selectionError, { color: mutedTextColor }]}>This GIF format cannot be sent. Choose another.</Text>
+        <Text accessibilityLiveRegion="polite" style={[styles.selectionError, { color: mutedTextColor }]}>This expression cannot be sent. Choose another.</Text>
       ) : null}
       <Text style={[styles.attribution, { color: mutedTextColor }]}>Powered by GIPHY</Text>
     </Animated.View>

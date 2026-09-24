@@ -113,7 +113,8 @@ describe('ChatExpressionTray', () => {
       expect(screen.getByPlaceholderText('Search animated stickers')).toBeTruthy();
       await fireEvent.press(screen.getByTestId('chat-expression-tab-emoji'));
       await fireEvent.press(screen.getByTestId('chat-expression-mode-emoji-animated'));
-      expect(screen.getByPlaceholderText('Search animated emoji')).toBeTruthy();
+      expect(screen.queryByPlaceholderText('Search animated emoji')).toBeNull();
+      expect(screen.queryByTestId('chat-expression-search')).toBeNull();
     } finally {
       if (previous === undefined) delete process.env.EXPO_PUBLIC_GIPHY_IOS_API_KEY;
       else process.env.EXPO_PUBLIC_GIPHY_IOS_API_KEY = previous;

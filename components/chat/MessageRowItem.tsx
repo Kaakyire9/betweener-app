@@ -15,6 +15,7 @@ import { withAlpha } from '@/lib/chat/ui/color-utils';
 import { formatRemainingTime } from '@/lib/chat/ui/message-formatters';
 import { resolveChatImageUri, resolveChatVideoUri } from '@/lib/chat/media-uri';
 import { canRetryFailedTextMessage } from '@/lib/chat/thread-behavior';
+import { isChatExpression } from '@/lib/chat/expressions/chat-expression-presentation';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { Image as ExpoImage } from 'expo-image';
@@ -410,8 +411,9 @@ export const MessageRowItem = memo(
       item.isViewOnce && item.encryptedMedia && (item.type === 'image' || item.type === 'video')
     );
     const canOpenViewOnce = !isMyMessage && !viewOnceViewedByMe && isEncryptedViewOnce;
+    const isExpressionMessage = isChatExpression(item.mediaKind);
     const shouldCenterMedia =
-      (item.type === 'image' || item.type === 'video') && !isEncryptedViewOnce;
+      (item.type === 'image' || item.type === 'video') && !isEncryptedViewOnce && !isExpressionMessage;
     const mediaLabel = item.type === 'video' ? 'Video' : 'Photo';
     const viewOnceTitle = isMyMessage
       ? viewOnceViewedByPeer
@@ -636,7 +638,7 @@ export const MessageRowItem = memo(
               return;
             }
             const resolvedImageUri = resolveChatImageUri(item, cachedImageUrl);
-            if (item.type === 'image' && (resolvedImageUri || item.storagePath)) {
+            if (!isExpressionMessage && item.type === 'image' && (resolvedImageUri || item.storagePath)) {
               onViewImage(item, resolvedImageUri || '');
               return;
             }
@@ -694,6 +696,7 @@ export const MessageRowItem = memo(
             (item.type === 'image' || item.type === 'video') && !isEncryptedViewOnce && styles.mediaMessageBubble,
             item.type === 'image' && !isEncryptedViewOnce && styles.imageBubble,
             item.type === 'video' && !isEncryptedViewOnce && styles.videoBubble,
+            isExpressionMessage && styles.expressionBubble,
             item.type === 'document' && styles.documentBubble,
             item.type === 'date_plan' && (isMyMessage ? styles.datePlanBubbleMy : styles.datePlanBubbleTheir),
             item.type === 'date_plan' && styles.datePlanBubble,
@@ -1060,7 +1063,7 @@ export const MessageRowItem = memo(
 
             {reactionNodes}
 
-            {!isGroupedWithNext ? (
+            {!isGroupedWithNext && !isExpressionMessage ? (
               <View
                 pointerEvents="none"
                 style={[

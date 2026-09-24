@@ -16,7 +16,10 @@ import {
   isChatMediaProviderUnavailable,
 } from "@/lib/chat/attachments/chat-attachment-error";
 import { getChatAlbumSendStage } from '@/lib/chat/album/chat-media-album';
-import { isTransparentChatExpression } from '@/lib/chat/expressions/chat-expression-presentation';
+import {
+  isChatExpression,
+  isTransparentChatExpression,
+} from '@/lib/chat/expressions/chat-expression-presentation';
 
 type MediaMessageContentProps = {
   item: MessageType;
@@ -187,6 +190,7 @@ const MediaMessageContent = memo(
       const visibleItems = mediaItems.slice(0, 4);
       const isAlbum = mediaItems.length > 1;
       const transparentExpression = isTransparentChatExpression(item.mediaKind);
+      const expressionMessage = isChatExpression(item.mediaKind);
       const frameWidth = imageSize?.width ?? 340;
       const frameHeight = isAlbum ? Math.round(frameWidth * 0.86) : (imageSize?.height ?? 340);
       const resolveTileUri = (mediaItem: (typeof mediaItems)[number], tileIndex: number) => {
@@ -354,6 +358,89 @@ const MediaMessageContent = memo(
           </Pressable>
         );
       };
+      if (expressionMessage && !isAlbum) {
+        const expressionLabel = item.mediaKind === 'giphy_emoji'
+          ? 'Animated emoji'
+          : item.mediaKind === 'giphy_sticker'
+            ? 'Animated sticker'
+            : item.mediaKind === 'giphy_text'
+              ? 'Animated text'
+              : 'GIF';
+        return (
+          <View
+            accessible
+            accessibilityRole="image"
+            accessibilityLabel={expressionLabel}
+            style={[
+              expressionStyles.container,
+              { width: frameWidth },
+            ]}
+          >
+            <View
+              style={[
+                { width: frameWidth, height: frameHeight },
+                !transparentExpression && expressionStyles.gifSurface,
+              ]}
+            >
+              {primaryImageUri ? (
+                <ExpoImage
+                  source={{
+                    uri: primaryImageUri,
+                    cacheKey: primaryPreviewUri
+                      ? mediaItems[0]?.previewStoragePath || undefined
+                      : mediaItems[0]?.storagePath || item.storagePath || undefined,
+                  }}
+                  style={StyleSheet.absoluteFill}
+                  cachePolicy="memory-disk"
+                  contentFit={transparentExpression ? 'contain' : 'cover'}
+                  transition={100}
+                  autoplay
+                  onLoad={() => reportLoadedImage(
+                    item,
+                    primaryImageUri,
+                    primaryPreviewUri
+                      ? mediaItems[0]?.previewStoragePath
+                      : mediaItems[0]?.storagePath || item.storagePath,
+                  )}
+                  onError={() => onMediaLoadError?.(item)}
+                />
+              ) : (
+                <View style={[albumStyles.placeholder, expressionStyles.placeholder]}>
+                  <MaterialCommunityIcons name="sticker-emoji" size={28} color="rgba(255,255,255,0.72)" />
+                </View>
+              )}
+              {deliveryBadge}
+            </View>
+            <Animated.View
+              pointerEvents="none"
+              style={[
+                expressionStyles.metaRow,
+                isMyMessage ? receiptPulseStyle : null,
+              ]}
+            >
+              <Text style={[expressionStyles.metaText, { color: _theme.textMuted }]}>{timeLabel}</Text>
+              {isMyMessage ? (
+                <MaterialCommunityIcons
+                  name={receiptIcon?.name || 'clock-outline'}
+                  size={receiptIcon?.size || 13}
+                  color={receiptIcon?.color || _theme.textMuted}
+                />
+              ) : null}
+            </Animated.View>
+            {isMyMessage && item.status === 'failed' && attachmentFailure?.retryable !== false ? (
+              <Pressable
+                style={deliveryStyles.retryHitTarget}
+                onPress={(event) => {
+                  event.stopPropagation();
+                  onRetryFailedMessage?.(item.id);
+                }}
+                accessibilityRole="button"
+                accessibilityLabel={`Retry sending ${expressionLabel.toLowerCase()}`}
+              />
+            ) : null}
+          </View>
+        );
+      }
       return (
         <View
           style={[
@@ -596,12 +683,38 @@ MediaMessageContent.displayName = "MediaMessageContent";
 export default MediaMessageContent;
 
 const expressionStyles = StyleSheet.create({
+  container: {
+    position: 'relative',
+    alignItems: 'stretch',
+  },
+  gifSurface: {
+    borderRadius: 15,
+    overflow: 'hidden',
+  },
   transparentSurface: {
     backgroundColor: 'transparent',
     borderWidth: 0,
     shadowOpacity: 0,
     elevation: 0,
     overflow: 'visible',
+  },
+  placeholder: {
+    backgroundColor: 'rgba(16, 44, 46, 0.5)',
+    borderRadius: 14,
+  },
+  metaRow: {
+    minHeight: 18,
+    marginTop: 2,
+    alignSelf: 'flex-end',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 3,
+  },
+  metaText: {
+    fontFamily: 'Manrope_600SemiBold',
+    fontSize: 10,
+    lineHeight: 14,
   },
 });
 

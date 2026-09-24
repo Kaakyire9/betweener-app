@@ -113,6 +113,7 @@ export default function ChatExpressionTray({
     || (activeTab === 'emoji' && emojiSource === 'animated')
     || (activeTab === 'stickers' && stickerSource === 'animated')
   );
+  const animatedEmojiCatalogue = activeTab === 'emoji' && emojiSource === 'animated';
 
   useEffect(() => {
     let cancelled = false;
@@ -270,7 +271,7 @@ export default function ChatExpressionTray({
         })}
       </View>
 
-      <View style={styles.searchShell}>
+      {!animatedEmojiCatalogue ? <View style={styles.searchShell}>
         <MaterialCommunityIcons name="magnify" size={18} color={theme.textMuted} />
         <TextInput
           testID="chat-expression-search"
@@ -294,7 +295,7 @@ export default function ChatExpressionTray({
             <MaterialCommunityIcons name="close-circle" size={17} color={theme.textMuted} />
           </Pressable>
         ) : null}
-      </View>
+      </View> : null}
 
       {gifProviderConfigured ? (
         <View style={styles.giphyModes} accessibilityRole="tablist">
