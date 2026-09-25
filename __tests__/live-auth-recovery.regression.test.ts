@@ -107,7 +107,7 @@ test('session recovery is single-flight and missing credentials require reauthen
   assert.doesNotMatch(supabaseSource, /fallbackSession|sessionForRefresh/);
   assert.match(authContext, /supabase\.auth\.signOut\(\{ scope: 'local' \}\)/);
   assert.match(authContext, /finally \{[\s\S]*applySignedOutState\(\)/);
-  assert.match(packageManifest, /"@supabase\/supabase-js": "2\.117\.1"/);
+  assert.match(packageManifest, /"@supabase\/supabase-js": "2\.117\.2"/);
 });
 
 test('Live catalogue waits for real auth and reloads after auth recovery', () => {
