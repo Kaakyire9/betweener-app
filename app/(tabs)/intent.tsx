@@ -8,6 +8,7 @@ import {
   cancelIntentRequestOfflineSafe,
   decideIntentRequestOfflineSafe,
 } from '@/lib/intents/offline-actions';
+import { mergeSuggestedMovesWithProfiles } from '@/lib/intents/suggested-moves';
 import { computeFirstReplyHours, computeInterestOverlapRatio } from '@/lib/match/match-score';
 import { Motion } from '@/lib/motion';
 import {
@@ -1494,7 +1495,19 @@ export default function IntentScreen() {
             setSuggestedError(null);
           }
         } else {
-          const next = ((data as SuggestedMove[]) || []);
+          const rawMoves = ((data as SuggestedMove[]) || []);
+          const candidateIds = rawMoves.map((item) => String(item.id)).filter(Boolean);
+          let next = rawMoves;
+          if (candidateIds.length > 0) {
+            const { data: candidateProfiles, error: candidateProfilesError } = await supabase
+              .from('profiles')
+              .select('id,full_name,age,avatar_url,photos,account_state,deleted_at')
+              .in('id', candidateIds);
+            if (!candidateProfilesError && Array.isArray(candidateProfiles)) {
+              next = mergeSuggestedMovesWithProfiles(rawMoves, candidateProfiles as any[]);
+            }
+          }
+          if (cancelled) return;
           setSuggestedMoves(next);
           setSuggestedError(null);
           void writeIntentSuggestedMovesSnapshot(currentProfileId, next);
