@@ -184,24 +184,36 @@ export async function guardAndPublishProfileMediaV1_2(
   };
 }
 
-export const profileMediaGuardMessageV1_2 = (error: unknown) => {
+const normalizeMediaLabel = (mediaLabel?: string) => {
+  const label = String(mediaLabel || '').trim();
+  return label || 'This photo';
+};
+
+export const profileMediaGuardMessageV1_2 = (error: unknown, mediaLabel?: string) => {
   const code = String((error as any)?.code || '');
   const reason = String((error as any)?.reason || '');
+  const subject = normalizeMediaLabel(mediaLabel);
   if (code === 'PROFILE_MEDIA_SCAN_UNAVAILABLE') {
-    return 'Photo safety checks are temporarily unavailable. Your existing photos are unchanged. Please try again.';
+    return mediaLabel
+      ? `${subject} could not be checked because photo safety checks are temporarily unavailable. Your existing photos are unchanged. Please try again.`
+      : 'Photo safety checks are temporarily unavailable. Your existing photos are unchanged. Please try again.';
   }
   if (code !== 'PROFILE_MEDIA_REPLACE_REQUIRED') return null;
   if (reason === 'EXPLICIT_NUDITY' || reason === 'SEXUAL_CONTENT') {
-    return 'This photo contains nudity or sexual content and cannot be used. Choose another photo.';
+    return `${subject} contains nudity or sexual content and cannot be used. Choose another photo.`;
   }
   if (reason === 'CONTACT_OR_PROMOTION' || reason === 'QR_CODE') {
-    return 'This photo contains contact details, promotional text, or a QR code. Choose another photo.';
+    return `${subject} contains contact details, promotional text, or a QR code. Choose another photo.`;
   }
   if (reason === 'AVATAR_FACE_REQUIRED') {
-    return 'Your profile picture must clearly show your face. Choose another photo.';
+    return mediaLabel
+      ? `${subject} was selected as your profile picture, but it does not clearly show your face. Choose another photo.`
+      : 'Your profile picture must clearly show your face. Choose another photo.';
   }
   if (reason === 'AVATAR_MULTIPLE_FACES') {
-    return 'Your profile picture must clearly show only you. Group photos can still be added to your gallery.';
+    return mediaLabel
+      ? `${subject} was selected as your profile picture, but it shows more than one person. Group photos can still be added to your gallery.`
+      : 'Your profile picture must clearly show only you. Group photos can still be added to your gallery.';
   }
-  return 'This photo does not meet the profile photo safety rules. Choose another photo.';
+  return `${subject} does not meet the profile photo safety rules. Choose another photo.`;
 };

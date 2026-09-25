@@ -253,6 +253,23 @@ test('visible contact text without QR is rejected deterministically', () => {
   assert.equal(combined.reason, 'CONTACT_OR_PROMOTION');
 });
 
+test('explicit nudity remains the rejection reason when contact evidence also exists', () => {
+  const provider = providerAssessment({
+    decision: 'BLOCK',
+    reason: 'EXPLICIT_NUDITY',
+    categories: ['sexual'],
+    riskScore: 0.99,
+    scores: { nudity: 0.99, sexual: 0.96, violence: 0, hate: 0, contact: 0, promotion: 0, qr_code: 0 },
+  });
+  const text = assessMediaExtractedText('Call me on +44 7123 456789', 'public_profile_media');
+  const combined = combineProfileMediaEvidence(provider, text, false);
+
+  assert.equal(combined.decision, 'BLOCK');
+  assert.equal(combined.reason, 'EXPLICIT_NUDITY');
+  assert.ok(combined.categories.includes('sexual'));
+  assert.ok(combined.categories.includes('PHONE_CONTACT'));
+});
+
 test('an unsubstantiated provider QR/contact veto cannot override benign decoded evidence', () => {
   const text = assessMediaExtractedText(
     'Welcome to Bristol A quiet afternoon',

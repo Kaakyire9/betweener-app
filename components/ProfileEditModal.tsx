@@ -434,6 +434,12 @@ interface ProfileEditModalProps {
   onClose: () => void;
   onSave: (updatedProfile: any) => void;
   onOpenVerification?: () => void;
+  mediaSnapshot?: {
+    avatarUrl: string | null;
+    heroImageUrl: string | null;
+    photos: string[];
+    profileVideo: string | null;
+  };
 }
 
 type FieldPickerProps = {
@@ -507,7 +513,13 @@ const FieldPicker = ({
   </Modal>
 );
 
-export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerification }: ProfileEditModalProps) {
+export default function ProfileEditModal({
+  visible,
+  onClose,
+  onSave,
+  onOpenVerification,
+  mediaSnapshot,
+}: ProfileEditModalProps) {
   const { user, profile, updateProfile, refreshProfile } = useAuth();
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
@@ -1012,11 +1024,20 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       const filteredLanguages = normalizedLanguages.filter(
         (lang) => languagesOptions.includes(lang) || lang === 'Other'
       );
-      const normalizedAvatarUrl = normalizeProfilePhotoUri(profile.avatar_url);
-      const normalizedPhotos = normalizeGalleryPhotoList((profile as any).photos, normalizedAvatarUrl);
-      const normalizedHeroImageUrl = normalizeProfilePhotoUri((profile as any).hero_image_url);
+      const normalizedAvatarUrl = normalizeProfilePhotoUri(
+        mediaSnapshot ? mediaSnapshot.avatarUrl : profile.avatar_url,
+      );
+      const normalizedPhotos = normalizeGalleryPhotoList(
+        mediaSnapshot ? mediaSnapshot.photos : (profile as any).photos,
+        normalizedAvatarUrl,
+      );
+      const normalizedHeroImageUrl = normalizeProfilePhotoUri(
+        mediaSnapshot ? mediaSnapshot.heroImageUrl : (profile as any).hero_image_url,
+      );
       const normalizedProfileVideoUrl = normalizeLocalMediaUri(
-        (profile as any).profile_video || (profile as any).profileVideo || '',
+        mediaSnapshot
+          ? mediaSnapshot.profileVideo
+          : (profile as any).profile_video || (profile as any).profileVideo || '',
       );
       setFormData({
         full_name: profile.full_name || '',
@@ -1072,10 +1093,14 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       // Set selected languages for multi-select
       setSelectedLanguages(filteredLanguages);
     }
-  }, [closeNestedPickers, visible, profile]);
+  }, [closeNestedPickers, mediaSnapshot, visible, profile]);
 
   useEffect(() => {
     if (!visible) return;
+    // The parent screen owns the current media state while it is mounted.
+    // Its snapshot can intentionally contain an empty gallery after deletion,
+    // so never replace it with an older persisted fallback.
+    if (mediaSnapshot) return;
     const profileId = (profile as any)?.id || user?.id;
     if (!profileId) return;
     let cancelled = false;
@@ -1099,7 +1124,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     return () => {
       cancelled = true;
     };
-  }, [profile, user?.id, visible]);
+  }, [mediaSnapshot, profile, user?.id, visible]);
 
   useEffect(() => {
     let mounted = true;
@@ -1333,11 +1358,17 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     return approved;
   };
 
-  const presentProfileMediaError = (error: unknown) => {
-    const message = profileMediaGuardMessageV1_2(error);
+  const presentProfileMediaError = (error: unknown, mediaLabel?: string) => {
+    const message = profileMediaGuardMessageV1_2(error, mediaLabel);
     if (!message) return false;
     setStatusTone('error');
     setStatusMessage(message);
+    Alert.alert(
+      String((error as any)?.code || '') === 'PROFILE_MEDIA_REPLACE_REQUIRED'
+        ? 'Photo rejected'
+        : 'Photo check unavailable',
+      message,
+    );
     return true;
   };
 
@@ -1385,36 +1416,106 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     Alert.alert('Photo staged', 'Photo added here. Tap Save to apply it to your profile.');
   };
 
-  const stageGalleryBatch = async (uris: string[]) => {
+  const stageGalleryBatch = async (assets: ImagePicker.ImagePickerAsset[]) => {
+    const selectedAssets = assets.slice(
+      0,
+      Math.max(0, MAX_PROFILE_GALLERY_ITEMS - formData.photos.length),
+    );
+    if (selectedAssets.length === 0) return;
+
+    if (isProfileMediaGuardV1_2Runtime()) {
+      let currentAvatar = normalizeProfilePhotoUri(formData.avatar_url) || null;
+      let currentHero = normalizeProfilePhotoUri(formData.hero_image_url) || null;
+      let currentPhotos = normalizeGalleryPhotoList(formData.photos, currentAvatar);
+      let approvedCount = 0;
+      let scanInterrupted: string | null = null;
+      const rejected: { label: string; message: string }[] = [];
+
+      for (let index = 0; index < selectedAssets.length; index += 1) {
+        const asset = selectedAssets[index];
+        const fileName = String(asset.fileName || '').trim();
+        const label = fileName ? `Photo ${index + 1} (${fileName})` : `Photo ${index + 1}`;
+
+        try {
+          const stableUri = await persistProfileMediaUri(
+            asset.uri,
+            `profile-photo-${index + 1}`,
+            asset.mimeType || 'image/jpeg',
+          );
+          const shouldSeedAvatar = !currentAvatar;
+          const nextAvatar = shouldSeedAvatar ? stableUri : currentAvatar;
+          const nextPhotos = appendGalleryMedia(
+            currentPhotos,
+            shouldSeedAvatar ? [] : [stableUri],
+            nextAvatar,
+          );
+          const approved = await approveProfileMediaDraft({
+            avatarUrl: nextAvatar,
+            heroImageUrl: currentHero,
+            photos: nextPhotos,
+            localUris: [stableUri],
+          });
+          currentAvatar = approved.avatarUrl;
+          currentHero = approved.heroImageUrl;
+          currentPhotos = normalizeGalleryPhotoList(approved.photos, approved.avatarUrl);
+          approvedCount += 1;
+        } catch (error) {
+          const guardMessage = profileMediaGuardMessageV1_2(error, label);
+          const code = String((error as any)?.code || '');
+          if (code === 'PROFILE_MEDIA_SCAN_UNAVAILABLE') {
+            scanInterrupted = guardMessage
+              || `${label} could not be checked. Your previously approved photos are unchanged.`;
+            break;
+          }
+          rejected.push({
+            label,
+            message: guardMessage || `${label} could not be prepared. Choose another photo and try again.`,
+          });
+        }
+      }
+
+      if (scanInterrupted) {
+        const approvedPrefix = approvedCount > 0
+          ? `${approvedCount} photo${approvedCount === 1 ? ' was' : 's were'} approved before the check paused.\n\n`
+          : '';
+        setStatusTone('error');
+        setStatusMessage(scanInterrupted);
+        Alert.alert('Photo check paused', `${approvedPrefix}${scanInterrupted}`);
+        return;
+      }
+
+      if (rejected.length > 0) {
+        const approvedPrefix = approvedCount > 0
+          ? `${approvedCount} photo${approvedCount === 1 ? ' is' : 's are'} ready. `
+          : '';
+        const rejectionSummary = rejected.map(({ message }) => `• ${message}`).join('\n');
+        const status = `${approvedPrefix}${rejected.length} photo${rejected.length === 1 ? ' was' : 's were'} rejected.`;
+        setStatusTone('error');
+        setStatusMessage(status);
+        Alert.alert(
+          rejected.length === 1 ? 'Photo rejected' : `${rejected.length} photos rejected`,
+          `${approvedPrefix.trim()}${approvedPrefix ? '\n\n' : ''}${rejectionSummary}`,
+        );
+        return;
+      }
+
+      const successMessage = `${approvedCount} approved photo${approvedCount === 1 ? ' is' : 's are'} ready in your profile studio.`;
+      setStatusTone('success');
+      setStatusMessage(successMessage);
+      Alert.alert('Photos approved', successMessage);
+      return;
+    }
+
     const stagedUris = (
       await Promise.all(
-        uris.map((uri) => persistProfileMediaUri(uri, 'profile-photo', 'image/jpeg')),
+        selectedAssets.map((asset) => persistProfileMediaUri(
+          asset.uri,
+          'profile-photo',
+          asset.mimeType || 'image/jpeg',
+        )),
       )
     ).filter(Boolean);
     if (stagedUris.length === 0) return;
-
-    if (isProfileMediaGuardV1_2Runtime()) {
-      const shouldSeedAvatar = !formData.avatar_url;
-      const nextAvatar = shouldSeedAvatar ? stagedUris[0] : formData.avatar_url;
-      const nextPhotos = appendGalleryMedia(
-        formData.photos,
-        shouldSeedAvatar ? stagedUris.slice(1) : stagedUris,
-        nextAvatar,
-      );
-      await approveProfileMediaDraft({
-        avatarUrl: nextAvatar || null,
-        heroImageUrl: formData.hero_image_url || null,
-        photos: nextPhotos,
-        localUris: stagedUris,
-      });
-      Alert.alert(
-        'Photos approved',
-        shouldSeedAvatar
-          ? 'The first photo is your profile picture and the remaining approved photos are ready in your gallery.'
-          : `${stagedUris.length} approved photo${stagedUris.length === 1 ? ' is' : 's are'} ready in your gallery.`,
-      );
-      return;
-    }
 
     let promotedToAvatar = false;
     setFormData((prev) => {
@@ -1853,7 +1954,12 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       });
 
       if (!result.canceled && result.assets[0]) {
-        await handleImageUpload(result.assets[0].uri, isAvatar);
+        const asset = result.assets[0];
+        await handleImageUpload(
+          asset.uri,
+          isAvatar,
+          String(asset.fileName || '').trim() || 'Camera photo',
+        );
       }
     } catch (error) {
       console.error('Error opening camera:', error);
@@ -1877,9 +1983,14 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
 
       if (!result.canceled && result.assets.length > 0) {
         if (isAvatar) {
-          await handleImageUpload(result.assets[0].uri, true);
+          const asset = result.assets[0];
+          await handleImageUpload(
+            asset.uri,
+            true,
+            String(asset.fileName || '').trim() || 'Selected photo',
+          );
         } else {
-          await stageGalleryBatch(result.assets.map((asset) => asset.uri).filter(Boolean));
+          await stageGalleryBatch(result.assets);
         }
       }
     } catch (error) {
@@ -1891,12 +2002,12 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     }
   };
 
-  const handleImageUpload = async (uri: string, isAvatar: boolean) => {
+  const handleImageUpload = async (uri: string, isAvatar: boolean, mediaLabel?: string) => {
     try {
       setUploading(true);
       await stageImageOffline(uri, isAvatar);
     } catch (error) {
-      if (presentProfileMediaError(error)) return;
+      if (presentProfileMediaError(error, mediaLabel)) return;
       console.error('Error uploading image:', error);
       const errorMessage = error instanceof Error ? error.message : 'Failed to upload image';
       Alert.alert('Error', `Upload failed: ${errorMessage}`);

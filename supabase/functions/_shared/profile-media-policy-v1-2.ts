@@ -146,6 +146,11 @@ const hasExplicitContactOrPromotionEvidence = (signals: ProfileMediaVisualSignal
 const isContactCategory = (category: string) =>
   /contact|phone|email|external|social|handle|promotion|solicitation|qr/i.test(category);
 
+const isPrimaryHarmReason = (reason: ProfileMediaReason) =>
+  reason === 'EXPLICIT_NUDITY'
+  || reason === 'SEXUAL_CONTENT'
+  || reason === 'VIOLENCE_OR_HATE';
+
 /**
  * Deterministic decoded QR/OCR evidence is authoritative for concrete contact
  * tokens. The provider remains authoritative for explicit visible signals that
@@ -157,10 +162,16 @@ export function combineProfileMediaEvidence(
   hasDecodedQr: boolean,
 ): ProfileMediaPolicyAssessment {
   if (deterministic.decision === 'BLOCK') {
+    // OCR/contact evidence can coexist with a stronger visual-safety finding.
+    // Preserve the primary harm reason so the member sees the truthful,
+    // actionable rejection instead of a secondary contact/promotion label.
+    let reason: ProfileMediaReason = 'CONTACT_OR_PROMOTION';
+    if (isPrimaryHarmReason(provider.reason)) reason = provider.reason;
+    else if (hasDecodedQr) reason = 'QR_CODE';
     return {
       ...provider,
       decision: 'BLOCK',
-      reason: hasDecodedQr ? 'QR_CODE' : 'CONTACT_OR_PROMOTION',
+      reason,
       categories: [...new Set([...provider.categories, ...deterministic.categories])],
       riskScore: Math.max(provider.riskScore, 1),
       scores: { ...provider.scores, deterministic_contact_guard: 1 },
