@@ -19,6 +19,7 @@ export type ChatListMessageRealtimeRow = {
   deleted_at?: string | null;
   edited_at?: string | null;
   message_type?: string | null;
+  media_kind?: string | null;
   is_view_once?: boolean | null;
 };
 

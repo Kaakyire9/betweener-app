@@ -1,5 +1,7 @@
+import type { ChatExpressionMediaKind } from '@/lib/chat/expressions/chat-gif-provider';
+
 export const CHAT_DB_NAME = 'betweener_chat.db';
-export const CHAT_SCHEMA_VERSION = 8;
+export const CHAT_SCHEMA_VERSION = 9;
 
 export type ChatThreadLocalStatus = 'active' | 'hidden' | 'deleted';
 export type ChatThreadType = 'direct';
@@ -36,6 +38,7 @@ export type ChatThreadRow = {
   last_message_preview: string | null;
   last_message_sender_id: string | null;
   last_message_status: ChatMessageStatus | null;
+  last_message_media_kind: ChatExpressionMediaKind | null;
   last_message_edited_at: string | null;
   last_message_reaction_emoji: string | null;
   last_message_reaction_user_id: string | null;
@@ -139,6 +142,7 @@ create table if not exists chat_threads (
   last_message_preview text null,
   last_message_sender_id text null,
   last_message_status text null,
+  last_message_media_kind text null,
   last_message_edited_at text null,
   last_message_reaction_emoji text null,
   last_message_reaction_user_id text null,

@@ -30,15 +30,18 @@ const buildTextOutboxRow = ({
       kind: 'chat_text_send',
       senderId: ownerUserId,
       receiverId: threadId,
-      text: message.type === 'image'
+      text: message.providerMedia
+        ? ''
+        : message.type === 'image'
         ? message.storagePath ? '' : message.imageUrl ?? message.text
         : message.type === 'video'
         ? message.storagePath ? '' : message.videoUrl ?? message.text
         : message.text,
-      messageType: message.type,
+      messageType: message.providerMedia ? 'provider_expression' : message.type,
       clientMessageId: localMessageId,
       replyToMessageId: message.replyToId ?? null,
       storagePath: message.storagePath ?? null,
+      providerMedia: message.providerMedia ?? null,
       metadataJson: safeJsonStringify(message),
     }) ?? '{}',
     attempt_count: 0,

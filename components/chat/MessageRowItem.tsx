@@ -12,10 +12,14 @@ import type { MessageType } from '@/components/chat/types';
 import { BLOCKED_AVATAR_SOURCE, CHAT_BUBBLE_TAIL_PATH, QUICK_REACTIONS } from '@/constants/chat';
 import { Colors } from '@/constants/theme';
 import { withAlpha } from '@/lib/chat/ui/color-utils';
+import { getChatBubbleFramePolicy } from '@/lib/chat/ui/bubble-frame-policy';
+import { getChatBubbleFrameStyle } from '@/lib/chat/ui/bubble-frame-style';
 import { formatRemainingTime } from '@/lib/chat/ui/message-formatters';
 import { resolveChatImageUri, resolveChatVideoUri } from '@/lib/chat/media-uri';
 import { canRetryFailedTextMessage } from '@/lib/chat/thread-behavior';
 import { isChatExpression } from '@/lib/chat/expressions/chat-expression-presentation';
+import { getEmojiOnlyPresentation } from '@/lib/chat/expressions/emoji-only';
+import { getChatMessagePreviewText } from '@/lib/message-preview';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { Image as ExpoImage } from 'expo-image';
@@ -33,6 +37,8 @@ type ReplyMeta = {
   thumbnailUri?: string | null;
   thumbnailKind?: 'image' | 'video' | 'location' | 'date_plan' | null;
 };
+
+const EMPTY_REACTIONS: MessageType['reactions'] = [];
 
 export const MessageRowItem = memo(
   ({
@@ -101,13 +107,18 @@ export const MessageRowItem = memo(
       onHighlightPress,
     }: MessageRowItemProps) => {
     const isSystemRow = item.type === 'system' || item.isSystem;
+    // Older persisted messages and optimistic reconciliation can omit this
+    // field even though current message mappers always provide it.
+    const reactions = Array.isArray(item.reactions) ? item.reactions : EMPTY_REACTIONS;
+    const reactionCount = reactions.length;
     const focusPulse = useRef(new Animated.Value(0)).current;
     const accent = isMyMessage ? Colors.light.background : theme.tint;
-    const reactionEntrance = useRef(new Animated.Value(item.reactions.length > 0 ? 1 : 0)).current;
-    const previousReactionCount = useRef(item.reactions.length);
+    const reactionEntrance = useRef(new Animated.Value(reactionCount > 0 ? 1 : 0)).current;
+    const previousReactionCount = useRef(reactionCount);
     const entryAnim = useRef(new Animated.Value(shouldAnimateEntry ? 0 : 1)).current;
     const receiptPulse = useRef(new Animated.Value(1)).current;
     const reactionBubblePulse = useRef(new Animated.Value(1)).current;
+    const nestedLongPressHandledRef = useRef(false);
     const previousReceiptStatus = useRef(item.status);
     const focusPulseStyle = useMemo(() => ({
       opacity: focusPulse,
@@ -304,14 +315,14 @@ export const MessageRowItem = memo(
     }, [isMyMessage, item.status, receiptPulse]);
 
     useEffect(() => {
-      if (item.reactions.length === 0) {
+      if (reactionCount === 0) {
         reactionEntrance.setValue(0);
         reactionBubblePulse.setValue(1);
         previousReactionCount.current = 0;
         return;
       }
 
-      if (previousReactionCount.current !== item.reactions.length) {
+      if (previousReactionCount.current !== reactionCount) {
         reactionEntrance.stopAnimation();
         reactionEntrance.setValue(0);
         reactionBubblePulse.stopAnimation();
@@ -341,16 +352,16 @@ export const MessageRowItem = memo(
         reactionBubblePulse.setValue(1);
       }
 
-      previousReactionCount.current = item.reactions.length;
-    }, [item.reactions.length, reactionBubblePulse, reactionEntrance]);
+      previousReactionCount.current = reactionCount;
+    }, [reactionCount, reactionBubblePulse, reactionEntrance]);
 
     const metaLabel = timeLabel;
 
     const reactionNodes = useMemo(() => {
       if (item.deletedForAll) return null;
-      if (item.reactions.length === 0) return null;
+      if (reactionCount === 0) return null;
       const counts = new Map<string, number>();
-      item.reactions.forEach((reaction) => {
+      reactions.forEach((reaction) => {
         counts.set(reaction.emoji, (counts.get(reaction.emoji) ?? 0) + 1);
       });
       const summary = Array.from(counts.entries())
@@ -380,8 +391,8 @@ export const MessageRowItem = memo(
           </Pressable>
         </Animated.View>
       );
-    }, [item.deletedForAll, item.reactions, isMyMessage, onOpenReactionSheet, reactionEntranceStyle, styles]);
-    const hasReactionSummary = !item.deletedForAll && item.reactions.length > 0;
+    }, [item.deletedForAll, isMyMessage, onOpenReactionSheet, reactionCount, reactionEntranceStyle, reactions, styles]);
+    const hasReactionSummary = !item.deletedForAll && reactionCount > 0;
 
     const canEdit = useMemo(
       () =>
@@ -412,6 +423,22 @@ export const MessageRowItem = memo(
     );
     const canOpenViewOnce = !isMyMessage && !viewOnceViewedByMe && isEncryptedViewOnce;
     const isExpressionMessage = isChatExpression(item.mediaKind);
+    const emojiOnlyPresentation = item.type === 'text' && !item.deletedForAll
+      ? getEmojiOnlyPresentation(item.text)
+      : null;
+    const bubbleFramePolicy = useMemo(
+      () => getChatBubbleFramePolicy({
+        message: item,
+        emojiOnly: Boolean(emojiOnlyPresentation),
+      }),
+      [emojiOnlyPresentation, item],
+    );
+    const outerBubbleFrameStyle = useMemo(
+      () => bubbleFramePolicy.ownsOuterFrame
+        ? getChatBubbleFrameStyle(bubbleFramePolicy, isDark)
+        : null,
+      [bubbleFramePolicy, isDark],
+    );
     const shouldCenterMedia =
       (item.type === 'image' || item.type === 'video') && !isEncryptedViewOnce && !isExpressionMessage;
     const mediaLabel = item.type === 'video' ? 'Video' : 'Photo';
@@ -466,7 +493,12 @@ export const MessageRowItem = memo(
           preview = 'Voice message';
           break;
         case 'image':
-          preview = 'Photo';
+          preview = getChatMessagePreviewText({
+            text: item.replyTo.text,
+            messageType: 'image',
+            mediaKind: item.replyTo.mediaKind,
+            isViewOnce: item.replyTo.isViewOnce,
+          });
           {
             const replyMedia = item.replyTo.mediaItems?.find((mediaItem) => mediaItem.type === 'image');
             thumbnailUri =
@@ -543,6 +575,33 @@ export const MessageRowItem = memo(
     const messageTextNode = useMemo(() => {
       const text = item.text || '';
       if (!text) return null;
+      if (emojiOnlyPresentation) {
+        return (
+          <View
+            accessible
+            accessibilityRole="text"
+            accessibilityLabel={text}
+            style={styles.emojiOnlyGlyphRow}
+          >
+            {emojiOnlyPresentation.sequences.map((sequence, index) => (
+              <Text
+                key={`${sequence}-${index}`}
+                style={[
+                  styles.emojiOnlyGlyph,
+                  isMyMessage ? styles.myMessageText : styles.theirMessageText,
+                  {
+                    fontSize: emojiOnlyPresentation.fontSize,
+                    lineHeight: emojiOnlyPresentation.lineHeight,
+                    minWidth: emojiOnlyPresentation.fontSize + 6,
+                  },
+                ]}
+              >
+                {sequence}
+              </Text>
+            ))}
+          </View>
+        );
+      }
       const baseStyle = [
         styles.messageText,
         styles.messageTextInline,
@@ -566,7 +625,7 @@ export const MessageRowItem = memo(
           onOpenLink={onOpenLink}
         />
       );
-    }, [highlightQuery, isMyMessage, item.deletedForAll, item.id, item.text, onHighlightPress, onOpenLink, styles]);
+    }, [emojiOnlyPresentation, highlightQuery, isMyMessage, item.deletedForAll, item.id, item.text, onHighlightPress, onOpenLink, styles]);
 
     if (isSystemRow) {
       return (
@@ -624,6 +683,7 @@ export const MessageRowItem = memo(
           styles={styles}
           isMyMessage={isMyMessage}
           centerContent={shouldCenterMedia}
+          hasFrame={bubbleFramePolicy.role !== 'none'}
           onFocus={onFocus}
           onRetryFailedMessage={onRetryFailedMessage}
           onLongPress={() => onLongPress(item.id)}
@@ -697,11 +757,13 @@ export const MessageRowItem = memo(
             item.type === 'image' && !isEncryptedViewOnce && styles.imageBubble,
             item.type === 'video' && !isEncryptedViewOnce && styles.videoBubble,
             isExpressionMessage && styles.expressionBubble,
+            emojiOnlyPresentation && styles.emojiOnlyMessageBubble,
             item.type === 'document' && styles.documentBubble,
             item.type === 'date_plan' && (isMyMessage ? styles.datePlanBubbleMy : styles.datePlanBubbleTheir),
             item.type === 'date_plan' && styles.datePlanBubble,
             item.type === 'location' && styles.locationBubble,
             reactionBubblePulseStyle,
+            outerBubbleFrameStyle,
           ]}>
             {isFocused ? (
               <Animated.View
@@ -723,9 +785,22 @@ export const MessageRowItem = memo(
                   isMyMessage ? styles.replyChipMy : styles.replyChipTheir,
                 ]}
                 onPress={() => {
+                  if (nestedLongPressHandledRef.current) {
+                    nestedLongPressHandledRef.current = false;
+                    return;
+                  }
                   if (!replyMeta.canJump || !item.replyTo?.id) return;
                   onReplyJump(item.replyTo.id);
                 }}
+                onPressIn={() => {
+                  nestedLongPressHandledRef.current = false;
+                }}
+                onLongPress={(event) => {
+                  nestedLongPressHandledRef.current = true;
+                  event.stopPropagation();
+                  onLongPress(item.id);
+                }}
+                delayLongPress={450}
               >
                 <View
                   style={[
@@ -743,6 +818,7 @@ export const MessageRowItem = memo(
                     {replyMeta.thumbnailUri && replyMeta.thumbnailKind !== 'video' ? (
                       <ExpoImage
                         source={{ uri: replyMeta.thumbnailUri }}
+                        recyclingKey={`${item.id}:reply:${replyMeta.thumbnailUri}`}
                         style={styles.replyChipThumbImage}
                         cachePolicy="disk"
                         contentFit="cover"
@@ -818,12 +894,13 @@ export const MessageRowItem = memo(
             )}
 
             {item.type === 'text' ? (
-              <View style={styles.textWithMeta}>
+              <View style={[styles.textWithMeta, emojiOnlyPresentation && styles.emojiOnlyTextWithMeta]}>
                 {messageTextNode}
                 <View
                   style={[
                     styles.inlineMetaRow,
                     textInlineMetaStyle,
+                    emojiOnlyPresentation && styles.emojiOnlyMetaRow,
                   ]}
                   pointerEvents={showEdited ? 'auto' : 'none'}
                 >
@@ -871,10 +948,23 @@ export const MessageRowItem = memo(
             ) : isEncryptedViewOnce ? (
               <Pressable
                 onPress={() => {
+                  if (nestedLongPressHandledRef.current) {
+                    nestedLongPressHandledRef.current = false;
+                    return;
+                  }
                   if (canOpenViewOnce) {
                     onOpenViewOnce(item);
                   }
                 }}
+                onPressIn={() => {
+                  nestedLongPressHandledRef.current = false;
+                }}
+                onLongPress={(event) => {
+                  nestedLongPressHandledRef.current = true;
+                  event.stopPropagation();
+                  onLongPress(item.id);
+                }}
+                delayLongPress={450}
                 disabled={!canOpenViewOnce}
                 style={styles.viewOnceInlineRow}
               >
@@ -938,6 +1028,7 @@ export const MessageRowItem = memo(
                 theme={theme}
                 isDark={isDark}
                 onToggleVoice={onToggleVoice}
+                onLongPress={() => onLongPress(item.id)}
               />
               ) : item.type === 'image' || item.type === 'video' ? (
                 <MediaMessageContent
@@ -953,6 +1044,7 @@ export const MessageRowItem = memo(
                   theme={theme}
                   isDark={isDark}
                   receiptPulseStyle={receiptPulseStyle}
+                  framePolicy={bubbleFramePolicy}
                   onMediaLoadError={onRefreshMedia}
                   onMediaLoadSuccess={onMediaLoadSuccess}
                   onRetryMedia={onRetryMedia}
@@ -960,6 +1052,7 @@ export const MessageRowItem = memo(
                   onViewImage={onViewImage}
                   onViewVideo={onViewVideo}
                   onManageAlbumItem={onManageAlbumItem}
+                  onLongPress={() => onLongPress(item.id)}
                 />
               ) : item.type === 'date_plan' ? (
                 <DatePlanMessageContent
@@ -1063,7 +1156,7 @@ export const MessageRowItem = memo(
 
             {reactionNodes}
 
-            {!isGroupedWithNext && !isExpressionMessage ? (
+            {!isGroupedWithNext && bubbleFramePolicy.ownsOuterFrame ? (
               <View
                 pointerEvents="none"
                 style={[

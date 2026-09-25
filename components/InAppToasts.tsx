@@ -79,6 +79,7 @@ type MessageToastRow = {
   receiver_id: string;
   text: string | null;
   message_type: string | null;
+  media_kind?: string | null;
   is_view_once?: boolean | null;
 };
 
@@ -907,6 +908,7 @@ export default function InAppToasts() {
       getChatMessagePreviewText({
         text: row?.text,
         messageType: row?.message_type,
+        mediaKind: row?.media_kind,
         isViewOnce: Boolean(row?.is_view_once),
       }) || 'New message'
     );
@@ -1701,7 +1703,7 @@ export default function InAppToasts() {
             try {
               const { data: messageRow } = await supabase
                 .from('messages')
-                .select('sender_id,receiver_id,text,message_type,is_view_once')
+                .select('sender_id,receiver_id,text,message_type,media_kind,is_view_once')
                 .eq('id', row.message_id)
                 .maybeSingle();
               if (!messageRow?.sender_id || !messageRow?.receiver_id) return;
@@ -2074,7 +2076,7 @@ export default function InAppToasts() {
         void (async () => {
           const { data: messageRow } = await supabase
             .from('messages')
-            .select('id,sender_id,receiver_id,text,message_type,is_view_once')
+            .select('id,sender_id,receiver_id,text,message_type,media_kind,is_view_once')
             .eq('id', messageId)
             .maybeSingle();
           const resolvedRow = messageRow as MessageToastRow | null;
@@ -2119,7 +2121,7 @@ export default function InAppToasts() {
           if (messageId) {
             const { data: messageRow } = await supabase
               .from('messages')
-              .select('sender_id,receiver_id,text,message_type,is_view_once')
+              .select('sender_id,receiver_id,text,message_type,media_kind,is_view_once')
               .eq('id', messageId)
               .maybeSingle();
             if (messageRow) {

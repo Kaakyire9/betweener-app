@@ -23,6 +23,9 @@ with expected(version, purpose) as (values
   ,('20260921123000', 'chat media publication provenance')
   ,('20260922100000', 'atomic chat image album rate limit')
   ,('20260923220000', 'chat expression media presentation')
+  ,('20260924100000', 'chat expression semantic previews')
+  ,('20260924230000', 'GIPHY provider-reference messages')
+  ,('20260925090000', 'provider-expression atomic fast path')
 )
 select expected.version, expected.purpose, exists (
   select 1 from supabase_migrations.schema_migrations migration
@@ -64,6 +67,8 @@ with expected(name, signature, authenticated_execute, service_execute) as (value
     'public.rpc_admin_reverse_content_moderation_event(uuid,text)', true, true)
   ,('chat expression publication',
     'public.rpc_finalize_chat_attachment_batch_v4(uuid,uuid,text,text,smallint,jsonb,text,uuid,text,jsonb)', false, true)
+  ,('provider expression publication',
+    'public.rpc_service_send_provider_expression(uuid,uuid,text,jsonb,text,uuid)', false, true)
 ), resolved as (
   select expected.*, to_regprocedure(expected.signature) as oid from expected
 )
@@ -227,6 +232,16 @@ with boundaries as (
     and to_regprocedure(
       'public.rpc_finalize_chat_attachment_batch_v4(uuid,uuid,text,text,smallint,jsonb,text,uuid,text,jsonb)'
     ) is not null
+    and to_regprocedure(
+      'public.rpc_service_send_provider_expression(uuid,uuid,text,jsonb,text,uuid)'
+    ) is not null
+    and exists (
+      select 1 from information_schema.columns
+      where table_schema = 'public' and table_name = 'messages'
+        and column_name = 'provider_media' and data_type = 'jsonb'
+    )
+    and exists (select 1 from pg_trigger where tgrelid = 'public.messages'::regclass
+      and tgname = 'enforce_chat_provider_media_write' and not tgisinternal)
     and to_regclass('public.approved_profile_media_objects') is not null
     and not has_table_privilege(
       'authenticated', 'public.approved_profile_media_objects', 'SELECT'

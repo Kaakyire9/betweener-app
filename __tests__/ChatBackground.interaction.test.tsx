@@ -14,6 +14,7 @@ describe('ChatBackground', () => {
 
     expect(background.props.pointerEvents).toBe('none');
     expect(getByTestId('chat-background-artwork-dark')).toBeTruthy();
+    expect(getByTestId('chat-background-offline-pattern-dark')).toBeTruthy();
     expect(getByTestId('chat-background-atmosphere-dark')).toBeTruthy();
     expect(getChatBackgroundTreatment('dark').foundation).toBe(Colors.dark.background);
   });
@@ -40,6 +41,7 @@ describe('ChatBackground', () => {
     await fireEvent(getByTestId('chat-background-artwork-light'), 'error');
 
     expect(queryByTestId('chat-background-artwork-light')).toBeNull();
+    expect(getByTestId('chat-background-offline-pattern-light')).toHaveStyle({ opacity: 0.5 });
     expect(getByTestId('chat-background')).toHaveStyle({
       backgroundColor: Colors.light.background,
     });

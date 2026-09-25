@@ -6,6 +6,8 @@ import {
   selectLatestChatListActivity,
 } from '@/lib/chat/chat-list-message-merge';
 import { getChatMessagePreviewText } from '@/lib/message-preview';
+import type { ChatExpressionMediaKind } from '@/lib/chat/expressions/chat-gif-provider';
+import { parseChatExpressionMediaKind } from '@/lib/chat/expressions/chat-expression-presentation';
 
 export type ConversationType = {
   id: string;
@@ -35,6 +37,7 @@ export type ConversationType = {
     timestamp: Date;
     senderId: string;
     type: 'text' | 'voice' | 'image' | 'mood_sticker' | 'video' | 'document' | 'location';
+    mediaKind?: ChatExpressionMediaKind | null;
     isViewOnce?: boolean;
     isRead: boolean;
     deliveredAt: Date | null;
@@ -72,7 +75,7 @@ export type ThreadPreviewMessage = ConversationType['lastMessage'] & {
 };
 
 export const getListRowPreviewText = (
-  row?: Pick<MessageRow, 'deleted_for_all' | 'text' | 'message_type' | 'is_view_once'> | null,
+  row?: Pick<MessageRow, 'deleted_for_all' | 'text' | 'message_type' | 'media_kind' | 'is_view_once'> | null,
 ) => {
   if (!row) return '';
   if (row.deleted_for_all) return 'Message deleted';
@@ -80,6 +83,7 @@ export const getListRowPreviewText = (
     getChatMessagePreviewText({
       text: row.text,
       messageType: row.message_type,
+      mediaKind: row.media_kind,
       isViewOnce: Boolean(row.is_view_once),
     }) || row.text || ''
   );
@@ -122,7 +126,7 @@ export const messageRowToLocalChatMessage = (
     is_view_once: row.is_view_once ? 1 : 0,
     local_only: 0,
     error_code: null,
-    metadata_json: null,
+    metadata_json: row.media_kind ? JSON.stringify({ mediaKind: row.media_kind }) : null,
     remote_updated_at: row.created_at,
     local_updated_at: new Date().toISOString(),
   };
@@ -305,6 +309,7 @@ export const localThreadToConversation = (row: ChatThreadRow): ConversationType 
       timestamp,
       senderId: row.last_message_sender_id || '',
       type: previewType,
+      mediaKind: parseChatExpressionMediaKind(row.last_message_media_kind),
       isViewOnce: preview === 'View once photo' || preview === 'View once video',
       isRead: row.last_message_status === 'read'
         || (row.last_message_sender_id !== row.owner_user_id && row.unread_count === 0),
@@ -341,7 +346,11 @@ export const conversationToLocalThread = (
     : conversation.lastMessage.isViewOnce && conversation.lastMessage.type === 'video'
     ? 'View once video'
     : conversation.lastMessage.type === 'image'
-    ? 'Photo'
+    ? getChatMessagePreviewText({
+        text: conversation.lastMessage.text,
+        messageType: 'image',
+        mediaKind: conversation.lastMessage.mediaKind,
+      })
     : conversation.lastMessage.type === 'video'
     ? 'Video'
     : conversation.lastMessage.type === 'voice'
@@ -382,6 +391,7 @@ export const conversationToLocalThread = (
     last_message_preview: lastMessagePreview,
     last_message_sender_id: conversation.lastMessage.senderId || null,
     last_message_status: lastMessageStatus,
+    last_message_media_kind: parseChatExpressionMediaKind(conversation.lastMessage.mediaKind),
     last_message_edited_at: conversation.lastMessage.editedAt instanceof Date
       ? conversation.lastMessage.editedAt.toISOString()
       : null,

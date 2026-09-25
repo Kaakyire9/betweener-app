@@ -1,5 +1,6 @@
 import type { MessageType } from '@/components/chat/types';
 import type { ChatMessageRow } from '@/lib/chat/local/chat-db';
+import { parseChatProviderMediaReference } from './expressions/chat-gif-provider.ts';
 
 type CachedReplyTarget = {
   id: string;
@@ -7,6 +8,7 @@ type CachedReplyTarget = {
   senderId: string;
   timestamp: string;
   type: MessageType['type'];
+  mediaKind?: MessageType['mediaKind'];
   deletedForAll?: boolean;
   isViewOnce?: boolean;
   imageUrl?: string;
@@ -23,6 +25,7 @@ type CachedReplyTarget = {
     scheduledFor: string;
   };
   sticker?: MessageType['sticker'];
+  providerMedia?: MessageType['providerMedia'];
 };
 
 export type CachedMessageType = Omit<
@@ -76,6 +79,7 @@ export type MessageDatabaseRow = {
   media_group_id?: string | null;
   media_caption?: string | null;
   media_kind?: string | null;
+  provider_media?: unknown;
 };
 
 const serializeReplyTarget = (message: MessageType | undefined): CachedReplyTarget | undefined => {
@@ -102,6 +106,7 @@ const serializeReplyTarget = (message: MessageType | undefined): CachedReplyTarg
     senderId: message.senderId,
     timestamp,
     type: message.type,
+    mediaKind: message.mediaKind,
     isViewOnce: message.isViewOnce,
     imageUrl: isPrivateViewOnce ? undefined : message.imageUrl,
     offlineImageUri: isPrivateViewOnce ? undefined : message.offlineImageUri,
@@ -131,14 +136,32 @@ const serializeReplyTarget = (message: MessageType | undefined): CachedReplyTarg
           }
         : undefined,
     sticker: isPrivateViewOnce ? undefined : message.sticker,
+    providerMedia: isPrivateViewOnce ? undefined : message.providerMedia,
   };
 };
 
-const deserializeReplyTarget = (message: CachedReplyTarget | undefined): MessageType | undefined => {
+const EPOCH_DATE = new Date(0);
+
+const deserializeCachedDate = (
+  value: string | number | Date | null | undefined,
+  fallback: Date = EPOCH_DATE,
+) => {
+  const candidate = value instanceof Date ? value : value ? new Date(value) : null;
+  return candidate && Number.isFinite(candidate.getTime())
+    ? candidate
+    : new Date(fallback.getTime());
+};
+
+const deserializeReplyTarget = (
+  message: CachedReplyTarget | undefined,
+  fallbackTimestamp: Date = EPOCH_DATE,
+): MessageType | undefined => {
   if (!message) return undefined;
+  const timestamp = deserializeCachedDate(message.timestamp, fallbackTimestamp);
   return {
     ...message,
-    timestamp: message.timestamp ? new Date(message.timestamp) : new Date(),
+    providerMedia: parseChatProviderMediaReference(message.providerMedia),
+    timestamp,
     reactions: [],
     status: 'sent',
     location: message.location
@@ -150,9 +173,7 @@ const deserializeReplyTarget = (message: CachedReplyTarget | undefined): Message
     dateInvite: message.dateInvite
       ? {
           ...message.dateInvite,
-          scheduledFor: message.dateInvite.scheduledFor
-            ? new Date(message.dateInvite.scheduledFor)
-            : new Date(),
+          scheduledFor: deserializeCachedDate(message.dateInvite.scheduledFor, timestamp),
         }
       : undefined,
   };
@@ -161,6 +182,7 @@ const deserializeReplyTarget = (message: CachedReplyTarget | undefined): Message
 export const serializeCachedMessages = (messages: MessageType[]): CachedMessageType[] =>
   (messages || []).map((message) => ({
     ...message,
+    providerMedia: parseChatProviderMediaReference(message.providerMedia),
     timestamp: message.timestamp instanceof Date ? message.timestamp.toISOString() : new Date().toISOString(),
     readAt: message.readAt instanceof Date ? message.readAt.toISOString() : undefined,
     deletedAt: message.deletedAt instanceof Date ? message.deletedAt.toISOString() : (message.deletedAt ?? null),
@@ -185,30 +207,40 @@ export const serializeCachedMessages = (messages: MessageType[]): CachedMessageT
     replyTo: serializeReplyTarget(message.replyTo),
   }));
 
-export const deserializeCachedMessages = (raw: unknown): MessageType[] => {
+export const deserializeCachedMessages = (
+  raw: unknown,
+  fallbackTimestamp: Date = EPOCH_DATE,
+): MessageType[] => {
   if (!Array.isArray(raw)) return [];
-  return (raw as CachedMessageType[]).map((message) => ({
-    ...message,
-    timestamp: message.timestamp ? new Date(message.timestamp) : new Date(),
-    readAt: message.readAt ? new Date(message.readAt) : undefined,
-    deletedAt: message.deletedAt ? new Date(message.deletedAt) : null,
-    editedAt: message.editedAt ? new Date(message.editedAt) : null,
-    location: message.location
-      ? {
-          ...message.location,
-          expiresAt: message.location.expiresAt ? new Date(message.location.expiresAt) : null,
-        }
-      : undefined,
-    dateInvite: message.dateInvite
-      ? {
-          ...message.dateInvite,
-          scheduledFor: message.dateInvite.scheduledFor
-            ? new Date(message.dateInvite.scheduledFor)
-            : new Date(),
-        }
-      : undefined,
-    replyTo: deserializeReplyTarget(message.replyTo),
-  }));
+  return (raw as CachedMessageType[]).map((message) => {
+    // Legacy and partially-written optimistic snapshots can be missing date
+    // fields. Never use the wall clock while hydrating them: doing so changes
+    // the message revision on every render and recursively reapplies SQLite.
+    const timestamp = deserializeCachedDate(message.timestamp, fallbackTimestamp);
+    return {
+      ...message,
+      providerMedia: parseChatProviderMediaReference(message.providerMedia),
+      timestamp,
+      readAt: message.readAt ? deserializeCachedDate(message.readAt, timestamp) : undefined,
+      deletedAt: message.deletedAt ? deserializeCachedDate(message.deletedAt, timestamp) : null,
+      editedAt: message.editedAt ? deserializeCachedDate(message.editedAt, timestamp) : null,
+      location: message.location
+        ? {
+            ...message.location,
+            expiresAt: message.location.expiresAt
+              ? deserializeCachedDate(message.location.expiresAt, timestamp)
+              : null,
+          }
+        : undefined,
+      dateInvite: message.dateInvite
+        ? {
+            ...message.dateInvite,
+            scheduledFor: deserializeCachedDate(message.dateInvite.scheduledFor, timestamp),
+          }
+        : undefined,
+      replyTo: deserializeReplyTarget(message.replyTo, timestamp),
+    };
+  });
 };
 
 export const safeJsonStringify = (value: unknown): string | null => {
@@ -295,7 +327,10 @@ export const localRowToChatMessage = (row: ChatMessageRow): MessageType => {
 
   if (row.metadata_json) {
     try {
-      const hydrated = deserializeCachedMessages([JSON.parse(row.metadata_json)])[0];
+      const hydrated = deserializeCachedMessages(
+        [JSON.parse(row.metadata_json)],
+        deserializeCachedDate(row.created_at),
+      )[0];
       if (hydrated) {
         return {
           ...hydrated,
@@ -325,6 +360,16 @@ export const localRowToChatMessage = (row: ChatMessageRow): MessageType => {
     deletedForAll: row.status === 'deleted',
     deletedAt: row.deleted_at ? new Date(row.deleted_at) : null,
     isViewOnce: row.is_view_once === 1,
+    providerMedia: parseChatProviderMediaReference(
+      (() => {
+        if (!row.metadata_json) return null;
+        try {
+          return (JSON.parse(row.metadata_json) as { providerMedia?: unknown }).providerMedia;
+        } catch {
+          return null;
+        }
+      })(),
+    ),
     replyToId: row.reply_to_message_id,
   };
 };

@@ -12,7 +12,7 @@ export type ChatStickerDefinition = {
   emoji: string;
   name: string;
   category: keyof typeof STICKER_COLORS;
-  pack: 'Essentials' | 'Between Us' | 'Everyday';
+  pack: 'Essentials' | 'Favourites' | 'Everyday';
   color: string;
   keywords: readonly string[];
 };
@@ -28,16 +28,16 @@ export const MOOD_STICKERS: readonly ChatStickerDefinition[] = [
   { id: 'electric', emoji: '\u26A1', name: 'Electric', category: 'energy', pack: 'Essentials', color: STICKER_COLORS.energy, keywords: ['energy', 'spark'] },
   { id: 'sparkle', emoji: '\u2728', name: 'Sparkle', category: 'energy', pack: 'Essentials', color: STICKER_COLORS.energy, keywords: ['shine', 'magic'] },
   { id: 'star', emoji: '\u2B50', name: 'Star', category: 'energy', pack: 'Essentials', color: STICKER_COLORS.energy, keywords: ['brilliant', 'proud'] },
-  { id: 'love', emoji: '\u2764\uFE0F', name: 'Love', category: 'heart', pack: 'Between Us', color: STICKER_COLORS.heart, keywords: ['heart', 'romance'] },
-  { id: 'hearts', emoji: '\u{1F495}', name: 'Hearts', category: 'heart', pack: 'Between Us', color: STICKER_COLORS.heart, keywords: ['together', 'affection'] },
-  { id: 'sparkling-heart', emoji: '\u{1F496}', name: 'Sparkling Heart', category: 'heart', pack: 'Between Us', color: STICKER_COLORS.heart, keywords: ['special', 'romance'] },
-  { id: 'rose', emoji: '\u{1F339}', name: 'Rose', category: 'heart', pack: 'Between Us', color: STICKER_COLORS.heart, keywords: ['flower', 'date'] },
-  { id: 'great-flow', emoji: '\u{1F49A}', name: 'Great Flow', category: 'connection', pack: 'Between Us', color: STICKER_COLORS.connection, keywords: ['chemistry', 'connection', 'vibe'] },
-  { id: 'warm-spark', emoji: '\u{1FAF6}', name: 'Warm Spark', category: 'connection', pack: 'Between Us', color: STICKER_COLORS.connection, keywords: ['spark', 'care', 'hands'] },
-  { id: 'perfect-match', emoji: '\u{1F9E9}', name: 'Perfect Match', category: 'connection', pack: 'Between Us', color: STICKER_COLORS.connection, keywords: ['match', 'fit', 'us'] },
-  { id: 'date-energy', emoji: '\u{1F942}', name: 'Date Energy', category: 'connection', pack: 'Between Us', color: STICKER_COLORS.connection, keywords: ['date', 'cheers', 'meet'] },
-  { id: 'thinking-of-you', emoji: '\u{1F4AD}', name: 'Thinking of You', category: 'connection', pack: 'Between Us', color: STICKER_COLORS.connection, keywords: ['miss', 'thinking', 'you'] },
-  { id: 'chemistry', emoji: '\u{1F9EA}', name: 'Chemistry', category: 'connection', pack: 'Between Us', color: STICKER_COLORS.connection, keywords: ['vibe', 'spark', 'science'] },
+  { id: 'love', emoji: '\u2764\uFE0F', name: 'Love', category: 'heart', pack: 'Favourites', color: STICKER_COLORS.heart, keywords: ['heart', 'romance'] },
+  { id: 'hearts', emoji: '\u{1F495}', name: 'Hearts', category: 'heart', pack: 'Favourites', color: STICKER_COLORS.heart, keywords: ['together', 'affection'] },
+  { id: 'sparkling-heart', emoji: '\u{1F496}', name: 'Sparkling Heart', category: 'heart', pack: 'Favourites', color: STICKER_COLORS.heart, keywords: ['special', 'romance'] },
+  { id: 'rose', emoji: '\u{1F339}', name: 'Rose', category: 'heart', pack: 'Favourites', color: STICKER_COLORS.heart, keywords: ['flower', 'date'] },
+  { id: 'great-flow', emoji: '\u{1F49A}', name: 'Great Flow', category: 'connection', pack: 'Favourites', color: STICKER_COLORS.connection, keywords: ['chemistry', 'connection', 'vibe'] },
+  { id: 'warm-spark', emoji: '\u{1FAF6}', name: 'Warm Spark', category: 'connection', pack: 'Favourites', color: STICKER_COLORS.connection, keywords: ['spark', 'care', 'hands'] },
+  { id: 'perfect-match', emoji: '\u{1F9E9}', name: 'Perfect Match', category: 'connection', pack: 'Favourites', color: STICKER_COLORS.connection, keywords: ['match', 'fit', 'us'] },
+  { id: 'date-energy', emoji: '\u{1F942}', name: 'Date Energy', category: 'connection', pack: 'Favourites', color: STICKER_COLORS.connection, keywords: ['date', 'cheers', 'meet'] },
+  { id: 'thinking-of-you', emoji: '\u{1F4AD}', name: 'Thinking of You', category: 'connection', pack: 'Favourites', color: STICKER_COLORS.connection, keywords: ['miss', 'thinking', 'you'] },
+  { id: 'chemistry', emoji: '\u{1F9EA}', name: 'Chemistry', category: 'connection', pack: 'Favourites', color: STICKER_COLORS.connection, keywords: ['vibe', 'spark', 'science'] },
   { id: 'party', emoji: '\u{1F973}', name: 'Party', category: 'celebration', pack: 'Everyday', color: STICKER_COLORS.celebration, keywords: ['fun', 'birthday'] },
   { id: 'confetti', emoji: '\u{1F389}', name: 'Confetti', category: 'celebration', pack: 'Everyday', color: STICKER_COLORS.celebration, keywords: ['congrats', 'party'] },
   { id: 'celebrate', emoji: '\u{1F64C}', name: 'Celebrate', category: 'celebration', pack: 'Everyday', color: STICKER_COLORS.celebration, keywords: ['yes', 'win'] },

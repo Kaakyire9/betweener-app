@@ -36,6 +36,49 @@ const validStickerPayload = (text: string) => {
   }
 };
 
+const PROVIDER_MEDIA_ID = /^[a-z0-9_-]{1,100}$/i;
+const PROVIDER_MEDIA_KINDS = new Set([
+  'giphy_gif', 'giphy_sticker', 'giphy_emoji', 'giphy_text',
+]);
+const PROVIDER_MEDIA_KEYS = new Set([
+  'schemaVersion', 'provider', 'providerMediaId', 'title', 'width', 'height', 'kind',
+]);
+
+const parseProviderMedia = (value: unknown) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).some((key) => !PROVIDER_MEDIA_KEYS.has(key))) return null;
+  const providerMediaId = typeof record.providerMediaId === 'string'
+    ? record.providerMediaId.trim()
+    : '';
+  const title = typeof record.title === 'string' ? record.title.trim().slice(0, 160) : '';
+  const kind = typeof record.kind === 'string' ? record.kind : '';
+  const dimension = (entry: unknown) => entry == null
+    ? null
+    : Number.isInteger(entry) && Number(entry) >= 1 && Number(entry) <= 8192
+      ? Number(entry)
+      : undefined;
+  const width = dimension(record.width);
+  const height = dimension(record.height);
+  if (
+    record.schemaVersion !== 1
+    || record.provider !== 'giphy'
+    || !PROVIDER_MEDIA_ID.test(providerMediaId)
+    || !PROVIDER_MEDIA_KINDS.has(kind)
+    || width === undefined
+    || height === undefined
+  ) return null;
+  return {
+    schemaVersion: 1,
+    provider: 'giphy',
+    providerMediaId,
+    title: title || 'GIPHY expression',
+    width,
+    height,
+    kind,
+  };
+};
+
 serve(async (request) => {
   if (request.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (request.method !== 'POST') return json(405, { code: 'METHOD_NOT_ALLOWED' });
@@ -71,6 +114,8 @@ serve(async (request) => {
   const clientMessageId = String(input.clientMessageId ?? '').trim();
   const text = String(input.text ?? '').trim();
   const messageType = String(input.messageType ?? 'text');
+  const providerExpression = action === 'send' && messageType === 'provider_expression';
+  const providerMedia = providerExpression ? parseProviderMedia(input.providerMedia) : null;
   const replyToMessageId = input.replyToMessageId == null ? null : String(input.replyToMessageId);
   const storagePath = input.storagePath == null ? null : String(input.storagePath);
   if (
@@ -78,9 +123,10 @@ serve(async (request) => {
     || (action === 'send' && (!UUID.test(receiverId) || receiverId === authData.user.id))
     || (action === 'edit' && !UUID.test(messageId))
     || (action === 'send' && (!clientMessageId || clientMessageId.length > 200))
-    || !text || text.length > 5000
-    || !['text', 'mood_sticker'].includes(messageType)
-    || (messageType === 'mood_sticker' && !validStickerPayload(text))
+    || (providerExpression
+      ? !providerMedia || text.length > 0 || storagePath !== null
+      : !text || text.length > 5000 || !['text', 'mood_sticker'].includes(messageType))
+    || (!providerExpression && messageType === 'mood_sticker' && !validStickerPayload(text))
     || (replyToMessageId !== null && !UUID.test(replyToMessageId))
     || (storagePath !== null && storagePath.length > 1000)
   ) {
@@ -91,19 +137,27 @@ serve(async (request) => {
     auth: { persistSession: false, autoRefreshToken: false },
     global: { headers: { 'X-Content-Safety-Version': 'content-safety-v1' } },
   });
-  const { data: rateLimit, error: rateLimitError } = await admin.rpc(
-    'rpc_service_consume_content_guard_rate_limit',
-    { p_user_id: authData.user.id, p_scope: 'private_message' },
-  );
-  if (rateLimitError || !rateLimit) return json(503, { code: 'MESSAGE_GUARD_UNAVAILABLE' });
-  if ((rateLimit as Record<string, unknown>).allowed !== true) {
-    return json(429, {
-      code: 'MESSAGE_GUARD_RATE_LIMITED',
-      retry_after_seconds: (rateLimit as Record<string, unknown>).retry_after_seconds,
-    });
+  if (!providerExpression) {
+    const { data: rateLimit, error: rateLimitError } = await admin.rpc(
+      'rpc_service_consume_content_guard_rate_limit',
+      { p_user_id: authData.user.id, p_scope: 'private_message' },
+    );
+    if (rateLimitError || !rateLimit) return json(503, { code: 'MESSAGE_GUARD_UNAVAILABLE' });
+    if ((rateLimit as Record<string, unknown>).allowed !== true) {
+      return json(429, {
+        code: 'MESSAGE_GUARD_RATE_LIMITED',
+        retry_after_seconds: (rateLimit as Record<string, unknown>).retry_after_seconds,
+      });
+    }
   }
 
-  let assessment = assessPrivateMessageRules(text);
+  let assessment = providerExpression
+    ? {
+        decision: 'ALLOW', categories: [], riskScore: 0,
+        provider: 'giphy_sdk', model: 'provider-reference-v1',
+        providerRequestId: null, failureReason: null,
+      }
+    : assessPrivateMessageRules(text);
   if (messageType === 'text' && assessment.decision !== 'BLOCK') {
     const harm = await moderateWithOpenAI(text);
     if (harm.failureReason) {
@@ -157,7 +211,16 @@ serve(async (request) => {
         ...moderationArgs,
         p_message_id: messageId,
       })
-    : await admin.rpc('rpc_service_send_moderated_private_message', {
+    : providerExpression
+      ? await admin.rpc('rpc_service_send_provider_expression', {
+          p_sender_user_id: authData.user.id,
+          p_receiver_user_id: receiverId,
+          p_client_message_id: clientMessageId,
+          p_provider_media: providerMedia,
+          p_media_kind: providerMedia.kind,
+          p_reply_to_message_id: replyToMessageId,
+        })
+      : await admin.rpc('rpc_service_send_moderated_private_message', {
         ...moderationArgs,
         p_receiver_user_id: receiverId,
         p_client_message_id: clientMessageId,
@@ -167,16 +230,26 @@ serve(async (request) => {
       });
   if (error) {
     const diagnostic = String(error.message ?? '');
-    const code = ['MESSAGING_BLOCKED', 'MESSAGE_EDIT_FORBIDDEN', 'INVALID_MODERATED_MESSAGE']
+    const code = [
+      'MESSAGING_BLOCKED', 'MESSAGE_EDIT_FORBIDDEN', 'INVALID_MODERATED_MESSAGE',
+      'INVALID_PROVIDER_EXPRESSION', 'MESSAGE_IDEMPOTENCY_CONFLICT',
+    ]
       .find((candidate) => diagnostic.includes(candidate)) ?? 'MESSAGE_SEND_FAILED';
     return json(
       ['MESSAGING_BLOCKED', 'MESSAGE_EDIT_FORBIDDEN'].includes(code)
         ? 403
-        : code === 'INVALID_MODERATED_MESSAGE' ? 400 : 503,
+        : code === 'MESSAGE_IDEMPOTENCY_CONFLICT' ? 409
+        : ['INVALID_MODERATED_MESSAGE', 'INVALID_PROVIDER_EXPRESSION'].includes(code) ? 400 : 503,
       { code },
     );
   }
   const result = (data ?? {}) as Record<string, unknown>;
+  if (result.ok === false && result.code === 'MESSAGE_GUARD_RATE_LIMITED') {
+    return json(429, {
+      code: 'MESSAGE_GUARD_RATE_LIMITED',
+      retry_after_seconds: result.retry_after_seconds,
+    });
+  }
   console.info(JSON.stringify({
     event: 'private_message_guard_decision',
     sender_user_id: authData.user.id,

@@ -1,4 +1,5 @@
 import type { ChatMessageRow } from '@/lib/chat/local/chat-schema';
+import { parseChatExpressionMediaKind } from '@/lib/chat/expressions/chat-expression-presentation';
 import { getChatMessagePreviewText } from '@/lib/message-preview';
 import { getChatDb } from '@/lib/storage/sqlite';
 
@@ -13,17 +14,29 @@ type ChatThreadSummaryMessage = Pick<
   | 'message_type'
   | 'status'
   | 'is_view_once'
+  | 'metadata_json'
   | 'edited_at'
   | 'created_at'
   | 'remote_updated_at'
   | 'local_updated_at'
 >;
 
+const getStoredMediaKind = (metadataJson: string | null) => {
+  if (!metadataJson) return null;
+  try {
+    const parsed = JSON.parse(metadataJson) as { mediaKind?: unknown };
+    return parseChatExpressionMediaKind(parsed?.mediaKind);
+  } catch {
+    return null;
+  }
+};
+
 const getThreadMessagePreview = (message: ChatThreadSummaryMessage) => {
   return (
     getChatMessagePreviewText({
       text: message.body,
       messageType: message.message_type,
+      mediaKind: getStoredMediaKind(message.metadata_json),
       isViewOnce: message.is_view_once === 1,
       status: message.status,
     }) || message.body || ''
@@ -36,7 +49,7 @@ export const refreshThreadSummaryFromMessages = async (
 ) => {
   const latest = await db.getFirstAsync<ChatThreadSummaryMessage>(
     `
-      select id, body, sender_user_id, message_type, status, is_view_once, edited_at, created_at, remote_updated_at, local_updated_at
+      select id, body, sender_user_id, message_type, status, is_view_once, metadata_json, edited_at, created_at, remote_updated_at, local_updated_at
       from chat_messages
       where owner_user_id = ?
         and thread_id = ?
@@ -70,6 +83,7 @@ export const refreshThreadSummaryFromMessages = async (
             last_message_preview = '',
             last_message_sender_id = null,
             last_message_status = null,
+            last_message_media_kind = null,
             last_message_edited_at = null,
             last_message_reaction_emoji = null,
             last_message_reaction_user_id = null,
@@ -98,19 +112,21 @@ export const refreshThreadSummaryFromMessages = async (
       insert into chat_threads (
         id, owner_user_id, peer_user_id, peer_profile_id, peer_name, peer_avatar_url,
         peer_verified, peer_presence_status, peer_last_active, title, thread_type, last_message_id,
-        last_message_preview, last_message_sender_id, last_message_status, last_message_edited_at,
+        last_message_preview, last_message_sender_id, last_message_status, last_message_media_kind,
+        last_message_edited_at,
         last_message_reaction_emoji, last_message_reaction_user_id, last_message_reaction_created_at,
         last_message_reaction_target_type, last_activity_kind, last_activity_message_id,
         last_activity_preview, last_activity_at, last_message_at, unread_count,
         is_muted, is_pinned, is_archived, local_status, remote_updated_at,
         local_updated_at, created_at
       )
-      values (?, ?, ?, null, null, null, 0, null, null, null, 'direct', ?, ?, ?, ?, ?, null, null, null, null, null, null, null, null, ?, ?, 0, 0, 0, 'active', ?, ?, ?)
+      values (?, ?, ?, null, null, null, 0, null, null, null, 'direct', ?, ?, ?, ?, ?, ?, null, null, null, null, null, null, null, null, ?, ?, 0, 0, 0, 'active', ?, ?, ?)
       on conflict(owner_user_id, id) do update set
         last_message_id = excluded.last_message_id,
         last_message_preview = excluded.last_message_preview,
         last_message_sender_id = excluded.last_message_sender_id,
         last_message_status = excluded.last_message_status,
+        last_message_media_kind = excluded.last_message_media_kind,
         last_message_edited_at = excluded.last_message_edited_at,
         last_message_reaction_emoji = case
           when chat_threads.last_message_id = excluded.last_message_id then chat_threads.last_message_reaction_emoji
@@ -160,6 +176,7 @@ export const refreshThreadSummaryFromMessages = async (
     getThreadMessagePreview(latest),
     latest.sender_user_id,
     latest.status,
+    getStoredMediaKind(latest.metadata_json),
     latest.edited_at,
     latest.created_at,
     unread?.unread_count ?? 0,
@@ -176,7 +193,7 @@ export const refreshThreadSummaryFromMessagesSync = (
 ) => {
   const latest = db.getFirstSync<ChatThreadSummaryMessage>(
     `
-      select id, body, sender_user_id, message_type, status, is_view_once, edited_at, created_at, remote_updated_at, local_updated_at
+      select id, body, sender_user_id, message_type, status, is_view_once, metadata_json, edited_at, created_at, remote_updated_at, local_updated_at
       from chat_messages
       where owner_user_id = ?
         and thread_id = ?
@@ -209,6 +226,7 @@ export const refreshThreadSummaryFromMessagesSync = (
             last_message_preview = '',
             last_message_sender_id = null,
             last_message_status = null,
+            last_message_media_kind = null,
             last_message_edited_at = null,
             last_message_reaction_emoji = null,
             last_message_reaction_user_id = null,
@@ -237,19 +255,21 @@ export const refreshThreadSummaryFromMessagesSync = (
       insert into chat_threads (
         id, owner_user_id, peer_user_id, peer_profile_id, peer_name, peer_avatar_url,
         peer_verified, peer_presence_status, peer_last_active, title, thread_type, last_message_id,
-        last_message_preview, last_message_sender_id, last_message_status, last_message_edited_at,
+        last_message_preview, last_message_sender_id, last_message_status, last_message_media_kind,
+        last_message_edited_at,
         last_message_reaction_emoji, last_message_reaction_user_id, last_message_reaction_created_at,
         last_message_reaction_target_type, last_activity_kind, last_activity_message_id,
         last_activity_preview, last_activity_at, last_message_at, unread_count,
         is_muted, is_pinned, is_archived, local_status, remote_updated_at,
         local_updated_at, created_at
       )
-      values (?, ?, ?, null, null, null, 0, null, null, null, 'direct', ?, ?, ?, ?, ?, null, null, null, null, null, null, null, null, ?, ?, 0, 0, 0, 'active', ?, ?, ?)
+      values (?, ?, ?, null, null, null, 0, null, null, null, 'direct', ?, ?, ?, ?, ?, ?, null, null, null, null, null, null, null, null, ?, ?, 0, 0, 0, 'active', ?, ?, ?)
       on conflict(owner_user_id, id) do update set
         last_message_id = excluded.last_message_id,
         last_message_preview = excluded.last_message_preview,
         last_message_sender_id = excluded.last_message_sender_id,
         last_message_status = excluded.last_message_status,
+        last_message_media_kind = excluded.last_message_media_kind,
         last_message_edited_at = excluded.last_message_edited_at,
         last_message_reaction_emoji = case
           when chat_threads.last_message_id = excluded.last_message_id then chat_threads.last_message_reaction_emoji
@@ -299,6 +319,7 @@ export const refreshThreadSummaryFromMessagesSync = (
     getThreadMessagePreview(latest),
     latest.sender_user_id,
     latest.status,
+    getStoredMediaKind(latest.metadata_json),
     latest.edited_at,
     latest.created_at,
     unread?.unread_count ?? 0,

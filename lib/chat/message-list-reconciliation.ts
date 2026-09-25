@@ -136,3 +136,28 @@ export const preserveUnchangedMessageReferences = (
 
   return listChanged ? reconciled : currentMessages;
 };
+
+/**
+ * Drops an optimistic row once a canonical server row with the same client
+ * identity is present. This also repairs older local caches that retained
+ * both rows after a lost acknowledgement.
+ */
+export const removeSupersededOptimisticMessages = (messages: MessageType[]) => {
+  const canonicalClientIds = new Set(
+    messages
+      .filter((message) => !String(message.id).startsWith('temp-'))
+      .map((message) => message.clientMessageId)
+      .filter((id): id is string => Boolean(id)),
+  );
+  if (canonicalClientIds.size === 0) return messages;
+
+  let removed = false;
+  const filtered = messages.filter((message) => {
+    if (!String(message.id).startsWith('temp-')) return true;
+    const clientMessageId = message.clientMessageId ?? message.id;
+    const superseded = canonicalClientIds.has(clientMessageId);
+    removed ||= superseded;
+    return !superseded;
+  });
+  return removed ? filtered : messages;
+};

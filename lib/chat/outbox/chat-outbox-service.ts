@@ -61,6 +61,7 @@ import {
 } from '@/lib/chat/album/chat-media-album';
 import * as FileSystem from 'expo-file-system/legacy';
 import { AppState } from 'react-native';
+import { parseChatProviderMediaReference } from '@/lib/chat/expressions/chat-gif-provider';
 
 
 const CHAT_MEDIA_BUCKET = 'chat-media' as const;
@@ -183,6 +184,7 @@ const ensureThreadShell = async (args: {
     last_message_preview: existing?.last_message_preview ?? null,
     last_message_sender_id: existing?.last_message_sender_id ?? null,
     last_message_status: existing?.last_message_status ?? null,
+    last_message_media_kind: existing?.last_message_media_kind ?? null,
     last_message_edited_at: existing?.last_message_edited_at ?? null,
     last_message_reaction_emoji: existing?.last_message_reaction_emoji ?? null,
     last_message_reaction_user_id: existing?.last_message_reaction_user_id ?? null,
@@ -211,6 +213,10 @@ const parseTextPayload = (item: ChatPendingOutboxRow): TextOutboxPayload | null 
     const parsed = JSON.parse(item.payload_json) as TextOutboxPayload;
     if (!parsed || parsed.kind !== 'chat_text_send') return null;
     if (!parsed.senderId || !parsed.receiverId || typeof parsed.text !== 'string') return null;
+    if (
+      parsed.messageType === 'provider_expression'
+      && !parseChatProviderMediaReference(parsed.providerMedia)
+    ) return null;
     return parsed;
   } catch {
     return null;
@@ -781,6 +787,24 @@ const sendTextOutboxItem = async (item: ChatPendingOutboxRow) => {
   }
 
   const clientMessageId = payload.clientMessageId ?? item.local_message_id;
+  // A retry may follow a lost HTTP response even though the server committed
+  // the message. Recover that canonical row before changing the local bubble
+  // back to "sending" or invoking the guard again.
+  if (item.attempt_count > 0 || item.status === 'sending') {
+    const canonicalBeforeRetry = await fetchExistingClientMessage(
+      payload.senderId,
+      clientMessageId,
+    ).catch(() => null);
+    if (canonicalBeforeRetry) {
+      await ChatRepository.settleOutboxMessage(
+        item.owner_user_id,
+        item.thread_id,
+        item.local_message_id,
+        toLocalMessageRow(item.owner_user_id, item.thread_id, canonicalBeforeRetry, payload),
+      );
+      return { sent: true, threadId: item.thread_id };
+    }
+  }
   await ChatRepository.markOutboxItemAttempting(item.owner_user_id, item.local_message_id);
 
   const { data: guardData, error } = await supabase.functions.invoke('private-message-guard-send', {
@@ -791,6 +815,9 @@ const sendTextOutboxItem = async (item: ChatPendingOutboxRow) => {
       messageType: payload.messageType ?? 'text',
       replyToMessageId: payload.replyToMessageId ?? null,
       storagePath: payload.storagePath ?? null,
+      providerMedia: payload.messageType === 'provider_expression'
+        ? parseChatProviderMediaReference(payload.providerMedia)
+        : null,
     },
   });
 
@@ -820,12 +847,25 @@ const sendTextOutboxItem = async (item: ChatPendingOutboxRow) => {
 
   const remoteRow = guardResult.message
     ?? (await fetchExistingClientMessage(payload.senderId, clientMessageId));
-  if (remoteRow) {
-    await ChatRepository.upsertMessages(item.owner_user_id, item.thread_id, [
-      toLocalMessageRow(item.owner_user_id, item.thread_id, remoteRow, payload),
-    ]);
+  if (!remoteRow) {
+    await scheduleOutboxRetry(
+      item,
+      new Error('canonical_message_missing_after_send'),
+      'canonical_message_missing',
+      'The server did not confirm the queued message',
+    );
+    return { sent: false, threadId: item.thread_id };
   }
-  await ChatRepository.markOutboxItemStatus(item.owner_user_id, item.local_message_id, 'sent');
+
+  // Replace the optimistic row and settle its outbox record atomically. This
+  // prevents a delivered provider expression from surviving locally as a
+  // second "Sending..." bubble.
+  await ChatRepository.settleOutboxMessage(
+    item.owner_user_id,
+    item.thread_id,
+    item.local_message_id,
+    toLocalMessageRow(item.owner_user_id, item.thread_id, remoteRow, payload),
+  );
   return { sent: true, threadId: item.thread_id };
 };
 

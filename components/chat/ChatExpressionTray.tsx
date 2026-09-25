@@ -4,8 +4,11 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
+  BackHandler,
   Easing,
+  FlatList,
   Keyboard,
+  Modal,
   Pressable,
   Platform,
   ScrollView,
@@ -15,9 +18,12 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Colors } from '@/constants/theme';
+import { useReduceMotion } from '@/hooks/useReduceMotion';
 import GiphyExpressionGrid from '@/components/chat/GiphyExpressionGrid';
+import ProviderExpressionMediaView from '@/components/chat/ProviderExpressionMediaView';
 import type { GiphyExpressionMode } from '@/components/chat/GiphyExpressionGrid.types';
 import {
   CHAT_EMOJI_GROUPS,
@@ -27,13 +33,15 @@ import {
   EMPTY_CHAT_EXPRESSION_PREFERENCES,
   loadChatExpressionPreferences,
   recordRecentExpression,
+  recordRecentProviderExpression,
   saveChatExpressionPreferences,
+  toggleFavouriteProviderExpression,
   toggleFavouriteSticker,
   type ChatExpressionPreferences,
 } from '@/lib/chat/expressions/chat-expression-preferences';
 import {
   getChatGifApiKey,
-  type ChatGifResult,
+  type ChatProviderExpressionSelection,
 } from '@/lib/chat/expressions/chat-gif-provider';
 import type { ChatStickerDefinition } from '@/lib/chat-stickers';
 import { MOOD_STICKERS } from '@/lib/chat-stickers';
@@ -44,14 +52,22 @@ type EmojiSource = 'classic' | 'animated';
 type StickerSource = 'betweener' | 'animated';
 type Theme = typeof Colors.light;
 
+let expressionSessionTab: ExpressionTab = 'stickers';
+let expressionSessionQueries: Record<ExpressionTab, string> = {
+  emoji: '',
+  stickers: '',
+  gifs: '',
+};
+
 type Props = {
   visible: boolean;
+  ownerUserId?: string | null;
   theme: Theme;
   isDark: boolean;
   onClose: () => void;
   onInsertEmoji: (emoji: string) => void;
   onSendSticker: (sticker: ChatStickerDefinition) => void;
-  onSendGif: (gif: ChatGifResult) => void;
+  onSendGif: (gif: ChatProviderExpressionSelection) => void;
 };
 
 const TABS: readonly {
@@ -76,6 +92,7 @@ const findStickers = (query: string) => {
 
 export default function ChatExpressionTray({
   visible,
+  ownerUserId,
   theme,
   isDark,
   onClose,
@@ -83,22 +100,33 @@ export default function ChatExpressionTray({
   onSendSticker,
   onSendGif,
 }: Props) {
-  const { height: windowHeight } = useWindowDimensions();
+  const { height: windowHeight, width: windowWidth } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const reduceMotion = useReduceMotion();
   const [mounted, setMounted] = useState(visible);
-  const [activeTab, setActiveTab] = useState<ExpressionTab>('stickers');
+  const [activeTab, setActiveTab] = useState<ExpressionTab>(expressionSessionTab);
   const [giphyMode, setGiphyMode] = useState<GiphyExpressionMode>('gifs');
   const [emojiSource, setEmojiSource] = useState<EmojiSource>('classic');
   const [stickerSource, setStickerSource] = useState<StickerSource>('animated');
-  const [query, setQuery] = useState('');
+  const [queries, setQueries] = useState<Record<ExpressionTab, string>>(
+    expressionSessionQueries,
+  );
+  const [expanded, setExpanded] = useState(false);
+  const [searchFocused, setSearchFocused] = useState(false);
+  const [previewExpression, setPreviewExpression] = useState<ChatProviderExpressionSelection | null>(null);
+  const [previewSticker, setPreviewSticker] = useState<ChatStickerDefinition | null>(null);
   const [selectedEmojiGroupId, setSelectedEmojiGroupId] = useState('smileys');
   const [preferences, setPreferences] = useState<ChatExpressionPreferences>(
     EMPTY_CHAT_EXPRESSION_PREFERENCES,
   );
   const animation = useRef(new Animated.Value(visible ? 1 : 0)).current;
+  const searchInputRef = useRef<TextInput | null>(null);
+  const suppressNextStickerPressRef = useRef(false);
   const gifPlatform = Platform.OS === 'ios' || Platform.OS === 'android' || Platform.OS === 'web'
     ? Platform.OS
     : 'unknown';
   const gifApiKey = getChatGifApiKey(gifPlatform);
+  const query = queries[activeTab];
   const gifProviderConfigured = Boolean(gifApiKey);
   const availableTabs = gifProviderConfigured
     ? TABS
@@ -117,13 +145,13 @@ export default function ChatExpressionTray({
 
   useEffect(() => {
     let cancelled = false;
-    void loadChatExpressionPreferences().then((value) => {
+    void loadChatExpressionPreferences(ownerUserId).then((value) => {
       if (!cancelled) setPreferences(value);
     });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [ownerUserId]);
 
   useEffect(() => {
     if (visible) {
@@ -131,7 +159,7 @@ export default function ChatExpressionTray({
       setMounted(true);
       Animated.timing(animation, {
         toValue: 1,
-        duration: 260,
+        duration: reduceMotion ? 0 : 220,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }).start();
@@ -139,18 +167,60 @@ export default function ChatExpressionTray({
     }
     Animated.timing(animation, {
       toValue: 0,
-      duration: 180,
+      duration: reduceMotion ? 0 : 160,
       easing: Easing.in(Easing.cubic),
       useNativeDriver: true,
     }).start(({ finished }) => {
       if (finished) setMounted(false);
     });
-  }, [animation, visible]);
+  }, [animation, reduceMotion, visible]);
 
   const persistPreferences = useCallback((next: ChatExpressionPreferences) => {
     setPreferences(next);
-    void saveChatExpressionPreferences(next).catch(() => {});
+    void saveChatExpressionPreferences(next, ownerUserId).catch(() => {});
+  }, [ownerUserId]);
+
+  const updateQuery = useCallback((value: string) => {
+    const next = { ...queries, [activeTab]: value };
+    expressionSessionQueries = next;
+    setQueries(next);
+  }, [activeTab, queries]);
+
+  const selectTab = useCallback((tab: ExpressionTab) => {
+    expressionSessionTab = tab;
+    setActiveTab(tab);
   }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android' || !visible) return;
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (previewExpression) {
+        setPreviewExpression(null);
+        return true;
+      }
+      if (previewSticker) {
+        setPreviewSticker(null);
+        suppressNextStickerPressRef.current = false;
+        return true;
+      }
+      if (searchFocused) {
+        searchInputRef.current?.blur();
+        Keyboard.dismiss();
+        return true;
+      }
+      if (query) {
+        updateQuery('');
+        return true;
+      }
+      if (expanded) {
+        setExpanded(false);
+        return true;
+      }
+      onClose();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [expanded, onClose, previewExpression, previewSticker, query, searchFocused, updateQuery, visible]);
 
   const selectEmoji = useCallback((emoji: string) => {
     Haptics.selectionAsync().catch(() => {});
@@ -169,6 +239,42 @@ export default function ChatExpressionTray({
     persistPreferences(toggleFavouriteSticker(preferences, stickerId));
   }, [persistPreferences, preferences]);
 
+  const previewCuratedSticker = useCallback((sticker: ChatStickerDefinition) => {
+    suppressNextStickerPressRef.current = true;
+    Haptics.selectionAsync().catch(() => {});
+    setPreviewSticker(sticker);
+  }, []);
+
+  const pressCuratedSticker = useCallback((sticker: ChatStickerDefinition) => {
+    if (suppressNextStickerPressRef.current) {
+      suppressNextStickerPressRef.current = false;
+      return;
+    }
+    selectSticker(sticker);
+  }, [selectSticker]);
+
+  const providerExpressionIsFavourite = useCallback((item: ChatProviderExpressionSelection) => (
+    preferences.favouriteProviderExpressions.some(
+      (candidate) => candidate.providerMediaId === item.providerMediaId && candidate.kind === item.kind,
+    )
+  ), [preferences.favouriteProviderExpressions]);
+
+  const sendProviderExpression = useCallback((item: ChatProviderExpressionSelection) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    persistPreferences(recordRecentProviderExpression(preferences, item));
+    setPreviewExpression(null);
+    onSendGif(item);
+  }, [onSendGif, persistPreferences, preferences]);
+
+  const selectProviderExpression = useCallback((item: ChatProviderExpressionSelection) => {
+    sendProviderExpression(item);
+  }, [sendProviderExpression]);
+
+  const favouriteProviderExpression = useCallback((item: ChatProviderExpressionSelection) => {
+    Haptics.selectionAsync().catch(() => {});
+    persistPreferences(toggleFavouriteProviderExpression(preferences, item));
+  }, [persistPreferences, preferences]);
+
   const stickerSections = useMemo(() => {
     const filtered = findStickers(query);
     const byId = new Map(MOOD_STICKERS.map((sticker) => [sticker.id, sticker] as const));
@@ -180,7 +286,7 @@ export default function ChatExpressionTray({
       .map((id) => byId.get(id))
       .filter((sticker): sticker is ChatStickerDefinition => Boolean(sticker))
       .filter((sticker) => filtered.includes(sticker));
-    const packs = ['Between Us', 'Essentials', 'Everyday'] as const;
+    const packs = ['Favourites', 'Essentials', 'Everyday'] as const;
     return [
       ...(favourites.length ? [{ id: 'favourites', title: 'Favourites', items: favourites }] : []),
       ...(recent.length && !query.trim() ? [{ id: 'recent', title: 'Recently used', items: recent }] : []),
@@ -207,7 +313,30 @@ export default function ChatExpressionTray({
     ?? emojiGroups[0]
     ?? CHAT_EMOJI_GROUPS[0];
   const styles = useMemo(() => createStyles(theme, isDark), [isDark, theme]);
-  const trayHeight = Math.min(460, Math.max(350, windowHeight * 0.49));
+  const compactHeight = Math.max(292, Math.min(390, windowHeight * 0.43));
+  const expandedHeight = Math.max(compactHeight, Math.min(620, windowHeight - insets.top - 150));
+  const trayHeight = expanded ? expandedHeight : compactHeight;
+  const emojiColumns = windowWidth >= 700 ? 10 : windowWidth >= 390 ? 8 : 7;
+  const providerQuickItems = useMemo(() => {
+    if (!showProviderGrid || query.trim()) return [];
+    const expectedKind = providerMode === 'gifs'
+      ? 'giphy_gif'
+      : providerMode === 'animated-text'
+        ? 'giphy_text'
+        : providerMode === 'emoji'
+          ? 'giphy_emoji'
+          : 'giphy_sticker';
+    const seen = new Set<string>();
+    return [
+      ...preferences.favouriteProviderExpressions,
+      ...preferences.recentProviderExpressions,
+    ].filter((item) => {
+      const identity = `${item.kind}:${item.providerMediaId}`;
+      if (item.kind !== expectedKind || seen.has(identity)) return false;
+      seen.add(identity);
+      return true;
+    }).slice(0, 12);
+  }, [preferences.favouriteProviderExpressions, preferences.recentProviderExpressions, providerMode, query, showProviderGrid]);
 
   if (!mounted) return null;
 
@@ -228,12 +357,18 @@ export default function ChatExpressionTray({
         },
       ]}
     >
-      <View style={styles.handle} />
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.eyebrow}>BETWEENER EXPRESSIONS</Text>
-          <Text style={styles.title}>Say it with feeling</Text>
-        </View>
+      <View style={styles.topRow}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={expanded ? 'Collapse expressions' : 'Expand expressions'}
+          accessibilityHint="Changes how much of the expression catalogue is visible"
+          accessibilityState={{ expanded }}
+          hitSlop={8}
+          style={styles.handleButton}
+          onPress={() => setExpanded((current) => !current)}
+        >
+          <View style={styles.handle} />
+        </Pressable>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Close expressions"
@@ -256,8 +391,7 @@ export default function ChatExpressionTray({
               accessibilityState={{ selected }}
               style={[styles.tab, selected && styles.tabSelected]}
               onPress={() => {
-                setActiveTab(tab.id);
-                setQuery('');
+                selectTab(tab.id);
               }}
             >
               <MaterialCommunityIcons
@@ -274,9 +408,10 @@ export default function ChatExpressionTray({
       {!animatedEmojiCatalogue ? <View style={styles.searchShell}>
         <MaterialCommunityIcons name="magnify" size={18} color={theme.textMuted} />
         <TextInput
+          ref={searchInputRef}
           testID="chat-expression-search"
           value={query}
-          onChangeText={setQuery}
+          onChangeText={updateQuery}
           placeholder={activeTab === 'gifs'
             ? giphyMode === 'animated-text' ? 'Type words to animate' : 'Search GIFs'
             : activeTab === 'stickers' && gifProviderConfigured && stickerSource === 'animated'
@@ -289,9 +424,11 @@ export default function ChatExpressionTray({
           autoCapitalize="none"
           autoCorrect={false}
           returnKeyType="search"
+          onFocus={() => setSearchFocused(true)}
+          onBlur={() => setSearchFocused(false)}
         />
         {query ? (
-          <Pressable accessibilityLabel="Clear search" onPress={() => setQuery('')}>
+          <Pressable accessibilityLabel="Clear search" onPress={() => updateQuery('')}>
             <MaterialCommunityIcons name="close-circle" size={17} color={theme.textMuted} />
           </Pressable>
         ) : null}
@@ -348,16 +485,79 @@ export default function ChatExpressionTray({
       ) : null}
 
       {showProviderGrid ? (
-        <GiphyExpressionGrid
-          apiKey={gifApiKey}
-          query={query}
-          mode={providerMode}
-          isDark={isDark}
-          tint={theme.tint}
-          textColor={theme.text}
-          mutedTextColor={theme.textMuted}
-          onSelect={onSendGif}
-        />
+        <View style={styles.flex}>
+          {providerQuickItems.length > 0 ? (
+            <View style={styles.providerQuickSection}>
+              <View style={styles.providerQuickLead}>
+                <MaterialCommunityIcons name="history" size={14} color={theme.tint} />
+                <Text style={styles.providerQuickLabel}>Quick</Text>
+              </View>
+              <View style={styles.providerQuickDivider} />
+              <ScrollView
+                horizontal
+                style={styles.providerQuickScroll}
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.providerQuickContent}
+              >
+                {providerQuickItems.map((item) => {
+                  const favourite = providerExpressionIsFavourite(item);
+                  return (
+                    <Pressable
+                      key={`${item.kind}:${item.providerMediaId}`}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${item.title}${favourite ? ', favourite' : ''}`}
+                      accessibilityHint="Tap to send. Hold to preview and manage favourites."
+                      accessibilityActions={[
+                        { name: 'activate', label: 'Select expression' },
+                        { name: 'favourite', label: favourite ? 'Remove favourite' : 'Add favourite' },
+                      ]}
+                      style={styles.providerQuickItem}
+                      onPress={() => selectProviderExpression(item)}
+                      onLongPress={() => setPreviewExpression(item)}
+                      onAccessibilityAction={(event) => {
+                        if (event.nativeEvent.actionName === 'favourite') {
+                          favouriteProviderExpression(item);
+                        } else if (event.nativeEvent.actionName === 'activate') {
+                          selectProviderExpression(item);
+                        }
+                      }}
+                    >
+                      <ProviderExpressionMediaView
+                        reference={item}
+                        autoPlay={!reduceMotion}
+                        transparent={item.kind !== 'giphy_gif'}
+                        style={styles.providerQuickImage}
+                        fallback={(
+                          <View style={[styles.providerQuickImage, styles.providerFallback]}>
+                            <MaterialCommunityIcons name="sticker-emoji" size={20} color={theme.textMuted} />
+                          </View>
+                        )}
+                      />
+                      {favourite ? (
+                        <MaterialCommunityIcons
+                          name="heart"
+                          size={11}
+                          color={theme.tint}
+                          style={styles.providerQuickFavourite}
+                        />
+                      ) : null}
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          ) : null}
+          <GiphyExpressionGrid
+            apiKey={gifApiKey}
+            query={query}
+            mode={providerMode}
+            isDark={isDark}
+            tint={theme.tint}
+            textColor={theme.text}
+            mutedTextColor={theme.textMuted}
+            onSelect={selectProviderExpression}
+          />
+        </View>
       ) : activeTab === 'emoji' ? (
         <View style={styles.flex}>
           <ScrollView
@@ -380,20 +580,27 @@ export default function ChatExpressionTray({
               );
             })}
           </ScrollView>
-          <ScrollView contentContainerStyle={styles.emojiGrid} showsVerticalScrollIndicator={false}>
-            {selectedEmojiGroup.emojis.map((emoji, index) => (
+          <FlatList
+            key={`emoji-columns-${emojiColumns}`}
+            data={[...selectedEmojiGroup.emojis]}
+            numColumns={emojiColumns}
+            keyExtractor={(emoji, index) => `${emoji}-${index}`}
+            contentContainerStyle={styles.emojiGrid}
+            showsVerticalScrollIndicator={false}
+            initialNumToRender={emojiColumns * 4}
+            windowSize={5}
+            renderItem={({ item: emoji, index }) => (
               <Pressable
-                key={`${emoji}-${index}`}
                 testID={`chat-expression-emoji-${index}`}
                 accessibilityRole="button"
                 accessibilityLabel={`Insert ${emoji}`}
-                style={styles.emojiButton}
+                style={[styles.emojiButton, { width: `${100 / emojiColumns}%` }]}
                 onPress={() => selectEmoji(emoji)}
               >
                 <Text style={styles.emoji}>{emoji}</Text>
               </Pressable>
-            ))}
-          </ScrollView>
+            )}
+          />
         </View>
       ) : activeTab === 'stickers' ? (
         <ScrollView contentContainerStyle={styles.stickerContent} showsVerticalScrollIndicator={false}>
@@ -403,12 +610,6 @@ export default function ChatExpressionTray({
             <View key={section.id} style={styles.stickerSection}>
               <View style={styles.sectionHeading}>
                 <Text style={styles.sectionTitle}>{section.title}</Text>
-                {section.id === 'Between Us' ? (
-                  <View style={styles.signaturePill}>
-                    <MaterialCommunityIcons name="creation" size={11} color={theme.tint} />
-                    <Text style={styles.signatureText}>SIGNATURE</Text>
-                  </View>
-                ) : null}
               </View>
               <View style={styles.stickerGrid}>
                 {section.items.map((sticker) => {
@@ -419,11 +620,25 @@ export default function ChatExpressionTray({
                       testID={`chat-expression-sticker-${sticker.id}`}
                       accessibilityRole="button"
                       accessibilityLabel={`${sticker.name} sticker${favourite ? ', favourite' : ''}`}
-                      accessibilityHint="Tap to send. Hold to favourite."
+                      accessibilityHint="Tap to send. Hold to preview."
+                      accessibilityActions={[
+                        { name: 'activate', label: 'Send sticker' },
+                        { name: 'preview', label: 'Preview sticker' },
+                        { name: 'favourite', label: favourite ? 'Remove favourite' : 'Add favourite' },
+                      ]}
                       style={styles.stickerCard}
-                      onPress={() => selectSticker(sticker)}
-                      onLongPress={() => favouriteSticker(sticker.id)}
+                      onPress={() => pressCuratedSticker(sticker)}
+                      onLongPress={() => previewCuratedSticker(sticker)}
                       delayLongPress={320}
+                      onAccessibilityAction={(event) => {
+                        if (event.nativeEvent.actionName === 'preview') {
+                          previewCuratedSticker(sticker);
+                        } else if (event.nativeEvent.actionName === 'favourite') {
+                          favouriteSticker(sticker.id);
+                        } else if (event.nativeEvent.actionName === 'activate') {
+                          selectSticker(sticker);
+                        }
+                      }}
                     >
                       <LinearGradient
                         colors={[
@@ -449,7 +664,7 @@ export default function ChatExpressionTray({
               </View>
             </View>
           ))}
-          <Text style={styles.helperText}>Tap to send · Hold to favourite</Text>
+          <Text style={styles.helperText}>Tap to send · Hold to preview</Text>
         </ScrollView>
       ) : !gifProviderConfigured ? (
         <View style={styles.providerState}>
@@ -462,6 +677,130 @@ export default function ChatExpressionTray({
           </Text>
         </View>
       ) : null}
+      <Modal
+        visible={Boolean(previewExpression || previewSticker)}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          setPreviewExpression(null);
+          setPreviewSticker(null);
+          suppressNextStickerPressRef.current = false;
+        }}
+      >
+        <View style={styles.previewBackdrop}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Close expression preview"
+            style={StyleSheet.absoluteFill}
+            onPress={() => {
+              setPreviewExpression(null);
+              setPreviewSticker(null);
+              suppressNextStickerPressRef.current = false;
+            }}
+          />
+          {previewExpression ? (
+            <View style={styles.previewCard}>
+              <ProviderExpressionMediaView
+                reference={{
+                  schemaVersion: 1,
+                  provider: 'giphy',
+                  providerMediaId: previewExpression.providerMediaId,
+                  title: previewExpression.title,
+                  width: previewExpression.width,
+                  height: previewExpression.height,
+                  kind: previewExpression.kind,
+                }}
+                autoPlay={!reduceMotion}
+                transparent={previewExpression.kind !== 'giphy_gif'}
+                style={[
+                  styles.previewImage,
+                  previewExpression.width && previewExpression.height
+                    ? { aspectRatio: previewExpression.width / previewExpression.height }
+                    : null,
+                ]}
+                fallback={(
+                  <View style={[styles.previewImage, styles.providerFallback]}>
+                    <MaterialCommunityIcons name="sticker-emoji" size={32} color={theme.textMuted} />
+                  </View>
+                )}
+              />
+              <Text style={styles.previewTitle} numberOfLines={2}>{previewExpression.title}</Text>
+              <Text style={styles.previewAttribution}>Powered by GIPHY</Text>
+              <View style={styles.previewActions}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={providerExpressionIsFavourite(previewExpression)
+                    ? 'Remove from favourites'
+                    : 'Add to favourites'}
+                  style={styles.previewSecondaryAction}
+                  onPress={() => favouriteProviderExpression(previewExpression)}
+                >
+                  <MaterialCommunityIcons
+                    name={providerExpressionIsFavourite(previewExpression) ? 'heart' : 'heart-outline'}
+                    size={20}
+                    color={theme.tint}
+                  />
+                  <Text style={styles.previewSecondaryText}>Favourite</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Send expression"
+                  style={styles.previewSendAction}
+                  onPress={() => sendProviderExpression(previewExpression)}
+                >
+                  <Text style={styles.previewSendText}>Send</Text>
+                  <MaterialCommunityIcons name="send" size={18} color="#ffffff" />
+                </Pressable>
+              </View>
+            </View>
+          ) : previewSticker ? (
+            <View style={styles.previewCard}>
+              <LinearGradient
+                colors={[
+                  withAlpha(previewSticker.color, isDark ? 0.32 : 0.2),
+                  withAlpha(previewSticker.color, isDark ? 0.1 : 0.06),
+                ]}
+                style={styles.previewStickerArtwork}
+              >
+                <Text style={styles.previewStickerEmoji}>{previewSticker.emoji}</Text>
+              </LinearGradient>
+              <Text style={styles.previewTitle}>{previewSticker.name}</Text>
+              <Text style={styles.previewFirstPartyAttribution}>BETWEENER FAVOURITE</Text>
+              <View style={styles.previewActions}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={preferences.favouriteStickerIds.includes(previewSticker.id)
+                    ? 'Remove from favourites'
+                    : 'Add to favourites'}
+                  style={styles.previewSecondaryAction}
+                  onPress={() => favouriteSticker(previewSticker.id)}
+                >
+                  <MaterialCommunityIcons
+                    name={preferences.favouriteStickerIds.includes(previewSticker.id) ? 'heart' : 'heart-outline'}
+                    size={20}
+                    color={theme.tint}
+                  />
+                  <Text style={styles.previewSecondaryText}>Favourite</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Send sticker"
+                  style={styles.previewSendAction}
+                  onPress={() => {
+                    const sticker = previewSticker;
+                    setPreviewSticker(null);
+                    suppressNextStickerPressRef.current = false;
+                    selectSticker(sticker);
+                  }}
+                >
+                  <Text style={styles.previewSendText}>Send</Text>
+                  <MaterialCommunityIcons name="send" size={18} color="#ffffff" />
+                </Pressable>
+              </View>
+            </View>
+          ) : null}
+        </View>
+      </Modal>
     </Animated.View>
   );
 }
@@ -479,37 +818,32 @@ const createStyles = (theme: Theme, isDark: boolean) => StyleSheet.create({
     elevation: 16,
   },
   flex: { flex: 1 },
+  topRow: {
+    height: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+  },
+  handleButton: {
+    minWidth: 54,
+    minHeight: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   handle: {
     width: 34,
     height: 4,
     borderRadius: 2,
     alignSelf: 'center',
     backgroundColor: withAlpha(theme.textMuted, 0.26),
-    marginBottom: 7,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    marginBottom: 9,
-  },
-  eyebrow: {
-    color: theme.tint,
-    fontFamily: 'Archivo_700Bold',
-    fontSize: 10,
-    letterSpacing: 1.5,
-  },
-  title: {
-    color: theme.text,
-    fontFamily: 'PlayfairDisplay_700Bold',
-    fontSize: 23,
-    lineHeight: 28,
   },
   closeButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    position: 'absolute',
+    right: 12,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: withAlpha(theme.text, isDark ? 0.08 : 0.045),
@@ -522,12 +856,12 @@ const createStyles = (theme: Theme, isDark: boolean) => StyleSheet.create({
     padding: 3,
     borderRadius: 18,
     backgroundColor: withAlpha(theme.text, isDark ? 0.08 : 0.045),
-    marginBottom: 9,
+    marginBottom: 6,
   },
   tab: {
-    minWidth: 96,
-    height: 38,
-    paddingHorizontal: 14,
+    minWidth: 88,
+    height: 34,
+    paddingHorizontal: 11,
     borderRadius: 15,
     flexDirection: 'row',
     alignItems: 'center',
@@ -545,11 +879,11 @@ const createStyles = (theme: Theme, isDark: boolean) => StyleSheet.create({
   tabLabel: {
     color: theme.textMuted,
     fontFamily: 'Manrope_600SemiBold',
-    fontSize: 14,
+    fontSize: 13,
   },
   tabLabelSelected: { color: theme.tint },
   searchShell: {
-    height: 44,
+    height: 38,
     borderRadius: 21,
     marginHorizontal: 16,
     marginBottom: 7,
@@ -565,7 +899,7 @@ const createStyles = (theme: Theme, isDark: boolean) => StyleSheet.create({
     flex: 1,
     color: theme.text,
     fontFamily: 'Manrope_400Regular',
-    fontSize: 16,
+    fontSize: 15,
     paddingVertical: 0,
   },
   emojiCategories: {
@@ -585,11 +919,8 @@ const createStyles = (theme: Theme, isDark: boolean) => StyleSheet.create({
   emojiGrid: {
     paddingHorizontal: 13,
     paddingBottom: 14,
-    flexDirection: 'row',
-    flexWrap: 'wrap',
   },
   emojiButton: {
-    width: '12.5%',
     aspectRatio: 1,
     alignItems: 'center',
     justifyContent: 'center',
@@ -610,37 +941,22 @@ const createStyles = (theme: Theme, isDark: boolean) => StyleSheet.create({
     fontSize: 14,
     letterSpacing: 0.2,
   },
-  signaturePill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    paddingHorizontal: 6,
-    height: 17,
-    borderRadius: 8,
-    backgroundColor: withAlpha(theme.tint, 0.11),
-  },
-  signatureText: {
-    color: theme.tint,
-    fontFamily: 'Archivo_700Bold',
-    fontSize: 7,
-    letterSpacing: 0.8,
-  },
   stickerGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
   },
-  stickerCard: { width: '31.7%', minHeight: 82, borderRadius: 18, overflow: 'hidden' },
+  stickerCard: { width: '23.2%', minHeight: 70, borderRadius: 15, overflow: 'hidden' },
   stickerGradient: {
     flex: 1,
-    minHeight: 82,
+    minHeight: 70,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 18,
     borderWidth: 1,
     borderColor: withAlpha(theme.text, isDark ? 0.105 : 0.065),
   },
-  stickerEmoji: { fontSize: 31, marginBottom: 3 },
+  stickerEmoji: { fontSize: 29, marginBottom: 2 },
   stickerName: {
     color: theme.text,
     fontFamily: 'Manrope_600SemiBold',
@@ -701,8 +1017,8 @@ const createStyles = (theme: Theme, isDark: boolean) => StyleSheet.create({
     backgroundColor: withAlpha(theme.text, isDark ? 0.07 : 0.04),
   },
   giphyMode: {
-    minWidth: 112,
-    height: 34,
+    minWidth: 104,
+    height: 30,
     borderRadius: 14,
     paddingHorizontal: 12,
     flexDirection: 'row',
@@ -724,4 +1040,163 @@ const createStyles = (theme: Theme, isDark: boolean) => StyleSheet.create({
     fontSize: 13,
   },
   giphyModeLabelSelected: { color: theme.tint },
+  providerQuickSection: {
+    height: 48,
+    marginHorizontal: 12,
+    marginBottom: 5,
+    paddingHorizontal: 6,
+    borderRadius: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    overflow: 'hidden',
+    backgroundColor: withAlpha(theme.tint, isDark ? 0.055 : 0.035),
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: withAlpha(theme.tint, isDark ? 0.18 : 0.1),
+  },
+  providerQuickLead: {
+    height: 40,
+    paddingHorizontal: 5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  providerQuickLabel: {
+    color: theme.textMuted,
+    fontFamily: 'Archivo_700Bold',
+    fontSize: 11,
+    letterSpacing: 0.25,
+  },
+  providerQuickDivider: {
+    width: StyleSheet.hairlineWidth,
+    height: 25,
+    marginHorizontal: 6,
+    backgroundColor: withAlpha(theme.text, isDark ? 0.16 : 0.1),
+  },
+  providerQuickContent: {
+    paddingRight: 8,
+    gap: 6,
+    alignItems: 'center',
+  },
+  providerQuickScroll: { flex: 1 },
+  providerQuickItem: {
+    width: 38,
+    height: 38,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: withAlpha(theme.text, isDark ? 0.06 : 0.035),
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
+  },
+  providerQuickImage: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+  },
+  providerFallback: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: withAlpha(theme.text, isDark ? 0.08 : 0.045),
+  },
+  providerQuickFavourite: {
+    position: 'absolute',
+    top: 3,
+    right: 3,
+  },
+  previewBackdrop: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+    backgroundColor: 'rgba(0, 12, 13, 0.72)',
+  },
+  previewCard: {
+    width: '100%',
+    maxWidth: 390,
+    padding: 14,
+    borderRadius: 24,
+    backgroundColor: isDark ? '#102526' : '#fffaf5',
+    borderWidth: 1,
+    borderColor: withAlpha(theme.tint, isDark ? 0.34 : 0.18),
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 14 },
+    shadowOpacity: 0.28,
+    shadowRadius: 28,
+    elevation: 22,
+  },
+  previewImage: {
+    width: '100%',
+    minHeight: 180,
+    maxHeight: 340,
+    borderRadius: 17,
+    backgroundColor: withAlpha(theme.text, isDark ? 0.05 : 0.025),
+  },
+  previewTitle: {
+    color: theme.text,
+    fontFamily: 'Manrope_600SemiBold',
+    fontSize: 15,
+    lineHeight: 20,
+    marginTop: 10,
+  },
+  previewAttribution: {
+    color: theme.textMuted,
+    fontFamily: 'Archivo_700Bold',
+    fontSize: 9,
+    letterSpacing: 0.7,
+    marginTop: 3,
+  },
+  previewStickerArtwork: {
+    height: 230,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  previewStickerEmoji: {
+    fontSize: 116,
+    lineHeight: 132,
+    includeFontPadding: false,
+  },
+  previewFirstPartyAttribution: {
+    color: theme.textMuted,
+    fontFamily: 'Archivo_700Bold',
+    fontSize: 9,
+    letterSpacing: 0.8,
+    marginTop: 3,
+  },
+  previewActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 14,
+  },
+  previewSecondaryAction: {
+    minHeight: 46,
+    paddingHorizontal: 15,
+    borderRadius: 15,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    borderWidth: 1,
+    borderColor: withAlpha(theme.tint, 0.22),
+  },
+  previewSecondaryText: {
+    color: theme.tint,
+    fontFamily: 'Manrope_700Bold',
+    fontSize: 13,
+  },
+  previewSendAction: {
+    flex: 1,
+    minHeight: 46,
+    borderRadius: 15,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: theme.tint,
+  },
+  previewSendText: {
+    color: '#ffffff',
+    fontFamily: 'Manrope_700Bold',
+    fontSize: 15,
+  },
 });

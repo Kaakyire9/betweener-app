@@ -728,14 +728,15 @@ export const ChatRepository = {
             insert into chat_threads (
               id, owner_user_id, peer_user_id, peer_profile_id, peer_name, peer_avatar_url,
               peer_verified, peer_presence_status, peer_last_active, title, thread_type, last_message_id,
-              last_message_preview, last_message_sender_id, last_message_status, last_message_edited_at,
+              last_message_preview, last_message_sender_id, last_message_status, last_message_media_kind,
+              last_message_edited_at,
               last_message_reaction_emoji, last_message_reaction_user_id, last_message_reaction_created_at,
               last_message_reaction_target_type, last_activity_kind, last_activity_message_id,
               last_activity_preview, last_activity_at, last_message_at, unread_count,
               is_muted, is_pinned, is_archived, local_status, remote_updated_at,
               local_updated_at, created_at
             )
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             on conflict(owner_user_id, id) do update set
               owner_user_id = excluded.owner_user_id,
               peer_user_id = excluded.peer_user_id,
@@ -751,6 +752,7 @@ export const ChatRepository = {
               last_message_preview = excluded.last_message_preview,
               last_message_sender_id = excluded.last_message_sender_id,
               last_message_status = excluded.last_message_status,
+              last_message_media_kind = excluded.last_message_media_kind,
               last_message_edited_at = excluded.last_message_edited_at,
               last_message_reaction_emoji = excluded.last_message_reaction_emoji,
               last_message_reaction_user_id = excluded.last_message_reaction_user_id,
@@ -2131,6 +2133,7 @@ export const ChatRepository = {
               last_message_preview = '',
               last_message_sender_id = null,
               last_message_status = null,
+              last_message_media_kind = null,
               last_message_edited_at = null,
               last_message_reaction_emoji = null,
               last_message_reaction_user_id = null,

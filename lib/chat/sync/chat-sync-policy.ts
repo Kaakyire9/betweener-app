@@ -41,6 +41,7 @@ export const hasIncompleteCachedAttachment = (messages: MessageType[]) =>
     if (message.deletedForAll) return false;
     if (message.isViewOnce && message.encryptedMedia !== true) return true;
     if (message.type === 'image') {
+      if (message.providerMedia) return false;
       return !message.encryptedMedia && !message.storagePath && !message.imageUrl && !message.offlineImageUri;
     }
     if (message.type === 'video') {
@@ -88,7 +89,7 @@ export const resolveThreadSyncCursor = ({
   return latestTimestamp == null ? null : new Date(latestTimestamp).toISOString();
 };
 
-const OPTIONAL_CHAT_MEDIA_COLUMNS = ['media_items', 'media_expected_count', 'media_group_id', 'media_caption', 'media_kind'] as const;
+const OPTIONAL_CHAT_MEDIA_COLUMNS = ['media_items', 'media_expected_count', 'media_group_id', 'media_caption', 'media_kind', 'provider_media'] as const;
 
 export const isMissingOptionalChatMediaColumnsError = (
   error?: { code?: string | null; message?: string | null } | null,

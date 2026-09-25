@@ -4,8 +4,8 @@ import {
   ActivityIndicator,
   Animated,
   Easing,
+  FlatList,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -109,30 +109,37 @@ export default function GiphyExpressionGrid({
         },
       ]}
     >
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <View style={styles.grid}>
-          {results.map((gif) => (
-            <Pressable
-              key={gif.id}
+      <FlatList
+        data={results}
+        numColumns={2}
+        keyExtractor={(gif) => `${gif.kind}:${gif.id}`}
+        contentContainerStyle={styles.content}
+        columnWrapperStyle={styles.gridRow}
+        showsVerticalScrollIndicator={false}
+        initialNumToRender={8}
+        windowSize={5}
+        renderItem={({ item: gif }) => (
+          <Pressable
               testID={`chat-expression-gif-${gif.id}`}
-              accessibilityRole="button"
-              accessibilityLabel={`Send GIF: ${gif.title}`}
-              style={[styles.card, { backgroundColor: withAlpha(textColor, isDark ? 0.1 : 0.06) }]}
-              onPress={() => onSelect(gif)}
-            >
-              <ExpoImage
-                source={{ uri: gif.previewUrl }}
-                style={styles.image}
-                contentFit={mode === 'stickers' ? 'contain' : 'cover'}
-                cachePolicy="memory-disk"
-                transition={140}
-                autoplay
-              />
-            </Pressable>
-          ))}
-        </View>
-        <Text style={[styles.attribution, { color: mutedTextColor }]}>Powered by GIPHY</Text>
-      </ScrollView>
+            accessibilityRole="button"
+            accessibilityLabel={`Select ${mode === 'stickers' ? 'sticker' : 'GIF'}: ${gif.title}`}
+            style={[styles.card, { backgroundColor: withAlpha(textColor, isDark ? 0.1 : 0.06) }]}
+            onPress={() => onSelect(gif)}
+          >
+            <ExpoImage
+              source={{ uri: gif.previewUrl }}
+              style={styles.image}
+              contentFit={mode === 'stickers' ? 'contain' : 'cover'}
+              cachePolicy="none"
+              transition={140}
+              autoplay
+            />
+          </Pressable>
+        )}
+        ListFooterComponent={(
+          <Text style={[styles.attribution, { color: mutedTextColor }]}>Powered by GIPHY</Text>
+        )}
+      />
     </Animated.View>
   );
 }
@@ -140,8 +147,8 @@ export default function GiphyExpressionGrid({
 const styles = StyleSheet.create({
   container: { flex: 1 },
   content: { paddingHorizontal: 13, paddingBottom: 16 },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
-  card: { width: '49%', height: 118, borderRadius: 16, overflow: 'hidden' },
+  gridRow: { gap: 7, marginBottom: 7 },
+  card: { flex: 1, maxWidth: '49%', height: 118, borderRadius: 16, overflow: 'hidden' },
   image: { width: '100%', height: '100%' },
   state: {
     flex: 1,

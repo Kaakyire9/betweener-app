@@ -659,6 +659,45 @@ export type Database = {
         }
         Relationships: []
       }
+      approved_chat_media_objects: {
+        Row: {
+          approved_at: string
+          attachment_id: string
+          byte_size: number
+          client_message_id: string
+          mime_type: string
+          object_path: string
+          receiver_id: string
+          sender_id: string
+          sha256: string
+          variant: string
+        }
+        Insert: {
+          approved_at?: string
+          attachment_id: string
+          byte_size: number
+          client_message_id: string
+          mime_type: string
+          object_path: string
+          receiver_id: string
+          sender_id: string
+          sha256: string
+          variant: string
+        }
+        Update: {
+          approved_at?: string
+          attachment_id?: string
+          byte_size?: number
+          client_message_id?: string
+          mime_type?: string
+          object_path?: string
+          receiver_id?: string
+          sender_id?: string
+          sha256?: string
+          variant?: string
+        }
+        Relationships: []
+      }
       approved_profile_media_objects: {
         Row: {
           approved_at: string
@@ -10481,6 +10520,7 @@ export type Database = {
           media_items: Json
           media_kind: string | null
           message_type: string
+          provider_media: Json | null
           read_at: string | null
           receiver_id: string
           reply_to_message_id: string | null
@@ -10526,6 +10566,7 @@ export type Database = {
           media_items?: Json
           media_kind?: string | null
           message_type?: string
+          provider_media?: Json | null
           read_at?: string | null
           receiver_id: string
           reply_to_message_id?: string | null
@@ -10571,6 +10612,7 @@ export type Database = {
           media_items?: Json
           media_kind?: string | null
           message_type?: string
+          provider_media?: Json | null
           read_at?: string | null
           receiver_id?: string
           reply_to_message_id?: string | null
@@ -15342,6 +15384,15 @@ export type Database = {
         Returns: boolean
       }
       can_view_moment: { Args: { p_moment_id: string }; Returns: boolean }
+      chat_message_semantic_preview: {
+        Args: {
+          p_media_kind: string
+          p_message_type: string
+          p_private?: boolean
+          p_text: string
+        }
+        Returns: string
+      }
       circle_pulse_comment_reaction_summary_json: {
         Args: { p_comment_id: string }
         Returns: Json
@@ -15493,6 +15544,7 @@ export type Database = {
           media_items: Json
           media_kind: string | null
           message_type: string
+          provider_media: Json | null
           read_at: string | null
           receiver_id: string
           reply_to_message_id: string | null
@@ -16216,6 +16268,10 @@ export type Database = {
       }
       is_trusted_boost_viewer: {
         Args: { p_target_profile_id?: string; p_viewer_profile_id: string }
+        Returns: boolean
+      }
+      is_valid_chat_provider_media: {
+        Args: { p_media_kind?: string; p_provider_media: Json }
         Returns: boolean
       }
       live_active_profile: {
@@ -17770,6 +17826,7 @@ export type Database = {
           media_items: Json
           media_kind: string | null
           message_type: string
+          provider_media: Json | null
           read_at: string | null
           receiver_id: string
           reply_to_message_id: string | null
@@ -19010,6 +19067,7 @@ export type Database = {
           media_items: Json
           media_kind: string | null
           message_type: string
+          provider_media: Json | null
           read_at: string | null
           receiver_id: string
           reply_to_message_id: string | null
@@ -19073,6 +19131,7 @@ export type Database = {
           media_items: Json
           media_kind: string | null
           message_type: string
+          provider_media: Json | null
           read_at: string | null
           receiver_id: string
           reply_to_message_id: string | null
@@ -19137,6 +19196,7 @@ export type Database = {
           media_items: Json
           media_kind: string | null
           message_type: string
+          provider_media: Json | null
           read_at: string | null
           receiver_id: string
           reply_to_message_id: string | null
@@ -19202,6 +19262,7 @@ export type Database = {
           media_items: Json
           media_kind: string | null
           message_type: string
+          provider_media: Json | null
           read_at: string | null
           receiver_id: string
           reply_to_message_id: string | null
@@ -19283,6 +19344,7 @@ export type Database = {
           media_items: Json
           media_kind: string | null
           message_type: string
+          provider_media: Json | null
           read_at: string | null
           receiver_id: string
           reply_to_message_id: string | null
@@ -19347,6 +19409,7 @@ export type Database = {
           media_items: Json
           media_kind: string | null
           message_type: string
+          provider_media: Json | null
           read_at: string | null
           receiver_id: string
           reply_to_message_id: string | null
@@ -19395,6 +19458,7 @@ export type Database = {
           last_message_id: string
           last_message_is_read: boolean
           last_message_is_view_once: boolean
+          last_message_media_kind: string
           last_message_reaction_created_at: string
           last_message_reaction_emoji: string
           last_message_reaction_target_type: string
@@ -22306,6 +22370,20 @@ export type Database = {
         }
         Returns: string
       }
+      rpc_service_register_approved_chat_media: {
+        Args: {
+          p_attachment_id: string
+          p_byte_size: number
+          p_client_message_id: string
+          p_mime_type: string
+          p_object_path: string
+          p_receiver_id: string
+          p_sender_id: string
+          p_sha256: string
+          p_variant: string
+        }
+        Returns: boolean
+      }
       rpc_service_register_approved_profile_media: {
         Args: {
           p_byte_size: number
@@ -22367,6 +22445,17 @@ export type Database = {
           p_sender_user_id: string
           p_storage_path?: string
           p_text: string
+        }
+        Returns: Json
+      }
+      rpc_service_send_provider_expression: {
+        Args: {
+          p_client_message_id: string
+          p_media_kind: string
+          p_provider_media: Json
+          p_receiver_user_id: string
+          p_reply_to_message_id?: string
+          p_sender_user_id: string
         }
         Returns: Json
       }

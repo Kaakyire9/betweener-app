@@ -1,8 +1,20 @@
-import { CHAT_ATTACHMENT_LIMITS } from '../attachment-policy.ts';
-
 export type ChatExpressionMediaKind = 'giphy_gif' | 'giphy_sticker' | 'giphy_emoji' | 'giphy_text';
 
+export type ChatProviderMediaReference = {
+  schemaVersion: 1;
+  provider: 'giphy';
+  providerMediaId: string;
+  title: string;
+  width: number | null;
+  height: number | null;
+  kind: ChatExpressionMediaKind;
+};
+
 export type ChatGifResult = {
+  schemaVersion: 1;
+  source: 'provider';
+  provider: 'giphy';
+  providerMediaId: string;
   id: string;
   title: string;
   previewUrl: string;
@@ -11,7 +23,11 @@ export type ChatGifResult = {
   height: number | null;
   byteSize: number | null;
   kind: ChatExpressionMediaKind;
+  isAnimated: true;
+  attributionLabel: 'GIPHY';
 };
+
+export type ChatProviderExpressionSelection = ChatGifResult | ChatProviderMediaReference;
 
 export type ChatGifPlatform = 'ios' | 'android' | 'web' | 'unknown';
 
@@ -54,6 +70,64 @@ export const isChatGifProviderConfigured = (platform: ChatGifPlatform = 'unknown
   getChatGifApiKey(platform),
 );
 
+const PROVIDER_MEDIA_ID = /^[a-z0-9_-]{1,100}$/iu;
+const PROVIDER_MEDIA_REFERENCE_KEYS = new Set([
+  'schemaVersion',
+  'provider',
+  'providerMediaId',
+  'title',
+  'width',
+  'height',
+  'kind',
+]);
+
+const boundedDimension = (value: unknown) => {
+  const parsed = finiteNumber(value);
+  return parsed !== null && Number.isInteger(parsed) && parsed <= 8192 ? parsed : null;
+};
+
+export const parseChatProviderMediaReference = (value: unknown): ChatProviderMediaReference | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).some((key) => !PROVIDER_MEDIA_REFERENCE_KEYS.has(key))) return null;
+  const providerMediaId = typeof record.providerMediaId === 'string'
+    ? record.providerMediaId.trim()
+    : '';
+  const kind = typeof record.kind === 'string' ? record.kind : '';
+  const title = typeof record.title === 'string' ? record.title.trim().slice(0, 160) : '';
+  const width = record.width === null ? null : boundedDimension(record.width);
+  const height = record.height === null ? null : boundedDimension(record.height);
+  if (
+    record.schemaVersion !== 1
+    || record.provider !== 'giphy'
+    || !PROVIDER_MEDIA_ID.test(providerMediaId)
+    || !['giphy_gif', 'giphy_sticker', 'giphy_emoji', 'giphy_text'].includes(kind)
+    || (record.width !== null && width === null)
+    || (record.height !== null && height === null)
+  ) return null;
+  return {
+    schemaVersion: 1,
+    provider: 'giphy',
+    providerMediaId,
+    title: title || 'GIPHY expression',
+    width,
+    height,
+    kind: kind as ChatExpressionMediaKind,
+  };
+};
+
+export const buildChatProviderMediaReference = (
+  result: ChatProviderExpressionSelection,
+): ChatProviderMediaReference => ({
+  schemaVersion: 1,
+  provider: 'giphy',
+  providerMediaId: result.providerMediaId,
+  title: result.title.trim().slice(0, 160) || 'GIPHY expression',
+  width: result.width,
+  height: result.height,
+  kind: result.kind,
+});
+
 export const parseChatGifProviderResult = (
   value: unknown,
   kind: ChatExpressionMediaKind = 'giphy_gif',
@@ -95,9 +169,12 @@ export const parseChatGifProviderResult = (
     !id
     || !isApprovedChatGifUrl(previewUrl)
     || !isApprovedChatGifUrl(originalUrl)
-    || (byteSize !== null && byteSize > CHAT_ATTACHMENT_LIMITS.imageBytes)
   ) return null;
   return {
+    schemaVersion: 1,
+    source: 'provider',
+    provider: 'giphy',
+    providerMediaId: id,
     id,
     title: typeof record.title === 'string' && record.title.trim()
       ? record.title.trim()
@@ -108,6 +185,8 @@ export const parseChatGifProviderResult = (
     height: finiteNumber(original?.height),
     byteSize,
     kind,
+    isAnimated: true,
+    attributionLabel: 'GIPHY',
   };
 };
 

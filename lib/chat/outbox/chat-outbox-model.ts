@@ -1,15 +1,18 @@
 import type { ChatMessageRow } from '@/lib/chat/local/chat-db';
+import type { ChatProviderMediaReference } from '@/lib/chat/expressions/chat-gif-provider';
+import { parseChatProviderMediaReference } from '@/lib/chat/expressions/chat-gif-provider';
 
 export type TextOutboxPayload = {
   kind?: 'chat_text_send';
   senderId?: string;
   receiverId?: string;
   text?: string;
-  messageType?: ChatMessageRow['message_type'];
+  messageType?: ChatMessageRow['message_type'] | 'provider_expression';
   clientMessageId?: string | null;
   replyToMessageId?: string | null;
   metadataJson?: string | null;
   storagePath?: string | null;
+  providerMedia?: ChatProviderMediaReference | null;
 };
 
 export type MediaOutboxPayload = {
@@ -128,6 +131,7 @@ export type RemoteMessageRow = {
   media_group_id?: string | null;
   media_caption?: string | null;
   media_kind?: string | null;
+  provider_media?: unknown;
   is_view_once?: boolean | null;
   encrypted_media?: boolean | null;
   encrypted_media_path?: string | null;
@@ -148,7 +152,7 @@ export type FlushResult = {
 };
 
 export const REMOTE_MESSAGE_SELECT =
-  'id,client_message_id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,reply_to_message_id,audio_path,audio_duration,audio_waveform,storage_path,media_items,media_expected_count,media_group_id,media_caption,media_kind,is_view_once,encrypted_media,encrypted_media_path,encrypted_key_sender,encrypted_key_receiver,encrypted_key_nonce,encrypted_media_nonce,encrypted_media_alg,encrypted_media_mime,encrypted_media_size';
+  'id,client_message_id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,reply_to_message_id,audio_path,audio_duration,audio_waveform,storage_path,media_items,media_expected_count,media_group_id,media_caption,media_kind,provider_media,is_view_once,encrypted_media,encrypted_media_path,encrypted_key_sender,encrypted_key_receiver,encrypted_key_nonce,encrypted_media_nonce,encrypted_media_alg,encrypted_media_mime,encrypted_media_size';
 
 export const albumFilesToLocalMediaItems = (files: readonly MediaOutboxFile[]) => JSON.stringify(
   files.map((file, index) => ({
@@ -267,6 +271,9 @@ const buildMessageMetadataJson = (
     mediaGroupId: row.media_group_id ?? (payload?.kind === 'chat_media_send' ? payload.mediaGroupId ?? null : null),
     mediaCaption: row.media_caption ?? (payload?.kind === 'chat_media_send' ? payload.albumCaption ?? null : null),
     mediaKind: row.media_kind ?? (payload?.kind === 'chat_media_send' ? payload.mediaKind ?? null : null),
+    providerMedia: parseChatProviderMediaReference(
+      row.provider_media ?? (payload?.kind === 'chat_text_send' ? payload.providerMedia : null),
+    ),
     previewStoragePath: remoteMediaItems[0]?.previewStoragePath ?? null,
     isViewOnce: Boolean(row.is_view_once),
     encryptedMedia: Boolean(row.encrypted_media),

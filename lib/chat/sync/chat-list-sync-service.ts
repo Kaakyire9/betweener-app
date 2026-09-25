@@ -16,6 +16,7 @@ type RemoteConversationSummaryRow = {
   last_message_is_read: boolean;
   last_message_delivered_at?: string | null;
   last_message_type?: string | null;
+  last_message_media_kind?: string | null;
   last_message_is_view_once?: boolean | null;
   last_message_deleted_for_all?: boolean | null;
   last_message_edited_at?: string | null;
@@ -41,6 +42,7 @@ export type RemoteChatListMessageRow = {
   delivered_at?: string | null;
   deleted_for_all?: boolean | null;
   message_type?: string | null;
+  media_kind?: string | null;
   is_view_once?: boolean | null;
 };
 
@@ -63,7 +65,7 @@ const withTimeoutFallback = async <T>(promise: Promise<T>, timeoutMs: number, fa
 export const fetchRemoteChatListMessageMeta = async (messageId: string) => {
   return supabase
     .from('messages')
-    .select('id,sender_id,receiver_id,message_type,edited_at,text,is_view_once')
+    .select('id,sender_id,receiver_id,message_type,media_kind,edited_at,text,is_view_once')
     .eq('id', messageId)
     .maybeSingle();
 };
@@ -375,6 +377,7 @@ export const fetchRemoteChatListConversations = async <
         delivered_at: row.last_message_delivered_at ?? null,
         deleted_for_all: row.last_message_deleted_for_all ?? false,
         message_type: row.last_message_type ?? 'text',
+        media_kind: row.last_message_media_kind ?? null,
         is_view_once: row.last_message_is_view_once ?? false,
         edited_at: row.last_message_edited_at ?? null,
       },

@@ -62,6 +62,7 @@ import {
   type ThreadPreviewMessage,
 } from '@/lib/chat/list/chat-list-model';
 import { withAlpha } from '@/lib/chat/ui/color-utils';
+import { parseChatExpressionMediaKind } from '@/lib/chat/expressions/chat-expression-presentation';
 import { getSupabaseNetEvents, supabase } from "@/lib/supabase";
 import { captureMessage } from "@/lib/telemetry/sentry";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
@@ -637,6 +638,9 @@ export default function ChatScreen() {
                 timestamp: lastTimestamp,
                 senderId: last?.sender_id || fallbackPreview?.senderId || '',
                 type: lastType,
+                mediaKind: parseChatExpressionMediaKind(
+                  last?.media_kind ?? fallbackPreview?.mediaKind,
+                ),
                 isViewOnce: lastIsViewOnce,
                 deletedForAll: lastDeletedForAll,
                 localStatus: lastDeletedForAll ? 'deleted' : fallbackPreview?.localStatus,
@@ -1001,21 +1005,41 @@ export default function ChatScreen() {
               targetType,
             }
           : undefined;
-      if (!reactionPreview) {
-        void fetchConversations();
-        return;
-      }
       const currentConversation = conversationsRef.current.find(
         (conversation) => conversation.id === otherId,
       );
-      if (
-        !currentConversation ||
-        reactionPreview.createdAt.getTime() <=
-          currentConversation.lastMessage.timestamp.getTime()
-      ) {
+      if (!currentConversation) return;
+
+      if (!reactionPreview) {
+        const clearsVisibleActivity =
+          currentConversation.latestActivity?.kind === 'reaction' &&
+          currentConversation.latestActivity.messageId === messageRow.id;
+        void ChatRepository.updateThreadReactionPreview(
+          user.id,
+          otherId,
+          messageRow.id,
+          null,
+        ).catch((persistError) => console.log('[chat] list reaction clear local persist error', persistError));
+        if (clearsVisibleActivity) {
+          void ChatRepository.updateThreadActivityPreview(user.id, otherId, null)
+            .catch((persistError) => console.log('[chat] list reaction activity clear error', persistError));
+        }
+        setConversations((prev) => prev.map((conversation) => {
+          if (conversation.id !== otherId) return conversation;
+          return {
+            ...conversation,
+            latestActivity: clearsVisibleActivity ? null : conversation.latestActivity,
+            lastMessage: conversation.lastMessage.id === messageRow.id
+              ? { ...conversation.lastMessage, reactionPreview: undefined }
+              : conversation.lastMessage,
+          };
+        }));
         return;
       }
-      applyListActivity(otherId, {
+
+      if (reactionPreview.createdAt.getTime() <= currentConversation.lastMessage.timestamp.getTime()) return;
+
+      const reactionActivity: NonNullable<ConversationType['latestActivity']> = {
         kind: 'reaction',
         messageId: messageRow.id,
         preview:
@@ -1027,7 +1051,11 @@ export default function ChatScreen() {
             ? `Reacted ${reactionPreview.emoji} to your message`
             : 'Reacted to your message',
         createdAt: reactionPreview.createdAt,
-      });
+      };
+      void ChatRepository.updateThreadActivityPreview(user.id, otherId, {
+        ...reactionActivity,
+        createdAt: reactionActivity.createdAt.toISOString(),
+      }).catch((persistError) => console.log('[chat] list reaction activity local persist error', persistError));
       void ChatRepository.updateThreadReactionPreview(
         user.id,
         otherId,
@@ -1042,18 +1070,20 @@ export default function ChatScreen() {
       setConversations((prev) =>
         prev.map((conv) => {
           if (conv.id !== otherId) return conv;
-          if (conv.lastMessage.id !== messageRow.id) return conv;
+          const currentActivityAt = conv.latestActivity?.createdAt.getTime() ?? 0;
           return {
             ...conv,
-            lastMessage: {
-              ...conv.lastMessage,
-              reactionPreview,
-            },
+            latestActivity: currentActivityAt > reactionActivity.createdAt.getTime()
+              ? conv.latestActivity
+              : reactionActivity,
+            lastMessage: conv.lastMessage.id === messageRow.id
+              ? { ...conv.lastMessage, reactionPreview }
+              : conv.lastMessage,
           };
         }),
       );
     },
-    [applyListActivity, fetchConversations, user?.id],
+    [user?.id],
   );
 
   const handleListChatPrefChange = useCallback((row: ChatListChatPrefRow) => {

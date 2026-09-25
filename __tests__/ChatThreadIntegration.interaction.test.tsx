@@ -175,7 +175,8 @@ describe("Chat thread integration flows", () => {
       senderId: "me",
       timestamp: new Date("2026-09-22T19:18:00.000Z"),
       type: "text",
-      reactions: [],
+      // Simulates a legacy cached row created before reactions were normalized.
+      reactions: undefined,
       status: "sent",
       replyToId: "original-1",
       replyTo: {
@@ -254,6 +255,81 @@ describe("Chat thread integration flows", () => {
     expect(getByText("Maame Ama")).toBeTruthy();
     expect(getByText(originalText).props.numberOfLines).toBe(2);
     expect(queryByText("08:45")).toBeNull();
+  });
+
+  it("renders every sequence in a double-emoji message as its own glyph", async () => {
+    const emoji = '\u{1F60D}';
+    const noop = jest.fn();
+    const screen = await render(
+      <MessageRowItem
+        item={{
+          id: "emoji-pair-1",
+          text: `${emoji}${emoji}`,
+          senderId: "me",
+          timestamp: new Date("2026-09-25T11:18:00.000Z"),
+          type: "text",
+          reactions: [],
+          status: "sent",
+        }}
+        isMyMessage
+        showAvatar={false}
+        showAvatarSpacer={false}
+        isGroupedWithPrev={false}
+        isGroupedWithNext={false}
+        shouldAnimateEntry={false}
+        isPlaying={false}
+        isReactionOpen={false}
+        isFocused={false}
+        focusToken={0}
+        timeLabel="11:18"
+        userAvatar={null}
+        currentUserId="me"
+        peerName="Kwabena"
+        theme={Colors.dark}
+        isDark
+        styles={styles}
+        onLongPress={noop}
+        onRetryFailedMessage={noop}
+        onToggleVoice={noop}
+        onFocus={noop}
+        onReply={noop}
+        onReplyJump={noop}
+        onEditMessage={noop}
+        onAddReaction={noop}
+        onCloseReactions={noop}
+        onOpenEditHistory={noop}
+        onCopyMessage={noop}
+        onTogglePin={noop}
+        onDeleteMessage={noop}
+        isActionPinned={false}
+        onOpenReactionSheet={noop}
+        onViewImage={noop}
+        onViewVideo={noop}
+        onManageAlbumItem={noop}
+        onOpenDocument={noop}
+        onRefreshMedia={noop}
+        onMediaLoadSuccess={noop}
+        onRetryMedia={noop}
+        onOpenLink={noop}
+        onOpenLocation={noop}
+        onStopLiveShare={noop}
+        onOpenViewOnce={noop}
+        onAcceptDatePlan={noop}
+        onSuggestAnotherTime={noop}
+        onSuggestAnotherPlace={noop}
+        onSuggestBoth={noop}
+        onRescheduleDatePlan={noop}
+        onCancelDatePlan={noop}
+        onRequestDatePlanConcierge={noop}
+        onAddDatePlanToCalendar={noop}
+        datePlanActionId={null}
+        datePlanCalendarActionId={null}
+        viewOnceViewedByMe={false}
+        viewOnceViewedByPeer={false}
+      />,
+    );
+
+    expect(screen.getAllByText(emoji)).toHaveLength(2);
   });
 
   it("retries a failed message and reconciles it with the server state", async () => {

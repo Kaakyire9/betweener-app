@@ -1,13 +1,25 @@
 // @ts-nocheck
 import { fireEvent, render, waitFor } from '@testing-library/react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import ChatExpressionTray from '@/components/chat/ChatExpressionTray';
 import { Colors } from '@/constants/theme';
 
+const renderTray = (element: React.ReactElement) => render(
+  <SafeAreaProvider
+    initialMetrics={{
+      frame: { x: 0, y: 0, width: 390, height: 844 },
+      insets: { top: 47, right: 0, bottom: 34, left: 0 },
+    }}
+  >
+    {element}
+  </SafeAreaProvider>,
+);
+
 describe('ChatExpressionTray', () => {
   it('sends a curated Betweener sticker from the signature pack', async () => {
     const onSendSticker = jest.fn();
-    const screen = await render(
+    const screen = await renderTray(
       <ChatExpressionTray
         visible
         theme={Colors.light}
@@ -29,7 +41,7 @@ describe('ChatExpressionTray', () => {
 
   it('inserts emoji without sending a separate message', async () => {
     const onInsertEmoji = jest.fn();
-    const screen = await render(
+    const screen = await renderTray(
       <ChatExpressionTray
         visible
         theme={Colors.dark}
@@ -50,7 +62,7 @@ describe('ChatExpressionTray', () => {
   it('hides GIF search when a licensed provider key is not configured', async () => {
     const previous = process.env.EXPO_PUBLIC_GIPHY_API_KEY;
     delete process.env.EXPO_PUBLIC_GIPHY_API_KEY;
-    const screen = await render(
+    const screen = await renderTray(
       <ChatExpressionTray
         visible
         theme={Colors.light}
@@ -71,7 +83,7 @@ describe('ChatExpressionTray', () => {
     const previous = process.env.EXPO_PUBLIC_GIPHY_IOS_API_KEY;
     process.env.EXPO_PUBLIC_GIPHY_IOS_API_KEY = 'test-ios-sdk-key';
     try {
-      const screen = await render(
+      const screen = await renderTray(
         <ChatExpressionTray
           visible
           theme={Colors.dark}
@@ -98,7 +110,7 @@ describe('ChatExpressionTray', () => {
     const previous = process.env.EXPO_PUBLIC_GIPHY_IOS_API_KEY;
     process.env.EXPO_PUBLIC_GIPHY_IOS_API_KEY = 'test-ios-sdk-key';
     try {
-      const screen = await render(
+      const screen = await renderTray(
         <ChatExpressionTray
           visible
           theme={Colors.dark}
@@ -110,6 +122,7 @@ describe('ChatExpressionTray', () => {
         />,
       );
 
+      await fireEvent.press(screen.getByTestId('chat-expression-tab-stickers'));
       expect(screen.getByPlaceholderText('Search animated stickers')).toBeTruthy();
       await fireEvent.press(screen.getByTestId('chat-expression-tab-emoji'));
       await fireEvent.press(screen.getByTestId('chat-expression-mode-emoji-animated'));

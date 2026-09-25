@@ -90,6 +90,41 @@ describe("Chat message variant interactions", () => {
     expect(onViewImage).toHaveBeenCalledWith("https://example.com/image.jpg");
   }, 15_000);
 
+  it("routes a held photo to message actions without opening the viewer", async () => {
+    const onLongPress = jest.fn();
+    const onViewImage = jest.fn();
+    const item = {
+      id: "held-image-1",
+      text: "",
+      senderId: "peer-1",
+      timestamp: new Date("2026-09-25T12:00:00.000Z"),
+      type: "image",
+      imageUrl: "https://example.com/held-image.jpg",
+      reactions: [],
+    };
+
+    const screen = await render(
+      <MediaMessageContent
+        item={item}
+        isMyMessage={false}
+        timeLabel="12:00"
+        styles={styles}
+        theme={Colors.light}
+        isDark={false}
+        receiptPulseStyle={{}}
+        onLongPress={onLongPress}
+        onViewImage={onViewImage}
+      />
+    );
+
+    await fireEvent(screen.getByLabelText("Open photo"), "longPress", {
+      stopPropagation: jest.fn(),
+    });
+
+    expect(onLongPress).toHaveBeenCalledTimes(1);
+    expect(onViewImage).not.toHaveBeenCalled();
+  });
+
   it("explains terminal image moderation failures without offering a futile retry", async () => {
     const onRetryFailedMessage = jest.fn();
     const item = {

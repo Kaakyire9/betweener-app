@@ -82,23 +82,24 @@ export const applyLocalReactionToggle = ({
 
   const nextItems = items.map((msg) => {
     if (msg.id !== messageId) return msg;
+    const reactions = msg.reactions ?? [];
     if (shouldRemove) {
       return {
         ...msg,
-        reactions: msg.reactions.filter((reaction) => reaction.userId !== userId),
+        reactions: reactions.filter((reaction) => reaction.userId !== userId),
       };
     }
     if (existingReaction) {
       return {
         ...msg,
-        reactions: msg.reactions.map((reaction) =>
+        reactions: reactions.map((reaction) =>
           reaction.userId === userId ? { ...reaction, emoji } : reaction
         ),
       };
     }
     return {
       ...msg,
-      reactions: [...msg.reactions, { userId, emoji }],
+      reactions: [...reactions, { userId, emoji }],
     };
   });
 

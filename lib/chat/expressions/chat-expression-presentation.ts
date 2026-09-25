@@ -23,6 +23,21 @@ export const isChatExpression = (kind: unknown): kind is ChatExpressionMediaKind
   KINDS.has(kind as ChatExpressionMediaKind)
 );
 
+export const getChatExpressionPreviewLabel = (kind: unknown) => {
+  switch (parseChatExpressionMediaKind(kind)) {
+    case 'giphy_gif':
+      return 'GIF';
+    case 'giphy_sticker':
+      return 'Sticker';
+    case 'giphy_emoji':
+      return 'Animated emoji';
+    case 'giphy_text':
+      return 'Animated text';
+    default:
+      return null;
+  }
+};
+
 export const getChatExpressionFrame = ({
   kind,
   sourceWidth,

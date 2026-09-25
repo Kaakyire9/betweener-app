@@ -7,6 +7,7 @@ type Props = {
   styles: Record<string, any>;
   isMyMessage: boolean;
   centerContent?: boolean;
+  hasFrame?: boolean;
   onFocus: (messageId: string) => void;
   onRetryFailedMessage: (messageId: string) => void;
   onPressContent: () => void;
@@ -20,6 +21,7 @@ export default function ChatMessageBubblePressable({
   styles,
   isMyMessage,
   centerContent = false,
+  hasFrame = false,
   onFocus,
   onRetryFailedMessage,
   onPressContent,
@@ -30,7 +32,7 @@ export default function ChatMessageBubblePressable({
     <Pressable
       testID="chat-message-bubble-pressable"
       onLongPress={onLongPress}
-      delayLongPress={600}
+      delayLongPress={450}
       onPress={() => {
         onFocus(messageId);
         if (canRetryFailedText) {
@@ -39,10 +41,11 @@ export default function ChatMessageBubblePressable({
         }
         onPressContent();
       }}
-      style={[
+      style={({ pressed }) => [
         styles.messageBubbleContainer,
         isMyMessage ? styles.myMessageContainer : styles.theirMessageContainer,
         centerContent ? styles.centeredMessageContainer : null,
+        pressed && hasFrame ? styles.messageBubblePressed : null,
       ]}
     >
       {children}

@@ -22,6 +22,7 @@ export const toThreadParams = (thread: ChatThreadRow) => [
   thread.last_message_preview,
   thread.last_message_sender_id,
   thread.last_message_status,
+  thread.last_message_media_kind,
   thread.last_message_edited_at,
   thread.last_message_reaction_emoji,
   thread.last_message_reaction_user_id,

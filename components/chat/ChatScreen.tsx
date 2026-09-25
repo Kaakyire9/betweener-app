@@ -127,8 +127,9 @@ import {
   type TextSelection,
 } from '@/lib/chat/expressions/chat-expression-catalog';
 import {
-  isApprovedChatGifUrl,
-  type ChatGifResult,
+  buildChatProviderMediaReference,
+  parseChatProviderMediaReference,
+  type ChatProviderExpressionSelection,
 } from '@/lib/chat/expressions/chat-gif-provider';
 import {
   getChatExpressionFrame,
@@ -2155,6 +2156,7 @@ const resolveQueuedVideoUri = async (
         mediaGroupId: row.media_group_id ?? null,
         mediaCaption: row.media_caption ?? null,
         mediaKind: parseChatExpressionMediaKind(row.media_kind),
+        providerMedia: parseChatProviderMediaReference(row.provider_media),
         previewStoragePath: mediaItems[0]?.previewStoragePath ?? null,
         imageUrl,
         videoUrl,
@@ -2253,6 +2255,8 @@ const resolveQueuedVideoUri = async (
     reconcileDeliveredFallback,
     getMessageRevisionKey: getChatMessageRevisionKey,
   });
+  const localThreadStateRef = useRef(localThreadState);
+  localThreadStateRef.current = localThreadState;
 
   const localHydrationActionRefs = useRef<{
     fetchHiddenMessages: () => Promise<void>;
@@ -2283,17 +2287,18 @@ const resolveQueuedVideoUri = async (
   );
 
   useLayoutEffect(() => {
+    const localSnapshot = localThreadStateRef.current;
     if (!user?.id || !activePeerMessageUserId) return;
     if (!isScreenFocusedRef.current) return;
-    if (!localThreadState.mergedMessages || localThreadState.mergedMessages.length === 0) return;
-    if (!localThreadState.revision) return;
+    if (!localSnapshot.mergedMessages || localSnapshot.mergedMessages.length === 0) return;
+    if (!localSnapshot.revision) return;
 
     const localKey = `${user.id}:${activePeerMessageUserId}`;
-    const applyRevision = `${localKey}:${remoteMessagesChecked ? 'remote' : 'local'}:${localThreadState.revision}`;
+    const applyRevision = `${localKey}:${remoteMessagesChecked ? 'remote' : 'local'}:${localSnapshot.revision}`;
     if (chatThreadLocalAppliedRevisionRef.current === applyRevision) return;
     chatThreadLocalAppliedRevisionRef.current = applyRevision;
     const isFirstLocalApply = chatThreadLocalLoadedKeyRef.current !== localKey;
-    const hasMessageChanges = messagesRef.current !== localThreadState.mergedMessages;
+    const hasMessageChanges = messagesRef.current !== localSnapshot.mergedMessages;
     if (isFirstLocalApply) {
       chatThreadLocalLoadedKeyRef.current = localKey;
     }
@@ -2301,8 +2306,8 @@ const resolveQueuedVideoUri = async (
     if (isFirstLocalApply || hasMessageChanges) {
       if (__DEV__) {
         console.log('[chat][thread][local] observer-apply', {
-          messageCount: localThreadState.mergedMessages.length,
-          hasMore: localThreadState.hasMore,
+          messageCount: localSnapshot.mergedMessages.length,
+          hasMore: localSnapshot.hasMore,
           remoteMessagesChecked,
         });
       }
@@ -2311,13 +2316,13 @@ const resolveQueuedVideoUri = async (
     if (hasMessageChanges) {
       setMessages((prev) => {
         const prevKey = prev.map(getChatMessageRevisionKey).join("|");
-        const nextKey = localThreadState.mergedMessages!
+        const nextKey = localSnapshot.mergedMessages!
           .map(getChatMessageRevisionKey)
           .join("|");
-        return prevKey === nextKey ? prev : localThreadState.mergedMessages!;
+        return prevKey === nextKey ? prev : localSnapshot.mergedMessages!;
       });
     }
-    const localViewOnceIds = localThreadState.mergedMessages
+    const localViewOnceIds = localSnapshot.mergedMessages
       .filter((message) => message.isViewOnce)
       .map((message) => message.id);
     if (localViewOnceIds.length > 0) {
@@ -2326,16 +2331,16 @@ const resolveQueuedVideoUri = async (
     setMessagesLoaded((prev) => (prev ? prev : true));
     setThreadBootstrapSettled((prev) => (prev ? prev : true));
     if (!remoteMessagesChecked) {
-      setHasMore((prev) => (prev === localThreadState.hasMore ? prev : localThreadState.hasMore));
+      setHasMore((prev) => (prev === localSnapshot.hasMore ? prev : localSnapshot.hasMore));
     }
     setOldestTimestamp((prev) => {
       const prevTime = prev?.getTime() ?? null;
-      const nextTime = localThreadState.oldestTimestamp?.getTime() ?? null;
-      return prevTime === nextTime ? prev : localThreadState.oldestTimestamp;
+      const nextTime = localSnapshot.oldestTimestamp?.getTime() ?? null;
+      return prevTime === nextTime ? prev : localSnapshot.oldestTimestamp;
     });
   }, [
     activePeerMessageUserId,
-    localThreadState,
+    localThreadState.revision,
     remoteMessagesChecked,
     hydrateLocalViewOnceStatus,
     user?.id,
@@ -5547,7 +5552,7 @@ const resolveQueuedVideoUri = async (
                     msg.id === canonicalRow.id
                       ? {
                           ...nextMessage,
-                          reactions: msg.reactions,
+                          reactions: msg.reactions ?? [],
                           offlineImageUri: msg.offlineImageUri,
                           offlineVideoUri: msg.offlineVideoUri,
                         }
@@ -5686,7 +5691,7 @@ const resolveQueuedVideoUri = async (
                     msg.id === canonicalRow.id
                       ? {
                           ...mergeMessageWithMonotonicReceipt(msg, nextMessage),
-                          reactions: msg.reactions,
+                          reactions: msg.reactions ?? [],
                         }
                       : msg
                   ),
@@ -6092,8 +6097,8 @@ const resolveQueuedVideoUri = async (
           ? item.mediaKind
             ? getChatExpressionFrame({
                 kind: item.mediaKind,
-                sourceWidth: item.mediaItems?.[0]?.width,
-                sourceHeight: item.mediaItems?.[0]?.height,
+                sourceWidth: item.providerMedia?.width ?? item.mediaItems?.[0]?.width,
+                sourceHeight: item.providerMedia?.height ?? item.mediaItems?.[0]?.height,
                 availableWidth: Math.min(
                   responsive.width * CHAT_MEDIA_FRAME_WIDTH_RATIO,
                   CHAT_MEDIA_FRAME_MAX_WIDTH,
@@ -6616,106 +6621,74 @@ const resolveQueuedVideoUri = async (
     });
   }, [peerResolved, activePeerMessageUserId, isBlockedByMe, isChatBlocked, networkReady, replyingTo, user?.id]);
 
-  const sendProviderGif = useCallback(async (gif: ChatGifResult) => {
-    const expressionLabel = gif.kind === 'giphy_sticker'
-      ? 'sticker'
-      : gif.kind === 'giphy_emoji'
-        ? 'animated emoji'
-        : gif.kind === 'giphy_text'
-          ? 'animated text'
-          : 'GIF';
+  const sendProviderGif = useCallback(async (gif: ChatProviderExpressionSelection) => {
     if (isChatBlocked) {
       Alert.alert('Messaging unavailable', isBlockedByMe ? 'Unblock to send messages.' : 'You can\'t message this user.');
       return;
     }
-    if (!networkReady) {
-      Alert.alert('Connection required', `Reconnect to prepare and check this ${expressionLabel}.`);
-      return;
-    }
-    if (mediaUploadStatus) {
-      Alert.alert('Upload in progress', 'Please wait for the current media upload to finish.');
-      return;
-    }
-    if (!isApprovedChatGifUrl(gif.originalUrl) || !FileSystem.cacheDirectory) {
-      Alert.alert('Expression unavailable', `This ${expressionLabel} source could not be verified.`);
-      return;
-    }
+    if (!peerResolved || !user?.id || !activePeerMessageUserId) return;
+    const providerMedia = buildChatProviderMediaReference(gif);
+    const tempId = `temp-expression-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const optimisticMessage: MessageType = {
+      id: tempId,
+      clientMessageId: tempId,
+      text: '',
+      senderId: user.id,
+      timestamp: new Date(),
+      type: 'image',
+      reactions: [],
+      status: 'sending',
+      mediaKind: gif.kind,
+      providerMedia,
+      replyToId: replyingTo?.id ?? null,
+      replyTo: replyingTo || undefined,
+    };
 
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     setShowMoodStickers(false);
-    const uploadStatusId = beginMediaUploadStatus(
-      'Preparing GIF…',
-      'Downloading a safe copy for Betweener inspection.',
-      'file-gif-box',
-    );
-    const safeId = gif.id.replace(/[^a-z0-9_-]/gi, '').slice(0, 80) || `${Date.now()}`;
-    const temporaryUri = `${FileSystem.cacheDirectory}betweener-gif-${safeId}-${Date.now()}.gif`;
-    let preparingBubble: PreparingMediaBubble | null = null;
-    try {
-      const downloaded = await FileSystem.downloadAsync(gif.originalUrl, temporaryUri);
-      if (downloaded.status < 200 || downloaded.status >= 300) {
-        throw new Error(`chat_gif_download_${downloaded.status}`);
-      }
-      const info = await FileSystem.getInfoAsync(temporaryUri);
-      const byteSize = info.exists && 'size' in info && typeof info.size === 'number'
-        ? info.size
-        : gif.byteSize;
-      const providerPrefix = gif.kind.replace('giphy_', '').replace(/[^a-z]/g, '') || 'gif';
-      const validationError = validateChatAttachment({
-        kind: 'image',
-        fileName: `giphy-${providerPrefix}-${safeId}.gif`,
-        mimeType: 'image/gif',
-        sizeBytes: byteSize,
-      });
-      if (validationError) throw new Error(validationError);
+    setMessages((prev) => [...prev, optimisticMessage]);
+    await persistLocalTextOutboxState({
+      ownerUserId: user.id,
+      threadId: activePeerMessageUserId,
+      message: optimisticMessage,
+      outboxStatus: 'sending',
+    }).catch((persistError) => console.log('[chat] persist provider expression outbox error', persistError));
+    setReplyingTo(null);
+    setEditingMessage(null);
+    setViewOnceMode(false);
 
-      preparingBubble = beginPreparingMediaBubble([{
-        localUri: temporaryUri,
-        mediaType: 'image',
-        contentType: 'image/gif',
-        width: gif.width,
-        height: gif.height,
-        byteSize,
-      }], '', gif.kind);
-      updateMediaUploadStatus(
-        uploadStatusId,
-        'Checking GIF…',
-        'Betweener is verifying this animation before it is shared.',
-        'shield-check-outline',
-      );
-      await queueMediaAttachment({
-        localUri: temporaryUri,
-        fileName: `giphy-${providerPrefix}-${safeId}.gif`,
-        contentType: 'image/gif',
-        mediaType: 'image',
-        byteSize,
-        width: gif.width,
-        height: gif.height,
-        preparingBubble,
-        mediaKind: gif.kind,
+    if (!networkReady) {
+      const queuedMessage = transitionMessageLifecycleRecord({
+        message: optimisticMessage,
+        event: 'send_deferred',
       });
-    } catch (error) {
-      discardPreparingMediaBubble(preparingBubble);
-      Alert.alert(
-        'Expression not sent',
-        error instanceof Error && error.message.startsWith('Choose an image')
-          ? error.message
-          : `This ${expressionLabel} could not be prepared safely. Please choose another one.`,
-      );
-    } finally {
-      clearMediaUploadStatus(uploadStatusId);
-      void FileSystem.deleteAsync(temporaryUri, { idempotent: true }).catch(() => {});
+      void persistLocalTextOutboxState({
+        ownerUserId: user.id,
+        threadId: activePeerMessageUserId,
+        message: queuedMessage,
+        outboxStatus: 'queued',
+      }).catch((persistError) => console.log('[chat] persist queued provider expression error', persistError));
+      setMessages((prev) => transitionMessageLifecycle({
+        items: prev,
+        messageId: tempId,
+        event: 'send_deferred',
+      }));
+      return;
     }
+
+    await flushLocalTextOutbox(user.id).catch((error) => {
+      if (!isLikelyNetworkError(error)) {
+        console.log('[chat] flush provider expression outbox error', error);
+      }
+    });
   }, [
-    beginMediaUploadStatus,
-    beginPreparingMediaBubble,
-    clearMediaUploadStatus,
-    discardPreparingMediaBubble,
+    activePeerMessageUserId,
     isBlockedByMe,
     isChatBlocked,
-    mediaUploadStatus,
     networkReady,
-    queueMediaAttachment,
-    updateMediaUploadStatus,
+    peerResolved,
+    replyingTo,
+    user?.id,
   ]);
 
   const addReaction = useCallback(async (messageId: string, emoji: string) => {
@@ -8815,7 +8788,7 @@ const resolveQueuedVideoUri = async (
   useEffect(() => {
     if (!reactionSheetVisible || !reactionSheetMessage) return;
     const userIds = Array.from(
-      new Set(reactionSheetMessage.reactions.map((reaction) => reaction.userId))
+      new Set((reactionSheetMessage.reactions ?? []).map((reaction) => reaction.userId))
     ).filter(Boolean);
     if (userIds.length === 0) return;
     const missing = userIds.filter((id) => !reactionProfiles[id]);
@@ -9115,6 +9088,7 @@ const resolveQueuedVideoUri = async (
     return (
       <ChatExpressionTray
         visible={showMoodStickers}
+        ownerUserId={user?.id}
         theme={theme}
         isDark={isDark}
         onClose={() => setShowMoodStickers(false)}
@@ -9187,6 +9161,18 @@ const resolveQueuedVideoUri = async (
       </View>
       {/* Header */}
       <View style={styles.header}>
+        <LinearGradient
+          pointerEvents="none"
+          colors={
+            isDark
+              ? [withAlpha(theme.backgroundSubtle, 0.98), withAlpha(theme.background, 0.94)]
+              : [withAlpha('#fffaf5', 0.98), withAlpha(theme.background, 0.94)]
+          }
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.headerChromeGradient}
+        />
+        <View pointerEvents="none" style={styles.headerChromeGlow} />
         <TouchableOpacity
           style={styles.backButton}
           onPress={handleGoBack}
@@ -10787,24 +10773,27 @@ const resolveQueuedVideoUri = async (
         keyboardVerticalOffset={0}
       >
         <ChatBackground tone={isDark ? 'dark' : 'light'} />
-        {showJumpToBottom && !showThreadBootstrapLoader && (
-          <Pressable
-            style={[
-              styles.jumpToBottomButton,
-              {
-                bottom:
-                  (replyingTo ? 140 : 96) +
-                  (keyboardInset ? Math.max(0, keyboardInset - 12) : 0),
-              },
-            ]}
-            onPress={() => {
-              shouldAutoScrollRef.current = true;
-              maybeScrollToEnd(true);
-            }}
-          >
-            <MaterialCommunityIcons name="chevron-down" size={20} color={Colors.light.background} />
-          </Pressable>
-        )}
+        {showJumpToBottom &&
+          !showThreadBootstrapLoader &&
+          !showMoodStickers &&
+          !showImagePicker && (
+            <Pressable
+              style={[
+                styles.jumpToBottomButton,
+                {
+                  bottom:
+                    (replyingTo ? 140 : 96) +
+                    (keyboardInset ? Math.max(0, keyboardInset - 12) : 0),
+                },
+              ]}
+              onPress={() => {
+                shouldAutoScrollRef.current = true;
+                maybeScrollToEnd(true);
+              }}
+            >
+              <MaterialCommunityIcons name="chevron-down" size={20} color={Colors.light.background} />
+            </Pressable>
+          )}
         {showThreadBootstrapLoader ? (
           <View style={styles.threadBootstrapLoader}>
             <ActivityIndicator size="small" color={theme.tint} />
@@ -10836,8 +10825,6 @@ const resolveQueuedVideoUri = async (
             {renderTypingIndicator()}
           </>
         )}
-        {renderMoodStickersPanel()}
-
         {mediaUploadStatus ? (
           <View style={styles.mediaUploadNotice}>
             <View style={styles.mediaUploadIcon}>
@@ -10908,6 +10895,8 @@ const resolveQueuedVideoUri = async (
             onSendMessage={sendMessage}
           />
         ) : null}
+
+        {renderMoodStickersPanel()}
 
         {/* Image Picker Actions */}
         {showImagePicker && (

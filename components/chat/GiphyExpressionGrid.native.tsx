@@ -180,7 +180,7 @@ export default function GiphyExpressionGrid({
           key={`${mode}:${settledQuery}`}
           content={content}
           cellPadding={4}
-          fixedSizeCells={false}
+          fixedSizeCells={mode === 'stickers'}
           onContentUpdate={(event) => {
             // GIPHY's emoji catalogue can report a transient zero while its
             // native grid already contains cells. It is not a searchable
@@ -190,7 +190,7 @@ export default function GiphyExpressionGrid({
           onMediaSelect={selectMedia}
           renditionType="fixed_width"
           showCheckeredBackground={false}
-          spanCount={mode === 'emoji' ? 3 : 2}
+          spanCount={mode === 'gifs' ? 2 : 4}
           style={styles.grid}
           theme={sdkTheme}
         />

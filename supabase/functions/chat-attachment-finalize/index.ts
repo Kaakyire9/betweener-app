@@ -1854,6 +1854,15 @@ serve(async (req) => {
       ) {
         return json(400, { error: 'invalid_attachment_batch' })
       }
+      // Standard GIPHY integrations may not download/re-publish provider media.
+      // Keep the legacy pipeline fail-closed unless both the client release and
+      // this trusted boundary are explicitly enabled after written approval.
+      if (mediaKind && Deno.env.get('GIPHY_MEDIA_CACHING_APPROVED') !== 'true') {
+        return json(503, {
+          error: 'chat_expression_delivery_disabled',
+          retryable: false,
+        })
+      }
 
       const validated: Record<string, unknown>[] = []
       const sourceObjects: Array<{ bucket: string; path: string }> = []

@@ -8,7 +8,10 @@ import {
 } from '../lib/chat/sync/chat-sync-policy.ts';
 import { createCoalescedAsyncRunner } from '../lib/chat/local/coalesced-async-runner.ts';
 import { createPriorityOperationScheduler } from '../lib/chat/local/priority-operation-scheduler.ts';
-import { buildChatThreadLocalRevision } from '../lib/chat/local/chat-thread-local-revision.ts';
+import {
+  buildChatThreadLocalRevision,
+  getChatMessageRowRevisionKey,
+} from '../lib/chat/local/chat-thread-local-revision.ts';
 import { shouldPersistThreadReadState } from '../lib/chat/read-state/thread-read-persistence-policy.ts';
 import {
   clampReplySwipeDistance,
@@ -150,6 +153,53 @@ test('local thread revisions ignore new array identities with unchanged content'
 
   assert.equal(duplicate, first);
   assert.notEqual(changed, first);
+});
+
+test('local thread row revisions depend only on persisted SQLite content', () => {
+  const row = {
+    id: 'temp-expression-1',
+    local_id: 'temp-expression-1',
+    thread_id: 'peer-1',
+    owner_user_id: 'owner-1',
+    sender_user_id: 'owner-1',
+    receiver_user_id: 'peer-1',
+    body: '',
+    message_type: 'image',
+    status: 'sending',
+    direction: 'outgoing',
+    created_at: '2026-09-25T08:40:00.000Z',
+    server_created_at: null,
+    edited_at: null,
+    deleted_at: null,
+    reply_to_message_id: null,
+    is_view_once: 0,
+    local_only: 1,
+    error_code: null,
+    metadata_json: '{"type":"image"}',
+    remote_updated_at: null,
+    local_updated_at: '2026-09-25T08:40:00.000Z',
+  };
+  const first = buildChatThreadLocalRevision(
+    [row],
+    false,
+    new Date(row.created_at),
+    getChatMessageRowRevisionKey,
+  );
+  const duplicate = buildChatThreadLocalRevision(
+    [{ ...row }],
+    false,
+    new Date(row.created_at),
+    getChatMessageRowRevisionKey,
+  );
+  const changed = buildChatThreadLocalRevision(
+    [{ ...row, status: 'sent', local_updated_at: '2026-09-25T08:41:00.000Z' }],
+    false,
+    new Date(row.created_at),
+    getChatMessageRowRevisionKey,
+  );
+
+  assert.equal(first, duplicate);
+  assert.notEqual(first, changed);
 });
 
 test('thread read persistence skips an already durable read state', () => {
@@ -336,6 +386,33 @@ test('thread sync remains incremental when cached attachment metadata is complet
           id: 'image-1',
           type: 'image',
           storagePath: 'user/thread/image-1.jpg',
+          status: 'delivered',
+        },
+      ],
+    }),
+    true,
+  );
+});
+
+test('provider expressions are complete without Betweener attachment storage', () => {
+  assert.equal(
+    shouldFetchThreadIncrementally({
+      syncCursor: '2026-07-20T10:00:00.000Z',
+      currentMessages: [
+        {
+          ...baseMessage,
+          id: 'provider-expression-1',
+          type: 'image',
+          mediaKind: 'giphy_sticker',
+          providerMedia: {
+            schemaVersion: 1,
+            provider: 'giphy',
+            providerMediaId: 'sticker-123',
+            title: 'Wave sticker',
+            width: 320,
+            height: 320,
+            kind: 'giphy_sticker',
+          },
           status: 'delivered',
         },
       ],
