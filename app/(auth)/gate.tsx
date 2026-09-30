@@ -7,6 +7,7 @@ import { useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import { View } from "react-native";
 import { supabase } from "@/lib/supabase";
+import { signOutSupabaseSession } from "@/lib/auth/sign-out-session";
 import {
   clearPendingAuthProvider,
   getFreshPendingAuthProvider,
@@ -336,7 +337,7 @@ export default function AuthGateScreen() {
       if (!payload?.is_merged) return false;
 
       try {
-        await supabase.auth.signOut();
+        await signOutSupabaseSession({ reason: 'merged_account_redirect' });
       } catch {
         // best effort only
       }
@@ -446,7 +447,7 @@ export default function AuthGateScreen() {
             user?.email ?? null,
           );
           try {
-            await supabase.auth.signOut();
+            await signOutSupabaseSession({ reason: 'retired_duplicate_redirect' });
           } catch {
             // best effort only
           }
@@ -679,7 +680,7 @@ export default function AuthGateScreen() {
             userToUse.email ?? null,
           );
           try {
-            await supabase.auth.signOut();
+            await signOutSupabaseSession({ reason: 'retired_duplicate_redirect' });
           } catch {
             // best effort only
           }
@@ -725,7 +726,7 @@ export default function AuthGateScreen() {
             const providerRoute = getDisconnectedProviderRoute(currentProvider, userToUse.email ?? null);
             await persistDisconnectedProviderRedirect(currentProvider, userToUse.email ?? null);
             try {
-              await supabase.auth.signOut();
+              await signOutSupabaseSession({ reason: 'disconnected_provider_redirect' });
             } catch {
               // best effort only
             }

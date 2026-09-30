@@ -35,7 +35,11 @@ serve(async (req) => {
     const supabaseUrl = (Deno.env.get("SUPABASE_URL") || "").trim();
     const anonKey = (Deno.env.get("SUPABASE_ANON_KEY") || "").trim();
     const serviceRoleKey = (Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "").trim();
-    const revenueCatApiKey = (Deno.env.get("REVENUECAT_SECRET_API_KEY") || "").trim();
+    const revenueCatApiKey = (
+      Deno.env.get("REVENUECAT_V1_SECRET_API_KEY") ||
+      Deno.env.get("REVENUECAT_SECRET_API_KEY") ||
+      ""
+    ).trim();
     const authHeader = req.headers.get("Authorization") || "";
 
     if (!supabaseUrl || !anonKey || !serviceRoleKey || !revenueCatApiKey) {

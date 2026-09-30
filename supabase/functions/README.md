@@ -14,8 +14,9 @@ RevenueCat webhook function
   - `REVENUECAT_WEBHOOK_AUTH`
   - `REVENUECAT_SECRET_API_KEY`
 - Optional secrets:
-  - `REVENUECAT_SILVER_ENTITLEMENT`
-  - `REVENUECAT_GOLD_ENTITLEMENT`
+  - `REVENUECAT_V1_SECRET_API_KEY` (preferred future V1 name; falls back to `REVENUECAT_SECRET_API_KEY`)
+  - `REVENUECAT_WEBHOOK_SIGNING_SECRET` (when set, HMAC becomes mandatory)
+  - `REVENUECAT_WEBHOOK_SIGNATURE_TOLERANCE_SECONDS` (defaults to 300, clamped to 30-900)
   - `REVENUECAT_SILVER_PRODUCT`
   - `REVENUECAT_GOLD_PRODUCT`
   - `REVENUECAT_SYNC_SANDBOX`
@@ -23,9 +24,19 @@ RevenueCat webhook function
 
 Preferred auth:
 - Set the RevenueCat webhook Authorization header to the exact value of `REVENUECAT_WEBHOOK_AUTH`.
+- Keep Authorization enabled when HMAC signing is introduced.
+- HMAC verification uses `X-RevenueCat-Webhook-Signature: t=<unix_timestamp>,v1=<hmac_sha256_hex>` over the exact raw bytes of `<timestamp>.<request_body>`.
+- Do not set `REVENUECAT_WEBHOOK_SIGNING_SECRET` until the RevenueCat integration signing secret has been copied securely; once set, unsigned or invalid requests fail closed.
 
 Supabase gateway fallback:
 - If Supabase rejects the incoming `Authorization` header before the function runs, leave RevenueCat's Authorization header empty and append `?webhook_secret=YOUR_VALUE` to the webhook URL instead.
+
+RevenueCat V2 economy foundation
+
+- Future Sparks functions must use only `REVENUECAT_PROJECT_ID` and `REVENUECAT_V2_SECRET_API_KEY` through `_shared/economy-config.ts`.
+- Existing subscription webhook/backfill functions remain V1 and must not read `REVENUECAT_V2_SECRET_API_KEY`.
+- All economy mutations must call `rpc_service_assert_economy_feature_enabled_v1` before acting.
+- Phase B performs no RevenueCat V2 currency debit or credit.
 
 Global locality search function
 

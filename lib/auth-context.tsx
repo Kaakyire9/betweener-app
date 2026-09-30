@@ -40,6 +40,13 @@ import {
   CURRENT_TERMS_VERSION,
   recordCurrentLegalAcceptance,
 } from '@/lib/legal/acceptance';
+import { APP_WEB_AUTH_CALLBACK_URL } from '@/config/app-identity';
+import {
+  bindRevenueCatIdentity,
+  blockRevenueCatIdentityAccess,
+  logOutRevenueCatIdentity,
+} from '@/lib/subscriptions';
+import { signOutSupabaseSession } from '@/lib/auth/sign-out-session';
 
 type Profile = Database['public']['Tables']['profiles']['Row'];
 type FetchProfileOptions = { force?: boolean };
@@ -458,6 +465,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   profileRef.current = profile;
 
   const applySignedOutState = (nextStatus: AuthStatus = 'unauthenticated') => {
+    blockRevenueCatIdentityAccess();
     accessTokenRef.current = null;
     profileCacheRef.current = null;
     profileFetchPromiseRef.current = null;
@@ -783,6 +791,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
         if (initialSession?.user) {
+          await bindRevenueCatIdentity(initialSession.user.id).catch(() => {
+            logAuthRecoveryEvent('revenuecat_identity_bind_failed', {
+              reason: 'initial_session',
+            });
+          });
           // Profile creation is performed by fetchProfile only after a successful
           // server response confirms that the row is genuinely absent.
           let initialProfile = await fetchProfile(initialSession.user.id);
@@ -811,6 +824,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         } else {
           const restored = await restoreAuthSnapshot("initial_session_empty");
           if (!restored) {
+            void logOutRevenueCatIdentity('auth_bootstrap_unauthenticated');
             setProfile(null);
             setPhoneVerified(false);
           } else if (await probeReachableNetwork()) {
@@ -848,6 +862,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setAuthStatus('authenticated');
           const nextUserId = session.user.id;
           const previousUserId = currentSessionUserIdRef.current;
+          await bindRevenueCatIdentity(nextUserId).catch(() => {
+            logAuthRecoveryEvent('revenuecat_identity_bind_failed', {
+              reason: previousUserId && previousUserId !== nextUserId
+                ? 'account_switch'
+                : `auth_event:${_event}`,
+            });
+          });
           if (previousUserId && previousUserId !== nextUserId) {
             await Promise.all([
               resetChatDbForUserSignOut(previousUserId),
@@ -953,6 +974,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               }
             }
             if (!restored) {
+              void logOutRevenueCatIdentity('forced_authentication_reset');
               applySignedOutState();
             } else {
               setAuthStatus(networkReachable ? 'reconnecting_session' : 'offline_authenticated');
@@ -1620,7 +1642,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setIsAuthenticating(true);
     try {
       // Use custom scheme for deep linking
-      const redirectUrl = 'https://getbetweener.com/auth/callback';
+      const redirectUrl = APP_WEB_AUTH_CALLBACK_URL;
       const { error } = await supabase.auth.signUp({
         email,
         password,
@@ -1652,9 +1674,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       void updatePresence(false);
     }
     try {
-      const { error } = await supabase.auth.signOut({ scope: 'local' });
-      if (error) {
-        console.error('Error signing out:', error);
+      const { supabaseError, revenueCatError } = await signOutSupabaseSession({
+        scope: 'local',
+        reason: 'explicit_sign_out',
+      });
+      if (supabaseError) {
+        console.error('Error signing out:', supabaseError);
+      }
+      if (revenueCatError) {
+        console.warn('RevenueCat sign out unavailable; local access was still cleared.');
       }
     } catch (error) {
       console.error('Error signing out:', error);

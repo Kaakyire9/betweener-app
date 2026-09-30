@@ -9,14 +9,23 @@ import Purchases, {
   PURCHASES_ERROR_CODE,
 } from "react-native-purchases";
 import { Platform } from "react-native";
+import { logger } from "@/lib/telemetry/logger";
+import {
+  resolveMembershipTier,
+  type RevenueCatCustomerInfoLike,
+} from "@/lib/membership/membership-resolver";
+import {
+  MEMBERSHIP_PACKAGE_IDS,
+  resolveExactMembershipCatalog,
+  resolveExactMembershipPackage,
+} from "@/lib/membership/offering-resolver";
+import { RevenueCatIdentitySession } from "@/lib/membership/revenuecat-identity-core";
 
 export type PremiumPlan = "FREE" | "SILVER" | "GOLD";
 export type PremiumPlanInterval = "monthly" | "quarterly" | "annual";
 
 type ConfigureArgs = {
   appUserID: string;
-  email?: string | null;
-  displayName?: string | null;
 };
 
 const IOS_API_KEY = process.env.EXPO_PUBLIC_REVENUECAT_APPLE_API_KEY || "";
@@ -24,7 +33,7 @@ const ANDROID_API_KEY = process.env.EXPO_PUBLIC_REVENUECAT_GOOGLE_API_KEY || "";
 
 type RevenueCatEventBridge = {
   registered: boolean;
-  subscribers: Set<CustomerInfoUpdateListener>;
+  subscribers: Set<(customerInfo: CustomerInfo | null) => void>;
   customerInfoListener: CustomerInfoUpdateListener;
 };
 
@@ -32,13 +41,18 @@ type RevenueCatGlobal = typeof globalThis & {
   __betweenerRevenueCatEventBridge?: RevenueCatEventBridge;
 };
 
+function hasBoundRevenueCatIdentity() {
+  return Boolean(revenueCatIdentity.getBoundUserId());
+}
+
 const revenueCatGlobal = globalThis as RevenueCatGlobal;
 const revenueCatEventBridge = revenueCatGlobal.__betweenerRevenueCatEventBridge ?? (() => {
-  const subscribers = new Set<CustomerInfoUpdateListener>();
+  const subscribers = new Set<(customerInfo: CustomerInfo | null) => void>();
   const bridge: RevenueCatEventBridge = {
     registered: false,
     subscribers,
     customerInfoListener: (customerInfo) => {
+      if (!hasBoundRevenueCatIdentity()) return;
       subscribers.forEach((listener) => listener(customerInfo));
     },
   };
@@ -78,6 +92,9 @@ const GOLD_MONTHLY_PRODUCT_HINT = (getPlatformEnv("EXPO_PUBLIC_REVENUECAT_GOLD_M
 const GOLD_QUARTERLY_PRODUCT_HINT = (getPlatformEnv("EXPO_PUBLIC_REVENUECAT_GOLD_QUARTERLY_PRODUCT", "EXPO_PUBLIC_REVENUECAT_ANDROID_GOLD_QUARTERLY_PRODUCT") || "gold.quarterly").toLowerCase();
 const GOLD_ANNUAL_PRODUCT_HINT = (getPlatformEnv("EXPO_PUBLIC_REVENUECAT_GOLD_ANNUAL_PRODUCT", "EXPO_PUBLIC_REVENUECAT_ANDROID_GOLD_ANNUAL_PRODUCT") || "gold.annual").toLowerCase();
 
+const isProductionMembershipResolution = () =>
+  String(process.env.EXPO_PUBLIC_ENVIRONMENT || "").trim().toLowerCase() === "production";
+
 const INTERVAL_ORDER: Record<PremiumPlanInterval, number> = {
   monthly: 0,
   quarterly: 1,
@@ -116,6 +133,29 @@ const getRevenueCatApiKey = () => {
   return "";
 };
 
+const revenueCatIdentity = new RevenueCatIdentitySession(
+  {
+    isConfigured: () => Purchases.isConfigured().catch(() => false),
+    configure: (appUserId) => {
+      Purchases.configure({ apiKey: getRevenueCatApiKey(), appUserID: appUserId });
+    },
+    getAppUserId: () => Purchases.getAppUserID().catch(() => null),
+    logIn: (appUserId) => Purchases.logIn(appUserId),
+    logOut: () => Purchases.logOut(),
+  },
+  (event) => {
+    logger.info(
+      event.type === "logout" ? "revenuecat.identity.logout" : "revenuecat.identity.changed",
+      {
+        succeeded: event.succeeded,
+        reason: event.reason,
+        accountChanged:
+          Boolean(event.previousUserId) && event.previousUserId !== event.nextUserId,
+      },
+    );
+  },
+);
+
 export const isRevenueCatConfiguredForPlatform = () => Boolean(getRevenueCatApiKey()) && Platform.OS !== "web";
 
 function ensureRevenueCatEventBridge() {
@@ -126,7 +166,9 @@ function ensureRevenueCatEventBridge() {
   revenueCatEventBridge.registered = true;
 }
 
-export function subscribeToRevenueCatCustomerInfo(listener: CustomerInfoUpdateListener) {
+export function subscribeToRevenueCatCustomerInfo(
+  listener: (customerInfo: CustomerInfo | null) => void,
+) {
   if (!isRevenueCatConfiguredForPlatform()) return () => {};
 
   ensureRevenueCatEventBridge();
@@ -136,32 +178,32 @@ export function subscribeToRevenueCatCustomerInfo(listener: CustomerInfoUpdateLi
   };
 }
 
-export async function ensureRevenueCatConfigured({ appUserID, email, displayName }: ConfigureArgs) {
+const clearRevenueCatCustomerInfo = () => {
+  revenueCatEventBridge.subscribers.forEach((listener) => listener(null));
+};
+
+export function blockRevenueCatIdentityAccess() {
+  revenueCatIdentity.blockAccess();
+  clearRevenueCatCustomerInfo();
+}
+
+export async function logOutRevenueCatIdentity(reason = "explicit_sign_out") {
+  blockRevenueCatIdentityAccess();
+  if (!isRevenueCatConfiguredForPlatform()) return { error: null };
+  return revenueCatIdentity.clear(reason);
+}
+
+export async function bindRevenueCatIdentity(appUserID: string) {
   if (!isRevenueCatConfiguredForPlatform()) return false;
 
   ensureRevenueCatEventBridge();
-
-  const configured = await Purchases.isConfigured().catch(() => false);
-  if (!configured) {
-    Purchases.configure({
-      apiKey: getRevenueCatApiKey(),
-      appUserID,
-    });
-  } else {
-    const currentUser = await Purchases.getAppUserID().catch(() => null);
-    if (currentUser && currentUser !== appUserID) {
-      await Purchases.logIn(appUserID);
-    }
-  }
-
-  if (email) {
-    await Purchases.setEmail(email).catch(() => {});
-  }
-  if (displayName) {
-    await Purchases.setDisplayName(displayName).catch(() => {});
-  }
-
+  if (revenueCatIdentity.getBoundUserId() !== appUserID) clearRevenueCatCustomerInfo();
+  await revenueCatIdentity.bind(appUserID);
   return true;
+}
+
+export async function ensureRevenueCatConfigured({ appUserID }: ConfigureArgs) {
+  return bindRevenueCatIdentity(appUserID);
 }
 
 export async function loadRevenueCatState(args: ConfigureArgs): Promise<{
@@ -188,6 +230,11 @@ export async function loadRevenueCatState(args: ConfigureArgs): Promise<{
     Purchases.getCustomerInfo().catch(() => null),
   ]);
 
+  if (!isProductionMembershipResolution() && offerings) {
+    resolveExactMembershipCatalog(offerings);
+    logger.info("economy.config.loaded", { area: "membership_offering", environment: "staging" });
+  }
+
   return {
     enabled: true,
     canMakePayments,
@@ -198,20 +245,12 @@ export async function loadRevenueCatState(args: ConfigureArgs): Promise<{
 }
 
 export function derivePlanFromCustomerInfo(customerInfo: CustomerInfo | null): PremiumPlan {
-  if (!customerInfo) return "FREE";
-  const activeEntitlements = Object.keys(customerInfo.entitlements.active || {}).map((key) => key.toLowerCase());
-  const activeProducts = (customerInfo.activeSubscriptions || []).map((key) => key.toLowerCase());
-
-  const hasGold =
-    activeEntitlements.some((key) => key.includes(GOLD_ENTITLEMENT)) ||
-    activeProducts.some((key) => key.includes(GOLD_PRODUCT_HINT));
-  if (hasGold) return "GOLD";
-
-  const hasSilver =
-    activeEntitlements.some((key) => key.includes(SILVER_ENTITLEMENT)) ||
-    activeProducts.some((key) => key.includes(SILVER_PRODUCT_HINT));
-  if (hasSilver) return "SILVER";
-
+  const resolution = resolveMembershipTier(customerInfo as RevenueCatCustomerInfoLike | null, {
+    allowLegacyProductFallback: isProductionMembershipResolution(),
+    legacyProductHints: { silver: SILVER_PRODUCT_HINT, gold: GOLD_PRODUCT_HINT },
+  });
+  if (resolution.tier === "gold") return "GOLD";
+  if (resolution.tier === "silver") return "SILVER";
   return "FREE";
 }
 
@@ -238,6 +277,11 @@ function entitlementMatchesPlan(
 export function getPlanEndsAtFromCustomerInfo(customerInfo: CustomerInfo | null, plan: PremiumPlan) {
   if (!customerInfo || plan === "FREE") return null;
 
+  if (!isProductionMembershipResolution()) {
+    const entitlement = customerInfo.entitlements.active?.[plan.toLowerCase()];
+    return entitlement?.isActive === false ? null : entitlement?.expirationDate ?? null;
+  }
+
   const activeEntitlement = Object.entries(customerInfo.entitlements.active || {}).find(([entitlementId, entitlement]) => (
     entitlement.isActive && entitlementMatchesPlan(entitlementId, entitlement.productIdentifier, plan)
   ));
@@ -261,6 +305,12 @@ export function getPlanIntervalFromPackage(pkg: PurchasesPackage): PremiumPlanIn
   const subscriptionPeriod = String(pkg.product.subscriptionPeriod || "").toUpperCase();
   const packageId = (pkg.identifier || "").toLowerCase();
   const productId = (pkg.product.identifier || "").toLowerCase();
+
+  for (const tier of ["silver", "gold"] as const) {
+    for (const interval of ["monthly", "quarterly", "annual"] as const) {
+      if (packageId === MEMBERSHIP_PACKAGE_IDS[tier][interval]) return interval;
+    }
+  }
 
   if (subscriptionPeriod === "P1M" || packageId.includes("monthly") || productId.includes("monthly")) {
     return "monthly";
@@ -301,6 +351,12 @@ function packageMatchesPlanAndInterval(
 }
 
 export function getPackagesForPlan(offerings: PurchasesOfferings | null, plan: Exclude<PremiumPlan, "FREE">) {
+  if (!isProductionMembershipResolution()) {
+    const tier = plan.toLowerCase() as "silver" | "gold";
+    const catalog = resolveExactMembershipCatalog(offerings);
+    return (["monthly", "quarterly", "annual"] as const).map((interval) => catalog[tier][interval]);
+  }
+
   return (["monthly", "quarterly", "annual"] as const)
     .map((interval) => findPackageForPlan(offerings, plan, interval))
     .filter((pkg): pkg is PurchasesPackage => Boolean(pkg))
@@ -316,6 +372,14 @@ export function findPackageForPlan(
   plan: Exclude<PremiumPlan, "FREE">,
   interval: PremiumPlanInterval = "monthly",
 ) {
+  if (!isProductionMembershipResolution()) {
+    return resolveExactMembershipPackage(
+      offerings,
+      plan.toLowerCase() as "silver" | "gold",
+      interval,
+    );
+  }
+
   const packages = offerings?.current?.availablePackages || [];
 
   const exactMatch = packages.find((pkg) => packageMatchesPlanAndInterval(pkg, plan, interval));
@@ -339,11 +403,13 @@ export function findPackageForPlan(
 }
 
 export async function purchasePlanPackage(pkg: PurchasesPackage) {
-  return Purchases.purchasePackage(pkg);
+  const result = await Purchases.purchasePackage(pkg);
+  return { currentPlan: derivePlanFromCustomerInfo(result.customerInfo) };
 }
 
 export async function restoreRevenueCatPurchases() {
-  return Purchases.restorePurchases();
+  const customerInfo = await Purchases.restorePurchases();
+  return { currentPlan: derivePlanFromCustomerInfo(customerInfo) };
 }
 
 export function isPurchaseCancelled(error: unknown) {
@@ -352,4 +418,18 @@ export function isPurchaseCancelled(error: unknown) {
     purchasesError?.code === PURCHASES_ERROR_CODE.PURCHASE_CANCELLED_ERROR ||
     purchasesError?.userCancelled === true
   );
+}
+
+export function getMembershipPurchaseErrorMessage(error: unknown) {
+  const purchasesError = error as PurchasesError | undefined;
+  if (purchasesError?.code === PURCHASES_ERROR_CODE.NETWORK_ERROR) {
+    return "Check your connection and try again.";
+  }
+  if (purchasesError?.code === PURCHASES_ERROR_CODE.PAYMENT_PENDING_ERROR) {
+    return "This purchase is pending approval in the App Store.";
+  }
+  if (purchasesError?.code === PURCHASES_ERROR_CODE.PURCHASE_NOT_ALLOWED_ERROR) {
+    return "Purchases are not allowed for this App Store account.";
+  }
+  return "Unable to complete this membership request right now.";
 }

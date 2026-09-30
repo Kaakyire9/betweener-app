@@ -5,10 +5,10 @@ import { Motion } from "@/lib/motion";
 import {
   PremiumPlan,
   PremiumPlanInterval,
-  derivePlanFromCustomerInfo,
   findPackageForPlan,
   getPackagesForPlan,
   getPlanIntervalFromPackage,
+  getMembershipPurchaseErrorMessage,
   isPurchaseCancelled,
   isRevenueCatConfiguredForPlatform,
   purchasePlanPackage,
@@ -149,7 +149,7 @@ export default function PremiumPlansScreen() {
     billingSupported,
     currentPlan,
     currentPlanEndsAt,
-    customerInfo,
+    managementURL,
     error: billingError,
     hasActiveBoost,
     offerings,
@@ -205,14 +205,13 @@ export default function PremiumPlansScreen() {
     try {
       setActionKey(`${plan}:${interval}`);
       const result = await purchasePlanPackage(targetPackage);
-      if (result.customerInfo && derivePlanFromCustomerInfo(result.customerInfo) !== "FREE") {
+      if (result.currentPlan !== "FREE") {
         await refresh();
       }
       Alert.alert("Premium active", `${PLAN_CONFIG[plan].label} ${INTERVAL_META[interval].label.toLowerCase()} is now active on this account.`);
     } catch (error) {
       if (!isPurchaseCancelled(error)) {
-        const message = error instanceof Error ? error.message : "Unable to complete this purchase right now.";
-        Alert.alert("Purchase failed", message);
+        Alert.alert("Purchase failed", getMembershipPurchaseErrorMessage(error));
       }
     } finally {
       setActionKey(null);
@@ -226,16 +225,15 @@ export default function PremiumPlansScreen() {
       await refresh();
       Alert.alert("Purchases restored", "Your premium membership has been refreshed.");
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to restore purchases right now.";
-      Alert.alert("Restore failed", message);
+      Alert.alert("Restore failed", getMembershipPurchaseErrorMessage(error));
     } finally {
       setRestoring(false);
     }
   };
 
   const handleManage = async () => {
-    if (customerInfo?.managementURL) {
-      await openExternalUrl(customerInfo.managementURL);
+    if (managementURL) {
+      await openExternalUrl(managementURL);
       return;
     }
     await openSupportEmail(
@@ -560,6 +558,9 @@ export default function PremiumPlansScreen() {
 }
 
 function buildPackageMap(offerings: PurchasesOfferings | null, plan: PaidPlan) {
+  if (!offerings) {
+    return { monthly: null, quarterly: null, annual: null };
+  }
   const packages = getPackagesForPlan(offerings, plan);
   return {
     monthly: packages.find((pkg) => getPlanIntervalFromPackage(pkg) === "monthly") || findPackageForPlan(offerings, plan, "monthly"),

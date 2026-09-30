@@ -16,6 +16,8 @@ import {
   isUuid,
   syncUserSubscription,
 } from "../_shared/revenuecat-subscription-sync.ts";
+import { verifyRevenueCatWebhookSignature } from "../_shared/revenuecat-webhook-signature.ts";
+import { isRevenueCatWebhookAuthorized } from "../_shared/revenuecat-webhook-auth.ts";
 const SYNC_SANDBOX = String(Deno.env.get("REVENUECAT_SYNC_SANDBOX") || "true").toLowerCase() !== "false";
 
 const updateWebhookEvent = async (admin: any, eventId: string, patch: Record<string, unknown>) => {
@@ -48,7 +50,16 @@ serve(async (req) => {
     const supabaseUrl = (Deno.env.get("SUPABASE_URL") || "").trim();
     const serviceRoleKey = (Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "").trim();
     const webhookAuth = (Deno.env.get("REVENUECAT_WEBHOOK_AUTH") || "").trim();
-    const revenueCatApiKey = (Deno.env.get("REVENUECAT_SECRET_API_KEY") || "").trim();
+    const revenueCatApiKey = (
+      Deno.env.get("REVENUECAT_V1_SECRET_API_KEY") ||
+      Deno.env.get("REVENUECAT_SECRET_API_KEY") ||
+      ""
+    ).trim();
+    const webhookSigningSecret = (Deno.env.get("REVENUECAT_WEBHOOK_SIGNING_SECRET") || "").trim();
+    const signatureToleranceSeconds = Number.parseInt(
+      Deno.env.get("REVENUECAT_WEBHOOK_SIGNATURE_TOLERANCE_SECONDS") || "300",
+      10,
+    );
 
     if (!supabaseUrl || !serviceRoleKey || !webhookAuth || !revenueCatApiKey) {
       return new Response(JSON.stringify({
@@ -66,27 +77,54 @@ serve(async (req) => {
     }
 
     const requestUrl = new URL(req.url);
-    const providedAuth = (req.headers.get("Authorization") || "").trim();
-    const querySecret = (
-      requestUrl.searchParams.get("webhook_secret") ||
-      requestUrl.searchParams.get("secret") ||
-      ""
-    ).trim();
-    const isAuthorized =
-      (providedAuth && providedAuth === webhookAuth) ||
-      (querySecret && querySecret === webhookAuth);
+    const isAuthorized = isRevenueCatWebhookAuthorized({
+      authorizationHeader: req.headers.get("Authorization"),
+      webhookSecret: webhookAuth,
+      webhookSecretQuery: requestUrl.searchParams.get("webhook_secret"),
+      legacySecretQuery: requestUrl.searchParams.get("secret"),
+    });
 
     if (!isAuthorized) {
+      console.warn(JSON.stringify({ event: "revenuecat.webhook.rejected", reason: "authorization" }));
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
+    const rawBody = new Uint8Array(await req.arrayBuffer());
+    if (webhookSigningSecret) {
+      const signatureResult = await verifyRevenueCatWebhookSignature({
+        rawBody,
+        header: req.headers.get("X-RevenueCat-Webhook-Signature"),
+        secret: webhookSigningSecret,
+        toleranceSeconds: Number.isFinite(signatureToleranceSeconds)
+          ? signatureToleranceSeconds
+          : 300,
+      });
+      if (!signatureResult.valid) {
+        console.warn(JSON.stringify({
+          event: "revenuecat.webhook.rejected",
+          reason: signatureResult.reason,
+        }));
+        return new Response(JSON.stringify({ error: "Invalid webhook signature" }), {
+          status: 401,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+    }
+
     admin = createClient(supabaseUrl, serviceRoleKey);
-    const payload = await req.json();
+    const payload = JSON.parse(new TextDecoder().decode(rawBody));
     const event = extractEvent(payload);
     eventId = event.id || null;
+    console.info(JSON.stringify({
+      event: "revenuecat.webhook.received",
+      eventId: event.id ?? null,
+      eventType: event.type ?? null,
+      environment: event.environment ?? null,
+      hmacVerified: Boolean(webhookSigningSecret),
+    }));
 
     if (!event.id || !event.type) {
       return new Response(JSON.stringify({ error: "Invalid RevenueCat payload" }), {
@@ -128,6 +166,10 @@ serve(async (req) => {
         .maybeSingle();
 
       if (existing?.processing_status === "processed" || existing?.processing_status === "ignored") {
+        console.info(JSON.stringify({
+          event: "revenuecat.webhook.duplicate",
+          eventId: event.id,
+        }));
         return new Response(JSON.stringify({ ok: true, duplicate: true, event_id: event.id }), {
           status: 200,
           headers: { ...corsHeaders, "Content-Type": "application/json" },

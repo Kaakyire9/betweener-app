@@ -1,10 +1,12 @@
 // @ts-nocheck
 
-const SILVER_ENTITLEMENT = (Deno.env.get("REVENUECAT_SILVER_ENTITLEMENT") || "silver").toLowerCase();
-const GOLD_ENTITLEMENT = (Deno.env.get("REVENUECAT_GOLD_ENTITLEMENT") || "gold").toLowerCase();
+const SILVER_ENTITLEMENT = "silver";
+const GOLD_ENTITLEMENT = "gold";
 const SILVER_PRODUCT_HINT = (Deno.env.get("REVENUECAT_SILVER_PRODUCT") || "silver").toLowerCase();
 const GOLD_PRODUCT_HINT = (Deno.env.get("REVENUECAT_GOLD_PRODUCT") || "gold").toLowerCase();
 const REVENUECAT_API_BASE = (Deno.env.get("REVENUECAT_API_BASE") || "https://api.revenuecat.com").replace(/\/+$/, "");
+const ALLOW_LEGACY_PRODUCT_FALLBACK =
+  String(Deno.env.get("ENVIRONMENT") || "").trim().toLowerCase() === "production";
 
 export type RevenueCatEvent = {
   id?: string;
@@ -108,10 +110,10 @@ export const choosePlanFromSubscriber = (
       const productId = normalizeString(row.product_identifier);
       const normalizedEntitlement = String(entitlementId || "").toLowerCase();
       const inferredPlan =
-        normalizedEntitlement.includes(GOLD_ENTITLEMENT) ? "GOLD" :
-        normalizedEntitlement.includes(SILVER_ENTITLEMENT) ? "SILVER" :
-        productId?.toLowerCase().includes(GOLD_PRODUCT_HINT) ? "GOLD" :
-        productId?.toLowerCase().includes(SILVER_PRODUCT_HINT) ? "SILVER" :
+        normalizedEntitlement === GOLD_ENTITLEMENT ? "GOLD" :
+        normalizedEntitlement === SILVER_ENTITLEMENT ? "SILVER" :
+        ALLOW_LEGACY_PRODUCT_FALLBACK && productId?.toLowerCase().includes(GOLD_PRODUCT_HINT) ? "GOLD" :
+        ALLOW_LEGACY_PRODUCT_FALLBACK && productId?.toLowerCase().includes(SILVER_PRODUCT_HINT) ? "SILVER" :
         "FREE";
 
       return {
@@ -147,8 +149,8 @@ export const choosePlanFromSubscriber = (
       const expiresAt = parseMaybeDate(row.expires_date);
       const purchaseDate = parseMaybeDate(row.purchase_date);
       const inferredPlan =
-        normalizedProduct.includes(GOLD_PRODUCT_HINT) ? "GOLD" :
-        normalizedProduct.includes(SILVER_PRODUCT_HINT) ? "SILVER" :
+        ALLOW_LEGACY_PRODUCT_FALLBACK && normalizedProduct.includes(GOLD_PRODUCT_HINT) ? "GOLD" :
+        ALLOW_LEGACY_PRODUCT_FALLBACK && normalizedProduct.includes(SILVER_PRODUCT_HINT) ? "SILVER" :
         "FREE";
 
       return {
