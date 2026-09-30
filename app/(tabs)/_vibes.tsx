@@ -72,6 +72,7 @@ import { Alert, Animated, DeviceEventEmitter, Easing, KeyboardAvoidingView, Moda
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import VibesAllMomentsModal from "@/components/vibes/VibesAllMomentsModal";
+import VibesAccessStateCard from "@/components/vibes/VibesAccessStateCard";
 import FloatingMomentsCapsule from "@/components/vibes/moments/FloatingMomentsCapsule";
 import MomentsHeaderRow from "@/components/vibes/moments/MomentsHeaderRow";
 import useMomentsCapsuleMetrics from "@/components/vibes/moments/useMomentsCapsuleMetrics";
@@ -99,6 +100,7 @@ import {
   resolveAgePresetMode,
   type AgePresetMode,
 } from "@/lib/vibes/age-range-presets";
+import { deriveVibesAccessReason } from "@/lib/vibes/vibes-access-state";
 import type { MomentRelationshipContext } from "@/types/moment-context";
 import { getMomentsInboxActivityItems } from "@/lib/inbox/badge-groups";
 
@@ -136,6 +138,7 @@ type VibesActionHistoryEntry =
 export default function ExploreScreen() {
   const { onboardingCelebration } = useLocalSearchParams<{ onboardingCelebration?: string }>();
   const { profile, user, refreshProfile, authRecoveryPending, usingPersistedSessionFallback } = useAuth();
+  const [vibesScreenFocused, setVibesScreenFocused] = useState(false);
   const [showOnboardingCelebration, setShowOnboardingCelebration] = useState(false);
   const onboardingCelebrationHandledRef = useRef(false);
   const dismissOnboardingCelebration = useCallback(() => {
@@ -186,6 +189,8 @@ export default function ExploreScreen() {
   const vibesStackVisualReserve = layoutMetrics.device.compactHeight ? 18 : 22;
   const momentsCapsuleMetrics = useMomentsCapsuleMetrics();
   const showingRecoveredSnapshot = authRecoveryPending || usingPersistedSessionFallback;
+  const vibesAccessReason = useMemo(() => deriveVibesAccessReason(profile as any), [profile]);
+  const canUseVibes = vibesAccessReason == null;
   const { profileId: resolvedProfileId } = useResolvedProfileId(user?.id ?? null, profile?.id ?? null);
   const isGhanaianDiaspora = isGhanaianDiasporaProfile(profile);
   const vibesSubtitle = isGhanaianDiaspora
@@ -222,6 +227,8 @@ export default function ExploreScreen() {
   const [activeWindowMinutes, _setActiveWindowMinutes] = useState(15);
   const [distanceUnit, setDistanceUnit] = useState<DistanceUnit>('auto');
   const [viewerInterests, setViewerInterests] = useState<string[]>([]);
+  const [visibilityActionBusy, setVisibilityActionBusy] = useState(false);
+  const [visibilityActionError, setVisibilityActionError] = useState<string | null>(null);
   const savedMinAgePreference = useMemo(() => {
     const raw = Number((profile as any)?.min_age_interest);
     if (!Number.isFinite(raw)) return 18;
@@ -258,7 +265,7 @@ export default function ExploreScreen() {
     segment: vibesSegment,
     activeWindowMinutes,
     distanceUnit,
-    liveFetchEnabled: !showingRecoveredSnapshot,
+    liveFetchEnabled: vibesScreenFocused && !showingRecoveredSnapshot && canUseVibes,
     momentUserIds: momentBoostIds,
     viewerInterests,
     viewerGender: (profile as any)?.gender ?? null,
@@ -269,6 +276,75 @@ export default function ExploreScreen() {
       maxAge: savedMaxAgePreference,
     },
   });
+
+  const openVibesProfileSettings = useCallback(() => {
+    requestOpenProfileEdit();
+    router.navigate({
+      pathname: '/(tabs)/profile',
+      params: { openEdit: String(Date.now()) },
+    });
+  }, []);
+
+  const enableVibesVisibility = useCallback(async () => {
+    if (visibilityActionBusy || vibesAccessReason !== 'visibility_off') return;
+    const profileId = resolvedProfileId ?? profile?.id ?? null;
+    if (!profileId || !user?.id) {
+      setVisibilityActionError('Your profile is still loading. Please try again in a moment.');
+      return;
+    }
+
+    setVisibilityActionBusy(true);
+    setVisibilityActionError(null);
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .update({ discoverable_in_vibes: true })
+        .eq('id', profileId)
+        .eq('user_id', user.id)
+        .eq('profile_completed', true)
+        .eq('matchmaking_mode', false)
+        .eq('profile_moderation_state', 'CLEAR')
+        .select('discoverable_in_vibes,matchmaking_mode,profile_completed,profile_moderation_state')
+        .maybeSingle();
+
+      if (error) throw error;
+      if (!data || (data as any).discoverable_in_vibes !== true) {
+        throw new Error('VIBES_VISIBILITY_STATE_CHANGED');
+      }
+
+      const refreshedProfile = await refreshProfile();
+      if ((refreshedProfile as any)?.discoverable_in_vibes !== true) {
+        throw new Error('VIBES_VISIBILITY_NOT_CONFIRMED');
+      }
+
+      setCurrentIndex(0);
+      await Promise.resolve(refreshMatches());
+      await haptics.success();
+      logger.info('[vibes] visibility_enabled_from_access_state', { profileId });
+    } catch (error) {
+      logger.warn('[vibes] visibility_enable_failed', {
+        profileId,
+        message: String((error as Error)?.message || error),
+      });
+      setVisibilityActionError(
+        'We could not safely change visibility. Review your profile settings and try again.',
+      );
+    } finally {
+      setVisibilityActionBusy(false);
+    }
+  }, [
+    profile?.id,
+    refreshMatches,
+    refreshProfile,
+    resolvedProfileId,
+    user?.id,
+    vibesAccessReason,
+    visibilityActionBusy,
+  ]);
+
+  useEffect(() => {
+    setVisibilityActionError(null);
+  }, [vibesAccessReason]);
 
   const [celebrationMatch, setCelebrationMatch] = useState<any | null>(null);
   const [offlineNotice, setOfflineNotice] = useState<string | null>(null);
@@ -402,8 +478,6 @@ export default function ExploreScreen() {
     [distanceUnit]
   );
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [vibesScreenFocused, setVibesScreenFocused] = useState(false);
-
   const [videoModalUrl, setVideoModalUrl] = useState<string | null>(null);
   const [videoModalVisible, setVideoModalVisible] = useState(false);
   const [videoModalTitle, setVideoModalTitle] = useState<string | null>(null);
@@ -2924,6 +2998,23 @@ export default function ExploreScreen() {
                 allowClose
                 onClose={closePracticeWalkthrough}
               />
+            ) : vibesAccessReason ? (
+              <VibesAccessStateCard
+                reason={vibesAccessReason}
+                theme={theme}
+                isDark={isDark}
+                compact={layoutMetrics.device.compactHeight || layoutMetrics.isCompactWidth}
+                busy={visibilityActionBusy}
+                error={visibilityActionError}
+                onPrimaryPress={
+                  vibesAccessReason === 'visibility_off'
+                    ? () => { void enableVibesVisibility(); }
+                    : openVibesProfileSettings
+                }
+                onSecondaryPress={
+                  vibesAccessReason === 'visibility_off' ? openVibesProfileSettings : undefined
+                }
+              />
             ) : loadingMatches && matchList.length === 0 ? (
               <ExploreStackSkeleton />
             ) : offlineNotice && matchList.length === 0 ? (
@@ -2988,7 +3079,7 @@ export default function ExploreScreen() {
           </View>
         </Animated.ScrollView>
 
-        {!showPracticeWalkthrough && practiceLoaded ? (
+        {!showPracticeWalkthrough && practiceLoaded && canUseVibes ? (
           <View
             style={[
               styles.actionButtons,
