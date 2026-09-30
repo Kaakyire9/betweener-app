@@ -1,6 +1,8 @@
 // @ts-nocheck -- checked by the function-local Deno configuration.
 import { createClient } from '@supabase/supabase-js';
 import { corsHeaders } from '../_shared/cors.ts';
+import { getSupabaseAdminKey } from '../_shared/supabase-admin-key.ts';
+import { getSupabasePublicApiKey } from '../_shared/supabase-public-key.ts';
 
 const MAX_BYTES = 50 * 1024 * 1024;
 const MOODS = new Set([
@@ -46,11 +48,11 @@ Deno.serve(async (request) => {
     const authorization = request.headers.get('Authorization')?.trim() ?? '';
     if (!authorization.startsWith('Bearer ')) return json(401, { error: 'unauthorized' });
     const supabaseUrl = requiredEnv('SUPABASE_URL');
-    const caller = createClient(supabaseUrl, requiredEnv('SUPABASE_ANON_KEY'), {
+    const caller = createClient(supabaseUrl, getSupabasePublicApiKey(), {
       auth: { autoRefreshToken: false, persistSession: false },
       global: { headers: { Authorization: authorization } },
     });
-    const service = createClient(supabaseUrl, requiredEnv('SUPABASE_SERVICE_ROLE_KEY'), {
+    const service = createClient(supabaseUrl, getSupabaseAdminKey(), {
       auth: { autoRefreshToken: false, persistSession: false },
     });
     const { data: authData, error: authError } = await caller.auth.getUser();
@@ -111,7 +113,7 @@ Deno.serve(async (request) => {
       try {
         const cleanup = createClient(
           requiredEnv('SUPABASE_URL'),
-          requiredEnv('SUPABASE_SERVICE_ROLE_KEY'),
+          getSupabaseAdminKey(),
           { auth: { autoRefreshToken: false, persistSession: false } },
         );
         await cleanup.storage.from('live-program-music').remove([uploadedPath]);

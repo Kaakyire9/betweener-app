@@ -2,6 +2,8 @@
 import { StreamClient } from '@stream-io/node-sdk';
 import { createClient } from '@supabase/supabase-js';
 import { corsHeaders } from '../_shared/cors.ts';
+import { getSupabaseAdminKey } from '../_shared/supabase-admin-key.ts';
+import { getSupabasePublicApiKey } from '../_shared/supabase-public-key.ts';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ACTIONS = new Set(['mute', 'unmute', 'remove', 'suspend']);
@@ -34,8 +36,8 @@ Deno.serve(async (request) => {
     }
 
     const url = env('SUPABASE_URL');
-    const anonKey = env('SUPABASE_ANON_KEY');
-    const serviceKey = env('SUPABASE_SERVICE_ROLE_KEY');
+    const anonKey = getSupabasePublicApiKey();
+    const serviceKey = getSupabaseAdminKey();
     const caller = createClient(url, anonKey, {
       auth: { autoRefreshToken: false, persistSession: false },
       global: { headers: { Authorization: authorization } },

@@ -3,6 +3,8 @@
 // remain in Edge Function env.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { corsHeaders } from './cors.ts';
+import { getSupabaseAdminKey } from './supabase-admin-key.ts';
+import { getSupabasePublicApiKey } from './supabase-public-key.ts';
 import {
   classifyImageSolicitation,
   mergeContentSafetyAssessments,
@@ -294,8 +296,8 @@ export const handleProfileGuardRequest = async (
   if (!bearerMatch) return json({ code: 'AUTH_REQUIRED' }, 401);
 
   const url = Deno.env.get('SUPABASE_URL');
-  const anonKey = Deno.env.get('SUPABASE_ANON_KEY');
-  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  const anonKey = getSupabasePublicApiKey();
+  const serviceKey = getSupabaseAdminKey();
   if (!url || !anonKey || !serviceKey) return json({ code: 'PROFILE_GUARD_UNAVAILABLE' }, 503);
 
   // getUser(accessToken) calls Supabase Auth's verified-user endpoint. The

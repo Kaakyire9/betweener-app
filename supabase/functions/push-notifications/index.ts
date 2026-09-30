@@ -6,6 +6,7 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 // eslint-disable-next-line import/no-unresolved -- resolved by the Supabase Deno runtime.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { getSupabaseAdminKey } from '../_shared/supabase-admin-key.ts'
 import {
   parsePushWebhookBody,
   PUSH_WEBHOOK_MAX_BODY_BYTES,
@@ -472,7 +473,7 @@ serve(async (request) => {
   }
 
   const supabaseUrl = (Deno.env.get('SUPABASE_URL') || '').trim()
-  const supabaseServiceKey = (Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '').trim()
+  const supabaseServiceKey = getSupabaseAdminKey()
   if (!supabaseUrl || !supabaseServiceKey) {
     console.error('push-notifications database configuration unavailable', {
       event: 'database_configuration_unavailable',

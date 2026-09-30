@@ -34,6 +34,7 @@ import { addEventListener as addNetInfoListener, fetch as fetchNetInfo } from '@
 import type { Database } from '@/supabase/types/database';
 import { addBreadcrumb, setSentryUser } from '@/lib/telemetry/sentry';
 import { isSupabaseAccessTokenUsable } from '@/lib/auth/session-token';
+import { buildSupabasePublicHeaders } from '@/lib/supabase-public-headers';
 import { createPresenceWriteCoordinator } from '@/lib/presence-write-coordinator';
 import {
   CURRENT_PRIVACY_VERSION,
@@ -245,10 +246,7 @@ const diagnoseProfileFetch = async (userId: string) => {
   try {
     const res = await fetch(url, {
       method: "GET",
-      headers: {
-        apikey: anonKey,
-        Authorization: `Bearer ${anonKey}`,
-      },
+      headers: buildSupabasePublicHeaders({ apiKey: anonKey }),
       signal: controller.signal,
     });
     const ms = Date.now() - startedAt;
@@ -284,10 +282,7 @@ const fetchProfileViaRest = async (
     const res = (await Promise.race([
       fetch(url, {
         method: "GET",
-        headers: {
-          apikey: anonKey,
-          Authorization: `Bearer ${accessToken || anonKey}`,
-        },
+        headers: buildSupabasePublicHeaders({ apiKey: anonKey, accessToken }),
         signal: controller.signal,
       }),
       new Promise<never>((_, reject) =>
@@ -338,10 +333,7 @@ const fetchProfilePhoneFlagsViaRest = async (
     const res = (await Promise.race([
       fetch(url, {
         method: "GET",
-        headers: {
-          apikey: anonKey,
-          Authorization: `Bearer ${accessToken || anonKey}`,
-        },
+        headers: buildSupabasePublicHeaders({ apiKey: anonKey, accessToken }),
         signal: controller.signal,
       }),
       new Promise<never>((_, reject) =>
@@ -390,10 +382,7 @@ const fetchVerifiedPhoneViaRest = async (
     const res = (await Promise.race([
       fetch(url, {
         method: "GET",
-        headers: {
-          apikey: anonKey,
-          Authorization: `Bearer ${accessToken || anonKey}`,
-        },
+        headers: buildSupabasePublicHeaders({ apiKey: anonKey, accessToken }),
         signal: controller.signal,
       }),
       new Promise<never>((_, reject) =>

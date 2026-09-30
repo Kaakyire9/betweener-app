@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.110.7'
+import { getSupabaseAdminKey } from '../_shared/supabase-admin-key.ts'
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status,
@@ -13,7 +14,7 @@ serve(async (req) => {
   if (!expected) return json({ error: 'worker_not_configured' }, 503)
   if ((req.headers.get('x-cron-secret') || '').trim() !== expected) return json({ error: 'unauthorized' }, 401)
   const url = Deno.env.get('SUPABASE_URL') || ''
-  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
+  const serviceKey = getSupabaseAdminKey()
   if (!url || !serviceKey) return json({ error: 'server_configuration_incomplete' }, 500)
   const service = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
   const { data: run, error: runError } = await service

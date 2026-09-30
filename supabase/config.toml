@@ -24,6 +24,16 @@ verify_jwt = false
 # Scheduled requests authenticate with a function-owned secret.
 verify_jwt = false
 
+[functions.send-verification]
+# Signup phone verification is intentionally callable before a user session exists.
+# The handler rate-limits requests and ignores unverified caller-supplied user IDs.
+verify_jwt = false
+
+[functions.verify-phone]
+# Signup phone verification is intentionally callable before a user session exists.
+# The handler rate-limits requests and ignores unverified caller-supplied user IDs.
+verify_jwt = false
+
 [api]
 enabled = true
 # Port to use for the API URL.

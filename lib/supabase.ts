@@ -6,6 +6,7 @@ import { isLikelyNetworkError } from '@/lib/network';
 import { isNetworkConnectionAvailable } from '@/lib/network-state';
 import { addBreadcrumb, captureMessage } from '@/lib/telemetry/sentry';
 import { isSupabaseAccessTokenUsable } from '@/lib/auth/session-token';
+import { buildSupabasePublicHeaders } from '@/lib/supabase-public-headers';
 
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
 const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
@@ -481,10 +482,7 @@ const probeSupabaseConnectivity = async (reason: string) => {
     const start = Date.now();
     const res = await fetchWithTimeout(url, {
       method: 'GET',
-      headers: {
-        apikey: SUPABASE_ANON_KEY,
-        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-      },
+      headers: buildSupabasePublicHeaders({ apiKey: SUPABASE_ANON_KEY }),
     } as any);
 
     logFetchIssueThrottled(

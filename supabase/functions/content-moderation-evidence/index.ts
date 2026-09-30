@@ -2,6 +2,8 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { corsHeaders } from '../_shared/cors.ts';
+import { getSupabaseAdminKey } from '../_shared/supabase-admin-key.ts';
+import { getSupabasePublicApiKey } from '../_shared/supabase-public-key.ts';
 
 const headers = { ...corsHeaders, 'Content-Type': 'application/json' };
 const json = (body: Record<string, unknown>, status = 200) =>
@@ -19,8 +21,8 @@ serve(async (request) => {
   if (!bearer) return json({ code: 'AUTH_REQUIRED' }, 401);
 
   const url = Deno.env.get('SUPABASE_URL');
-  const anonKey = Deno.env.get('SUPABASE_ANON_KEY');
-  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  const anonKey = getSupabasePublicApiKey();
+  const serviceKey = getSupabaseAdminKey();
   if (!url || !anonKey || !serviceKey) return json({ code: 'EVIDENCE_UNAVAILABLE' }, 503);
 
   const authClient = createClient(url, anonKey, { auth: { persistSession: false } });

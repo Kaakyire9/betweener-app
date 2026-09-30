@@ -287,7 +287,7 @@ test('hosted introductions resolve through a reduced-motion-safe formation cerem
 test('ending a Spark revokes database admission and terminates the provider call', () => {
   assert.match(repository, /functions\.invoke\('live-private-spark-control'/i);
   assert.match(controlFunction, /rpc_end_live_private_spark/i);
-  assert.match(controlFunction, /SUPABASE_SERVICE_ROLE_KEY/i);
+  assert.match(controlFunction, /getSupabaseAdminKey/i);
   assert.match(controlFunction, /\.call\(providerState\.provider_call_type, providerState\.provider_call_id\)/i);
   assert.match(controlFunction, /\.end\(\)/i);
   assert.match(controlFunction, /providerSyncPending: true/i);

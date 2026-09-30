@@ -80,7 +80,7 @@ If the migration transaction fails, it rolls back atomically. If postdeployment 
 
 ## Required operational checks
 
-- `push-notifications` retains `SUPABASE_SERVICE_ROLE_KEY` only for canonical claim/completion RPCs and token resolution after HMAC authentication.
+- `push-notifications` uses the injected `SUPABASE_SECRET_KEYS` server credential for canonical claim/completion RPCs and token resolution after HMAC authentication.
 - JWT verification is intentionally disabled for the database webhook transport. Missing or invalid HMAC configuration fails closed with no fallback credential path.
 - `push-notifications` sets `LIVE_NOTIFICATIONS_MIN_APP_VERSION` to the first released binary that supports the Live routes (currently `1.2.0`).
 - `LIVE_NOTIFICATIONS_MIN_APP_VERSION` cannot lower the compiled `1.2.0` safety floor. Incompatible-token suppressions use the aggregate reason `incompatible_app_version` without logging tokens or recorded client versions.

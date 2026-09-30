@@ -1,6 +1,7 @@
 // @ts-nocheck -- checked by the function-local Deno configuration.
 import { StreamClient } from '@stream-io/node-sdk';
 import { createClient } from '@supabase/supabase-js';
+import { getSupabaseAdminKey } from '../_shared/supabase-admin-key.ts';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const REASON_PATTERN = /^[a-z][a-z0-9_]{0,119}$/;
@@ -74,7 +75,7 @@ Deno.serve(async (request) => {
     if (!validUuid(workerInstanceId)) return json({ error: 'invalid_request' }, 400);
 
     const supabaseUrl = requiredEnv('SUPABASE_URL');
-    const service = createClient(supabaseUrl, requiredEnv('SUPABASE_SERVICE_ROLE_KEY'), {
+    const service = createClient(supabaseUrl, getSupabaseAdminKey(), {
       auth: { autoRefreshToken: false, persistSession: false },
     });
 

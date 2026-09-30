@@ -4,13 +4,23 @@
 // @ts-nocheck
 // This is a Deno Edge Function - TypeScript errors are expected in VS Code
 
+Shared Supabase credentials
+
+- Low-privilege or user-scoped clients use `SUPABASE_PUBLISHABLE_KEYS` through
+  `_shared/supabase-public-key.ts` (the injected `default` publishable key).
+- Privileged clients use `SUPABASE_SECRET_KEYS` through
+  `_shared/supabase-admin-key.ts` (the injected `default` secret key).
+- Do not use publishable keys as bearer tokens. Forward only a real user access
+  token in `Authorization` for user-scoped clients.
+
 RevenueCat webhook function
 
 - Function name: `revenuecat-webhook`
 - `config.toml`: `verify_jwt = false`
-- Required secrets:
+- Required Supabase environment:
   - `SUPABASE_URL`
-  - `SUPABASE_SERVICE_ROLE_KEY`
+  - `SUPABASE_SECRET_KEYS` (injected automatically; the `default` secret key is used)
+  - optional `BETWEENER_SUPABASE_SECRET_KEY` for an explicit server-only key
   - `REVENUECAT_WEBHOOK_AUTH`
   - `REVENUECAT_SECRET_API_KEY`
 - Optional secrets:

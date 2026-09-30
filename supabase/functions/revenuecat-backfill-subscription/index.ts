@@ -8,6 +8,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
+import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
+import { getSupabasePublicApiKey } from "../_shared/supabase-public-key.ts";
 import {
   isUuid,
   normalizeString,
@@ -33,8 +35,8 @@ serve(async (req) => {
 
   try {
     const supabaseUrl = (Deno.env.get("SUPABASE_URL") || "").trim();
-    const anonKey = (Deno.env.get("SUPABASE_ANON_KEY") || "").trim();
-    const serviceRoleKey = (Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "").trim();
+    const anonKey = getSupabasePublicApiKey();
+    const serviceRoleKey = getSupabaseAdminKey();
     const revenueCatApiKey = (
       Deno.env.get("REVENUECAT_V1_SECRET_API_KEY") ||
       Deno.env.get("REVENUECAT_SECRET_API_KEY") ||
