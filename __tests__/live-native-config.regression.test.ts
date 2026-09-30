@@ -83,7 +83,7 @@ test('iOS Firebase uses CocoaPods with the existing static framework linkage', (
 
 test('Stream ongoing-call runtime is initialized once at the native app entry point', () => {
   assert.match(packageJson, /"main": "index\.js"/);
-  assert.match(packageJson, /"@stream-io\/react-native-callingx": "0\.11\.3"/);
+  assert.match(packageJson, /"@stream-io\/react-native-callingx": "0\.11\.5"/);
   assert.match(appEntry, /StreamVideoRN\.setPushConfig/);
   assert.match(appEntry, /android:[\s\S]*enableOngoingCalls: true/);
   assert.match(appEntry, /ios:[\s\S]*enableOngoingCalls: true/);
