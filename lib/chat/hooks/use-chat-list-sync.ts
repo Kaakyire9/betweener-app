@@ -5,6 +5,7 @@ import { useFocusEffect } from "expo-router";
 import { AppState } from "react-native";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { UserPresenceRow } from "@/lib/user-presence";
+import { subscribeUserChatBroadcast } from "@/lib/realtime/user-chat-broadcast";
 
 export type ChatListMessageRealtimeRow = {
   id: string;
@@ -121,43 +122,36 @@ export const useChatListSync = ({
   useEffect(() => {
     if (!userId || !realtimeActive) return;
     let cancelled = false;
-    const channel = supabase.channel(`messages:chatlist:${userId}`);
-
-    channel
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'messages',
-        },
-        (payload) => {
+    const unsubscribe = subscribeUserChatBroadcast(
+      userId,
+      (change) => {
           if (cancelled) return;
-          if (payload.eventType === 'DELETE') {
+          if (change.table !== 'messages') return;
+          if (change.eventType === 'DELETE') {
             void fetchConversations();
             return;
           }
 
-          const row = payload.new as ChatListMessageRealtimeRow;
+          const row = change.new as unknown as ChatListMessageRealtimeRow;
           if (!row?.id) return;
-          if (payload.eventType === 'INSERT') {
+          if (change.eventType === 'INSERT') {
             onMessageInsert(row);
             return;
           }
           if (row.receiver_id === userId) onMessageReceiverUpdate(row);
           if (row.sender_id === userId) onMessageSenderUpdate(row);
-        },
-      )
-      .subscribe((status) => {
+      },
+      (status) => {
         if (cancelled) return;
         if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
           void fetchConversations();
         }
-      });
+      },
+    );
 
     return () => {
       cancelled = true;
-      supabase.removeChannel(channel);
+      unsubscribe();
     };
   }, [
     fetchConversations,

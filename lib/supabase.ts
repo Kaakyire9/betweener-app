@@ -723,6 +723,14 @@ export const initSupabaseAuthLifecycle = () => {
     } catch {
       // ignore
     }
+    try {
+      // Push owns background delivery. Closing the socket prevents retained
+      // screen channels from continuing database change work while hidden;
+      // existing channels rejoin when start() reconnects the client.
+      supabase.realtime.disconnect();
+    } catch {
+      // ignore
+    }
   };
 
   let currentAppState = AppState.currentState;

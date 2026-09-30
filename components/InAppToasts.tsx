@@ -7,6 +7,7 @@ import { ChatOutboxService } from '@/lib/chat/outbox/chat-outbox-service';
 import { getStickerReactionTarget, parseStickerPreview } from '@/lib/chat-sticker-preview';
 import { getChatMessagePreviewText, getDatePlanPreviewText, parseDatePlanPreviewMeta } from '@/lib/message-preview';
 import { getSafeRemoteImageUri, getUserFacingDisplayName } from '@/lib/profile/display-name';
+import { subscribeUserChatBroadcast } from '@/lib/realtime/user-chat-broadcast';
 import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Image as ExpoImage } from 'expo-image';
@@ -670,6 +671,12 @@ export default function InAppToasts() {
   }
 
   function systemMessagePreview(row: any, peerName: string) {
+    if (row?.event_type === 'database_capacity_alert') {
+      return {
+        title: 'Database capacity',
+        body: row?.text ?? 'Database connection capacity changed.',
+      };
+    }
     if (row?.event_type === 'admin_queue_item') {
       return {
         title: 'Admin queue',
@@ -763,20 +770,20 @@ export default function InAppToasts() {
       eventType === 'date_plan_concierge_cancelled' ||
       eventType === 'account_recovery_reviewing' ||
       eventType === 'account_recovery_resolved' ||
-      eventType === 'account_recovery_closed'
+      eventType === 'account_recovery_closed' ||
+      eventType === 'database_capacity_alert'
     );
   }
 
   useEffect(() => {
     if (!user?.id) return;
 
-    const channel = supabase
-      .channel(`inapp_system_messages:${user.id}`)
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'system_messages', filter: `user_id=eq.${user.id}` },
-        (payload) => {
-          const row = payload.new as any;
+    const unsubscribe = subscribeUserChatBroadcast(
+      user.id,
+      (change) => {
+          if (change.table !== 'system_messages' || change.eventType !== 'INSERT') return;
+          const row = change.new as any;
+          if (row?.user_id !== user.id) return;
           if (!row) return;
           const officialSystemMessage = isOfficialSystemMessage(row);
           const notificationKind =
@@ -844,12 +851,11 @@ export default function InAppToasts() {
                   : undefined,
             });
           })();
-        },
-      )
-      .subscribe();
+      },
+    );
 
     return () => {
-      supabase.removeChannel(channel);
+      unsubscribe();
     };
   }, [canInAppNotify, getProfileLite, pushToast, user?.id]);
 

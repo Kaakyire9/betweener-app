@@ -38,6 +38,35 @@ type IntentRealtimeEntry = {
 };
 
 const intentRealtimeEntries = new Map<string, IntentRealtimeEntry>();
+const sharedIntentFetches = new Map<string, {
+  promise: Promise<{ data: IntentRequest[] | null; error: unknown }>;
+  reuseUntil: number;
+}>();
+
+const fetchIntentRequestsShared = (userId: string) => {
+  const existing = sharedIntentFetches.get(userId);
+  if (existing && Date.now() <= existing.reuseUntil) return existing.promise;
+
+  const promise = (async () => {
+    try {
+      await supabase.rpc('rpc_mark_expired_intent_requests');
+    } catch {}
+    const { data, error } = await supabase
+      .from('intent_requests')
+      .select('*')
+      .or(`recipient_id.eq.${userId},actor_id.eq.${userId}`)
+      .order('created_at', { ascending: false })
+      .limit(200);
+    return { data: (data ?? null) as IntentRequest[] | null, error };
+  })();
+
+  sharedIntentFetches.set(userId, { promise, reuseUntil: Date.now() + 1_000 });
+  void promise.finally(() => {
+    const current = sharedIntentFetches.get(userId);
+    if (current?.promise === promise) current.reuseUntil = Date.now() + 750;
+  });
+  return promise;
+};
 
 const notifyIntentRealtimeListeners = (entry: IntentRealtimeEntry) => {
   if (entry.notifyTimer) clearTimeout(entry.notifyTimer);
@@ -347,17 +376,9 @@ export const useIntentRequests = (
     }
     setLoading(true);
     try {
-      // Best-effort cleanup; don't fail the screen if this errors.
-      try {
-        await supabase.rpc('rpc_mark_expired_intent_requests');
-      } catch {}
-
-      const { data, error } = await supabase
-        .from('intent_requests')
-        .select('*')
-        .or(`recipient_id.eq.${userId},actor_id.eq.${userId}`)
-        .order('created_at', { ascending: false })
-        .limit(200);
+      // The tab shell and Intent screen can refresh together. Coalesce that
+      // burst into one RPC/select without sharing mutable React state.
+      const { data, error } = await fetchIntentRequestsShared(userId);
 
       if (error) {
         setLastServerFetchFailedAt(Date.now());
