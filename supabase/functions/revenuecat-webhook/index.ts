@@ -16,24 +16,42 @@ import {
   isUuid,
   syncUserSubscription,
 } from "../_shared/revenuecat-subscription-sync.ts";
+import { resolveRevenueCatEventEnvironment } from "../_shared/revenuecat-event.ts";
 import { verifyRevenueCatWebhookSignature } from "../_shared/revenuecat-webhook-signature.ts";
 import { isRevenueCatWebhookAuthorized } from "../_shared/revenuecat-webhook-auth.ts";
 const SYNC_SANDBOX = String(Deno.env.get("REVENUECAT_SYNC_SANDBOX") || "true").toLowerCase() !== "false";
 
 const updateWebhookEvent = async (admin: any, eventId: string, patch: Record<string, unknown>) => {
-  await admin
+  const { error } = await admin
     .from("revenuecat_webhook_events")
     .update({
       ...patch,
       updated_at: new Date().toISOString(),
     })
     .eq("event_id", eventId);
+  if (error) throw new Error(`Unable to update legacy webhook event: ${error.message}`);
 };
 
+const updateInboxEvent = async (admin: any, eventId: string, patch: Record<string, unknown>) => {
+  const { error } = await admin
+    .from("revenuecat_webhook_inbox")
+    .update({
+      ...patch,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("revenuecat_event_id", eventId);
+  if (error) throw new Error(`Unable to update webhook inbox event: ${error.message}`);
+};
+
+const sha256Hex = async (value: Uint8Array) => {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", value));
+  return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+};
 
 serve(async (req) => {
   let admin: any = null;
   let eventId: string | null = null;
+  let inboxClaimed = false;
 
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -117,12 +135,14 @@ serve(async (req) => {
     admin = createClient(supabaseUrl, serviceRoleKey);
     const payload = JSON.parse(new TextDecoder().decode(rawBody));
     const event = extractEvent(payload);
+    const environmentResolution = resolveRevenueCatEventEnvironment(event);
     eventId = event.id || null;
     console.info(JSON.stringify({
       event: "revenuecat.webhook.received",
       eventId: event.id ?? null,
       eventType: event.type ?? null,
-      environment: event.environment ?? null,
+      environment: environmentResolution.environment,
+      environmentSource: environmentResolution.source,
       hmacVerified: Boolean(webhookSigningSecret),
     }));
 
@@ -133,6 +153,16 @@ serve(async (req) => {
       });
     }
 
+    if (!environmentResolution.environment) {
+      console.warn(JSON.stringify({
+        event: "revenuecat.webhook.environment_unresolved",
+        eventId: event.id,
+        eventType: event.type,
+        environmentSource: environmentResolution.source,
+        rawEnvironment: environmentResolution.rawValue,
+      }));
+    }
+
     const eventRow = {
       event_id: event.id,
       event_type: event.type,
@@ -141,13 +171,73 @@ serve(async (req) => {
       aliases: event.aliases || [],
       transferred_from: event.transferred_from || [],
       transferred_to: event.transferred_to || [],
-      environment: event.environment,
+      environment: environmentResolution.environment,
       event_timestamp_ms: event.event_timestamp_ms,
       processing_status: "received",
       last_error: null,
       payload,
       updated_at: new Date().toISOString(),
     };
+
+    if (event.type !== "TEST") {
+      const payloadSha256 = await sha256Hex(rawBody);
+      const { data: claim, error: claimError } = await admin.rpc(
+        "rpc_service_claim_revenuecat_webhook_event_v1",
+        {
+          p_revenuecat_event_id: event.id,
+          p_event_type: event.type,
+          p_environment: environmentResolution.environment,
+          p_environment_source: environmentResolution.source,
+          p_app_user_id: event.app_user_id,
+          p_payload: payload,
+          p_payload_sha256: payloadSha256,
+        },
+      );
+
+      if (claimError) {
+        throw new Error(`Unable to claim webhook inbox event: ${claimError.message}`);
+      }
+
+      if (!claim?.should_process) {
+        const { data: inboxEvent, error: inboxReadError } = await admin
+          .from("revenuecat_webhook_inbox")
+          .select(
+            "environment,environment_source,processing_state,attempt_count,delivery_count,received_at,last_received_at",
+          )
+          .eq("revenuecat_event_id", event.id)
+          .single();
+        if (inboxReadError) {
+          throw new Error(`Unable to read duplicate webhook inbox event: ${inboxReadError.message}`);
+        }
+        console.info(JSON.stringify({
+          event: "revenuecat.webhook.duplicate",
+          eventId: event.id,
+          processingState: inboxEvent.processing_state,
+          deliveryCount: inboxEvent.delivery_count,
+        }));
+        return new Response(JSON.stringify({
+          ok: true,
+          duplicate: true,
+          event_id: event.id,
+          inbox: inboxEvent,
+        }), {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      inboxClaimed = true;
+      if (!environmentResolution.environment) {
+        await updateInboxEvent(admin, event.id, {
+          last_error_code: environmentResolution.source === "missing"
+            ? "environment_missing"
+            : "environment_unsupported",
+          error: environmentResolution.source === "missing"
+            ? "RevenueCat event environment is missing"
+            : `Unsupported RevenueCat environment: ${environmentResolution.rawValue}`,
+        });
+      }
+    }
 
     const { error: insertError } = await admin
       .from("revenuecat_webhook_events")
@@ -161,11 +251,17 @@ serve(async (req) => {
 
       const { data: existing } = await admin
         .from("revenuecat_webhook_events")
-        .select("processing_status")
+        .select("processing_status,processed_at")
         .eq("event_id", event.id)
         .maybeSingle();
 
       if (existing?.processing_status === "processed" || existing?.processing_status === "ignored") {
+        if (inboxClaimed) {
+          await updateInboxEvent(admin, event.id, {
+            processing_state: existing.processing_status,
+            processed_at: existing.processed_at || new Date().toISOString(),
+          });
+        }
         console.info(JSON.stringify({
           event: "revenuecat.webhook.duplicate",
           eventId: event.id,
@@ -182,13 +278,21 @@ serve(async (req) => {
       });
     }
 
-    if (!SYNC_SANDBOX && String(event.environment || "").toUpperCase() === "SANDBOX") {
+    if (!SYNC_SANDBOX && environmentResolution.environment === "SANDBOX") {
       await updateWebhookEvent(admin, event.id, {
         processing_status: "ignored",
         processed_at: new Date().toISOString(),
         synced_user_ids: [],
         last_error: "sandbox sync disabled",
       });
+      if (inboxClaimed) {
+        await updateInboxEvent(admin, event.id, {
+          processing_state: "ignored",
+          processed_at: new Date().toISOString(),
+          last_error_code: "sandbox_sync_disabled",
+          error: "sandbox sync disabled",
+        });
+      }
 
       return new Response(JSON.stringify({ ok: true, ignored: true, reason: "sandbox_sync_disabled" }), {
         status: 200,
@@ -217,6 +321,12 @@ serve(async (req) => {
         synced_user_ids: [],
         last_error: "no uuid app_user_id candidates found",
       });
+      await updateInboxEvent(admin, event.id, {
+        processing_state: "ignored",
+        processed_at: new Date().toISOString(),
+        last_error_code: "no_uuid_candidates",
+        error: "no uuid app_user_id candidates found",
+      });
 
       return new Response(JSON.stringify({ ok: true, ignored: true, reason: "no_uuid_candidates" }), {
         status: 200,
@@ -226,7 +336,12 @@ serve(async (req) => {
 
     const syncResults = [];
     for (const userId of candidateIds) {
-      const result = await syncUserSubscription(admin, revenueCatApiKey, userId, event.environment || null);
+      const result = await syncUserSubscription(
+        admin,
+        revenueCatApiKey,
+        userId,
+        environmentResolution.environment,
+      );
       syncResults.push(result);
     }
 
@@ -235,6 +350,10 @@ serve(async (req) => {
       processed_at: new Date().toISOString(),
       synced_user_ids: syncResults.filter((entry) => !entry.skipped).map((entry) => entry.userId),
       last_error: null,
+    });
+    await updateInboxEvent(admin, event.id, {
+      processing_state: "processed",
+      processed_at: new Date().toISOString(),
     });
 
     return new Response(JSON.stringify({
@@ -254,6 +373,14 @@ serve(async (req) => {
         processing_status: "failed",
         last_error: error instanceof Error ? error.message : String(error),
       }).catch(() => undefined);
+      if (inboxClaimed) {
+        const message = error instanceof Error ? error.message : String(error);
+        await updateInboxEvent(admin, eventId, {
+          processing_state: "failed",
+          last_error_code: "processing_failed",
+          error: message.slice(0, 2000),
+        }).catch(() => undefined);
+      }
     }
 
     return new Response(JSON.stringify({

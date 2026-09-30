@@ -30,6 +30,10 @@ import {
   verifyRevenueCatWebhookSignature,
 } from '@/supabase/functions/_shared/revenuecat-webhook-signature';
 import { isRevenueCatWebhookAuthorized } from '@/supabase/functions/_shared/revenuecat-webhook-auth';
+import {
+  extractEvent,
+  resolveRevenueCatEventEnvironment,
+} from '@/supabase/functions/_shared/revenuecat-event';
 
 const ORIGINAL_ENV = { ...process.env };
 const USER_A = '11111111-1111-4111-8111-111111111111';
@@ -329,16 +333,76 @@ describe('RevenueCat webhook HMAC', () => {
     })).resolves.toEqual({ valid: false, reason: 'timestamp_outside_tolerance' });
   });
 
-  it('retains duplicate idempotency and TEST-event ignore behavior', () => {
+  it('uses the durable inbox before legacy processing and retains TEST-event compatibility', () => {
     const webhook = readFileSync('supabase/functions/revenuecat-webhook/index.ts', 'utf8');
-    expect(webhook).toMatch(/existing\?\.processing_status === "processed"[\s\S]*duplicate: true/i);
+    expect(webhook).toMatch(/rpc_service_claim_revenuecat_webhook_event_v1[\s\S]*!claim\?\.should_process[\s\S]*duplicate: true/i);
+    expect(webhook.indexOf('rpc_service_claim_revenuecat_webhook_event_v1'))
+      .toBeLessThan(webhook.indexOf('.from("revenuecat_webhook_events")\n      .insert(eventRow)'));
     expect(webhook).toMatch(/event\.type[^\n]*=== "TEST"[\s\S]*reason: "test_event"/i);
+  });
+});
+
+describe('RevenueCat event environment provenance', () => {
+  it('prefers and normalizes event.environment', () => {
+    const event = extractEvent({ event: { environment: 'sandbox', purchase_environment: 'PRODUCTION' } });
+    expect(resolveRevenueCatEventEnvironment(event)).toEqual({
+      environment: 'SANDBOX',
+      source: 'event.environment',
+      rawValue: 'sandbox',
+    });
+  });
+
+  it('uses purchase_environment for virtual-currency sandbox events', () => {
+    const event = extractEvent({ event: {
+      type: 'VIRTUAL_CURRENCY_TRANSACTION',
+      purchase_environment: 'SANDBOX',
+    } });
+    expect(resolveRevenueCatEventEnvironment(event)).toEqual({
+      environment: 'SANDBOX',
+      source: 'event.purchase_environment',
+      rawValue: 'SANDBOX',
+    });
+  });
+
+  it('does not lose a supported purchase environment behind an unsupported primary field', () => {
+    expect(resolveRevenueCatEventEnvironment({
+      environment: 'unknown',
+      purchase_environment: 'SANDBOX',
+    })).toEqual({
+      environment: 'SANDBOX',
+      source: 'event.purchase_environment',
+      rawValue: 'SANDBOX',
+    });
+  });
+
+  it.each([
+    ['environment', { environment: 'production' }],
+    ['purchase_environment', { purchase_environment: 'production' }],
+  ])('normalizes production from %s', (_field, event) => {
+    expect(resolveRevenueCatEventEnvironment(event)).toMatchObject({ environment: 'PRODUCTION' });
+  });
+
+  it('makes missing and unsupported environments explicit', () => {
+    expect(resolveRevenueCatEventEnvironment({})).toEqual({
+      environment: null,
+      source: 'missing',
+      rawValue: null,
+    });
+    expect(resolveRevenueCatEventEnvironment({ purchase_environment: 'preview' })).toEqual({
+      environment: null,
+      source: 'unsupported',
+      rawValue: 'preview',
+    });
   });
 });
 
 describe('database foundation contract', () => {
   const migration = readFileSync(
     'supabase/migrations/20260929100000_membership_sparks_phase_b_foundation.sql',
+    'utf8',
+  );
+  const inboxHardeningMigration = readFileSync(
+    'supabase/migrations/20260930120000_revenuecat_webhook_inbox_hardening.sql',
     'utf8',
   );
 
@@ -367,5 +431,14 @@ describe('database foundation contract', () => {
     expect(migration).toMatch(/revoke all on table public\.economy_action_rules from anon, authenticated/i);
     expect(migration).toMatch(/economy_service_role_required/i);
     expect(migration).toMatch(/economy_feature_disabled/i);
+  });
+
+  it('claims each inbox event atomically and observes duplicates without reprocessing', () => {
+    expect(inboxHardeningMigration).toMatch(/on conflict \(revenuecat_event_id\) do nothing/i);
+    expect(inboxHardeningMigration).toMatch(/'should_process', true/i);
+    expect(inboxHardeningMigration).toMatch(/delivery_count = delivery_count \+ 1/i);
+    expect(inboxHardeningMigration).toMatch(/'should_process', false/i);
+    expect(inboxHardeningMigration).toMatch(/grant execute[\s\S]*to service_role/i);
+    expect(inboxHardeningMigration).toMatch(/revoke all[\s\S]*from public, anon, authenticated/i);
   });
 });

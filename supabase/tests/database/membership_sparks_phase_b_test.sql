@@ -8,7 +8,7 @@ insert into auth.users(id, email)
 values ('9b100000-0000-4000-8000-000000000001', 'phase-b1-canary@example.invalid')
 on conflict (id) do nothing;
 
-select plan(46);
+select plan(61);
 
 select has_table('public', 'economy_feature_flags', 'economy_feature_flags exists');
 select has_table('public', 'economy_action_rules', 'economy_action_rules exists');
@@ -161,6 +161,27 @@ select col_is_unique(
   'revenuecat_event_id',
   'RevenueCat event IDs are unique'
 );
+select has_column('public', 'revenuecat_webhook_inbox', 'environment_source', 'inbox records the environment source');
+select has_column('public', 'revenuecat_webhook_inbox', 'attempt_count', 'inbox records processing attempts');
+select has_column('public', 'revenuecat_webhook_inbox', 'delivery_count', 'inbox records duplicate deliveries');
+select has_column('public', 'revenuecat_webhook_inbox', 'last_received_at', 'inbox records the latest delivery time');
+select has_column('public', 'revenuecat_webhook_inbox', 'error', 'inbox records bounded processing errors');
+select ok(
+  has_function_privilege(
+    'service_role',
+    'public.rpc_service_claim_revenuecat_webhook_event_v1(text,text,text,text,text,jsonb,text)',
+    'EXECUTE'
+  ),
+  'service role can claim RevenueCat inbox events'
+);
+select ok(
+  not has_function_privilege(
+    'authenticated',
+    'public.rpc_service_claim_revenuecat_webhook_event_v1(text,text,text,text,text,jsonb,text)',
+    'EXECUTE'
+  ),
+  'authenticated users cannot claim RevenueCat inbox events'
+);
 select ok(
   exists (
     select 1 from pg_trigger
@@ -270,6 +291,84 @@ select throws_ok(
   $$,
   '23514', null,
   'malformed inbox events are rejected by constraints'
+);
+
+select lives_ok(
+  $$ select public.rpc_service_claim_revenuecat_webhook_event_v1(
+    'phase-b2-initial-purchase', 'INITIAL_PURCHASE', 'SANDBOX', 'event.environment',
+    '9b100000-0000-4000-8000-000000000001', '{"event":{"type":"INITIAL_PURCHASE"}}'::jsonb,
+    '1111111111111111111111111111111111111111111111111111111111111111'
+  ) $$,
+  'initial purchase enters the inbox'
+);
+select ok(
+  exists (
+    select 1 from public.revenuecat_webhook_inbox
+    where revenuecat_event_id = 'phase-b2-initial-purchase'
+      and event_type = 'INITIAL_PURCHASE'
+      and environment = 'SANDBOX'
+      and environment_source = 'event.environment'
+      and processing_state = 'processing'
+      and attempt_count = 1
+      and delivery_count = 1
+  ),
+  'initial purchase enters the inbox exactly once'
+);
+select lives_ok(
+  $$ select public.rpc_service_claim_revenuecat_webhook_event_v1(
+    'phase-b2-vc-grant', 'VIRTUAL_CURRENCY_TRANSACTION', 'SANDBOX', 'event.purchase_environment',
+    '9b100000-0000-4000-8000-000000000001', '{"event":{"source":"in_app_purchase"}}'::jsonb,
+    '2222222222222222222222222222222222222222222222222222222222222222'
+  ) $$,
+  'virtual-currency grant enters the inbox'
+);
+select ok(
+  exists (
+    select 1 from public.revenuecat_webhook_inbox
+    where revenuecat_event_id = 'phase-b2-vc-grant'
+      and event_type = 'VIRTUAL_CURRENCY_TRANSACTION'
+      and environment = 'SANDBOX'
+      and environment_source = 'event.purchase_environment'
+      and attempt_count = 1
+      and delivery_count = 1
+  ),
+  'virtual-currency grant enters the inbox exactly once with sandbox provenance'
+);
+select lives_ok(
+  $$ select public.rpc_service_claim_revenuecat_webhook_event_v1(
+    'phase-b2-vc-expiration', 'VIRTUAL_CURRENCY_TRANSACTION', 'PRODUCTION', 'event.purchase_environment',
+    '9b100000-0000-4000-8000-000000000001', '{"event":{"source":"expiration"}}'::jsonb,
+    '3333333333333333333333333333333333333333333333333333333333333333'
+  ) $$,
+  'virtual-currency expiration enters the inbox'
+);
+select ok(
+  exists (
+    select 1 from public.revenuecat_webhook_inbox
+    where revenuecat_event_id = 'phase-b2-vc-expiration'
+      and environment = 'PRODUCTION'
+      and environment_source = 'event.purchase_environment'
+      and attempt_count = 1
+      and delivery_count = 1
+  ),
+  'virtual-currency expiration enters the inbox exactly once with production provenance'
+);
+select lives_ok(
+  $$ select public.rpc_service_claim_revenuecat_webhook_event_v1(
+    'phase-b2-initial-purchase', 'INITIAL_PURCHASE', 'SANDBOX', 'event.environment',
+    '9b100000-0000-4000-8000-000000000001', '{"event":{"type":"INITIAL_PURCHASE"}}'::jsonb,
+    '1111111111111111111111111111111111111111111111111111111111111111'
+  ) $$,
+  'duplicate delivery is accepted without a second inbox row'
+);
+select ok(
+  (select count(*) = 1
+     and max(attempt_count) = 1
+     and max(delivery_count) = 2
+     and min(received_at) = max(received_at)
+   from public.revenuecat_webhook_inbox
+   where revenuecat_event_id = 'phase-b2-initial-purchase'),
+  'duplicate delivery is observable and does not create another processing attempt'
 );
 
 select * from finish();

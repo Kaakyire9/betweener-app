@@ -7,18 +7,14 @@ const GOLD_PRODUCT_HINT = (Deno.env.get("REVENUECAT_GOLD_PRODUCT") || "gold").to
 const REVENUECAT_API_BASE = (Deno.env.get("REVENUECAT_API_BASE") || "https://api.revenuecat.com").replace(/\/+$/, "");
 const ALLOW_LEGACY_PRODUCT_FALLBACK =
   String(Deno.env.get("ENVIRONMENT") || "").trim().toLowerCase() === "production";
+import {
+  extractEvent,
+  normalizeString,
+  type RevenueCatEvent,
+} from "./revenuecat-event.ts";
 
-export type RevenueCatEvent = {
-  id?: string;
-  type?: string;
-  app_user_id?: string | null;
-  original_app_user_id?: string | null;
-  aliases?: string[] | null;
-  transferred_from?: string[] | null;
-  transferred_to?: string[] | null;
-  environment?: string | null;
-  event_timestamp_ms?: number | null;
-};
+export { extractEvent, normalizeString } from "./revenuecat-event.ts";
+export type { RevenueCatEvent } from "./revenuecat-event.ts";
 
 export type SubscriptionSync = {
   userId: string;
@@ -40,29 +36,6 @@ const PLAN_PRIORITY: Record<SubscriptionSync["plan"], number> = {
 export const isUuid = (value: string | null | undefined) =>
   typeof value === "string" &&
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.trim());
-
-const asArray = (value: unknown) => (Array.isArray(value) ? value.filter((entry) => typeof entry === "string") : []);
-
-export const normalizeString = (value: unknown) => {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed ? trimmed : null;
-};
-
-export const extractEvent = (payload: any): RevenueCatEvent => {
-  const event = payload?.event && typeof payload.event === "object" ? payload.event : payload;
-  return {
-    id: normalizeString(event?.id),
-    type: normalizeString(event?.type),
-    app_user_id: normalizeString(event?.app_user_id),
-    original_app_user_id: normalizeString(event?.original_app_user_id),
-    aliases: asArray(event?.aliases),
-    transferred_from: asArray(event?.transferred_from),
-    transferred_to: asArray(event?.transferred_to),
-    environment: normalizeString(event?.environment),
-    event_timestamp_ms: typeof event?.event_timestamp_ms === "number" ? event.event_timestamp_ms : null,
-  };
-};
 
 export const collectCandidateIds = (event: RevenueCatEvent) => {
   return Array.from(
