@@ -105,6 +105,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as AppleAuthentication from "expo-apple-authentication";
 import { makeRedirectUri } from "expo-auth-session";
+import { APP_SCHEME, APP_WEB_AUTH_CALLBACK_URL } from "@/config/app-identity";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -1795,7 +1796,7 @@ export default function ProfileScreen() {
       setEmailSaving(true);
       const { error } = await supabase.auth.updateUser(
         { email: trimmed },
-        { emailRedirectTo: 'https://getbetweener.com/auth/callback' },
+        { emailRedirectTo: APP_WEB_AUTH_CALLBACK_URL },
       );
       if (error) {
         setEmailError(error.message);
@@ -1867,7 +1868,7 @@ export default function ProfileScreen() {
   const getOAuthRedirectUrl = useCallback(
     () =>
       makeRedirectUri({
-        scheme: 'betweenerapp',
+        scheme: APP_SCHEME,
         path: 'auth/callback',
       }),
     [],

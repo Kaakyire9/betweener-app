@@ -28,6 +28,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import BetweenerLoader from '@/components/ui/BetweenerLoader';
+import { buildWebUrl } from '@/config/app-identity';
 import {
   LiveConnectionBanner,
   LiveAudiencePreferences,
@@ -905,7 +906,7 @@ export default function LiveSessionScreen() {
       : 'Time to be announced';
     await Share.share({
       title: snapshot.session.title,
-      message: `${snapshot.session.title}\n${scheduled}\nhttps://getbetweener.com/live/${sessionId}`,
+      message: `${snapshot.session.title}\n${scheduled}\n${buildWebUrl(`live/${sessionId}`)}`,
     });
   };
   const invitationOptions = (

@@ -14,6 +14,7 @@ import {
 import { LinearGradient } from "expo-linear-gradient";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { clearPendingAuthFlow, markPendingAuthFlow } from "@/lib/auth-callback";
+import { APP_WEB_AUTH_CALLBACK_URL } from "@/config/app-identity";
 
 export default function MagicLinkScreen() {
   const [email, setEmail] = useState("");
@@ -58,7 +59,7 @@ export default function MagicLinkScreen() {
         email: email,
         options: {
           shouldCreateUser: isSignup,
-          emailRedirectTo: "https://getbetweener.com/auth/callback",
+          emailRedirectTo: APP_WEB_AUTH_CALLBACK_URL,
         },
       });
 

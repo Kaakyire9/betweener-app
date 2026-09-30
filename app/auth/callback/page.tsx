@@ -1,10 +1,12 @@
 'use client';
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { APP_AUTH_CALLBACK_URL, APP_WEB_AUTH_CALLBACK_URL } from '@/config/app-identity';
 
-const SUPABASE_VERIFY_URL = 'https://jbyblhithbqwojhwlenv.supabase.co/auth/v1/verify';
-const WEB_CALLBACK_URL = 'https://getbetweener.com/auth/callback';
-const APP_CALLBACK_BASE = 'betweenerapp://auth/callback';
+const SUPABASE_URL = String(process.env.EXPO_PUBLIC_SUPABASE_URL || '').replace(/\/$/, '');
+const SUPABASE_VERIFY_URL = `${SUPABASE_URL}/auth/v1/verify`;
+const WEB_CALLBACK_URL = APP_WEB_AUTH_CALLBACK_URL;
+const APP_CALLBACK_BASE = APP_AUTH_CALLBACK_URL;
 
 type Phase = 'loading' | 'opening' | 'ready' | 'desktop' | 'error';
 

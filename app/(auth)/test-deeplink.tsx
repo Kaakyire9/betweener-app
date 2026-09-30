@@ -2,6 +2,7 @@ import { canAccessInternalTools } from "@/lib/internal-tools";
 import { useEffect } from "react";
 import { Redirect } from "expo-router";
 import { Alert, Linking, Pressable, Text, View } from "react-native";
+import { APP_AUTH_CALLBACK_URL } from "@/config/app-identity";
 
 export default function TestDeepLink() {
   const internalToolsEnabled = canAccessInternalTools();
@@ -36,7 +37,7 @@ export default function TestDeepLink() {
   }
 
   const testDeepLink = () => {
-    const testUrl = "betweenerapp://auth/callback?code=test123";
+    const testUrl = `${APP_AUTH_CALLBACK_URL}?code=test123`;
     Linking.openURL(testUrl).catch(() => {
       Alert.alert("Error", "Could not open deep link");
     });

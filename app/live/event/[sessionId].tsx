@@ -33,6 +33,7 @@ import {
   type LiveReturnRouteParams,
 } from '@/features/live/navigation/live-navigation.ts';
 import { useAuth } from '@/lib/auth-context';
+import { buildWebUrl } from '@/config/app-identity';
 
 const formatDate = (value: string | null) => value
   ? new Intl.DateTimeFormat(undefined, { dateStyle: 'full', timeStyle: 'short' }).format(new Date(value))
@@ -109,7 +110,7 @@ export default function LiveEventScreen() {
     if (!session) return;
     await Share.share({
       title: session.title,
-      message: `${session.title}\n${formatDate(session.scheduledStart)}\nhttps://getbetweener.com/live/${session.id}`,
+      message: `${session.title}\n${formatDate(session.scheduledStart)}\n${buildWebUrl(`live/${session.id}`)}`,
     });
   };
 
