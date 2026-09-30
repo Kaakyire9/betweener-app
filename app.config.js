@@ -288,6 +288,9 @@ module.exports = ({ config }) => {
         },
       ],
       withGooglePlayPackageVerificationAsset,
+      ...(identity.variant === 'staging'
+        ? [['expo-dev-client', { addGeneratedScheme: false }]]
+        : []),
       ...(config.plugins ?? []).map((plugin) => configureVariantPlugin(plugin, identity)),
       'expo-asset',
       'expo-image',

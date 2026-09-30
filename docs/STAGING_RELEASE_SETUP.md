@@ -132,6 +132,8 @@ Official reference: https://supabase.com/docs/guides/auth/redirect-urls
 3. Serve Android Digital Asset Links at `https://staging.getbetweener.com/.well-known/assetlinks.json` containing `com.aduboffour.betweener.staging` and the Play App Signing SHA-256 fingerprint.
 4. Confirm both files return HTTP 200 without redirects and with the correct JSON content type.
 
+The checked-in staging `assetlinks.json` contains the dedicated EAS staging keystore certificate and supports directly installed EAS-signed APKs. Before distributing an AAB through Google Play, enroll the staging app in Play App Signing and add the Play App Signing SHA-256 certificate to the same fingerprint array. Keep the EAS fingerprint so internal APKs continue to verify.
+
 ## 7. Other third parties
 
 ### Google Maps
