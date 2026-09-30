@@ -23,6 +23,8 @@ import Animated, { FadeInDown } from "react-native-reanimated";
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { PurchasesOfferings, PurchasesPackage } from "react-native-purchases";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { SparkBalanceChip } from "@/components/economy/SparkBalanceChip";
+import { useSparkWallet } from "@/lib/economy/wallet/use-spark-wallet";
 
 type PaidPlan = Exclude<PremiumPlan, "FREE">;
 type TierPlan = PremiumPlan;
@@ -156,6 +158,12 @@ export default function PremiumPlansScreen() {
     loading,
     refresh,
   } = usePremiumState();
+  const {
+    wallet: sparkWallet,
+    flags: economyFlags,
+    flagsLoading: economyFlagsLoading,
+    refresh: refreshSparkWallet,
+  } = useSparkWallet();
   const [actionKey, setActionKey] = useState<string | null>(null);
   const [restoring, setRestoring] = useState(false);
   const [selectedIntervals, setSelectedIntervals] = useState<Record<PaidPlan, PremiumPlanInterval>>(PLAN_DEFAULT_INTERVAL);
@@ -206,7 +214,10 @@ export default function PremiumPlansScreen() {
       setActionKey(`${plan}:${interval}`);
       const result = await purchasePlanPackage(targetPackage);
       if (result.currentPlan !== "FREE") {
-        await refresh();
+        await Promise.allSettled([
+          refresh(),
+          refreshSparkWallet({ invalidate: true, reason: "membership_purchase" }),
+        ]);
       }
       Alert.alert("Premium active", `${PLAN_CONFIG[plan].label} ${INTERVAL_META[interval].label.toLowerCase()} is now active on this account.`);
     } catch (error) {
@@ -222,7 +233,10 @@ export default function PremiumPlansScreen() {
     try {
       setRestoring(true);
       await restoreRevenueCatPurchases();
-      await refresh();
+      await Promise.allSettled([
+        refresh(),
+        refreshSparkWallet({ invalidate: true, reason: "restore_purchases" }),
+      ]);
       Alert.alert("Purchases restored", "Your premium membership has been refreshed.");
     } catch (error) {
       Alert.alert("Restore failed", getMembershipPurchaseErrorMessage(error));
@@ -385,6 +399,45 @@ export default function PremiumPlansScreen() {
               </View>
             </View>
           </View>
+
+          {!economyFlagsLoading && economyFlags.spark_wallet_enabled ? (
+            <View style={styles.sparksCard}>
+              <LinearGradient
+                colors={[withAlpha(theme.tint, 0.17), withAlpha(theme.accent, 0.12)]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={StyleSheet.absoluteFill}
+              />
+              <View style={styles.sparksHeader}>
+                <View style={styles.sparksCopy}>
+                  <Text style={styles.sparksEyebrow}>SPARKS</Text>
+                  <Text style={styles.sparksTitle}>Your optional premium experiences</Text>
+                </View>
+                <SparkBalanceChip wallet={sparkWallet} />
+              </View>
+              <Text style={styles.sparksBody}>
+                Keep your balance close without turning membership into a checkout screen.
+              </Text>
+              <View style={styles.sparksActions}>
+                <Pressable
+                  accessibilityRole="button"
+                  style={styles.sparksPrimaryButton}
+                  onPress={() => router.push("/wallet/sparks" as never)}
+                >
+                  <Text style={styles.sparksPrimaryButtonText}>Open Sparks Wallet</Text>
+                </Pressable>
+                {economyFlags.spark_store_enabled ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    style={styles.secondaryButton}
+                    onPress={() => router.push("/wallet/sparks" as never)}
+                  >
+                    <Text style={styles.secondaryButtonText}>Get Sparks</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            </View>
+          ) : null}
 
           {(Object.keys(PLAN_CONFIG) as PaidPlan[]).map((plan, index) => {
             const config = PLAN_CONFIG[plan];
@@ -807,6 +860,30 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderWidth: 1,
       borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
     },
+    sparksCard: {
+      position: "relative",
+      overflow: "hidden",
+      borderRadius: 24,
+      padding: 19,
+      gap: 12,
+      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.34 : 0.82),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, 0.22),
+    },
+    sparksHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
+    sparksCopy: { flex: 1 },
+    sparksEyebrow: { color: theme.tint, fontSize: 10, fontWeight: "700", letterSpacing: 1.3 },
+    sparksTitle: { color: theme.text, fontFamily: "PlayfairDisplay_700Bold", fontSize: 20, marginTop: 4 },
+    sparksBody: { color: theme.textMuted, fontFamily: "Manrope_500Medium", fontSize: 13, lineHeight: 19 },
+    sparksActions: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 10 },
+    sparksPrimaryButton: {
+      minHeight: 46,
+      paddingHorizontal: 18,
+      borderRadius: 999,
+      justifyContent: "center",
+      backgroundColor: theme.tint,
+    },
+    sparksPrimaryButtonText: { color: "#FFFFFF", fontSize: 12, fontWeight: "700" },
     planGlow: { ...StyleSheet.absoluteFill },
     planHeader: { flexDirection: "row", justifyContent: "space-between", gap: 12 },
     planHeaderCopy: { flex: 1, gap: 4 },

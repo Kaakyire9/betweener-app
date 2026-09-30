@@ -38,6 +38,7 @@ import { captureException, initSentry, wrapWithSentry } from "@/lib/telemetry/se
 import { logger } from "@/lib/telemetry/logger";
 import { recoverSupabaseConnectivity, SUPABASE_IS_CONFIGURED } from "@/lib/supabase";
 import { initPushNotificationUX } from "@/lib/notifications/push";
+import { SparkWalletProvider } from "@/lib/economy/wallet/use-spark-wallet";
 import {
   buildNotificationRoute,
   clearPendingNotificationRoute,
@@ -782,7 +783,8 @@ function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <AuthProvider>
-        <View style={{ flex: 1, backgroundColor: Colors[colorScheme].background }}>
+        <SparkWalletProvider>
+          <View style={{ flex: 1, backgroundColor: Colors[colorScheme].background }}>
           <OfflineMutationQueueHydrator />
           <VibesTelemetryQueueHydrator />
           <ChatOutboxHydrator />
@@ -974,7 +976,8 @@ function RootLayout() {
               </Animated.View>
             </View>
           )}
-        </View>
+          </View>
+        </SparkWalletProvider>
       </AuthProvider>
     </GestureHandlerRootView>
   );

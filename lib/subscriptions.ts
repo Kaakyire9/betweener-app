@@ -202,6 +202,10 @@ export async function bindRevenueCatIdentity(appUserID: string) {
   return true;
 }
 
+export function canAccessRevenueCatForUser(appUserID: string) {
+  return revenueCatIdentity.canAccessFor(appUserID);
+}
+
 export async function ensureRevenueCatConfigured({ appUserID }: ConfigureArgs) {
   return bindRevenueCatIdentity(appUserID);
 }

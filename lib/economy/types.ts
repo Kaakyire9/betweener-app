@@ -109,10 +109,31 @@ export type EconomyQuote = {
 export type SparkWalletSnapshot = {
   appUserId: string;
   currencyCode: 'SPK';
-  observedBalance: number;
-  observedAt: string;
-  provider: 'revenuecat';
+  balance: number | null;
+  status: SparkWalletStatus;
+  isStale: boolean;
+  fetchedAt: string | null;
+  source: 'revenuecat' | 'revenuecat_cache' | null;
+  errorCode: EconomyErrorCode | null;
 };
+
+export type SparkWalletStatus =
+  | 'idle'
+  | 'loading'
+  | 'fresh'
+  | 'stale'
+  | 'offline'
+  | 'error';
+
+export type SparkPurchaseStatus =
+  | 'idle'
+  | 'confirming'
+  | 'purchasing'
+  | 'verifying'
+  | 'refreshing_balance'
+  | 'success'
+  | 'cancelled'
+  | 'failed';
 
 export class EconomyError extends Error {
   readonly code: EconomyErrorCode;

@@ -1,6 +1,7 @@
 /* global __dirname */
 
 const { spawnSync } = require('node:child_process');
+const fs = require('node:fs');
 const path = require('node:path');
 
 const projectRoot = path.resolve(__dirname, '..');
@@ -178,8 +179,40 @@ const runNegativeFixtureTests = () => {
   return cases.length;
 };
 
+const validateSparkStoreSource = () => {
+  const source = fs.readFileSync(
+    path.join(projectRoot, 'lib/economy/store/spark-store-service.ts'),
+    'utf8',
+  );
+  const requiredValues = [
+    "'spark_store'",
+    "'sparks_100'",
+    "'sparks_550'",
+    "'sparks_1200'",
+    "'sparks_2600'",
+    "'com.betweener.staging.sparks.100'",
+    "'com.betweener.staging.sparks.550'",
+    "'com.betweener.staging.sparks.1200'",
+    "'com.betweener.staging.sparks.2600'",
+  ];
+  for (const value of requiredValues) {
+    if (!source.includes(value)) throw new Error(`Spark Store configuration is missing ${value}.`);
+  }
+  if (/EXPO_PUBLIC_SPARKS_\d+_PRODUCT/u.test(source)) {
+    throw new Error('Spark Store must resolve packages from RevenueCat without public product fallbacks.');
+  }
+  if (/com\.betweener\.sparks\.\d+/u.test(source)) {
+    throw new Error('Staging Spark Store source contains a production Apple Spark product fallback.');
+  }
+};
+
 if (process.argv.includes('--self-test')) {
-  console.log(JSON.stringify({ negativeFixtures: 'PASS', cases: runNegativeFixtureTests() }));
+  validateSparkStoreSource();
+  console.log(JSON.stringify({
+    negativeFixtures: 'PASS',
+    cases: runNegativeFixtureTests(),
+    sparkStoreConfiguration: 'PASS',
+  }));
   process.exit(0);
 }
 
@@ -208,9 +241,11 @@ validateRevenueCatIsolation({
     bundleIdentifier: resolvedAppConfig.ios?.bundleIdentifier,
   },
 });
+validateSparkStoreSource();
 
 console.log(JSON.stringify({
   iosRevenueCatIsolation: 'PASS',
+  sparkStoreConfiguration: 'PASS',
   productionResolution: 'UNCHANGED',
   androidIsolation: 'PENDING',
 }));
