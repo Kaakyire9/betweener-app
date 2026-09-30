@@ -8,6 +8,7 @@ import {
   clampProgrammeVolume,
   parseWorkerConfig,
   sanitizeFfmpegDiagnostic,
+  selectAdaptivePollDelay,
   shouldCompleteBeforePublish,
 } from '../src/program-audio.mjs';
 
@@ -49,6 +50,38 @@ test('worker configuration rejects weak shared secrets', () => {
     SUPABASE_URL: 'https://project.supabase.co',
     PROGRAM_AUDIO_WORKER_TOKEN: 'short',
   }), /invalid_program_audio_worker_token/);
+});
+
+test('worker polls quickly while active and backs off with jitter while idle', () => {
+  const options = {
+    activeMilliseconds: 2_000,
+    idleMinimumMilliseconds: 15_000,
+    idleMaximumMilliseconds: 30_000,
+    failureMilliseconds: 10_000,
+  };
+  assert.equal(selectAdaptivePollDelay({
+    ...options, active: true, pollSucceeded: true, random: () => 0.5,
+  }), 2_000);
+  assert.equal(selectAdaptivePollDelay({
+    ...options, active: false, pollSucceeded: true, random: () => 0,
+  }), 15_000);
+  assert.equal(selectAdaptivePollDelay({
+    ...options, active: false, pollSucceeded: true, random: () => 1,
+  }), 30_000);
+  assert.equal(selectAdaptivePollDelay({
+    ...options, active: false, pollSucceeded: false, random: () => 0.5,
+  }), 10_000);
+});
+
+test('worker configuration defaults to bounded adaptive polling', () => {
+  const configuration = parseWorkerConfig({
+    SUPABASE_URL: 'https://project.supabase.co',
+    PROGRAM_AUDIO_WORKER_TOKEN: 'x'.repeat(32),
+  });
+  assert.equal(configuration.pollMilliseconds, 2_000);
+  assert.equal(configuration.idlePollMinimumMilliseconds, 15_000);
+  assert.equal(configuration.idlePollMaximumMilliseconds, 30_000);
+  assert.equal(configuration.failurePollMilliseconds, 10_000);
 });
 
 test('an expired non-looping track completes before FFmpeg starts', () => {

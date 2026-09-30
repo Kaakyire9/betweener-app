@@ -17,6 +17,7 @@ import {
   clampProgrammeVolume,
   parseWorkerConfig,
   sanitizeFfmpegDiagnostic,
+  selectAdaptivePollDelay,
   shouldCompleteBeforePublish,
 } from './program-audio.mjs';
 
@@ -35,6 +36,8 @@ class ProgrammeAudioWorker {
     this.stopping = false;
     this.ready = false;
     this.lastSuccessfulPollAt = null;
+    this.pollMode = 'starting';
+    this.nextPollDelayMilliseconds = null;
     this.cacheDirectory = null;
   }
 
@@ -404,6 +407,7 @@ class ProgrammeAudioWorker {
     }
     this.lastSuccessfulPollAt = new Date().toISOString();
     this.ready = true;
+    return work.length;
   }
 
   startHealthServer() {
@@ -418,6 +422,8 @@ class ProgrammeAudioWorker {
         healthy,
         activePublishers: this.sessions.size,
         lastSuccessfulPollAt: this.lastSuccessfulPollAt,
+        pollMode: this.pollMode,
+        nextPollDelayMilliseconds: this.nextPollDelayMilliseconds,
       }));
     });
     this.healthServer.listen(this.configuration.port, '0.0.0.0');
@@ -428,15 +434,28 @@ class ProgrammeAudioWorker {
     this.startHealthServer();
     this.log('worker_started');
     while (!this.stopping) {
+      let pollSucceeded = false;
+      let discoveredWorkCount = 0;
       try {
-        await this.poll();
+        discoveredWorkCount = await this.poll();
+        pollSucceeded = true;
       } catch (error) {
         this.ready = false;
         this.log('poll_failed', {
           reason: error instanceof Error ? error.message : 'unknown',
         });
       }
-      if (!this.stopping) await delay(this.configuration.pollMilliseconds);
+      const active = discoveredWorkCount > 0 || this.sessions.size > 0;
+      this.pollMode = pollSucceeded ? (active ? 'active' : 'idle') : 'backoff';
+      this.nextPollDelayMilliseconds = selectAdaptivePollDelay({
+        active,
+        pollSucceeded,
+        activeMilliseconds: this.configuration.pollMilliseconds,
+        idleMinimumMilliseconds: this.configuration.idlePollMinimumMilliseconds,
+        idleMaximumMilliseconds: this.configuration.idlePollMaximumMilliseconds,
+        failureMilliseconds: this.configuration.failurePollMilliseconds,
+      });
+      if (!this.stopping) await delay(this.nextPollDelayMilliseconds);
     }
   }
 

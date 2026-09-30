@@ -103,6 +103,23 @@ export const sanitizeFfmpegDiagnostic = (stderr, sensitiveValues = []) => {
   return lines.join(' | ').slice(0, 1_200);
 };
 
+export const selectAdaptivePollDelay = ({
+  active,
+  pollSucceeded,
+  activeMilliseconds,
+  idleMinimumMilliseconds,
+  idleMaximumMilliseconds,
+  failureMilliseconds,
+  random = Math.random,
+}) => {
+  if (!pollSucceeded) return failureMilliseconds;
+  if (active) return activeMilliseconds;
+  const minimum = Math.min(idleMinimumMilliseconds, idleMaximumMilliseconds);
+  const maximum = Math.max(idleMinimumMilliseconds, idleMaximumMilliseconds);
+  const sample = Math.max(0, Math.min(1, Number(random()) || 0));
+  return Math.round(minimum + ((maximum - minimum) * sample));
+};
+
 export const parseWorkerConfig = (environment) => {
   const required = (name) => {
     const value = environment[name]?.trim();
@@ -127,6 +144,15 @@ export const parseWorkerConfig = (environment) => {
     ffmpegPath: environment.FFMPEG_PATH?.trim() || 'ffmpeg',
     pythonPath: environment.PYTHON_PATH?.trim() || 'python3',
     pollMilliseconds: positiveInteger('PROGRAM_AUDIO_POLL_MS', 2_000, 500, 30_000),
+    idlePollMinimumMilliseconds: positiveInteger(
+      'PROGRAM_AUDIO_IDLE_POLL_MIN_MS', 15_000, 5_000, 60_000,
+    ),
+    idlePollMaximumMilliseconds: positiveInteger(
+      'PROGRAM_AUDIO_IDLE_POLL_MAX_MS', 30_000, 5_000, 60_000,
+    ),
+    failurePollMilliseconds: positiveInteger(
+      'PROGRAM_AUDIO_FAILURE_POLL_MS', 10_000, 1_000, 60_000,
+    ),
     heartbeatMilliseconds: positiveInteger('PROGRAM_AUDIO_HEARTBEAT_MS', 8_000, 2_000, 30_000),
     maximumSessions: positiveInteger('PROGRAM_AUDIO_MAX_SESSIONS', 25, 1, 100),
     maximumTrackBytes: positiveInteger(

@@ -77,10 +77,20 @@ Deploy it to an always-on container service with:
 - `SUPABASE_URL=https://jbyblhithbqwojhwlenv.supabase.co`
 - `PROGRAM_AUDIO_WORKER_TOKEN=<the same secret>`
 - `PROGRAM_AUDIO_MAX_SESSIONS=25`
+- `PROGRAM_AUDIO_POLL_MS=2000` (active playback/control cadence)
+- `PROGRAM_AUDIO_IDLE_POLL_MIN_MS=15000`
+- `PROGRAM_AUDIO_IDLE_POLL_MAX_MS=30000`
+- `PROGRAM_AUDIO_FAILURE_POLL_MS=10000`
 - minimum instances `1`
 - scale-to-zero disabled
 - outbound HTTPS and RTMPS allowed
 - health check `GET /healthz` on port `8080`
+
+The worker polls quickly only while work exists. With no discovered work and no
+active publishers it uses a jittered 15â€“30 second interval, which avoids a
+constant database discovery query and prevents multiple workers polling in
+lockstep. `/healthz` exposes `pollMode` and `nextPollDelayMilliseconds` for
+operational verification.
 
 The Stream secret and Supabase service-role key remain only inside the Edge Function. The media worker receives neither.
 
