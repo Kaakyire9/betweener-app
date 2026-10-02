@@ -18,6 +18,7 @@ import {
 } from '@/lib/economy/wallet/spark-wallet-service';
 import { SparkWalletStore } from '@/lib/economy/wallet/spark-wallet-store';
 import { createEmptySparkWallet, isSparkWalletStale } from '@/lib/economy/wallet/spark-wallet-types';
+import { resolvePremiumHeroVariant } from '@/lib/membership/premium-hero-variant';
 
 jest.mock('react-native-purchases', () => ({
   __esModule: true,
@@ -33,6 +34,8 @@ jest.mock('react-native-purchases', () => ({
     NETWORK_ERROR: 'NETWORK_ERROR',
     PURCHASE_CANCELLED_ERROR: 'PURCHASE_CANCELLED_ERROR',
     PURCHASE_NOT_ALLOWED_ERROR: 'PURCHASE_NOT_ALLOWED_ERROR',
+    PRODUCT_ALREADY_PURCHASED_ERROR: 'PRODUCT_ALREADY_PURCHASED_ERROR',
+    RECEIPT_ALREADY_IN_USE_ERROR: 'RECEIPT_ALREADY_IN_USE_ERROR',
     PRODUCT_NOT_AVAILABLE_FOR_PURCHASE_ERROR: 'PRODUCT_NOT_AVAILABLE_FOR_PURCHASE_ERROR',
   },
 }));
@@ -231,6 +234,7 @@ describe('Phase C Spark purchase lifecycle', () => {
       balanceBefore: 150,
       isOnline: () => true,
       getActiveUserId: () => 'user-a',
+      requireAccountOwnership: async () => ({ appUserId: 'user-a' }),
       invalidateAndRefresh,
       onState: (state) => states.push(state.status),
       adapter: { purchasePackage },
@@ -250,6 +254,7 @@ describe('Phase C Spark purchase lifecycle', () => {
       balanceBefore: 0,
       isOnline: () => true,
       getActiveUserId: () => 'user-a',
+      requireAccountOwnership: async () => ({ appUserId: 'user-a' }),
       invalidateAndRefresh: async () => 0,
       onState: (state) => states.push(state.status),
       adapter: {
@@ -271,6 +276,7 @@ describe('Phase C Spark purchase lifecycle', () => {
       balanceBefore: 150,
       isOnline: () => true,
       getActiveUserId: () => 'user-a',
+      requireAccountOwnership: async () => ({ appUserId: 'user-a' }),
       invalidateAndRefresh: async () => {
         throw new Error('network');
       },
@@ -290,6 +296,7 @@ describe('Phase C Spark purchase lifecycle', () => {
       balanceBefore: 150,
       isOnline: () => true,
       getActiveUserId: () => activeUserId,
+      requireAccountOwnership: async () => ({ appUserId: activeUserId }),
       invalidateAndRefresh: async () => 0,
       onState: () => undefined,
       adapter: {
@@ -299,6 +306,49 @@ describe('Phase C Spark purchase lifecycle', () => {
       },
     })).rejects.toMatchObject({ code: 'ACCOUNT_MISMATCH' });
   });
+
+  it('rechecks authoritative ownership after StoreKit returns', async () => {
+    let ownershipChecks = 0;
+    await expect(executeSparkPurchase({
+      appUserId: 'user-a',
+      membershipTier: 'free',
+      pack,
+      balanceBefore: 0,
+      isOnline: () => true,
+      getActiveUserId: () => 'user-a',
+      requireAccountOwnership: async () => {
+        ownershipChecks += 1;
+        if (ownershipChecks > 1) {
+          throw new EconomyError('ACCOUNT_PREPARATION_REQUIRED', 'Account preparation required.');
+        }
+      },
+      invalidateAndRefresh: async () => 100,
+      onState: () => undefined,
+      adapter: { purchasePackage: async () => ({}) },
+    })).rejects.toMatchObject({ code: 'ACCOUNT_PREPARATION_REQUIRED' });
+    expect(ownershipChecks).toBe(2);
+  });
+
+  it('fails closed when strict restore policy rejects User B using User A receipt', async () => {
+    const invalidateAndRefresh = jest.fn(async () => 100);
+    await expect(executeSparkPurchase({
+      appUserId: 'user-b',
+      membershipTier: 'free',
+      pack,
+      balanceBefore: 0,
+      isOnline: () => true,
+      getActiveUserId: () => 'user-b',
+      requireAccountOwnership: async () => ({ appUserId: 'user-b' }),
+      invalidateAndRefresh,
+      onState: () => undefined,
+      adapter: {
+        purchasePackage: async () => {
+          throw { code: 'RECEIPT_ALREADY_IN_USE_ERROR' };
+        },
+      },
+    })).rejects.toMatchObject({ code: 'ACCOUNT_PREPARATION_REQUIRED' });
+    expect(invalidateAndRefresh).not.toHaveBeenCalled();
+  });
 });
 
 describe('Phase C integration wiring', () => {
@@ -307,8 +357,8 @@ describe('Phase C integration wiring', () => {
   const walletProvider = fs.readFileSync(path.join(root, 'lib/economy/wallet/use-spark-wallet.tsx'), 'utf8');
 
   it('refreshes the RevenueCat wallet after membership purchase and restore', () => {
-    expect(premiumScreen).toContain('reason: "membership_purchase"');
-    expect(premiumScreen).toContain('reason: "restore_purchases"');
+    expect(premiumScreen).toMatch(/reason:\s*['"]membership_purchase['"]/);
+    expect(premiumScreen).toMatch(/reason:\s*['"]restore_purchases['"]/);
     expect(premiumScreen).not.toMatch(/balance\s*\+=/);
   });
 
@@ -327,5 +377,64 @@ describe('Phase C integration wiring', () => {
     expect(clientSources).not.toContain('REVENUECAT_V2_SECRET_API_KEY');
     expect(clientSources).not.toContain('REVENUECAT_SECRET_API_KEY');
     expect(clientSources).not.toContain('spark-spend');
+  });
+});
+
+describe('Premium commerce hero personalization', () => {
+  const root = path.resolve(__dirname, '..');
+
+  it('shows the opposite-gender portrait for supported Betweener profiles', () => {
+    expect(resolvePremiumHeroVariant('MALE')).toBe('woman');
+    expect(resolvePremiumHeroVariant('female')).toBe('man');
+  });
+
+  it('uses branded artwork until a supported profile gender is available', () => {
+    expect(resolvePremiumHeroVariant(null)).toBe('brand');
+    expect(resolvePremiumHeroVariant('')).toBe('brand');
+    expect(resolvePremiumHeroVariant('OTHER')).toBe('brand');
+  });
+
+  it('bundles portrait and emblem assets locally for offline rendering', () => {
+    const heroArt = fs.readFileSync(path.join(root, 'components/economy/PremiumHeroArt.tsx'), 'utf8');
+    const commerceVisuals = fs.readFileSync(path.join(root, 'components/economy/CommerceVisuals.tsx'), 'utf8');
+    const assets = [
+      'assets/images/premium/premium-hero-woman-v1.png',
+      'assets/images/premium/premium-hero-man-v1.png',
+      'assets/images/premium/betweener-glass-emblem-v1.png',
+      'assets/images/premium/spark-glass-heart-v1.png',
+    ];
+
+    assets.forEach((asset) => expect(fs.existsSync(path.join(root, asset))).toBe(true));
+    expect(heroArt).toContain("require('../../assets/images/premium/premium-hero-woman-v1.png')");
+    expect(heroArt).toContain("require('../../assets/images/premium/premium-hero-man-v1.png')");
+    expect(commerceVisuals).toContain("require('../../assets/images/premium/betweener-glass-emblem-v1.png')");
+    expect(commerceVisuals).toContain("require('../../assets/images/premium/spark-glass-heart-v1.png')");
+    expect(commerceVisuals).toContain('<SparkEmblem compact={compact} />');
+    expect(heroArt).toContain('<CommerceEmblem />');
+    expect(`${heroArt}\n${commerceVisuals}`).not.toMatch(/https?:\/\//);
+  });
+
+  it('keeps hero benefits in one compact row and defines a genuine light palette', () => {
+    const premiumScreen = fs.readFileSync(path.join(root, 'app/premium-plans.tsx'), 'utf8');
+    const commerceVisuals = fs.readFileSync(path.join(root, 'components/economy/CommerceVisuals.tsx'), 'utf8');
+
+    expect(premiumScreen.match(/<CommercePill compact/g)).toHaveLength(3);
+    expect(commerceVisuals).toContain('CommerceLightColors');
+    expect(commerceVisuals).toContain("canvas: '#F7F0E6'");
+    expect(commerceVisuals).toContain("text: '#073F3C'");
+  });
+
+  it('uses accessible ambient commerce motion without animating wallet authority', () => {
+    const commerceVisuals = fs.readFileSync(path.join(root, 'components/economy/CommerceVisuals.tsx'), 'utf8');
+    const heroArt = fs.readFileSync(path.join(root, 'components/economy/PremiumHeroArt.tsx'), 'utf8');
+    const tierCard = fs.readFileSync(path.join(root, 'components/economy/MembershipTierCard.tsx'), 'utf8');
+
+    expect(commerceVisuals).toContain('const reduceMotion = useReduceMotion()');
+    expect(commerceVisuals).toContain('outerOrbit.value = withRepeat');
+    expect(commerceVisuals).toContain('innerOrbit.value = withRepeat');
+    expect(commerceVisuals).toContain('const sheenStyle = useAnimatedStyle');
+    expect(heroArt).toContain('const portraitStyle = useAnimatedStyle');
+    expect(tierCard).toContain('withSpring(selected ? 1 : 0');
+    expect(commerceVisuals).not.toMatch(/balance\.value\s*=\s*with(?:Timing|Spring)/);
   });
 });

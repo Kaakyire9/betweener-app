@@ -1,7 +1,13 @@
-import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { StyleSheet, Text, View } from 'react-native';
+import { useMemo } from 'react';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 
+import {
+  type CommerceTheme,
+  RevenueCatVerifiedBadge,
+  SparkOrb,
+  useCommerceTheme,
+} from '@/components/economy/CommerceVisuals';
 import type { SparkWalletSnapshot } from '@/lib/economy/types';
 
 type Props = {
@@ -9,16 +15,17 @@ type Props = {
 };
 
 export function SparkWalletHero({ wallet }: Props) {
+  const theme = useCommerceTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const balance = wallet.balance === null ? '—' : wallet.balance.toLocaleString();
+  const loading = wallet.status === 'loading' && wallet.balance === null;
   const status = wallet.status === 'offline'
-    ? 'Offline · balance may be outdated'
-    : wallet.isStale
-      ? 'Last known balance · refreshing'
-      : wallet.status === 'error'
-        ? 'Balance temporarily unavailable'
-        : wallet.status === 'loading'
-          ? 'Refreshing your Sparks'
-          : 'RevenueCat verified balance';
+    ? 'Offline · showing your last verified balance'
+    : wallet.status === 'error'
+      ? 'Balance temporarily unavailable'
+      : wallet.status === 'loading'
+        ? 'Confirming your balance'
+        : 'Ready for whatever happens next';
 
   return (
     <View
@@ -26,77 +33,78 @@ export function SparkWalletHero({ wallet }: Props) {
       style={styles.shell}
     >
       <LinearGradient
-        colors={['rgba(24,174,168,0.34)', 'rgba(125,91,166,0.28)', 'rgba(232,184,92,0.14)']}
+        colors={theme.mode === 'dark'
+          ? ['rgba(7,118,124,0.38)', 'rgba(11,34,40,0.88)', 'rgba(75,36,91,0.34)']
+          : ['rgba(174,226,217,0.78)', 'rgba(255,254,250,0.99)', 'rgba(220,196,234,0.48)']}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={StyleSheet.absoluteFill}
       />
-      <View style={styles.iconShell}>
-        <MaterialCommunityIcons name="heart-flash" size={30} color="#F8E6B8" />
+      <View style={styles.glowA} />
+      <View style={styles.glowB} />
+      <View style={styles.orbWrap}>
+        <SparkOrb showCore={false} />
+        <View style={styles.balanceOverlay}>
+          <Text style={styles.balanceLabel}>YOUR BALANCE</Text>
+          {loading ? (
+            <ActivityIndicator color={theme.cyan} size="large" style={styles.loader} />
+          ) : (
+            <Text adjustsFontSizeToFit minimumFontScale={0.66} numberOfLines={1} style={styles.balance}>
+              {balance}
+            </Text>
+          )}
+          <Text style={styles.unit}>Sparks</Text>
+        </View>
       </View>
-      <Text style={styles.eyebrow}>YOUR SPARKS</Text>
-      <Text adjustsFontSizeToFit minimumFontScale={0.72} numberOfLines={1} style={styles.balance}>
-        {balance}
-      </Text>
-      <Text style={styles.caption}>Optional premium experiences across Betweener.</Text>
+      <RevenueCatVerifiedBadge stale={wallet.isStale || wallet.status === 'offline'} />
       <Text style={styles.status}>{status}</Text>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(theme: CommerceTheme) {
+  return StyleSheet.create({
   shell: {
-    minHeight: 278,
+    minHeight: 352,
     overflow: 'hidden',
-    borderRadius: 30,
+    borderRadius: 32,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.18)',
-    paddingHorizontal: 24,
-    paddingVertical: 24,
+    borderColor: theme.lineBright,
+    paddingHorizontal: 18,
+    paddingVertical: 22,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#172026',
-    shadowColor: '#051515',
-    shadowOpacity: 0.2,
-    shadowRadius: 20,
+    backgroundColor: theme.panel,
+    shadowColor: theme.shadow,
+    shadowOpacity: theme.mode === 'dark' ? 0.16 : 0.13,
+    shadowRadius: 24,
     shadowOffset: { width: 0, height: 12 },
-    elevation: 8,
+    elevation: 7,
   },
-  iconShell: {
-    width: 58,
-    height: 58,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.10)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.14)',
-    marginBottom: 15,
+  glowA: {
+    position: 'absolute',
+    width: 190,
+    height: 190,
+    borderRadius: 190,
+    top: -120,
+    right: -70,
+    backgroundColor: theme.mode === 'dark' ? 'rgba(22,221,214,0.10)' : 'rgba(20,126,121,0.08)',
   },
-  eyebrow: {
-    color: 'rgba(244,239,230,0.72)',
-    fontFamily: 'Manrope_700Bold',
-    letterSpacing: 1.8,
-    fontSize: 11,
+  glowB: {
+    position: 'absolute',
+    width: 180,
+    height: 180,
+    borderRadius: 180,
+    bottom: -120,
+    left: -60,
+    backgroundColor: theme.mode === 'dark' ? 'rgba(194,104,255,0.10)' : 'rgba(126,70,155,0.07)',
   },
-  balance: {
-    color: '#FBF8F1',
-    fontFamily: 'PlayfairDisplay_700Bold',
-    fontSize: 62,
-    lineHeight: 72,
-    marginTop: 2,
-  },
-  caption: {
-    color: 'rgba(251,248,241,0.86)',
-    fontFamily: 'Manrope_500Medium',
-    textAlign: 'center',
-    fontSize: 14,
-    lineHeight: 21,
-  },
-  status: {
-    color: 'rgba(248,230,184,0.84)',
-    fontFamily: 'Manrope_600SemiBold',
-    fontSize: 11,
-    marginTop: 12,
-  },
-});
+  orbWrap: { width: 194, height: 194, alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
+  balanceOverlay: { position: 'absolute', alignItems: 'center', justifyContent: 'center' },
+  balanceLabel: { color: theme.textMuted, fontFamily: 'Manrope_700Bold', fontSize: 9, letterSpacing: 1.35 },
+  balance: { color: theme.text, fontFamily: 'PlayfairDisplay_700Bold', fontSize: 52, lineHeight: 58, marginTop: 1 },
+  loader: { minHeight: 58 },
+  unit: { color: theme.text, fontFamily: 'PlayfairDisplay_700Bold', fontSize: 16, marginTop: -3 },
+  status: { color: theme.textMuted, fontFamily: 'Manrope_500Medium', fontSize: 11, marginTop: 10, textAlign: 'center' },
+  });
+}

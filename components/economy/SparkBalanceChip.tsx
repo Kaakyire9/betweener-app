@@ -1,8 +1,7 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 
-import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useCommerceTheme } from '@/components/economy/CommerceVisuals';
 import type { SparkWalletSnapshot } from '@/lib/economy/types';
 
 type Props = {
@@ -11,8 +10,7 @@ type Props = {
 };
 
 export function SparkBalanceChip({ wallet, compact = false }: Props) {
-  const scheme = useColorScheme() === 'dark' ? 'dark' : 'light';
-  const theme = Colors[scheme];
+  const theme = useCommerceTheme();
   const loading = wallet.status === 'loading' && wallet.balance === null;
   const label = wallet.balance === null
     ? 'Sparks balance unavailable'
@@ -24,18 +22,18 @@ export function SparkBalanceChip({ wallet, compact = false }: Props) {
       style={[
         styles.container,
         compact && styles.compact,
-        { borderColor: theme.outline, backgroundColor: theme.backgroundSubtle },
+        { borderColor: theme.line, backgroundColor: theme.surface },
       ]}
     >
-      <MaterialCommunityIcons name="heart-flash" size={compact ? 15 : 18} color={theme.accent} />
+      <MaterialCommunityIcons name="heart-flash" size={compact ? 15 : 18} color={theme.violet} />
       {loading ? (
-        <ActivityIndicator size="small" color={theme.tint} />
+        <ActivityIndicator size="small" color={theme.cyan} />
       ) : (
         <Text style={[styles.value, compact && styles.valueCompact, { color: theme.text }]}>
           {wallet.balance === null ? '—' : wallet.balance.toLocaleString()}
         </Text>
       )}
-      {wallet.isStale ? <View style={[styles.staleDot, { backgroundColor: theme.accent }]} /> : null}
+      {wallet.isStale ? <View style={[styles.staleDot, { backgroundColor: theme.gold }]} /> : null}
     </View>
   );
 }

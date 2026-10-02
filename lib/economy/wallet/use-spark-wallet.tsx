@@ -42,6 +42,7 @@ import {
   readCachedSparkWallet,
 } from '@/lib/economy/wallet/spark-wallet-service';
 import { sparkWalletStore } from '@/lib/economy/wallet/spark-wallet-store';
+import { subscribeToFinancialStateReset } from '@/lib/economy/financial-state-reset';
 import { isNetworkConnectionAvailable } from '@/lib/network-state';
 import {
   bindRevenueCatIdentity,
@@ -94,6 +95,15 @@ export function SparkWalletProvider({ children }: PropsWithChildren) {
   useEffect(() => () => {
     mountedRef.current = false;
   }, []);
+
+  useEffect(() => subscribeToFinancialStateReset(() => {
+    setStore(EMPTY_STORE_STATE);
+    setPurchase(EMPTY_SPARK_PURCHASE_STATE);
+    purchaseInFlightRef.current = false;
+    refreshPromiseRef.current = null;
+    setFlags(DISABLED_ECONOMY_FEATURE_FLAGS);
+    setFlagsLoading(false);
+  }), []);
 
   const refresh = useCallback(async (options?: { invalidate?: boolean; reason?: string }) => {
     const activeUserId = sparkWalletStore.getAppUserId();

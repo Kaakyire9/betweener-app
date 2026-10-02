@@ -341,7 +341,7 @@ serve(async (req) => {
         admin,
         revenueCatApiKey,
         userId,
-        environmentResolution.environment,
+        environmentResolution,
       );
       syncResults.push(result);
     }

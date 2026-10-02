@@ -11,6 +11,7 @@ import {
   extractEvent,
   normalizeString,
   type RevenueCatEvent,
+  type RevenueCatEnvironmentResolution,
 } from "./revenuecat-event.ts";
 
 export { extractEvent, normalizeString } from "./revenuecat-event.ts";
@@ -188,7 +189,7 @@ export const syncUserSubscription = async (
   admin: any,
   revenueCatApiKey: string,
   userId: string,
-  eventEnvironment: string | null,
+  eventEnvironment: RevenueCatEnvironmentResolution,
   options?: { revenueCatAppUserId?: string | null },
 ) => {
   const { data: userData, error: userError } = await admin.auth.admin.getUserById(userId);
@@ -199,7 +200,7 @@ export const syncUserSubscription = async (
   const revenueCatAppUserId = normalizeString(options?.revenueCatAppUserId) || userId;
   const snapshot = await fetchSubscriberSnapshot(revenueCatApiKey, revenueCatAppUserId);
   const subscriber = snapshot?.subscriber ?? null;
-  const resolved = choosePlanFromSubscriber(subscriber, userId, eventEnvironment);
+  const resolved = choosePlanFromSubscriber(subscriber, userId, eventEnvironment.environment);
   const nowIso = new Date().toISOString();
 
   const { error: deactivateError } = await admin
@@ -226,7 +227,10 @@ export const syncUserSubscription = async (
     external_customer_id: resolved.customerId,
     external_product_id: resolved.productId,
     external_entitlement: resolved.entitlementId,
-    external_environment: resolved.environment,
+    // RevenueCat may emit a paired virtual-currency expiration event without either
+    // environment field. Omitting the column prevents that delivery from erasing a
+    // canonical SANDBOX/PRODUCTION value written by the paired provenance-bearing event.
+    ...(resolved.environment ? { external_environment: resolved.environment } : {}),
     updated_at: nowIso,
   };
 
@@ -244,5 +248,6 @@ export const syncUserSubscription = async (
     plan: resolved.plan,
     productId: resolved.productId,
     endsAt: resolved.endsAt,
+    environment: resolved.environment,
   };
 };

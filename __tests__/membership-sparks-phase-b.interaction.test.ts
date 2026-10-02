@@ -34,6 +34,12 @@ import {
   extractEvent,
   resolveRevenueCatEventEnvironment,
 } from '@/supabase/functions/_shared/revenuecat-event';
+import {
+  assertIdentifiedAccountOwnership,
+  isAnonymousRevenueCatAppUserId,
+} from '@/lib/economy/account-ownership-core';
+import { sparkWalletStore } from '@/lib/economy/wallet/spark-wallet-store';
+import { clearClientFinancialState } from '@/lib/economy/financial-state-reset';
 
 const ORIGINAL_ENV = { ...process.env };
 const USER_A = '11111111-1111-4111-8111-111111111111';
@@ -176,7 +182,7 @@ const makeIdentityAdapter = () => {
 };
 
 describe('RevenueCat identity lifecycle', () => {
-  it('supports login, account switch, same-user re-login and logout', async () => {
+  it('supports login, direct account switch, same-user re-login and local detach', async () => {
     const mock = makeIdentityAdapter();
     const session = new RevenueCatIdentitySession(mock.adapter);
     await session.bind(USER_A);
@@ -191,17 +197,17 @@ describe('RevenueCat identity lifecycle', () => {
     expect(session.canAccessFor(USER_A)).toBe(false);
     expect(session.canAccessFor(USER_B)).toBe(true);
 
-    await session.clear('logout');
-    expect(mock.calls.logOut).toBe(1);
+    session.detach('logout');
+    expect(mock.calls.logOut).toBe(0);
     expect(session.canAccessFor(USER_B)).toBe(false);
   });
 
-  it('fails closed when RevenueCat is unavailable during logout', async () => {
+  it('fails closed when a terminal RevenueCat SDK logout is unavailable', async () => {
     const mock = makeIdentityAdapter();
     const session = new RevenueCatIdentitySession(mock.adapter);
     await session.bind(USER_A);
     mock.setLogoutError(new Error('offline'));
-    const result = await session.clear('logout');
+    const result = await session.clearSdkIdentity('deleted_account_cleanup');
     expect(result.error).toBeInstanceOf(Error);
     expect(session.canAccessFor(USER_A)).toBe(false);
   });
@@ -211,10 +217,10 @@ describe('RevenueCat identity lifecycle', () => {
     const session = new RevenueCatIdentitySession(mock.adapter);
     await session.bind(USER_A);
 
-    await session.clear('account_recovery');
+    session.detach('account_recovery');
     await session.bind(USER_B);
 
-    expect(mock.calls.logOut).toBe(1);
+    expect(mock.calls.logOut).toBe(0);
     expect(mock.calls.logIn).toEqual([USER_B]);
     expect(session.canAccessFor(USER_A)).toBe(false);
     expect(session.canAccessFor(USER_B)).toBe(true);
@@ -225,10 +231,71 @@ describe('RevenueCat identity lifecycle', () => {
     const session = new RevenueCatIdentitySession(mock.adapter);
     await expect(session.bind('person@example.com')).rejects.toThrow('Supabase UUID');
   });
+
+  it('clears User A wallet state immediately on local logout', () => {
+    sparkWalletStore.switchIdentity(USER_A);
+    const version = sparkWalletStore.getIdentityVersion();
+    sparkWalletStore.accept({
+      appUserId: USER_A,
+      currencyCode: 'SPK',
+      balance: 250,
+      status: 'fresh',
+      isStale: false,
+      fetchedAt: new Date().toISOString(),
+      source: 'revenuecat',
+      errorCode: null,
+    }, version);
+
+    clearClientFinancialState();
+
+    expect(sparkWalletStore.getSnapshot()).toMatchObject({ appUserId: '', balance: null, status: 'idle' });
+  });
+});
+
+describe('identified-only commerce ownership', () => {
+  it('allows commerce only when Supabase and RevenueCat equal the expected UUID', () => {
+    expect(assertIdentifiedAccountOwnership({
+      expectedUserId: USER_A,
+      supabaseUserId: USER_A,
+      revenueCatAppUserId: USER_A,
+    })).toEqual({ appUserId: USER_A });
+  });
+
+  it('blocks an authenticated UUID mismatch', () => {
+    expect(() => assertIdentifiedAccountOwnership({
+      expectedUserId: USER_A,
+      supabaseUserId: USER_A,
+      revenueCatAppUserId: USER_B,
+    })).toThrow(expect.objectContaining({ code: 'ACCOUNT_PREPARATION_REQUIRED' }));
+  });
+
+  it('blocks a RevenueCat anonymous identity for an authenticated user', () => {
+    const anonymousId = '$RCAnonymousID:fixture';
+    expect(isAnonymousRevenueCatAppUserId(anonymousId)).toBe(true);
+    expect(() => assertIdentifiedAccountOwnership({
+      expectedUserId: USER_A,
+      supabaseUserId: USER_A,
+      revenueCatAppUserId: anonymousId,
+    })).toThrow(expect.objectContaining({ code: 'ACCOUNT_PREPARATION_REQUIRED' }));
+  });
 });
 
 describe('canonical auth and monetization teardown', () => {
-  it('attempts Supabase logout even when RevenueCat logout fails', async () => {
+  it('does not create an anonymous RevenueCat identity during normal logout', async () => {
+    const calls: string[] = [];
+    const result = await runAuthMonetizationTeardown({
+      blockRevenueCatAccess: () => calls.push('block'),
+      supabaseSignOut: async () => {
+        calls.push('supabase');
+        return { error: null };
+      },
+    });
+    expect(calls).toEqual(['block', 'supabase']);
+    expect(result.revenueCatError).toBeNull();
+    expect(result.supabaseError).toBeNull();
+  });
+
+  it('attempts Supabase logout when an explicit terminal SDK logout fails', async () => {
     const calls: string[] = [];
     const result = await runAuthMonetizationTeardown({
       blockRevenueCatAccess: () => calls.push('block'),
@@ -243,14 +310,12 @@ describe('canonical auth and monetization teardown', () => {
     });
     expect(calls).toEqual(['block', 'revenuecat', 'supabase']);
     expect(result.revenueCatError).toBeInstanceOf(Error);
-    expect(result.supabaseError).toBeNull();
   });
 
   it('keeps RevenueCat access blocked when Supabase logout fails', async () => {
     let blocked = false;
     const result = await runAuthMonetizationTeardown({
       blockRevenueCatAccess: () => { blocked = true; },
-      revenueCatLogOut: async () => ({ error: null }),
       supabaseSignOut: async () => ({ error: new Error('network') }),
     });
     expect(blocked).toBe(true);
@@ -393,6 +458,17 @@ describe('RevenueCat event environment provenance', () => {
       source: 'unsupported',
       rawValue: 'preview',
     });
+  });
+
+  it('persists the normalized purchase environment into the subscription mirror', () => {
+    const syncSource = readFileSync(
+      'supabase/functions/_shared/revenuecat-subscription-sync.ts',
+      'utf8',
+    );
+    const webhookSource = readFileSync('supabase/functions/revenuecat-webhook/index.ts', 'utf8');
+    expect(syncSource).toContain('eventEnvironment.environment');
+    expect(syncSource).toContain('resolved.environment ? { external_environment: resolved.environment } : {}');
+    expect(webhookSource).toMatch(/syncUserSubscription\([\s\S]*environmentResolution,/);
   });
 });
 

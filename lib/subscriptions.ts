@@ -20,6 +20,9 @@ import {
   resolveExactMembershipPackage,
 } from "@/lib/membership/offering-resolver";
 import { RevenueCatIdentitySession } from "@/lib/membership/revenuecat-identity-core";
+import { requireEconomyAccountOwnership } from "@/lib/economy/account-ownership";
+import { EconomyError } from "@/lib/economy/types";
+import { clearClientFinancialState } from "@/lib/economy/financial-state-reset";
 
 export type PremiumPlan = "FREE" | "SILVER" | "GOLD";
 export type PremiumPlanInterval = "monthly" | "quarterly" | "annual";
@@ -145,7 +148,7 @@ const revenueCatIdentity = new RevenueCatIdentitySession(
   },
   (event) => {
     logger.info(
-      event.type === "logout" ? "revenuecat.identity.logout" : "revenuecat.identity.changed",
+      event.type === "changed" ? "revenuecat.identity.changed" : `revenuecat.identity.${event.type}`,
       {
         succeeded: event.succeeded,
         reason: event.reason,
@@ -185,12 +188,23 @@ const clearRevenueCatCustomerInfo = () => {
 export function blockRevenueCatIdentityAccess() {
   revenueCatIdentity.blockAccess();
   clearRevenueCatCustomerInfo();
+  clearClientFinancialState();
 }
 
-export async function logOutRevenueCatIdentity(reason = "explicit_sign_out") {
+export function detachRevenueCatIdentity(reason = "explicit_sign_out") {
+  revenueCatIdentity.detach(reason);
+  clearRevenueCatCustomerInfo();
+  clearClientFinancialState();
+}
+
+/**
+ * Terminal-only SDK identity reset. Normal sign-out must use detachRevenueCatIdentity so the
+ * next authenticated UUID can transition directly through Purchases.logIn().
+ */
+export async function logOutRevenueCatIdentity(reason = "deleted_account_cleanup") {
   blockRevenueCatIdentityAccess();
   if (!isRevenueCatConfiguredForPlatform()) return { error: null };
-  return revenueCatIdentity.clear(reason);
+  return revenueCatIdentity.clearSdkIdentity(reason);
 }
 
 export async function bindRevenueCatIdentity(appUserID: string) {
@@ -406,13 +420,17 @@ export function findPackageForPlan(
   return null;
 }
 
-export async function purchasePlanPackage(pkg: PurchasesPackage) {
+export async function purchasePlanPackage(pkg: PurchasesPackage, appUserID: string) {
+  await requireEconomyAccountOwnership(appUserID);
   const result = await Purchases.purchasePackage(pkg);
+  await requireEconomyAccountOwnership(appUserID);
   return { currentPlan: derivePlanFromCustomerInfo(result.customerInfo) };
 }
 
-export async function restoreRevenueCatPurchases() {
+export async function restoreRevenueCatPurchases(appUserID: string) {
+  await requireEconomyAccountOwnership(appUserID);
   const customerInfo = await Purchases.restorePurchases();
+  await requireEconomyAccountOwnership(appUserID);
   return { currentPlan: derivePlanFromCustomerInfo(customerInfo) };
 }
 
@@ -425,7 +443,16 @@ export function isPurchaseCancelled(error: unknown) {
 }
 
 export function getMembershipPurchaseErrorMessage(error: unknown) {
+  if (error instanceof EconomyError && error.code === "ACCOUNT_PREPARATION_REQUIRED") {
+    return error.message;
+  }
   const purchasesError = error as PurchasesError | undefined;
+  if (
+    purchasesError?.code === PURCHASES_ERROR_CODE.RECEIPT_ALREADY_IN_USE_ERROR ||
+    purchasesError?.code === PURCHASES_ERROR_CODE.PRODUCT_ALREADY_PURCHASED_ERROR
+  ) {
+    return "This store receipt belongs to another Betweener account. Sign in to its original account or use a different store test account.";
+  }
   if (purchasesError?.code === PURCHASES_ERROR_CODE.NETWORK_ERROR) {
     return "Check your connection and try again.";
   }

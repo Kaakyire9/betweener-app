@@ -45,7 +45,7 @@ import { APP_WEB_AUTH_CALLBACK_URL } from '@/config/app-identity';
 import {
   bindRevenueCatIdentity,
   blockRevenueCatIdentityAccess,
-  logOutRevenueCatIdentity,
+  detachRevenueCatIdentity,
 } from '@/lib/subscriptions';
 import { signOutSupabaseSession } from '@/lib/auth/sign-out-session';
 
@@ -106,7 +106,7 @@ type AuthContextType = {
   // Auth Actions
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signUp: (email: string, password: string) => Promise<{ error: Error | null }>;
-  signOut: () => Promise<void>;
+  signOut: (options?: { clearRevenueCatSdkIdentity?: boolean; reason?: string }) => Promise<void>;
   refreshProfile: () => Promise<Profile | null>;
   refreshPhoneState: () => Promise<boolean>;
   retrySessionRecovery: (reason?: string) => Promise<boolean>;
@@ -813,7 +813,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         } else {
           const restored = await restoreAuthSnapshot("initial_session_empty");
           if (!restored) {
-            void logOutRevenueCatIdentity('auth_bootstrap_unauthenticated');
+            detachRevenueCatIdentity('auth_bootstrap_unauthenticated');
             setProfile(null);
             setPhoneVerified(false);
           } else if (await probeReachableNetwork()) {
@@ -963,7 +963,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               }
             }
             if (!restored) {
-              void logOutRevenueCatIdentity('forced_authentication_reset');
+              detachRevenueCatIdentity('forced_authentication_reset');
               applySignedOutState();
             } else {
               setAuthStatus(networkReachable ? 'reconnecting_session' : 'offline_authenticated');
@@ -1650,7 +1650,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const signOut = async () => {
+  const signOut = async (options?: { clearRevenueCatSdkIdentity?: boolean; reason?: string }) => {
     signOutRequestedRef.current = true;
     const signedOutUserId = user?.id ?? null;
     await clearPersistedAuthSnapshot();
@@ -1665,7 +1665,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const { supabaseError, revenueCatError } = await signOutSupabaseSession({
         scope: 'local',
-        reason: 'explicit_sign_out',
+        reason: options?.reason ?? 'explicit_sign_out',
+        clearRevenueCatSdkIdentity: options?.clearRevenueCatSdkIdentity,
       });
       if (supabaseError) {
         console.error('Error signing out:', supabaseError);

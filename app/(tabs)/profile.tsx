@@ -2521,7 +2521,10 @@ export default function ProfileScreen() {
       } catch {
         // ignore haptics failures
       }
-      await signOut();
+      await signOut({
+        clearRevenueCatSdkIdentity: true,
+        reason: 'deleted_account_cleanup',
+      });
       router.replace('/(auth)/welcome');
       Alert.alert(
         'Account deleted',

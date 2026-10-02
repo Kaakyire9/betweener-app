@@ -16,6 +16,14 @@ Phase B creates membership authority, identity, policy, feature-flag, audit and 
 - Future V2 economy functions use only `REVENUECAT_PROJECT_ID` and `REVENUECAT_V2_SECRET_API_KEY`.
 - Do not remove `REVENUECAT_SECRET_API_KEY` until the V1 transition has been deployed and verified.
 
+## Account ownership lifecycle
+
+- Membership purchases, Spark purchases, restore operations, and every future economy mutation must pass the shared identified-account guard immediately before the operation. Store operations must repeat the guard after StoreKit/Play returns.
+- The active Supabase UUID, expected operation UUID, and RevenueCat App User ID must match exactly. `$RCAnonymousID:*` is never permitted to transact.
+- Normal sign-out and recovery detach client access and clear membership, wallet, catalog, and purchase state without calling `Purchases.logOut()`. The next authenticated user transitions directly with `Purchases.logIn(newSupabaseUuid)`.
+- `Purchases.logOut()` is reserved for terminal deleted-account cleanup, after commerce has already been blocked. It must not be added to normal sign-out, account switching, recovery, or auth-bootstrap paths.
+- Staging RevenueCat restore behavior must be set to the strict keep-with-original-owner policy. Client identity equality detects auth races and anonymous sessions, but cannot prevent RevenueCat from transferring an Apple receipt when the project itself is configured to transfer purchases.
+
 ## HMAC activation after deployment
 
 Keep the existing Authorization header configured throughout the migration.

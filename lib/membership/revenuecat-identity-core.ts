@@ -7,7 +7,7 @@ export type RevenueCatIdentityAdapter = {
 };
 
 export type RevenueCatIdentityEvent = {
-  type: 'changed' | 'logout';
+  type: 'changed' | 'detached' | 'logout';
   previousUserId: string | null;
   nextUserId: string | null;
   succeeded: boolean;
@@ -37,6 +37,18 @@ export class RevenueCatIdentitySession {
   blockAccess() {
     this.accessBlocked = true;
     this.boundUserId = null;
+  }
+
+  detach(reason: string) {
+    const previousUserId = this.boundUserId;
+    this.blockAccess();
+    this.onEvent?.({
+      type: 'detached',
+      previousUserId,
+      nextUserId: null,
+      succeeded: true,
+      reason,
+    });
   }
 
   bind(appUserId: string): Promise<void> {
@@ -83,7 +95,7 @@ export class RevenueCatIdentitySession {
     return result;
   }
 
-  clear(reason: string): Promise<{ error: unknown | null }> {
+  clearSdkIdentity(reason: string): Promise<{ error: unknown | null }> {
     const work = async () => {
       const previousUserId = this.boundUserId;
       this.blockAccess();

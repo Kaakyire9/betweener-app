@@ -8,6 +8,7 @@ import { EconomyError, type EconomyErrorCode, type MembershipTier } from '@/lib/
 import type { SparkPurchaseState } from '@/lib/economy/wallet/spark-wallet-types';
 import type { ResolvedSparkPackage } from '@/lib/economy/store/spark-store-service';
 import { trackSparkEvent } from '@/lib/economy/spark-telemetry';
+import { requireEconomyAccountOwnership } from '@/lib/economy/account-ownership';
 
 export type SparkPurchaseAdapter = {
   purchasePackage: (pkg: PurchasesPackage) => Promise<unknown>;
@@ -34,6 +35,15 @@ export const isSparkPurchaseCancellation = (error: unknown) => {
 export function mapSparkPurchaseError(error: unknown): EconomyError {
   if (error instanceof EconomyError) return error;
   const purchaseError = error as PurchasesError | undefined;
+  if (
+    purchaseError?.code === PURCHASES_ERROR_CODE.RECEIPT_ALREADY_IN_USE_ERROR
+    || purchaseError?.code === PURCHASES_ERROR_CODE.PRODUCT_ALREADY_PURCHASED_ERROR
+  ) {
+    return new EconomyError(
+      'ACCOUNT_PREPARATION_REQUIRED',
+      'This store receipt belongs to another Betweener account. Sign in to its original account or use a different store test account.',
+    );
+  }
   if (purchaseError?.code === PURCHASES_ERROR_CODE.NETWORK_ERROR) {
     return new EconomyError('NETWORK_ERROR', 'Check your connection and try again.');
   }
@@ -56,6 +66,7 @@ type PurchaseArgs = {
   invalidateAndRefresh: () => Promise<number>;
   onState: (state: SparkPurchaseState) => void;
   adapter?: SparkPurchaseAdapter;
+  requireAccountOwnership?: (expectedUserId: string) => Promise<unknown>;
 };
 
 const stateFor = (
@@ -75,9 +86,11 @@ const stateFor = (
 
 export async function executeSparkPurchase(args: PurchaseArgs): Promise<SparkPurchaseResult> {
   const adapter = args.adapter ?? revenueCatPurchaseAdapter;
+  const requireAccountOwnership = args.requireAccountOwnership ?? requireEconomyAccountOwnership;
   const telemetry = { packageId: args.pack.packageId, sparkAmount: args.pack.amount, membershipTier: args.membershipTier };
   if (!args.isOnline()) throw new EconomyError('NETWORK_ERROR', 'Connect to the internet to buy Sparks.');
   if (args.getActiveUserId() !== args.appUserId) throw new EconomyError('ACCOUNT_MISMATCH', 'Your account changed.');
+  await requireAccountOwnership(args.appUserId);
 
   args.onState(stateFor('purchasing', args.pack));
   trackSparkEvent('spark.purchase.started', telemetry);
@@ -107,8 +120,15 @@ export async function executeSparkPurchase(args: PurchaseArgs): Promise<SparkPur
 
   args.onState(stateFor('verifying', args.pack, { storeCompleted: true }));
   trackSparkEvent('spark.purchase.store_completed', telemetry);
-  if (args.getActiveUserId() !== args.appUserId) {
-    const mismatch = new EconomyError('ACCOUNT_MISMATCH', 'The purchase completed for the previous account.');
+  try {
+    if (args.getActiveUserId() !== args.appUserId) {
+      throw new EconomyError('ACCOUNT_MISMATCH', 'The purchase completed for the previous account.');
+    }
+    await requireAccountOwnership(args.appUserId);
+  } catch (error) {
+    const mismatch = error instanceof EconomyError
+      ? error
+      : new EconomyError('ACCOUNT_PREPARATION_REQUIRED', 'We are preparing this account for purchases. Please try again.');
     args.onState(stateFor('failed', args.pack, { storeCompleted: true, errorCode: mismatch.code }));
     trackSparkEvent('spark.account_mismatch', { ...telemetry, result: mismatch.code });
     throw mismatch;
@@ -137,7 +157,7 @@ export async function executeSparkPurchase(args: PurchaseArgs): Promise<SparkPur
     };
   } catch (error) {
     const code: EconomyErrorCode = error instanceof EconomyError ? error.code : 'REVENUECAT_UNAVAILABLE';
-    if (code === 'ACCOUNT_MISMATCH') {
+    if (code === 'ACCOUNT_MISMATCH' || code === 'ACCOUNT_PREPARATION_REQUIRED') {
       args.onState(stateFor('failed', args.pack, { storeCompleted: true, errorCode: code }));
       trackSparkEvent('spark.account_mismatch', { ...telemetry, result: code });
       throw error;

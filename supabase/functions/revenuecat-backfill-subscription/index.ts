@@ -15,6 +15,7 @@ import {
   normalizeString,
   syncUserSubscription,
 } from "../_shared/revenuecat-subscription-sync.ts";
+import { resolveRevenueCatEventEnvironment } from "../_shared/revenuecat-event.ts";
 
 type BackfillPayload = {
   targetUserId?: string | null;
@@ -82,6 +83,7 @@ serve(async (req) => {
     const targetUserId = normalizeString(payload.targetUserId);
     const revenueCatAppUserId = normalizeString(payload.revenueCatAppUserId) || targetUserId;
     const environment = normalizeString(payload.environment);
+    const environmentResolution = resolveRevenueCatEventEnvironment({ environment });
     const reason = normalizeString(payload.reason) || "manual_backfill";
 
     if (!targetUserId || !isUuid(targetUserId)) {
@@ -96,7 +98,7 @@ serve(async (req) => {
       service,
       revenueCatApiKey,
       targetUserId,
-      environment,
+      environmentResolution,
       { revenueCatAppUserId },
     );
 
@@ -112,7 +114,7 @@ serve(async (req) => {
       aliases: [revenueCatAppUserId],
       transferred_from: [],
       transferred_to: [],
-      environment,
+      environment: environmentResolution.environment,
       event_timestamp_ms: Date.now(),
       processing_status: "processed",
       synced_user_ids: syncedUserIds,
