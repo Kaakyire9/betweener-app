@@ -74,7 +74,7 @@ const assertBuildIdentity = ({ identity, googleServicesFile, googleServiceInfoPl
 
   const buildPlatform = String(process.env.EAS_BUILD_PLATFORM || '').trim().toLowerCase();
   const buildProfile = String(process.env.EAS_BUILD_PROFILE || '').trim();
-  const androidOnlyProfiles = new Set(['playInternal', 'playVerification']);
+  const androidOnlyProfiles = new Set(['playInternal', 'playStaging', 'playVerification']);
   if (buildPlatform === 'ios' && androidOnlyProfiles.has(buildProfile)) {
     throw new Error(
       `[app-config] Build profile ${buildProfile} is Android-only and cannot produce an iOS build.`,

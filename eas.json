@@ -81,6 +81,21 @@
         "EXPO_USE_POD_REPO_UPDATE": "1"
       }
     },
+    "playStaging": {
+      "node": "24.18.0",
+      "channel": "staging",
+      "distribution": "store",
+      "environment": "preview",
+      "autoIncrement": true,
+      "android": {
+        "buildType": "app-bundle"
+      },
+      "env": {
+        "APP_VARIANT": "staging",
+        "EXPO_PUBLIC_ENABLE_INTERNAL_TOOLS": "false",
+        "EXPO_USE_POD_REPO_UPDATE": "1"
+      }
+    },
     "testflightStaging": {
       "node": "24.18.0",
       "channel": "staging",
