@@ -3,6 +3,9 @@ import {
   buildDeterministicChatAttachmentPath,
   consumeViewOnceAttachment,
   finalizeChatAttachment,
+  finalizeChatAttachmentBatch,
+  preflightChatImageAttachment,
+  preflightChatImageAttachmentBatch,
 } from '@/lib/chat/attachment-lifecycle';
 
 jest.mock('@/lib/supabase', () => ({
@@ -46,7 +49,9 @@ describe('chat attachment lifecycle', () => {
       mimeType: 'application/pdf',
     };
     await expect(finalizeChatAttachment(input)).resolves.toEqual({ id: 'message-id' });
-    expect(mockInvoke).toHaveBeenCalledWith('chat-attachment-finalize', { body: input });
+    expect(mockInvoke).toHaveBeenCalledWith('chat-attachment-finalize', {
+      body: { contractVersion: '1.2.0', ...input },
+    });
   });
 
   it('preserves the server error code when a view-once claim is rejected', async () => {
@@ -63,6 +68,135 @@ describe('chat attachment lifecycle', () => {
     await expect(consumeViewOnceAttachment('message-id')).rejects.toMatchObject({
       code: 'view_once_already_consumed',
       message: 'view_once_already_consumed',
+    });
+  });
+
+  it('preserves moderation details when a batch finalization is rejected', async () => {
+    mockInvoke.mockResolvedValue({
+      data: null,
+      error: {
+        context: new Response(JSON.stringify({
+          error: 'image_content_not_allowed',
+          categories: ['sexual'],
+        }), {
+          status: 422,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      },
+    });
+
+    await expect(finalizeChatAttachmentBatch({
+      receiverId: 'receiver-id',
+      clientMessageId: 'client-id',
+      attachmentType: 'image',
+      attachments: [{
+        receiverId: 'receiver-id',
+        clientMessageId: 'client-id',
+        attachmentId: 'attachment-id',
+        attachmentType: 'image',
+        bucketId: 'chat-attachment-staging-v1-2',
+        storagePath: 'sender/receiver-id/client-id/attachment-id-attachment.jpg',
+        mimeType: 'image/jpeg',
+      }],
+    })).rejects.toMatchObject({
+      code: 'image_content_not_allowed',
+      status: 422,
+      categories: ['sexual'],
+      message: 'image_content_not_allowed',
+    });
+  });
+
+  it('creates exact original and preview receipts in one paired moderation request', async () => {
+    mockInvoke.mockResolvedValue({
+      data: { approved: true, performance: { totalMs: 321 } },
+      error: null,
+    });
+    const input = {
+      receiverId: 'receiver-id',
+      clientMessageId: 'client-id',
+      attachmentId: 'attachment-id',
+      bucketId: 'chat-attachment-staging-v1-2' as const,
+      storagePath: 'sender/receiver-id/client-id/attachment-id-attachment.jpg',
+      mimeType: 'image/jpeg',
+      previewStoragePath: 'sender/receiver-id/client-id/attachment-id-preview.jpg',
+      previewMimeType: 'image/jpeg' as const,
+    };
+
+    await expect(preflightChatImageAttachment(input)).resolves.toBeUndefined();
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
+    expect(mockInvoke).toHaveBeenCalledWith('chat-attachment-finalize', {
+      body: {
+        mode: 'moderate_image_item',
+        assetRole: 'pair',
+        contractVersion: '1.2.0',
+        ...input,
+      },
+    });
+  });
+
+  it('moderates an album through one authenticated batch request', async () => {
+    mockInvoke.mockResolvedValue({
+      data: { approved: true, attachmentCount: 2, performance: { totalMs: 500 } },
+      error: null,
+    });
+    const attachment = {
+      receiverId: 'receiver-id',
+      clientMessageId: 'client-id',
+      attachmentId: 'attachment-id',
+      bucketId: 'chat-attachment-staging-v1-2' as const,
+      storagePath: 'sender/receiver-id/client-id/attachment-id-attachment.jpg',
+      mimeType: 'image/jpeg',
+      previewStoragePath: 'sender/receiver-id/client-id/attachment-id-preview.jpg',
+      previewMimeType: 'image/jpeg' as const,
+    };
+    const secondAttachment = {
+      ...attachment,
+      attachmentId: 'attachment-id-2',
+      storagePath: 'sender/receiver-id/client-id/attachment-id-2-attachment.jpg',
+      previewStoragePath: 'sender/receiver-id/client-id/attachment-id-2-preview.jpg',
+    };
+
+    await expect(preflightChatImageAttachmentBatch({
+      receiverId: 'receiver-id',
+      clientMessageId: 'client-id',
+      attachments: [attachment, secondAttachment],
+    })).resolves.toBeUndefined();
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
+    expect(mockInvoke).toHaveBeenCalledWith('chat-attachment-finalize', {
+      body: {
+        mode: 'moderate_image_batch',
+        contractVersion: '1.2.0',
+        receiverId: 'receiver-id',
+        clientMessageId: 'client-id',
+        attachments: [attachment, secondAttachment],
+      },
+    });
+  });
+
+  it('preserves an HTTP classification when the gateway response is not JSON', async () => {
+    mockInvoke.mockResolvedValue({
+      data: null,
+      error: {
+        context: new Response('gateway unavailable', { status: 503 }),
+      },
+    });
+
+    await expect(finalizeChatAttachmentBatch({
+      receiverId: 'receiver-id',
+      clientMessageId: 'client-id',
+      attachmentType: 'image',
+      attachments: [{
+        receiverId: 'receiver-id',
+        clientMessageId: 'client-id',
+        attachmentId: 'attachment-id',
+        attachmentType: 'image',
+        bucketId: 'chat-attachment-staging-v1-2',
+        storagePath: 'sender/receiver-id/client-id/attachment-id-attachment.jpg',
+        mimeType: 'image/jpeg',
+      }],
+    })).rejects.toMatchObject({
+      code: 'attachment_finalize_http_503',
+      status: 503,
     });
   });
 

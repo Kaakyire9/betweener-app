@@ -1,22 +1,20 @@
 // @ts-nocheck
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { getSupabaseAdminHeaders } from "../_shared/supabase-admin-key.ts";
 
 serve(async () => {
   try {
     const url = Deno.env.get("SUPABASE_URL") ?? "";
-    const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-    if (!url || !key) {
-      console.error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
+    if (!url) {
+      console.error("Missing SUPABASE_URL");
       return new Response("Missing config", { status: 500 });
     }
 
     const resp = await fetch(`${url}/rest/v1/rpc/reset_daily_superlikes`, {
       method: "POST",
-      headers: {
+      headers: getSupabaseAdminHeaders({
         "Content-Type": "application/json",
-        "apikey": key,
-        "Authorization": `Bearer ${key}`,
-      },
+      }),
       body: "{}", // no args
     });
 

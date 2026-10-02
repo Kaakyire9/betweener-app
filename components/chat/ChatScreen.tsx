@@ -1,5 +1,8 @@
 import MomentViewer from "@/components/MomentViewer";
+import { ChatBackground } from '@/components/chat/ChatBackground';
 import ChatComposer from "@/components/chat/ChatComposer";
+import ChatExpressionTray from '@/components/chat/ChatExpressionTray';
+import ChatMediaSafetyNotice from '@/components/chat/ChatMediaSafetyNotice';
 import { ChatMessageList } from "@/components/chat/ChatMessageList";
 import { ChatThreadView } from "@/components/chat/ChatThreadView";
 import { createChatScreenStyles } from '@/components/chat/styles/chat-screen.styles';
@@ -8,10 +11,14 @@ import { MessageRowItem } from '@/components/chat/MessageRowItem';
 import { ChatVideoViewer } from "@/components/chat/media/ChatVideoViewer";
 import { ChatDocumentViewer } from '@/components/chat/media/ChatDocumentViewer';
 import { ChatImmersiveVideoViewer } from '@/components/chat/media/ChatImmersiveVideoViewer';
+import { ChatImageViewer } from '@/components/chat/media/ChatImageViewer';
+import { ChatAlbumCaptionEditor } from '@/components/chat/media/ChatAlbumCaptionEditor';
+import { ChatLocationPicker } from '@/components/chat/location/ChatLocationPicker';
+import { ChatLocationViewer } from '@/components/chat/location/ChatLocationViewer';
 import ChatMessageActionsSheet from "@/components/chat/ChatMessageActionsSheet";
 import ChatReactionSummarySheet from "@/components/chat/ChatReactionSummarySheet";
 import ChatSafetyModal from "@/components/chat/ChatSafetyModal";
-import type { ChatMediaItem, DatePlanResponseKind, DatePlanStatus, MessageType } from "@/components/chat/types";
+import type { ChatMediaItem, DatePlanResponseKind, MessageType } from "@/components/chat/types";
 import { Colors } from "@/constants/theme";
 import {
   ATTACHMENT_SHEET_MAX_HEIGHT,
@@ -21,24 +28,21 @@ import {
   BLOCKED_BY_ME,
   BLOCKED_BY_THEM,
   CHAT_MEDIA_BUCKET,
+  CHAT_MEDIA_FRAME_MAX_WIDTH,
+  CHAT_MEDIA_FRAME_WIDTH_RATIO,
   CHAT_PREFS_STORAGE_KEY,
   CHAT_SAFETY_SEEN_KEY,
   CONCIERGE_SERVICE_OPTIONS,
   DATE_PLAN_TEXT_PREFIX,
   DEFAULT_VOICE_WAVEFORM,
   DOCUMENT_TEXT_PREFIX,
-  DURABLE_CHAT_OUTBOX_MAX_ATTEMPTS,
   FALLBACK_BETWEENER_DATE_PICKS,
-  GOOGLE_MAPS_MAP_ID,
   GOOGLE_MAPS_WEB_API_KEY,
   HEADER_HINT_STORAGE_KEY,
   LEGACY_MESSAGE_SELECT_FIELDS,
-  LIVE_LOCATION_PRESETS,
   LOCAL_CHAT_OPERATION_TIMEOUT_MS,
   LOCATION_LIVE_PREFIX,
   LOCATION_TEXT_PREFIX,
-  MAP_STYLE_DARK,
-  MAP_STYLE_LIGHT,
   MESSAGE_SELECT_FIELDS,
   PAGE_SIZE,
   PICKER_MEDIA_TYPES_ALL,
@@ -55,6 +59,22 @@ import {
 } from "@/lib/chat/active-thread";
 import { ChatThreadActionsService } from "@/lib/chat/chat-thread-actions-service";
 import {
+  buildDateInvitePayload,
+  buildDateQuickSlots,
+  getDatePlaceExperience,
+  mergeDateInviteWithPlanRow,
+  parseDateInviteMessage,
+  type DatePlaceOption,
+} from '@/lib/chat/date-plan/chat-date-plan-payload';
+import {
+  buildLocationMessageText,
+  buildMapsLink,
+  getStaticMapUrl,
+  parseLocationMessage,
+  type PlaceResult,
+  type PlaceSuggestion,
+} from '@/lib/chat/location/chat-location-payload';
+import {
   CHAT_ATTACHMENT_LIMITS,
   CHAT_DOCUMENT_PICKER_MIME_TYPES,
   validateChatAttachment,
@@ -63,6 +83,7 @@ import {
   createChatAttachmentId,
 } from "@/lib/chat/attachment-lifecycle";
 import {
+  createPreparingMediaMessage,
   createQueuedMediaMessage,
   createQueuedMediaOutboxRow,
   createQueuedViewOnceOutboxRow,
@@ -71,6 +92,16 @@ import {
   createChatAttachmentPreview,
   removeChatAttachmentPreview,
 } from "@/lib/chat/attachments/chat-attachment-preview";
+import {
+  getChatAttachmentFailurePresentation,
+  isChatMediaModerationRejection,
+} from '@/lib/chat/attachments/chat-attachment-error';
+import {
+  publishChatMediaRejectionNotice,
+  subscribeChatMediaRejectionNotices,
+  type ChatMediaRejectionNotice,
+} from '@/lib/chat/moderation/chat-media-rejection-notice';
+import { getChatGuardFailurePresentation } from '@/lib/chat/moderation/chat-guard-error-presentation';
 import {
   getAttachmentUploadErrorMessage,
   isRetryableUploadError,
@@ -87,7 +118,27 @@ import {
   getStableChatImageFrame,
   normalizeChatMediaItems,
 } from "@/lib/chat/media-album";
+import { mapChatAlbumItemsBounded } from '@/lib/chat/album/chat-media-album';
 import { selectChatImageGalleryItem } from '@/lib/chat/media/chat-image-gallery';
+import { getChatMessageVisualMediaPaths } from '@/lib/chat/media/chat-media-paths';
+import { normalizeChatLink } from '@/lib/chat/links/chat-link-policy';
+import {
+  insertChatEmoji,
+  type TextSelection,
+} from '@/lib/chat/expressions/chat-expression-catalog';
+import {
+  buildChatProviderMediaReference,
+  parseChatProviderMediaReference,
+  type ChatProviderExpressionSelection,
+} from '@/lib/chat/expressions/chat-gif-provider';
+import {
+  getChatExpressionFrame,
+  parseChatExpressionMediaKind,
+} from '@/lib/chat/expressions/chat-expression-presentation';
+import {
+  prepareChatImageForSend,
+  type ChatImageSendQuality,
+} from '@/lib/chat/media/chat-image-preparation';
 import { acknowledgeIncomingMessagesDelivered } from "@/lib/chat/delivery-receipts";
 import { useChatMessages } from "@/lib/chat/hooks/use-chat-messages";
 import { useChatThreadBrowseUi } from "@/lib/chat/hooks/use-chat-thread-browse-ui";
@@ -97,7 +148,8 @@ import { useChatThreadStateSync } from "@/lib/chat/hooks/use-chat-thread-state-s
 import { useChatThreadLocalState } from "@/lib/chat/hooks/use-chat-thread-local-state";
 import { useChatThreadController } from "@/lib/chat/hooks/use-chat-thread-controller";
 import { useChatMediaAccess } from "@/lib/chat/hooks/use-chat-media-access";
-import { ChatRepository, type ChatMessageRow, type ChatPendingOutboxRow } from "@/lib/chat/local/chat-db";
+import { useChatAlbumActions } from '@/lib/chat/hooks/use-chat-album-actions';
+import { ChatRepository, type ChatMessageRow } from "@/lib/chat/local/chat-db";
 import { ChatThreadRemoteService } from "@/lib/chat/chat-thread-remote-service";
 import { mergeViewOnceStatus } from '@/lib/chat/view-once-status';
 import {
@@ -127,6 +179,10 @@ import {
 import { reconcileFetchedThreadRows } from "@/lib/chat/loading/thread-fetch-reconciler";
 import { mergeIncrementalThreadMessages } from "@/lib/chat/loading/thread-message-state-merge";
 import {
+  mergeFetchedMessagesWithLocalPending,
+  mergeOfflineMediaIntoMessage,
+} from '@/lib/chat/loading/chat-thread-local-merge';
+import {
   buildRetryFailedTextPayload,
   CHAT_READ_RECEIPT_DELAY_MS,
   createDatePlanDraftFromInvite,
@@ -136,6 +192,12 @@ import {
   shouldScheduleMessageRead,
 } from "@/lib/chat/thread-behavior";
 import { ChatOutboxService } from "@/lib/chat/outbox/chat-outbox-service";
+import {
+  buildVoiceOutboxRow,
+  flushLocalTextOutbox,
+  markLocalTextOutboxStatus,
+  persistLocalTextOutboxState,
+} from '@/lib/chat/outbox/chat-outbox-drafts';
 import {
   chronologicalIndexToListIndex,
   getChronologicalListDistanceToBottom,
@@ -164,12 +226,11 @@ import {
   formatDateInviteWhen,
   formatIntentExpiresIn,
   formatIntentTypeLabel,
-  formatRemainingTime,
   getFileTypeLabel,
 } from "@/lib/chat/ui/message-formatters";
 import {
   buildStickerPayload,
-  MOOD_STICKERS,
+  type ChatStickerDefinition,
   parseStickerFallback,
   parseStickerPayload,
   STICKER_COLORS,
@@ -226,6 +287,7 @@ import {
 } from "@/lib/offline/chat-store";
 import {
   enqueueChatReactionSyncMutation,
+  subscribeToOfflineMutationEvents,
 } from "@/lib/offline/mutation-queue";
 import {
   cacheOfflineVideo,
@@ -235,6 +297,7 @@ import {
   removeOfflineVideo,
 } from "@/lib/offline/video-store";
 import { showOpenSettingsPrompt } from "@/lib/permission-prompts";
+import { getMediaModerationCapabilities } from '@/lib/safety/media-moderation-capabilities';
 import { getSafeRemoteImageUri, getUserFacingDisplayName, hasLeftBetweener } from "@/lib/profile/display-name";
 import { useResponsiveMetrics } from "@/lib/responsive";
 import { supabase } from "@/lib/supabase";
@@ -277,7 +340,6 @@ import {
     Image,
     Keyboard,
     KeyboardAvoidingView,
-    Linking,
     Modal,
     Platform,
     Pressable,
@@ -288,426 +350,47 @@ import {
     TouchableOpacity,
     View,
 } from "react-native";
-import { PinchGestureHandler, State } from "react-native-gesture-handler";
+import { State } from "react-native-gesture-handler";
 import { scheduleIdleTask } from "@/lib/scheduling/idle-task";
 import {
   chatMessageToLocalRow,
   deserializeCachedMessages,
   localRowToChatMessage,
-  safeJsonStringify,
   serializeCachedMessages,
   type CachedMessageType,
   type MessageDatabaseRow,
 } from '@/lib/chat/message-mappers';
-import MapView, { Marker, PROVIDER_GOOGLE, Region } from "react-native-maps";
-import { Image as NativeImageCompressor } from 'react-native-compressor';
+import MapView, { type Region } from "react-native-maps";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+const resolvePreparedMediaDimension = (
+  prepared: unknown,
+  dimension: 'width' | 'height',
+  fallback: number | null | undefined,
+) => {
+  if (!prepared || typeof prepared !== 'object') return fallback ?? null;
+  const value = (prepared as Record<string, unknown>)[dimension];
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? value
+    : fallback ?? null;
+};
 
 // Message type definition
 type BetweenerVenueRow = Database["public"]["Tables"]["betweener_venues"]["Row"];
 type DatePlanRow = Database["public"]["Tables"]["date_plans"]["Row"];
-const buildTextOutboxRow = ({
-  ownerUserId,
-  threadId,
-  message,
-  status,
-  error,
-}: {
-  ownerUserId: string;
-  threadId: string;
-  message: MessageType;
-  status: ChatPendingOutboxRow['status'];
-  error?: { code?: string | null; message?: string | null };
-}): ChatPendingOutboxRow => {
-  const now = new Date().toISOString();
-  const localMessageId = message.clientMessageId ?? message.id;
-  const durableOutboxStatus: ChatPendingOutboxRow['status'] = status === 'sending' ? 'queued' : status;
-  return {
-    id: localMessageId,
-    local_message_id: localMessageId,
-    thread_id: threadId,
-    owner_user_id: ownerUserId,
-    payload_json:
-      safeJsonStringify({
-        kind: 'chat_text_send',
-        senderId: ownerUserId,
-        receiverId: threadId,
-        text:
-          message.type === 'image'
-            ? message.storagePath ? '' : message.imageUrl ?? message.text
-            : message.type === 'video'
-            ? message.storagePath ? '' : message.videoUrl ?? message.text
-            : message.text,
-        messageType: message.type,
-        clientMessageId: localMessageId,
-        replyToMessageId: message.replyToId ?? null,
-        storagePath: message.storagePath ?? null,
-        metadataJson: safeJsonStringify(message),
-    }) ?? '{}',
-    attempt_count: 0,
-    max_attempts: DURABLE_CHAT_OUTBOX_MAX_ATTEMPTS,
-    next_retry_at: null,
-    status: durableOutboxStatus,
-    error_code: error?.code ?? null,
-    error_message: error?.message ?? null,
-    created_at: now,
-    updated_at: now,
-  };
-};
 
-const persistLocalTextOutboxState = async ({
-  ownerUserId,
-  threadId,
-  message,
-  outboxStatus,
-  error,
-}: {
-  ownerUserId: string;
-  threadId: string;
-  message: MessageType;
-  outboxStatus: ChatPendingOutboxRow['status'];
-  error?: { code?: string | null; message?: string | null };
-}) => {
-  await ChatRepository.upsertMessages(ownerUserId, threadId, [
-    chatMessageToLocalRow(ownerUserId, threadId, message),
-  ]);
-  await ChatRepository.upsertPendingOutboxItem(
-    ownerUserId,
-    buildTextOutboxRow({ ownerUserId, threadId, message, status: outboxStatus, error }),
-  );
-};
-
-const markLocalTextOutboxStatus = async ({
-  ownerUserId,
-  localMessageId,
-  status,
-  error,
-}: {
-  ownerUserId: string;
-  localMessageId: string;
-  status: ChatPendingOutboxRow['status'];
-  error?: { code?: string | null; message?: string | null };
-}) => {
-  await ChatRepository.markOutboxItemStatus(ownerUserId, localMessageId, status, error);
-};
-
-const flushLocalTextOutbox = async (ownerUserId: string) => {
-  await ChatOutboxService.flushPending(ownerUserId);
-};
-
-const _buildMediaOutboxRow = ({
-  ownerUserId,
-  threadId,
-  message,
-  localUri,
-  fileName,
-  contentType,
-  mediaType,
-  documentSizeLabel,
-  documentTypeLabel,
-  byteSize,
-  width,
-  height,
-  durationMs,
-  attachmentId,
-  albumItems,
-}: {
-  ownerUserId: string;
-  threadId: string;
-  message: MessageType;
-  localUri: string;
-  fileName: string;
-  contentType: string;
-  mediaType: 'image' | 'video' | 'document';
-  documentSizeLabel?: string | null;
-  documentTypeLabel?: string | null;
-  byteSize?: number | null;
-  width?: number | null;
-  height?: number | null;
-  durationMs?: number | null;
-  attachmentId?: string | null;
-  albumItems?: {
-    localUri: string;
-    fileName: string;
-    contentType: string;
-    attachmentId: string;
-    byteSize?: number | null;
-    width?: number | null;
-    height?: number | null;
-    durationMs?: number | null;
-  }[];
-}): ChatPendingOutboxRow => {
-  const now = new Date().toISOString();
-  const localMessageId = message.clientMessageId ?? message.id;
-  return {
-    id: localMessageId,
-    local_message_id: localMessageId,
-    thread_id: threadId,
-    owner_user_id: ownerUserId,
-    payload_json:
-      safeJsonStringify({
-        kind: 'chat_media_send',
-        senderId: ownerUserId,
-        receiverId: threadId,
-        clientMessageId: localMessageId,
-        localUri,
-        fileName,
-        contentType,
-        mediaType,
-        attachmentId: attachmentId ?? createChatAttachmentId(),
-        byteSize: byteSize ?? null,
-        width: width ?? null,
-        height: height ?? null,
-        durationMs: durationMs ?? null,
-        replyToMessageId: message.replyToId ?? null,
-        documentName: mediaType === 'document' ? fileName : null,
-        documentSizeLabel: documentSizeLabel ?? null,
-        documentTypeLabel: documentTypeLabel ?? null,
-        albumItems: albumItems?.length ? albumItems : undefined,
-      }) ?? '{}',
-    attempt_count: 0,
-    max_attempts: DURABLE_CHAT_OUTBOX_MAX_ATTEMPTS,
-    next_retry_at: null,
-    status: 'queued',
-    error_code: null,
-    error_message: null,
-    created_at: now,
-    updated_at: now,
-  };
-};
-
-const buildVoiceOutboxRow = ({
-  ownerUserId,
-  threadId,
-  message,
-  localUri,
-  fileName,
-  contentType,
-  durationSeconds,
-  waveform,
-}: {
-  ownerUserId: string;
-  threadId: string;
-  message: MessageType;
-  localUri: string;
-  fileName: string;
-  contentType: string;
-  durationSeconds: number;
-  waveform: number[];
-}): ChatPendingOutboxRow => {
-  const now = new Date().toISOString();
-  const localMessageId = message.clientMessageId ?? message.id;
-  return {
-    id: localMessageId,
-    local_message_id: localMessageId,
-    thread_id: threadId,
-    owner_user_id: ownerUserId,
-    payload_json:
-      safeJsonStringify({
-        kind: 'chat_voice_send',
-        senderId: ownerUserId,
-        receiverId: threadId,
-        clientMessageId: localMessageId,
-        localUri,
-        fileName,
-        contentType,
-        attachmentId: createChatAttachmentId(),
-        durationSeconds,
-        waveform,
-        replyToMessageId: message.replyToId ?? null,
-      }) ?? '{}',
-    attempt_count: 0,
-    max_attempts: DURABLE_CHAT_OUTBOX_MAX_ATTEMPTS,
-    next_retry_at: null,
-    status: 'queued',
-    error_code: null,
-    error_message: null,
-    created_at: now,
-    updated_at: now,
-  };
-};
-
-const mergeOfflineMediaIntoMessage = (nextMessage: MessageType, previous?: MessageType | null): MessageType => {
-  if (!previous) return nextMessage;
-  if (nextMessage.type === 'image' && (nextMessage.mediaItems?.length || previous.mediaItems?.length)) {
-    const previousByAttachment = new Map(
-      (previous.mediaItems ?? []).map((mediaItem) => [mediaItem.attachmentId, mediaItem]),
-    );
-    const nextItems = (nextMessage.mediaItems ?? previous.mediaItems ?? []).map((mediaItem) => {
-      const previousItem = previousByAttachment.get(mediaItem.attachmentId);
-      return {
-        ...mediaItem,
-        localUri: mediaItem.localUri ?? previousItem?.localUri,
-        signedUrl: mediaItem.signedUrl ?? previousItem?.signedUrl,
-      };
-    });
-    return {
-      ...nextMessage,
-      mediaItems: nextItems,
-      offlineImageUri: nextMessage.offlineImageUri ?? previous.offlineImageUri ?? nextItems[0]?.localUri,
-    };
-  }
-  if (nextMessage.type === 'image' && !nextMessage.offlineImageUri && previous.offlineImageUri) {
-    return { ...nextMessage, offlineImageUri: previous.offlineImageUri };
-  }
-  if (nextMessage.type === 'video' && !nextMessage.offlineVideoUri && previous.offlineVideoUri) {
-    return { ...nextMessage, offlineVideoUri: previous.offlineVideoUri };
-  }
-  return nextMessage;
-};
-
-const PENDING_LOCAL_MESSAGE_STATUSES: ReadonlySet<NonNullable<MessageType['status']>> = new Set([
-  'sending',
-  'queued',
-  'failed',
-]);
-
-const hasLikelyServerMatch = (
-  localMessage: MessageType,
-  serverMessages: MessageType[],
-  currentUserId: string,
-) => {
-  if (localMessage.senderId !== currentUserId) return false;
-  if (localMessage.clientMessageId) {
-    return serverMessages.some(
-      (serverMessage) =>
-        serverMessage.senderId === currentUserId &&
-        serverMessage.clientMessageId === localMessage.clientMessageId,
-    );
-  }
-  const localTimestamp = localMessage.timestamp.getTime();
-  return serverMessages.some((serverMessage) => {
-    if (serverMessage.senderId !== currentUserId) return false;
-    if (serverMessage.type !== localMessage.type) return false;
-    if ((serverMessage.replyToId ?? null) !== (localMessage.replyToId ?? null)) return false;
-    if (Math.abs(serverMessage.timestamp.getTime() - localTimestamp) > 120000) return false;
-
-    switch (localMessage.type) {
-      case 'voice':
-        return true;
-      case 'image':
-        return Boolean(localMessage.imageUrl) ? localMessage.imageUrl === serverMessage.imageUrl : true;
-      case 'video':
-        return Boolean(localMessage.videoUrl) ? localMessage.videoUrl === serverMessage.videoUrl : true;
-      case 'document':
-        return localMessage.document?.name
-          ? localMessage.document.name === serverMessage.document?.name
-          : localMessage.text === serverMessage.text;
-      case 'location':
-      case 'date_plan':
-      case 'mood_sticker':
-      case 'text':
-        return localMessage.text === serverMessage.text;
-      case 'system':
-        return false;
-      default:
-        return localMessage.text === serverMessage.text;
-    }
-  });
-};
-
-const mergeFetchedMessagesWithLocalPending = ({
-  fetchedMessages,
-  previousMessages,
-  currentUserId,
-  debug,
-}: {
-  fetchedMessages: MessageType[];
-  previousMessages: MessageType[];
-  currentUserId: string;
-  debug?: (payload: {
-    preservedPendingCount: number;
-    droppedPendingCount: number;
-    preservedPendingIds: string[];
-    droppedPendingIds: string[];
-    preservedPendingTypes: string[];
-    droppedPendingTypes: string[];
-  }) => void;
-}) => {
-  const fetchedIds = new Set(fetchedMessages.map((message) => message.id));
-  const preservedPending: MessageType[] = [];
-  const droppedPending: MessageType[] = [];
-  const pendingLocals = previousMessages.filter((message) => {
-    if (fetchedIds.has(message.id)) return false;
-    if (!message.status || !PENDING_LOCAL_MESSAGE_STATUSES.has(message.status)) return false;
-    if (message.senderId !== currentUserId) return false;
-    if (message.type === 'system' || message.isSystem) return false;
-    const shouldKeep = !message.id.startsWith('temp-')
-      ? message.status === 'failed'
-      : !hasLikelyServerMatch(message, fetchedMessages, currentUserId);
-    if (shouldKeep) preservedPending.push(message);
-    else droppedPending.push(message);
-    return shouldKeep;
-  });
-
-  if (debug && (preservedPending.length > 0 || droppedPending.length > 0)) {
-    debug({
-      preservedPendingCount: preservedPending.length,
-      droppedPendingCount: droppedPending.length,
-      preservedPendingIds: preservedPending.map((message) => message.id),
-      droppedPendingIds: droppedPending.map((message) => message.id),
-      preservedPendingTypes: preservedPending.map((message) => `${message.type}:${message.status ?? 'none'}`),
-      droppedPendingTypes: droppedPending.map((message) => `${message.type}:${message.status ?? 'none'}`),
-    });
-  }
-
-  if (pendingLocals.length === 0) return fetchedMessages;
-
-  return [...fetchedMessages, ...pendingLocals].sort(
-    (a, b) => a.timestamp.getTime() - b.timestamp.getTime(),
-  );
-};
-
-const _mergeIncrementalFetchedMessages = (
-  previousMessages: MessageType[],
-  fetchedMessages: MessageType[],
-) => {
-  if (fetchedMessages.length === 0) return previousMessages;
-  const byId = new Map(previousMessages.map((message) => [message.id, message] as const));
-  const findExistingIdByClientMessageId = (clientMessageId: string, nextId: string) => {
-    for (const [id, message] of byId.entries()) {
-      if (id !== nextId && message.clientMessageId === clientMessageId) {
-        return id;
-      }
-    }
-    return null;
-  };
-
-  fetchedMessages.forEach((message) => {
-    const existingClientId = message.clientMessageId
-      ? findExistingIdByClientMessageId(message.clientMessageId, message.id)
-      : null;
-    const previous = byId.get(existingClientId ?? message.id);
-    if (existingClientId) {
-      byId.delete(existingClientId);
-    }
-    byId.set(
-      message.id,
-      previous
-        ? {
-            ...previous,
-            ...message,
-            reactions: message.reactions?.length ? message.reactions : previous.reactions,
-            replyTo: message.replyTo ?? previous.replyTo,
-            offlineImageUri: message.offlineImageUri ?? previous.offlineImageUri,
-            offlineVideoUri: message.offlineVideoUri ?? previous.offlineVideoUri,
-            voiceMessage:
-              message.voiceMessage && previous.voiceMessage
-                ? { ...message.voiceMessage, isPlaying: previous.voiceMessage.isPlaying }
-                : message.voiceMessage ?? previous.voiceMessage,
-          }
-        : message,
-    );
-  });
-
-  return Array.from(byId.values()).sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-};
 
 type MediaUploadStatus = {
   id: number;
   title: string;
   subtitle: string;
   icon: ComponentProps<typeof MaterialCommunityIcons>['name'];
+};
+
+type PreparingMediaBubble = {
+  message: MessageType;
+  attachmentIds: string[];
+  mediaGroupId: string | null;
 };
 
 const getReportEvidencePreview = (message?: MessageType | null) => {
@@ -755,206 +438,6 @@ type ReactionRow = {
 };
 
 // Quick reactions
-const buildMapsLink = (lat: number, lng: number) =>
-  `https://maps.google.com/?q=${lat},${lng}`;
-
-const parseCoordsFromMapsUrl = (url?: string | null) => {
-  if (!url) return null;
-  const match = url.match(/q=([-0-9.]+),([-0-9.]+)/);
-  if (!match) return null;
-  const lat = Number(match[1]);
-  const lng = Number(match[2]);
-  if (Number.isNaN(lat) || Number.isNaN(lng)) return null;
-  return { lat, lng };
-};
-
-const getStaticMapUrl = (lat: number, lng: number) => {
-  if (!GOOGLE_MAPS_WEB_API_KEY) return null;
-  const base = 'https://maps.googleapis.com/maps/api/staticmap';
-  const center = `${lat},${lng}`;
-  const marker = `color:0x0ea5a0|${center}`;
-  const mapId = GOOGLE_MAPS_MAP_ID ? `&map_id=${encodeURIComponent(GOOGLE_MAPS_MAP_ID)}` : '';
-  return `${base}?center=${center}&zoom=15&size=640x360&scale=2&markers=${encodeURIComponent(marker)}&key=${GOOGLE_MAPS_WEB_API_KEY}${mapId}`;
-};
-
-const parseCoordsLine = (value?: string | null) => {
-  if (!value) return null;
-  const match = value.match(/(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/);
-  if (!match) return null;
-  const lat = Number(match[1]);
-  const lng = Number(match[2]);
-  if (Number.isNaN(lat) || Number.isNaN(lng)) return null;
-  return { lat, lng };
-};
-
-const parseLocationMessage = (rawText: string): MessageType['location'] | null => {
-  const lines = rawText.split('\n').map((line) => line.trim()).filter(Boolean);
-  if (lines.length === 0) return null;
-  const first = lines[0] ?? '';
-  const isLive = first.startsWith(LOCATION_LIVE_PREFIX);
-  const isPinned = first.startsWith(LOCATION_TEXT_PREFIX);
-  if (!isLive && !isPinned) return null;
-
-  let label = '';
-  let address = '';
-  let coordsLine = '';
-  let mapLink = '';
-  let expiresAt: Date | null = null;
-
-  if (isLive) {
-    const rawExpiry = first.slice(LOCATION_LIVE_PREFIX.length).trim();
-    if (rawExpiry) {
-      const parsed = new Date(rawExpiry);
-      if (!Number.isNaN(parsed.getTime())) {
-        expiresAt = parsed;
-      }
-    }
-    coordsLine = lines[1] ?? '';
-    label = lines[2] ?? '';
-    address = lines[3] ?? '';
-    mapLink = lines.find((line) => line.includes('maps.google.com') || line.startsWith('http')) ?? '';
-  } else {
-    label = first.replace(LOCATION_TEXT_PREFIX, '').trim();
-    coordsLine = lines[1] ?? '';
-    mapLink = lines.find((line) => line.includes('maps.google.com') || line.startsWith('http')) ?? '';
-    if (lines.length > 2 && lines[2] !== mapLink) {
-      address = lines[2];
-    }
-  }
-
-  const coords = parseCoordsLine(coordsLine) ?? parseCoordsFromMapsUrl(mapLink);
-  if (!coords) return null;
-  const resolvedLabel = label || address || `${coords.lat.toFixed(4)}, ${coords.lng.toFixed(4)}`;
-  const mapUrl = getStaticMapUrl(coords.lat, coords.lng);
-
-  return {
-    lat: coords.lat,
-    lng: coords.lng,
-    label: resolvedLabel,
-    address: address || undefined,
-    mapUrl: mapUrl || undefined,
-    mapLink: mapLink || buildMapsLink(coords.lat, coords.lng),
-    live: isLive,
-    expiresAt,
-  };
-};
-
-const buildDateInvitePayload = ({
-  planId,
-  parentPlanId,
-  scheduledFor,
-  place,
-  note,
-  status = 'pending',
-  conciergeRequested = false,
-  responseKind = 'initial',
-}: {
-  planId?: string | null;
-  parentPlanId?: string | null;
-  scheduledFor: Date;
-  place: DatePlaceOption;
-  note?: string | null;
-  status?: DatePlanStatus;
-  conciergeRequested?: boolean;
-  responseKind?: DatePlanResponseKind;
-}) =>
-  `${DATE_PLAN_TEXT_PREFIX}${JSON.stringify({
-    planId: planId || null,
-    parentPlanId: parentPlanId || null,
-    venueId: place.venueId ?? null,
-    scheduledFor: scheduledFor.toISOString(),
-    placeName: place.name,
-    placeAddress: place.address ?? null,
-    source: place.source,
-    badges: place.badges ?? [],
-    summary: place.summary ?? null,
-    city: place.city ?? null,
-    lat: place.lat,
-    lng: place.lng,
-    note: note?.trim() || null,
-    responseKind,
-    status,
-    conciergeRequested,
-  })}`;
-
-const parseDateInviteMessage = (rawText: string): MessageType['dateInvite'] | null => {
-  if (!rawText?.startsWith(DATE_PLAN_TEXT_PREFIX)) return null;
-  try {
-    const parsed = JSON.parse(rawText.slice(DATE_PLAN_TEXT_PREFIX.length));
-    const scheduledFor = new Date(parsed?.scheduledFor);
-    if (!parsed?.placeName || Number.isNaN(scheduledFor.getTime())) return null;
-    const lat = typeof parsed?.lat === 'number' ? parsed.lat : null;
-    const lng = typeof parsed?.lng === 'number' ? parsed.lng : null;
-    const mapUrl = lat != null && lng != null ? getStaticMapUrl(lat, lng) : null;
-    const mapLink = lat != null && lng != null ? buildMapsLink(lat, lng) : null;
-    return {
-      planId: typeof parsed?.planId === 'string' ? parsed.planId : null,
-      parentPlanId: typeof parsed?.parentPlanId === 'string' ? parsed.parentPlanId : null,
-      venueId: typeof parsed?.venueId === 'string' ? parsed.venueId : null,
-      scheduledFor,
-      placeName: String(parsed.placeName),
-      placeAddress: typeof parsed?.placeAddress === 'string' ? parsed.placeAddress : undefined,
-      note: typeof parsed?.note === 'string' ? parsed.note : undefined,
-      source: (parsed?.source as DatePlaceSource) || 'search',
-      badges: Array.isArray(parsed?.badges) ? parsed.badges.filter((value: unknown) => typeof value === 'string') : [],
-      summary: typeof parsed?.summary === 'string' ? parsed.summary : null,
-      city: typeof parsed?.city === 'string' ? parsed.city : null,
-      lat,
-      lng,
-      mapUrl,
-      mapLink,
-      responseKind:
-        parsed?.responseKind === 'counter_time' ||
-        parsed?.responseKind === 'counter_place' ||
-        parsed?.responseKind === 'counter_both'
-          ? parsed.responseKind
-          : 'initial',
-      status:
-        parsed?.status === 'accepted' ||
-        parsed?.status === 'declined' ||
-        parsed?.status === 'cancelled' ||
-        parsed?.status === 'countered'
-          ? parsed.status
-          : 'pending',
-      conciergeRequested: Boolean(parsed?.conciergeRequested),
-    };
-  } catch (error) {
-    console.log('[chat] date invite parse error', error);
-    return null;
-  }
-};
-
-const mergeDateInviteWithPlanRow = (
-  invite: MessageType['dateInvite'],
-  plan: DatePlanRow,
-): MessageType['dateInvite'] => {
-  if (!invite) return invite;
-  const lat = typeof plan.lat === 'number' ? plan.lat : invite.lat ?? null;
-  const lng = typeof plan.lng === 'number' ? plan.lng : invite.lng ?? null;
-  return {
-    ...invite,
-    planId: plan.id,
-    parentPlanId: plan.parent_plan_id,
-    venueId: plan.venue_id,
-    scheduledFor: new Date(plan.scheduled_for),
-    placeName: plan.place_name,
-    placeAddress: plan.place_address || undefined,
-    note: plan.note || undefined,
-    source: (plan.place_source as DatePlaceSource) || invite.source,
-    badges: Array.isArray(plan.place_badges)
-      ? plan.place_badges.filter((value): value is string => typeof value === 'string')
-      : invite.badges ?? [],
-    summary: plan.place_summary,
-    city: plan.city,
-    lat,
-    lng,
-    mapUrl: lat != null && lng != null ? getStaticMapUrl(lat, lng) : null,
-    mapLink: lat != null && lng != null ? buildMapsLink(lat, lng) : null,
-    status: (plan.status as DatePlanStatus) || invite.status || 'pending',
-    conciergeRequested: Boolean(plan.concierge_requested),
-    responseKind: (plan.response_kind as DatePlanResponseKind) || invite.responseKind || 'initial',
-  };
-};
 
 const dedupeMessagesById = (items: MessageType[]) => {
   if (items.length <= 1) return items;
@@ -990,196 +473,7 @@ type MessageRenderMeta = {
   isActionPinned: boolean;
 };
 
-const buildDateQuickSlots = (baseNow: Date) => {
-  const tonight = new Date(baseNow);
-  tonight.setHours(baseNow.getHours() < 18 ? 19 : 20, 0, 0, 0);
-  if (tonight.getTime() <= baseNow.getTime()) {
-    tonight.setDate(tonight.getDate() + 1);
-    tonight.setHours(19, 0, 0, 0);
-  }
 
-  const tomorrow = new Date(baseNow);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  tomorrow.setHours(19, 0, 0, 0);
-
-  const saturdayBrunch = new Date(baseNow);
-  const daysUntilSaturday = (6 - saturdayBrunch.getDay() + 7) % 7 || 7;
-  saturdayBrunch.setDate(saturdayBrunch.getDate() + daysUntilSaturday);
-  saturdayBrunch.setHours(11, 30, 0, 0);
-
-  return [
-    {
-      id: 'tonight',
-      label: tonight.getDate() === baseNow.getDate() ? 'Tonight' : 'Next evening',
-      caption: tonight.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
-      date: tonight,
-    },
-    {
-      id: 'tomorrow',
-      label: 'Tomorrow',
-      caption: 'Dinner time',
-      date: tomorrow,
-    },
-    {
-      id: 'saturday_brunch',
-      label: 'Saturday brunch',
-      caption: '11:30 AM',
-      date: saturdayBrunch,
-    },
-  ] as const;
-};
-
-const getMetadataStringArray = (metadata: Record<string, unknown> | null | undefined, key: string) => {
-  const value = metadata?.[key];
-  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0) : [];
-};
-
-
-const getDatePlaceExperience = (place: DatePlaceOption | null) => {
-  if (!place) {
-    return {
-      vibe: null as string | null,
-      trustReasons: [] as string[],
-      perks: [] as string[],
-      conciergeServices: [] as string[],
-    };
-  }
-
-  const metadata = place.metadata ?? null;
-  const vibe =
-    typeof metadata?.date_vibe === 'string' && metadata.date_vibe.trim().length > 0
-      ? metadata.date_vibe
-      : place.source === 'betweener_pick'
-      ? 'First-date ready'
-      : place.source === 'preferred'
-      ? 'Closer to their side'
-      : place.source === 'nearby'
-      ? 'Easy to get to'
-      : 'Flexible meet-up';
-
-  const defaultTrustReasons =
-    place.source === 'betweener_pick'
-      ? ['Public, easy-to-find venue', 'Comfort-first setup', 'Good for a first meeting']
-      : ['Public location', 'Easy to find on Maps', 'Simple to adjust if plans shift'];
-
-  const trustReasons = getMetadataStringArray(metadata, 'trust_reasons');
-  const conciergeServices = getMetadataStringArray(metadata, 'concierge_services');
-  const perks = [
-    ...((place.badges ?? []).filter((badge) => badge !== 'Betweener Safe Venue')),
-    ...(conciergeServices.length > 0 ? ['Betweener help available'] : []),
-  ];
-
-  return {
-    vibe,
-    trustReasons: trustReasons.length > 0 ? trustReasons : defaultTrustReasons,
-    perks,
-    conciergeServices,
-  };
-};
-
-const buildLocationMessageText = ({
-  lat,
-  lng,
-  label,
-  address,
-  live,
-  expiresAt,
-}: {
-  lat: number;
-  lng: number;
-  label: string;
-  address?: string | null;
-  live?: boolean;
-  expiresAt?: Date | null;
-}) => {
-  const safeLabel = label?.trim() || `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
-  const mapLink = buildMapsLink(lat, lng);
-  if (live && expiresAt) {
-    return [
-      `${LOCATION_LIVE_PREFIX}${expiresAt.toISOString()}`,
-      `${lat},${lng}`,
-      safeLabel,
-      address?.trim() || '',
-      mapLink,
-    ]
-      .filter(Boolean)
-      .join('\n');
-  }
-  return [
-    `${LOCATION_TEXT_PREFIX} ${safeLabel}`,
-    `${lat},${lng}`,
-    address?.trim() || '',
-    mapLink,
-  ]
-    .filter(Boolean)
-    .join('\n');
-};
-
-type PlaceSuggestion = {
-  id: string;
-  primary: string;
-  secondary?: string | null;
-};
-
-type PlaceResult = {
-  id: string;
-  name: string;
-  address?: string | null;
-  lat: number;
-  lng: number;
-};
-
-type DatePlaceSource = 'betweener_pick' | 'nearby' | 'search' | 'preferred';
-
-type DatePlaceOption = PlaceResult & {
-  source: DatePlaceSource;
-  badges?: string[];
-  summary?: string | null;
-  city?: string | null;
-  venueId?: string | null;
-  metadata?: Record<string, unknown> | null;
-};
-
-const normalizeHeicImage = async (
-  asset: ImagePicker.ImagePickerAsset,
-  fallbackName: string
-) => {
-  const mime = asset.mimeType?.toLowerCase() ?? '';
-  const name = fallbackName || `image-${Date.now()}`;
-  const lowerName = name.toLowerCase();
-  const isHeic =
-    mime === 'image/heic' ||
-    mime === 'image/heif' ||
-    lowerName.endsWith('.heic') ||
-    lowerName.endsWith('.heif');
-
-  if (!isHeic) {
-    return {
-      uri: asset.uri,
-      fileName: name,
-      contentType: mime || 'image/jpeg',
-    };
-  }
-
-  const convertedUri = await NativeImageCompressor.compress(asset.uri, {
-    compressionMethod: 'manual',
-    maxWidth: 4096,
-    maxHeight: 4096,
-    quality: 0.92,
-    input: 'uri',
-    output: 'jpg',
-    returnableOutputType: 'uri',
-  });
-  let jpegName = name.replace(/\.(heic|heif)$/i, '.jpg');
-  if (!/\.[a-z0-9]+$/i.test(jpegName)) {
-    jpegName = `${jpegName}.jpg`;
-  }
-  return {
-    uri: convertedUri,
-    fileName: jpegName,
-    contentType: 'image/jpeg',
-  };
-};
 
 export default function ConversationScreen() {
   const insets = useSafeAreaInsets();
@@ -1340,10 +634,38 @@ export default function ConversationScreen() {
 
   const [messages, setMessages] = useState<MessageType[]>([]);
   const [messagesLoaded, setMessagesLoaded] = useState(false);
+  const attachmentFailureAlertsReadyRef = useRef(false);
+  const announcedAttachmentFailuresRef = useRef<Set<string>>(new Set());
   const [threadBootstrapSettled, setThreadBootstrapSettled] = useState(false);
   const [remoteMessagesChecked, setRemoteMessagesChecked] = useState(false);
   const [chatSafetyVisible, setChatSafetyVisible] = useState(false);
   const [networkReady, setNetworkReady] = useState(true);
+  const [albumCaptionEditorMessage, setAlbumCaptionEditorMessage] = useState<MessageType | null>(null);
+  const [albumCaptionSaving, setAlbumCaptionSaving] = useState(false);
+
+  useEffect(() => {
+    if (!messagesLoaded || !user?.id) return;
+    const failedAttachments = messages.filter((message) =>
+      message.senderId === user.id &&
+      message.status === 'failed' &&
+      (message.type === 'image' || message.type === 'video') &&
+      !isChatMediaModerationRejection(message.sendErrorCode),
+    );
+    if (!attachmentFailureAlertsReadyRef.current) {
+      failedAttachments.forEach((message) => announcedAttachmentFailuresRef.current.add(message.id));
+      attachmentFailureAlertsReadyRef.current = true;
+      return;
+    }
+    const newlyFailed = failedAttachments.filter(
+      (message) => !announcedAttachmentFailuresRef.current.has(message.id),
+    );
+    if (newlyFailed.length === 0) return;
+    newlyFailed.forEach((message) => announcedAttachmentFailuresRef.current.add(message.id));
+    const failure = getChatAttachmentFailurePresentation(
+      newlyFailed[newlyFailed.length - 1]?.sendErrorCode,
+    );
+    Alert.alert(failure.title, failure.message);
+  }, [messages, messagesLoaded, user?.id]);
   const signChatMediaUrl = useCallback(async (storagePath: string) => {
     const { data, error } = await supabase.storage
       .from(CHAT_MEDIA_BUCKET)
@@ -1483,6 +805,7 @@ export default function ConversationScreen() {
     setThreadBootstrapSettled(hasWarmThreadSnapshot);
     setRemoteMessagesChecked(false);
     setChatSafetyVisible(false);
+    setMediaSafetyNotice(null);
     seededMessageAnimationsRef.current = false;
     animatedMessageIdsRef.current.clear();
   }, [routeId]);
@@ -1501,9 +824,11 @@ export default function ConversationScreen() {
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [isUploadingVoice, setIsUploadingVoice] = useState(false);
   const [mediaUploadStatus, setMediaUploadStatus] = useState<MediaUploadStatus | null>(null);
+  const [mediaSafetyNotice, setMediaSafetyNotice] = useState<ChatMediaRejectionNotice | null>(null);
   const [isInputFocused, setIsInputFocused] = useState(false);
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
   const [showImagePicker, setShowImagePicker] = useState(false);
+  const [imageSendQuality, setImageSendQuality] = useState<ChatImageSendQuality>('standard');
   const [replyingTo, setReplyingTo] = useState<MessageType | null>(null);
   const [editingMessage, setEditingMessage] = useState<MessageType | null>(null);
   const [viewOnceMode, setViewOnceMode] = useState(false);
@@ -1522,6 +847,14 @@ export default function ConversationScreen() {
   const [imageViewerAlbumIndex, setImageViewerAlbumIndex] = useState(0);
   const [imageViewerAlbumCount, setImageViewerAlbumCount] = useState(1);
   const [videoViewerUrl, setVideoViewerUrl] = useState<string | null>(null);
+  useEffect(() => subscribeChatMediaRejectionNotices((notice) => {
+    if (notice.ownerUserId !== user?.id || notice.threadId !== activePeerMessageUserId) return;
+    setMessages((current) => current.filter((message) =>
+      message.id !== notice.localMessageId &&
+      message.clientMessageId !== notice.localMessageId,
+    ));
+    setMediaSafetyNotice(notice);
+  }), [activePeerMessageUserId, user?.id]);
   const [cachedImageUris, setCachedImageUris] = useState<Record<string, string>>({});
   const [cachedVideoUris, setCachedVideoUris] = useState<Record<string, string>>({});
   const [documentViewer, setDocumentViewer] = useState<
@@ -2085,7 +1418,26 @@ export default function ConversationScreen() {
     return availablePicks.filter((venue) => preferredCity.includes(venue.city.toLowerCase()));
   }, [betweenerVenues, peerProfile?.city, peerProfile?.location, peerProfile?.region]);
 
-  const renderedMessages = useMemo(() => dedupeMessagesById(messages), [messages]);
+  const renderedMessages = useMemo(
+    () => dedupeMessagesById(messages).filter(
+      (message) => !(
+        message.status === 'failed' &&
+        (message.type === 'image' || message.type === 'video') &&
+        isChatMediaModerationRejection(message.sendErrorCode)
+      ),
+    ),
+    [messages],
+  );
+  const shouldDismissMediaSafetyNotice = useMemo(
+    () => Boolean(mediaSafetyNotice && renderedMessages.some((message) =>
+      message.senderId === user?.id &&
+      message.timestamp.getTime() > mediaSafetyNotice.createdAt &&
+      message.status !== 'sending' &&
+      message.status !== 'queued' &&
+      message.status !== 'failed',
+    )),
+    [mediaSafetyNotice, renderedMessages, user?.id],
+  );
   const pinnedMessageIdSet = useMemo(() => new Set(pinnedMessageIds), [pinnedMessageIds]);
   const chatMessageCount = useMemo(
     () => renderedMessages.filter((message) => !message.isSystem).length,
@@ -2204,7 +1556,6 @@ export default function ConversationScreen() {
   const imagePinchScale = useRef(new Animated.Value(1)).current;
   const imageScaleRef = useRef(1);
   const imageViewerRequestRef = useRef(0);
-  const imageViewerSwipeStartXRef = useRef<number | null>(null);
   const imageViewerSourceRef = useRef<{
     message: MessageType;
     renderedUrl: string;
@@ -2225,6 +1576,7 @@ export default function ConversationScreen() {
   const voicePreviewSoundRef = useRef<AudioPlayer | null>(null);
   const mapRef = useRef<MapView>(null);
   const inputRef = useRef<TextInput>(null);
+  const inputSelectionRef = useRef<TextSelection>({ start: 0, end: 0 });
   const reconnectToastOpacity = useRef(new Animated.Value(0)).current;
   const chatActionToastOpacity = useRef(new Animated.Value(0)).current;
   const momentPulse = useRef(new Animated.Value(0)).current;
@@ -2803,6 +2155,8 @@ const resolveQueuedVideoUri = async (
         mediaExpectedCount: row.media_expected_count ?? null,
         mediaGroupId: row.media_group_id ?? null,
         mediaCaption: row.media_caption ?? null,
+        mediaKind: parseChatExpressionMediaKind(row.media_kind),
+        providerMedia: parseChatProviderMediaReference(row.provider_media),
         previewStoragePath: mediaItems[0]?.previewStoragePath ?? null,
         imageUrl,
         videoUrl,
@@ -2877,9 +2231,10 @@ const resolveQueuedVideoUri = async (
     };
   }, []);
 
-  const linkReplies = useCallback((items: MessageType[]) => {
+  const linkReplies = useCallback((items: MessageType[], additionalTargets: MessageType[] = []) => {
     if (items.length === 0) return items;
-    const map = new Map(items.map((msg) => [msg.id, msg]));
+    const map = new Map(additionalTargets.map((msg) => [msg.id, msg]));
+    items.forEach((msg) => map.set(msg.id, msg));
     return items.map((msg) => {
       if (!msg.replyToId) return msg;
       const target = map.get(msg.replyToId);
@@ -2900,6 +2255,8 @@ const resolveQueuedVideoUri = async (
     reconcileDeliveredFallback,
     getMessageRevisionKey: getChatMessageRevisionKey,
   });
+  const localThreadStateRef = useRef(localThreadState);
+  localThreadStateRef.current = localThreadState;
 
   const localHydrationActionRefs = useRef<{
     fetchHiddenMessages: () => Promise<void>;
@@ -2930,41 +2287,42 @@ const resolveQueuedVideoUri = async (
   );
 
   useLayoutEffect(() => {
+    const localSnapshot = localThreadStateRef.current;
     if (!user?.id || !activePeerMessageUserId) return;
     if (!isScreenFocusedRef.current) return;
-    if (!localThreadState.mergedMessages || localThreadState.mergedMessages.length === 0) return;
-    if (!localThreadState.revision) return;
+    if (!localSnapshot.mergedMessages || localSnapshot.mergedMessages.length === 0) return;
+    if (!localSnapshot.revision) return;
 
     const localKey = `${user.id}:${activePeerMessageUserId}`;
-    const applyRevision = `${localKey}:${remoteMessagesChecked ? 'remote' : 'local'}:${localThreadState.revision}`;
+    const applyRevision = `${localKey}:${remoteMessagesChecked ? 'remote' : 'local'}:${localSnapshot.revision}`;
     if (chatThreadLocalAppliedRevisionRef.current === applyRevision) return;
     chatThreadLocalAppliedRevisionRef.current = applyRevision;
     const isFirstLocalApply = chatThreadLocalLoadedKeyRef.current !== localKey;
-    const hasMessageChanges = messagesRef.current !== localThreadState.mergedMessages;
+    const hasMessageChanges = messagesRef.current !== localSnapshot.mergedMessages;
     if (isFirstLocalApply) {
       chatThreadLocalLoadedKeyRef.current = localKey;
     }
 
     if (isFirstLocalApply || hasMessageChanges) {
-      console.log('[chat][thread][local] observer-apply', {
-        currentUserId: user.id,
-        peerUserId: activePeerMessageUserId,
-        messageCount: localThreadState.mergedMessages.length,
-        hasMore: localThreadState.hasMore,
-        remoteMessagesChecked,
-      });
+      if (__DEV__) {
+        console.log('[chat][thread][local] observer-apply', {
+          messageCount: localSnapshot.mergedMessages.length,
+          hasMore: localSnapshot.hasMore,
+          remoteMessagesChecked,
+        });
+      }
     }
 
     if (hasMessageChanges) {
       setMessages((prev) => {
         const prevKey = prev.map(getChatMessageRevisionKey).join("|");
-        const nextKey = localThreadState.mergedMessages!
+        const nextKey = localSnapshot.mergedMessages!
           .map(getChatMessageRevisionKey)
           .join("|");
-        return prevKey === nextKey ? prev : localThreadState.mergedMessages!;
+        return prevKey === nextKey ? prev : localSnapshot.mergedMessages!;
       });
     }
-    const localViewOnceIds = localThreadState.mergedMessages
+    const localViewOnceIds = localSnapshot.mergedMessages
       .filter((message) => message.isViewOnce)
       .map((message) => message.id);
     if (localViewOnceIds.length > 0) {
@@ -2973,16 +2331,16 @@ const resolveQueuedVideoUri = async (
     setMessagesLoaded((prev) => (prev ? prev : true));
     setThreadBootstrapSettled((prev) => (prev ? prev : true));
     if (!remoteMessagesChecked) {
-      setHasMore((prev) => (prev === localThreadState.hasMore ? prev : localThreadState.hasMore));
+      setHasMore((prev) => (prev === localSnapshot.hasMore ? prev : localSnapshot.hasMore));
     }
     setOldestTimestamp((prev) => {
       const prevTime = prev?.getTime() ?? null;
-      const nextTime = localThreadState.oldestTimestamp?.getTime() ?? null;
-      return prevTime === nextTime ? prev : localThreadState.oldestTimestamp;
+      const nextTime = localSnapshot.oldestTimestamp?.getTime() ?? null;
+      return prevTime === nextTime ? prev : localSnapshot.oldestTimestamp;
     });
   }, [
     activePeerMessageUserId,
-    localThreadState,
+    localThreadState.revision,
     remoteMessagesChecked,
     hydrateLocalViewOnceStatus,
     user?.id,
@@ -4069,7 +3427,21 @@ const resolveQueuedVideoUri = async (
           code: (err as { code?: string })?.code ?? null,
           message: err instanceof Error ? err.message : String(err),
         }, err);
-        Alert.alert('View once', getViewOnceUploadErrorMessage(kind, err));
+        if (
+          isChatMediaModerationRejection((err as { code?: string })?.code) ||
+          isChatMediaModerationRejection(err instanceof Error ? err.message : err)
+        ) {
+          publishChatMediaRejectionNotice({
+            ownerUserId: user.id,
+            threadId: activePeerMessageUserId,
+            localMessageId: tempId,
+            attachmentType: 'image',
+            reasonCategory: 'MEDIA_POLICY_REJECTED',
+            viewOnce: true,
+          });
+        } else {
+          Alert.alert('View once', getViewOnceUploadErrorMessage(kind, err));
+        }
       }
       return;
     }
@@ -4254,6 +3626,54 @@ const resolveQueuedVideoUri = async (
     });
   }, [activePeerMessageUserId, conversationId, isBlockedByMe, isChatBlocked, networkReady, replyingTo, user?.id]);
 
+  const beginPreparingMediaBubble = useCallback((items: {
+    localUri: string;
+    mediaType: 'image' | 'video';
+    contentType?: string | null;
+    width?: number | null;
+    height?: number | null;
+    byteSize?: number | null;
+    durationMs?: number | null;
+  }[], caption = '', mediaKind: MessageType['mediaKind'] = null): PreparingMediaBubble | null => {
+    if (!user?.id || items.length === 0) return null;
+    const attachmentIds = items.map(() => createChatAttachmentId());
+    const mediaGroupId = items.length > 1 ? createChatAttachmentId() : null;
+    const clientMessageId = mediaGroupId
+      ? `temp-album-${mediaGroupId}`
+      : `temp-${items[0].mediaType}-${Date.now()}`;
+    const message = {
+      ...createPreparingMediaMessage({
+        id: clientMessageId,
+        senderId: user.id,
+        caption,
+        mediaGroupId,
+        replyTo: replyingTo || undefined,
+        items: items.map((item, index) => ({
+          attachmentId: attachmentIds[index],
+          type: item.mediaType,
+          localUri: item.localUri,
+          mimeType: item.contentType ?? null,
+          width: item.width ?? null,
+          height: item.height ?? null,
+          byteSize: item.byteSize ?? null,
+          durationMs: item.durationMs ?? null,
+        })),
+      }),
+      mediaKind,
+    };
+    setMessages((current) => appendMessage(current, message));
+    setReplyingTo(null);
+    setEditingMessage(null);
+    setViewOnceMode(false);
+    requestAnimationFrame(() => flatListRef.current?.scrollToEnd({ animated: true }));
+    return { message, attachmentIds, mediaGroupId };
+  }, [replyingTo, user?.id]);
+
+  const discardPreparingMediaBubble = useCallback((bubble: PreparingMediaBubble | null) => {
+    if (!bubble) return;
+    setMessages((current) => current.filter((message) => message.id !== bubble.message.id));
+  }, []);
+
   const queueMediaAttachment = useCallback(async ({
     localUri,
     fileName,
@@ -4265,6 +3685,8 @@ const resolveQueuedVideoUri = async (
     width,
     height,
     durationMs,
+    preparingBubble,
+    mediaKind,
   }: {
     localUri: string;
     fileName: string;
@@ -4276,10 +3698,12 @@ const resolveQueuedVideoUri = async (
     width?: number | null;
     height?: number | null;
     durationMs?: number | null;
+    preparingBubble?: PreparingMediaBubble | null;
+    mediaKind?: MessageType['mediaKind'];
   }) => {
     if (!user?.id || !conversationId) return;
     const stagedUri = await stageOfflineChatUpload(localUri, fileName);
-    const attachmentId = createChatAttachmentId();
+    const attachmentId = preparingBubble?.attachmentIds[0] ?? createChatAttachmentId();
     let preview: Awaited<ReturnType<typeof createChatAttachmentPreview>>;
     try {
       preview = await createChatAttachmentPreview({
@@ -4293,24 +3717,54 @@ const resolveQueuedVideoUri = async (
       await removeStagedOfflineChatUpload(stagedUri);
       throw error;
     }
-    const tempId = `temp-${mediaType}-${Date.now()}`;
+    const tempId = preparingBubble?.message.id ?? `temp-${mediaType}-${Date.now()}`;
     const clientMessageId = tempId;
-    const optimistic = createQueuedMediaMessage({
+    const queuedMessage = createQueuedMediaMessage({
       id: clientMessageId,
       senderId: user.id,
       mediaType,
       stagedUri,
       fileName,
-      replyTo: replyingTo || undefined,
+      replyTo: preparingBubble?.message.replyTo ?? replyingTo ?? undefined,
       documentSizeLabel,
       documentTypeLabel,
       previewUri: preview?.localUri ?? null,
     });
+    const optimistic: MessageType = mediaType === 'image' || mediaType === 'video'
+      ? {
+          ...queuedMessage,
+          mediaKind: mediaKind ?? preparingBubble?.message.mediaKind ?? null,
+          mediaItems: [{
+            attachmentId,
+            index: 0,
+            type: mediaType,
+            storagePath: '',
+            mimeType: contentType,
+            width: width ?? null,
+            height: height ?? null,
+            byteSize: byteSize ?? null,
+            durationMs: durationMs ?? null,
+            localUri: stagedUri,
+            localPreviewUri: preview?.localUri ?? null,
+            transferState: 'queued',
+            uploadProgress: 0,
+          }],
+          mediaExpectedCount: 1,
+        }
+      : queuedMessage;
 
-    setMessages((prev) => [...prev, optimistic]);
-    setReplyingTo(null);
-    setEditingMessage(null);
-    setViewOnceMode(false);
+    setMessages((current) => {
+      const existingIndex = current.findIndex((message) => message.id === clientMessageId);
+      if (existingIndex < 0) return appendMessage(current, optimistic);
+      const next = current.slice();
+      next[existingIndex] = optimistic;
+      return next;
+    });
+    if (!preparingBubble) {
+      setReplyingTo(null);
+      setEditingMessage(null);
+      setViewOnceMode(false);
+    }
 
     try {
       await ChatRepository.enqueueMessageWithOutbox(
@@ -4358,7 +3812,7 @@ const resolveQueuedVideoUri = async (
     setTimeout(() => {
       flatListRef.current?.scrollToEnd({ animated: true });
     }, 100);
-  }, [activePeerMessageUserId, replyingTo, user?.id]);
+  }, [activePeerMessageUserId, conversationId, replyingTo, user?.id]);
 
   const queueMediaAlbum = useCallback(async (items: {
     localUri: string;
@@ -4369,7 +3823,7 @@ const resolveQueuedVideoUri = async (
     width?: number | null;
     height?: number | null;
     durationMs?: number | null;
-  }[], caption = '') => {
+  }[], caption = '', preparingBubble?: PreparingMediaBubble | null) => {
     if (!user?.id || !activePeerMessageUserId || items.length < 2) return;
     const selectedItems = items.slice(0, 10);
     const stagedItems: {
@@ -4391,7 +3845,7 @@ const resolveQueuedVideoUri = async (
     try {
       for (let index = 0; index < selectedItems.length; index += 1) {
         const mediaItem = selectedItems[index];
-        const attachmentId = createChatAttachmentId();
+        const attachmentId = preparingBubble?.attachmentIds[index] ?? createChatAttachmentId();
         const localUri = await stageOfflineChatUpload(mediaItem.localUri, `${index}-${mediaItem.fileName}`);
         try {
           const preview = await createChatAttachmentPreview({
@@ -4412,6 +3866,14 @@ const resolveQueuedVideoUri = async (
             previewHeight: preview?.height ?? null,
           });
         } catch (error) {
+          if (__DEV__) {
+            console.log('[chat][album] staging-failed', {
+              attachmentIndex: index,
+              attachmentId,
+              stage: 'preview_generation',
+              code: error instanceof Error ? error.message : String(error),
+            });
+          }
           await removeStagedOfflineChatUpload(localUri);
           throw error;
         }
@@ -4423,8 +3885,8 @@ const resolveQueuedVideoUri = async (
       ]));
       throw error;
     }
-    const mediaGroupId = createChatAttachmentId();
-    const clientMessageId = `temp-album-${mediaGroupId}`;
+    const mediaGroupId = preparingBubble?.mediaGroupId ?? createChatAttachmentId();
+    const clientMessageId = preparingBubble?.message.id ?? `temp-album-${mediaGroupId}`;
     const mediaItems: ChatMediaItem[] = stagedItems.map((mediaItem, index) => ({
       attachmentId: mediaItem.attachmentId,
       index,
@@ -4456,13 +3918,21 @@ const resolveQueuedVideoUri = async (
       mediaExpectedCount: stagedItems.length,
       mediaGroupId,
       mediaCaption: caption.trim() || null,
-      replyToId: replyingTo?.id ?? null,
-      replyTo: replyingTo || undefined,
+      replyToId: preparingBubble?.message.replyToId ?? replyingTo?.id ?? null,
+      replyTo: preparingBubble?.message.replyTo ?? replyingTo ?? undefined,
     };
-    setMessages((current) => [...current, optimistic]);
-    setReplyingTo(null);
-    setEditingMessage(null);
-    setViewOnceMode(false);
+    setMessages((current) => {
+      const existingIndex = current.findIndex((message) => message.id === clientMessageId);
+      if (existingIndex < 0) return appendMessage(current, optimistic);
+      const next = current.slice();
+      next[existingIndex] = optimistic;
+      return next;
+    });
+    if (!preparingBubble) {
+      setReplyingTo(null);
+      setEditingMessage(null);
+      setViewOnceMode(false);
+    }
 
     try {
       await ChatRepository.enqueueMessageWithOutbox(
@@ -4909,6 +4379,7 @@ const resolveQueuedVideoUri = async (
     }).start(({ finished }) => {
       if (finished) {
         setShowImagePicker(false);
+        setImageSendQuality('standard');
       }
     });
   }, [attachmentAnim, isBlockedByMe, isChatBlocked]);
@@ -4926,6 +4397,7 @@ const resolveQueuedVideoUri = async (
     if (showImagePicker) {
       closeAttachmentSheet();
     }
+    Keyboard.dismiss();
     setShowMoodStickers((prev) => !prev);
   }, [closeAttachmentSheet, showImagePicker]);
 
@@ -5042,6 +4514,7 @@ const resolveQueuedVideoUri = async (
 
   const handleInputFocus = useCallback(() => {
     setIsInputFocused(true);
+    setShowMoodStickers(false);
     if (showImagePicker) {
       closeAttachmentSheet();
     }
@@ -5130,7 +4603,7 @@ const resolveQueuedVideoUri = async (
       // the canonical message delta so a slower system query cannot extend
       // thread reconciliation by running serially after the message request.
       const systemRowsPromise = fetchSystemMessages();
-      const { data, error, isIncrementalFetch, threadSyncCursor } = await fetchRemoteThreadMessages({
+      const { data, replyTargetRows, error, isIncrementalFetch, threadSyncCursor } = await fetchRemoteThreadMessages({
         currentUserId: user.id,
         peerUserId: activePeerMessageUserId,
         pageSize: PAGE_SIZE,
@@ -5223,12 +4696,17 @@ const resolveQueuedVideoUri = async (
         mergeOfflineMedia: mergeOfflineMediaIntoMessage,
         mergeReceipt: mergeMessageWithMonotonicReceipt,
       });
+      const replyTargetMessages = (replyTargetRows || []).map((row) =>
+        mapRowToMessage(row as MessageDatabaseRow),
+      );
+      const orderedWithReplies = linkReplies(ordered, replyTargetMessages);
       console.log('[chat][thread][remote] success', {
         currentUserId: user.id,
         peerUserId: activePeerMessageUserId,
         durationMs: Date.now() - startedAt,
         remoteRowCount: (data || []).length,
         orderedMessageCount: ordered.length,
+        replyTargetCount: replyTargetMessages.length,
         isIncrementalFetch,
       });
       const systemRows = await systemRowsPromise;
@@ -5239,8 +4717,8 @@ const resolveQueuedVideoUri = async (
         });
         return;
       }
-      const combined = [...ordered, ...systemRows].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-      const linked = reconcileDeliveredFallback(linkReplies(combined));
+      const combined = [...orderedWithReplies, ...systemRows].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+      const linked = reconcileDeliveredFallback(linkReplies(combined, replyTargetMessages));
       let mergedForState: MessageType[] = linked;
       setMessages((prev) => {
         if (!isIncrementalFetch && linked.length === 0 && prev.length > 0) {
@@ -5260,6 +4738,7 @@ const resolveQueuedVideoUri = async (
               previousMessages: prev,
               currentUserId: user.id,
             }),
+            replyTargetMessages,
           ),
         );
         mergedForState = preserveUnchangedMessageReferences(
@@ -5287,14 +4766,14 @@ const resolveQueuedVideoUri = async (
         fetchedMessageCount: linked.length,
         threadSyncCursor,
       });
-      if (ordered.length > 0) {
+      if (orderedWithReplies.length > 0) {
         void (async () => {
           try {
             const { timedOut } = await withLocalOperationTimeout(
               ChatRepository.upsertMessages(
                 user.id,
                 activePeerMessageUserId,
-                ordered.map((message) =>
+                orderedWithReplies.map((message) =>
                   chatMessageToLocalRow(user.id, activePeerMessageUserId, message),
                 ),
                 { priority: 'background' },
@@ -5307,13 +4786,13 @@ const resolveQueuedVideoUri = async (
                 currentUserId: user.id,
                 peerUserId: activePeerMessageUserId,
                 timeoutMs: LOCAL_CHAT_OPERATION_TIMEOUT_MS,
-                messageCount: ordered.length,
+                messageCount: orderedWithReplies.length,
               });
             } else {
               console.log('[chat][thread][remote] local-persist-success', {
                 currentUserId: user.id,
                 peerUserId: activePeerMessageUserId,
-                messageCount: ordered.length,
+                messageCount: orderedWithReplies.length,
               });
             }
           } catch (localPersistError) {
@@ -5362,6 +4841,26 @@ const resolveQueuedVideoUri = async (
   useEffect(() => {
     activePeerMessageUserIdRef.current = activePeerMessageUserId ?? null;
   }, [activePeerMessageUserId]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    return subscribeToOfflineMutationEvents((event) => {
+      if (
+        event.type !== 'failed' ||
+        event.mutation.kind !== 'chat_reaction_sync' ||
+        event.mutation.payload.userId !== user.id
+      ) {
+        return;
+      }
+      const failedMessageId = event.mutation.payload.messageId;
+      if (!messagesRef.current.some((message) => message.id === failedMessageId)) return;
+      void fetchMessages();
+      Alert.alert(
+        'Reaction not updated',
+        'We restored the reaction saved in the conversation. Please try again.',
+      );
+    });
+  }, [fetchMessages, user?.id]);
 
   const startThreadSynchronization = useCallback(() => {
     if (!user?.id || !activePeerMessageUserId) return;
@@ -5622,6 +5121,7 @@ const resolveQueuedVideoUri = async (
       ok?: boolean;
       code?: string;
       message?: MessageDatabaseRow;
+      restricted_until?: string | null;
     };
     const data = guardResult.message ?? null;
 
@@ -5645,6 +5145,14 @@ const resolveQueuedVideoUri = async (
         return;
       }
       console.log('[chat] retry failed message error', error ?? guardResult.code);
+      const failureCode = (error as { code?: string } | null)?.code
+        ?? guardResult.code
+        ?? 'retry_failed';
+      const failure = getChatGuardFailurePresentation({
+        action: 'retry',
+        code: failureCode,
+        restrictedUntil: guardResult.restricted_until,
+      });
       const failedRetryMessage = transitionMessageLifecycleRecord({
         message: sendingRetryMessage,
         event: 'retryable_failure',
@@ -5655,11 +5163,10 @@ const resolveQueuedVideoUri = async (
         message: failedRetryMessage,
         outboxStatus: 'failed',
         error: {
-          code: (error as { code?: string } | null)?.code ?? guardResult.code ?? 'retry_failed',
-          message: (error as { message?: string } | null)?.message
-            ?? (guardResult.code === 'MESSAGE_REVIEW_REQUIRED'
-              ? 'Message held for safety review'
-              : 'Message violates Betweener safety rules'),
+          code: failureCode,
+          message: guardResult.ok === false
+            ? failure.outboxMessage
+            : (error as { message?: string } | null)?.message ?? failure.outboxMessage,
         },
       }).catch((persistError) => console.log('[chat] persist failed retry text outbox error', persistError));
       setMessages((prev) => transitionMessageLifecycle({
@@ -5667,14 +5174,7 @@ const resolveQueuedVideoUri = async (
         messageId,
         event: 'retryable_failure',
       }));
-      Alert.alert(
-        guardResult.ok === false ? 'Message not sent' : 'Retry failed',
-        guardResult.code === 'MESSAGE_REVIEW_REQUIRED'
-          ? 'This message is being held for a safety review.'
-          : guardResult.ok === false
-            ? 'Please remove solicitation, threats, scams, or unsafe content and try again.'
-            : 'Unable to resend this message right now.',
-      );
+      Alert.alert(failure.title, failure.message);
       return;
     }
 
@@ -5707,6 +5207,20 @@ const resolveQueuedVideoUri = async (
     if (message.type === 'text') {
       await retryFailedTextMessage(message.id);
       return;
+    }
+    if (message.type === 'image' || message.type === 'video') {
+      if (
+        message.sendErrorCode?.startsWith('caption_') &&
+        (Boolean(message.mediaGroupId) || (message.mediaItems?.length ?? 0) > 1)
+      ) {
+        setAlbumCaptionEditorMessage(message);
+        return;
+      }
+      const failure = getChatAttachmentFailurePresentation(message.sendErrorCode);
+      if (!failure.retryable) {
+        Alert.alert(failure.title, failure.message);
+        return;
+      }
     }
     const localMessageId = message.clientMessageId ?? message.id;
     if ((message.mediaItems?.length ?? 0) > 1) {
@@ -5781,64 +5295,43 @@ const resolveQueuedVideoUri = async (
     }
   }, [isChatBlocked, networkReady, retryFailedTextMessage, user?.id]);
 
+  const saveAlbumCaptionAndRetry = useCallback(async (caption: string) => {
+    if (!user?.id || !albumCaptionEditorMessage || albumCaptionSaving) return;
+    setAlbumCaptionSaving(true);
+    const localMessageId = albumCaptionEditorMessage.clientMessageId ?? albumCaptionEditorMessage.id;
+    try {
+      const requeued = await ChatOutboxService.updateAlbumCaption(user.id, localMessageId, caption);
+      if (!requeued) {
+        Alert.alert('Caption unchanged', 'This album may already be finalised or is no longer available on this device.');
+        return;
+      }
+      setMessages((current) => current.map((entry) => entry.id === albumCaptionEditorMessage.id
+        ? {
+            ...entry,
+            mediaCaption: caption.trim() || null,
+            sendErrorCode: null,
+            status: 'queued',
+          }
+        : entry));
+      setAlbumCaptionEditorMessage(null);
+    } catch {
+      Alert.alert('Unable to update caption', 'Check your connection and try again.');
+    } finally {
+      setAlbumCaptionSaving(false);
+    }
+  }, [albumCaptionEditorMessage, albumCaptionSaving, user?.id]);
+
   const retryFailedMessageById = useCallback(async (messageId: string) => {
     const message = messagesRef.current.find((entry) => entry.id === messageId);
     if (!message) return;
     await retryFailedMessage(message);
   }, [retryFailedMessage]);
 
-  const manageFailedAlbumItem = useCallback((message: MessageType, albumIndex: number) => {
-    if (!user?.id || message.status !== 'failed') return;
-    const mediaItem = message.mediaItems?.find((entry) => entry.index === albumIndex);
-    if (!mediaItem) return;
-    const localMessageId = message.clientMessageId ?? message.id;
-    Alert.alert(
-      'Album item',
-      `Choose what to do with item ${albumIndex + 1} of ${message.mediaItems?.length ?? 1}.`,
-      [
-        { text: 'Not now', style: 'cancel' },
-        {
-          text: 'Remove item',
-          style: 'destructive',
-          onPress: () => {
-            void ChatOutboxService.removeAlbumItem(user.id, localMessageId, mediaItem.attachmentId)
-              .then((result) => {
-                if (!result.changed) {
-                  Alert.alert('Album locked', 'This album is already being finalised and can no longer be changed.');
-                  return;
-                }
-                setMessages((current) => current.map((entry) => entry.id === message.id
-                  ? {
-                      ...entry,
-                      mediaExpectedCount: result.remainingCount,
-                      mediaItems: entry.mediaItems
-                        ?.filter((candidate) => candidate.attachmentId !== mediaItem.attachmentId)
-                        .map((candidate, index) => ({ ...candidate, index })),
-                    }
-                  : entry));
-              });
-          },
-        },
-        {
-          text: 'Retry this item',
-          onPress: () => {
-            setMessages((current) => current.map((entry) => entry.id === message.id
-              ? {
-                  ...transitionMessageLifecycleRecord({ message: entry, event: networkReady ? 'send_started' : 'retry_requested' }),
-                  mediaItems: entry.mediaItems?.map((candidate) => candidate.attachmentId === mediaItem.attachmentId
-                    ? { ...candidate, transferState: 'queued', transferError: null }
-                    : candidate),
-                }
-              : entry));
-            void ChatOutboxService.retryAlbumItem(user.id, localMessageId, mediaItem.attachmentId)
-              .then((requeued) => {
-                if (!requeued) Alert.alert('Retry unavailable', 'This item can no longer be retried from this device.');
-              });
-          },
-        },
-      ],
-    );
-  }, [networkReady, user?.id]);
+  const manageAlbumItem = useChatAlbumActions({
+    networkReady,
+    setMessages,
+    userId: user?.id,
+  });
 
   useEffect(() => {
     if (!messagesLoaded) return;
@@ -6059,7 +5552,7 @@ const resolveQueuedVideoUri = async (
                     msg.id === canonicalRow.id
                       ? {
                           ...nextMessage,
-                          reactions: msg.reactions,
+                          reactions: msg.reactions ?? [],
                           offlineImageUri: msg.offlineImageUri,
                           offlineVideoUri: msg.offlineVideoUri,
                         }
@@ -6198,7 +5691,7 @@ const resolveQueuedVideoUri = async (
                     msg.id === canonicalRow.id
                       ? {
                           ...mergeMessageWithMonotonicReceipt(msg, nextMessage),
-                          reactions: msg.reactions,
+                          reactions: msg.reactions ?? [],
                         }
                       : msg
                   ),
@@ -6582,14 +6075,7 @@ const resolveQueuedVideoUri = async (
       const showAvatar = !isSystemMessage && !isMyMessage && !isChatBlocked && !isGroupedWithNext;
       const showAvatarSpacer =
         !isSystemMessage && !isMyMessage && !isChatBlocked && isGroupedWithNext;
-      const mediaPaths = [
-        item.storagePath,
-        item.previewStoragePath,
-        ...(item.mediaItems ?? []).flatMap((mediaItem) => [
-          mediaItem.storagePath,
-          mediaItem.previewStoragePath,
-        ]),
-      ].filter((path): path is string => Boolean(path));
+      const mediaPaths = getChatMessageVisualMediaPaths(item);
       const mediaUrisByPath = Object.fromEntries(
         mediaPaths
           .map((path) => [path, chatMediaUrisByPath[path]] as const)
@@ -6608,7 +6094,21 @@ const resolveQueuedVideoUri = async (
         showDateSeparator: !prevMessage || !isSameDay(prevMessage.timestamp, item.timestamp),
         timeLabel: formatTime(item.timestamp),
         imageSize: item.type === 'image'
-          ? getStableChatImageFrame(item.mediaItems?.[0]?.width, item.mediaItems?.[0]?.height, Math.min(responsive.width * 0.72, 340))
+          ? item.mediaKind
+            ? getChatExpressionFrame({
+                kind: item.mediaKind,
+                sourceWidth: item.providerMedia?.width ?? item.mediaItems?.[0]?.width,
+                sourceHeight: item.providerMedia?.height ?? item.mediaItems?.[0]?.height,
+                availableWidth: Math.min(
+                  responsive.width * CHAT_MEDIA_FRAME_WIDTH_RATIO,
+                  CHAT_MEDIA_FRAME_MAX_WIDTH,
+                ),
+              })
+            : getStableChatImageFrame(
+                item.mediaItems?.[0]?.width,
+                item.mediaItems?.[0]?.height,
+                Math.min(responsive.width * CHAT_MEDIA_FRAME_WIDTH_RATIO, CHAT_MEDIA_FRAME_MAX_WIDTH),
+              )
           : undefined,
         cachedImageUrl:
           item.type === 'image'
@@ -6827,6 +6327,7 @@ const resolveQueuedVideoUri = async (
     pinnedMessageCount,
     primaryPinnedMessage,
     jumpToMessage,
+    mediaUrisByPath: chatMediaUrisByPath,
   });
 
   useEffect(() => {
@@ -6904,6 +6405,20 @@ const resolveQueuedVideoUri = async (
     updateTyping(text);
   };
 
+  const handleInputSelectionChange = useCallback((selection: TextSelection) => {
+    inputSelectionRef.current = selection;
+  }, []);
+
+  const insertEmojiIntoComposer = useCallback((emoji: string) => {
+    const insertion = insertChatEmoji(inputText, emoji, inputSelectionRef.current);
+    inputSelectionRef.current = insertion.selection;
+    setInputText(insertion.text);
+    updateTyping(insertion.text);
+    requestAnimationFrame(() => {
+      inputRef.current?.setNativeProps({ selection: insertion.selection });
+    });
+  }, [inputText, updateTyping]);
+
   const submitEditMessage = useCallback(async () => {
     if (!editingMessage || !user?.id) return;
     const trimmed = inputText.trim();
@@ -6935,17 +6450,13 @@ const resolveQueuedVideoUri = async (
 
     if (error) {
       console.log('[chat] edit message error', error);
-      const moderationCode = String((error as { code?: string })?.code ?? '');
-      Alert.alert(
-        moderationCode === 'MESSAGE_CONTENT_NOT_ALLOWED' || moderationCode === 'MESSAGE_REVIEW_REQUIRED'
-          ? 'Edit not saved'
-          : 'Edit message',
-        moderationCode === 'MESSAGE_REVIEW_REQUIRED'
-          ? 'This edit is being held for a safety review.'
-          : moderationCode === 'MESSAGE_CONTENT_NOT_ALLOWED'
-            ? 'Please remove solicitation, threats, scams, or unsafe content and try again.'
-            : 'Unable to update this message right now.',
-      );
+      const guardError = error as { code?: string; restrictedUntil?: string | null };
+      const failure = getChatGuardFailurePresentation({
+        action: 'edit',
+        code: guardError.code,
+        restrictedUntil: guardError.restrictedUntil,
+      });
+      Alert.alert(failure.title, failure.message);
       await refreshThread();
       return;
     }
@@ -7042,7 +6553,7 @@ const resolveQueuedVideoUri = async (
     }, 100);
   };
 
-  const sendMoodSticker = useCallback(async (sticker: (typeof MOOD_STICKERS)[number]) => {
+  const sendMoodSticker = useCallback(async (sticker: ChatStickerDefinition) => {
     if (isChatBlocked) {
       Alert.alert('Messaging unavailable', isBlockedByMe ? 'Unblock to send messages.' : 'You can\'t message this user.');
       return;
@@ -7109,6 +6620,76 @@ const resolveQueuedVideoUri = async (
       }
     });
   }, [peerResolved, activePeerMessageUserId, isBlockedByMe, isChatBlocked, networkReady, replyingTo, user?.id]);
+
+  const sendProviderGif = useCallback(async (gif: ChatProviderExpressionSelection) => {
+    if (isChatBlocked) {
+      Alert.alert('Messaging unavailable', isBlockedByMe ? 'Unblock to send messages.' : 'You can\'t message this user.');
+      return;
+    }
+    if (!peerResolved || !user?.id || !activePeerMessageUserId) return;
+    const providerMedia = buildChatProviderMediaReference(gif);
+    const tempId = `temp-expression-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const optimisticMessage: MessageType = {
+      id: tempId,
+      clientMessageId: tempId,
+      text: '',
+      senderId: user.id,
+      timestamp: new Date(),
+      type: 'image',
+      reactions: [],
+      status: 'sending',
+      mediaKind: gif.kind,
+      providerMedia,
+      replyToId: replyingTo?.id ?? null,
+      replyTo: replyingTo || undefined,
+    };
+
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    setShowMoodStickers(false);
+    setMessages((prev) => [...prev, optimisticMessage]);
+    await persistLocalTextOutboxState({
+      ownerUserId: user.id,
+      threadId: activePeerMessageUserId,
+      message: optimisticMessage,
+      outboxStatus: 'sending',
+    }).catch((persistError) => console.log('[chat] persist provider expression outbox error', persistError));
+    setReplyingTo(null);
+    setEditingMessage(null);
+    setViewOnceMode(false);
+
+    if (!networkReady) {
+      const queuedMessage = transitionMessageLifecycleRecord({
+        message: optimisticMessage,
+        event: 'send_deferred',
+      });
+      void persistLocalTextOutboxState({
+        ownerUserId: user.id,
+        threadId: activePeerMessageUserId,
+        message: queuedMessage,
+        outboxStatus: 'queued',
+      }).catch((persistError) => console.log('[chat] persist queued provider expression error', persistError));
+      setMessages((prev) => transitionMessageLifecycle({
+        items: prev,
+        messageId: tempId,
+        event: 'send_deferred',
+      }));
+      return;
+    }
+
+    await flushLocalTextOutbox(user.id).catch((error) => {
+      if (!isLikelyNetworkError(error)) {
+        console.log('[chat] flush provider expression outbox error', error);
+      }
+    });
+  }, [
+    activePeerMessageUserId,
+    isBlockedByMe,
+    isChatBlocked,
+    networkReady,
+    peerResolved,
+    replyingTo,
+    user?.id,
+  ]);
 
   const addReaction = useCallback(async (messageId: string, emoji: string) => {
     if (!user?.id) return;
@@ -7609,6 +7190,14 @@ const resolveQueuedVideoUri = async (
   }, [networkReady, playingVoiceId, stopVoicePlayback]);
 
   const captureCameraMedia = useCallback(async (captureMode: 'image' | 'video' | 'mixed') => {
+    const capabilities = getMediaModerationCapabilities();
+    if (captureMode === 'video' && !capabilities.chatVideoUploads) {
+      Alert.alert(
+        'Video sharing is temporarily paused',
+        'Video sharing will return after frame-by-frame safety checks are ready. You can still send photos.',
+      );
+      return;
+    }
     if (mediaUploadStatus) {
       Alert.alert('Upload in progress', 'Please wait for the current media upload to finish.');
       return;
@@ -7627,8 +7216,10 @@ const resolveQueuedVideoUri = async (
           ? ['images']
           : captureMode === 'video'
           ? ['videos']
-          : PICKER_MEDIA_TYPES_ALL,
-      quality: 0.85,
+          : capabilities.chatVideoUploads ? PICKER_MEDIA_TYPES_ALL : ['images'],
+      // Preserve picker bytes; v1.2 applies one deterministic Standard/HD
+      // preparation pass before durable staging.
+      quality: 1,
       videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,
       videoMaxDuration: 30,
     });
@@ -7647,6 +7238,17 @@ const resolveQueuedVideoUri = async (
       Alert.alert('Attachment unavailable', attachmentError);
       return;
     }
+    const preparingBubble = !viewOnceMode
+      ? beginPreparingMediaBubble([{
+          localUri: asset.uri,
+          mediaType: asset.type === 'video' ? 'video' : 'image',
+          contentType: asset.mimeType,
+          width: asset.width,
+          height: asset.height,
+          byteSize: asset.fileSize,
+          durationMs: asset.duration,
+        }])
+      : null;
     const mediaKind = asset.type === 'video' ? 'video' : 'photo';
     const uploadStatusId = beginMediaUploadStatus(
       viewOnceMode ? `Securing private ${mediaKind}...` : `Uploading ${mediaKind}...`,
@@ -7659,13 +7261,15 @@ const resolveQueuedVideoUri = async (
       contentType: string;
       mediaType: 'image' | 'video';
       byteSize?: number | null;
+      width?: number | null;
+      height?: number | null;
     } | null = null;
     try {
       const fallbackName = asset.fileName ?? asset.uri.split('/').pop() ?? `camera-${Date.now()}`;
       const baseContentType = asset.mimeType ?? (asset.type === 'video' ? 'video/mp4' : 'image/jpeg');
       const normalized =
         asset.type === 'image'
-          ? await normalizeHeicImage(asset, fallbackName)
+          ? await prepareChatImageForSend(asset, fallbackName, imageSendQuality)
           : await prepareChatVideo({
               uri: asset.uri,
               fileName: fallbackName,
@@ -7688,6 +7292,8 @@ const resolveQueuedVideoUri = async (
           'sizeBytes' in normalized && typeof normalized.sizeBytes === 'number'
             ? normalized.sizeBytes
             : asset.fileSize,
+        width: resolvePreparedMediaDimension(normalized, 'width', asset.width),
+        height: resolvePreparedMediaDimension(normalized, 'height', asset.height),
       };
 
       if (viewOnceMode) {
@@ -7714,9 +7320,10 @@ const resolveQueuedVideoUri = async (
           contentType: queueCandidate.contentType,
           mediaType: queueCandidate.mediaType,
           byteSize: queueCandidate.byteSize ?? null,
-          width: asset.width ?? null,
-          height: asset.height ?? null,
+          width: queueCandidate.width ?? null,
+          height: queueCandidate.height ?? null,
           durationMs: asset.duration ?? null,
+          preparingBubble,
         });
       }
     } catch (error) {
@@ -7726,8 +7333,14 @@ const resolveQueuedVideoUri = async (
           fileName: queueCandidate.fileName,
           contentType: queueCandidate.contentType,
           mediaType: queueCandidate.mediaType,
+          byteSize: queueCandidate.byteSize ?? null,
+          width: queueCandidate.width ?? null,
+          height: queueCandidate.height ?? null,
+          durationMs: asset.duration ?? null,
+          preparingBubble,
         });
       } else {
+        discardPreparingMediaBubble(preparingBubble);
         Alert.alert('Attachment', getAttachmentUploadErrorMessage(error));
       }
     } finally {
@@ -7735,8 +7348,11 @@ const resolveQueuedVideoUri = async (
     }
   }, [
     beginMediaUploadStatus,
+    beginPreparingMediaBubble,
     clearMediaUploadStatus,
     closeAttachmentSheet,
+    discardPreparingMediaBubble,
+    imageSendQuality,
     mediaUploadStatus,
     sendEncryptedMediaAttachment,
     queueMediaAttachment,
@@ -7745,6 +7361,10 @@ const resolveQueuedVideoUri = async (
   ]);
 
   const handleCameraPress = useCallback(() => {
+    if (!getMediaModerationCapabilities().chatVideoUploads) {
+      void captureCameraMedia('image');
+      return;
+    }
     if (Platform.OS === 'android') {
       Alert.alert('Camera', 'Choose what you want to capture.', [
         { text: 'Photo', onPress: () => void captureCameraMedia('image') },
@@ -7757,10 +7377,12 @@ const resolveQueuedVideoUri = async (
   }, [captureCameraMedia]);
 
   const handleLibraryPress = useCallback(async () => {
+    const capabilities = getMediaModerationCapabilities();
     if (mediaUploadStatus) {
       Alert.alert('Upload in progress', 'Please wait for the current media upload to finish.');
       return;
     }
+    setMediaSafetyNotice(null);
     const libraryStatus = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!libraryStatus.granted) {
       showOpenSettingsPrompt(
@@ -7770,8 +7392,8 @@ const resolveQueuedVideoUri = async (
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: PICKER_MEDIA_TYPES_ALL,
-      quality: 0.85,
+      mediaTypes: capabilities.chatVideoUploads ? PICKER_MEDIA_TYPES_ALL : ['images'],
+      quality: 1,
       videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,
       allowsMultipleSelection: !viewOnceMode,
       selectionLimit: viewOnceMode ? 1 : 10,
@@ -7780,6 +7402,13 @@ const resolveQueuedVideoUri = async (
     if (result.canceled) return;
     closeAttachmentSheet();
     const selectedAssets = (result.assets ?? []).filter((selectedAsset) => Boolean(selectedAsset.uri));
+    if (!capabilities.chatVideoUploads && selectedAssets.some((asset) => asset.type === 'video')) {
+      Alert.alert(
+        'Video sharing is temporarily paused',
+        'Choose photos for now. Video sharing will return after frame-by-frame safety checks are ready.',
+      );
+      return;
+    }
     if (!viewOnceMode && selectedAssets.length > 1) {
       const invalidAsset = selectedAssets.find((selectedAsset) => validateChatAttachment({
         kind: selectedAsset.type === 'video' ? 'video' : 'image',
@@ -7798,13 +7427,26 @@ const resolveQueuedVideoUri = async (
         }) ?? 'One of these items could not be prepared.');
         return;
       }
+      const albumCaption = inputText.trim();
+      const preparingBubble = beginPreparingMediaBubble(
+        selectedAssets.map((selectedAsset) => ({
+          localUri: selectedAsset.uri,
+          mediaType: selectedAsset.type === 'video' ? 'video' : 'image',
+          contentType: selectedAsset.mimeType,
+          width: selectedAsset.width,
+          height: selectedAsset.height,
+          byteSize: selectedAsset.fileSize,
+          durationMs: selectedAsset.duration,
+        })),
+        albumCaption,
+      );
       const uploadStatusId = beginMediaUploadStatus(
         `Preparing ${selectedAssets.length} items...`,
         'Building one ordered, secure media album.',
         'image-multiple-outline',
       );
       try {
-        const normalizedAssets = await Promise.all(selectedAssets.map(async (selectedAsset, index) => {
+        const normalizedAssets = await mapChatAlbumItemsBounded(selectedAssets, async (selectedAsset, index) => {
           const isVideo = selectedAsset.type === 'video';
           const fallbackName = selectedAsset.fileName ?? selectedAsset.uri.split('/').pop()
             ?? `${isVideo ? 'video' : 'photo'}-${index + 1}.${isVideo ? 'mp4' : 'jpg'}`;
@@ -7816,7 +7458,7 @@ const resolveQueuedVideoUri = async (
                 sizeBytes: selectedAsset.fileSize,
                 durationMs: selectedAsset.duration,
               })
-            : await normalizeHeicImage(selectedAsset, fallbackName);
+            : await prepareChatImageForSend(selectedAsset, fallbackName, imageSendQuality);
           return {
             localUri: normalized.uri,
             fileName: normalized.fileName,
@@ -7825,16 +7467,16 @@ const resolveQueuedVideoUri = async (
             byteSize: 'sizeBytes' in normalized && typeof normalized.sizeBytes === 'number'
               ? normalized.sizeBytes
               : selectedAsset.fileSize ?? null,
-            width: selectedAsset.width ?? null,
-            height: selectedAsset.height ?? null,
+            width: resolvePreparedMediaDimension(normalized, 'width', selectedAsset.width),
+            height: resolvePreparedMediaDimension(normalized, 'height', selectedAsset.height),
             durationMs: selectedAsset.duration ?? null,
           };
-        }));
+        }, 2);
         updateMediaUploadStatus(uploadStatusId, 'Queueing media album...', 'Everything will appear together in one message.', 'clock-outline');
-        const albumCaption = inputText.trim();
-        await queueMediaAlbum(normalizedAssets, albumCaption);
+        await queueMediaAlbum(normalizedAssets, albumCaption, preparingBubble);
         if (albumCaption) setInputText('');
       } catch (error) {
+        discardPreparingMediaBubble(preparingBubble);
         Alert.alert('Media album', getAttachmentUploadErrorMessage(error));
       } finally {
         clearMediaUploadStatus(uploadStatusId);
@@ -7854,6 +7496,17 @@ const resolveQueuedVideoUri = async (
       Alert.alert('Attachment unavailable', attachmentError);
       return;
     }
+    const preparingBubble = !viewOnceMode
+      ? beginPreparingMediaBubble([{
+          localUri: asset.uri,
+          mediaType: asset.type === 'video' ? 'video' : 'image',
+          contentType: asset.mimeType,
+          width: asset.width,
+          height: asset.height,
+          byteSize: asset.fileSize,
+          durationMs: asset.duration,
+        }])
+      : null;
     const mediaKind = asset.type === 'video' ? 'video' : 'photo';
     const uploadStatusId = beginMediaUploadStatus(
       viewOnceMode ? `Securing private ${mediaKind}...` : `Uploading ${mediaKind}...`,
@@ -7866,13 +7519,15 @@ const resolveQueuedVideoUri = async (
       contentType: string;
       mediaType: 'image' | 'video';
       byteSize?: number | null;
+      width?: number | null;
+      height?: number | null;
     } | null = null;
     try {
       const fallbackName = asset.fileName ?? asset.uri.split('/').pop() ?? `library-${Date.now()}`;
       const baseContentType = asset.mimeType ?? (asset.type === 'video' ? 'video/mp4' : 'image/jpeg');
       const normalized =
         asset.type === 'image'
-          ? await normalizeHeicImage(asset, fallbackName)
+          ? await prepareChatImageForSend(asset, fallbackName, imageSendQuality)
           : await prepareChatVideo({
               uri: asset.uri,
               fileName: fallbackName,
@@ -7895,6 +7550,8 @@ const resolveQueuedVideoUri = async (
           'sizeBytes' in normalized && typeof normalized.sizeBytes === 'number'
             ? normalized.sizeBytes
             : asset.fileSize,
+        width: resolvePreparedMediaDimension(normalized, 'width', asset.width),
+        height: resolvePreparedMediaDimension(normalized, 'height', asset.height),
       };
 
       if (viewOnceMode) {
@@ -7921,9 +7578,10 @@ const resolveQueuedVideoUri = async (
           contentType: queueCandidate.contentType,
           mediaType: queueCandidate.mediaType,
           byteSize: queueCandidate.byteSize ?? null,
-          width: asset.width ?? null,
-          height: asset.height ?? null,
+          width: queueCandidate.width ?? null,
+          height: queueCandidate.height ?? null,
           durationMs: asset.duration ?? null,
+          preparingBubble,
         });
       }
     } catch (error) {
@@ -7933,8 +7591,14 @@ const resolveQueuedVideoUri = async (
           fileName: queueCandidate.fileName,
           contentType: queueCandidate.contentType,
           mediaType: queueCandidate.mediaType,
+          byteSize: queueCandidate.byteSize ?? null,
+          width: queueCandidate.width ?? null,
+          height: queueCandidate.height ?? null,
+          durationMs: asset.duration ?? null,
+          preparingBubble,
         });
       } else {
+        discardPreparingMediaBubble(preparingBubble);
         Alert.alert('Attachment', getAttachmentUploadErrorMessage(error));
       }
     } finally {
@@ -7942,8 +7606,11 @@ const resolveQueuedVideoUri = async (
     }
   }, [
     beginMediaUploadStatus,
+    beginPreparingMediaBubble,
     clearMediaUploadStatus,
     closeAttachmentSheet,
+    discardPreparingMediaBubble,
+    imageSendQuality,
     mediaUploadStatus,
     inputText,
     sendEncryptedMediaAttachment,
@@ -7954,6 +7621,13 @@ const resolveQueuedVideoUri = async (
   ]);
 
   const handleDocumentPress = useCallback(async () => {
+    if (!getMediaModerationCapabilities().chatDocumentUploads) {
+      Alert.alert(
+        'File sharing is temporarily paused',
+        'Documents will return after malware and content scanning are ready.',
+      );
+      return;
+    }
     if (mediaUploadStatus) {
       Alert.alert('Upload in progress', 'Please wait for the current media upload to finish.');
       return;
@@ -8688,6 +8362,35 @@ const resolveQueuedVideoUri = async (
     });
   }, [createFreshChatMediaUrl, networkReady, openVideoViewer, theme.tint]);
 
+  const openChatExternalLink = useCallback((rawUrl: string) => {
+    const link = normalizeChatLink(rawUrl);
+    if (!link) {
+      Alert.alert('Link unavailable', 'Betweener could not verify this link.');
+      return;
+    }
+    const transportWarning = link.secure
+      ? 'This link opens outside Betweener. Continue only if you trust the destination.'
+      : 'This connection is not encrypted. Continue only if you recognise and trust the destination.';
+    Alert.alert(
+      'Open external link?',
+      `${link.host}\n\n${transportWarning}`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Open link',
+          onPress: () => {
+            void WebBrowser.openBrowserAsync(link.normalizedUrl, {
+              presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN,
+              controlsColor: theme.tint,
+            }).catch(() => {
+              Alert.alert('Link unavailable', 'This link could not be opened.');
+            });
+          },
+        },
+      ],
+    );
+  }, [theme.tint]);
+
   const onViewableItemsChanged = useCallback(
     ({
       viewableItems,
@@ -8913,13 +8616,42 @@ const resolveQueuedVideoUri = async (
     [reportEvidenceMessage]
   );
 
+  const dismissPendingLocalMessage = useCallback(async (message: MessageType) => {
+    if (!user?.id || !activePeerMessageUserId) return false;
+    const localMessageId = message.clientMessageId ?? message.id;
+    try {
+      const cancelled = await ChatOutboxService.cancelMessage(user.id, localMessageId);
+      const remaining = cancelled
+        ? null
+        : await ChatRepository.getOutboxItem(user.id, localMessageId);
+      if (!cancelled && remaining && remaining.status !== 'cancelled') {
+        Alert.alert(
+          'Unable to remove message',
+          'The upload is still being cancelled. Check your connection and try again.',
+        );
+        return false;
+      }
+      await ChatRepository.deleteMessages(
+        user.id,
+        activePeerMessageUserId,
+        [message.id, localMessageId],
+      );
+      setMessages((current) => current.filter((entry) => entry.id !== message.id));
+      return true;
+    } catch (error) {
+      console.log('[chat] dismiss pending local message error', error);
+      Alert.alert('Unable to remove message', 'Please check your connection and try again.');
+      return false;
+    }
+  }, [activePeerMessageUserId, user?.id]);
+
   const hideMessageForMe = useCallback(async (message: MessageType) => {
     if (!user?.id || !activePeerMessageUserId) return;
     closeMessageActions();
     setShowReactions(null);
 
     if (message.id.startsWith('temp-')) {
-      setMessages((prev) => prev.filter((msg) => msg.id !== message.id));
+      await dismissPendingLocalMessage(message);
       return;
     }
 
@@ -8945,7 +8677,7 @@ const resolveQueuedVideoUri = async (
     void ChatRepository.deleteMessages(user.id, activePeerMessageUserId, [message.id]).catch((deleteError) =>
       console.log('[chat] delete hidden local message error', deleteError),
     );
-  }, [activePeerMessageUserId, closeMessageActions, fetchHiddenMessages, refreshThread, updateHiddenMessageIds, user?.id]);
+  }, [activePeerMessageUserId, closeMessageActions, dismissPendingLocalMessage, fetchHiddenMessages, refreshThread, updateHiddenMessageIds, user?.id]);
 
   const deleteMessageForEveryone = useCallback(async (message: MessageType) => {
     if (!user?.id) return;
@@ -8954,7 +8686,7 @@ const resolveQueuedVideoUri = async (
     setShowReactions(null);
 
     if (message.id.startsWith('temp-')) {
-      setMessages((prev) => prev.filter((msg) => msg.id !== message.id));
+      await dismissPendingLocalMessage(message);
       return;
     }
 
@@ -9003,7 +8735,7 @@ const resolveQueuedVideoUri = async (
       void removeOfflineImage(message.storagePath);
       void removeOfflineVideo(message.storagePath);
     }
-  }, [closeMessageActions, conversationId, refreshThread, user?.id]);
+  }, [closeMessageActions, conversationId, dismissPendingLocalMessage, refreshThread, user?.id]);
 
   const pinMessage = useCallback(async (message: MessageType) => {
     if (!user?.id || !conversationId) return;
@@ -9056,7 +8788,7 @@ const resolveQueuedVideoUri = async (
   useEffect(() => {
     if (!reactionSheetVisible || !reactionSheetMessage) return;
     const userIds = Array.from(
-      new Set(reactionSheetMessage.reactions.map((reaction) => reaction.userId))
+      new Set((reactionSheetMessage.reactions ?? []).map((reaction) => reaction.userId))
     ).filter(Boolean);
     if (userIds.length === 0) return;
     const missing = userIds.filter((id) => !reactionProfiles[id]);
@@ -9226,11 +8958,12 @@ const resolveQueuedVideoUri = async (
             onViewVideo={(message, url, albumIndex) => {
               void openVideoViewer(message, url, albumIndex);
             }}
-            onManageAlbumItem={manageFailedAlbumItem}
+            onManageAlbumItem={manageAlbumItem}
             onOpenDocument={handleOpenDocument}
             onRefreshMedia={refreshChatMediaMessage}
             onMediaLoadSuccess={persistRenderedChatMedia}
             onRetryMedia={retryChatMediaMessage}
+            onOpenLink={openChatExternalLink}
             onOpenLocation={openLocationViewer}
             onStopLiveShare={stopLiveSharing}
             onOpenViewOnce={openViewOnceMessage}
@@ -9281,7 +9014,8 @@ const resolveQueuedVideoUri = async (
       handleOpenDocument,
       refreshChatMediaMessage,
       retryChatMediaMessage,
-      manageFailedAlbumItem,
+      openChatExternalLink,
+      manageAlbumItem,
       handleSuggestAnotherTime,
       handleSuggestAnotherPlace,
       handleSuggestBoth,
@@ -9334,65 +9068,53 @@ const resolveQueuedVideoUri = async (
   };
 
   const handleOpenMediaItem = useCallback(
-    (item: { type: 'image' | 'video'; url?: string | null; message: MessageType }) => {
+    (item: {
+      type: 'image' | 'video';
+      url?: string | null;
+      albumIndex: number;
+      message: MessageType;
+    }) => {
       closeMediaHub();
       if (item.type === 'image') {
-        if (!item.url) return;
-        void openImageViewer(item.message, item.url);
+        void openImageViewer(item.message, item.url || '', item.albumIndex);
       } else {
-        void openVideoViewer(item.message, item.url || '');
+        void openVideoViewer(item.message, item.url || '', item.albumIndex);
       }
     },
     [closeMediaHub, openImageViewer, openVideoViewer]
   );
 
   const renderMoodStickersPanel = () => {
-    if (!showMoodStickers) return null;
-
-    const categories = [...new Set(MOOD_STICKERS.map(s => s.category))];
-
     return (
-      <View style={styles.moodStickersPanel}>
-        <View style={styles.moodStickerHeader}>
-          <Text style={styles.moodStickerTitle}>Mood Stickers</Text>
-          <TouchableOpacity onPress={() => setShowMoodStickers(false)}>
-            <MaterialCommunityIcons name="close" size={24} color={theme.textMuted} />
-          </TouchableOpacity>
-        </View>
-
-        <ScrollView
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.moodStickersContent}
-        >
-          {categories.map(category => (
-            <View key={category} style={styles.stickerCategory}>
-              <Text style={styles.categoryTitle}>
-                {category.charAt(0).toUpperCase() + category.slice(1)}
-              </Text>
-              <View style={styles.stickersGrid}>
-                {MOOD_STICKERS.filter(s => s.category === category).map((sticker, idx) => (
-                  <TouchableOpacity
-                    key={idx}
-                    style={styles.stickerButton}
-                    onPress={() => sendMoodSticker(sticker)}
-                  >
-                    <Text style={styles.stickerEmoji}>{sticker.emoji}</Text>
-                    <Text style={styles.stickerName}>
-                      {sticker.name}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-          ))}
-        </ScrollView>
-      </View>
+      <ChatExpressionTray
+        visible={showMoodStickers}
+        ownerUserId={user?.id}
+        theme={theme}
+        isDark={isDark}
+        onClose={() => setShowMoodStickers(false)}
+        onInsertEmoji={insertEmojiIntoComposer}
+        onSendSticker={(sticker) => {
+          void sendMoodSticker(sticker);
+        }}
+        onSendGif={(gif) => {
+          void sendProviderGif(gif);
+        }}
+      />
     );
   };
 
   return (
     <ChatThreadView style={styles.container}>
       <ChatSafetyModal visible={chatSafetyVisible} onGotIt={dismissChatSafety} />
+      <ChatAlbumCaptionEditor
+        visible={Boolean(albumCaptionEditorMessage)}
+        initialCaption={albumCaptionEditorMessage?.mediaCaption}
+        saving={albumCaptionSaving}
+        onClose={() => {
+          if (!albumCaptionSaving) setAlbumCaptionEditorMessage(null);
+        }}
+        onSave={saveAlbumCaptionAndRetry}
+      />
       <View style={styles.reconnectToastHost} pointerEvents="none">
         <Animated.View
           style={[
@@ -9439,6 +9161,18 @@ const resolveQueuedVideoUri = async (
       </View>
       {/* Header */}
       <View style={styles.header}>
+        <LinearGradient
+          pointerEvents="none"
+          colors={
+            isDark
+              ? [withAlpha(theme.backgroundSubtle, 0.98), withAlpha(theme.background, 0.94)]
+              : [withAlpha('#fffaf5', 0.98), withAlpha(theme.background, 0.94)]
+          }
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.headerChromeGradient}
+        />
+        <View pointerEvents="none" style={styles.headerChromeGlow} />
         <TouchableOpacity
           style={styles.backButton}
           onPress={handleGoBack}
@@ -10511,9 +10245,9 @@ const resolveQueuedVideoUri = async (
                         style={styles.mediaTile}
                         onPress={() => handleOpenMediaItem(item)}
                       >
-                        {item.type === 'image' && item.url ? (
+                        {item.thumbnailUrl || (item.type === 'image' && item.url) ? (
                           <ExpoImage
-                            source={{ uri: item.url }}
+                            source={{ uri: item.thumbnailUrl || item.url || '' }}
                             style={styles.mediaTileImage}
                             cachePolicy="disk"
                             contentFit="cover"
@@ -10521,10 +10255,21 @@ const resolveQueuedVideoUri = async (
                           />
                         ) : (
                           <View style={styles.mediaTilePlaceholder}>
-                            <MaterialCommunityIcons name="play-circle" size={26} color={theme.textMuted} />
-                            <Text style={styles.mediaTileLabel}>Video</Text>
+                            <MaterialCommunityIcons
+                              name={item.type === 'video' ? 'play-circle' : 'image-outline'}
+                              size={26}
+                              color={theme.textMuted}
+                            />
+                            <Text style={styles.mediaTileLabel}>
+                              {item.type === 'video' ? 'Video' : 'Photo'}
+                            </Text>
                           </View>
                         )}
+                        {item.type === 'video' && item.thumbnailUrl ? (
+                          <View pointerEvents="none" style={styles.mediaTileVideoBadge}>
+                            <MaterialCommunityIcons name="play" size={16} color={Colors.light.background} />
+                          </View>
+                        ) : null}
                       </Pressable>
                     ))}
                   </View>
@@ -10538,7 +10283,7 @@ const resolveQueuedVideoUri = async (
                       <Pressable
                         key={`${item.id}-${idx}`}
                         style={styles.mediaListItem}
-                        onPress={() => Linking.openURL(item.url)}
+                        onPress={() => openChatExternalLink(item.url)}
                       >
                         <MaterialCommunityIcons name="link-variant" size={18} color={theme.tint} />
                         <View style={styles.mediaListText}>
@@ -10884,136 +10629,49 @@ const resolveQueuedVideoUri = async (
         </KeyboardAvoidingView>
       </Modal>
 
-      <Modal
-        transparent
+      <ChatImageViewer
         visible={imageViewerVisible}
-        animationType="fade"
-        presentationStyle="overFullScreen"
-        statusBarTranslucent
-        onRequestClose={closeImageViewer}
-      >
-        <View style={styles.imageViewerBackdrop}>
-          <Pressable
-            style={StyleSheet.absoluteFill}
-            onPress={closeImageViewer}
-          />
-          {imageViewerUrl && (
-            <PinchGestureHandler
-              onGestureEvent={onImagePinchEvent}
-              onHandlerStateChange={onImagePinchStateChange}
-            >
-              <Animated.View
-                style={[
-                  styles.imageViewerImage,
-                  { transform: [{ scale: imageScale }] },
-                ]}
-                onTouchStart={(event) => {
-                  imageViewerSwipeStartXRef.current = imageViewerAlbumCount > 1
-                    ? event.nativeEvent.pageX
-                    : null;
-                }}
-                onTouchEnd={(event) => {
-                  const startX = imageViewerSwipeStartXRef.current;
-                  imageViewerSwipeStartXRef.current = null;
-                  if (startX === null) return;
-                  const delta = event.nativeEvent.pageX - startX;
-                  if (Math.abs(delta) < 56) return;
-                  moveMediaViewer(delta < 0 ? 1 : -1);
-                }}
-              >
-                <ExpoImage
-                  source={{ uri: imageViewerUrl }}
-                  style={StyleSheet.absoluteFill}
-                  cachePolicy="disk"
-                  contentFit="contain"
-                  transition={120}
-                  onLoadStart={() => {
-                    setImageViewerLoading(true);
-                    setImageViewerError(false);
-                  }}
-                  onLoad={() => {
-                    setImageViewerLoading(false);
-                    setImageViewerError(false);
-                  }}
-                  onError={() => {
-                    setImageViewerLoading(false);
-                    setImageViewerError(true);
-                  }}
-                />
-              </Animated.View>
-            </PinchGestureHandler>
-          )}
-          {imageViewerAlbumCount > 1 ? (
-            <>
-              <View
-                pointerEvents="none"
-                style={[
-                  styles.imageViewerCounter,
-                  { top: Math.max(insets.top + 17, 25) },
-                ]}
-              >
-                <Text style={styles.imageViewerCounterText}>
-                  {imageViewerAlbumIndex + 1} / {imageViewerAlbumCount}
-                </Text>
-              </View>
-              <TouchableOpacity
-                style={[
-                  styles.imageViewerPrevious,
-                  imageViewerAlbumIndex === 0 && styles.imageViewerNavigationDisabled,
-                ]}
-                onPress={() => moveMediaViewer(-1)}
-                disabled={imageViewerAlbumIndex === 0}
-                accessibilityRole="button"
-                accessibilityLabel="Previous photo"
-              >
-                <MaterialCommunityIcons name="chevron-left" size={30} color="#FFFFFF" />
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.imageViewerNext,
-                  imageViewerAlbumIndex >= imageViewerAlbumCount - 1 &&
-                    styles.imageViewerNavigationDisabled,
-                ]}
-                onPress={() => moveMediaViewer(1)}
-                disabled={imageViewerAlbumIndex >= imageViewerAlbumCount - 1}
-                accessibilityRole="button"
-                accessibilityLabel="Next photo"
-              >
-                <MaterialCommunityIcons name="chevron-right" size={30} color="#FFFFFF" />
-              </TouchableOpacity>
-            </>
-          ) : null}
-          {imageViewerLoading ? (
-            <View pointerEvents="none" style={styles.imageViewerStatus}>
-              <ActivityIndicator size="small" color={Colors.light.background} />
-              <Text style={styles.imageViewerStatusText}>Opening photo…</Text>
-            </View>
-          ) : null}
-          {imageViewerError ? (
-            <TouchableOpacity style={styles.imageViewerRetry} onPress={retryImageViewer}>
-              <MaterialCommunityIcons name="refresh" size={20} color={Colors.light.background} />
-              <Text style={styles.imageViewerRetryText}>Try again</Text>
-            </TouchableOpacity>
-          ) : null}
-          {imageViewerSourceRef.current?.message.mediaCaption || imageViewerSourceRef.current?.message.text ? (
-            <View
-              pointerEvents="none"
-              style={[styles.imageViewerCaption, { bottom: Math.max(insets.bottom + 18, 26) }]}
-            >
-              <Text style={styles.imageViewerCaptionText}>
-                {imageViewerSourceRef.current.message.mediaCaption
-                  ?? imageViewerSourceRef.current.message.text}
-              </Text>
-            </View>
-          ) : null}
-          <TouchableOpacity
-            style={[styles.imageViewerClose, { top: Math.max(insets.top + 10, 18), right: 16 }]}
-            onPress={closeImageViewer}
-          >
-            <MaterialCommunityIcons name="close" size={20} color={Colors.light.background} />
-          </TouchableOpacity>
-        </View>
-      </Modal>
+        uri={imageViewerUrl}
+        loading={imageViewerLoading}
+        hasError={imageViewerError}
+        currentIndex={imageViewerAlbumIndex}
+        itemCount={imageViewerAlbumCount}
+        caption={imageViewerSourceRef.current?.message.mediaCaption
+          ?? imageViewerSourceRef.current?.message.text
+          ?? null}
+        topInset={insets.top}
+        bottomInset={insets.bottom}
+        scale={imageScale}
+        styles={styles}
+        onPinchGesture={onImagePinchEvent}
+        onPinchStateChange={onImagePinchStateChange}
+        onClose={closeImageViewer}
+        onMove={moveMediaViewer}
+        onRetry={retryImageViewer}
+        onManage={
+          imageViewerSourceRef.current?.message.senderId === user?.id
+          && ['queued', 'sending', 'failed'].includes(imageViewerSourceRef.current?.message.status ?? '')
+          && imageViewerAlbumCount > 1
+            ? () => {
+                const source = imageViewerSourceRef.current;
+                if (!source) return;
+                manageAlbumItem(source.message, source.albumIndex);
+              }
+            : undefined
+        }
+        onLoadStart={() => {
+          setImageViewerLoading(true);
+          setImageViewerError(false);
+        }}
+        onLoad={() => {
+          setImageViewerLoading(false);
+          setImageViewerError(false);
+        }}
+        onError={() => {
+          setImageViewerLoading(false);
+          setImageViewerError(true);
+        }}
+      />
 
       <ChatImmersiveVideoViewer
         visible={Boolean(videoViewerUrl)}
@@ -11027,6 +10685,17 @@ const resolveQueuedVideoUri = async (
         onPrevious={() => moveMediaViewer(-1)}
         onNext={() => moveMediaViewer(1)}
         onRetry={retryCurrentAlbumViewerItem}
+        onManage={
+          imageViewerSourceRef.current?.message.senderId === user?.id &&
+          ['queued', 'sending', 'failed'].includes(imageViewerSourceRef.current?.message.status ?? '') &&
+          imageViewerAlbumCount > 1
+            ? () => {
+                const source = imageViewerSourceRef.current;
+                if (!source) return;
+                manageAlbumItem(source.message, source.albumIndex);
+              }
+            : undefined
+        }
       />
 
       <ChatDocumentViewer
@@ -11037,365 +10706,45 @@ const resolveQueuedVideoUri = async (
         onClose={closeDocumentViewer}
       />
 
-      <Modal
-        visible={Boolean(locationViewerMessage?.location)}
-        onRequestClose={closeLocationViewer}
-        animationType="slide"
-      >
-        <View style={styles.locationViewerContainer}>
-          {locationViewerMessage?.location ? (
-            <>
-              <MapView
-                key={`${locationViewerMessage.location.lat}-${locationViewerMessage.location.lng}`}
-                style={StyleSheet.absoluteFill}
-                provider={Platform.OS === 'web' ? undefined : PROVIDER_GOOGLE}
-                googleMapId={GOOGLE_MAPS_MAP_ID || undefined}
-                mapPadding={{ top: 120, right: 20, bottom: 220, left: 20 }}
-                customMapStyle={GOOGLE_MAPS_MAP_ID ? undefined : isDark ? MAP_STYLE_DARK : MAP_STYLE_LIGHT}
-                initialRegion={{
-                  latitude: locationViewerMessage.location.lat,
-                  longitude: locationViewerMessage.location.lng,
-                  latitudeDelta: 0.012,
-                  longitudeDelta: 0.012,
-                }}
-                showsPointsOfInterests
-                showsBuildings
-              >
-                <Marker
-                  coordinate={{
-                    latitude: locationViewerMessage.location.lat,
-                    longitude: locationViewerMessage.location.lng,
-                  }}
-                  title={locationViewerMessage.location.label}
-                  pinColor={theme.tint}
-                />
-              </MapView>
-              <View style={styles.locationViewerHeader}>
-                <TouchableOpacity
-                  style={styles.locationViewerClose}
-                  onPress={closeLocationViewer}
-                >
-                  <MaterialCommunityIcons name="close" size={20} color={theme.text} />
-                </TouchableOpacity>
-                <View style={styles.locationViewerText}>
-                  <Text style={styles.locationViewerTitle} numberOfLines={1}>
-                    {locationViewerMessage.location.label}
-                  </Text>
-                  {locationViewerMessage.location.address ? (
-                    <Text style={styles.locationViewerSubtitle} numberOfLines={1}>
-                      {locationViewerMessage.location.address}
-                    </Text>
-                  ) : null}
-                </View>
-              </View>
-              <View style={styles.locationViewerFooter}>
-                {locationViewerMessage.location.live && (
-                  <View style={styles.locationViewerLiveRow}>
-                    <View style={styles.locationLiveBadge}>
-                      <Text style={styles.locationLiveBadgeText}>Live</Text>
-                    </View>
-                    <Text style={styles.locationLiveText}>
-                      {formatRemainingTime(locationViewerMessage.location.expiresAt, nowTick)}
-                    </Text>
-                    {locationViewerMessage.senderId === user?.id &&
-                      locationViewerMessage.location.expiresAt &&
-                      locationViewerMessage.location.expiresAt.getTime() > nowTick && (
-                        <TouchableOpacity
-                          style={styles.locationStopButton}
-                          onPress={() => stopLiveSharing(locationViewerMessage.id)}
-                        >
-                          <Text style={styles.locationStopText}>Stop sharing</Text>
-                        </TouchableOpacity>
-                      )}
-                  </View>
-                )}
-                <TouchableOpacity
-                  style={styles.locationViewerAction}
-                  onPress={() => {
-                    const link = locationViewerMessage.location.mapLink || buildMapsLink(locationViewerMessage.location.lat, locationViewerMessage.location.lng);
-                    Linking.openURL(link);
-                  }}
-                >
-                  <MaterialCommunityIcons name="directions" size={18} color={theme.text} />
-                  <Text style={styles.locationViewerActionText}>Open in Maps</Text>
-                </TouchableOpacity>
-              </View>
-            </>
-          ) : null}
-        </View>
-      </Modal>
+      <ChatLocationViewer
+        message={locationViewerMessage}
+        currentUserId={user?.id}
+        now={nowTick}
+        isDark={isDark}
+        theme={theme}
+        styles={styles}
+        onClose={closeLocationViewer}
+        onStopSharing={stopLiveSharing}
+      />
 
-      <Modal
+      <ChatLocationPicker
         visible={locationModalVisible}
-        onRequestClose={closeLocationModal}
-        animationType="slide"
-      >
-        <View style={styles.locationModalContainer}>
-          <MapView
-            ref={mapRef}
-            style={StyleSheet.absoluteFill}
-            provider={Platform.OS === 'web' ? undefined : PROVIDER_GOOGLE}
-            googleMapId={GOOGLE_MAPS_MAP_ID || undefined}
-            mapPadding={{ top: 160, right: 20, bottom: 320, left: 20 }}
-            customMapStyle={GOOGLE_MAPS_MAP_ID ? undefined : isDark ? MAP_STYLE_DARK : MAP_STYLE_LIGHT}
-            initialRegion={mapInitialRegion}
-            onPress={handleMapPress}
-            showsUserLocation={locationStatus === 'granted'}
-            showsMyLocationButton={locationStatus === 'granted'}
-            showsPointsOfInterests
-            showsBuildings
-          >
-            {selectedPlace && (
-              <Marker
-                coordinate={{ latitude: selectedPlace.lat, longitude: selectedPlace.lng }}
-                title={selectedPlace.name}
-                pinColor={theme.tint}
-              />
-            )}
-          </MapView>
-
-          <Animated.View
-            style={[
-              styles.locationTopBar,
-              {
-                opacity: locationSheetAnim,
-                transform: [
-                  {
-                    translateY: locationSheetAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [-12, 0],
-                    }),
-                  },
-                ],
-              },
-            ]}
-          >
-            <BlurView
-              intensity={45}
-              tint={isDark ? 'dark' : 'light'}
-              style={styles.locationGlass}
-              pointerEvents="none"
-            />
-            <View style={styles.locationTopContent}>
-              <TouchableOpacity
-                style={styles.locationTopButton}
-                onPress={closeLocationModal}
-              >
-                <MaterialCommunityIcons name="chevron-left" size={22} color={theme.text} />
-              </TouchableOpacity>
-              <View>
-                <Text style={styles.locationTopTitle}>Share location</Text>
-                <Text style={styles.locationTopSubtitle}>Pick a place to send</Text>
-              </View>
-              <View style={styles.locationTopSpacer} />
-            </View>
-          </Animated.View>
-
-          <Animated.View
-            style={[
-              styles.locationSearchWrap,
-              {
-                opacity: locationSheetAnim,
-                transform: [
-                  {
-                    translateY: locationSheetAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [-6, 0],
-                    }),
-                  },
-                ],
-              },
-            ]}
-          >
-            <BlurView
-              intensity={45}
-              tint={isDark ? 'dark' : 'light'}
-              style={styles.locationGlass}
-              pointerEvents="none"
-            />
-            <View style={styles.locationSearchContent}>
-              <MaterialCommunityIcons name="magnify" size={18} color={theme.textMuted} />
-              <TextInput
-                style={styles.locationSearchInput}
-                placeholder="Search places"
-                placeholderTextColor={theme.textMuted}
-                value={locationSearchQuery}
-                onChangeText={setLocationSearchQuery}
-              />
-              {searchLoading ? (
-                <ActivityIndicator size="small" color={theme.textMuted} />
-              ) : locationSearchQuery.length > 0 ? (
-                <TouchableOpacity onPress={() => setLocationSearchQuery('')}>
-                  <MaterialCommunityIcons name="close-circle" size={18} color={theme.textMuted} />
-                </TouchableOpacity>
-              ) : null}
-            </View>
-          </Animated.View>
-
-          {locationSuggestions.length > 0 && (
-            <View style={styles.locationSuggestionsPanel}>
-              <ScrollView showsVerticalScrollIndicator={false}>
-                {locationSuggestions.map((suggestion) => (
-                  <TouchableOpacity
-                    key={suggestion.id}
-                    style={styles.locationSuggestionRow}
-                    onPress={() => handleSuggestionPress(suggestion)}
-                  >
-                    <MaterialCommunityIcons name="map-marker-outline" size={16} color={theme.textMuted} />
-                    <View style={styles.locationSuggestionText}>
-                      <Text style={styles.locationSuggestionTitle}>{suggestion.primary}</Text>
-                      {suggestion.secondary ? (
-                        <Text style={styles.locationSuggestionSubtitle}>{suggestion.secondary}</Text>
-                      ) : null}
-                    </View>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            </View>
-          )}
-
-          <Animated.View
-            style={[
-              styles.locationBottomSheet,
-              {
-                opacity: locationSheetAnim,
-                transform: [
-                  {
-                    translateY: locationSheetAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [40, 0],
-                    }),
-                  },
-                ],
-              },
-            ]}
-          >
-            <BlurView
-              intensity={55}
-              tint={isDark ? 'dark' : 'light'}
-              style={styles.locationGlass}
-              pointerEvents="none"
-            />
-            <View style={styles.locationSheetContent}>
-              <View style={styles.locationSheetHandle} />
-              <View style={styles.locationSelectedRow}>
-              <Text style={styles.locationSectionTitle}>Selected</Text>
-              <Text style={styles.locationSelectedValue} numberOfLines={1}>
-                {selectedPlace?.name || 'Tap the map or search'}
-              </Text>
-              {selectedPlace?.address ? (
-                <Text style={styles.locationSelectedSubtitle} numberOfLines={1}>
-                  {selectedPlace.address}
-                </Text>
-              ) : null}
-              </View>
-
-              <View style={styles.locationNearbyRow}>
-                <View style={styles.locationNearbyHeader}>
-                  <Text style={styles.locationSectionTitle}>Nearby</Text>
-                  {placesLoading ? (
-                    <ActivityIndicator size="small" color={theme.textMuted} />
-                  ) : null}
-                </View>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  {nearbyPlaces.map((place) => (
-                    <TouchableOpacity
-                      key={place.id}
-                      style={styles.locationNearbyCard}
-                      onPress={() => selectPlace(place)}
-                    >
-                      <View style={styles.locationNearbyIcon}>
-                        <MaterialCommunityIcons name="map-marker-outline" size={16} color={theme.tint} />
-                      </View>
-                      <View style={styles.locationNearbyMeta}>
-                        <Text style={styles.locationNearbyName} numberOfLines={1}>
-                          {place.name}
-                        </Text>
-                        {place.address ? (
-                          <Text style={styles.locationNearbyAddress} numberOfLines={1}>
-                            {place.address}
-                          </Text>
-                        ) : null}
-                      </View>
-                    </TouchableOpacity>
-                  ))}
-                  {!hasPlacesKey && (
-                    <View style={styles.locationNearbyCard}>
-                      <View style={styles.locationNearbyIcon}>
-                        <MaterialCommunityIcons name="alert-circle-outline" size={16} color={theme.textMuted} />
-                      </View>
-                      <View style={styles.locationNearbyMeta}>
-                        <Text style={styles.locationNearbyName}>Add Google Maps key</Text>
-                        <Text style={styles.locationNearbyAddress}>Places search disabled</Text>
-                      </View>
-                    </View>
-                  )}
-                </ScrollView>
-              </View>
-
-              <View style={styles.locationLiveSection}>
-                <Text style={styles.locationSectionTitle}>Live location</Text>
-                <View style={styles.locationPresetRow}>
-                  {LIVE_LOCATION_PRESETS.map((preset) => (
-                    <TouchableOpacity
-                      key={preset}
-                      style={[
-                        styles.locationPresetChip,
-                        liveDurationMinutes === preset && styles.locationPresetChipActive,
-                      ]}
-                      onPress={() => setLiveDurationMinutes(preset)}
-                    >
-                      <Text
-                        style={[
-                          styles.locationPresetText,
-                          liveDurationMinutes === preset && styles.locationPresetTextActive,
-                        ]}
-                      >
-                        {preset === 60
-                          ? '1 hour'
-                          : preset === 480
-                          ? '8 hours'
-                          : `${preset} min`}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-                <Text style={styles.locationLiveHint}>
-                  Remaining time is always visible and you can stop sharing anytime.
-                </Text>
-              </View>
-
-              {locationError ? (
-                <Text style={styles.locationErrorText}>{locationError}</Text>
-              ) : null}
-
-              <View style={styles.locationActionRow}>
-                <TouchableOpacity
-                  style={styles.locationGhostButton}
-                  onPress={handleSendLocation}
-                >
-                  <MaterialCommunityIcons name="map-marker-outline" size={18} color={theme.text} />
-                  <Text style={styles.locationGhostText}>Send pin</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.locationPrimaryButton}
-                  onPress={handleSendLiveLocation}
-                >
-                  <MaterialCommunityIcons name="map-marker-radius-outline" size={18} color={Colors.light.background} />
-                  <Text style={styles.locationPrimaryText}>Share live</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </Animated.View>
-
-          {showLocationLoading && (
-            <View style={styles.locationLoadingOverlay}>
-              <ActivityIndicator size="large" color={theme.tint} />
-              <Text style={styles.locationLoadingText}>Finding your location...</Text>
-            </View>
-          )}
-        </View>
-      </Modal>
+        mapRef={mapRef}
+        mapInitialRegion={mapInitialRegion}
+        selectedPlace={selectedPlace}
+        locationStatus={locationStatus}
+        sheetAnimation={locationSheetAnim}
+        searchQuery={locationSearchQuery}
+        searchLoading={searchLoading}
+        suggestions={locationSuggestions}
+        nearbyPlaces={nearbyPlaces}
+        placesLoading={placesLoading}
+        hasPlacesKey={hasPlacesKey}
+        liveDurationMinutes={liveDurationMinutes}
+        locationError={locationError}
+        showLoading={showLocationLoading}
+        isDark={isDark}
+        theme={theme}
+        styles={styles}
+        onClose={closeLocationModal}
+        onMapPress={handleMapPress}
+        onSearchQueryChange={setLocationSearchQuery}
+        onSuggestionPress={handleSuggestionPress}
+        onSelectPlace={selectPlace}
+        onLiveDurationChange={setLiveDurationMinutes}
+        onSendPin={handleSendLocation}
+        onSendLive={handleSendLiveLocation}
+      />
 
       {momentViewerVisible && momentUsersWithContent.length > 0 ? (
         <MomentViewer
@@ -11423,24 +10772,28 @@ const resolveQueuedVideoUri = async (
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={0}
       >
-        {showJumpToBottom && !showThreadBootstrapLoader && (
-          <Pressable
-            style={[
-              styles.jumpToBottomButton,
-              {
-                bottom:
-                  (replyingTo ? 140 : 96) +
-                  (keyboardInset ? Math.max(0, keyboardInset - 12) : 0),
-              },
-            ]}
-            onPress={() => {
-              shouldAutoScrollRef.current = true;
-              maybeScrollToEnd(true);
-            }}
-          >
-            <MaterialCommunityIcons name="chevron-down" size={20} color={Colors.light.background} />
-          </Pressable>
-        )}
+        <ChatBackground tone={isDark ? 'dark' : 'light'} />
+        {showJumpToBottom &&
+          !showThreadBootstrapLoader &&
+          !showMoodStickers &&
+          !showImagePicker && (
+            <Pressable
+              style={[
+                styles.jumpToBottomButton,
+                {
+                  bottom:
+                    (replyingTo ? 140 : 96) +
+                    (keyboardInset ? Math.max(0, keyboardInset - 12) : 0),
+                },
+              ]}
+              onPress={() => {
+                shouldAutoScrollRef.current = true;
+                maybeScrollToEnd(true);
+              }}
+            >
+              <MaterialCommunityIcons name="chevron-down" size={20} color={Colors.light.background} />
+            </Pressable>
+          )}
         {showThreadBootstrapLoader ? (
           <View style={styles.threadBootstrapLoader}>
             <ActivityIndicator size="small" color={theme.tint} />
@@ -11472,8 +10825,6 @@ const resolveQueuedVideoUri = async (
             {renderTypingIndicator()}
           </>
         )}
-        {renderMoodStickersPanel()}
-
         {mediaUploadStatus ? (
           <View style={styles.mediaUploadNotice}>
             <View style={styles.mediaUploadIcon}>
@@ -11487,6 +10838,24 @@ const resolveQueuedVideoUri = async (
           </View>
         ) : null}
 
+        {mediaSafetyNotice ? (
+          <ChatMediaSafetyNotice
+            key={mediaSafetyNotice.id}
+            notice={mediaSafetyNotice}
+            theme={theme}
+            isDark={isDark}
+            dismissWhenContinued={shouldDismissMediaSafetyNotice}
+            onDismiss={() => {
+              setMediaSafetyNotice((current) =>
+                current?.id === mediaSafetyNotice.id ? null : current,
+              );
+            }}
+            onChooseAnother={() => {
+              void handleLibraryPress();
+            }}
+          />
+        ) : null}
+
         {!needsRouteIdentityResolution ? (
           <ChatComposer
             styles={styles}
@@ -11495,6 +10864,7 @@ const resolveQueuedVideoUri = async (
             inputRef={inputRef}
             inputText={inputText}
             onChangeText={handleInputChange}
+            onSelectionChange={handleInputSelectionChange}
             onFocus={handleInputFocus}
             onBlur={handleInputBlur}
             placeholderTextColor={withAlpha(theme.textMuted, isDark ? 0.66 : 0.72)}
@@ -11526,6 +10896,8 @@ const resolveQueuedVideoUri = async (
           />
         ) : null}
 
+        {renderMoodStickersPanel()}
+
         {/* Image Picker Actions */}
         {showImagePicker && (
           <Animated.View
@@ -11554,12 +10926,46 @@ const resolveQueuedVideoUri = async (
             <View style={styles.attachmentHandle} />
             <View style={styles.imagePickerHeader}>
               <Text style={styles.imagePickerTitle}>Share</Text>
-              <TouchableOpacity
-                style={styles.imagePickerClose}
-                onPress={closeAttachmentSheet}
-              >
-                <MaterialCommunityIcons name="close" size={18} color={theme.textMuted} />
-              </TouchableOpacity>
+              <View style={styles.imagePickerHeaderActions}>
+                <TouchableOpacity
+                  accessibilityRole="switch"
+                  accessibilityLabel="Send photos in HD"
+                  accessibilityHint="Uses more data and preserves more image detail"
+                  accessibilityState={{ checked: imageSendQuality === 'hd' }}
+                  hitSlop={6}
+                  style={[
+                    styles.imageQualityButton,
+                    imageSendQuality === 'hd' && styles.imageQualityButtonActive,
+                  ]}
+                  onPress={() => {
+                    Haptics.selectionAsync().catch(() => {});
+                    setImageSendQuality((current) => current === 'hd' ? 'standard' : 'hd');
+                  }}
+                >
+                  <MaterialCommunityIcons
+                    name="high-definition-box"
+                    size={17}
+                    color={imageSendQuality === 'hd' ? theme.tint : theme.textMuted}
+                  />
+                  <Text
+                    style={[
+                      styles.imageQualityButtonText,
+                      imageSendQuality === 'hd' && styles.imageQualityButtonTextActive,
+                    ]}
+                  >
+                    HD
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  accessibilityLabel="Close share options"
+                  hitSlop={6}
+                  style={styles.imagePickerClose}
+                  onPress={closeAttachmentSheet}
+                >
+                  <MaterialCommunityIcons name="close" size={18} color={theme.textMuted} />
+                </TouchableOpacity>
+              </View>
             </View>
 
             <ScrollView
@@ -11569,108 +10975,199 @@ const resolveQueuedVideoUri = async (
               bounces={false}
               keyboardShouldPersistTaps="handled"
             >
-              <TouchableOpacity
-                style={[
-                  styles.viewOnceAttachmentRow,
-                  viewOnceMode && styles.viewOnceAttachmentRowActive,
-                ]}
-                onPress={async () => {
-                  Haptics.selectionAsync().catch(() => {});
-                  if (!viewOnceMode) {
-                    const keys = await ensureViewOnceKeys();
-                    if (!keys) return;
-                  }
-                  setViewOnceMode((prev) => !prev);
+              <Animated.View
+                style={{
+                  opacity: attachmentAnim.interpolate({
+                    inputRange: [0.08, 0.42, 1],
+                    outputRange: [0, 1, 1],
+                    extrapolate: 'clamp',
+                  }),
+                  transform: [{
+                    translateY: attachmentAnim.interpolate({
+                      inputRange: [0.08, 0.48, 1],
+                      outputRange: [8, 0, 0],
+                      extrapolate: 'clamp',
+                    }),
+                  }],
                 }}
               >
-                <View style={styles.viewOnceAttachmentLeft}>
-                  <View
-                    style={[
-                      styles.viewOnceAttachmentIcon,
-                      viewOnceMode && styles.viewOnceAttachmentIconActive,
-                    ]}
-                  >
-                    <MaterialCommunityIcons
-                      name={viewOnceMode ? 'shield-lock' : 'shield-lock-outline'}
-                      size={18}
-                      color={viewOnceMode ? Colors.light.background : theme.textMuted}
-                    />
-                  </View>
-                  <View>
-                    <Text style={styles.viewOnceAttachmentTitle}>View once (encrypted)</Text>
-                    <Text style={styles.viewOnceAttachmentSubtitle}>Only for photos & videos</Text>
-                  </View>
-                </View>
-                <View
+                <TouchableOpacity
+                  accessibilityRole="switch"
+                  accessibilityLabel="View once encrypted media"
+                  accessibilityHint="Applies to the next photo or video"
+                  accessibilityState={{ checked: viewOnceMode }}
                   style={[
-                    styles.viewOnceAttachmentToggle,
-                    viewOnceMode && styles.viewOnceAttachmentToggleActive,
+                    styles.viewOnceAttachmentChip,
+                    viewOnceMode && styles.viewOnceAttachmentChipActive,
                   ]}
+                  onPress={async () => {
+                    Haptics.selectionAsync().catch(() => {});
+                    if (!viewOnceMode) {
+                      const keys = await ensureViewOnceKeys();
+                      if (!keys) return;
+                    }
+                    setViewOnceMode((prev) => !prev);
+                  }}
                 >
                   <MaterialCommunityIcons
-                    name={viewOnceMode ? 'lock' : 'lock-open-variant'}
-                    size={16}
-                    color={viewOnceMode ? Colors.light.background : theme.textMuted}
+                    name={viewOnceMode ? 'shield-lock' : 'shield-lock-outline'}
+                    size={17}
+                    color={viewOnceMode ? theme.tint : theme.textMuted}
                   />
-                </View>
-              </TouchableOpacity>
+                  <Text
+                    style={[
+                      styles.viewOnceAttachmentChipText,
+                      viewOnceMode && styles.viewOnceAttachmentChipTextActive,
+                    ]}
+                  >
+                    View once
+                  </Text>
+                  {viewOnceMode ? (
+                    <MaterialCommunityIcons name="check" size={14} color={theme.tint} />
+                  ) : null}
+                </TouchableOpacity>
+              </Animated.View>
 
               <View style={styles.imagePickerGrid}>
-                <TouchableOpacity
-                  style={styles.imagePickerOption}
-                  onPress={handleCameraPress}
+                <Animated.View
+                  style={[
+                    styles.imagePickerOptionMotion,
+                    {
+                      opacity: attachmentAnim.interpolate({
+                        inputRange: [0.16, 0.5, 1],
+                        outputRange: [0, 1, 1],
+                        extrapolate: 'clamp',
+                      }),
+                      transform: [{
+                        translateY: attachmentAnim.interpolate({
+                          inputRange: [0.16, 0.56, 1],
+                          outputRange: [12, 0, 0],
+                          extrapolate: 'clamp',
+                        }),
+                      }],
+                    },
+                  ]}
                 >
-                  <View style={styles.imagePickerIcon}>
-                    <MaterialCommunityIcons name="camera-outline" size={22} color={theme.tint} />
-                  </View>
-                  {viewOnceMode && (
-                    <View style={styles.viewOnceMediaBadge}>
-                      <MaterialCommunityIcons name="lock" size={12} color={Colors.light.background} />
-                      <Text style={styles.viewOnceMediaBadgeText}>Once</Text>
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    accessibilityLabel="Camera"
+                    style={styles.imagePickerOption}
+                    onPress={handleCameraPress}
+                  >
+                    <View style={styles.imagePickerIcon}>
+                      <MaterialCommunityIcons name="camera-outline" size={23} color={theme.tint} />
                     </View>
-                  )}
-                  <Text style={styles.imagePickerLabel}>Camera</Text>
-                  <Text style={styles.imagePickerSubLabel}>Photo & video</Text>
-                </TouchableOpacity>
+                    {viewOnceMode && (
+                      <View style={styles.viewOnceMediaBadge}>
+                        <MaterialCommunityIcons name="lock" size={12} color={Colors.light.background} />
+                        <Text style={styles.viewOnceMediaBadgeText}>Once</Text>
+                      </View>
+                    )}
+                    <Text style={styles.imagePickerLabel}>Camera</Text>
+                  </TouchableOpacity>
+                </Animated.View>
 
-                <TouchableOpacity
-                  style={styles.imagePickerOption}
-                  onPress={handleLibraryPress}
+                <Animated.View
+                  style={[
+                    styles.imagePickerOptionMotion,
+                    {
+                      opacity: attachmentAnim.interpolate({
+                        inputRange: [0.24, 0.58, 1],
+                        outputRange: [0, 1, 1],
+                        extrapolate: 'clamp',
+                      }),
+                      transform: [{
+                        translateY: attachmentAnim.interpolate({
+                          inputRange: [0.24, 0.64, 1],
+                          outputRange: [12, 0, 0],
+                          extrapolate: 'clamp',
+                        }),
+                      }],
+                    },
+                  ]}
                 >
-                  <View style={styles.imagePickerIcon}>
-                    <MaterialCommunityIcons name="image-multiple-outline" size={22} color={theme.tint} />
-                  </View>
-                  {viewOnceMode && (
-                    <View style={styles.viewOnceMediaBadge}>
-                      <MaterialCommunityIcons name="lock" size={12} color={Colors.light.background} />
-                      <Text style={styles.viewOnceMediaBadgeText}>Once</Text>
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    accessibilityLabel="Photos"
+                    style={styles.imagePickerOption}
+                    onPress={handleLibraryPress}
+                  >
+                    <View style={styles.imagePickerIcon}>
+                      <MaterialCommunityIcons name="image-multiple-outline" size={23} color={theme.tint} />
                     </View>
-                  )}
-                  <Text style={styles.imagePickerLabel}>Photos</Text>
-                  <Text style={styles.imagePickerSubLabel}>Library</Text>
-                </TouchableOpacity>
+                    {viewOnceMode && (
+                      <View style={styles.viewOnceMediaBadge}>
+                        <MaterialCommunityIcons name="lock" size={12} color={Colors.light.background} />
+                        <Text style={styles.viewOnceMediaBadgeText}>Once</Text>
+                      </View>
+                    )}
+                    <Text style={styles.imagePickerLabel}>Photos</Text>
+                  </TouchableOpacity>
+                </Animated.View>
 
-                <TouchableOpacity
-                  style={styles.imagePickerOption}
-                  onPress={handleDocumentPress}
+                <Animated.View
+                  style={[
+                    styles.imagePickerOptionMotion,
+                    {
+                      opacity: attachmentAnim.interpolate({
+                        inputRange: [0.32, 0.66, 1],
+                        outputRange: [0, 1, 1],
+                        extrapolate: 'clamp',
+                      }),
+                      transform: [{
+                        translateY: attachmentAnim.interpolate({
+                          inputRange: [0.32, 0.72, 1],
+                          outputRange: [12, 0, 0],
+                          extrapolate: 'clamp',
+                        }),
+                      }],
+                    },
+                  ]}
                 >
-                  <View style={styles.imagePickerIcon}>
-                    <MaterialCommunityIcons name="file-document-outline" size={22} color={theme.tint} />
-                  </View>
-                  <Text style={styles.imagePickerLabel}>Documents</Text>
-                  <Text style={styles.imagePickerSubLabel}>Files & media</Text>
-                </TouchableOpacity>
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    accessibilityLabel="Documents"
+                    style={styles.imagePickerOption}
+                    onPress={handleDocumentPress}
+                  >
+                    <View style={styles.imagePickerIcon}>
+                      <MaterialCommunityIcons name="file-document-outline" size={23} color={theme.tint} />
+                    </View>
+                    <Text style={styles.imagePickerLabel}>Documents</Text>
+                  </TouchableOpacity>
+                </Animated.View>
 
-                <TouchableOpacity
-                  style={styles.imagePickerOption}
-                  onPress={handleLocationPress}
+                <Animated.View
+                  style={[
+                    styles.imagePickerOptionMotion,
+                    {
+                      opacity: attachmentAnim.interpolate({
+                        inputRange: [0.4, 0.74, 1],
+                        outputRange: [0, 1, 1],
+                        extrapolate: 'clamp',
+                      }),
+                      transform: [{
+                        translateY: attachmentAnim.interpolate({
+                          inputRange: [0.4, 0.8, 1],
+                          outputRange: [12, 0, 0],
+                          extrapolate: 'clamp',
+                        }),
+                      }],
+                    },
+                  ]}
                 >
-                  <View style={styles.imagePickerIcon}>
-                    <MaterialCommunityIcons name="map-marker-outline" size={22} color={theme.tint} />
-                  </View>
-                  <Text style={styles.imagePickerLabel}>Location</Text>
-                  <Text style={styles.imagePickerSubLabel}>Send a pin</Text>
-                </TouchableOpacity>
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    accessibilityLabel="Location"
+                    style={styles.imagePickerOption}
+                    onPress={handleLocationPress}
+                  >
+                    <View style={styles.imagePickerIcon}>
+                      <MaterialCommunityIcons name="map-marker-outline" size={23} color={theme.tint} />
+                    </View>
+                    <Text style={styles.imagePickerLabel}>Location</Text>
+                  </TouchableOpacity>
+                </Animated.View>
               </View>
             </ScrollView>
           </Animated.View>

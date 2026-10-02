@@ -669,7 +669,7 @@ export default function CirclePulseCommentSheet({
                                 : styles.syncBadgeTextQueued,
                             ]}
                           >
-                            {getModerationState(pinnedComment.id).pinStatus === 'failed' ? 'Pin failed' : 'Pin syncing'}
+                            {getModerationState(pinnedComment.id).pinStatus === 'failed' ? 'Pin failed' : 'Saving...'}
                           </Text>
                         </View>
                       ) : null}
@@ -815,8 +815,8 @@ export default function CirclePulseCommentSheet({
                                     {moderationState.pinStatus === 'failed'
                                       ? 'Pin failed'
                                       : comment.pinnedAt
-                                        ? 'Pin syncing'
-                                        : 'Unpin syncing'}
+                                        ? 'Saving...'
+                                        : 'Saving...'}
                                   </Text>
                                 </View>
                               ) : null}
@@ -837,7 +837,7 @@ export default function CirclePulseCommentSheet({
                                         : styles.syncBadgeTextQueued,
                                     ]}
                                   >
-                                    {moderationState.reportStatus === 'failed' ? 'Report failed' : 'Report syncing'}
+                                    {moderationState.reportStatus === 'failed' ? 'Report failed' : 'Reporting...'}
                                   </Text>
                                 </View>
                               ) : null}

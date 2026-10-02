@@ -1,14 +1,27 @@
 // @ts-nocheck
 import test from 'node:test';
 import {
+  collectMissingReplyTargetIds,
   isMissingOptionalChatMediaColumnsError,
   resolveThreadSyncCursor,
   shouldFetchThreadIncrementally,
 } from '../lib/chat/sync/chat-sync-policy.ts';
 import { createCoalescedAsyncRunner } from '../lib/chat/local/coalesced-async-runner.ts';
 import { createPriorityOperationScheduler } from '../lib/chat/local/priority-operation-scheduler.ts';
-import { buildChatThreadLocalRevision } from '../lib/chat/local/chat-thread-local-revision.ts';
+import {
+  buildChatThreadLocalRevision,
+  getChatMessageRowRevisionKey,
+} from '../lib/chat/local/chat-thread-local-revision.ts';
 import { shouldPersistThreadReadState } from '../lib/chat/read-state/thread-read-persistence-policy.ts';
+import {
+  clampReplySwipeDistance,
+  shouldClaimReplySwipe,
+  shouldCommitReplySwipe,
+} from '../lib/chat/swipe-reply-policy.ts';
+import {
+  extractChatLinks,
+  normalizeChatLink,
+} from '../lib/chat/links/chat-link-policy.ts';
 import {
   chronologicalIndexToListIndex,
   getChronologicalListDistanceToBottom,
@@ -41,6 +54,53 @@ const baseMessage = {
   type: 'text',
   reactions: [],
 };
+
+test('reply hydration requests only originals missing from the visible page and safe snapshots', () => {
+  const rows = [
+    { id: 'message-3', reply_to_message_id: 'message-1' },
+    { id: 'message-4', reply_to_message_id: 'message-2' },
+  ];
+  const currentMessages = [
+    {
+      ...baseMessage,
+      id: 'message-2',
+    },
+    {
+      ...baseMessage,
+      id: 'message-5',
+      replyToId: 'message-0',
+      replyTo: {
+        ...baseMessage,
+        id: 'message-0',
+      },
+    },
+  ];
+
+  assert.deepEqual(collectMissingReplyTargetIds({ rows, currentMessages }), ['message-1']);
+});
+
+test('reply swipe claims deliberate right drags and uses a bounded premium motion', () => {
+  assert.equal(shouldClaimReplySwipe(16, 4), true);
+  assert.equal(shouldClaimReplySwipe(16, 14), false);
+  assert.equal(shouldClaimReplySwipe(-16, 2), false);
+  assert.equal(shouldCommitReplySwipe(52, 0.1), true);
+  assert.equal(shouldCommitReplySwipe(30, 0.7), true);
+  assert.equal(shouldCommitReplySwipe(30, 0.2), false);
+  assert.equal(clampReplySwipeDistance(120), 72);
+  assert.equal(clampReplySwipeDistance(-10), 0);
+});
+
+test('chat links accept only normalized web destinations and trim message punctuation', () => {
+  const links = extractChatLinks(
+    'Try https://example.com/path?q=1, or www.betweener.com/help.',
+  );
+  assert.deepEqual(links.map((link) => link.normalizedUrl), [
+    'https://example.com/path?q=1',
+    'https://www.betweener.com/help',
+  ]);
+  assert.equal(normalizeChatLink('javascript:alert(1)'), null);
+  assert.equal(normalizeChatLink('https://user:password@example.com/private'), null);
+});
 
 test('chat read receipt delay stays stable', () => {
   assert.equal(CHAT_READ_RECEIPT_DELAY_MS, 700);
@@ -93,6 +153,53 @@ test('local thread revisions ignore new array identities with unchanged content'
 
   assert.equal(duplicate, first);
   assert.notEqual(changed, first);
+});
+
+test('local thread row revisions depend only on persisted SQLite content', () => {
+  const row = {
+    id: 'temp-expression-1',
+    local_id: 'temp-expression-1',
+    thread_id: 'peer-1',
+    owner_user_id: 'owner-1',
+    sender_user_id: 'owner-1',
+    receiver_user_id: 'peer-1',
+    body: '',
+    message_type: 'image',
+    status: 'sending',
+    direction: 'outgoing',
+    created_at: '2026-09-25T08:40:00.000Z',
+    server_created_at: null,
+    edited_at: null,
+    deleted_at: null,
+    reply_to_message_id: null,
+    is_view_once: 0,
+    local_only: 1,
+    error_code: null,
+    metadata_json: '{"type":"image"}',
+    remote_updated_at: null,
+    local_updated_at: '2026-09-25T08:40:00.000Z',
+  };
+  const first = buildChatThreadLocalRevision(
+    [row],
+    false,
+    new Date(row.created_at),
+    getChatMessageRowRevisionKey,
+  );
+  const duplicate = buildChatThreadLocalRevision(
+    [{ ...row }],
+    false,
+    new Date(row.created_at),
+    getChatMessageRowRevisionKey,
+  );
+  const changed = buildChatThreadLocalRevision(
+    [{ ...row, status: 'sent', local_updated_at: '2026-09-25T08:41:00.000Z' }],
+    false,
+    new Date(row.created_at),
+    getChatMessageRowRevisionKey,
+  );
+
+  assert.equal(first, duplicate);
+  assert.notEqual(first, changed);
 });
 
 test('thread read persistence skips an already durable read state', () => {
@@ -279,6 +386,33 @@ test('thread sync remains incremental when cached attachment metadata is complet
           id: 'image-1',
           type: 'image',
           storagePath: 'user/thread/image-1.jpg',
+          status: 'delivered',
+        },
+      ],
+    }),
+    true,
+  );
+});
+
+test('provider expressions are complete without Betweener attachment storage', () => {
+  assert.equal(
+    shouldFetchThreadIncrementally({
+      syncCursor: '2026-07-20T10:00:00.000Z',
+      currentMessages: [
+        {
+          ...baseMessage,
+          id: 'provider-expression-1',
+          type: 'image',
+          mediaKind: 'giphy_sticker',
+          providerMedia: {
+            schemaVersion: 1,
+            provider: 'giphy',
+            providerMediaId: 'sticker-123',
+            title: 'Wave sticker',
+            width: 320,
+            height: 320,
+            kind: 'giphy_sticker',
+          },
           status: 'delivered',
         },
       ],

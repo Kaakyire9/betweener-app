@@ -15,6 +15,7 @@ type ChatImmersiveVideoViewerProps = {
   onPrevious?: () => void;
   onNext?: () => void;
   onRetry?: () => void;
+  onManage?: () => void;
 };
 
 export const ChatImmersiveVideoViewer = ({
@@ -27,6 +28,7 @@ export const ChatImmersiveVideoViewer = ({
   onPrevious,
   onNext,
   onRetry,
+  onManage,
 }: ChatImmersiveVideoViewerProps) => {
   const insets = useSafeAreaInsets();
   const [playbackFailed, setPlaybackFailed] = useState(false);
@@ -117,6 +119,19 @@ export const ChatImmersiveVideoViewer = ({
             <Text style={styles.captionText}>{caption}</Text>
           </View>
         ) : null}
+        {onManage ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Manage album item"
+            onPress={onManage}
+            style={[styles.manage, {
+              bottom: Math.max(insets.bottom + 18, 26) + (caption ? 76 : 0),
+            }]}
+          >
+            <MaterialCommunityIcons name="dots-horizontal" size={20} color="#FFFFFF" />
+            <Text style={styles.retryText}>Manage</Text>
+          </Pressable>
+        ) : null}
         {playbackFailed ? (
           <Pressable
             accessibilityRole="button"
@@ -194,6 +209,11 @@ const styles = StyleSheet.create({
     position: 'absolute', alignSelf: 'center', top: '46%', flexDirection: 'row',
     alignItems: 'center', gap: 7, paddingHorizontal: 16, paddingVertical: 11,
     borderRadius: 999, backgroundColor: 'rgba(5,9,13,0.82)',
+  },
+  manage: {
+    position: 'absolute', right: 18, flexDirection: 'row', alignItems: 'center',
+    gap: 6, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 999,
+    backgroundColor: 'rgba(5,9,13,0.82)',
   },
   retryText: { color: '#FFFFFF', fontSize: 13, fontWeight: '800' },
 });

@@ -94,12 +94,12 @@ test('Edge requests cannot inject a scene, person, track, prompt or action', () 
   assert.doesNotMatch(musicEdge, /body\.(?:track|path|bucket|url|uri)/i);
 });
 
-test('private experiences and publisher devices fail closed for music', () => {
+test('private experiences and every phone fail closed for local music playback', () => {
   const playback = functionBody(musicPolicyHardening, 'rpc_service_get_live_music_playback_v1');
   assert.match(playback, /private_experience_music_forbidden/i);
   assert.match(playback, /publisher_device_mix_unsupported/i);
   assert.match(playback, /live_private_sparks/i);
-  assert.match(route, /allowMusicPlayback: isLive && !canPublish/i);
+  assert.match(route, /allowMusicPlayback: false/i);
 });
 
 test('music kill switches are rechecked and Host overrides suppress Odo', () => {

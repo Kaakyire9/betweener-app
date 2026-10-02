@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { APP_SCHEME, APP_WEB_ORIGIN } from "@/config/app-identity";
 
 export const LAST_DEEP_LINK_URL_KEY = "last_deep_link_url";
 export const LEGACY_AUTH_PENDING_TOKENS_KEY = "auth_pending_tokens_v1";
@@ -22,6 +23,7 @@ type PendingIdentityLink = {
 };
 
 const DEV_CALLBACK_HOSTS = new Set(["localhost", "127.0.0.1"]);
+const APP_WEB_HOST = new URL(APP_WEB_ORIGIN).hostname.toLowerCase();
 const AUTH_PENDING_FLOW_TTLS: Record<PendingAuthFlow["purpose"], number> = {
   oauth: 15 * 60 * 1000,
   email_link: 4 * 60 * 60 * 1000,
@@ -126,11 +128,11 @@ export const isTrustedAuthCallbackUrl = (url: string) => {
     const host = parsed.hostname.toLowerCase();
     const path = parsed.pathname.replace(/^\/+|\/+$/g, "").toLowerCase();
 
-    if (scheme === "https" && host === "getbetweener.com" && path === "auth/callback") {
+    if (scheme === "https" && host === APP_WEB_HOST && path === "auth/callback") {
       return true;
     }
 
-    if (scheme === "betweenerapp" && host === "auth" && path === "callback") {
+    if (scheme === APP_SCHEME && host === "auth" && path === "callback") {
       return true;
     }
 

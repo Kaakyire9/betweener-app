@@ -19,9 +19,14 @@ import {
 
 import type {
   LiveQuickConnectIntent,
+  LiveQuickConnectPoolMember,
   LiveQuickConnectPoolSnapshot,
+  LiveQuickConnectPublicFormation,
 } from '../application/index.ts';
+import { LIVE_PRIVATE_SPARK_MOTION } from '../motion/live-private-spark-motion.ts';
+import type { LivePairPortrait } from '../motion/live-private-spark-motion.ts';
 import { paginateLiveQuickConnectPool } from '../domain/index.ts';
+import { LivePrivateActivityIndicator } from './LivePrivateActivityIndicator.tsx';
 import { LiveQuickConnectConstellation } from './LiveQuickConnectConstellation.tsx';
 import { type LiveVisualTheme, useLiveVisualTheme } from './live-visual-tokens.ts';
 
@@ -36,6 +41,7 @@ export type LiveQuickConnectPoolProps = {
   onSignalInterest: (profileId: string) => void;
   layout: 'stacked' | 'side-by-side';
   onLayoutChange: (layout: 'stacked' | 'side-by-side') => void;
+  privateActivityCount?: number;
   embedded?: boolean;
 };
 
@@ -46,6 +52,10 @@ const CONTROL_COPY: Record<LiveQuickConnectPoolSnapshot['controlState'], string>
   draining: 'The final conversations are being completed.',
   ended: "Tonight's rotation has ended.",
 };
+
+const EMPTY_PUBLIC_FORMATIONS: readonly LiveQuickConnectPublicFormation[] = [];
+
+const firstName = (value: string | null) => value?.trim().split(/\s+/)[0] || 'A guest';
 
 const INTENT_OPTIONS: readonly {
   value: LiveQuickConnectIntent;
@@ -83,6 +93,7 @@ export function LiveQuickConnectPool({
   onSignalInterest,
   layout,
   onLayoutChange,
+  privateActivityCount = 0,
   embedded = false,
 }: LiveQuickConnectPoolProps) {
   const visual = useLiveVisualTheme();
@@ -94,11 +105,17 @@ export function LiveQuickConnectPool({
   const [reduceMotion, setReduceMotion] = useState(false);
   const [choosingIntent, setChoosingIntent] = useState(false);
   const [connectionIntent, setConnectionIntent] = useState<LiveQuickConnectIntent | null>(null);
+  const [formationClockTick, setFormationClockTick] = useState(0);
+  const memberCacheRef = useRef(new Map<string, LiveQuickConnectPoolMember>());
 
   useEffect(() => {
     if (choosingIntent) return;
     setConnectionIntent(snapshot?.connectionIntent ?? null);
   }, [choosingIntent, snapshot?.connectionIntent]);
+
+  useEffect(() => {
+    snapshot?.members.forEach((member) => memberCacheRef.current.set(member.userId, member));
+  }, [snapshot?.members]);
 
   useEffect(() => {
     let mounted = true;
@@ -125,10 +142,83 @@ export function LiveQuickConnectPool({
     return () => animation.stop();
   }, [glow, reduceMotion]);
 
-  const poolPage = useMemo(
-    () => paginateLiveQuickConnectPool(snapshot?.members ?? [], page),
-    [page, snapshot?.members],
+  const publicFormations = snapshot?.publicFormations ?? EMPTY_PUBLIC_FORMATIONS;
+  const serverClockOffsetMs = useMemo(() => {
+    const serverNowMs = Date.parse(snapshot?.serverNow ?? '');
+    return Number.isFinite(serverNowMs) ? serverNowMs - Date.now() : 0;
+  }, [snapshot?.serverNow]);
+  const formationNowMs = useMemo(
+    () => Date.now() + serverClockOffsetMs,
+    [formationClockTick, serverClockOffsetMs],
   );
+
+  useEffect(() => {
+    const boundaries = publicFormations.flatMap((formation) => {
+      const startsAtMs = Date.parse(formation.startsAt);
+      if (!Number.isFinite(startsAtMs)) return [];
+      return [
+        startsAtMs,
+        startsAtMs + LIVE_PRIVATE_SPARK_MOTION.formationDurationMs,
+      ];
+    });
+    const nextBoundary = boundaries
+      .filter((boundary) => boundary > formationNowMs)
+      .sort((left, right) => left - right)[0];
+    if (nextBoundary == null) return undefined;
+    const timeout = setTimeout(
+      () => setFormationClockTick((current) => current + 1),
+      Math.max(16, nextBoundary - formationNowMs + 24),
+    );
+    return () => clearTimeout(timeout);
+  }, [formationNowMs, publicFormations]);
+
+  const activePublicFormation = useMemo(() => publicFormations.find((formation) => {
+    const startsAtMs = Date.parse(formation.startsAt);
+    return Number.isFinite(startsAtMs)
+      && startsAtMs <= formationNowMs
+      && startsAtMs + LIVE_PRIVATE_SPARK_MOTION.formationDurationMs > formationNowMs;
+  }) ?? null, [formationNowMs, publicFormations]);
+
+  const constellationMembers = useMemo(() => {
+    const membersByUserId = new Map(
+      (snapshot?.members ?? []).map((member) => [member.userId, member]),
+    );
+    publicFormations.forEach((formation) => {
+      const startsAtMs = Date.parse(formation.startsAt);
+      if (!Number.isFinite(startsAtMs)
+        || startsAtMs + LIVE_PRIVATE_SPARK_MOTION.formationDurationMs <= formationNowMs) return;
+      [formation.participantA, formation.participantB].forEach((person) => {
+        if (membersByUserId.has(person.userId)) return;
+        membersByUserId.set(person.userId, memberCacheRef.current.get(person.userId) ?? {
+          userId: person.userId,
+          profileId: person.profileId,
+          fullName: person.fullName,
+          avatarUrl: person.avatarUrl,
+          age: null,
+          city: null,
+          expressedInterest: false,
+        });
+      });
+    });
+    const members = [...membersByUserId.values()];
+    if (!activePublicFormation) return members;
+    const activeOrder = new Map([
+      [activePublicFormation.participantA.userId, 0],
+      [activePublicFormation.participantB.userId, 1],
+    ]);
+    return members.sort((left, right) => (
+      (activeOrder.get(left.userId) ?? 2) - (activeOrder.get(right.userId) ?? 2)
+    ));
+  }, [activePublicFormation, formationNowMs, publicFormations, snapshot?.members]);
+
+  const poolPage = useMemo(
+    () => paginateLiveQuickConnectPool(constellationMembers, page),
+    [constellationMembers, page],
+  );
+
+  useEffect(() => {
+    if (activePublicFormation) setPage(0);
+  }, [activePublicFormation?.pairingId]);
 
   const changePage = (nextPage: number) => {
     if (pageAnimating || nextPage === poolPage.page) return;
@@ -160,6 +250,51 @@ export function LiveQuickConnectPool({
     });
   };
 
+  const privatePairingPeople = useMemo<readonly LivePairPortrait[]>(() => {
+    const pairing = snapshot?.queue?.pairing;
+    if (!pairing || !currentUserId) return [];
+    const current = memberCacheRef.current.get(currentUserId);
+    const other = memberCacheRef.current.get(pairing.otherPerson.userId);
+    return [
+      {
+        userId: currentUserId,
+        fullName: current?.fullName ?? 'You',
+        avatarUrl: current?.avatarUrl ?? null,
+      },
+      {
+        userId: pairing.otherPerson.userId,
+        fullName: other?.fullName ?? pairing.otherPerson.fullName,
+        avatarUrl: other?.avatarUrl ?? pairing.otherPerson.avatarUrl,
+      },
+    ];
+  }, [currentUserId, snapshot?.queue?.pairing]);
+
+  const privatePairingId = snapshot?.queue?.pairing?.id ?? null;
+  const privatePairingScheduled = privatePairingId != null
+    && publicFormations.some((formation) => formation.pairingId === privatePairingId);
+  const publicPairingPeople: readonly LivePairPortrait[] = activePublicFormation ? [
+    activePublicFormation.participantA,
+    activePublicFormation.participantB,
+  ] : [];
+  const pairingPeople = activePublicFormation
+    ? publicPairingPeople
+    : privatePairingScheduled
+      ? []
+      : privatePairingPeople;
+  const pairingEventKey = activePublicFormation?.pairingId ?? privatePairingId;
+  const pairingUserIds = pairingPeople.map((person) => person.userId);
+  const pairingInitialProgress = activePublicFormation
+    ? Math.max(0, Math.min(
+      0.98,
+      (formationNowMs - Date.parse(activePublicFormation.startsAt))
+        / LIVE_PRIVATE_SPARK_MOTION.formationDurationMs,
+    ))
+    : 0;
+  const pairingLabel = pairingPeople.length === 2
+    ? `${firstName(pairingPeople[0].fullName)} & ${firstName(pairingPeople[1].fullName)} found a Private Spark`
+    : 'A Private Spark is ready';
+  const pairingHaptic = currentUserId != null && pairingUserIds.includes(currentUserId);
+
   if (!snapshot) {
     return initialLoading ? (
       <View style={styles.loading}>
@@ -170,10 +305,6 @@ export function LiveQuickConnectPool({
 
   const poolCount = snapshot.members.length;
   const pairingActive = snapshot.queue?.pairing != null;
-  const pairingUserIds = snapshot.queue?.pairing
-    ? [currentUserId, snapshot.queue.pairing.otherPerson.userId]
-      .filter((userId): userId is string => Boolean(userId))
-    : [];
   return (
     <View style={[styles.shell, embedded && styles.shellEmbedded]}>
       <View style={[styles.headingRow, layout === 'side-by-side' && styles.headingRowCompact]}>
@@ -275,6 +406,12 @@ export function LiveQuickConnectPool({
         </View>
       )}
 
+      <LivePrivateActivityIndicator
+        activePairCount={privateActivityCount}
+        compact={layout === 'side-by-side'}
+        style={styles.privateActivity}
+      />
+
       {!snapshot.isHost && !snapshot.isOptedIn && choosingIntent ? (
         <View style={styles.preferencePanel}>
           <Text style={styles.preferenceTitle}>What are you hoping to find?</Text>
@@ -306,7 +443,7 @@ export function LiveQuickConnectPool({
         </View>
       ) : null}
 
-      {poolCount > 0 ? (
+      {poolCount > 0 || publicFormations.length > 0 || pairingPeople.length === 2 ? (
         <>
           <LiveQuickConnectConstellation
             busyAction={busyAction}
@@ -316,6 +453,11 @@ export function LiveQuickConnectPool({
             members={poolPage.members}
             onSignalInterest={onSignalInterest}
             pageMotion={pageMotion}
+            pairingEventKey={pairingEventKey}
+            pairingHaptic={pairingHaptic}
+            pairingInitialProgress={pairingInitialProgress}
+            pairingLabel={pairingLabel}
+            pairingPeople={pairingPeople}
             pairingUserIds={pairingUserIds}
             reduceMotion={reduceMotion}
           />
@@ -422,4 +564,5 @@ const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
   leaveButton: { alignSelf: 'center', minHeight: 28, borderRadius: 14, flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: visual.color.surfaceRaised, paddingHorizontal: 12 },
   leaveText: { color: visual.color.textMuted, fontSize: 8, fontFamily: 'Manrope_800ExtraBold' },
   error: { color: visual.color.danger, fontSize: 8, textAlign: 'center', fontFamily: 'Manrope_600SemiBold' },
+  privateActivity: { alignSelf: 'center' },
 });

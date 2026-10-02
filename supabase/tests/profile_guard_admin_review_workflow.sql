@@ -1,6 +1,8 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
+set local role postgres;
+set search_path = public, extensions, pg_catalog;
 select plan(12);
 
 insert into auth.users(id, email) values
@@ -10,6 +12,7 @@ insert into auth.users(id, email) values
 insert into public.internal_admins(user_id, email, role)
 values ('93000000-0000-4000-8000-000000000001', 'guard-admin@example.test', 'moderation');
 
+select set_config('request.jwt.claim.role', 'service_role', true);
 select set_config('app.profile_guard_write', 'on', true);
 insert into public.profiles(
   id, user_id, full_name, age, gender, bio, phone_number, phone_verified,
@@ -43,7 +46,7 @@ select lives_ok(
   ) $$,
   'service role creates a semantic review with submitted evidence'
 );
-reset role;
+set local role postgres;
 
 select is(
   (select evidence_snapshot->'profile_updates'->>'bio'
@@ -81,7 +84,7 @@ select lives_ok(
   ) $$,
   'admin can clear an event-scoped review'
 );
-reset role;
+set local role postgres;
 
 select is(
   (select profile_moderation_state from public.profiles

@@ -3,8 +3,12 @@ import {
   type FlashListRef,
   type ListRenderItemInfo,
 } from '@shopify/flash-list';
-import { useCallback, type ReactElement, type ReactNode, type RefObject } from 'react';
+import { memo, useCallback, type ReactElement, type ReactNode, type RefObject } from 'react';
 import type { MessageType } from './types';
+
+const START_RENDERING_FROM_BOTTOM = Object.freeze({
+  startRenderingFromBottom: true,
+});
 
 type ChatMessageListProps = {
   routeKey: string;
@@ -36,13 +40,13 @@ type ChatMessageListProps = {
  * latest messages become visible, and item types prevent incompatible media
  * rows from sharing a recycle pool.
  */
-export const ChatMessageList = ({
+export const ChatMessageList = memo(function ChatMessageList({
   routeKey, listRef, messages, renderItem, getItemType, keyExtractor,
   contentContainerStyle, header, empty, onScroll, onStartReached,
   onContentSizeChange, onLayout, onScrollBeginDrag, onScrollEndDrag,
   onMomentumScrollBegin, onMomentumScrollEnd, onViewableItemsChanged,
   viewabilityConfig,
-}: ChatMessageListProps) => {
+}: ChatMessageListProps) {
   const renderMessageItem = useCallback(
     ({ item, index }: ListRenderItemInfo<MessageType>) =>
       renderItem({ item, index }),
@@ -64,7 +68,7 @@ export const ChatMessageList = ({
       bounces={false}
       alwaysBounceVertical={false}
       overScrollMode="never"
-      maintainVisibleContentPosition={{ startRenderingFromBottom: true }}
+      maintainVisibleContentPosition={START_RENDERING_FROM_BOTTOM}
       onScroll={onScroll}
       scrollEventThrottle={16}
       onStartReached={onStartReached}
@@ -79,4 +83,4 @@ export const ChatMessageList = ({
       viewabilityConfig={viewabilityConfig}
     />
   );
-};
+});

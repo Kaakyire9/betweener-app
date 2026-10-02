@@ -10,6 +10,8 @@ const stage = readFileSync(new URL('../features/live/components/StreamLiveStage.
 test('global reminders never cover a Live or private Live surface', () => {
   assert.match(reminder, /pathname\.startsWith\('\/live'\)/);
   assert.match(reminder, /if \(shouldSuppress \|\| !visible \|\| !reminder\) return null/);
+  assert.match(reminder, /width: '76%'/);
+  assert.match(reminder, /}, 4200\)/);
 });
 
 test('host operations are consolidated in one full-screen Live Studio', () => {

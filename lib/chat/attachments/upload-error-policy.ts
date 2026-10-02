@@ -36,6 +36,9 @@ export const getAttachmentUploadErrorMessage = (error: unknown) => {
   if (message.includes('chat_storage_capacity_insufficient')) {
     return 'Your device needs more free space before this attachment can be prepared. Free some storage, then try again.';
   }
+  if (message.includes('chat_preview_generation_failed')) {
+    return 'One photo could not be prepared. Please choose the photos again.';
+  }
   if (message.includes('timeout') || message.includes('network')) {
     return 'The upload timed out. Try again on a stronger connection or send a smaller video.';
   }

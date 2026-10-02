@@ -1,5 +1,34 @@
 import type { MessageType } from '@/components/chat/types';
 
+const MAX_REPLY_TARGETS_PER_FETCH = 50;
+
+export const collectMissingReplyTargetIds = ({
+  rows,
+  currentMessages,
+}: {
+  rows: { id: string; reply_to_message_id?: string | null }[];
+  currentMessages: MessageType[];
+}): string[] => {
+  const availableIds = new Set<string>();
+  rows.forEach((row) => availableIds.add(row.id));
+  currentMessages.forEach((message) => {
+    availableIds.add(message.id);
+    if (message.replyTo?.id) availableIds.add(message.replyTo.id);
+  });
+
+  const requestedIds = new Set<string>();
+  rows.forEach((row) => {
+    if (row.reply_to_message_id) requestedIds.add(row.reply_to_message_id);
+  });
+  currentMessages.forEach((message) => {
+    if (message.replyToId && !message.replyTo) requestedIds.add(message.replyToId);
+  });
+
+  return [...requestedIds]
+    .filter((id) => !availableIds.has(id))
+    .slice(0, MAX_REPLY_TARGETS_PER_FETCH);
+};
+
 const isPersistedRemoteMessage = (message: MessageType) =>
   !message.isSystem &&
   message.type !== 'system' &&
@@ -12,6 +41,7 @@ export const hasIncompleteCachedAttachment = (messages: MessageType[]) =>
     if (message.deletedForAll) return false;
     if (message.isViewOnce && message.encryptedMedia !== true) return true;
     if (message.type === 'image') {
+      if (message.providerMedia) return false;
       return !message.encryptedMedia && !message.storagePath && !message.imageUrl && !message.offlineImageUri;
     }
     if (message.type === 'video') {
@@ -59,7 +89,7 @@ export const resolveThreadSyncCursor = ({
   return latestTimestamp == null ? null : new Date(latestTimestamp).toISOString();
 };
 
-const OPTIONAL_CHAT_MEDIA_COLUMNS = ['media_items', 'media_expected_count', 'media_group_id', 'media_caption'] as const;
+const OPTIONAL_CHAT_MEDIA_COLUMNS = ['media_items', 'media_expected_count', 'media_group_id', 'media_caption', 'media_kind', 'provider_media'] as const;
 
 export const isMissingOptionalChatMediaColumnsError = (
   error?: { code?: string | null; message?: string | null } | null,

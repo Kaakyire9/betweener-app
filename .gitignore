@@ -49,6 +49,8 @@ app-example
 
 # firebase
 google-services.json
+google-services.*.json
+GoogleService-Info*.plist
 google-play-service-account*.json
 *service-account*.json
 

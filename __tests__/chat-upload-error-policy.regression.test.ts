@@ -14,4 +14,8 @@ test('queues only transient upload failures for retry', () => {
 test('provides actionable attachment failure copy', () => {
   assert.match(getAttachmentUploadErrorMessage(new Error('payload too large')), /too large/i);
   assert.match(getAttachmentUploadErrorMessage(new Error('network timeout')), /timed out/i);
+  assert.match(
+    getAttachmentUploadErrorMessage(new Error('chat_preview_generation_failed')),
+    /could not be prepared/i,
+  );
 });

@@ -1,10 +1,13 @@
 import type * as ImagePicker from 'expo-image-picker';
 import { Platform } from 'react-native';
 
-export const ATTACHMENT_SHEET_MIN_HEIGHT = 300;
-export const ATTACHMENT_SHEET_MAX_HEIGHT = 420;
-export const ATTACHMENT_SHEET_SCREEN_RATIO = 0.46;
+export const ATTACHMENT_SHEET_MIN_HEIGHT = 270;
+export const ATTACHMENT_SHEET_MAX_HEIGHT = 308;
+export const ATTACHMENT_SHEET_SCREEN_RATIO = 0.34;
 export const CHAT_MEDIA_BUCKET = 'chat-media';
+export const CHAT_MEDIA_FRAME_WIDTH_RATIO = 0.76;
+export const CHAT_MEDIA_BUBBLE_WIDTH_RATIO = 0.8;
+export const CHAT_MEDIA_FRAME_MAX_WIDTH = 340;
 export const LOCATION_TEXT_PREFIX = '\u{1F4CD}';
 export const LOCATION_LIVE_PREFIX = 'LIVE:';
 export const CHAT_BUBBLE_TAIL_PATH =
@@ -89,7 +92,7 @@ export const CHAT_PREFS_STORAGE_KEY = 'chat_header_prefs_v1';
 export const CHAT_SAFETY_SEEN_KEY = 'chat_safety_seen_v2';
 export const LEGACY_MESSAGE_SELECT_FIELDS =
   'id,client_message_id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform,deleted_for_all,deleted_at,deleted_by,edited_at,reply_to_message_id,is_view_once,encrypted_media,encrypted_media_path,encrypted_key_sender,encrypted_key_receiver,encrypted_key_nonce,encrypted_media_nonce,encrypted_media_alg,encrypted_media_mime,encrypted_media_size,storage_path';
-export const MESSAGE_SELECT_FIELDS = `${LEGACY_MESSAGE_SELECT_FIELDS},media_items,media_expected_count,media_group_id,media_caption`;
+export const MESSAGE_SELECT_FIELDS = `${LEGACY_MESSAGE_SELECT_FIELDS},media_items,media_expected_count,media_group_id,media_caption,media_kind,provider_media`;
 
 export const MAP_STYLE_LIGHT = [
   { elementType: 'geometry', stylers: [{ color: '#F3E5D8' }] },

@@ -355,7 +355,7 @@ export const LiveAudiencePulseCard = memo(function LiveAudiencePulseCard({
 });
 
 const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
-  trigger: { width: 37, height: 37, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.color.surfaceRaised, borderWidth: 1, borderColor: visual.color.borderStrong },
+  trigger: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.color.surfaceRaised, borderWidth: 1, borderColor: visual.color.borderStrong },
   triggerResponseCount: { marginTop: 11 },
   compactCard: { marginTop: 8, marginBottom: 3, minHeight: 48, borderRadius: 16, borderWidth: 1, borderColor: visual.color.borderStrong, backgroundColor: visual.color.surfaceTranslucent, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
   compactCopy: { flex: 1, gap: 2 },

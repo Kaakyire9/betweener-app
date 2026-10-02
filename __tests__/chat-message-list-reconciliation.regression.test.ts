@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import {
   getChatMessageRevisionKey,
   preserveUnchangedMessageReferences,
+  removeSupersededOptimisticMessages,
 } from '../lib/chat/message-list-reconciliation.ts';
 
 const message = (id: string, status = 'sent') => ({
@@ -56,6 +57,23 @@ test('message reconciliation preserves stable rows when the list grows', () => {
   assert.equal(reconciled[0], current[0]);
   assert.equal(reconciled[1], current[1]);
   assert.equal(reconciled[2].id, 'three');
+});
+
+test('canonical messages remove stale optimistic rows with the same client identity', () => {
+  const optimistic = {
+    ...message('temp-expression-1', 'sending'),
+    id: 'temp-expression-1',
+    clientMessageId: 'temp-expression-1',
+    status: 'sending',
+  };
+  const canonical = {
+    ...message('8c154bc4-e8b6-40e4-a9fe-c4da28f849fa'),
+    id: '8c154bc4-e8b6-40e4-a9fe-c4da28f849fa',
+    clientMessageId: 'temp-expression-1',
+    status: 'sent',
+  };
+
+  assert.deepEqual(removeSupersededOptimisticMessages([optimistic, canonical]), [canonical]);
 });
 
 test('canonical attachment finalization replaces a partial realtime image row', () => {

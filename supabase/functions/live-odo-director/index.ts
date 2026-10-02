@@ -1,6 +1,8 @@
 // @ts-nocheck -- checked by the function-local Deno configuration.
 import { createClient } from '@supabase/supabase-js';
 import { corsHeaders } from '../_shared/cors.ts';
+import { getSupabaseAdminKey } from '../_shared/supabase-admin-key.ts';
+import { getSupabasePublicApiKey } from '../_shared/supabase-public-key.ts';
 import {
   ODO_CONSTITUTION_VERSION,
   OdoModelRouter,
@@ -48,8 +50,8 @@ Deno.serve(async (request) => {
   if (!body) return json({ error: 'invalid_request' }, 400);
 
   const url = env('SUPABASE_URL');
-  const anonKey = env('SUPABASE_ANON_KEY');
-  const serviceKey = env('SUPABASE_SERVICE_ROLE_KEY');
+  const anonKey = getSupabasePublicApiKey();
+  const serviceKey = getSupabaseAdminKey();
   const caller = createClient(url, anonKey, {
     auth: { autoRefreshToken: false, persistSession: false },
     global: { headers: { Authorization: authorization } },
@@ -190,4 +192,3 @@ Deno.serve(async (request) => {
     fallbackUsed: run.fallbackUsed,
   });
 });
-

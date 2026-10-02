@@ -8,6 +8,10 @@ const control = readFileSync('supabase/migrations/20260910122000_live_phase10g_p
 const recovery = readFileSync('supabase/migrations/20260910123000_live_phase10g_media_and_recovery.sql', 'utf8');
 const audience = readFileSync('supabase/migrations/20260910124000_live_phase10g_audience_program_snapshot.sql', 'utf8');
 const clock = readFileSync('supabase/migrations/20260910125000_live_phase10g_maintenance_clock.sql', 'utf8');
+const musicControlCoreRestore = readFileSync(
+  'supabase/migrations/20260914122000_live_music_control_core_restore.sql',
+  'utf8',
+);
 const maintenanceRepair = readFileSync(
   'supabase/migrations/20260910130000_live_phase10g_phase10f_maintenance_repair.sql',
   'utf8',
@@ -24,6 +28,14 @@ const lifecycleRecovery = readFileSync(
   'supabase/migrations/20260912100000_live_studio_media_lifecycle_recovery.sql',
   'utf8',
 );
+const musicLibraryAtmosphere = readFileSync(
+  'supabase/migrations/20260912110000_live_music_library_and_stage_atmosphere.sql',
+  'utf8',
+);
+const musicStagePresentation = readFileSync(
+  'supabase/migrations/20260912190000_live_music_stage_presentation.sql',
+  'utf8',
+);
 const liveRoute = readFileSync('app/live/[sessionId].tsx', 'utf8');
 const repository = readFileSync('features/live/application/live-repository.ts', 'utf8');
 const directorHook = readFileSync(
@@ -31,6 +43,11 @@ const directorHook = readFileSync(
   'utf8',
 );
 const directorPanel = readFileSync('features/live/components/OdoShowDirectorPanel.tsx', 'utf8');
+const musicAdminFunction = readFileSync(
+  'supabase/functions/live-music-library-admin/index.ts',
+  'utf8',
+);
+const health = readFileSync('supabase/verification/live_odo_phase10g_health.sql', 'utf8');
 
 const functionBody = (source: string, name: string): string => source.match(
   new RegExp(`create or replace function public\\.${name}[\\s\\S]*?\\n\\$\\$;`, 'i'),
@@ -54,6 +71,14 @@ test('10G preserves the executable Phase 10F opportunity maintenance chain', () 
   assert.match(maintenanceRepair, /status = 'expired'/i);
   assert.match(maintenanceRepair, /opportunity\.state in \(/i);
   assert.match(maintenanceRepair, /revoke all on function[\s\S]*service_role/i);
+});
+
+test('Programme Audio retains an executable private host music control chain', () => {
+  assert.match(musicControlCoreRestore, /create or replace function public\.live_odo_host_music_control_base_10f_v1/i);
+  assert.match(musicControlCoreRestore, /update public\.live_music_session_state/i);
+  assert.match(musicControlCoreRestore, /insert into public\.live_music_events/i);
+  assert.doesNotMatch(musicControlCoreRestore, /rpc_host_control_live_music_without_always_on_10f_v1/i);
+  assert.match(musicControlCoreRestore, /revoke all on function[\s\S]*authenticated, service_role/i);
 });
 
 test('Studio storage is RLS protected with no authenticated direct writes', () => {
@@ -166,6 +191,81 @@ test('screen audio and Programme Music repeat stay separately gated and authorit
   assert.match(completion, /track_still_playing/i);
   assert.match(completion, /music_repeat_all_advanced/i);
   assert.match(completion, /live_odo_is_service_role/i);
+  assert.match(liveRoute, /allowMusicPlayback: false/i);
+});
+
+test('global music catalogue is licensed, sanitized and reusable by every authorized Live', () => {
+  const catalogue = functionBody(musicLibraryAtmosphere, 'rpc_get_live_music_catalogue_v1');
+  assert.match(catalogue, /live\.view_host_console/i);
+  assert.match(catalogue, /live_studio_is_authorized_v1/i);
+  assert.match(catalogue, /license_status = 'approved'/i);
+  assert.match(catalogue, /licensed_regions @> array\['\*'\]/i);
+  assert.match(catalogue, /live_music_playlists/i);
+  assert.doesNotMatch(catalogue, /storage_path|storage_bucket|license_reference/i);
+  const publish = functionBody(
+    musicLibraryAtmosphere,
+    'rpc_admin_publish_live_music_track_v2',
+  );
+  assert.match(publish, /is_admin_user\(auth\.uid\(\)\)/i);
+  assert.match(publish, /storage\.objects/i);
+  assert.match(publish, /license_status, license_reference/i);
+  assert.match(publish, /contains_vocals/i);
+  assert.match(musicAdminFunction, /caller\.auth\.getUser\(\)/i);
+  assert.match(musicAdminFunction, /service\.rpc\('is_admin_user'/i);
+  assert.match(musicAdminFunction, /MAX_BYTES = 50 \* 1024 \* 1024/i);
+  assert.match(musicAdminFunction, /rpc_admin_publish_live_music_track_v2/i);
+  assert.match(musicAdminFunction, /remove\(\[uploadedPath\]\)/i);
+  assert.doesNotMatch(musicAdminFunction, /p_enabled/i);
+  assert.match(health, /configuration\.music_enabled/i);
+});
+
+test('Host Music stage is fenced, reversible and restored when programme audio stops', () => {
+  const setMusicStage = functionBody(
+    musicStagePresentation,
+    'rpc_host_set_live_music_stage_v1',
+  );
+  const restoreMusicStage = functionBody(
+    musicStagePresentation,
+    'live_program_restore_music_stage_v1',
+  );
+  const restoreOnStop = functionBody(
+    musicStagePresentation,
+    'live_program_restore_music_stage_on_stop_v1',
+  );
+  assert.match(setMusicStage, /live_odo_show_host_allowed_v1/i);
+  assert.match(setMusicStage, /p_expected_version/i);
+  assert.match(setMusicStage, /pg_advisory_xact_lock/i);
+  assert.match(setMusicStage, /studio_control_active/i);
+  assert.match(setMusicStage, /active_music_required/i);
+  assert.match(setMusicStage, /music_stage_return_state = jsonb_build_object/i);
+  assert.match(setMusicStage, /'SHOW_MUSIC'/i);
+  assert.match(restoreMusicStage, /source_assignments = v_assignments/i);
+  assert.match(restoreMusicStage, /music_stage_return_state = '\{\}'::jsonb/i);
+  assert.match(restoreMusicStage, /'RESTORE_STAGE'/i);
+  assert.match(restoreOnStop, /new\.status = 'stopped'/i);
+  assert.match(restoreOnStop, /music_stage_return_state <> '\{\}'::jsonb/i);
+  assert.match(musicStagePresentation, /after update of status, track_id/i);
+  assert.match(health, /20260912190000/i);
+  assert.match(health, /rpc_host_set_live_music_stage_v1\(uuid,boolean,bigint,uuid\)/i);
+});
+
+test('Stage Atmosphere is host-controlled, version-fenced and participant-readable', () => {
+  const setter = functionBody(
+    musicLibraryAtmosphere,
+    'rpc_host_set_live_stage_atmosphere_v1',
+  );
+  const snapshot = functionBody(
+    musicLibraryAtmosphere,
+    'rpc_get_live_stage_atmosphere_v1',
+  );
+  assert.match(musicLibraryAtmosphere, /alter table public\.live_stage_atmospheres enable row level security/i);
+  assert.match(musicLibraryAtmosphere, /alter publication supabase_realtime add table public\.live_stage_atmospheres/i);
+  assert.match(setter, /live\.manage_stage/i);
+  assert.match(setter, /p_expected_version/i);
+  assert.match(setter, /pg_advisory_xact_lock/i);
+  assert.match(setter, /live_stage_atmosphere_events/i);
+  assert.match(setter, /event_media,poster_path/i);
+  assert.match(snapshot, /live_participants/i);
 });
 
 test('audience Program output exposes no Studio access or private matching data', () => {

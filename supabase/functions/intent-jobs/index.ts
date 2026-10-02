@@ -2,9 +2,10 @@
 // Edge Function: background Intent jobs (expiry + reminders)
 //
 // Deploy this function and schedule it to run periodically (e.g. every 15 minutes).
-// It calls the DB RPC `rpc_process_intent_request_jobs()` using the service role key.
+// It calls the DB RPC `rpc_process_intent_request_jobs()` using a privileged server key.
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { getSupabaseAdminHeaders } from "../_shared/supabase-admin-key.ts";
 
 serve(async (req) => {
   // Optional shared secret for cron callers (recommended if you expose this publicly).
@@ -18,19 +19,16 @@ serve(async (req) => {
 
   try {
     const url = Deno.env.get("SUPABASE_URL") ?? "";
-    const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-    if (!url || !key) {
-      console.error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
+    if (!url) {
+      console.error("Missing SUPABASE_URL");
       return new Response("Missing config", { status: 500 });
     }
 
     const resp = await fetch(`${url}/rest/v1/rpc/rpc_process_intent_request_jobs`, {
       method: "POST",
-      headers: {
+      headers: getSupabaseAdminHeaders({
         "Content-Type": "application/json",
-        apikey: key,
-        Authorization: `Bearer ${key}`,
-      },
+      }),
       body: "{}", // use defaults
     });
 

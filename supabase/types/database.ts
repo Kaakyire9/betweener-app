@@ -7,6 +7,11 @@ export type Json =
   | Json[]
 
 export type Database = {
+  // Allows to automatically instantiate createClient with right options
+  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
+  __InternalSupabase: {
+    PostgrestVersion: "14.5"
+  }
   public: {
     Tables: {
       account_deletion_requests: {
@@ -531,6 +536,30 @@ export type Database = {
         }
         Relationships: []
       }
+      app_mutation_receipts: {
+        Row: {
+          created_at: string
+          mutation_kind: string
+          operation_id: string
+          result: Json
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          mutation_kind: string
+          operation_id: string
+          result?: Json
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          mutation_kind?: string
+          operation_id?: string
+          result?: Json
+          user_id?: string
+        }
+        Relationships: []
+      }
       app_version_history: {
         Row: {
           build_number: number
@@ -627,6 +656,75 @@ export type Database = {
           updated_at?: string
           whats_new_items?: Json
           whats_new_title?: string | null
+        }
+        Relationships: []
+      }
+      approved_chat_media_objects: {
+        Row: {
+          approved_at: string
+          attachment_id: string
+          byte_size: number
+          client_message_id: string
+          mime_type: string
+          object_path: string
+          receiver_id: string
+          sender_id: string
+          sha256: string
+          variant: string
+        }
+        Insert: {
+          approved_at?: string
+          attachment_id: string
+          byte_size: number
+          client_message_id: string
+          mime_type: string
+          object_path: string
+          receiver_id: string
+          sender_id: string
+          sha256: string
+          variant: string
+        }
+        Update: {
+          approved_at?: string
+          attachment_id?: string
+          byte_size?: number
+          client_message_id?: string
+          mime_type?: string
+          object_path?: string
+          receiver_id?: string
+          sender_id?: string
+          sha256?: string
+          variant?: string
+        }
+        Relationships: []
+      }
+      approved_profile_media_objects: {
+        Row: {
+          approved_at: string
+          byte_size: number
+          mime_type: string
+          object_path: string
+          public_url: string
+          sha256: string
+          user_id: string
+        }
+        Insert: {
+          approved_at?: string
+          byte_size: number
+          mime_type: string
+          object_path: string
+          public_url: string
+          sha256: string
+          user_id: string
+        }
+        Update: {
+          approved_at?: string
+          byte_size?: number
+          mime_type?: string
+          object_path?: string
+          public_url?: string
+          sha256?: string
+          user_id?: string
         }
         Relationships: []
       }
@@ -1054,6 +1152,54 @@ export type Database = {
           },
         ]
       }
+      chat_image_moderation_receipts: {
+        Row: {
+          attachment_id: string
+          categories: string[]
+          client_message_id: string
+          created_at: string
+          decision: string
+          expires_at: string
+          mime_type: string
+          policy_version: string
+          provider: string
+          provider_model: string
+          risk_score: number
+          sender_user_id: string
+          sha256: string
+        }
+        Insert: {
+          attachment_id: string
+          categories?: string[]
+          client_message_id: string
+          created_at?: string
+          decision: string
+          expires_at?: string
+          mime_type: string
+          policy_version: string
+          provider: string
+          provider_model: string
+          risk_score?: number
+          sender_user_id: string
+          sha256: string
+        }
+        Update: {
+          attachment_id?: string
+          categories?: string[]
+          client_message_id?: string
+          created_at?: string
+          decision?: string
+          expires_at?: string
+          mime_type?: string
+          policy_version?: string
+          provider?: string
+          provider_model?: string
+          risk_score?: number
+          sender_user_id?: string
+          sha256?: string
+        }
+        Relationships: []
+      }
       chat_media_album_item_cancellations: {
         Row: {
           attachment_id: string
@@ -1122,6 +1268,62 @@ export type Database = {
           peer_user_id?: string
           typing_until?: string | null
           updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      child_safety_evidence_transitions: {
+        Row: {
+          actor_user_id: string | null
+          created_at: string
+          event_id: string
+          from_state: string | null
+          id: number
+          reason: string
+          to_state: string
+        }
+        Insert: {
+          actor_user_id?: string | null
+          created_at?: string
+          event_id: string
+          from_state?: string | null
+          id?: never
+          reason: string
+          to_state: string
+        }
+        Update: {
+          actor_user_id?: string | null
+          created_at?: string
+          event_id?: string
+          from_state?: string | null
+          id?: never
+          reason?: string
+          to_state?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "child_safety_evidence_transitions_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "content_moderation_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      child_safety_reviewers: {
+        Row: {
+          granted_at: string
+          granted_by: string | null
+          user_id: string
+        }
+        Insert: {
+          granted_at?: string
+          granted_by?: string | null
+          user_id: string
+        }
+        Update: {
+          granted_at?: string
+          granted_by?: string | null
           user_id?: string
         }
         Relationships: []
@@ -3004,11 +3206,21 @@ export type Database = {
           created_at: string
           decision: string
           detector_version: string
+          evidence_hold: boolean
           evidence_redacted_at: string | null
+          evidence_resolution_reason: string | null
+          evidence_resolved_at: string | null
+          evidence_resolved_by: string | null
+          evidence_retention_attempts: number
+          evidence_retention_claim_id: string | null
+          evidence_retention_claimed_at: string | null
+          evidence_retention_failure: string | null
           evidence_snapshot: Json
+          evidence_state: string
           extracted_text: string | null
           failure_reason: string | null
           id: string
+          legal_hold: boolean
           provider: string
           provider_model: string
           provider_request_id: string | null
@@ -3031,11 +3243,21 @@ export type Database = {
           created_at?: string
           decision: string
           detector_version?: string
+          evidence_hold?: boolean
           evidence_redacted_at?: string | null
+          evidence_resolution_reason?: string | null
+          evidence_resolved_at?: string | null
+          evidence_resolved_by?: string | null
+          evidence_retention_attempts?: number
+          evidence_retention_claim_id?: string | null
+          evidence_retention_claimed_at?: string | null
+          evidence_retention_failure?: string | null
           evidence_snapshot?: Json
+          evidence_state?: string
           extracted_text?: string | null
           failure_reason?: string | null
           id?: string
+          legal_hold?: boolean
           provider: string
           provider_model: string
           provider_request_id?: string | null
@@ -3058,11 +3280,21 @@ export type Database = {
           created_at?: string
           decision?: string
           detector_version?: string
+          evidence_hold?: boolean
           evidence_redacted_at?: string | null
+          evidence_resolution_reason?: string | null
+          evidence_resolved_at?: string | null
+          evidence_resolved_by?: string | null
+          evidence_retention_attempts?: number
+          evidence_retention_claim_id?: string | null
+          evidence_retention_claimed_at?: string | null
+          evidence_retention_failure?: string | null
           evidence_snapshot?: Json
+          evidence_state?: string
           extracted_text?: string | null
           failure_reason?: string | null
           id?: string
+          legal_hold?: boolean
           provider?: string
           provider_model?: string
           provider_request_id?: string | null
@@ -3081,6 +3313,9 @@ export type Database = {
       content_safety_actor_state: {
         Row: {
           blocked_attempts: number
+          enforcement_points_30d: number
+          enforcement_recalculated_at: string | null
+          enforcement_tier: string
           last_incident_at: string | null
           restricted_until: string | null
           review_attempts: number
@@ -3089,6 +3324,9 @@ export type Database = {
         }
         Insert: {
           blocked_attempts?: number
+          enforcement_points_30d?: number
+          enforcement_recalculated_at?: string | null
+          enforcement_tier?: string
           last_incident_at?: string | null
           restricted_until?: string | null
           review_attempts?: number
@@ -3097,6 +3335,9 @@ export type Database = {
         }
         Update: {
           blocked_attempts?: number
+          enforcement_points_30d?: number
+          enforcement_recalculated_at?: string | null
+          enforcement_tier?: string
           last_incident_at?: string | null
           restricted_until?: string | null
           review_attempts?: number
@@ -4045,6 +4286,33 @@ export type Database = {
         }
         Relationships: []
       }
+      legal_acceptances: {
+        Row: {
+          accepted_at: string
+          app_version: string | null
+          privacy_version: string
+          source: string
+          terms_version: string
+          user_id: string
+        }
+        Insert: {
+          accepted_at?: string
+          app_version?: string | null
+          privacy_version: string
+          source?: string
+          terms_version: string
+          user_id: string
+        }
+        Update: {
+          accepted_at?: string
+          app_version?: string | null
+          privacy_version?: string
+          source?: string
+          terms_version?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       live_audience_poll_options: {
         Row: {
           id: string
@@ -4644,6 +4912,69 @@ export type Database = {
           },
         ]
       }
+      live_discovery_updates: {
+        Row: {
+          active_live_count: number
+          id: boolean
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          active_live_count?: number
+          id?: boolean
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          active_live_count?: number
+          id?: boolean
+          updated_at?: string
+          version?: number
+        }
+        Relationships: []
+      }
+      live_in_app_announcements: {
+        Row: {
+          body: string
+          created_at: string
+          id: string
+          kind: string
+          session_id: string
+          title: string
+        }
+        Insert: {
+          body: string
+          created_at?: string
+          id: string
+          kind: string
+          session_id: string
+          title: string
+        }
+        Update: {
+          body?: string
+          created_at?: string
+          id?: string
+          kind?: string
+          session_id?: string
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_in_app_announcements_id_fkey"
+            columns: ["id"]
+            isOneToOne: true
+            referencedRelation: "live_notification_campaigns"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_in_app_announcements_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       live_maintenance_failures: {
         Row: {
           error_message: string
@@ -5022,6 +5353,7 @@ export type Database = {
           playback_offset_seconds: number
           playlist_id: string | null
           program_started_at: string | null
+          repeat_mode: string
           requested_volume: number
           session_id: string
           status: string
@@ -5038,6 +5370,7 @@ export type Database = {
           playback_offset_seconds?: number
           playlist_id?: string | null
           program_started_at?: string | null
+          repeat_mode?: string
           requested_volume?: number
           session_id: string
           status?: string
@@ -5054,6 +5387,7 @@ export type Database = {
           playback_offset_seconds?: number
           playlist_id?: string | null
           program_started_at?: string | null
+          repeat_mode?: string
           requested_volume?: number
           session_id?: string
           status?: string
@@ -5141,6 +5475,74 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      live_notification_campaigns: {
+        Row: {
+          accepted_ticket_count: number
+          attempt_count: number
+          body: string
+          claimed_at: string | null
+          completed_at: string | null
+          created_at: string
+          data: Json
+          failure_reason: string | null
+          id: string
+          kind: string
+          next_attempt_at: string
+          recipient_count: number
+          schedule_revision: number
+          session_id: string
+          status: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          accepted_ticket_count?: number
+          attempt_count?: number
+          body: string
+          claimed_at?: string | null
+          completed_at?: string | null
+          created_at?: string
+          data?: Json
+          failure_reason?: string | null
+          id?: string
+          kind: string
+          next_attempt_at?: string
+          recipient_count?: number
+          schedule_revision?: number
+          session_id: string
+          status?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          accepted_ticket_count?: number
+          attempt_count?: number
+          body?: string
+          claimed_at?: string | null
+          completed_at?: string | null
+          created_at?: string
+          data?: Json
+          failure_reason?: string | null
+          id?: string
+          kind?: string
+          next_attempt_at?: string
+          recipient_count?: number
+          schedule_revision?: number
+          session_id?: string
+          status?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_notification_campaigns_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       live_odo_action_attempts: {
         Row: {
@@ -5309,6 +5711,207 @@ export type Database = {
           },
         ]
       }
+      live_odo_always_on_access: {
+        Row: {
+          allowed: boolean
+          created_at: string
+          expires_at: string | null
+          granted_by_user_id: string | null
+          note: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          allowed?: boolean
+          created_at?: string
+          expires_at?: string | null
+          granted_by_user_id?: string | null
+          note?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          allowed?: boolean
+          created_at?: string
+          expires_at?: string | null
+          granted_by_user_id?: string | null
+          note?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      live_odo_always_on_configuration: {
+        Row: {
+          allowed_markets: string[]
+          automatic_ending_enabled: boolean
+          availability_durations_minutes: number[]
+          availability_enabled: boolean
+          candidate_scan_limit: number
+          circuit_breaker_open: boolean
+          default_availability_minutes: number
+          edge_scan_limit: number
+          empty_room_seconds: number
+          id: boolean
+          internal_only: boolean
+          invitation_cooldown_minutes: number
+          invitation_ttl_seconds: number
+          invitations_enabled: boolean
+          low_liquidity_seconds: number
+          maximum_cohort_size: number
+          maximum_invitations_per_day: number
+          maximum_session_runtime_minutes: number
+          minimum_cohort_size: number
+          music_enabled: boolean
+          not_tonight_hours: number
+          odo_start_enabled: boolean
+          opportunity_ttl_seconds: number
+          post_session_cooldown_minutes: number
+          presence_freshness_seconds: number
+          safety_coverage_mode: string
+          shadow_detection_enabled: boolean
+          system_session_creation_enabled: boolean
+          updated_at: string
+          verified_users_only: boolean
+          worker_lease_seconds: number
+        }
+        Insert: {
+          allowed_markets?: string[]
+          automatic_ending_enabled?: boolean
+          availability_durations_minutes?: number[]
+          availability_enabled?: boolean
+          candidate_scan_limit?: number
+          circuit_breaker_open?: boolean
+          default_availability_minutes?: number
+          edge_scan_limit?: number
+          empty_room_seconds?: number
+          id?: boolean
+          internal_only?: boolean
+          invitation_cooldown_minutes?: number
+          invitation_ttl_seconds?: number
+          invitations_enabled?: boolean
+          low_liquidity_seconds?: number
+          maximum_cohort_size?: number
+          maximum_invitations_per_day?: number
+          maximum_session_runtime_minutes?: number
+          minimum_cohort_size?: number
+          music_enabled?: boolean
+          not_tonight_hours?: number
+          odo_start_enabled?: boolean
+          opportunity_ttl_seconds?: number
+          post_session_cooldown_minutes?: number
+          presence_freshness_seconds?: number
+          safety_coverage_mode?: string
+          shadow_detection_enabled?: boolean
+          system_session_creation_enabled?: boolean
+          updated_at?: string
+          verified_users_only?: boolean
+          worker_lease_seconds?: number
+        }
+        Update: {
+          allowed_markets?: string[]
+          automatic_ending_enabled?: boolean
+          availability_durations_minutes?: number[]
+          availability_enabled?: boolean
+          candidate_scan_limit?: number
+          circuit_breaker_open?: boolean
+          default_availability_minutes?: number
+          edge_scan_limit?: number
+          empty_room_seconds?: number
+          id?: boolean
+          internal_only?: boolean
+          invitation_cooldown_minutes?: number
+          invitation_ttl_seconds?: number
+          invitations_enabled?: boolean
+          low_liquidity_seconds?: number
+          maximum_cohort_size?: number
+          maximum_invitations_per_day?: number
+          maximum_session_runtime_minutes?: number
+          minimum_cohort_size?: number
+          music_enabled?: boolean
+          not_tonight_hours?: number
+          odo_start_enabled?: boolean
+          opportunity_ttl_seconds?: number
+          post_session_cooldown_minutes?: number
+          presence_freshness_seconds?: number
+          safety_coverage_mode?: string
+          shadow_detection_enabled?: boolean
+          system_session_creation_enabled?: boolean
+          updated_at?: string
+          verified_users_only?: boolean
+          worker_lease_seconds?: number
+        }
+        Relationships: []
+      }
+      live_odo_always_on_sessions: {
+        Row: {
+          created_at: string
+          empty_since: string | null
+          end_reason_code: string | null
+          lease_expires_at: string | null
+          lease_owner: string | null
+          lifecycle_state: string
+          low_liquidity_since: string | null
+          maximum_runtime_ends_at: string
+          opportunity_id: string
+          session_id: string
+          stream_cleanup_attempts: number
+          stream_resource_ended_at: string | null
+          stream_resource_ready_at: string | null
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          created_at?: string
+          empty_since?: string | null
+          end_reason_code?: string | null
+          lease_expires_at?: string | null
+          lease_owner?: string | null
+          lifecycle_state?: string
+          low_liquidity_since?: string | null
+          maximum_runtime_ends_at: string
+          opportunity_id: string
+          session_id: string
+          stream_cleanup_attempts?: number
+          stream_resource_ended_at?: string | null
+          stream_resource_ready_at?: string | null
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          created_at?: string
+          empty_since?: string | null
+          end_reason_code?: string | null
+          lease_expires_at?: string | null
+          lease_owner?: string | null
+          lifecycle_state?: string
+          low_liquidity_since?: string | null
+          maximum_runtime_ends_at?: string
+          opportunity_id?: string
+          session_id?: string
+          stream_cleanup_attempts?: number
+          stream_resource_ended_at?: string | null
+          stream_resource_ready_at?: string | null
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_odo_always_on_sessions_opportunity_id_fkey"
+            columns: ["opportunity_id"]
+            isOneToOne: true
+            referencedRelation: "live_quick_connect_opportunities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_odo_always_on_sessions_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: true
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       live_odo_budget_windows: {
         Row: {
           call_count: number
@@ -5394,6 +5997,9 @@ export type Database = {
           odo_voice_enabled: boolean
           pair_narration_enabled: boolean
           pricing_version: string
+          program_audio_publisher_enabled: boolean
+          program_audio_publisher_lease_seconds: number
+          program_audio_publisher_stale_seconds: number
           provider_timeout_ms: number
           scene_suggestions_enabled: boolean
           screen_share_enabled: boolean
@@ -5406,6 +6012,13 @@ export type Database = {
           show_intermission_every_rounds: number
           show_reconcile_seconds: number
           show_scene_minimum_dwell_seconds: number
+          studio_closed_beta: boolean
+          studio_controller_grace_seconds: number
+          studio_controller_lease_seconds: number
+          studio_external_audio_enabled: boolean
+          studio_media_publishing_enabled: boolean
+          studio_screen_audio_enabled: boolean
+          studio_session_discovery_enabled: boolean
           task_call_limits_per_minute: Json
           transition_copy_enabled: boolean
           updated_at: string
@@ -5460,6 +6073,9 @@ export type Database = {
           odo_voice_enabled?: boolean
           pair_narration_enabled?: boolean
           pricing_version?: string
+          program_audio_publisher_enabled?: boolean
+          program_audio_publisher_lease_seconds?: number
+          program_audio_publisher_stale_seconds?: number
           provider_timeout_ms?: number
           scene_suggestions_enabled?: boolean
           screen_share_enabled?: boolean
@@ -5472,6 +6088,13 @@ export type Database = {
           show_intermission_every_rounds?: number
           show_reconcile_seconds?: number
           show_scene_minimum_dwell_seconds?: number
+          studio_closed_beta?: boolean
+          studio_controller_grace_seconds?: number
+          studio_controller_lease_seconds?: number
+          studio_external_audio_enabled?: boolean
+          studio_media_publishing_enabled?: boolean
+          studio_screen_audio_enabled?: boolean
+          studio_session_discovery_enabled?: boolean
           task_call_limits_per_minute?: Json
           transition_copy_enabled?: boolean
           updated_at?: string
@@ -5526,6 +6149,9 @@ export type Database = {
           odo_voice_enabled?: boolean
           pair_narration_enabled?: boolean
           pricing_version?: string
+          program_audio_publisher_enabled?: boolean
+          program_audio_publisher_lease_seconds?: number
+          program_audio_publisher_stale_seconds?: number
           provider_timeout_ms?: number
           scene_suggestions_enabled?: boolean
           screen_share_enabled?: boolean
@@ -5538,6 +6164,13 @@ export type Database = {
           show_intermission_every_rounds?: number
           show_reconcile_seconds?: number
           show_scene_minimum_dwell_seconds?: number
+          studio_closed_beta?: boolean
+          studio_controller_grace_seconds?: number
+          studio_controller_lease_seconds?: number
+          studio_external_audio_enabled?: boolean
+          studio_media_publishing_enabled?: boolean
+          studio_screen_audio_enabled?: boolean
+          studio_session_discovery_enabled?: boolean
           task_call_limits_per_minute?: Json
           transition_copy_enabled?: boolean
           updated_at?: string
@@ -6241,23 +6874,35 @@ export type Database = {
           control_lease_expires_at: string | null
           control_source: string
           control_user_id: string | null
+          controller_acquired_at: string | null
+          controller_generation: number
+          controller_instance_id: string | null
           created_at: string
           current_priority: number
           current_scene: string
           enabled: boolean
           enabled_by_user_id: string | null
           energy_mode: string
+          fallback_scene: string
           host_suppression_ends_at: string | null
           last_intermission_round: number
           last_pairing_id: string | null
+          last_program_command_id: string | null
           last_reason_code: string | null
+          music_stage_return_state: Json
           next_wake_at: string | null
           paused_by_host: boolean
+          previous_program_state: Json
+          program_output_source: string
           program_source: string
+          program_transition: string
+          program_version: number
           scene_entered_at: string
           scene_history: Json
           session_id: string
           show_state: string
+          source_assignments: Json
+          target_canvas: string
           updated_at: string
           version: number
         }
@@ -6266,23 +6911,35 @@ export type Database = {
           control_lease_expires_at?: string | null
           control_source?: string
           control_user_id?: string | null
+          controller_acquired_at?: string | null
+          controller_generation?: number
+          controller_instance_id?: string | null
           created_at?: string
           current_priority?: number
           current_scene?: string
           enabled?: boolean
           enabled_by_user_id?: string | null
           energy_mode?: string
+          fallback_scene?: string
           host_suppression_ends_at?: string | null
           last_intermission_round?: number
           last_pairing_id?: string | null
+          last_program_command_id?: string | null
           last_reason_code?: string | null
+          music_stage_return_state?: Json
           next_wake_at?: string | null
           paused_by_host?: boolean
+          previous_program_state?: Json
+          program_output_source?: string
           program_source?: string
+          program_transition?: string
+          program_version?: number
           scene_entered_at?: string
           scene_history?: Json
           session_id: string
           show_state?: string
+          source_assignments?: Json
+          target_canvas?: string
           updated_at?: string
           version?: number
         }
@@ -6291,23 +6948,35 @@ export type Database = {
           control_lease_expires_at?: string | null
           control_source?: string
           control_user_id?: string | null
+          controller_acquired_at?: string | null
+          controller_generation?: number
+          controller_instance_id?: string | null
           created_at?: string
           current_priority?: number
           current_scene?: string
           enabled?: boolean
           enabled_by_user_id?: string | null
           energy_mode?: string
+          fallback_scene?: string
           host_suppression_ends_at?: string | null
           last_intermission_round?: number
           last_pairing_id?: string | null
+          last_program_command_id?: string | null
           last_reason_code?: string | null
+          music_stage_return_state?: Json
           next_wake_at?: string | null
           paused_by_host?: boolean
+          previous_program_state?: Json
+          program_output_source?: string
           program_source?: string
+          program_transition?: string
+          program_version?: number
           scene_entered_at?: string
           scene_history?: Json
           session_id?: string
           show_state?: string
+          source_assignments?: Json
+          target_canvas?: string
           updated_at?: string
           version?: number
         }
@@ -6485,6 +7154,7 @@ export type Database = {
           connection_quality_state: string
           created_at: string
           id: string
+          introduction_preference_decided_at: string | null
           invited_at: string
           joined_at: string | null
           last_connection_change_at: string | null
@@ -6510,6 +7180,7 @@ export type Database = {
           connection_quality_state?: string
           created_at?: string
           id?: string
+          introduction_preference_decided_at?: string | null
           invited_at?: string
           joined_at?: string | null
           last_connection_change_at?: string | null
@@ -6535,6 +7206,7 @@ export type Database = {
           connection_quality_state?: string
           created_at?: string
           id?: string
+          introduction_preference_decided_at?: string | null
           invited_at?: string
           joined_at?: string | null
           last_connection_change_at?: string | null
@@ -6961,6 +7633,285 @@ export type Database = {
           },
         ]
       }
+      live_program_audio_events: {
+        Row: {
+          created_at: string
+          event_type: string
+          id: string
+          lease_generation: number
+          music_version: number | null
+          reason_code: string
+          session_id: string
+          track_id: string | null
+          volume: number | null
+          worker_instance_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          event_type: string
+          id?: string
+          lease_generation: number
+          music_version?: number | null
+          reason_code: string
+          session_id: string
+          track_id?: string | null
+          volume?: number | null
+          worker_instance_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          event_type?: string
+          id?: string
+          lease_generation?: number
+          music_version?: number | null
+          reason_code?: string
+          session_id?: string
+          track_id?: string | null
+          volume?: number | null
+          worker_instance_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_program_audio_events_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_program_audio_events_track_id_fkey"
+            columns: ["track_id"]
+            isOneToOne: false
+            referencedRelation: "live_music_tracks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_program_audio_publishers: {
+        Row: {
+          consecutive_failures: number
+          created_at: string
+          failure_reason_code: string | null
+          last_heartbeat_at: string | null
+          lease_expires_at: string | null
+          lease_generation: number
+          observed_music_version: number | null
+          provider_user_id: string
+          published_track_id: string | null
+          published_volume: number
+          session_id: string
+          status: string
+          updated_at: string
+          worker_instance_id: string | null
+        }
+        Insert: {
+          consecutive_failures?: number
+          created_at?: string
+          failure_reason_code?: string | null
+          last_heartbeat_at?: string | null
+          lease_expires_at?: string | null
+          lease_generation?: number
+          observed_music_version?: number | null
+          provider_user_id: string
+          published_track_id?: string | null
+          published_volume?: number
+          session_id: string
+          status?: string
+          updated_at?: string
+          worker_instance_id?: string | null
+        }
+        Update: {
+          consecutive_failures?: number
+          created_at?: string
+          failure_reason_code?: string | null
+          last_heartbeat_at?: string | null
+          lease_expires_at?: string | null
+          lease_generation?: number
+          observed_music_version?: number | null
+          provider_user_id?: string
+          published_track_id?: string | null
+          published_volume?: number
+          session_id?: string
+          status?: string
+          updated_at?: string
+          worker_instance_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_program_audio_publishers_published_track_id_fkey"
+            columns: ["published_track_id"]
+            isOneToOne: false
+            referencedRelation: "live_music_tracks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_program_audio_publishers_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: true
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_program_command_events: {
+        Row: {
+          actor_user_id: string | null
+          command_id: string
+          command_type: string
+          controller_instance_id: string | null
+          created_at: string
+          expected_controller_generation: number | null
+          expected_program_version: number | null
+          id: string
+          reason_code: string
+          resulting_controller_generation: number
+          resulting_program_version: number
+          session_id: string
+          source: string
+          status: string
+        }
+        Insert: {
+          actor_user_id?: string | null
+          command_id: string
+          command_type: string
+          controller_instance_id?: string | null
+          created_at?: string
+          expected_controller_generation?: number | null
+          expected_program_version?: number | null
+          id?: string
+          reason_code: string
+          resulting_controller_generation: number
+          resulting_program_version: number
+          session_id: string
+          source: string
+          status: string
+        }
+        Update: {
+          actor_user_id?: string | null
+          command_id?: string
+          command_type?: string
+          controller_instance_id?: string | null
+          created_at?: string
+          expected_controller_generation?: number | null
+          expected_program_version?: number | null
+          id?: string
+          reason_code?: string
+          resulting_controller_generation?: number
+          resulting_program_version?: number
+          session_id?: string
+          source?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_program_command_events_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_program_source_updates: {
+        Row: {
+          session_id: string
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          session_id: string
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          session_id?: string
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_program_source_updates_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: true
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_program_sources: {
+        Row: {
+          created_at: string
+          failure_reason_code: string | null
+          generation: number
+          has_audio: boolean
+          has_video: boolean
+          health: string
+          id: string
+          last_seen_at: string | null
+          muted: boolean
+          owner_user_id: string | null
+          provider_user_id: string | null
+          readiness: string
+          safe_metadata: Json
+          session_id: string
+          source_key: string
+          source_role: string
+          source_type: string
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          created_at?: string
+          failure_reason_code?: string | null
+          generation?: number
+          has_audio?: boolean
+          has_video?: boolean
+          health?: string
+          id?: string
+          last_seen_at?: string | null
+          muted?: boolean
+          owner_user_id?: string | null
+          provider_user_id?: string | null
+          readiness?: string
+          safe_metadata?: Json
+          session_id: string
+          source_key: string
+          source_role: string
+          source_type: string
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          created_at?: string
+          failure_reason_code?: string | null
+          generation?: number
+          has_audio?: boolean
+          has_video?: boolean
+          health?: string
+          id?: string
+          last_seen_at?: string | null
+          muted?: boolean
+          owner_user_id?: string | null
+          provider_user_id?: string | null
+          readiness?: string
+          safe_metadata?: Json
+          session_id?: string
+          source_key?: string
+          source_role?: string
+          source_type?: string
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_program_sources_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       live_provider_control_jobs: {
         Row: {
           action: string
@@ -7053,6 +8004,79 @@ export type Database = {
           status?: string
         }
         Relationships: []
+      }
+      live_quick_connect_availability: {
+        Row: {
+          available_from: string
+          cooldown_until: string | null
+          created_at: string
+          expires_at: string
+          last_invited_at: string | null
+          market_context: string
+          not_tonight_until: string | null
+          profile_id: string
+          reserved_opportunity_id: string | null
+          source: string
+          status: string
+          updated_at: string
+          user_id: string
+          version: number
+        }
+        Insert: {
+          available_from?: string
+          cooldown_until?: string | null
+          created_at?: string
+          expires_at: string
+          last_invited_at?: string | null
+          market_context: string
+          not_tonight_until?: string | null
+          profile_id: string
+          reserved_opportunity_id?: string | null
+          source: string
+          status?: string
+          updated_at?: string
+          user_id: string
+          version?: number
+        }
+        Update: {
+          available_from?: string
+          cooldown_until?: string | null
+          created_at?: string
+          expires_at?: string
+          last_invited_at?: string | null
+          market_context?: string
+          not_tonight_until?: string | null
+          profile_id?: string
+          reserved_opportunity_id?: string | null
+          source?: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_quick_connect_availability_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "live_quick_connect_availability_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_quick_connect_availability_reservation_fk"
+            columns: ["reserved_opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "live_quick_connect_opportunities"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       live_quick_connect_controls: {
         Row: {
@@ -7207,6 +8231,244 @@ export type Database = {
           },
         ]
       }
+      live_quick_connect_opportunities: {
+        Row: {
+          accepted_count: number
+          accepted_pair_edge_count: number
+          candidate_count: number
+          created_at: string
+          ended_reason_code: string | null
+          expires_at: string
+          formation_bucket: string
+          id: string
+          isolated_count: number
+          last_reason_code: string | null
+          lease_expires_at: string | null
+          lease_generation: number
+          lease_owner: string | null
+          live_session_id: string | null
+          market_context: string
+          pair_edge_count: number
+          shadow_only: boolean
+          start_attempts: number
+          state: string
+          updated_at: string
+        }
+        Insert: {
+          accepted_count?: number
+          accepted_pair_edge_count?: number
+          candidate_count?: number
+          created_at?: string
+          ended_reason_code?: string | null
+          expires_at: string
+          formation_bucket: string
+          id?: string
+          isolated_count?: number
+          last_reason_code?: string | null
+          lease_expires_at?: string | null
+          lease_generation?: number
+          lease_owner?: string | null
+          live_session_id?: string | null
+          market_context: string
+          pair_edge_count?: number
+          shadow_only?: boolean
+          start_attempts?: number
+          state?: string
+          updated_at?: string
+        }
+        Update: {
+          accepted_count?: number
+          accepted_pair_edge_count?: number
+          candidate_count?: number
+          created_at?: string
+          ended_reason_code?: string | null
+          expires_at?: string
+          formation_bucket?: string
+          id?: string
+          isolated_count?: number
+          last_reason_code?: string | null
+          lease_expires_at?: string | null
+          lease_generation?: number
+          lease_owner?: string | null
+          live_session_id?: string | null
+          market_context?: string
+          pair_edge_count?: number
+          shadow_only?: boolean
+          start_attempts?: number
+          state?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_quick_connect_opportunities_live_session_id_fkey"
+            columns: ["live_session_id"]
+            isOneToOne: true
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_quick_connect_opportunity_events: {
+        Row: {
+          accepted_count: number | null
+          candidate_count: number | null
+          created_at: string
+          duration_ms: number | null
+          event_type: string
+          id: number
+          metadata: Json
+          opportunity_id: string | null
+          pair_edge_count: number | null
+          reason_code: string
+        }
+        Insert: {
+          accepted_count?: number | null
+          candidate_count?: number | null
+          created_at?: string
+          duration_ms?: number | null
+          event_type: string
+          id?: never
+          metadata?: Json
+          opportunity_id?: string | null
+          pair_edge_count?: number | null
+          reason_code: string
+        }
+        Update: {
+          accepted_count?: number | null
+          candidate_count?: number | null
+          created_at?: string
+          duration_ms?: number | null
+          event_type?: string
+          id?: never
+          metadata?: Json
+          opportunity_id?: string | null
+          pair_edge_count?: number | null
+          reason_code?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_quick_connect_opportunity_events_opportunity_id_fkey"
+            columns: ["opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "live_quick_connect_opportunities"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_quick_connect_opportunity_members: {
+        Row: {
+          created_at: string
+          invitation_expires_at: string | null
+          invitation_sent_at: string | null
+          opportunity_id: string
+          profile_id: string
+          responded_at: string | null
+          response_reason_code: string | null
+          state: string
+          updated_at: string
+          user_id: string
+          version: number
+        }
+        Insert: {
+          created_at?: string
+          invitation_expires_at?: string | null
+          invitation_sent_at?: string | null
+          opportunity_id: string
+          profile_id: string
+          responded_at?: string | null
+          response_reason_code?: string | null
+          state?: string
+          updated_at?: string
+          user_id: string
+          version?: number
+        }
+        Update: {
+          created_at?: string
+          invitation_expires_at?: string | null
+          invitation_sent_at?: string | null
+          opportunity_id?: string
+          profile_id?: string
+          responded_at?: string | null
+          response_reason_code?: string | null
+          state?: string
+          updated_at?: string
+          user_id?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_quick_connect_opportunity_members_opportunity_id_fkey"
+            columns: ["opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "live_quick_connect_opportunities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_quick_connect_opportunity_members_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "live_quick_connect_opportunity_members_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_quick_connect_opportunity_reservations: {
+        Row: {
+          availability_version: number
+          expires_at: string
+          opportunity_id: string
+          reserved_at: string
+          user_id: string
+        }
+        Insert: {
+          availability_version: number
+          expires_at: string
+          opportunity_id: string
+          reserved_at?: string
+          user_id: string
+        }
+        Update: {
+          availability_version?: number
+          expires_at?: string
+          opportunity_id?: string
+          reserved_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_quick_connect_opportunity_reservations_opportunity_id_fkey"
+            columns: ["opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "live_quick_connect_opportunities"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_quick_connect_opportunity_updates: {
+        Row: {
+          updated_at: string
+          user_id: string
+          version: number
+        }
+        Insert: {
+          updated_at?: string
+          user_id: string
+          version?: number
+        }
+        Update: {
+          updated_at?: string
+          user_id?: string
+          version?: number
+        }
+        Relationships: []
+      }
       live_quick_connect_pairings: {
         Row: {
           attempt_number: number
@@ -7225,6 +8487,7 @@ export type Database = {
           provider: string
           provider_call_id: string
           provider_call_type: string
+          public_formation_starts_at: string | null
           reconnect_deadline: string | null
           round_id: string
           session_id: string
@@ -7251,6 +8514,7 @@ export type Database = {
           provider?: string
           provider_call_id: string
           provider_call_type?: string
+          public_formation_starts_at?: string | null
           reconnect_deadline?: string | null
           round_id: string
           session_id: string
@@ -7277,6 +8541,7 @@ export type Database = {
           provider?: string
           provider_call_id?: string
           provider_call_type?: string
+          public_formation_starts_at?: string | null
           reconnect_deadline?: string | null
           round_id?: string
           session_id?: string
@@ -7634,6 +8899,59 @@ export type Database = {
           },
         ]
       }
+      live_reaction_totals: {
+        Row: {
+          applause_count: number
+          celebrate_count: number
+          heart_count: number
+          insight_count: number
+          joy_count: number
+          session_id: string
+          spark_count: number
+          support_count: number
+          total_count: number
+          updated_at: string
+          version: number
+          wow_count: number
+        }
+        Insert: {
+          applause_count?: number
+          celebrate_count?: number
+          heart_count?: number
+          insight_count?: number
+          joy_count?: number
+          session_id: string
+          spark_count?: number
+          support_count?: number
+          total_count?: number
+          updated_at?: string
+          version?: number
+          wow_count?: number
+        }
+        Update: {
+          applause_count?: number
+          celebrate_count?: number
+          heart_count?: number
+          insight_count?: number
+          joy_count?: number
+          session_id?: string
+          spark_count?: number
+          support_count?: number
+          total_count?: number
+          updated_at?: string
+          version?: number
+          wow_count?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_reaction_totals_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: true
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       live_reactions: {
         Row: {
           client_event_id: string
@@ -7894,6 +9212,70 @@ export type Database = {
           },
         ]
       }
+      live_session_host_assignments: {
+        Row: {
+          assigned_at: string
+          assigned_by_user_id: string
+          expired_at: string | null
+          id: string
+          previous_host_user_id: string | null
+          profile_id: string
+          revoked_at: string | null
+          session_id: string
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          assigned_at?: string
+          assigned_by_user_id: string
+          expired_at?: string | null
+          id?: string
+          previous_host_user_id?: string | null
+          profile_id: string
+          revoked_at?: string | null
+          session_id: string
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          assigned_at?: string
+          assigned_by_user_id?: string
+          expired_at?: string | null
+          id?: string
+          previous_host_user_id?: string | null
+          profile_id?: string
+          revoked_at?: string | null
+          session_id?: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_session_host_assignments_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "live_session_host_assignments_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_session_host_assignments_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       live_session_pool_members: {
         Row: {
           added_at: string
@@ -8122,10 +9504,11 @@ export type Database = {
           context_id: string | null
           context_type: string
           created_at: string
-          created_by_profile_id: string
-          created_by_user_id: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
           creation_request_id: string | null
           description: string | null
+          end_policy: string
           ended_at: string | null
           format: string
           gathering_id: string | null
@@ -8133,6 +9516,9 @@ export type Database = {
           maximum_participants: number
           maximum_publishers: number
           minimum_participants: number
+          ownership_type: string
+          produced_by_profile_id: string | null
+          produced_by_user_id: string | null
           provider: string
           provider_call_id: string
           provider_call_type: string
@@ -8141,6 +9527,9 @@ export type Database = {
           quorum_required_pairs: number
           recording_enabled: boolean
           rescheduled_at: string | null
+          runtime_end_at: string | null
+          runtime_extended_at: string | null
+          runtime_extended_by_user_id: string | null
           schedule_revision: number
           scheduled_duration_minutes: number
           scheduled_end: string | null
@@ -8149,6 +9538,7 @@ export type Database = {
           stage_requests_open: boolean
           started_at: string | null
           status: string
+          system_session_kind: string | null
           title: string
           updated_at: string
           version: number
@@ -8165,10 +9555,11 @@ export type Database = {
           context_id?: string | null
           context_type?: string
           created_at?: string
-          created_by_profile_id: string
-          created_by_user_id: string
+          created_by_profile_id?: string | null
+          created_by_user_id?: string | null
           creation_request_id?: string | null
           description?: string | null
+          end_policy?: string
           ended_at?: string | null
           format?: string
           gathering_id?: string | null
@@ -8176,6 +9567,9 @@ export type Database = {
           maximum_participants?: number
           maximum_publishers?: number
           minimum_participants?: number
+          ownership_type?: string
+          produced_by_profile_id?: string | null
+          produced_by_user_id?: string | null
           provider?: string
           provider_call_id: string
           provider_call_type?: string
@@ -8184,6 +9578,9 @@ export type Database = {
           quorum_required_pairs?: number
           recording_enabled?: boolean
           rescheduled_at?: string | null
+          runtime_end_at?: string | null
+          runtime_extended_at?: string | null
+          runtime_extended_by_user_id?: string | null
           schedule_revision?: number
           scheduled_duration_minutes?: number
           scheduled_end?: string | null
@@ -8192,6 +9589,7 @@ export type Database = {
           stage_requests_open?: boolean
           started_at?: string | null
           status?: string
+          system_session_kind?: string | null
           title: string
           updated_at?: string
           version?: number
@@ -8208,10 +9606,11 @@ export type Database = {
           context_id?: string | null
           context_type?: string
           created_at?: string
-          created_by_profile_id?: string
-          created_by_user_id?: string
+          created_by_profile_id?: string | null
+          created_by_user_id?: string | null
           creation_request_id?: string | null
           description?: string | null
+          end_policy?: string
           ended_at?: string | null
           format?: string
           gathering_id?: string | null
@@ -8219,6 +9618,9 @@ export type Database = {
           maximum_participants?: number
           maximum_publishers?: number
           minimum_participants?: number
+          ownership_type?: string
+          produced_by_profile_id?: string | null
+          produced_by_user_id?: string | null
           provider?: string
           provider_call_id?: string
           provider_call_type?: string
@@ -8227,6 +9629,9 @@ export type Database = {
           quorum_required_pairs?: number
           recording_enabled?: boolean
           rescheduled_at?: string | null
+          runtime_end_at?: string | null
+          runtime_extended_at?: string | null
+          runtime_extended_by_user_id?: string | null
           schedule_revision?: number
           scheduled_duration_minutes?: number
           scheduled_end?: string | null
@@ -8235,6 +9640,7 @@ export type Database = {
           stage_requests_open?: boolean
           started_at?: string | null
           status?: string
+          system_session_kind?: string | null
           title?: string
           updated_at?: string
           version?: number
@@ -8275,7 +9681,194 @@ export type Database = {
             referencedRelation: "gatherings"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "live_sessions_produced_by_profile_id_fkey"
+            columns: ["produced_by_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "live_sessions_produced_by_profile_id_fkey"
+            columns: ["produced_by_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
         ]
+      }
+      live_stage_atmosphere_events: {
+        Row: {
+          actor_user_id: string
+          created_at: string
+          id: string
+          preset: string
+          request_id: string
+          session_id: string
+          state_version: number
+        }
+        Insert: {
+          actor_user_id: string
+          created_at?: string
+          id?: string
+          preset: string
+          request_id: string
+          session_id: string
+          state_version: number
+        }
+        Update: {
+          actor_user_id?: string
+          created_at?: string
+          id?: string
+          preset?: string
+          request_id?: string
+          session_id?: string
+          state_version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_stage_atmosphere_events_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_stage_atmospheres: {
+        Row: {
+          preset: string
+          session_id: string
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          preset?: string
+          session_id: string
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          preset?: string
+          session_id?: string
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_stage_atmospheres_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: true
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_stage_invitations: {
+        Row: {
+          expires_at: string
+          id: string
+          invited_at: string
+          invited_by_user_id: string
+          profile_id: string
+          responded_at: string | null
+          session_id: string
+          status: string
+          user_id: string
+        }
+        Insert: {
+          expires_at: string
+          id: string
+          invited_at?: string
+          invited_by_user_id: string
+          profile_id: string
+          responded_at?: string | null
+          session_id: string
+          status?: string
+          user_id: string
+        }
+        Update: {
+          expires_at?: string
+          id?: string
+          invited_at?: string
+          invited_by_user_id?: string
+          profile_id?: string
+          responded_at?: string | null
+          session_id?: string
+          status?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_stage_invitations_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "live_stage_invitations_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_stage_invitations_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_studio_access: {
+        Row: {
+          allowed: boolean
+          can_control: boolean
+          can_moderate: boolean
+          can_publish: boolean
+          can_screen_share: boolean
+          can_use_external_audio: boolean
+          can_view: boolean
+          created_at: string
+          created_by_user_id: string | null
+          expires_at: string | null
+          note: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          allowed?: boolean
+          can_control?: boolean
+          can_moderate?: boolean
+          can_publish?: boolean
+          can_screen_share?: boolean
+          can_use_external_audio?: boolean
+          can_view?: boolean
+          created_at?: string
+          created_by_user_id?: string | null
+          expires_at?: string | null
+          note?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          allowed?: boolean
+          can_control?: boolean
+          can_moderate?: boolean
+          can_publish?: boolean
+          can_screen_share?: boolean
+          can_use_external_audio?: boolean
+          can_view?: boolean
+          created_at?: string
+          created_by_user_id?: string | null
+          expires_at?: string | null
+          note?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
       }
       match_celebration_events: {
         Row: {
@@ -8440,6 +10033,51 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      media_hash_provider_capabilities: {
+        Row: {
+          enabled: boolean
+          exact_hash_matching: boolean
+          external_provider_connected: boolean
+          feed_version: string | null
+          last_successful_sync: string | null
+          perceptual_matching: boolean
+          provider_id: string
+          provider_kind: string
+          provider_status: string
+          stale_after: string | null
+          updated_at: string
+          video_matching: boolean
+        }
+        Insert: {
+          enabled?: boolean
+          exact_hash_matching?: boolean
+          external_provider_connected?: boolean
+          feed_version?: string | null
+          last_successful_sync?: string | null
+          perceptual_matching?: boolean
+          provider_id: string
+          provider_kind: string
+          provider_status: string
+          stale_after?: string | null
+          updated_at?: string
+          video_matching?: boolean
+        }
+        Update: {
+          enabled?: boolean
+          exact_hash_matching?: boolean
+          external_provider_connected?: boolean
+          feed_version?: string | null
+          last_successful_sync?: string | null
+          perceptual_matching?: boolean
+          provider_id?: string
+          provider_kind?: string
+          provider_status?: string
+          stale_after?: string | null
+          updated_at?: string
+          video_matching?: boolean
+        }
+        Relationships: []
       }
       merged_accounts: {
         Row: {
@@ -8882,6 +10520,7 @@ export type Database = {
           media_items: Json
           media_kind: string | null
           message_type: string
+          provider_media: Json | null
           read_at: string | null
           receiver_id: string
           reply_to_message_id: string | null
@@ -8927,6 +10566,7 @@ export type Database = {
           media_items?: Json
           media_kind?: string | null
           message_type?: string
+          provider_media?: Json | null
           read_at?: string | null
           receiver_id: string
           reply_to_message_id?: string | null
@@ -8972,6 +10612,7 @@ export type Database = {
           media_items?: Json
           media_kind?: string | null
           message_type?: string
+          provider_media?: Json | null
           read_at?: string | null
           receiver_id?: string
           reply_to_message_id?: string | null
@@ -8992,6 +10633,69 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      moderation_evidence_retention_config: {
+        Row: {
+          cron_secret: string
+          enabled: boolean
+          endpoint: string
+          singleton: boolean
+          updated_at: string
+        }
+        Insert: {
+          cron_secret: string
+          enabled?: boolean
+          endpoint: string
+          singleton?: boolean
+          updated_at?: string
+        }
+        Update: {
+          cron_secret?: string
+          enabled?: boolean
+          endpoint?: string
+          singleton?: boolean
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      moderation_evidence_retention_runs: {
+        Row: {
+          completed_at: string | null
+          content_claimed: number
+          dead_letter_count: number
+          error: string | null
+          failed_count: number
+          id: string
+          profile_claimed: number
+          redacted_count: number
+          started_at: string
+          status: string
+        }
+        Insert: {
+          completed_at?: string | null
+          content_claimed?: number
+          dead_letter_count?: number
+          error?: string | null
+          failed_count?: number
+          id?: string
+          profile_claimed?: number
+          redacted_count?: number
+          started_at?: string
+          status?: string
+        }
+        Update: {
+          completed_at?: string | null
+          content_claimed?: number
+          dead_letter_count?: number
+          error?: string | null
+          failed_count?: number
+          id?: string
+          profile_claimed?: number
+          redacted_count?: number
+          started_at?: string
+          status?: string
+        }
+        Relationships: []
       }
       moment_comment_reactions: {
         Row: {
@@ -9196,6 +10900,7 @@ export type Database = {
           id: string
           inapp_enabled: boolean
           likes: boolean
+          live_always_on_invitations: boolean
           live_invitations: boolean
           live_pool_offers: boolean
           live_reminders: boolean
@@ -9227,6 +10932,7 @@ export type Database = {
           id?: string
           inapp_enabled?: boolean
           likes?: boolean
+          live_always_on_invitations?: boolean
           live_invitations?: boolean
           live_pool_offers?: boolean
           live_reminders?: boolean
@@ -9258,6 +10964,7 @@ export type Database = {
           id?: string
           inapp_enabled?: boolean
           likes?: boolean
+          live_always_on_invitations?: boolean
           live_invitations?: boolean
           live_pool_offers?: boolean
           live_reminders?: boolean
@@ -9928,6 +11635,174 @@ export type Database = {
           },
         ]
       }
+      profile_media_guard_events_v1_2: {
+        Row: {
+          byte_size: number | null
+          categories: string[]
+          client_request_id: string
+          created_at: string
+          decision: string
+          failure_reason: string | null
+          id: string
+          item_index: number
+          metadata: Json
+          mime_type: string | null
+          provider: string
+          provider_model: string
+          provider_request_id: string | null
+          reason_code: string
+          risk_score: number
+          sha256: string | null
+          slot: string
+          user_id: string
+        }
+        Insert: {
+          byte_size?: number | null
+          categories?: string[]
+          client_request_id: string
+          created_at?: string
+          decision: string
+          failure_reason?: string | null
+          id?: string
+          item_index?: number
+          metadata?: Json
+          mime_type?: string | null
+          provider?: string
+          provider_model?: string
+          provider_request_id?: string | null
+          reason_code: string
+          risk_score?: number
+          sha256?: string | null
+          slot: string
+          user_id: string
+        }
+        Update: {
+          byte_size?: number | null
+          categories?: string[]
+          client_request_id?: string
+          created_at?: string
+          decision?: string
+          failure_reason?: string | null
+          id?: string
+          item_index?: number
+          metadata?: Json
+          mime_type?: string | null
+          provider?: string
+          provider_model?: string
+          provider_request_id?: string | null
+          reason_code?: string
+          risk_score?: number
+          sha256?: string | null
+          slot?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      profile_media_remediation_config: {
+        Row: {
+          cron_secret: string
+          enabled: boolean
+          endpoint: string
+          singleton: boolean
+          updated_at: string
+        }
+        Insert: {
+          cron_secret: string
+          enabled?: boolean
+          endpoint: string
+          singleton?: boolean
+          updated_at?: string
+        }
+        Update: {
+          cron_secret?: string
+          enabled?: boolean
+          endpoint?: string
+          singleton?: boolean
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      profile_media_remediation_jobs: {
+        Row: {
+          attempt_count: number
+          claim_token: string | null
+          claimed_at: string | null
+          completed_at: string | null
+          created_at: string
+          decision_categories: string[]
+          field_name: string
+          id: string
+          item_index: number
+          last_error: string | null
+          needs_source_cleanup: boolean
+          next_retry_at: string | null
+          priority: number
+          profile_id: string
+          sha256: string | null
+          source_url: string
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          attempt_count?: number
+          claim_token?: string | null
+          claimed_at?: string | null
+          completed_at?: string | null
+          created_at?: string
+          decision_categories?: string[]
+          field_name: string
+          id?: string
+          item_index?: number
+          last_error?: string | null
+          needs_source_cleanup?: boolean
+          next_retry_at?: string | null
+          priority?: number
+          profile_id: string
+          sha256?: string | null
+          source_url: string
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          attempt_count?: number
+          claim_token?: string | null
+          claimed_at?: string | null
+          completed_at?: string | null
+          created_at?: string
+          decision_categories?: string[]
+          field_name?: string
+          id?: string
+          item_index?: number
+          last_error?: string | null
+          needs_source_cleanup?: boolean
+          next_retry_at?: string | null
+          priority?: number
+          profile_id?: string
+          sha256?: string | null
+          source_url?: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "profile_media_remediation_jobs_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "profile_media_remediation_jobs_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profile_moderation_events: {
         Row: {
           categories: string[]
@@ -9935,6 +11810,10 @@ export type Database = {
           decision: string
           detector_version: string
           evidence_redacted_at: string | null
+          evidence_retention_attempts: number
+          evidence_retention_claim_id: string | null
+          evidence_retention_claimed_at: string | null
+          evidence_retention_failure: string | null
           evidence_snapshot: Json
           field_names: string[]
           id: string
@@ -9954,6 +11833,10 @@ export type Database = {
           decision: string
           detector_version: string
           evidence_redacted_at?: string | null
+          evidence_retention_attempts?: number
+          evidence_retention_claim_id?: string | null
+          evidence_retention_claimed_at?: string | null
+          evidence_retention_failure?: string | null
           evidence_snapshot?: Json
           field_names?: string[]
           id?: string
@@ -9973,6 +11856,10 @@ export type Database = {
           decision?: string
           detector_version?: string
           evidence_redacted_at?: string | null
+          evidence_retention_attempts?: number
+          evidence_retention_claim_id?: string | null
+          evidence_retention_claimed_at?: string | null
+          evidence_retention_failure?: string | null
           evidence_snapshot?: Json
           field_names?: string[]
           id?: string
@@ -10035,6 +11922,48 @@ export type Database = {
           },
           {
             foreignKeyName: "profile_notes_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      profile_onboarding_completion_receipts_v2: {
+        Row: {
+          committed_at: string
+          completion_request_id: string
+          interest_ids: string[]
+          onboarding_variant: string
+          profile_id: string
+          user_id: string
+        }
+        Insert: {
+          committed_at?: string
+          completion_request_id: string
+          interest_ids: string[]
+          onboarding_variant: string
+          profile_id: string
+          user_id: string
+        }
+        Update: {
+          committed_at?: string
+          completion_request_id?: string
+          interest_ids?: string[]
+          onboarding_variant?: string
+          profile_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "profile_onboarding_completion_receipts_v2_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "profile_onboarding_completion_receipts_v2_profile_id_fkey"
             columns: ["profile_id"]
             isOneToOne: false
             referencedRelation: "profiles"
@@ -11863,6 +13792,36 @@ export type Database = {
         }
         Relationships: []
       }
+      unsafe_media_hash_blocklist: {
+        Row: {
+          category: string
+          created_at: string
+          disabled_at: string | null
+          enabled: boolean
+          sha256: string
+          source: string
+          source_reference: string | null
+        }
+        Insert: {
+          category: string
+          created_at?: string
+          disabled_at?: string | null
+          enabled?: boolean
+          sha256: string
+          source: string
+          source_reference?: string | null
+        }
+        Update: {
+          category?: string
+          created_at?: string
+          disabled_at?: string | null
+          enabled?: boolean
+          sha256?: string
+          source?: string
+          source_reference?: string | null
+        }
+        Relationships: []
+      }
       user_location_profiles: {
         Row: {
           created_at: string | null
@@ -13412,6 +15371,10 @@ export type Database = {
         Args: { p_profile_id: string }
         Returns: boolean
       }
+      can_receive_live_reaction_broadcast: {
+        Args: { p_topic: string; p_user_id?: string }
+        Returns: boolean
+      }
       can_users_chat: {
         Args: { p_receiver_user_id: string; p_sender_user_id: string }
         Returns: boolean
@@ -13421,13 +15384,30 @@ export type Database = {
         Returns: boolean
       }
       can_view_moment: { Args: { p_moment_id: string }; Returns: boolean }
+      chat_message_semantic_preview: {
+        Args: {
+          p_media_kind: string
+          p_message_type: string
+          p_private?: boolean
+          p_text: string
+        }
+        Returns: string
+      }
       circle_pulse_comment_reaction_summary_json: {
         Args: { p_comment_id: string }
         Returns: Json
       }
       clean_expired_distance_cache: { Args: never; Returns: number }
+      cleanup_app_mutation_receipts_v1: {
+        Args: { p_limit?: number }
+        Returns: number
+      }
       cleanup_live_ephemeral_activity: { Args: never; Returns: Json }
       cleanup_live_match_rounds: { Args: never; Returns: number }
+      cleanup_live_operational_events_v1: {
+        Args: { p_batch_size?: number }
+        Returns: Json
+      }
       cleanup_live_private_sparks: { Args: never; Returns: number }
       cleanup_live_stale_participants: { Args: never; Returns: Json }
       cleanup_phone_verifications_orphans: { Args: never; Returns: undefined }
@@ -13458,9 +15438,26 @@ export type Database = {
         Args: { p_cron_secret: string; p_endpoint: string }
         Returns: boolean
       }
+      configure_moderation_evidence_retention_worker: {
+        Args: { p_cron_secret: string; p_endpoint: string }
+        Returns: boolean
+      }
+      configure_profile_media_remediation_worker: {
+        Args: { p_cron_secret: string; p_endpoint: string }
+        Returns: boolean
+      }
       content_safety_assess_private_message: {
         Args: { p_text: string }
         Returns: Json
+      }
+      content_safety_event_weight: {
+        Args: {
+          p_categories: string[]
+          p_decision: string
+          p_failure_reason: string
+          p_status: string
+        }
+        Returns: number
       }
       decrement_superlike: { Args: { p_profile_id: string }; Returns: number }
       detect_travel_for_user: {
@@ -13471,6 +15468,14 @@ export type Database = {
           is_traveling: boolean
           travel_mode: string
         }[]
+      }
+      disable_moderation_evidence_retention_worker: {
+        Args: never
+        Returns: boolean
+      }
+      disable_profile_media_remediation_worker: {
+        Args: never
+        Returns: boolean
       }
       disablelongtransactions: { Args: never; Returns: string }
       dropgeometrycolumn:
@@ -13539,6 +15544,7 @@ export type Database = {
           media_items: Json
           media_kind: string | null
           message_type: string
+          provider_media: Json | null
           read_at: string | null
           receiver_id: string
           reply_to_message_id: string | null
@@ -13569,6 +15575,7 @@ export type Database = {
         }
         Returns: boolean
       }
+      enqueue_live_notification_campaigns_v1: { Args: never; Returns: number }
       enqueue_vibes_v4_metric_refresh: {
         Args: {
           p_profile_id: string
@@ -14134,6 +16141,45 @@ export type Database = {
           verified: boolean
         }[]
       }
+      get_vibes_recommendations_v5_3_unfiltered: {
+        Args: {
+          p_active_window_minutes?: number
+          p_client_session_id?: string
+          p_limit?: number
+          p_refresh_ordinal?: number
+          p_request_id?: string
+          p_segment?: string
+          p_user_id: string
+        }
+        Returns: {
+          age: number
+          ai_score: number
+          avatar_url: string
+          bio: string
+          city: string
+          current_country: string
+          current_country_code: string
+          distance_km: number
+          full_name: string
+          id: string
+          is_active: boolean
+          last_active: string
+          latitude: number
+          location: string
+          location_precision: string
+          longitude: number
+          online: boolean
+          personality_type: string
+          profile_video: string
+          recommendation_reasons: Json
+          region: string
+          religion: string
+          tribe: string
+          user_id: string
+          verification_level: number
+          verified: boolean
+        }[]
+      }
       get_viewed_profile_prompts: {
         Args: { p_profile_id: string; p_viewer_profile_id?: string }
         Returns: {
@@ -14178,6 +16224,11 @@ export type Database = {
         }[]
       }
       invoke_chat_attachment_retention_worker: { Args: never; Returns: number }
+      invoke_moderation_evidence_retention_worker: {
+        Args: never
+        Returns: number
+      }
+      invoke_profile_media_remediation_worker: { Args: never; Returns: number }
       is_admin_user: { Args: { p_user_id?: string }; Returns: boolean }
       is_chat_attachment_object_mutable: {
         Args: {
@@ -14185,6 +16236,10 @@ export type Database = {
           p_sender_id: string
           p_storage_path: string
         }
+        Returns: boolean
+      }
+      is_child_safety_reviewer: {
+        Args: { p_user_id: string }
         Returns: boolean
       }
       is_circle_host: {
@@ -14213,6 +16268,10 @@ export type Database = {
       }
       is_trusted_boost_viewer: {
         Args: { p_target_profile_id?: string; p_viewer_profile_id: string }
+        Returns: boolean
+      }
+      is_valid_chat_provider_media: {
+        Args: { p_media_kind?: string; p_provider_media: Json }
         Returns: boolean
       }
       live_active_profile: {
@@ -14367,12 +16426,52 @@ export type Database = {
         Returns: boolean
       }
       live_evaluate_quorum: { Args: { p_session_id: string }; Returns: Json }
+      live_get_music_playback_without_program_audio_v1: {
+        Args: { p_session_id: string; p_user_id: string }
+        Returns: Json
+      }
       live_hosted_matching_snapshot: {
         Args: { p_session_id: string }
         Returns: Json
       }
+      live_is_odo_always_on_session_v1: {
+        Args: { p_session_id: string }
+        Returns: boolean
+      }
       live_match_pair_is_eligible: {
         Args: { p_session_id: string; p_user_a: string; p_user_b: string }
+        Returns: boolean
+      }
+      live_odo_always_on_bump_user_v1: {
+        Args: { p_user_id: string }
+        Returns: undefined
+      }
+      live_odo_always_on_has_active_experience_v1: {
+        Args: { p_excluded_session_id?: string; p_user_id: string }
+        Returns: boolean
+      }
+      live_odo_always_on_market_v1: {
+        Args: { p_user_id: string }
+        Returns: string
+      }
+      live_odo_always_on_music_allowed_v1: {
+        Args: { p_session_id: string }
+        Returns: boolean
+      }
+      live_odo_always_on_pair_is_eligible_v1: {
+        Args: { p_user_a: string; p_user_b: string }
+        Returns: boolean
+      }
+      live_odo_always_on_safety_preflight_v1: {
+        Args: { p_opportunity_id: string }
+        Returns: boolean
+      }
+      live_odo_always_on_service_witness_v1: {
+        Args: { p_session_id: string; p_user_id: string }
+        Returns: boolean
+      }
+      live_odo_always_on_user_allowed_v1: {
+        Args: { p_user_id: string }
         Returns: boolean
       }
       live_odo_append_director_event_v1: {
@@ -14570,6 +16669,15 @@ export type Database = {
         Args: { p_task: string }
         Returns: number
       }
+      live_odo_finalize_always_on_session_base_10f_v1: {
+        Args: {
+          p_failure_reason_code?: string
+          p_opportunity_id: string
+          p_stream_ready: boolean
+          p_worker_id: string
+        }
+        Returns: Json
+      }
       live_odo_full_quick_eligible_pairs_v1: {
         Args: { p_session_id: string }
         Returns: number
@@ -14593,6 +16701,10 @@ export type Database = {
       }
       live_odo_full_quick_snapshot_v1: {
         Args: { p_actor_user_id: string; p_session_id: string }
+        Returns: Json
+      }
+      live_odo_get_music_playback_base_10f_v1: {
+        Args: { p_session_id: string; p_user_id: string }
         Returns: Json
       }
       live_odo_guarded_action_allowed_v1: {
@@ -14644,10 +16756,38 @@ export type Database = {
         Args: { p_user_id: string }
         Returns: boolean
       }
+      live_odo_host_music_control_base_10f_v1: {
+        Args: {
+          p_action: string
+          p_idempotency_key?: string
+          p_mood?: string
+          p_playlist_id?: string
+          p_session_id: string
+          p_track_id?: string
+          p_volume?: number
+        }
+        Returns: Json
+      }
       live_odo_is_service_role: { Args: never; Returns: boolean }
       live_odo_jsonb_has_exact_keys_v1: {
         Args: { p_optional?: string[]; p_required: string[]; p_value: Json }
         Returns: boolean
+      }
+      live_odo_maintain_opportunities_base_10f_v1: {
+        Args: never
+        Returns: Json
+      }
+      live_odo_prepare_always_on_session_base_10f_v1: {
+        Args: { p_opportunity_id: string; p_worker_id: string }
+        Returns: Json
+      }
+      live_odo_reconcile_show_base_10f_v1: {
+        Args: {
+          p_lease_owner: string
+          p_requested_by_user_id: string
+          p_session_id: string
+        }
+        Returns: Json
       }
       live_odo_show_host_allowed_v1: {
         Args: { p_session_id: string; p_user_id: string }
@@ -14685,6 +16825,40 @@ export type Database = {
         Args: { p_profile: Database["public"]["Tables"]["profiles"]["Row"] }
         Returns: string
       }
+      live_program_assignment_error_v1: {
+        Args: { p_assignments: Json; p_scene: string; p_session_id: string }
+        Returns: string
+      }
+      live_program_command_result_v1: {
+        Args: {
+          p_applied: boolean
+          p_reason_code: string
+          p_session_id: string
+        }
+        Returns: Json
+      }
+      live_program_ensure_logical_sources_v1: {
+        Args: { p_session_id: string }
+        Returns: undefined
+      }
+      live_program_ensure_session_v1: {
+        Args: { p_session_id: string }
+        Returns: undefined
+      }
+      live_program_restore_music_stage_v1: {
+        Args: {
+          p_actor_user_id: string
+          p_command_id: string
+          p_reason: string
+          p_session_id: string
+          p_source: string
+        }
+        Returns: Json
+      }
+      live_program_safe_fallback_v1: {
+        Args: { p_preferred_scene: string; p_session_id: string }
+        Returns: Json
+      }
       live_quick_connect_has_active_safety_hold: {
         Args: { p_user_id: string }
         Returns: boolean
@@ -14717,7 +16891,23 @@ export type Database = {
         Args: { p_session_id: string }
         Returns: Json
       }
+      live_reaction_summary_payload: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
       live_role_capabilities: { Args: { p_role: string }; Returns: string[] }
+      live_session_has_active_delegated_host_v1: {
+        Args: { p_session_id: string; p_user_id: string }
+        Returns: boolean
+      }
+      live_stage_atmosphere_snapshot_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      live_studio_is_authorized_v1: {
+        Args: { p_capability?: string; p_session_id: string; p_user_id: string }
+        Returns: boolean
+      }
       longtransactionsenabled: { Args: never; Returns: boolean }
       normalize_live_quick_connect_intent: {
         Args: { p_value: string }
@@ -14840,6 +17030,14 @@ export type Database = {
         }
         Returns: number
       }
+      profile_media_reference_is_approved: {
+        Args: { p_url: string; p_user_id: string }
+        Returns: boolean
+      }
+      recalculate_content_safety_actor_state: {
+        Args: { p_user_id: string }
+        Returns: undefined
+      }
       record_profile_country_verification_observation: {
         Args: {
           p_accuracy_meters: number
@@ -14944,6 +17142,10 @@ export type Database = {
         Returns: string
       }
       rpc_admin_dashboard_overview: { Args: never; Returns: Json }
+      rpc_admin_delegate_live_host_v1: {
+        Args: { p_session_id: string; p_username: string }
+        Returns: Json
+      }
       rpc_admin_execute_account_merge_case: {
         Args: { p_case_id: string }
         Returns: Json
@@ -15421,6 +17623,20 @@ export type Database = {
         Args: { p_case_id: string }
         Returns: Json
       }
+      rpc_admin_publish_live_music_track_v2: {
+        Args: {
+          p_artist: string
+          p_contains_vocals: boolean
+          p_duration_seconds: number
+          p_license_expires_at?: string
+          p_license_reference: string
+          p_mood: string
+          p_storage_path: string
+          p_title: string
+          p_track_id: string
+        }
+        Returns: Json
+      }
       rpc_admin_request_verification_refresh: {
         Args: {
           p_profile_id: string
@@ -15442,12 +17658,39 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_admin_reverse_content_moderation_event: {
+        Args: { p_event_id: string; p_reason: string }
+        Returns: Json
+      }
       rpc_admin_review_verification_request: {
         Args: { p_decision: string; p_notes?: string; p_request_id: string }
         Returns: boolean
       }
+      rpc_admin_revoke_live_host_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      rpc_admin_set_live_odo_always_on_access_v1: {
+        Args: {
+          p_allowed: boolean
+          p_expires_at?: string
+          p_note?: string
+          p_user_id: string
+        }
+        Returns: Json
+      }
       rpc_admin_set_live_odo_guarded_host_access_v1: {
         Args: { p_allowed: boolean; p_note?: string; p_user_id: string }
+        Returns: Json
+      }
+      rpc_admin_set_live_studio_access_v1: {
+        Args: {
+          p_allowed: boolean
+          p_capabilities?: Json
+          p_expires_at?: string
+          p_note?: string
+          p_user_id: string
+        }
         Returns: Json
       }
       rpc_admin_update_account_merge_case: {
@@ -15468,6 +17711,10 @@ export type Database = {
         }
         Returns: boolean
       }
+      rpc_admin_update_live_odo_always_on_v1: {
+        Args: { p_patch: Json }
+        Returns: Json
+      }
       rpc_admin_update_live_odo_configuration_v1: {
         Args: { p_patch: Json }
         Returns: Json
@@ -15481,6 +17728,10 @@ export type Database = {
         Returns: Json
       }
       rpc_admin_update_live_odo_show_v1: {
+        Args: { p_patch: Json }
+        Returns: Json
+      }
+      rpc_admin_update_live_studio_configuration_v1: {
         Args: { p_patch: Json }
         Returns: Json
       }
@@ -15575,6 +17826,7 @@ export type Database = {
           media_items: Json
           media_kind: string | null
           message_type: string
+          provider_media: Json | null
           read_at: string | null
           receiver_id: string
           reply_to_message_id: string | null
@@ -15743,10 +17995,11 @@ export type Database = {
           context_id: string | null
           context_type: string
           created_at: string
-          created_by_profile_id: string
-          created_by_user_id: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
           creation_request_id: string | null
           description: string | null
+          end_policy: string
           ended_at: string | null
           format: string
           gathering_id: string | null
@@ -15754,6 +18007,9 @@ export type Database = {
           maximum_participants: number
           maximum_publishers: number
           minimum_participants: number
+          ownership_type: string
+          produced_by_profile_id: string | null
+          produced_by_user_id: string | null
           provider: string
           provider_call_id: string
           provider_call_type: string
@@ -15762,6 +18018,9 @@ export type Database = {
           quorum_required_pairs: number
           recording_enabled: boolean
           rescheduled_at: string | null
+          runtime_end_at: string | null
+          runtime_extended_at: string | null
+          runtime_extended_by_user_id: string | null
           schedule_revision: number
           scheduled_duration_minutes: number
           scheduled_end: string | null
@@ -15770,6 +18029,7 @@ export type Database = {
           stage_requests_open: boolean
           started_at: string | null
           status: string
+          system_session_kind: string | null
           title: string
           updated_at: string
           version: number
@@ -15922,10 +18182,11 @@ export type Database = {
           context_id: string | null
           context_type: string
           created_at: string
-          created_by_profile_id: string
-          created_by_user_id: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
           creation_request_id: string | null
           description: string | null
+          end_policy: string
           ended_at: string | null
           format: string
           gathering_id: string | null
@@ -15933,6 +18194,9 @@ export type Database = {
           maximum_participants: number
           maximum_publishers: number
           minimum_participants: number
+          ownership_type: string
+          produced_by_profile_id: string | null
+          produced_by_user_id: string | null
           provider: string
           provider_call_id: string
           provider_call_type: string
@@ -15941,6 +18205,9 @@ export type Database = {
           quorum_required_pairs: number
           recording_enabled: boolean
           rescheduled_at: string | null
+          runtime_end_at: string | null
+          runtime_extended_at: string | null
+          runtime_extended_by_user_id: string | null
           schedule_revision: number
           scheduled_duration_minutes: number
           scheduled_end: string | null
@@ -15949,6 +18216,7 @@ export type Database = {
           stage_requests_open: boolean
           started_at: string | null
           status: string
+          system_session_kind: string | null
           title: string
           updated_at: string
           version: number
@@ -15967,6 +18235,14 @@ export type Database = {
       rpc_cancel_signal: { Args: { p_signal_id: string }; Returns: string }
       rpc_check_profile_username_availability: {
         Args: { p_username: string }
+        Returns: Json
+      }
+      rpc_child_safety_resolve_evidence: {
+        Args: {
+          p_event_id: string
+          p_reason: string
+          p_release_legal_hold?: boolean
+        }
         Returns: Json
       }
       rpc_claim_chat_attachment_cleanup: {
@@ -16149,6 +18425,16 @@ export type Database = {
           report_count: number
           updated_at: string
         }[]
+      }
+      rpc_create_circle_pulse_comment_v2: {
+        Args: {
+          p_body: string
+          p_client_operation_id: string
+          p_parent_comment_id?: string
+          p_profile_id: string
+          p_pulse_item_id: string
+        }
+        Returns: Json
       }
       rpc_create_circle_relationship_gist: {
         Args: {
@@ -16391,21 +18677,7 @@ export type Database = {
           p_reaction: string
           p_session_id: string
         }
-        Returns: {
-          client_event_id: string
-          created_at: string
-          id: number
-          profile_id: string
-          reaction: string
-          session_id: string
-          user_id: string
-        }
-        SetofOptions: {
-          from: "*"
-          to: "live_reactions"
-          isOneToOne: true
-          isSetofReturn: false
-        }
+        Returns: Json
       }
       rpc_create_live_session: {
         Args: {
@@ -16429,10 +18701,11 @@ export type Database = {
           context_id: string | null
           context_type: string
           created_at: string
-          created_by_profile_id: string
-          created_by_user_id: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
           creation_request_id: string | null
           description: string | null
+          end_policy: string
           ended_at: string | null
           format: string
           gathering_id: string | null
@@ -16440,6 +18713,9 @@ export type Database = {
           maximum_participants: number
           maximum_publishers: number
           minimum_participants: number
+          ownership_type: string
+          produced_by_profile_id: string | null
+          produced_by_user_id: string | null
           provider: string
           provider_call_id: string
           provider_call_type: string
@@ -16448,6 +18724,9 @@ export type Database = {
           quorum_required_pairs: number
           recording_enabled: boolean
           rescheduled_at: string | null
+          runtime_end_at: string | null
+          runtime_extended_at: string | null
+          runtime_extended_by_user_id: string | null
           schedule_revision: number
           scheduled_duration_minutes: number
           scheduled_end: string | null
@@ -16456,6 +18735,7 @@ export type Database = {
           stage_requests_open: boolean
           started_at: string | null
           status: string
+          system_session_kind: string | null
           title: string
           updated_at: string
           version: number
@@ -16478,6 +18758,18 @@ export type Database = {
       rpc_create_media_moment: {
         Args: {
           p_caption?: string
+          p_media_url: string
+          p_metadata?: Json
+          p_moment_id: string
+          p_type: string
+          p_visibility?: string
+        }
+        Returns: string
+      }
+      rpc_create_media_moment_v2: {
+        Args: {
+          p_caption?: string
+          p_client_operation_id: string
           p_media_url: string
           p_metadata?: Json
           p_moment_id: string
@@ -16537,6 +18829,15 @@ export type Database = {
               isSetofReturn: false
             }
           }
+      rpc_create_moment_comment_v2: {
+        Args: {
+          p_body: string
+          p_client_operation_id: string
+          p_moment_id: string
+          p_parent_comment_id?: string
+        }
+        Returns: Json
+      }
       rpc_create_profile_boost: { Args: never; Returns: Json }
       rpc_create_profile_boost_v2: {
         Args: {
@@ -16546,6 +18847,26 @@ export type Database = {
           p_metadata?: Json
         }
         Returns: Json
+      }
+      rpc_create_profile_boost_v3: {
+        Args: {
+          p_audience_mode?: string
+          p_boost_type?: string
+          p_client_operation_id: string
+          p_focus_mode?: string
+          p_metadata?: Json
+        }
+        Returns: Json
+      }
+      rpc_create_text_moment_v2: {
+        Args: {
+          p_caption?: string
+          p_client_operation_id: string
+          p_metadata?: Json
+          p_text_body: string
+          p_visibility?: string
+        }
+        Returns: string
       }
       rpc_create_warm_introduction: {
         Args: {
@@ -16667,12 +18988,17 @@ export type Database = {
         Args: { p_private_spark_id: string; p_reason?: string }
         Returns: Json
       }
-      rpc_end_live_session_v1: {
-        Args: { p_session_id: string }
-        Returns: Json
-      }
+      rpc_end_live_session_v1: { Args: { p_session_id: string }; Returns: Json }
       rpc_enforce_profile_contact_guard: {
         Args: { p_profile_id: string }
+        Returns: Json
+      }
+      rpc_extend_live_session_v1: {
+        Args: {
+          p_extension_minutes?: number
+          p_keep_open?: boolean
+          p_session_id: string
+        }
         Returns: Json
       }
       rpc_fail_chat_attachment_cleanup: {
@@ -16741,6 +19067,7 @@ export type Database = {
           media_items: Json
           media_kind: string | null
           message_type: string
+          provider_media: Json | null
           read_at: string | null
           receiver_id: string
           reply_to_message_id: string | null
@@ -16804,6 +19131,7 @@ export type Database = {
           media_items: Json
           media_kind: string | null
           message_type: string
+          provider_media: Json | null
           read_at: string | null
           receiver_id: string
           reply_to_message_id: string | null
@@ -16868,6 +19196,73 @@ export type Database = {
           media_items: Json
           media_kind: string | null
           message_type: string
+          provider_media: Json | null
+          read_at: string | null
+          receiver_id: string
+          reply_to_message_id: string | null
+          sender_id: string
+          status: string
+          storage_path: string | null
+          text: string
+          view_once: boolean
+          viewed_at: string | null
+          viewed_by: string | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "messages"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      rpc_finalize_chat_attachment_batch_v4: {
+        Args: {
+          p_attachment_type: string
+          p_attachments: Json
+          p_caption: string
+          p_client_message_id: string
+          p_expected_count: number
+          p_media_kind: string
+          p_receiver_id: string
+          p_reply_to_message_id: string
+          p_request_payload: Json
+          p_sender_id: string
+        }
+        Returns: {
+          attachment_set_hash: string | null
+          attachment_state: string
+          attachment_state_version: number
+          audio_duration: number | null
+          audio_path: string | null
+          audio_waveform: Json | null
+          client_message_id: string | null
+          created_at: string
+          deleted_at: string | null
+          deleted_by: string | null
+          deleted_for_all: boolean
+          delivered_at: string | null
+          e2ee: boolean
+          edited_at: string | null
+          enc: Json | null
+          encrypted_key_nonce: string | null
+          encrypted_key_receiver: string | null
+          encrypted_key_sender: string | null
+          encrypted_media: boolean
+          encrypted_media_alg: string | null
+          encrypted_media_mime: string | null
+          encrypted_media_nonce: string | null
+          encrypted_media_path: string | null
+          encrypted_media_size: number | null
+          id: string
+          is_read: boolean
+          is_view_once: boolean
+          media_caption: string | null
+          media_expected_count: number | null
+          media_group_id: string | null
+          media_items: Json
+          media_kind: string | null
+          message_type: string
+          provider_media: Json | null
           read_at: string | null
           receiver_id: string
           reply_to_message_id: string | null
@@ -16949,6 +19344,7 @@ export type Database = {
           media_items: Json
           media_kind: string | null
           message_type: string
+          provider_media: Json | null
           read_at: string | null
           receiver_id: string
           reply_to_message_id: string | null
@@ -17013,6 +19409,7 @@ export type Database = {
           media_items: Json
           media_kind: string | null
           message_type: string
+          provider_media: Json | null
           read_at: string | null
           receiver_id: string
           reply_to_message_id: string | null
@@ -17061,6 +19458,7 @@ export type Database = {
           last_message_id: string
           last_message_is_read: boolean
           last_message_is_view_once: boolean
+          last_message_media_kind: string
           last_message_reaction_created_at: string
           last_message_reaction_emoji: string
           last_message_reaction_target_type: string
@@ -17465,8 +19863,20 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_get_live_hosting_management_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
       rpc_get_live_member_summary: {
         Args: { p_profile_id: string; p_session_id: string }
+        Returns: Json
+      }
+      rpc_get_live_music_catalogue_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      rpc_get_live_music_repeat_mode_v1: {
+        Args: { p_session_id: string }
         Returns: Json
       }
       rpc_get_live_odo_admin_trace_v1: {
@@ -17501,6 +19911,14 @@ export type Database = {
         Args: { p_session_id: string }
         Returns: Json
       }
+      rpc_get_live_odo_system_program_snapshot_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      rpc_get_live_private_activity_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
       rpc_get_live_private_spark: {
         Args: { p_spark_id: string }
         Returns: Json
@@ -17532,10 +19950,15 @@ export type Database = {
         Args: { p_session_id: string }
         Returns: Json
       }
+      rpc_get_live_program_snapshot_v2: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
       rpc_get_live_quick_connect: {
         Args: { p_session_id: string }
         Returns: Json
       }
+      rpc_get_live_quick_connect_availability_v1: { Args: never; Returns: Json }
       rpc_get_live_quick_connect_host_control: {
         Args: { p_session_id: string }
         Returns: Json
@@ -17575,6 +19998,10 @@ export type Database = {
         Args: { p_session_id: string }
         Returns: Json
       }
+      rpc_get_live_reaction_summary: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
       rpc_get_live_room_pulse: { Args: { p_session_id: string }; Returns: Json }
       rpc_get_live_rtc_admission: {
         Args: { p_session_id: string }
@@ -17609,11 +20036,27 @@ export type Database = {
           user_id: string
         }[]
       }
+      rpc_get_live_session_recap_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
       rpc_get_live_session_snapshot: {
         Args: { p_session_id: string }
         Returns: Json
       }
-      rpc_get_live_session_recap_v1: {
+      rpc_get_live_stage_atmosphere_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      rpc_get_live_studio_media_admission_v1: {
+        Args: {
+          p_controller_instance_id: string
+          p_session_id: string
+          p_source_kind: string
+        }
+        Returns: Json
+      }
+      rpc_get_live_studio_snapshot_v1: {
         Args: { p_session_id: string }
         Returns: Json
       }
@@ -17836,6 +20279,7 @@ export type Database = {
           connection_quality_state: string
           created_at: string
           id: string
+          introduction_preference_decided_at: string | null
           invited_at: string
           joined_at: string | null
           last_connection_change_at: string | null
@@ -17876,6 +20320,19 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_host_disconnect_live_studio_v1: {
+        Args: { p_command_id: string; p_session_id: string }
+        Returns: Json
+      }
+      rpc_host_set_live_music_stage_v1: {
+        Args: {
+          p_expected_version: number
+          p_request_id?: string
+          p_session_id: string
+          p_visible: boolean
+        }
+        Returns: Json
+      }
       rpc_host_set_live_show_scene_v1: {
         Args: {
           p_expected_version: number
@@ -17884,9 +20341,26 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_host_set_live_stage_atmosphere_v1: {
+        Args: {
+          p_expected_version: number
+          p_preset: string
+          p_request_id?: string
+          p_session_id: string
+        }
+        Returns: Json
+      }
       rpc_insert_request_acceptance_system_messages: {
         Args: { p_request_id: string }
         Returns: undefined
+      }
+      rpc_invite_live_stage_member_v1: {
+        Args: {
+          p_invitation_id: string
+          p_session_id: string
+          p_target_user_id: string
+        }
+        Returns: Json
       }
       rpc_invite_profile_to_circle: {
         Args: {
@@ -17955,6 +20429,7 @@ export type Database = {
           connection_quality_state: string
           created_at: string
           id: string
+          introduction_preference_decided_at: string | null
           invited_at: string
           joined_at: string | null
           last_connection_change_at: string | null
@@ -17997,6 +20472,7 @@ export type Database = {
           connection_quality_state: string
           created_at: string
           id: string
+          introduction_preference_decided_at: string | null
           invited_at: string
           joined_at: string | null
           last_connection_change_at: string | null
@@ -18031,6 +20507,7 @@ export type Database = {
           connection_quality_state: string
           created_at: string
           id: string
+          introduction_preference_decided_at: string | null
           invited_at: string
           joined_at: string | null
           last_connection_change_at: string | null
@@ -18146,6 +20623,10 @@ export type Database = {
           status: string
           title: string
         }[]
+      }
+      rpc_list_live_studio_control_sessions_v1: {
+        Args: { p_limit?: number }
+        Returns: Json
       }
       rpc_list_live_studio_sessions: {
         Args: { p_before?: string; p_limit?: number }
@@ -18375,6 +20856,7 @@ export type Database = {
           connection_quality_state: string
           created_at: string
           id: string
+          introduction_preference_decided_at: string | null
           invited_at: string
           joined_at: string | null
           last_connection_change_at: string | null
@@ -18577,6 +21059,14 @@ export type Database = {
         }
         Returns: number
       }
+      rpc_record_current_legal_acceptance_v1: {
+        Args: {
+          p_app_version?: string
+          p_privacy_version: string
+          p_terms_version: string
+        }
+        Returns: boolean
+      }
       rpc_record_profile_guard_semantic_observation: {
         Args: { p_decision: string; p_reason_code: string; p_user_id: string }
         Returns: undefined
@@ -18719,6 +21209,14 @@ export type Database = {
         }
         Returns: number
       }
+      rpc_replace_profile_interests_v2: {
+        Args: {
+          p_client_operation_id: string
+          p_interest_names: string[]
+          p_profile_id: string
+        }
+        Returns: string[]
+      }
       rpc_report_circle_pulse_comment: {
         Args: { p_comment_id: string; p_profile_id: string; p_reason?: string }
         Returns: boolean
@@ -18826,6 +21324,7 @@ export type Database = {
           connection_quality_state: string
           created_at: string
           id: string
+          introduction_preference_decided_at: string | null
           invited_at: string
           joined_at: string | null
           last_connection_change_at: string | null
@@ -18905,6 +21404,18 @@ export type Database = {
       }
       rpc_respond_live_private_spark: {
         Args: { p_accept: boolean; p_private_spark_id: string }
+        Returns: Json
+      }
+      rpc_respond_live_quick_connect_opportunity_v1: {
+        Args: {
+          p_expected_version?: number
+          p_opportunity_id: string
+          p_response: string
+        }
+        Returns: Json
+      }
+      rpc_respond_live_stage_invitation_v1: {
+        Args: { p_accept: boolean; p_invitation_id: string }
         Returns: Json
       }
       rpc_respond_warm_introduction: {
@@ -19016,6 +21527,7 @@ export type Database = {
           connection_quality_state: string
           created_at: string
           id: string
+          introduction_preference_decided_at: string | null
           invited_at: string
           joined_at: string | null
           last_connection_change_at: string | null
@@ -19074,10 +21586,11 @@ export type Database = {
           context_id: string | null
           context_type: string
           created_at: string
-          created_by_profile_id: string
-          created_by_user_id: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
           creation_request_id: string | null
           description: string | null
+          end_policy: string
           ended_at: string | null
           format: string
           gathering_id: string | null
@@ -19085,6 +21598,9 @@ export type Database = {
           maximum_participants: number
           maximum_publishers: number
           minimum_participants: number
+          ownership_type: string
+          produced_by_profile_id: string | null
+          produced_by_user_id: string | null
           provider: string
           provider_call_id: string
           provider_call_type: string
@@ -19093,6 +21609,9 @@ export type Database = {
           quorum_required_pairs: number
           recording_enabled: boolean
           rescheduled_at: string | null
+          runtime_end_at: string | null
+          runtime_extended_at: string | null
+          runtime_extended_by_user_id: string | null
           schedule_revision: number
           scheduled_duration_minutes: number
           scheduled_end: string | null
@@ -19101,6 +21620,7 @@ export type Database = {
           stage_requests_open: boolean
           started_at: string | null
           status: string
+          system_session_kind: string | null
           title: string
           updated_at: string
           version: number
@@ -19130,10 +21650,11 @@ export type Database = {
           context_id: string | null
           context_type: string
           created_at: string
-          created_by_profile_id: string
-          created_by_user_id: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
           creation_request_id: string | null
           description: string | null
+          end_policy: string
           ended_at: string | null
           format: string
           gathering_id: string | null
@@ -19141,6 +21662,9 @@ export type Database = {
           maximum_participants: number
           maximum_publishers: number
           minimum_participants: number
+          ownership_type: string
+          produced_by_profile_id: string | null
+          produced_by_user_id: string | null
           provider: string
           provider_call_id: string
           provider_call_type: string
@@ -19149,6 +21673,9 @@ export type Database = {
           quorum_required_pairs: number
           recording_enabled: boolean
           rescheduled_at: string | null
+          runtime_end_at: string | null
+          runtime_extended_at: string | null
+          runtime_extended_by_user_id: string | null
           schedule_revision: number
           scheduled_duration_minutes: number
           scheduled_end: string | null
@@ -19157,6 +21684,7 @@ export type Database = {
           stage_requests_open: boolean
           started_at: string | null
           status: string
+          system_session_kind: string | null
           title: string
           updated_at: string
           version: number
@@ -19188,10 +21716,11 @@ export type Database = {
           context_id: string | null
           context_type: string
           created_at: string
-          created_by_profile_id: string
-          created_by_user_id: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
           creation_request_id: string | null
           description: string | null
+          end_policy: string
           ended_at: string | null
           format: string
           gathering_id: string | null
@@ -19199,6 +21728,9 @@ export type Database = {
           maximum_participants: number
           maximum_publishers: number
           minimum_participants: number
+          ownership_type: string
+          produced_by_profile_id: string | null
+          produced_by_user_id: string | null
           provider: string
           provider_call_id: string
           provider_call_type: string
@@ -19207,6 +21739,9 @@ export type Database = {
           quorum_required_pairs: number
           recording_enabled: boolean
           rescheduled_at: string | null
+          runtime_end_at: string | null
+          runtime_extended_at: string | null
+          runtime_extended_by_user_id: string | null
           schedule_revision: number
           scheduled_duration_minutes: number
           scheduled_end: string | null
@@ -19215,6 +21750,7 @@ export type Database = {
           stage_requests_open: boolean
           started_at: string | null
           status: string
+          system_session_kind: string | null
           title: string
           updated_at: string
           version: number
@@ -19250,10 +21786,11 @@ export type Database = {
           context_id: string | null
           context_type: string
           created_at: string
-          created_by_profile_id: string
-          created_by_user_id: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
           creation_request_id: string | null
           description: string | null
+          end_policy: string
           ended_at: string | null
           format: string
           gathering_id: string | null
@@ -19261,6 +21798,9 @@ export type Database = {
           maximum_participants: number
           maximum_publishers: number
           minimum_participants: number
+          ownership_type: string
+          produced_by_profile_id: string | null
+          produced_by_user_id: string | null
           provider: string
           provider_call_id: string
           provider_call_type: string
@@ -19269,6 +21809,9 @@ export type Database = {
           quorum_required_pairs: number
           recording_enabled: boolean
           rescheduled_at: string | null
+          runtime_end_at: string | null
+          runtime_extended_at: string | null
+          runtime_extended_by_user_id: string | null
           schedule_revision: number
           scheduled_duration_minutes: number
           scheduled_end: string | null
@@ -19277,6 +21820,7 @@ export type Database = {
           stage_requests_open: boolean
           started_at: string | null
           status: string
+          system_session_kind: string | null
           title: string
           updated_at: string
           version: number
@@ -19388,6 +21932,15 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_send_profile_gift_v2: {
+        Args: {
+          p_client_operation_id: string
+          p_gift_type: string
+          p_include_sandbox_preview?: boolean
+          p_recipient_profile_id: string
+        }
+        Returns: Json
+      }
       rpc_send_signal: {
         Args: {
           p_note?: string
@@ -19395,6 +21948,16 @@ export type Database = {
           p_receiver_profile_id: string
           p_source?: string
           p_source_moment_id?: string
+        }
+        Returns: Json
+      }
+      rpc_service_apply_profile_media_v1_2: {
+        Args: {
+          p_avatar_url: string
+          p_client_request_id: string
+          p_hero_image_url: string
+          p_photos: string[]
+          p_user_id: string
         }
         Returns: Json
       }
@@ -19427,6 +21990,10 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_service_claim_live_notification_campaign_v1: {
+        Args: { p_campaign_id: string }
+        Returns: Json
+      }
       rpc_service_claim_live_odo_guarded_event_v1: {
         Args: {
           p_lease_owner: string
@@ -19437,12 +22004,64 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_service_claim_live_program_audio_v1: {
+        Args: { p_session_id: string; p_worker_instance_id: string }
+        Returns: Json
+      }
+      rpc_service_claim_moderation_evidence_retention: {
+        Args: { p_limit?: number; p_retention?: string }
+        Returns: Json
+      }
+      rpc_service_claim_profile_media_remediation: {
+        Args: { p_limit?: number }
+        Returns: {
+          attempt_count: number
+          claim_token: string
+          field_name: string
+          id: string
+          item_index: number
+          needs_source_cleanup: boolean
+          profile_id: string
+          source_url: string
+          user_id: string
+        }[]
+      }
+      rpc_service_claim_push_notification_event_v1: {
+        Args: { p_event_id: string }
+        Returns: Json
+      }
       rpc_service_clear_live_odo_policy_pause_v1: {
         Args: { p_reason_code: string; p_session_id: string }
         Returns: Json
       }
       rpc_service_clear_live_odo_policy_pause_without_full_quick_v1: {
         Args: { p_reason_code: string; p_session_id: string }
+        Returns: Json
+      }
+      rpc_service_complete_live_music_playback_v1: {
+        Args: {
+          p_expected_state_version: number
+          p_session_id: string
+          p_user_id: string
+        }
+        Returns: Json
+      }
+      rpc_service_complete_live_notification_campaign_v1: {
+        Args: {
+          p_accepted_ticket_count?: number
+          p_campaign_id: string
+          p_failure_reason?: string
+          p_recipient_count?: number
+          p_succeeded: boolean
+        }
+        Returns: undefined
+      }
+      rpc_service_complete_live_odo_always_on_cleanup_v1: {
+        Args: {
+          p_reason_code?: string
+          p_session_id: string
+          p_succeeded: boolean
+        }
         Returns: Json
       }
       rpc_service_complete_live_odo_copilot_call_v1: {
@@ -19479,6 +22098,26 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_service_complete_live_program_audio_v1: {
+        Args: {
+          p_expected_music_version: number
+          p_lease_generation: number
+          p_session_id: string
+          p_worker_instance_id: string
+        }
+        Returns: Json
+      }
+      rpc_service_complete_profile_onboarding_v2: {
+        Args: {
+          p_completion_request_id: string
+          p_evidence_snapshot?: Json
+          p_expected_updated_at: string
+          p_interest_names: string[]
+          p_updates: Json
+          p_user_id: string
+        }
+        Returns: Json
+      }
       rpc_service_complete_profile_onboarding_with_guard_v1: {
         Args: {
           p_evidence_snapshot?: Json
@@ -19488,12 +22127,30 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_service_complete_push_notification_event_v1: {
+        Args: {
+          p_accepted_ticket_count?: number
+          p_event_id: string
+          p_outcome?: string
+          p_recipient_count?: number
+          p_succeeded: boolean
+        }
+        Returns: boolean
+      }
+      rpc_service_configure_test_hash_provider: {
+        Args: { p_enabled: boolean; p_environment: string }
+        Returns: boolean
+      }
       rpc_service_consume_content_guard_rate_limit: {
         Args: { p_scope: string; p_user_id: string }
         Returns: Json
       }
       rpc_service_consume_profile_guard_rate_limit: {
         Args: { p_user_id: string }
+        Returns: Json
+      }
+      rpc_service_detect_live_quick_connect_opportunity_v1: {
+        Args: { p_market_context: string; p_worker_id: string }
         Returns: Json
       }
       rpc_service_edit_moderated_private_message: {
@@ -19546,12 +22203,47 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_service_finalize_live_quick_connect_opportunity_session_v1: {
+        Args: {
+          p_failure_reason_code?: string
+          p_opportunity_id: string
+          p_stream_ready: boolean
+          p_worker_id: string
+        }
+        Returns: Json
+      }
       rpc_service_finalize_profile_onboarding: {
         Args: { p_user_id: string }
         Returns: Json
       }
       rpc_service_get_live_music_playback_v1: {
         Args: { p_session_id: string; p_user_id: string }
+        Returns: Json
+      }
+      rpc_service_get_live_music_repeat_mode_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      rpc_service_get_live_odo_always_on_cleanup_work_v1: {
+        Args: { p_limit?: number }
+        Returns: Json
+      }
+      rpc_service_get_live_quick_connect_opportunity_work_v1: {
+        Args: { p_limit?: number }
+        Returns: Json
+      }
+      rpc_service_get_media_hash_capabilities: { Args: never; Returns: Json }
+      rpc_service_heartbeat_live_program_audio_v1: {
+        Args: {
+          p_failure_reason_code?: string
+          p_lease_generation: number
+          p_music_version: number
+          p_session_id: string
+          p_status: string
+          p_track_id: string
+          p_volume: number
+          p_worker_instance_id: string
+        }
         Returns: Json
       }
       rpc_service_insert_profile_prompt_with_guard: {
@@ -19599,15 +22291,47 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_service_list_live_program_audio_work_v1: {
+        Args: { p_limit?: number; p_worker_instance_id: string }
+        Returns: Json
+      }
       rpc_service_list_stale_view_once_moderation_objects: {
         Args: { p_limit?: number }
         Returns: {
           storage_path: string
         }[]
       }
+      rpc_service_maintain_live_odo_always_on_sessions_v1: {
+        Args: never
+        Returns: Json
+      }
+      rpc_service_maintain_live_program_audio_v1: {
+        Args: { p_limit?: number }
+        Returns: Json
+      }
+      rpc_service_maintain_live_quick_connect_opportunities_v1: {
+        Args: never
+        Returns: Json
+      }
+      rpc_service_maintain_live_studio_program_v1: {
+        Args: { p_limit?: number }
+        Returns: Json
+      }
+      rpc_service_match_unsafe_media_hash: {
+        Args: { p_sha256: string }
+        Returns: Json
+      }
       rpc_service_pause_live_odo_policy_v1: {
         Args: { p_reason_code: string; p_session_id: string }
         Returns: Json
+      }
+      rpc_service_prepare_live_quick_connect_opportunity_session_v1: {
+        Args: { p_opportunity_id: string; p_worker_id: string }
+        Returns: Json
+      }
+      rpc_service_purge_expired_chat_image_moderation_receipts: {
+        Args: { p_limit?: number }
+        Returns: number
       }
       rpc_service_reconcile_live_odo_full_quick_connect_v1: {
         Args: {
@@ -19646,11 +22370,62 @@ export type Database = {
         }
         Returns: string
       }
+      rpc_service_register_approved_chat_media: {
+        Args: {
+          p_attachment_id: string
+          p_byte_size: number
+          p_client_message_id: string
+          p_mime_type: string
+          p_object_path: string
+          p_receiver_id: string
+          p_sender_id: string
+          p_sha256: string
+          p_variant: string
+        }
+        Returns: boolean
+      }
+      rpc_service_register_approved_profile_media: {
+        Args: {
+          p_byte_size: number
+          p_mime_type: string
+          p_object_path: string
+          p_public_url: string
+          p_sha256: string
+          p_user_id: string
+        }
+        Returns: boolean
+      }
+      rpc_service_release_live_program_audio_v1: {
+        Args: {
+          p_lease_generation: number
+          p_reason_code?: string
+          p_session_id: string
+          p_worker_instance_id: string
+        }
+        Returns: Json
+      }
       rpc_service_renew_live_odo_lease_v1: {
         Args: {
           p_call_id: string
           p_lease_generation: number
           p_lease_owner: string
+        }
+        Returns: Json
+      }
+      rpc_service_reserve_push_notification_deliveries_v1: {
+        Args: { p_event_id: string; p_token_ids: string[] }
+        Returns: {
+          reserved_token_id: string
+        }[]
+      }
+      rpc_service_resolve_profile_media_remediation: {
+        Args: {
+          p_categories?: string[]
+          p_claim_token: string
+          p_error?: string
+          p_job_id: string
+          p_outcome: string
+          p_sha256?: string
         }
         Returns: Json
       }
@@ -19670,6 +22445,17 @@ export type Database = {
           p_sender_user_id: string
           p_storage_path?: string
           p_text: string
+        }
+        Returns: Json
+      }
+      rpc_service_send_provider_expression: {
+        Args: {
+          p_client_message_id: string
+          p_media_kind: string
+          p_provider_media: Json
+          p_receiver_user_id: string
+          p_reply_to_message_id?: string
+          p_sender_user_id: string
         }
         Returns: Json
       }
@@ -19778,6 +22564,7 @@ export type Database = {
           connection_quality_state: string
           created_at: string
           id: string
+          introduction_preference_decided_at: string | null
           invited_at: string
           joined_at: string | null
           last_connection_change_at: string | null
@@ -19810,6 +22597,10 @@ export type Database = {
         Args: { p_allowed: boolean }
         Returns: boolean
       }
+      rpc_set_live_quick_connect_availability_v1: {
+        Args: { p_duration_minutes: number; p_source?: string }
+        Returns: Json
+      }
       rpc_set_live_quick_connect_stage_layout: {
         Args: { p_session_id: string; p_stage_layout: string }
         Returns: Json
@@ -19824,6 +22615,7 @@ export type Database = {
           connection_quality_state: string
           created_at: string
           id: string
+          introduction_preference_decided_at: string | null
           invited_at: string
           joined_at: string | null
           last_connection_change_at: string | null
@@ -19866,10 +22658,11 @@ export type Database = {
           context_id: string | null
           context_type: string
           created_at: string
-          created_by_profile_id: string
-          created_by_user_id: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
           creation_request_id: string | null
           description: string | null
+          end_policy: string
           ended_at: string | null
           format: string
           gathering_id: string | null
@@ -19877,6 +22670,9 @@ export type Database = {
           maximum_participants: number
           maximum_publishers: number
           minimum_participants: number
+          ownership_type: string
+          produced_by_profile_id: string | null
+          produced_by_user_id: string | null
           provider: string
           provider_call_id: string
           provider_call_type: string
@@ -19885,6 +22681,9 @@ export type Database = {
           quorum_required_pairs: number
           recording_enabled: boolean
           rescheduled_at: string | null
+          runtime_end_at: string | null
+          runtime_extended_at: string | null
+          runtime_extended_by_user_id: string | null
           schedule_revision: number
           scheduled_duration_minutes: number
           scheduled_end: string | null
@@ -19893,6 +22692,7 @@ export type Database = {
           stage_requests_open: boolean
           started_at: string | null
           status: string
+          system_session_kind: string | null
           title: string
           updated_at: string
           version: number
@@ -19918,10 +22718,11 @@ export type Database = {
           context_id: string | null
           context_type: string
           created_at: string
-          created_by_profile_id: string
-          created_by_user_id: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
           creation_request_id: string | null
           description: string | null
+          end_policy: string
           ended_at: string | null
           format: string
           gathering_id: string | null
@@ -19929,6 +22730,9 @@ export type Database = {
           maximum_participants: number
           maximum_publishers: number
           minimum_participants: number
+          ownership_type: string
+          produced_by_profile_id: string | null
+          produced_by_user_id: string | null
           provider: string
           provider_call_id: string
           provider_call_type: string
@@ -19937,6 +22741,9 @@ export type Database = {
           quorum_required_pairs: number
           recording_enabled: boolean
           rescheduled_at: string | null
+          runtime_end_at: string | null
+          runtime_extended_at: string | null
+          runtime_extended_by_user_id: string | null
           schedule_revision: number
           scheduled_duration_minutes: number
           scheduled_end: string | null
@@ -19945,6 +22752,7 @@ export type Database = {
           stage_requests_open: boolean
           started_at: string | null
           status: string
+          system_session_kind: string | null
           title: string
           updated_at: string
           version: number
@@ -19988,6 +22796,71 @@ export type Database = {
       }
       rpc_signal_live_quick_connect_interest: {
         Args: { p_session_id: string; p_target_profile_id: string }
+        Returns: Json
+      }
+      rpc_studio_end_live_program_source_v1: {
+        Args: {
+          p_reason_code?: string
+          p_session_id: string
+          p_source_key: string
+        }
+        Returns: Json
+      }
+      rpc_studio_renew_live_program_control_v1: {
+        Args: {
+          p_controller_instance_id: string
+          p_expected_controller_generation: number
+          p_session_id: string
+        }
+        Returns: Json
+      }
+      rpc_studio_resume_live_odo_v1: {
+        Args: {
+          p_command_id: string
+          p_controller_instance_id: string
+          p_expected_controller_generation: number
+          p_session_id: string
+        }
+        Returns: Json
+      }
+      rpc_studio_take_live_program_control_v1: {
+        Args: {
+          p_command_id: string
+          p_controller_instance_id: string
+          p_expected_controller_generation: number
+          p_expected_program_version: number
+          p_session_id: string
+        }
+        Returns: Json
+      }
+      rpc_studio_take_live_program_v1: {
+        Args: {
+          p_command_id: string
+          p_controller_instance_id: string
+          p_expected_controller_generation: number
+          p_expected_program_version: number
+          p_scene: string
+          p_session_id: string
+          p_source_assignments: Json
+          p_target_canvas: string
+          p_transition?: string
+        }
+        Returns: Json
+      }
+      rpc_studio_upsert_live_program_source_v1: {
+        Args: {
+          p_failure_reason_code?: string
+          p_has_audio: boolean
+          p_has_video: boolean
+          p_health: string
+          p_muted?: boolean
+          p_provider_user_id: string
+          p_readiness: string
+          p_session_id: string
+          p_source_key: string
+          p_source_role: string
+          p_source_type: string
+        }
         Returns: Json
       }
       rpc_submit_live_private_spark_exit: {
@@ -20064,6 +22937,15 @@ export type Database = {
           status: string
         }[]
       }
+      rpc_submit_ugc_content_report_v1: {
+        Args: {
+          p_client_evidence?: Json
+          p_content_id: string
+          p_content_type: string
+          p_reason: string
+        }
+        Returns: string
+      }
       rpc_sync_moment_comment_reaction: {
         Args: { p_comment_id: string; p_reaction?: string }
         Returns: boolean
@@ -20118,10 +23000,11 @@ export type Database = {
           context_id: string | null
           context_type: string
           created_at: string
-          created_by_profile_id: string
-          created_by_user_id: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
           creation_request_id: string | null
           description: string | null
+          end_policy: string
           ended_at: string | null
           format: string
           gathering_id: string | null
@@ -20129,6 +23012,9 @@ export type Database = {
           maximum_participants: number
           maximum_publishers: number
           minimum_participants: number
+          ownership_type: string
+          produced_by_profile_id: string | null
+          produced_by_user_id: string | null
           provider: string
           provider_call_id: string
           provider_call_type: string
@@ -20137,6 +23023,9 @@ export type Database = {
           quorum_required_pairs: number
           recording_enabled: boolean
           rescheduled_at: string | null
+          runtime_end_at: string | null
+          runtime_extended_at: string | null
+          runtime_extended_by_user_id: string | null
           schedule_revision: number
           scheduled_duration_minutes: number
           scheduled_end: string | null
@@ -20145,6 +23034,7 @@ export type Database = {
           stage_requests_open: boolean
           started_at: string | null
           status: string
+          system_session_kind: string | null
           title: string
           updated_at: string
           version: number
@@ -20547,10 +23437,11 @@ export type Database = {
           context_id: string | null
           context_type: string
           created_at: string
-          created_by_profile_id: string
-          created_by_user_id: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
           creation_request_id: string | null
           description: string | null
+          end_policy: string
           ended_at: string | null
           format: string
           gathering_id: string | null
@@ -20558,6 +23449,9 @@ export type Database = {
           maximum_participants: number
           maximum_publishers: number
           minimum_participants: number
+          ownership_type: string
+          produced_by_profile_id: string | null
+          produced_by_user_id: string | null
           provider: string
           provider_call_id: string
           provider_call_type: string
@@ -20566,6 +23460,9 @@ export type Database = {
           quorum_required_pairs: number
           recording_enabled: boolean
           rescheduled_at: string | null
+          runtime_end_at: string | null
+          runtime_extended_at: string | null
+          runtime_extended_by_user_id: string | null
           schedule_revision: number
           scheduled_duration_minutes: number
           scheduled_end: string | null
@@ -20574,6 +23471,7 @@ export type Database = {
           stage_requests_open: boolean
           started_at: string | null
           status: string
+          system_session_kind: string | null
           title: string
           updated_at: string
           version: number
@@ -20608,10 +23506,11 @@ export type Database = {
           context_id: string | null
           context_type: string
           created_at: string
-          created_by_profile_id: string
-          created_by_user_id: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
           creation_request_id: string | null
           description: string | null
+          end_policy: string
           ended_at: string | null
           format: string
           gathering_id: string | null
@@ -20619,6 +23518,9 @@ export type Database = {
           maximum_participants: number
           maximum_publishers: number
           minimum_participants: number
+          ownership_type: string
+          produced_by_profile_id: string | null
+          produced_by_user_id: string | null
           provider: string
           provider_call_id: string
           provider_call_type: string
@@ -20627,6 +23529,9 @@ export type Database = {
           quorum_required_pairs: number
           recording_enabled: boolean
           rescheduled_at: string | null
+          runtime_end_at: string | null
+          runtime_extended_at: string | null
+          runtime_extended_by_user_id: string | null
           schedule_revision: number
           scheduled_duration_minutes: number
           scheduled_end: string | null
@@ -20635,6 +23540,7 @@ export type Database = {
           stage_requests_open: boolean
           started_at: string | null
           status: string
+          system_session_kind: string | null
           title: string
           updated_at: string
           version: number
@@ -20849,11 +23755,20 @@ export type Database = {
         }
       }
       run_live_maintenance: { Args: never; Returns: Json }
+      run_live_maintenance_without_always_on_10f_v1: {
+        Args: never
+        Returns: Json
+      }
       run_live_maintenance_without_full_quick_v1: { Args: never; Returns: Json }
+      run_live_maintenance_without_program_audio_v1: {
+        Args: never
+        Returns: Json
+      }
       run_live_maintenance_without_show_director_v1: {
         Args: never
         Returns: Json
       }
+      run_live_maintenance_without_studio_10g_v1: { Args: never; Returns: Json }
       search_ghana_localities: {
         Args: { p_limit?: number; p_query?: string; p_region?: string }
         Returns: {
@@ -21580,12 +24495,12 @@ export type Tables<
   DefaultSchemaTableNameOrOptions extends
     | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
         DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -21609,11 +24524,11 @@ export type TablesInsert<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -21634,11 +24549,11 @@ export type TablesUpdate<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -21659,11 +24574,11 @@ export type Enums<
   DefaultSchemaEnumNameOrOptions extends
     | keyof DefaultSchema["Enums"]
     | { schema: keyof DatabaseWithoutInternals },
-  EnumName extends DefaultSchemaEnumNameOrOptions extends {
+  EnumName extends (DefaultSchemaEnumNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaEnumNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -21676,11 +24591,11 @@ export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
     | keyof DefaultSchema["CompositeTypes"]
     | { schema: keyof DatabaseWithoutInternals },
-  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
+  CompositeTypeName extends (PublicCompositeTypeNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
-    : never = never,
+    : never) = never,
 > = PublicCompositeTypeNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }

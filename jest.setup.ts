@@ -36,6 +36,16 @@ jest.mock("expo-constants", () => ({
   ExecutionEnvironment: { StoreClient: "storeClient" },
 }));
 
+jest.mock("expo-application", () => ({
+  __esModule: true,
+  applicationId: "com.betweener.test",
+  applicationName: "Betweener",
+  nativeApplicationVersion: "1.2.0",
+  nativeBuildVersion: "1",
+  getIosApplicationReleaseTypeAsync: jest.fn(async () => 1),
+  getInstallationTimeAsync: jest.fn(async () => new Date(0)),
+}));
+
 jest.mock("expo-keep-awake", () => ({
   ExpoKeepAwakeTag: "ExpoKeepAwakeDefaultTag",
   activateKeepAwakeAsync: jest.fn(async () => undefined),

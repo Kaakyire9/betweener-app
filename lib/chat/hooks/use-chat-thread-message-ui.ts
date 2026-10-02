@@ -131,7 +131,7 @@ export const useChatThreadMessageUi = ({
   const reactionSummary = useMemo<ReactionSummaryItem[]>(() => {
     if (!reactionSheetMessage) return [];
     const counts = new Map<string, number>();
-    reactionSheetMessage.reactions.forEach((reaction) => {
+    (reactionSheetMessage.reactions ?? []).forEach((reaction) => {
       counts.set(reaction.emoji, (counts.get(reaction.emoji) ?? 0) + 1);
     });
     return Array.from(counts.entries())
@@ -141,7 +141,7 @@ export const useChatThreadMessageUi = ({
 
   const reactionSheetList = useMemo<ReactionListItem[]>(() => {
     if (!reactionSheetMessage) return [];
-    const list = reactionSheetMessage.reactions;
+    const list = reactionSheetMessage.reactions ?? [];
     if (!reactionSheetEmoji) return list;
     return list.filter((reaction) => reaction.emoji === reactionSheetEmoji);
   }, [reactionSheetEmoji, reactionSheetMessage]);

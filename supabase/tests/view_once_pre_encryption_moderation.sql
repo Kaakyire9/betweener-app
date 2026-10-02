@@ -1,6 +1,8 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
+set local role postgres;
+set search_path = public, extensions, pg_catalog;
 select plan(10);
 
 insert into auth.users(id, email) values
@@ -80,7 +82,7 @@ select lives_ok(
   $$ select * from public.rpc_service_list_stale_view_once_moderation_objects(10) $$,
   'retention worker can enumerate expired plaintext staging objects'
 );
-reset role;
+set local role postgres;
 
 set local role authenticated;
 select set_config('request.jwt.claim.role', 'authenticated', true);
@@ -91,7 +93,7 @@ select throws_ok(
   'permission denied for table view_once_moderation_receipts',
   'the sender cannot query service-only encryption receipts'
 );
-reset role;
+set local role postgres;
 
 select ok(
   (select expires_at > created_at from public.view_once_moderation_receipts limit 1),

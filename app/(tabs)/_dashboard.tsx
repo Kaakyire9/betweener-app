@@ -2,6 +2,7 @@ import { Colors } from "@/constants/theme";
 import { useInbox } from "@/hooks/useInbox";
 import { usePremiumState } from "@/hooks/use-premium-state";
 import { useColorScheme } from "@/hooks/use-color-scheme";
+import { useScreenRealtimeActive } from "@/hooks/use-screen-realtime-active";
 import { useAuth } from "@/lib/auth-context";
 import { ChatRepository } from "@/lib/chat/local/chat-repository";
 import {
@@ -78,6 +79,7 @@ const computeProfileCompletion = (profile: any | null) => {
 };
 
 export default function DashboardScreen() {
+  const realtimeActive = useScreenRealtimeActive();
   const colorScheme = useColorScheme();
   const resolvedScheme = (colorScheme ?? 'light') === 'dark' ? 'dark' : 'light';
   const theme = Colors[resolvedScheme];
@@ -109,7 +111,7 @@ export default function DashboardScreen() {
   }, []);
 
   useEffect(() => {
-    if (!user?.id) return;
+    if (!realtimeActive || !user?.id) return;
 
     // Grab freshest profile, then keep it in sync via realtime.
     const fetchLatest = async () => {
@@ -143,7 +145,7 @@ export default function DashboardScreen() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [user?.id]);
+  }, [realtimeActive, user?.id]);
 
   const profileCompletion = useMemo(() => computeProfileCompletion(liveProfile), [liveProfile]);
 
@@ -175,7 +177,7 @@ export default function DashboardScreen() {
   }, [liveProfile, profilePhotosCount]);
 
   useEffect(() => {
-    if (!myProfileId) return;
+    if (!realtimeActive || !myProfileId) return;
 
     const startOfToday = () => {
       const d = new Date();
@@ -222,7 +224,7 @@ export default function DashboardScreen() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [myProfileId]);
+  }, [myProfileId, realtimeActive]);
 
   const [matchesTodayCount, setMatchesTodayCount] = useState(0);
   const [profileViews, setProfileViews] = useState(0);
@@ -287,6 +289,7 @@ export default function DashboardScreen() {
       setConversationStreak(0);
       return;
     }
+    if (!realtimeActive) return;
 
     let cancelled = false;
 
@@ -381,7 +384,7 @@ export default function DashboardScreen() {
       unsubscribeThreads();
       supabase.removeChannel(channel);
     };
-  }, [user?.id, myProfileId]);
+  }, [user?.id, myProfileId, realtimeActive]);
 
   const startOfTodayIso = useMemo(() => {
     const d = new Date();
@@ -397,6 +400,7 @@ export default function DashboardScreen() {
       setMatchesTodayPeople([]);
       return;
     }
+    if (!realtimeActive) return;
 
     let cancelled = false;
 
@@ -513,7 +517,7 @@ export default function DashboardScreen() {
       if (matchesRefreshTimeoutRef.current) clearTimeout(matchesRefreshTimeoutRef.current);
       supabase.removeChannel(channel);
     };
-  }, [myProfileId, startOfTodayIso]);
+  }, [myProfileId, realtimeActive, startOfTodayIso]);
 
   type DashboardPerson = {
     userId: string;

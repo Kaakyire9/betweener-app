@@ -26,8 +26,18 @@ const guardPlugin = fs.readFileSync(
   path.join(root, 'plugins/with-betweener-live-webrtc.js'),
   'utf8',
 );
+const firebaseCocoaPodsPlugin = fs.readFileSync(
+  path.join(root, 'plugins/with-firebase-cocoapods.js'),
+  'utf8',
+);
 const appJson = fs.readFileSync(path.join(root, 'app.json'), 'utf8');
+const appEntry = fs.readFileSync(path.join(root, 'index.js'), 'utf8');
+const packageJson = fs.readFileSync(path.join(root, 'package.json'), 'utf8');
 const metroConfig = fs.readFileSync(path.join(root, 'metro.config.js'), 'utf8');
+const backgroundClient = fs.readFileSync(
+  path.join(root, 'features/live/media/stream-video-background-client.ts'),
+  'utf8',
+);
 const liveStage = fs.readFileSync(
   path.join(root, 'features/live/components/StreamLiveStage.tsx'),
   'utf8',
@@ -59,6 +69,35 @@ test('Stream native setup enables active-call continuity and native PiP', () => 
   assert.match(appConfig, /enableNonRingingPushNotifications:\s*false/);
   assert.match(appConfig, /iOSEnableMultitaskingCameraAccess:\s*true/);
   assert.match(appConfig, /androidPictureInPicture:\s*true/);
+});
+
+test('iOS Firebase uses CocoaPods with the existing static framework linkage', () => {
+  assert.match(appConfig, /'\.\/plugins\/with-firebase-cocoapods\.js'/);
+  assert.match(firebaseCocoaPodsPlugin, /withPodfile/);
+  assert.match(firebaseCocoaPodsPlugin, /\$RNFirebaseDisableSPM = true/);
+  assert.match(firebaseCocoaPodsPlugin, /use_modular_headers!/);
+  assert.match(firebaseCocoaPodsPlugin, /prepare_react_native_project!/);
+  assert.match(packageJson, /"@react-native-firebase\/app": "26\.4\.0"/);
+  assert.match(packageJson, /"@react-native-firebase\/messaging": "26\.4\.0"/);
+});
+
+test('Stream ongoing-call runtime is initialized once at the native app entry point', () => {
+  assert.match(packageJson, /"main": "index\.js"/);
+  assert.match(packageJson, /"@stream-io\/react-native-callingx": "0\.11\.5"/);
+  assert.match(appEntry, /StreamVideoRN\.setPushConfig/);
+  assert.match(appEntry, /android:[\s\S]*enableOngoingCalls: true/);
+  assert.match(appEntry, /ios:[\s\S]*enableOngoingCalls: true/);
+  assert.match(appEntry, /callsHistory: false/);
+  assert.match(appEntry, /createStreamVideoClient: async \(\) => getStreamVideoBackgroundClient\(\)/);
+  assert.match(backgroundClient, /registerStreamVideoBackgroundClient/);
+  assert.match(backgroundClient, /unregisterStreamVideoBackgroundClient/);
+  assert.match(appEntry, /require\(["']expo-router\/entry["']\)/);
+  assert.doesNotMatch(appEntry, /@expo\/metro-runtime\/error-overlay/);
+  assert.doesNotMatch(appEntry, /expo-router\/build\/qualified-entry/);
+  assert.ok(
+    appEntry.indexOf('StreamVideoRN.setPushConfig')
+      < appEntry.indexOf('require("expo-router/entry")'),
+  );
 });
 
 test('Windows Metro keeps the Stream module graph within a bounded handle budget', () => {
@@ -128,7 +167,11 @@ test('Live native config retains privacy permissions and blocks overlay permissi
 test('Android PiP controls are native, scoped and do not require overlay permission', () => {
   assert.match(guardPlugin, /class BetweenerLivePictureInPictureModule/);
   assert.match(guardPlugin, /PictureInPictureParams\.Builder/);
-  assert.match(guardPlugin, /val builder = PictureInPictureParams\.Builder\(\)\.apply/);
+  assert.match(guardPlugin, /PictureInPictureParams\.Builder\(\)\.setActions\(actions\)/);
+  assert.match(guardPlugin, /lastActionSignature == signature/);
+  assert.match(guardPlugin, /catch \(error: IllegalStateException\)/);
+  assert.doesNotMatch(guardPlugin, /setAspectRatio/);
+  assert.doesNotMatch(guardPlugin, /android\.util\.Rational/);
   assert.doesNotMatch(guardPlugin, /activity\.getPictureInPictureParams\(\)/);
   assert.doesNotMatch(guardPlugin, /activity\.pictureInPictureParams/);
   assert.match(guardPlugin, /RemoteAction/);
@@ -139,10 +182,13 @@ test('Android PiP controls are native, scoped and do not require overlay permiss
   assert.match(livePictureInPictureActions, /NativeEventEmitter/);
   assert.match(livePictureInPictureActions, /toggle_microphone/);
   assert.match(livePictureInPictureActions, /toggle_camera/);
+  assert.match(livePictureInPictureActions, /activeActionOwner === owner/);
+  assert.match(livePictureInPictureActions, /activeActionOwner !== owner/);
+  assert.match(liveStage, /callCid=\{call\.cid\}/);
 });
 
 test('custom Live stage activates platform PiP and foreground screen-awake protection', () => {
-  assert.match(liveStage, /useAutoEnterPiPEffect\(false\)/);
+  assert.match(liveStage, /useAutoEnterPiPEffect\(visualsConcealed\)/);
   assert.match(liveStage, /useIsInPiPMode\(\)/);
   assert.match(liveStage, /<RTCViewPipIOS[\s\S]+includeLocalParticipantVideo[\s\S]+onPiPChange=/);
   assert.match(liveStage, /pictureInPictureStage/);

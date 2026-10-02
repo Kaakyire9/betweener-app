@@ -3,7 +3,7 @@ import type { Match } from '@/types/match';
 import { getSupabaseNetEvents, supabase } from '@/lib/supabase';
 import { getProfileCardContext } from '@/lib/profile-interest';
 import { captureMessage } from '@/lib/telemetry/sentry';
-import { buildLocationSearchText, isRecentlyActive, parseDistanceKm, rerankVibesSegment, type VibesSegment } from '@/lib/vibes/discovery-logic';
+import { buildLocationSearchText, isActiveWithinWindow, isAgeWithinRange, isRecentlyActive, parseDistanceKm, rerankVibesSegment, type VibesSegment } from '@/lib/vibes/discovery-logic';
 import { getLocationAffinity, getLocationConnectionInsight } from '@/lib/location/location-intelligence';
 import { readVibesSnapshot, writeVibesSnapshot } from '@/lib/offline/vibes-store';
 import type { RelationshipCompass } from '@/lib/relationship-compass';
@@ -113,10 +113,21 @@ export function applyVibesFilters(
     relationshipCompass?: RelationshipCompass | null;
     viewerProfile?: any;
     preserveOrder?: boolean;
+    activeWindowMinutes?: number;
   },
 ): Match[] {
   let out = list.slice();
   const { segment, momentUserIds, viewerInterests, relationshipCompass, viewerProfile } = opts;
+
+  if (segment === 'activeNow') {
+    const windowMinutes = opts.activeWindowMinutes ?? 15;
+    out = out.filter((match) => {
+      const lastActive = (match as any).lastActive;
+      return lastActive
+        ? isActiveWithinWindow(lastActive, windowMinutes)
+        : Boolean((match as any).isActiveNow);
+    });
+  }
 
   if (filters.hasVideoOnly) {
     out = out.filter((m) => Boolean((m as any).profileVideo));
@@ -156,15 +167,13 @@ export function applyVibesFilters(
   if (segment === 'nearby' && filters.distanceFilterKm != null) {
     out = out.filter((m) => {
       const distanceKm = (m as any).distanceKm ?? parseDistanceKm(m.distance);
-      if (distanceKm == null) return true;
+      if (distanceKm == null || !Number.isFinite(Number(distanceKm))) return false;
       return distanceKm <= (filters.distanceFilterKm as number);
     });
   }
   if (filters.minAge || filters.maxAge) {
     out = out.filter((m) => {
-      const age = (m as any).age;
-      if (age == null) return true;
-      return age >= (filters.minAge || 0) && age <= (filters.maxAge || 200);
+      return isAgeWithinRange((m as any).age, filters.minAge || 0, filters.maxAge || 200);
     });
   }
   if (filters.religionFilter) {
@@ -623,6 +632,8 @@ export default function useVibesFeed({
         merged.minAge = merged.maxAge;
         merged.maxAge = tmp;
       }
+      merged.minAge = Math.max(18, Math.min(99, Math.round(merged.minAge || 18)));
+      merged.maxAge = Math.max(merged.minAge, Math.min(99, Math.round(merged.maxAge || 99)));
       merged.minSharedInterests = Math.max(0, Math.min(5, merged.minSharedInterests || 0));
       if (merged.minVibeScore != null) {
         merged.minVibeScore = Math.max(0, Math.min(100, merged.minVibeScore));
@@ -768,8 +779,9 @@ export default function useVibesFeed({
       relationshipCompass,
       viewerProfile,
       preserveOrder: usingCachedSnapshot || serverRankedSource,
+      activeWindowMinutes,
     });
-  }, [filters, momentUserIds, poolProfiles, relationshipCompass, segment, serverRankedSource, usingCachedSnapshot, viewerInterests, viewerProfile]);
+  }, [activeWindowMinutes, filters, momentUserIds, poolProfiles, relationshipCompass, segment, serverRankedSource, usingCachedSnapshot, viewerInterests, viewerProfile]);
 
   const snapshotsReady = exclusionsHydrated && snapshotHydrated;
 

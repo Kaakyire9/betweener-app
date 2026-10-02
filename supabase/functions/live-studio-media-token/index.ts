@@ -2,6 +2,7 @@
 import { StreamClient } from '@stream-io/node-sdk';
 import { createClient } from '@supabase/supabase-js';
 import { corsHeaders } from '../_shared/cors.ts';
+import { getSupabasePublicApiKey } from '../_shared/supabase-public-key.ts';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SOURCE_KINDS = [
@@ -75,7 +76,7 @@ Deno.serve(async (request) => {
       return json({ error: 'live_studio_media_invalid' }, 400);
     }
 
-    const caller = createClient(requiredEnv('SUPABASE_URL'), requiredEnv('SUPABASE_ANON_KEY'), {
+    const caller = createClient(requiredEnv('SUPABASE_URL'), getSupabasePublicApiKey(), {
       auth: { autoRefreshToken: false, persistSession: false },
       global: { headers: { Authorization: authorization } },
     });

@@ -2,6 +2,8 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { corsHeaders } from '../_shared/cors.ts'
+import { getSupabaseAdminKey } from '../_shared/supabase-admin-key.ts'
+import { getSupabasePublicApiKey } from '../_shared/supabase-public-key.ts'
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status,
@@ -15,8 +17,8 @@ serve(async (req) => {
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405)
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!
-  const anonKey = Deno.env.get('SUPABASE_ANON_KEY')!
-  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+  const anonKey = getSupabasePublicApiKey()
+  const serviceKey = getSupabaseAdminKey()
   const authHeader = req.headers.get('Authorization') || ''
   const authClient = createClient(supabaseUrl, anonKey, { global: { headers: { Authorization: authHeader } } })
   const { data: authData, error: authError } = await authClient.auth.getUser()

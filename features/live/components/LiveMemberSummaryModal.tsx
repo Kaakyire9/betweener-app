@@ -1,5 +1,5 @@
 import { Image } from 'expo-image';
-import { Heart, MessageCircle, ShieldCheck, X } from 'lucide-react-native';
+import { Ban, Flag, Heart, MessageCircle, ShieldCheck, X } from 'lucide-react-native';
 import { memo, useMemo } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -9,11 +9,15 @@ import { type LiveVisualTheme, useLiveVisualTheme } from './live-visual-tokens.t
 
 type Props = {
   busy?: boolean;
+  canBlock?: boolean;
+  canReport?: boolean;
   isLiked?: boolean;
   isSelf?: boolean;
   member: LiveMemberPreview | null;
+  onBlock: () => void;
   onClose: () => void;
   onLike: () => void;
+  onReport: () => void;
   onRequest: () => void;
   roomTitle: string;
   visible: boolean;
@@ -27,11 +31,15 @@ const initials = (name: string | null | undefined) => {
 
 export const LiveMemberSummaryModal = memo(function LiveMemberSummaryModal({
   busy = false,
+  canBlock = false,
+  canReport = false,
   isLiked = false,
   isSelf = false,
   member,
+  onBlock,
   onClose,
   onLike,
+  onReport,
   onRequest,
   roomTitle,
   visible,
@@ -97,6 +105,40 @@ export const LiveMemberSummaryModal = memo(function LiveMemberSummaryModal({
               </Pressable>
             </View>
           )}
+
+          {!isSelf && (canReport || canBlock) ? (
+            <View style={styles.safetyActions}>
+              {canReport ? <Pressable
+                accessibilityLabel={`Report ${name}`}
+                accessibilityRole="button"
+                disabled={busy}
+                onPress={onReport}
+                style={({ pressed }) => [
+                  styles.safetyAction,
+                  pressed && styles.pressed,
+                  busy && styles.disabled,
+                ]}
+              >
+                <Flag color={visual.color.textMuted} size={14} />
+                <Text style={styles.safetyText}>Report</Text>
+              </Pressable> : null}
+              {canReport && canBlock ? <View style={styles.safetyDivider} /> : null}
+              {canBlock ? <Pressable
+                accessibilityLabel={`Block ${name}`}
+                accessibilityRole="button"
+                disabled={busy}
+                onPress={onBlock}
+                style={({ pressed }) => [
+                  styles.safetyAction,
+                  pressed && styles.pressed,
+                  busy && styles.disabled,
+                ]}
+              >
+                <Ban color={visual.color.dangerText} size={14} />
+                <Text style={[styles.safetyText, styles.blockText]}>Block</Text>
+              </Pressable> : null}
+            </View>
+          ) : null}
         </LiveGlassSurface>
       </View>
     </Modal>
@@ -122,6 +164,12 @@ const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
   requestText: { color: visual.color.accentContrast, fontSize: 12, fontFamily: 'Manrope_800ExtraBold' },
   likeText: { color: visual.color.dangerText, fontSize: 12, fontFamily: 'Manrope_800ExtraBold' },
   disabled: { opacity: 0.58 },
+  pressed: { opacity: 0.72 },
+  safetyActions: { marginTop: 14, minHeight: 34, flexDirection: 'row', alignItems: 'center' },
+  safetyAction: { minWidth: 88, minHeight: 34, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
+  safetyDivider: { width: StyleSheet.hairlineWidth, height: 18, backgroundColor: visual.color.border },
+  safetyText: { color: visual.color.textMuted, fontSize: 10, fontFamily: 'Manrope_700Bold' },
+  blockText: { color: visual.color.dangerText },
   fullButton: { width: '100%', height: 50, marginTop: 22, borderRadius: 25, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.color.teal },
   fullButtonText: { color: visual.color.accentContrast, fontSize: 12, fontFamily: 'Manrope_800ExtraBold' },
 });

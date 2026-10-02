@@ -64,4 +64,5 @@ export const areMessageRowPropsEqual = (
   equalUriMaps(prev.mediaUrisByPath, next.mediaUrisByPath) &&
   prev.onRefreshMedia === next.onRefreshMedia &&
   prev.onMediaLoadSuccess === next.onMediaLoadSuccess &&
-  prev.onRetryMedia === next.onRetryMedia;
+  prev.onRetryMedia === next.onRetryMedia &&
+  prev.onOpenLink === next.onOpenLink;

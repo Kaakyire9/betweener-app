@@ -1,7 +1,8 @@
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useReduceMotion } from '@/hooks/useReduceMotion';
 import { useEffect, useMemo, useRef } from 'react';
-import { Animated, Easing, StyleSheet, View } from 'react-native';
+import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
 
 type BetweenerLoaderProps = {
   label?: string;
@@ -32,14 +33,27 @@ const CIRCLE_POINTS = [
   { x: -12.7, y: -12.7 },
 ] as const;
 
-export default function BetweenerLoader({ fullScreen = true }: BetweenerLoaderProps) {
+export default function BetweenerLoader({
+  label,
+  sublabel,
+  fullScreen = true,
+}: BetweenerLoaderProps) {
   const colorScheme = useColorScheme();
+  const reduceMotion = useReduceMotion();
   const theme = Colors[colorScheme ?? 'light'];
   const styles = useMemo(() => createStyles(theme), [theme]);
   const timeline = useRef(new Animated.Value(0)).current;
   const breathe = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
+    if (reduceMotion) {
+      timeline.setValue(0.84);
+      breathe.setValue(0);
+      return undefined;
+    }
+
+    timeline.setValue(0);
+    breathe.setValue(0);
     const animation = Animated.parallel([
       Animated.loop(
         Animated.sequence([
@@ -69,7 +83,7 @@ export default function BetweenerLoader({ fullScreen = true }: BetweenerLoaderPr
 
     animation.start();
     return () => animation.stop();
-  }, [breathe, timeline]);
+  }, [breathe, reduceMotion, timeline]);
 
   const orbitRotation = timeline.interpolate({
     inputRange: [0, 0.76, 1],
@@ -147,6 +161,12 @@ export default function BetweenerLoader({ fullScreen = true }: BetweenerLoaderPr
           );
         })}
       </Animated.View>
+      {label || sublabel ? (
+        <View style={styles.copy}>
+          {label ? <Text style={styles.label}>{label}</Text> : null}
+          {sublabel ? <Text style={styles.sublabel}>{sublabel}</Text> : null}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -161,7 +181,7 @@ const createStyles = (theme: typeof Colors.light) =>
     },
     inline: {
       flex: 0,
-      minHeight: 96,
+      minHeight: 132,
       backgroundColor: 'transparent',
     },
     stage: {
@@ -179,5 +199,24 @@ const createStyles = (theme: typeof Colors.light) =>
       shadowOpacity: 0.12,
       shadowRadius: 6,
       shadowOffset: { width: 0, height: 1 },
+    },
+    copy: {
+      alignItems: 'center',
+      maxWidth: 280,
+      marginTop: 4,
+      gap: 5,
+    },
+    label: {
+      color: theme.text,
+      fontSize: 13,
+      textAlign: 'center',
+      fontFamily: 'Manrope_700Bold',
+    },
+    sublabel: {
+      color: theme.textMuted,
+      fontSize: 11,
+      lineHeight: 16,
+      textAlign: 'center',
+      fontFamily: 'Manrope_500Medium',
     },
   });

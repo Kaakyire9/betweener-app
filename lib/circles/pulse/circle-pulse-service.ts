@@ -1,6 +1,7 @@
 import { supabase } from '@/lib/supabase';
 import { cacheOfflineImage, resolveOfflineImageUri } from '@/lib/offline/image-store';
 import { cacheOfflineVideo } from '@/lib/offline/video-store';
+import { isMissingIdempotentRpc } from '@/lib/offline/idempotent-rpc';
 import {
   createSignedCirclePulseMediaUrl,
   removeCirclePulseMedia,
@@ -663,13 +664,23 @@ export async function createCirclePulseComment(
   actorProfileId: string,
   body: string,
   parentCommentId?: string | null,
+  clientOperationId?: string | null,
 ) {
-  const { data, error } = await db.rpc('rpc_create_circle_pulse_comment', {
+  const rpcPayload = {
     p_pulse_item_id: itemId,
     p_profile_id: actorProfileId,
     p_body: body,
     p_parent_comment_id: parentCommentId ?? null,
-  });
+  };
+  let { data, error } = clientOperationId
+    ? await db.rpc('rpc_create_circle_pulse_comment_v2', {
+        p_client_operation_id: clientOperationId,
+        ...rpcPayload,
+      })
+    : await db.rpc('rpc_create_circle_pulse_comment', rpcPayload);
+  if (clientOperationId && error && isMissingIdempotentRpc(error)) {
+    ({ data, error } = await db.rpc('rpc_create_circle_pulse_comment', rpcPayload));
+  }
   if (error) throw toServiceError(error, 'Comment could not be saved.');
   const row = Array.isArray(data) ? data[0] : data;
   if (!row) throw new Error('Comment could not be saved.');

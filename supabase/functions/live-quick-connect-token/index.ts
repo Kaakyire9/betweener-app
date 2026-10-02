@@ -2,6 +2,7 @@
 import { StreamClient } from '@stream-io/node-sdk';
 import { createClient } from '@supabase/supabase-js';
 import { corsHeaders } from '../_shared/cors.ts';
+import { getSupabasePublicApiKey } from '../_shared/supabase-public-key.ts';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TOKEN_TTL_SECONDS = 5 * 60;
@@ -53,7 +54,7 @@ Deno.serve(async (request) => {
     const pairingId = typeof body.pairingId === 'string' ? body.pairingId.trim() : '';
     if (!UUID_PATTERN.test(pairingId)) return json({ error: 'invalid_pairing_id' }, 400);
 
-    const caller = createClient(env('SUPABASE_URL'), env('SUPABASE_ANON_KEY'), {
+    const caller = createClient(env('SUPABASE_URL'), getSupabasePublicApiKey(), {
       auth: { autoRefreshToken: false, persistSession: false },
       global: { headers: { Authorization: authorization } },
     });

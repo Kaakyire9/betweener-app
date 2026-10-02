@@ -20,6 +20,7 @@ import { StudioDjSource } from '../media/StudioDjSource.tsx';
 import { StudioMediaControls } from '../media/StudioMediaControls.tsx';
 import { StudioMediaProvider } from '../media/studio-media-context.tsx';
 import { OperationalPanels } from '../panels/OperationalPanels.tsx';
+import { HostAndRuntimePanel } from '../panels/HostAndRuntimePanel.tsx';
 import { ProgramRenderer } from '../program/ProgramRenderer.tsx';
 import { assignmentsForScene, SceneLibrary } from '../program/SceneLibrary.tsx';
 import { assignmentsContainTerminalSource } from '../program/source-assignments.ts';
@@ -243,8 +244,9 @@ export function StudioWorkspace({
             </section>
           </section>
 
-          <aside className="right-rail"><OperationalPanels snapshot={snapshot}
-            ownsControl={lease.ownsControl} onChanged={() => void refresh()} /></aside>
+          <aside className="right-rail stack-md"><HostAndRuntimePanel sessionId={sessionId} />
+            <OperationalPanels snapshot={snapshot}
+              ownsControl={lease.ownsControl} onChanged={() => void refresh()} /></aside>
         </div>
       </main>
     </StudioMediaProvider>
