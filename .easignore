@@ -31,6 +31,8 @@ yarn-error.*
 # EAS file variables provide Firebase configuration during cloud builds.
 .env*
 *.jks
+*.keystore
+credentials.json
 *.p8
 *.p12
 *.key

@@ -1,53 +1,89 @@
-## Android Release Symbols
+## Android Release Optimization and Symbols
 
-Betweener's Android store builds now split crash symbol handling into two clean paths:
+### Resolved build policy
 
-- Google Play Console: Java/Kotlin/R8 deobfuscation via `mapping.txt`
-- Sentry: JS source maps, ProGuard mappings, and native symbols for app-side crash monitoring
+| EAS profile | Android package | Remote environment | Android task | R8/minify | Resource shrinking | Mapping required |
+| --- | --- | --- | --- | --- | --- | --- |
+| `development` | `com.aduboffour.betweener.staging` | `preview` | debug development client | off | off | no |
+| `staging` | `com.aduboffour.betweener.staging` | `preview` | release APK | off | off | no |
+| `playStaging` | `com.aduboffour.betweener.staging` | `preview` | `bundleRelease` | off | off | no |
+| `production` | `com.aduboffour.betweener` | `production` | `bundleRelease` | on | on | yes |
 
-### What is wired
+The generated React Native Gradle project defaults both
+`android.enableMinifyInReleaseBuilds` and
+`android.enableShrinkResourcesInReleaseBuilds` to `false`. The production EAS
+profile deliberately overrides both properties to `true`. Hermes remains
+enabled for every profile.
 
-- `playInternal` and `production` EAS builds run `:app:bundleRelease` with:
-  - `-Pandroid.enableMinifyInReleaseBuilds=true`
-  - `-Pandroid.enableShrinkResourcesInReleaseBuilds=true`
-- EAS also collects the generated R8 mapping file from:
-  - `android/app/build/outputs/mapping/release/mapping.txt`
-- The Expo Sentry plugin enables the Android Gradle plugin so Android release builds can auto-upload:
-  - ProGuard/R8 mappings
-  - native debug symbols
+Google Play's “no deobfuscation file” message is expected for an unminified
+`playStaging` bundle. No `mapping.txt` exists for that build, and R8 must not be
+enabled only to hide the warning.
 
-### Required environment
+### Production mapping lifecycle
 
-Keep `SENTRY_AUTH_TOKEN` available to EAS for Android store builds.
+Every production Android build:
 
-Without it:
+1. Runs `:app:bundleRelease` with R8 and resource shrinking enabled.
+2. Generates `android/app/build/outputs/mapping/release/mapping.txt`.
+3. Runs `eas-build-on-success`, which verifies:
+   - build profile is `production`;
+   - application ID is `com.aduboffour.betweener`;
+   - `mapping.txt` exists and declares `# compiler: R8`;
+   - Sentry's upload token is available to the build.
+4. Writes `build-artifacts/android-release-symbols/release-mapping-manifest.json`.
+   The manifest binds the mapping SHA-256 and R8 map ID to the exact package,
+   version name, version code, EAS build ID, and Git commit.
+5. Uploads both files as private EAS build artifacts.
 
-- Play-side `mapping.txt` still exists and can be uploaded manually
-- Sentry auto-upload of Android release debug artifacts will not happen
+Never reuse a mapping or manifest from another version code. These generated
+artifacts are ignored by Git.
 
-### Google Play Console workflow
+### Google Play
 
-After a minified Android store build:
+For an AAB produced by a current Android Gradle plugin, the standard bundle
+task packages the R8 deobfuscation metadata and Google Play associates it with
+that bundle automatically. The separate EAS artifact is a recovery/audit copy.
 
-1. Download the EAS build artifacts archive.
-2. Extract `android/app/build/outputs/mapping/release/mapping.txt`.
-3. Upload that file in Google Play Console for the matching Android version code if Play does not already have deobfuscation metadata for that release.
+If a manual replacement is ever required, use the mapping and manifest from
+the same EAS build:
 
-### Sentry workflow
+1. Open Google Play Console.
+2. Select the production app.
+3. Open **Test and release > App bundle explorer**.
+4. Select the matching version code.
+5. Open **Downloads**, then find **Assets**.
+6. Use the upload control for the ReTrace mapping file.
 
-If `SENTRY_AUTH_TOKEN` is present during the EAS Android release build, the Sentry Gradle/plugin integration should upload the Android release debug artifacts automatically.
+### Sentry
 
-What this covers:
+The installed `@sentry/react-native` integration provides three distinct
+Android symbol paths:
 
-- React Native / Hermes JS source maps
-- Android ProGuard/R8 mappings
-- native symbols for Android crash symbolication
+- Metro/Sentry integration generates and uploads Hermes JavaScript source maps.
+- Sentry Android Gradle Plugin uploads R8/ProGuard mappings.
+- The same plugin uploads native debug symbols.
 
-### Why this split matters
+`SENTRY_AUTH_TOKEN` is stored in both EAS `preview` and `production`
+environments and is never committed. Development and ordinary staging profiles
+may explicitly disable automatic uploads. Production keeps them enabled.
 
-Google Play Console and Sentry solve different crash-reading problems:
+Do not override Sentry's runtime `release` or `dist`. The native integration and
+Gradle uploader must share the default
+`applicationId@versionName+versionCode` identity. Staging and production remain
+separate through both their package IDs and Sentry `environment` values.
 
-- Play Console needs `mapping.txt` for Java/Kotlin/R8 stack traces in Play
-- Sentry needs its own uploaded debug artifacts for symbolicated app-side events
+### Keep-rule audit
 
-One does not replace the other.
+The project does not add blanket keep rules. React Native, Expo modules,
+RevenueCat, Firebase, Google Play Billing, Stream, Sentry, WebRTC, camera/Nitro,
+and notification dependencies provide consumer rules and/or `@Keep` metadata.
+The generated app rules retain only Reanimated and React Native TurboModule
+classes. No Twilio Android dependency is installed; current calling is provided
+by Stream/WebRTC.
+
+Run the repository policy gate with:
+
+```powershell
+npm.cmd run verify:android-release
+npm.cmd run test:android-release
+```

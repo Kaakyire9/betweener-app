@@ -7,9 +7,12 @@ const { withDangerousMod } = require('expo/config-plugins');
 const PRODUCTION_IDENTITY = Object.freeze({
   variant: 'production',
   name: 'Betweener',
+  slug: 'betweener',
   bundleIdentifier: 'com.aduboffour.betweener',
   scheme: 'betweenerapp',
   webOrigin: 'https://getbetweener.com',
+  easProjectId: '7de6cdc4-8616-446f-99de-82764af3a7e6',
+  updatesUrl: 'https://u.expo.dev/7de6cdc4-8616-446f-99de-82764af3a7e6',
   icon: './assets/images/ios-icon-1024.png',
   foregroundIcon: './assets/images/foreground-icon.png',
   backgroundIcon: './assets/images/background-icon.png',
@@ -19,18 +22,25 @@ const PRODUCTION_IDENTITY = Object.freeze({
 const STAGING_IDENTITY = Object.freeze({
   variant: 'staging',
   name: 'Betweener S',
+  slug: 'betweener-staging',
   bundleIdentifier: 'com.aduboffour.betweener.staging',
   scheme: 'betweenerstaging',
   webOrigin: 'https://staging.getbetweener.com',
+  easProjectId: '7f38a835-2da7-419b-a20b-e1a12e021547',
+  updatesUrl: 'https://u.expo.dev/7f38a835-2da7-419b-a20b-e1a12e021547',
   icon: './assets/images/staging-icon-1024.png',
   foregroundIcon: './assets/images/staging-foreground-icon.png',
   backgroundIcon: './assets/images/staging-background-icon.png',
   supabaseProjectRef: 'xsgzxadwuxuziubglvps',
+  revenueCatAppleApiKey: 'appl_yWzDgNrgSeDoCGJMmYVFdEURQqd',
+  revenueCatGoogleApiKey: 'goog_jnufIIiUIJcDZsvkpvFnGqeNolV',
 });
 
 const resolveIdentity = () => {
   const variant = String(process.env.APP_VARIANT || '').trim().toLowerCase();
-  return variant === 'staging' ? STAGING_IDENTITY : PRODUCTION_IDENTITY;
+  if (variant === 'staging') return STAGING_IDENTITY;
+  if (!variant || variant === 'production') return PRODUCTION_IDENTITY;
+  throw new Error(`[app-config] Unsupported APP_VARIANT=${variant}.`);
 };
 
 const resolveExistingFile = (environmentName, fallbackPath) => {
@@ -65,6 +75,66 @@ const assertFirebaseIdentity = ({ identity, googleServicesFile, googleServiceInf
       throw new Error(
         `[app-config] Firebase iOS config does not match ${identity.bundleIdentifier}.`,
       );
+    }
+  }
+};
+
+const requiredEnvironmentValue = (name) => {
+  const value = String(process.env[name] || '').trim();
+  if (!value) throw new Error(`[app-config] ${name} is required.`);
+  return value;
+};
+
+const assertRevenueCatIdentity = (identity) => {
+  const appleApiKey = requiredEnvironmentValue('EXPO_PUBLIC_REVENUECAT_APPLE_API_KEY');
+  const googleApiKey = requiredEnvironmentValue('EXPO_PUBLIC_REVENUECAT_GOOGLE_API_KEY');
+
+  if (identity.variant === 'staging') {
+    if (
+      appleApiKey !== identity.revenueCatAppleApiKey
+      || googleApiKey !== identity.revenueCatGoogleApiKey
+    ) {
+      throw new Error('[app-config] Betweener S requires its exact staging RevenueCat SDK keys.');
+    }
+  } else if (
+    appleApiKey === STAGING_IDENTITY.revenueCatAppleApiKey
+    || googleApiKey === STAGING_IDENTITY.revenueCatGoogleApiKey
+  ) {
+    throw new Error('[app-config] Production cannot use Betweener Staging RevenueCat SDK keys.');
+  }
+
+  for (const tier of ['silver', 'gold']) {
+    const upperTier = tier.toUpperCase();
+    const broadProduct = requiredEnvironmentValue(`EXPO_PUBLIC_REVENUECAT_${upperTier}_PRODUCT`);
+    if (identity.variant === 'staging') {
+      const expectedBroadProduct = `com.betweener.staging.premium.${tier}`;
+      if (broadProduct !== expectedBroadProduct) {
+        throw new Error(`[app-config] Betweener S requires ${expectedBroadProduct}.`);
+      }
+    } else if (broadProduct.includes('com.betweener.staging.')) {
+      throw new Error('[app-config] Production cannot use staging RevenueCat products.');
+    }
+
+    for (const interval of ['monthly', 'quarterly', 'annual']) {
+      const upperInterval = interval.toUpperCase();
+      const appleProduct = requiredEnvironmentValue(
+        `EXPO_PUBLIC_REVENUECAT_${upperTier}_${upperInterval}_PRODUCT`,
+      );
+      const androidProduct = requiredEnvironmentValue(
+        `EXPO_PUBLIC_REVENUECAT_ANDROID_${upperTier}_${upperInterval}_PRODUCT`,
+      );
+      if (identity.variant === 'staging') {
+        const expectedAppleProduct = `com.betweener.staging.premium.${tier}.${interval}`;
+        const expectedAndroidProduct = `com.betweener.staging.premium.${tier}:${interval}`;
+        if (appleProduct !== expectedAppleProduct || androidProduct !== expectedAndroidProduct) {
+          throw new Error('[app-config] Betweener S RevenueCat product identity is invalid.');
+        }
+      } else if (
+        appleProduct.includes('com.betweener.staging.')
+        || androidProduct.includes('com.betweener.staging.')
+      ) {
+        throw new Error('[app-config] Production cannot use staging RevenueCat products.');
+      }
     }
   }
 };
@@ -108,6 +178,12 @@ const assertBuildIdentity = ({ identity, googleServicesFile, googleServiceInfoPl
   if (!String(process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '').trim()) {
     throw new Error(`[app-config] ${identity.name} requires EXPO_PUBLIC_SUPABASE_ANON_KEY.`);
   }
+
+  if (String(process.env.EXPO_PUBLIC_STREAM_VIDEO_API_KEY || '').trim()) {
+    throw new Error('[app-config] Stream API keys must be delivered by the isolated server token path.');
+  }
+
+  assertRevenueCatIdentity(identity);
 
   if (process.env.EAS_BUILD_PLATFORM === 'android' && !googleServicesFile) {
     throw new Error(
@@ -197,8 +273,13 @@ module.exports = ({ config }) => {
   return {
     ...config,
     name: identity.name,
+    slug: identity.slug,
     scheme: identity.scheme,
     icon: identity.icon,
+    updates: {
+      ...(config.updates ?? {}),
+      url: identity.updatesUrl,
+    },
     ios: {
       ...(config.ios ?? {}),
       bundleIdentifier: identity.bundleIdentifier,
@@ -249,12 +330,17 @@ module.exports = ({ config }) => {
     },
     extra: {
       ...(config.extra ?? {}),
+      eas: {
+        ...(config.extra?.eas ?? {}),
+        projectId: identity.easProjectId,
+      },
       appIdentity: {
         variant: identity.variant,
         name: identity.name,
         scheme: identity.scheme,
         bundleIdentifier: identity.bundleIdentifier,
         webOrigin: identity.webOrigin,
+        easProjectId: identity.easProjectId,
       },
     },
     plugins: [

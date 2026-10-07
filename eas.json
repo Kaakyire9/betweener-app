@@ -134,7 +134,8 @@
       "environment": "production",
       "autoIncrement": true,
       "buildArtifactPaths": [
-        "android/app/build/outputs/mapping/release/mapping.txt"
+        "android/app/build/outputs/mapping/release/mapping.txt",
+        "build-artifacts/android-release-symbols/release-mapping-manifest.json"
       ],
       "android": {
         "gradleCommand": ":app:bundleRelease -Pandroid.enableMinifyInReleaseBuilds=true -Pandroid.enableShrinkResourcesInReleaseBuilds=true"

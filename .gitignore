@@ -9,11 +9,14 @@ node_modules/
 dist/
 dist-export-android/
 web-build/
+build-artifacts/
 
 # Native
 .kotlin/
 *.orig.*
 *.jks
+*.keystore
+credentials.json
 *.p8
 *.p12
 *.key
