@@ -21,6 +21,7 @@ import {
   resolveExactMembershipCatalog,
   resolveExactSparkCatalog,
 } from '@/lib/membership/offering-resolver';
+import { resolveRevenueCatMembershipProducts } from '@/lib/membership/revenuecat-product-config';
 import {
   RevenueCatIdentitySession,
   type RevenueCatIdentityAdapter,
@@ -126,7 +127,61 @@ const membershipProductIds = {
   },
 };
 
+const androidMembershipProductIds = {
+  silver: {
+    monthly: 'com.betweener.staging.premium.silver:monthly',
+    quarterly: 'com.betweener.staging.premium.silver:quarterly',
+    annual: 'com.betweener.staging.premium.silver:annual',
+  },
+  gold: {
+    monthly: 'com.betweener.staging.premium.gold:monthly',
+    quarterly: 'com.betweener.staging.premium.gold:quarterly',
+    annual: 'com.betweener.staging.premium.gold:annual',
+  },
+};
+
 describe('exact offering and package resolution', () => {
+  it('resolves all six explicit Android product variables without changing iOS products', () => {
+    const resolvedAndroidProducts = resolveRevenueCatMembershipProducts(
+      'android',
+      androidMembershipProductIds,
+      membershipProductIds,
+    );
+    expect(resolvedAndroidProducts).toEqual(androidMembershipProductIds);
+    expect(resolveRevenueCatMembershipProducts(
+      'ios',
+      androidMembershipProductIds,
+      membershipProductIds,
+    )).toEqual(membershipProductIds);
+
+    const source = readFileSync('lib/membership/revenuecat-product-config.ts', 'utf8');
+    for (const name of [
+      'EXPO_PUBLIC_REVENUECAT_ANDROID_SILVER_MONTHLY_PRODUCT',
+      'EXPO_PUBLIC_REVENUECAT_ANDROID_SILVER_QUARTERLY_PRODUCT',
+      'EXPO_PUBLIC_REVENUECAT_ANDROID_SILVER_ANNUAL_PRODUCT',
+      'EXPO_PUBLIC_REVENUECAT_ANDROID_GOLD_MONTHLY_PRODUCT',
+      'EXPO_PUBLIC_REVENUECAT_ANDROID_GOLD_QUARTERLY_PRODUCT',
+      'EXPO_PUBLIC_REVENUECAT_ANDROID_GOLD_ANNUAL_PRODUCT',
+    ]) {
+      expect(source).toContain(`process.env.${name}`);
+    }
+    expect(source).not.toMatch(/process\.env\[/);
+  });
+
+  it('rejects production Android subscription IDs in the staging catalog', () => {
+    const packages = ['silver', 'gold'].flatMap((tier) =>
+      ['monthly', 'quarterly', 'annual'].map((interval) => ({
+        identifier: `${tier}_${interval}`,
+        product: { identifier: `com.betweener.staging.premium.${tier}:${interval}` },
+      })),
+    );
+    packages[0].product.identifier = 'com.betweener.premium.silver.monthly:silver-monthly';
+
+    expect(() => resolveExactMembershipCatalog({
+      all: { default: { identifier: 'default', availablePackages: packages } },
+    }, androidMembershipProductIds)).toThrow(MembershipConfigurationError);
+  });
+
   it('resolves the exact membership offering, package and product maps', () => {
     const catalog = resolveExactMembershipCatalog({
       all: { default: { identifier: 'default', availablePackages: membershipPackages() } },

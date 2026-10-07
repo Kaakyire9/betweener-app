@@ -25,7 +25,7 @@ $vars = @(
   "EXPO_PUBLIC_REVENUECAT_ANDROID_GOLD_ANNUAL_PRODUCT"
 )
 
-$environments = @("development", "preview", "production")
+$environments = @("preview")
 $envPath = Join-Path $PSScriptRoot "..\.env"
 $tempPath = Join-Path $PSScriptRoot "..\.eas-revenuecat-sync.env"
 
@@ -56,8 +56,10 @@ $lines = foreach ($name in $vars) {
 Set-Content -Path $tempPath -Value $lines
 
 try {
+  $previousVariant = $env:APP_VARIANT
+  $env:APP_VARIANT = "staging"
   foreach ($environment in $environments) {
-    Write-Host "Pushing RevenueCat env vars to $environment"
+    Write-Host "Pushing staging RevenueCat env vars to Betweener Staging $environment"
     & eas.cmd env:push $environment --path $tempPath --force
     if ($LASTEXITCODE -ne 0) {
       throw "Failed syncing RevenueCat variables to $environment"
@@ -65,9 +67,15 @@ try {
   }
 }
 finally {
+  if ($null -eq $previousVariant) {
+    Remove-Item Env:APP_VARIANT -ErrorAction SilentlyContinue
+  }
+  else {
+    $env:APP_VARIANT = $previousVariant
+  }
   if (Test-Path $tempPath) {
     Remove-Item -Path $tempPath -Force
   }
 }
 
-Write-Host "RevenueCat EAS variables synced to development, preview, and production."
+Write-Host "RevenueCat EAS variables synced to Betweener Staging preview only."
