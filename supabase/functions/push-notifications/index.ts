@@ -20,6 +20,10 @@ import {
   resolveLiveRoutingMinimumAppVersion,
   selectCompatiblePushTokensForDelivery,
 } from '../_shared/push-notification-compatibility.ts'
+import {
+  evaluatePushTokenProvenance,
+  type PushEnvironmentConfig,
+} from '../_shared/push-environment-provenance.ts'
 
 type PushNotificationEventClaim = {
   claimStatus: 'claimed' | 'duplicate' | 'expired' | 'rate_limited' | 'not_authorized'
@@ -48,6 +52,19 @@ type ExpoMessageCandidate = {
   message: Record<string, unknown>
 }
 
+type PushTokenRow = {
+  id: string
+  user_id?: string
+  token: string
+  app_version?: string | null
+  app_environment?: string | null
+  application_id?: string | null
+  expo_project_id?: string | null
+  installation_id?: string | null
+  provenance_status?: string | null
+  quarantined_at?: string | null
+}
+
 const LIVE_NOTIFICATIONS_MIN_APP_VERSION = resolveLiveRoutingMinimumAppVersion(
   Deno.env.get('LIVE_NOTIFICATIONS_MIN_APP_VERSION'),
 )
@@ -57,6 +74,46 @@ const CAMPAIGN_PAGE_SIZE = 500
 const EXPO_BATCH_SIZE = 100
 const EXPO_BATCH_CONCURRENCY = 3
 const MINIMUM_SIGNING_SECRET_LENGTH = 43
+
+const getPushDeliveryMode = () =>
+  (Deno.env.get('PUSH_DELIVERY_MODE') || '').trim().toLowerCase()
+
+const loadPushEnvironmentConfig = (): PushEnvironmentConfig | null => {
+  const appEnvironment = (Deno.env.get('PUSH_APP_ENVIRONMENT') || '').trim().toLowerCase()
+  const applicationId = (Deno.env.get('PUSH_APPLICATION_ID') || '').trim()
+  const expoProjectId = (Deno.env.get('PUSH_EXPO_PROJECT_ID') || '').trim().toLowerCase()
+  if (
+    !['staging', 'production'].includes(appEnvironment)
+    || !/^com\.aduboffour\.betweener(?:\.staging)?$/.test(applicationId)
+    || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(expoProjectId)
+  ) return null
+  const expectedApplicationId = appEnvironment === 'staging'
+    ? 'com.aduboffour.betweener.staging'
+    : 'com.aduboffour.betweener'
+  return applicationId === expectedApplicationId
+    ? { appEnvironment, applicationId, expoProjectId }
+    : null
+}
+
+const recordProvenanceRejection = (
+  rejectionCounts: Map<string, number>,
+  reason: string | null,
+) => {
+  const key = reason || 'PUSH_ENVIRONMENT_PROVENANCE_MISSING'
+  rejectionCounts.set(key, (rejectionCounts.get(key) || 0) + 1)
+}
+
+const logProvenanceRejections = (
+  context: Record<string, unknown>,
+  rejectionCounts: Map<string, number>,
+) => {
+  if (rejectionCounts.size === 0) return
+  console.warn('push-notifications destinations denied', {
+    event: 'push_environment_provenance_denied',
+    ...context,
+    rejection_counts: Object.fromEntries(rejectionCounts),
+  })
+}
 
 const jsonResponse = (status: number, payload: Record<string, unknown>, extraHeaders = {}) =>
   new Response(JSON.stringify(payload), {
@@ -269,6 +326,7 @@ const sendLiveNotificationCampaign = async (
   service: ReturnType<typeof createClient>,
   campaignId: string,
   eventId: string,
+  pushEnvironment: PushEnvironmentConfig,
 ) => {
   const { data: claimed, error: claimError } = await service.rpc(
     'rpc_service_claim_live_notification_campaign_v1',
@@ -281,6 +339,7 @@ const sendLiveNotificationCampaign = async (
       recipients: 0,
       acceptedTickets: 0,
       suppressedIncompatibleTokens: 0,
+      suppressedProvenanceTokens: 0,
     }
   }
 
@@ -304,13 +363,15 @@ const sendLiveNotificationCampaign = async (
   let acceptedTickets = 0
   let scannedTokens = 0
   let suppressedIncompatibleTokens = 0
+  let suppressedProvenanceTokens = 0
+  const provenanceRejections = new Map<string, number>()
   const notificationType = `live_${campaign.kind}`
 
   try {
     while (true) {
       let tokenQuery = service
         .from('push_tokens')
-        .select('id,user_id,token,app_version')
+        .select('id,user_id,token,app_version,app_environment,application_id,expo_project_id,installation_id,provenance_status,quarantined_at')
         .order('id')
         .limit(CAMPAIGN_PAGE_SIZE)
       if (lastTokenId) tokenQuery = tokenQuery.gt('id', lastTokenId)
@@ -329,6 +390,12 @@ const sendLiveNotificationCampaign = async (
       const preferences = new Map((preferenceRows || []).map((row) => [row.user_id, row]))
       const seenTokens = new Set<string>()
       const messages = tokenRows.flatMap((row) => {
+        const provenance = evaluatePushTokenProvenance(row, pushEnvironment)
+        if (!provenance.allowed) {
+          suppressedProvenanceTokens += 1
+          recordProvenanceRejection(provenanceRejections, provenance.reason)
+          return []
+        }
         const token = String(row.token || '').trim()
         if (!token || seenTokens.has(token)) return []
         seenTokens.add(token)
@@ -377,6 +444,7 @@ const sendLiveNotificationCampaign = async (
         minimum_app_version: LIVE_NOTIFICATIONS_MIN_APP_VERSION,
       })
     }
+    logProvenanceRejections({ campaign_id: campaign.id }, provenanceRejections)
 
     const { error: completeError } = await service.rpc(
       'rpc_service_complete_live_notification_campaign_v1',
@@ -401,6 +469,7 @@ const sendLiveNotificationCampaign = async (
       recipients: recipientUserIds.size,
       acceptedTickets,
       suppressedIncompatibleTokens,
+      suppressedProvenanceTokens,
     }
   } catch (error) {
     await service.rpc('rpc_service_complete_live_notification_campaign_v1', {
@@ -417,6 +486,23 @@ const sendLiveNotificationCampaign = async (
 serve(async (request) => {
   if (request.method !== 'POST') {
     return jsonResponse(405, { error: 'Method not allowed' }, { Allow: 'POST' })
+  }
+
+  const pushDeliveryMode = getPushDeliveryMode()
+  if (pushDeliveryMode !== 'enabled') {
+    console.error('push-notifications delivery unavailable', {
+      event: 'push_delivery_disabled',
+      mode: pushDeliveryMode || 'missing',
+    })
+    return jsonResponse(503, { error: 'Service unavailable' })
+  }
+
+  const pushEnvironment = loadPushEnvironmentConfig()
+  if (!pushEnvironment) {
+    console.error('push-notifications environment configuration unavailable', {
+      event: 'push_environment_configuration_unavailable',
+    })
+    return jsonResponse(503, { error: 'Service unavailable' })
   }
 
   let rawBody = ''
@@ -528,9 +614,17 @@ serve(async (request) => {
 
   try {
     if (claim.deliveryKind === 'live_campaign' && claim.campaignId) {
-      const result = await sendLiveNotificationCampaign(service, claim.campaignId, payload.event_id)
+      const result = await sendLiveNotificationCampaign(
+        service,
+        claim.campaignId,
+        payload.event_id,
+        pushEnvironment,
+      )
       let campaignOutcome = 'delivered'
       if (result.skipped) campaignOutcome = 'superseded'
+      else if (result.suppressedProvenanceTokens > 0 && result.acceptedTickets === 0) {
+        campaignOutcome = 'push_environment_provenance_suppressed'
+      }
       else if (result.suppressedIncompatibleTokens > 0) {
         campaignOutcome = result.acceptedTickets === 0
           ? 'incompatible_app_version_suppressed'
@@ -558,7 +652,7 @@ serve(async (request) => {
     const type = claim.eventType || asString(data.type) || 'system_message'
     const tokenResult = await service
       .from('push_tokens')
-      .select('id,token,last_seen_at,app_version')
+      .select('id,token,last_seen_at,app_version,app_environment,application_id,expo_project_id,installation_id,provenance_status,quarantined_at')
       .eq('user_id', claim.recipientUserId)
       .order('last_seen_at', { ascending: false, nullsFirst: false })
       .order('id', { ascending: true })
@@ -579,8 +673,19 @@ serve(async (request) => {
     const badge = await getUserBadgeCount(service, claim.recipientUserId).catch(() => null)
     if (richImageUrl && !data.image) data.image = richImageUrl
 
+    const provenanceRejections = new Map<string, number>()
+    const provenanceEligibleTokens = (tokenResult.data || []).filter((row: PushTokenRow) => {
+      const provenance = evaluatePushTokenProvenance(row, pushEnvironment)
+      if (!provenance.allowed) recordProvenanceRejection(provenanceRejections, provenance.reason)
+      return provenance.allowed
+    })
+    logProvenanceRejections({
+      event_id: payload.event_id,
+      recipient_user_id: claim.recipientUserId,
+    }, provenanceRejections)
+
     const tokenSelection = selectCompatiblePushTokensForDelivery(
-      tokenResult.data || [],
+      provenanceEligibleTokens,
       MAX_TOKENS_PER_RECIPIENT,
       type,
       LIVE_NOTIFICATIONS_MIN_APP_VERSION,
@@ -619,12 +724,14 @@ serve(async (request) => {
     const deliveryAck = messageId && acceptedTickets > 0
       ? await acknowledgePushDelivered(service, messageId, claim.recipientUserId)
       : { acked: false, error: null }
-    const deliveryOutcome = getCompatibilityAwareDeliveryOutcome(
+    const deliveryOutcome = provenanceEligibleTokens.length === 0 && provenanceRejections.size > 0
+      ? 'push_environment_provenance_suppressed'
+      : getCompatibilityAwareDeliveryOutcome(
       delivery.reservedTokens,
       tokenSelection.consideredTokens.length,
       tokenSelection.compatibleTokens.length,
       tokenSelection.suppressedIncompatibleCount,
-    )
+      )
     await completeEvent(
       true,
       delivery.reservedTokens > 0 ? 1 : 0,

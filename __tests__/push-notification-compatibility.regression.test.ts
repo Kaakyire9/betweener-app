@@ -111,7 +111,10 @@ test('ten-most-recent selection gates each token independently without mutating 
 
 test('worker loads app_version, preserves newest-token ordering and records aggregate suppression', () => {
   const worker = readFileSync('supabase/functions/push-notifications/index.ts', 'utf8')
-  assert.match(worker, /select\('id,token,last_seen_at,app_version'\)/)
+  assert.match(
+    worker,
+    /select\('id,token,last_seen_at,app_version,app_environment,application_id,expo_project_id,installation_id,provenance_status,quarantined_at'\)/,
+  )
   assert.match(worker, /order\('last_seen_at', \{ ascending: false, nullsFirst: false \}\)/)
   assert.match(worker, /order\('id', \{ ascending: true \}\)/)
   assert.match(worker, /selectCompatiblePushTokensForDelivery\([\s\S]*MAX_TOKENS_PER_RECIPIENT/)
