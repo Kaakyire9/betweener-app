@@ -14,6 +14,16 @@ jest.mock("@react-native-community/netinfo", () => ({
   })),
 }));
 
+jest.mock("@sentry/react-native", () => ({
+  addBreadcrumb: jest.fn(),
+  captureException: jest.fn(),
+  captureMessage: jest.fn(),
+  init: jest.fn(),
+  setContext: jest.fn(),
+  setUser: jest.fn(),
+  wrap: jest.fn((component) => component),
+}));
+
 jest.mock("expo", () => ({
   useEvent: (_emitter: any, _eventName: string, initialState: any) => initialState ?? {},
   requireNativeModule: jest.fn(() => ({})),
