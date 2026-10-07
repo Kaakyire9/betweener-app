@@ -31,6 +31,7 @@ import { useLiveOdoFullQuickConnect } from '../odo/full-quick-connect/use-live-o
 import { useLiveOdoShowDirector } from '../odo/show/use-live-odo-show-director.ts';
 import type { LiveStageAtmosphereController } from '../hooks/use-live-stage-atmosphere.ts';
 import { useLiveHostingManagement } from '../hooks/use-live-hosting-management.ts';
+import { createCurrentLiveSessionLinks } from '../config/live-link-runtime.ts';
 
 type LiveStudioTab = 'rotation' | 'stage' | 'match' | 'pulse' | 'music'
   | 'atmosphere' | 'odo' | 'session' | 'invite';
@@ -140,8 +141,7 @@ export function LiveStudioModal({
   }, [hasQuickConnectControls, visible]);
 
   const shareRoom = async () => {
-    const deepLink = `betweenerapp://live/${sessionId}`;
-    const webLink = `https://getbetweener.com/live/${sessionId}`;
+    const { deepLink, webLink } = createCurrentLiveSessionLinks(sessionId);
     await Share.share({
       title: `Join ${roomTitle} on Betweener`,
       message: `Join ${roomTitle} on Betweener Live.\n${webLink}\n${deepLink}`,

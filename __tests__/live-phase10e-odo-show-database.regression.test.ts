@@ -25,6 +25,7 @@ const musicEdge = readFileSync('supabase/functions/live-music-playback/index.ts'
 const showDeno = readFileSync('supabase/functions/live-odo-show-director/deno.json', 'utf8');
 const musicDeno = readFileSync('supabase/functions/live-music-playback/deno.json', 'utf8');
 const route = readFileSync('app/live/[sessionId].tsx', 'utf8');
+const health = readFileSync('supabase/verification/live_odo_phase10e_health.sql', 'utf8');
 
 const functionBody = (source: string, name: string): string => source.match(
   new RegExp(`create or replace function public\\.${name}[\\s\\S]*?\\n\\$\\$;`, 'i'),
@@ -79,6 +80,16 @@ test('one shared Odo lease and server maintenance recover Show Director', () => 
   const maintenance = functionBody(controlRecovery, 'run_live_maintenance');
   assert.match(acquire, /next_wake_at = timezone\('utc', now\(\)\) \+ interval '30 seconds'/i);
   assert.match(maintenance, /control_lease_expires_at <= timezone\('utc', now\(\)\)/i);
+});
+
+test('the health check follows the complete maintenance wrapper chain', () => {
+  assert.match(health, /procedure\.proname like 'run_live_maintenance%'/i);
+  assert.match(health, /string_agg\(pg_get_functiondef\(procedure\.oid\)/i);
+  assert.match(health, /in maintenance_protocol\.definition/i);
+  assert.doesNotMatch(
+    health,
+    /pg_get_functiondef\('public\.run_live_maintenance\(\)'::regprocedure\)/i,
+  );
 });
 
 test('Edge requests cannot inject a scene, person, track, prompt or action', () => {

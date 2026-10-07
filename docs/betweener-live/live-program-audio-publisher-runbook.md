@@ -25,9 +25,13 @@ The exact previous scene, canvas and source assignments are saved server-side. *
 
 The worker is not an Edge Function or a Vercel request. It is a persistent container because media publishing is a continuous process.
 
-## Deploy safely
+## Deploy safely to staging
 
 Generate one random secret of at least 32 characters. Store the same value in Supabase Edge Function secrets and the worker platform. Do not put it in `.env` files committed to Git.
+
+This procedure is staging-only. The expected Supabase project is
+`xsgzxadwuxuziubglvps`; stop if the target differs. Production requires a
+separate, explicitly authorized rollout.
 
 ```powershell
 $bytes = New-Object byte[] 48
@@ -38,6 +42,10 @@ try {
   $rng.Dispose()
 }
 $workerToken = [Convert]::ToBase64String($bytes)
+$projectRef = 'xsgzxadwuxuziubglvps'
+if ($projectRef -ne 'xsgzxadwuxuziubglvps') {
+  throw 'Refusing to deploy Programme Audio outside Betweener staging.'
+}
 if ($workerToken -eq ('A' * 64)) {
   throw 'Secure token generation failed; do not deploy this value.'
 }
@@ -48,7 +56,7 @@ $secretFile = Join-Path ([IO.Path]::GetTempPath()) ("betweener-program-audio-" +
   (New-Object Text.UTF8Encoding($false))
 )
 try {
-  npx.cmd supabase@latest secrets set --env-file $secretFile --project-ref jbyblhithbqwojhwlenv
+  npx.cmd supabase@latest secrets set --env-file $secretFile --project-ref $projectRef
 } finally {
   Remove-Item -LiteralPath $secretFile -Force
   [Array]::Clear($bytes, 0, $bytes.Length)
@@ -59,11 +67,13 @@ If token generation throws, stop there. Never run `secrets set` with the
 unchanged zero-filled byte array. Store `$workerToken` in the worker platform's
 secret manager, then clear the shell variable with `$workerToken = $null`.
 
-Deploy the database and the worker-only Edge Function. JWT verification is intentionally disabled at the gateway because this endpoint authenticates a private worker header with constant-time comparison; it accepts no browser or user token.
+After database parity has been proven separately, deploy only the worker Edge
+Function to the explicit staging project. JWT verification is intentionally
+disabled at the gateway because this endpoint authenticates a private worker
+header with constant-time comparison; it accepts no browser or user token.
 
 ```powershell
-npx.cmd supabase@latest db push --linked
-npx.cmd supabase@latest functions deploy live-program-audio-publisher --no-verify-jwt
+npx.cmd supabase@latest functions deploy live-program-audio-publisher --no-verify-jwt --project-ref $projectRef
 ```
 
 Build the worker container from the repository root:
@@ -74,7 +84,7 @@ docker build -f apps/program-audio-worker/Dockerfile -t betweener-program-audio:
 
 Deploy it to an always-on container service with:
 
-- `SUPABASE_URL=https://jbyblhithbqwojhwlenv.supabase.co`
+- `SUPABASE_URL=https://xsgzxadwuxuziubglvps.supabase.co`
 - `PROGRAM_AUDIO_WORKER_TOKEN=<the same secret>`
 - `PROGRAM_AUDIO_MAX_SESSIONS=25`
 - `PROGRAM_AUDIO_POLL_MS=2000` (active playback/control cadence)
