@@ -38,6 +38,10 @@ const phoneVerification = readFileSync(
   new URL('../lib/phone-verification.ts', import.meta.url),
   'utf8',
 );
+const signOutSession = readFileSync(
+  new URL('../lib/auth/sign-out-session.ts', import.meta.url),
+  'utf8',
+);
 
 test('persisted profile fallback never authorizes protected writes', () => {
   assert.match(
@@ -105,9 +109,10 @@ test('session recovery is single-flight and missing credentials require reauthen
     /if \(!session && !error\)[\s\S]*status: 'failed_unrecoverable'[\s\S]*errorMessage: 'session_missing'/,
   );
   assert.doesNotMatch(supabaseSource, /fallbackSession|sessionForRefresh/);
-  assert.match(authContext, /supabase\.auth\.signOut\(\{ scope: 'local' \}\)/);
+  assert.match(authContext, /signOutSupabaseSession\(\{[\s\S]*scope: 'local'/);
+  assert.match(signOutSession, /supabase\.auth\.signOut\(\{ scope: options\.scope \}\)/);
   assert.match(authContext, /finally \{[\s\S]*applySignedOutState\(\)/);
-  assert.match(packageManifest, /"@supabase\/supabase-js": "2\.116\.0"/);
+  assert.match(packageManifest, /"@supabase\/supabase-js": "2\.117\.2"/);
 });
 
 test('Live catalogue waits for real auth and reloads after auth recovery', () => {

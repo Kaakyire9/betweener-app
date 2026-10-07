@@ -33,6 +33,7 @@ type Props = {
   profileInitials: string;
   uploading: boolean;
   videoUploading: boolean;
+  videoUploadsEnabled?: boolean;
   onPickAvatar: () => void;
   onPickGallery: () => void;
   onPickVideo: () => void;
@@ -53,6 +54,7 @@ export default function ProfileMediaStudioSection({
   profileInitials,
   uploading,
   videoUploading,
+  videoUploadsEnabled = true,
   onPickAvatar,
   onPickGallery,
   onPickVideo,
@@ -72,6 +74,7 @@ export default function ProfileMediaStudioSection({
   const slotSummary = `${draft.gallery.length}/${MAX_PROFILE_GALLERY_ITEMS} story layers`;
   const [selectedLayerKey, setSelectedLayerKey] = useState<LayerKey | null>(null);
   const [notesSheetVisible, setNotesSheetVisible] = useState(false);
+  const [galleryFocusToken, setGalleryFocusToken] = useState(0);
   const selectedLayer = storyLayers.find((layer) => layer.key === selectedLayerKey) ?? null;
   const headerStatusLine = storyLayers
     .map((layer) => `${layer.label} ${layerStateLabel(layer)}`)
@@ -113,7 +116,7 @@ export default function ProfileMediaStudioSection({
       case 'video':
         if (draft.profileVideoUrl) {
           onRemoveVideo();
-        } else {
+        } else if (videoUploadsEnabled) {
           onPickVideo();
         }
         break;
@@ -176,6 +179,13 @@ export default function ProfileMediaStudioSection({
   const handleSetHero = (index: number) => {
     logger.info('[profile-studio] profile_studio_hero_set', { index });
     onRefineHero(index);
+  };
+
+  const handleReorderOpen = () => {
+    logger.info('[profile-studio] profile_studio_reorder_opened', {
+      galleryCount: draft.gallery.length,
+    });
+    setGalleryFocusToken((current) => current + 1);
   };
 
   return (
@@ -286,9 +296,11 @@ export default function ProfileMediaStudioSection({
             <ProfileStudioActionTile
               theme={theme}
               title={draft.profileVideoUrl ? 'Edit video' : 'Add video'}
-              subtitle={draft.profileVideoUrl ? 'Motion layer' : 'Add motion'}
+              subtitle={videoUploadsEnabled
+                ? (draft.profileVideoUrl ? 'Motion layer' : 'Add motion')
+                : 'Safety checks coming soon'}
               icon={draft.profileVideoUrl ? 'video-outline' : 'video-plus'}
-              disabled={videoUploading}
+              disabled={videoUploading || !videoUploadsEnabled}
               onPress={handlePickVideo}
             />
           </View>
@@ -311,7 +323,7 @@ export default function ProfileMediaStudioSection({
               subtitle="Shuffle scenes"
               icon="swap-horizontal"
               disabled={uploading || draft.gallery.length < 2}
-              onPress={handlePickGallery}
+              onPress={handleReorderOpen}
             />
           </View>
         </View>
@@ -333,6 +345,7 @@ export default function ProfileMediaStudioSection({
         onMakeAvatar={onRefineAvatar}
         onMoveGallery={handleMoveGallery}
         onRemovePhoto={onRemovePhoto}
+        focusReorderToken={galleryFocusToken}
       />
 
       <ProfileStudioNotesCard theme={theme} notes={notes} onPress={handleNotesOpen} />

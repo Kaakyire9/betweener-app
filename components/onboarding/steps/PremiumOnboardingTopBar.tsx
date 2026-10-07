@@ -40,7 +40,14 @@ export function PremiumOnboardingTopBar({
           <Text style={styles.welcomeJourneyText}>01 / {String(stepsLength).padStart(2, "0")}</Text>
         </View>
       ) : (
-        <Text style={styles.stepMeta}>STEP {stepIndex + 1} OF {stepsLength}</Text>
+        <Text
+          accessible
+          accessibilityRole="text"
+          accessibilityLabel={`Step ${stepIndex + 1} of ${stepsLength}`}
+          style={styles.stepMeta}
+        >
+          STEP {stepIndex + 1} OF {stepsLength}
+        </Text>
       )}
       {stepIndex === 0 ? (
         <Pressable

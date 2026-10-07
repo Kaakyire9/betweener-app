@@ -1,10 +1,8 @@
 import { Colors } from '@/constants/theme';
 import GiftArtwork from '@/components/gifts/GiftArtwork';
 import GiftRevealSheet from '@/components/gifts/GiftRevealSheet';
-import PremiumSyncNotice from '@/components/profile/PremiumSyncNotice';
 import { markInboxItemsReadByCriteria } from '@/hooks/useInbox';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { usePremiumOfflineQueueStatus } from '@/hooks/usePremiumOfflineQueueStatus';
 import { logProfileGiftEvent } from '@/lib/gifts/events';
 import { INSIGHTS_SYSTEM_ACTIVITY_KEYS } from '@/lib/inbox/badge-groups';
 import { isLikelyNetworkError } from '@/lib/network';
@@ -261,7 +259,6 @@ export default function ProfileInsightsScreen() {
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = (colorScheme ?? 'light') === 'dark';
   const { profile, user } = useAuth();
-  const premiumQueue = usePremiumOfflineQueueStatus();
   const scrollViewRef = useRef<ScrollView | null>(null);
   const giftArchiveYRef = useRef(0);
   const [giftSummary, setGiftSummary] = useState<{
@@ -732,23 +729,6 @@ export default function ProfileInsightsScreen() {
         ref={scrollViewRef}
         contentContainerStyle={[styles.content, isCompactWidth ? styles.contentCompact : null]}
       >
-        {premiumQueue.visible ? (
-          <PremiumSyncNotice
-            theme={theme}
-            isDark={isDark}
-            title={premiumQueue.title}
-            message={premiumQueue.message}
-            failedCount={premiumQueue.failedCount}
-            pendingCount={premiumQueue.pendingCount}
-            onPress={() => {
-              if (premiumQueue.hasFailed) {
-                void premiumQueue.retryFailed();
-                return;
-              }
-              router.push('/sync-activity');
-            }}
-          />
-        ) : null}
         <LinearGradient
           colors={isDark ? ['#19243A', '#1D1538'] : ['#E4F4F1', '#EFE6FA']}
           start={{ x: 0, y: 0 }}

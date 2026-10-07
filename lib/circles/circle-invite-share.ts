@@ -1,8 +1,11 @@
+import { buildAppUrl } from '@/config/app-identity';
+import { APP_SHARE_STORE_LINKS } from '@/config/app-store-links';
+
 export const BETWEENER_IOS_STORE_URL =
-  'https://apps.apple.com/gb/app/betweener/id6753134347';
+  APP_SHARE_STORE_LINKS.ios;
 
 export const BETWEENER_ANDROID_STORE_URL =
-  'https://play.google.com/store/apps/details?id=com.aduboffour.betweener&pcampaignid=web_share';
+  APP_SHARE_STORE_LINKS.android;
 
 type CircleExternalInvite = {
   title: string;
@@ -19,7 +22,7 @@ export function buildCircleExternalInvite(
 ): CircleExternalInvite {
   const safeCircleId = encodeURIComponent(circleId.trim());
   const safeCircleName = normalizeCircleName(circleName);
-  const appUrl = `betweenerapp://circles/${safeCircleId}`;
+  const appUrl = buildAppUrl(`circles/${safeCircleId}`);
 
   return {
     title: `Join ${safeCircleName} on Betweener`,

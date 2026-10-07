@@ -2,16 +2,21 @@ import { useAuth } from "@/lib/auth-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function PasswordLoginScreen() {
   const params = useLocalSearchParams<{ email?: string }>();
@@ -21,8 +26,14 @@ export default function PasswordLoginScreen() {
   const [focusedField, setFocusedField] = useState<"email" | "password" | null>(null);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const scrollRef = useRef<ScrollView>(null);
+  const passwordInputRef = useRef<TextInput>(null);
   const router = useRouter();
   const { signIn, isAuthenticating } = useAuth();
+
+  const revealPasswordField = useCallback((delay = 120) => {
+    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), delay);
+  }, []);
 
   useEffect(() => {
     const routeEmail = typeof params.email === "string" ? params.email.trim() : "";
@@ -30,6 +41,13 @@ export default function PasswordLoginScreen() {
       setEmail(routeEmail);
     }
   }, [params.email]);
+
+  useEffect(() => {
+    const subscription = Keyboard.addListener("keyboardDidShow", () => {
+      if (focusedField === "password") revealPasswordField(40);
+    });
+    return () => subscription.remove();
+  }, [focusedField, revealPasswordField]);
 
   const validate = () => {
     if (!email.match(/^[^@\s]+@[^@\s]+\.[^@\s]+$/)) {
@@ -46,6 +64,7 @@ export default function PasswordLoginScreen() {
 
   const handleLogin = async () => {
     if (!validate()) return;
+    Keyboard.dismiss();
     setError("");
     setSuccess("");
 
@@ -72,98 +91,155 @@ export default function PasswordLoginScreen() {
       style={styles.gradient}
     >
       <View style={styles.glow} />
-      <View style={styles.panel}>
-        <View style={styles.brandWrap}>
-          <View style={styles.brandRow}>
-            <Text style={styles.brand}>Betweener</Text>
-            <Text style={styles.brandGlyph}>*</Text>
-          </View>
-          <View style={styles.brandRule} />
-        </View>
-        <Text style={styles.title}>Password Login</Text>
-        <Text style={styles.subtitle}>
-          Use this if you prefer a password. For a faster, more secure experience, use the email link.
-        </Text>
-
-        <View style={[styles.inputShell, focusedField === "email" && styles.inputShellActive]}>
-          <MaterialCommunityIcons
-            name="email-outline"
-            size={18}
-            color={focusedField === "email" ? "#7C5FE6" : "#94A3B8"}
-          />
-          <TextInput
-            placeholder="Email"
-            placeholderTextColor="#94A3B8"
-            value={email}
-            onChangeText={setEmail}
-            autoCapitalize="none"
-            keyboardType="email-address"
-            onFocus={() => setFocusedField("email")}
-            onBlur={() => setFocusedField((prev) => (prev === "email" ? null : prev))}
-            style={styles.input}
-          />
-        </View>
-
-        <View style={[styles.inputShell, focusedField === "password" && styles.inputShellActive]}>
-          <MaterialCommunityIcons
-            name="lock-outline"
-            size={18}
-            color={focusedField === "password" ? "#7C5FE6" : "#94A3B8"}
-          />
-          <TextInput
-            placeholder="Password"
-            placeholderTextColor="#94A3B8"
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry={!showPassword}
-            onFocus={() => setFocusedField("password")}
-            onBlur={() => setFocusedField((prev) => (prev === "password" ? null : prev))}
-            style={styles.input}
-          />
-          <Pressable
-            onPress={() => setShowPassword((prev) => !prev)}
-            accessibilityRole="button"
-            accessibilityLabel={showPassword ? "Hide password" : "Show password"}
-            style={styles.iconButton}
+      <SafeAreaView style={styles.safeArea}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          keyboardVerticalOffset={0}
+          style={styles.keyboardArea}
+        >
+          <ScrollView
+            ref={scrollRef}
+            contentContainerStyle={styles.scrollContent}
+            keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
           >
-            <MaterialCommunityIcons
-              name={showPassword ? "eye-off-outline" : "eye-outline"}
-              size={18}
-              color={focusedField === "password" ? "#7C5FE6" : "#94A3B8"}
-            />
-          </Pressable>
-        </View>
+            <View style={styles.panel}>
+              <View style={styles.brandWrap}>
+                <View style={styles.brandRow}>
+                  <Text style={styles.brand}>Betweener</Text>
+                  <Text style={styles.brandGlyph}>*</Text>
+                </View>
+                <View style={styles.brandRule} />
+              </View>
 
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
-        {success ? <Text style={styles.successText}>{success}</Text> : null}
+              <View style={styles.securityPill}>
+                <MaterialCommunityIcons name="shield-lock-outline" size={14} color="#0A7773" />
+                <Text style={styles.securityPillText}>WELCOME BACK</Text>
+              </View>
 
-        <TouchableOpacity
-          style={[styles.primaryButton, isAuthenticating && styles.buttonDisabled]}
-          onPress={handleLogin}
-          disabled={isAuthenticating}
-        >
-          <Text style={styles.primaryButtonText}>
-            {isAuthenticating ? "Signing In..." : "Sign In"}
-          </Text>
-          <MaterialCommunityIcons name="arrow-right" size={18} color="#fff" />
-        </TouchableOpacity>
+              <Text style={styles.title}>Sign in securely</Text>
+              <Text style={styles.subtitle}>
+                Continue with the email and password connected to your Betweener account.
+              </Text>
 
-        <View style={styles.inlineRow}>
-          <Text style={styles.inlineText}>Prefer the secure link? </Text>
-          <Pressable onPress={() => router.push("/(auth)/magic-link")}>
-            <Text style={styles.inlineLink}>Send email link</Text>
-          </Pressable>
-        </View>
+              <View style={[styles.inputShell, focusedField === "email" && styles.inputShellActive]}>
+                <MaterialCommunityIcons
+                  name="email-outline"
+                  size={18}
+                  color={focusedField === "email" ? "#7C5FE6" : "#64748B"}
+                />
+                <TextInput
+                  placeholder="Email address"
+                  placeholderTextColor="#94A3B8"
+                  value={email}
+                  onChangeText={setEmail}
+                  autoCapitalize="none"
+                  autoComplete="email"
+                  keyboardType="email-address"
+                  returnKeyType="next"
+                  textContentType="emailAddress"
+                  onSubmitEditing={() => passwordInputRef.current?.focus()}
+                  onFocus={() => setFocusedField("email")}
+                  onBlur={() => setFocusedField((prev) => (prev === "email" ? null : prev))}
+                  style={styles.input}
+                />
+              </View>
 
-        <Pressable
-          onPress={() => router.push("/(auth)/forgot-password")}
-          style={styles.forgotLink}
-        >
-          <Text style={styles.forgotText}>Forgot your password?</Text>
-        </Pressable>
+              <View style={[styles.inputShell, focusedField === "password" && styles.inputShellActive]}>
+                <MaterialCommunityIcons
+                  name="lock-outline"
+                  size={18}
+                  color={focusedField === "password" ? "#7C5FE6" : "#64748B"}
+                />
+                <TextInput
+                  ref={passwordInputRef}
+                  placeholder="Password"
+                  placeholderTextColor="#94A3B8"
+                  value={password}
+                  onChangeText={setPassword}
+                  autoComplete="current-password"
+                  secureTextEntry={!showPassword}
+                  returnKeyType="done"
+                  textContentType="password"
+                  onSubmitEditing={() => void handleLogin()}
+                  onFocus={() => {
+                    setFocusedField("password");
+                    revealPasswordField(160);
+                  }}
+                  onBlur={() => setFocusedField((prev) => (prev === "password" ? null : prev))}
+                  style={styles.input}
+                />
+                <Pressable
+                  onPress={() => setShowPassword((prev) => !prev)}
+                  accessibilityRole="button"
+                  accessibilityLabel={showPassword ? "Hide password" : "Show password"}
+                  hitSlop={8}
+                  style={styles.iconButton}
+                >
+                  <MaterialCommunityIcons
+                    name={showPassword ? "eye-off-outline" : "eye-outline"}
+                    size={19}
+                    color={focusedField === "password" ? "#7C5FE6" : "#64748B"}
+                  />
+                </Pressable>
+              </View>
 
-        {isAuthenticating && <ActivityIndicator style={{ marginTop: 8 }} />}
-      </View>
+              {error ? (
+                <View style={[styles.feedbackBanner, styles.errorBanner]}>
+                  <MaterialCommunityIcons name="alert-circle-outline" size={18} color="#B42336" />
+                  <Text style={styles.errorText}>{error}</Text>
+                </View>
+              ) : null}
+              {success ? (
+                <View style={[styles.feedbackBanner, styles.successBanner]}>
+                  <MaterialCommunityIcons name="check-circle-outline" size={18} color="#12805C" />
+                  <Text style={styles.successText}>{success}</Text>
+                </View>
+              ) : null}
+
+              <TouchableOpacity
+                activeOpacity={0.88}
+                style={[styles.primaryButton, isAuthenticating && styles.buttonDisabled]}
+                onPress={handleLogin}
+                disabled={isAuthenticating}
+              >
+                {isAuthenticating ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <>
+                    <Text style={styles.primaryButtonText}>Sign in</Text>
+                    <MaterialCommunityIcons name="arrow-right" size={20} color="#FFFFFF" />
+                  </>
+                )}
+              </TouchableOpacity>
+
+              <Pressable
+                onPress={() => router.push("/(auth)/forgot-password")}
+                style={styles.forgotLink}
+              >
+                <Text style={styles.forgotText}>Forgot your password?</Text>
+              </Pressable>
+
+              <View style={styles.dividerRow}>
+                <View style={styles.dividerLine} />
+                <Text style={styles.dividerText}>OR</Text>
+                <View style={styles.dividerLine} />
+              </View>
+
+              <Pressable onPress={() => router.push("/(auth)/magic-link")} style={styles.emailLinkButton}>
+                <MaterialCommunityIcons name="email-fast-outline" size={18} color="#087D79" />
+                <Text style={styles.emailLinkButtonText}>Send me a secure sign-in link</Text>
+              </Pressable>
+
+              <View style={styles.privacyRow}>
+                <MaterialCommunityIcons name="lock-outline" size={13} color="#64748B" />
+                <Text style={styles.privacyText}>Your sign-in stays private and protected</Text>
+              </View>
+            </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
     </LinearGradient>
   );
 }
@@ -171,8 +247,18 @@ export default function PasswordLoginScreen() {
 const styles = StyleSheet.create({
   gradient: {
     flex: 1,
-    padding: 24,
+  },
+  safeArea: {
+    flex: 1,
+  },
+  keyboardArea: {
+    flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
     justifyContent: "center",
+    paddingHorizontal: 20,
+    paddingVertical: 18,
   },
   glow: {
     position: "absolute",
@@ -184,9 +270,15 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(124, 95, 230, 0.25)",
   },
   panel: {
-    backgroundColor: "rgba(255, 255, 255, 0.86)",
-    borderRadius: 24,
-    padding: 24,
+    width: "100%",
+    maxWidth: 520,
+    alignSelf: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.92)",
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.66)",
+    paddingHorizontal: 22,
+    paddingVertical: 24,
     shadowColor: "#0f172a",
     shadowOpacity: 0.2,
     shadowRadius: 30,
@@ -195,7 +287,7 @@ const styles = StyleSheet.create({
   },
   brandWrap: {
     alignItems: "center",
-    marginBottom: 10,
+    marginBottom: 12,
   },
   brandRow: {
     flexDirection: "row",
@@ -222,9 +314,28 @@ const styles = StyleSheet.create({
     marginTop: 8,
     opacity: 0.75,
   },
+  securityPill: {
+    alignSelf: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 11,
+    paddingVertical: 6,
+    marginBottom: 12,
+    borderRadius: 999,
+    backgroundColor: "rgba(15, 186, 181, 0.11)",
+    borderWidth: 1,
+    borderColor: "rgba(15, 186, 181, 0.2)",
+  },
+  securityPillText: {
+    color: "#0A7773",
+    fontFamily: "Manrope_700Bold",
+    fontSize: 10,
+    letterSpacing: 1.5,
+  },
   title: {
-    fontFamily: "Archivo_700Bold",
-    fontSize: 28,
+    fontFamily: "PlayfairDisplay_700Bold",
+    fontSize: 30,
     color: "#0F172A",
     marginBottom: 8,
     textAlign: "center",
@@ -233,7 +344,7 @@ const styles = StyleSheet.create({
     fontFamily: "Manrope_400Regular",
     fontSize: 15,
     color: "#64748B",
-    marginBottom: 24,
+    marginBottom: 20,
     textAlign: "center",
     lineHeight: 22,
   },
@@ -251,7 +362,7 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.9)",
     borderRadius: 18,
     paddingHorizontal: 14,
-    marginBottom: 16,
+    marginBottom: 14,
     borderWidth: 1,
     borderColor: "rgba(148,163,184,0.35)",
     shadowColor: "#0f172a",
@@ -266,58 +377,116 @@ const styles = StyleSheet.create({
   iconButton: {
     padding: 6,
   },
+  feedbackBanner: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+  },
+  errorBanner: {
+    backgroundColor: "rgba(227, 93, 106, 0.09)",
+    borderColor: "rgba(227, 93, 106, 0.25)",
+  },
+  successBanner: {
+    backgroundColor: "rgba(18, 128, 92, 0.09)",
+    borderColor: "rgba(18, 128, 92, 0.22)",
+  },
   errorText: {
-    color: "#ef4444",
-    marginBottom: 8,
-    textAlign: "center",
+    flex: 1,
+    color: "#B42336",
     fontFamily: "Manrope_500Medium",
+    fontSize: 13,
+    lineHeight: 18,
   },
   successText: {
-    color: "#10b981",
-    marginBottom: 8,
-    textAlign: "center",
+    flex: 1,
+    color: "#12805C",
     fontFamily: "Manrope_500Medium",
+    fontSize: 13,
+    lineHeight: 18,
   },
   primaryButton: {
-    backgroundColor: "#0FBAB5",
-    borderRadius: 16,
+    backgroundColor: "#0A9E99",
+    borderRadius: 18,
     paddingVertical: 16,
+    minHeight: 56,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
     gap: 8,
-    marginBottom: 20,
+    marginBottom: 14,
+    shadowColor: "#087D79",
+    shadowOpacity: 0.25,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 7 },
+    elevation: 5,
   },
   primaryButtonText: {
     color: "#fff",
     fontFamily: "Archivo_700Bold",
-    fontSize: 18,
-    letterSpacing: 1,
+    fontSize: 17,
+    letterSpacing: 0.3,
   },
   buttonDisabled: {
     opacity: 0.7,
   },
-  inlineRow: {
-    flexDirection: "row",
-    justifyContent: "center",
-  },
-  inlineText: {
-    color: "#64748B",
-    fontFamily: "Manrope_400Regular",
-    fontSize: 15,
-  },
-  inlineLink: {
-    color: "#0FBAB5",
-    fontFamily: "Manrope_500Medium",
-    fontSize: 15,
-  },
   forgotLink: {
-    marginTop: 16,
     alignItems: "center",
+    paddingVertical: 7,
   },
   forgotText: {
-    color: "#64748B",
-    fontFamily: "Manrope_500Medium",
+    color: "#087D79",
+    fontFamily: "Manrope_700Bold",
     fontSize: 14,
+  },
+  dividerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginVertical: 12,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: "rgba(100, 116, 139, 0.2)",
+  },
+  dividerText: {
+    color: "#94A3B8",
+    fontFamily: "Manrope_700Bold",
+    fontSize: 10,
+    letterSpacing: 1.2,
+  },
+  emailLinkButton: {
+    minHeight: 52,
+    borderRadius: 17,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingHorizontal: 16,
+    backgroundColor: "rgba(15, 186, 181, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(15, 186, 181, 0.2)",
+  },
+  emailLinkButtonText: {
+    color: "#087D79",
+    fontFamily: "Manrope_700Bold",
+    fontSize: 14,
+  },
+  privacyRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    marginTop: 15,
+  },
+  privacyText: {
+    color: "#64748B",
+    fontFamily: "Manrope_400Regular",
+    fontSize: 11,
   },
 });

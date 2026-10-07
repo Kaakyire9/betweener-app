@@ -7,6 +7,7 @@ import {
   formatConversationPreview,
   resolveChatListPreview,
 } from "@/lib/chat/chat-list-preview";
+import type { ChatExpressionMediaKind } from '@/lib/chat/expressions/chat-gif-provider';
 
 type MessageType = 'text' | 'voice' | 'image' | 'mood_sticker' | 'video' | 'document' | 'location';
 type LocalStatus = 'deleted' | 'queued' | 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
@@ -44,6 +45,7 @@ export type ChatConversationRowItem = {
     timestamp: Date;
     senderId: string;
     type: MessageType;
+    mediaKind?: ChatExpressionMediaKind | null;
     isViewOnce?: boolean;
     isRead: boolean;
     deliveredAt: Date | null;
@@ -113,6 +115,7 @@ const getLastMessagePreview = (lastMessage: ChatConversationRowItem['lastMessage
     getChatMessagePreviewText({
       text: lastMessage.text,
       messageType: lastMessage.type,
+      mediaKind: lastMessage.mediaKind,
       isViewOnce: Boolean(lastMessage.isViewOnce),
       status: lastMessage.localStatus,
     }) || lastMessage.text

@@ -51,3 +51,22 @@ export async function likeLiveMember({
     // Best-effort mirror only; the canonical swipe has already succeeded.
   }
 }
+
+type BlockLiveMemberInput = {
+  blockerUserId: string;
+  blockedUserId: string;
+};
+
+/** Applies the app-wide user block from the Live member surface. */
+export async function blockLiveMember({
+  blockerUserId,
+  blockedUserId,
+}: BlockLiveMemberInput): Promise<void> {
+  if (blockerUserId === blockedUserId) throw new Error('live_member_self_action');
+
+  const { error } = await supabase.from('blocks').insert({
+    blocker_id: blockerUserId,
+    blocked_id: blockedUserId,
+  });
+  if (error && error.code !== '23505') throw error;
+}

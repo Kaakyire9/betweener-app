@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { isMissingIdempotentRpc } from '@/lib/offline/idempotent-rpc';
 import type { PremiumPlan } from '@/lib/subscriptions';
 
 export type BoostType = 'manual' | 'smart';
@@ -97,6 +98,7 @@ export type CreateBoostInput = {
   audienceMode: BoostAudienceMode;
   focusMode: BoostFocusMode;
   metadata?: Record<string, unknown>;
+  clientOperationId?: string | null;
 };
 
 export type CreatedBoost = {
@@ -254,8 +256,8 @@ export async function getRecentBoostAnalytics(): Promise<BoostAnalytics> {
 }
 
 export async function createProfileBoostV2(input: CreateBoostInput): Promise<CreatedBoost> {
-  const { boostType, audienceMode, focusMode, metadata = {} } = input;
-  const { data, error } = await supabase.rpc('rpc_create_profile_boost_v2' as any, {
+  const { boostType, audienceMode, focusMode, metadata = {}, clientOperationId } = input;
+  const rpcPayload = {
     p_boost_type: boostType,
     p_audience_mode: audienceMode,
     p_focus_mode: focusMode,
@@ -263,7 +265,16 @@ export async function createProfileBoostV2(input: CreateBoostInput): Promise<Cre
       ...metadata,
       include_sandbox_preview: typeof __DEV__ !== 'undefined' && __DEV__,
     },
-  });
+  };
+  let { data, error } = clientOperationId
+    ? await supabase.rpc('rpc_create_profile_boost_v3' as any, {
+        p_client_operation_id: clientOperationId,
+        ...rpcPayload,
+      })
+    : await supabase.rpc('rpc_create_profile_boost_v2' as any, rpcPayload);
+  if (clientOperationId && error && isMissingIdempotentRpc(error)) {
+    ({ data, error } = await supabase.rpc('rpc_create_profile_boost_v2' as any, rpcPayload));
+  }
   if (error) throw error;
 
   const payload = (data ?? {}) as Record<string, any>;

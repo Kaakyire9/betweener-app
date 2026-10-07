@@ -3,6 +3,8 @@ import * as Application from 'expo-application';
 import Constants from 'expo-constants';
 import { Linking, Platform } from 'react-native';
 
+import { APP_IDENTITY } from '@/config/app-identity';
+import { APP_STORE_LINKS, isAllowedAppStoreUrl } from '@/config/app-store-links';
 import { supabase } from '@/lib/supabase';
 import { logger } from '@/lib/telemetry/logger';
 import type {
@@ -33,22 +35,12 @@ const VERSION_RULE_CACHE_KEY = 'app_version_rule_cache_v1';
 const SOFT_PROMPT_DISMISSAL_KEY = 'app_version_soft_prompt_dismissal_v1';
 const WHATS_NEW_SEEN_KEY = 'app_version_whats_new_seen_v1';
 
-const DEFAULT_IOS_STORE_URL = 'https://apps.apple.com/app/betweener/id6753134347';
-const DEFAULT_ANDROID_STORE_URL =
-  'https://play.google.com/store/apps/details?id=com.aduboffour.betweener';
-
 const normalizeStoreUrl = (value: unknown, platform: AppVersionRule['platform']): string => {
-  const fallback = platform === 'android' ? DEFAULT_ANDROID_STORE_URL : DEFAULT_IOS_STORE_URL;
+  const fallback = platform === 'android' ? APP_STORE_LINKS.android : APP_STORE_LINKS.ios;
   const candidate = normalizeString(value);
   if (!candidate) return fallback;
 
-  try {
-    const parsed = new URL(candidate);
-    const expectedHost = platform === 'android' ? 'play.google.com' : 'apps.apple.com';
-    return parsed.protocol === 'https:' && parsed.hostname === expectedHost ? parsed.toString() : fallback;
-  } catch {
-    return fallback;
-  }
+  return isAllowedAppStoreUrl(candidate, platform) ? new URL(candidate).toString() : fallback;
 };
 
 const isDev = typeof __DEV__ !== 'undefined' && __DEV__;
@@ -238,25 +230,39 @@ export const shouldBypassForceUpdateForCurrentBuild = (installed: InstalledAppVe
   isDev || installed.environment !== 'production';
 
 export const openAppVersionStoreUrl = async (rule: AppVersionRule): Promise<boolean> => {
-  const nativeStoreUrl =
-    rule.platform === 'ios'
-      ? 'itms-apps://apps.apple.com/app/id6753134347'
-      : 'market://details?id=com.aduboffour.betweener';
+  const nativeStoreUrl = rule.platform === 'ios'
+    ? APP_STORE_LINKS.nativeIos
+    : APP_STORE_LINKS.nativeAndroid;
+
+  if (nativeStoreUrl) {
+    try {
+      await Linking.openURL(nativeStoreUrl);
+      return true;
+    } catch (nativeError) {
+      try {
+        await Linking.openURL(rule.storeUrl);
+        return true;
+      } catch (webError) {
+        logger.error('[app-version] open_store_url_failed', webError, {
+          nativeError,
+          nativeStoreUrl,
+          storeUrl: rule.storeUrl,
+          variant: APP_IDENTITY.variant,
+        });
+        return false;
+      }
+    }
+  }
 
   try {
-    await Linking.openURL(nativeStoreUrl);
+    await Linking.openURL(rule.storeUrl);
     return true;
-  } catch (nativeError) {
-    try {
-      await Linking.openURL(rule.storeUrl);
-      return true;
-    } catch (webError) {
-      logger.error('[app-version] open_store_url_failed', webError, {
-        nativeError,
-        nativeStoreUrl,
-        storeUrl: rule.storeUrl,
-      });
-      return false;
-    }
+  } catch (webError) {
+    logger.error('[app-version] open_store_url_failed', webError, {
+      nativeStoreUrl,
+      storeUrl: rule.storeUrl,
+      variant: APP_IDENTITY.variant,
+    });
+    return false;
   }
 };

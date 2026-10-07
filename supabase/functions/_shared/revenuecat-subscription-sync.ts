@@ -1,22 +1,21 @@
 // @ts-nocheck
 
-const SILVER_ENTITLEMENT = (Deno.env.get("REVENUECAT_SILVER_ENTITLEMENT") || "silver").toLowerCase();
-const GOLD_ENTITLEMENT = (Deno.env.get("REVENUECAT_GOLD_ENTITLEMENT") || "gold").toLowerCase();
+const SILVER_ENTITLEMENT = "silver";
+const GOLD_ENTITLEMENT = "gold";
 const SILVER_PRODUCT_HINT = (Deno.env.get("REVENUECAT_SILVER_PRODUCT") || "silver").toLowerCase();
 const GOLD_PRODUCT_HINT = (Deno.env.get("REVENUECAT_GOLD_PRODUCT") || "gold").toLowerCase();
 const REVENUECAT_API_BASE = (Deno.env.get("REVENUECAT_API_BASE") || "https://api.revenuecat.com").replace(/\/+$/, "");
+const ALLOW_LEGACY_PRODUCT_FALLBACK =
+  String(Deno.env.get("ENVIRONMENT") || "").trim().toLowerCase() === "production";
+import {
+  extractEvent,
+  normalizeString,
+  type RevenueCatEvent,
+  type RevenueCatEnvironmentResolution,
+} from "./revenuecat-event.ts";
 
-export type RevenueCatEvent = {
-  id?: string;
-  type?: string;
-  app_user_id?: string | null;
-  original_app_user_id?: string | null;
-  aliases?: string[] | null;
-  transferred_from?: string[] | null;
-  transferred_to?: string[] | null;
-  environment?: string | null;
-  event_timestamp_ms?: number | null;
-};
+export { extractEvent, normalizeString } from "./revenuecat-event.ts";
+export type { RevenueCatEvent } from "./revenuecat-event.ts";
 
 export type SubscriptionSync = {
   userId: string;
@@ -38,29 +37,6 @@ const PLAN_PRIORITY: Record<SubscriptionSync["plan"], number> = {
 export const isUuid = (value: string | null | undefined) =>
   typeof value === "string" &&
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.trim());
-
-const asArray = (value: unknown) => (Array.isArray(value) ? value.filter((entry) => typeof entry === "string") : []);
-
-export const normalizeString = (value: unknown) => {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed ? trimmed : null;
-};
-
-export const extractEvent = (payload: any): RevenueCatEvent => {
-  const event = payload?.event && typeof payload.event === "object" ? payload.event : payload;
-  return {
-    id: normalizeString(event?.id),
-    type: normalizeString(event?.type),
-    app_user_id: normalizeString(event?.app_user_id),
-    original_app_user_id: normalizeString(event?.original_app_user_id),
-    aliases: asArray(event?.aliases),
-    transferred_from: asArray(event?.transferred_from),
-    transferred_to: asArray(event?.transferred_to),
-    environment: normalizeString(event?.environment),
-    event_timestamp_ms: typeof event?.event_timestamp_ms === "number" ? event.event_timestamp_ms : null,
-  };
-};
 
 export const collectCandidateIds = (event: RevenueCatEvent) => {
   return Array.from(
@@ -108,10 +84,10 @@ export const choosePlanFromSubscriber = (
       const productId = normalizeString(row.product_identifier);
       const normalizedEntitlement = String(entitlementId || "").toLowerCase();
       const inferredPlan =
-        normalizedEntitlement.includes(GOLD_ENTITLEMENT) ? "GOLD" :
-        normalizedEntitlement.includes(SILVER_ENTITLEMENT) ? "SILVER" :
-        productId?.toLowerCase().includes(GOLD_PRODUCT_HINT) ? "GOLD" :
-        productId?.toLowerCase().includes(SILVER_PRODUCT_HINT) ? "SILVER" :
+        normalizedEntitlement === GOLD_ENTITLEMENT ? "GOLD" :
+        normalizedEntitlement === SILVER_ENTITLEMENT ? "SILVER" :
+        ALLOW_LEGACY_PRODUCT_FALLBACK && productId?.toLowerCase().includes(GOLD_PRODUCT_HINT) ? "GOLD" :
+        ALLOW_LEGACY_PRODUCT_FALLBACK && productId?.toLowerCase().includes(SILVER_PRODUCT_HINT) ? "SILVER" :
         "FREE";
 
       return {
@@ -147,8 +123,8 @@ export const choosePlanFromSubscriber = (
       const expiresAt = parseMaybeDate(row.expires_date);
       const purchaseDate = parseMaybeDate(row.purchase_date);
       const inferredPlan =
-        normalizedProduct.includes(GOLD_PRODUCT_HINT) ? "GOLD" :
-        normalizedProduct.includes(SILVER_PRODUCT_HINT) ? "SILVER" :
+        ALLOW_LEGACY_PRODUCT_FALLBACK && normalizedProduct.includes(GOLD_PRODUCT_HINT) ? "GOLD" :
+        ALLOW_LEGACY_PRODUCT_FALLBACK && normalizedProduct.includes(SILVER_PRODUCT_HINT) ? "SILVER" :
         "FREE";
 
       return {
@@ -213,7 +189,7 @@ export const syncUserSubscription = async (
   admin: any,
   revenueCatApiKey: string,
   userId: string,
-  eventEnvironment: string | null,
+  eventEnvironment: RevenueCatEnvironmentResolution,
   options?: { revenueCatAppUserId?: string | null },
 ) => {
   const { data: userData, error: userError } = await admin.auth.admin.getUserById(userId);
@@ -224,7 +200,7 @@ export const syncUserSubscription = async (
   const revenueCatAppUserId = normalizeString(options?.revenueCatAppUserId) || userId;
   const snapshot = await fetchSubscriberSnapshot(revenueCatApiKey, revenueCatAppUserId);
   const subscriber = snapshot?.subscriber ?? null;
-  const resolved = choosePlanFromSubscriber(subscriber, userId, eventEnvironment);
+  const resolved = choosePlanFromSubscriber(subscriber, userId, eventEnvironment.environment);
   const nowIso = new Date().toISOString();
 
   const { error: deactivateError } = await admin
@@ -251,7 +227,10 @@ export const syncUserSubscription = async (
     external_customer_id: resolved.customerId,
     external_product_id: resolved.productId,
     external_entitlement: resolved.entitlementId,
-    external_environment: resolved.environment,
+    // RevenueCat may emit a paired virtual-currency expiration event without either
+    // environment field. Omitting the column prevents that delivery from erasing a
+    // canonical SANDBOX/PRODUCTION value written by the paired provenance-bearing event.
+    ...(resolved.environment ? { external_environment: resolved.environment } : {}),
     updated_at: nowIso,
   };
 
@@ -269,5 +248,6 @@ export const syncUserSubscription = async (
     plan: resolved.plan,
     productId: resolved.productId,
     endsAt: resolved.endsAt,
+    environment: resolved.environment,
   };
 };

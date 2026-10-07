@@ -19,7 +19,11 @@ import {
 } from '@/lib/supabase';
 import { isLikelyNetworkError } from '@/lib/network';
 import { isNetworkConnectionAvailable } from '@/lib/network-state';
-import { enqueueProfileUpdateMutation } from '@/lib/offline/mutation-queue';
+import {
+  clearOfflineMutationQueuesForOwner,
+  enqueueProfileUpdateMutation,
+  subscribeToOfflineMutationEvents,
+} from '@/lib/offline/mutation-queue';
 import { prepareProfileGuardInvocation } from '@/lib/profile-guard/write-payload';
 import { fetchUserPresence, overlayPresence, setCurrentUserPresence } from '@/lib/user-presence';
 import { Session, User } from '@supabase/supabase-js';
@@ -30,7 +34,20 @@ import { addEventListener as addNetInfoListener, fetch as fetchNetInfo } from '@
 import type { Database } from '@/supabase/types/database';
 import { addBreadcrumb, setSentryUser } from '@/lib/telemetry/sentry';
 import { isSupabaseAccessTokenUsable } from '@/lib/auth/session-token';
+import { buildSupabasePublicHeaders } from '@/lib/supabase-public-headers';
 import { createPresenceWriteCoordinator } from '@/lib/presence-write-coordinator';
+import {
+  CURRENT_PRIVACY_VERSION,
+  CURRENT_TERMS_VERSION,
+  recordCurrentLegalAcceptance,
+} from '@/lib/legal/acceptance';
+import { APP_WEB_AUTH_CALLBACK_URL } from '@/config/app-identity';
+import {
+  bindRevenueCatIdentity,
+  blockRevenueCatIdentityAccess,
+  detachRevenueCatIdentity,
+} from '@/lib/subscriptions';
+import { signOutSupabaseSession } from '@/lib/auth/sign-out-session';
 
 type Profile = Database['public']['Tables']['profiles']['Row'];
 type FetchProfileOptions = { force?: boolean };
@@ -89,7 +106,7 @@ type AuthContextType = {
   // Auth Actions
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signUp: (email: string, password: string) => Promise<{ error: Error | null }>;
-  signOut: () => Promise<void>;
+  signOut: (options?: { clearRevenueCatSdkIdentity?: boolean; reason?: string }) => Promise<void>;
   refreshProfile: () => Promise<Profile | null>;
   refreshPhoneState: () => Promise<boolean>;
   retrySessionRecovery: (reason?: string) => Promise<boolean>;
@@ -229,10 +246,7 @@ const diagnoseProfileFetch = async (userId: string) => {
   try {
     const res = await fetch(url, {
       method: "GET",
-      headers: {
-        apikey: anonKey,
-        Authorization: `Bearer ${anonKey}`,
-      },
+      headers: buildSupabasePublicHeaders({ apiKey: anonKey }),
       signal: controller.signal,
     });
     const ms = Date.now() - startedAt;
@@ -268,10 +282,7 @@ const fetchProfileViaRest = async (
     const res = (await Promise.race([
       fetch(url, {
         method: "GET",
-        headers: {
-          apikey: anonKey,
-          Authorization: `Bearer ${accessToken || anonKey}`,
-        },
+        headers: buildSupabasePublicHeaders({ apiKey: anonKey, accessToken }),
         signal: controller.signal,
       }),
       new Promise<never>((_, reject) =>
@@ -322,10 +333,7 @@ const fetchProfilePhoneFlagsViaRest = async (
     const res = (await Promise.race([
       fetch(url, {
         method: "GET",
-        headers: {
-          apikey: anonKey,
-          Authorization: `Bearer ${accessToken || anonKey}`,
-        },
+        headers: buildSupabasePublicHeaders({ apiKey: anonKey, accessToken }),
         signal: controller.signal,
       }),
       new Promise<never>((_, reject) =>
@@ -374,10 +382,7 @@ const fetchVerifiedPhoneViaRest = async (
     const res = (await Promise.race([
       fetch(url, {
         method: "GET",
-        headers: {
-          apikey: anonKey,
-          Authorization: `Bearer ${accessToken || anonKey}`,
-        },
+        headers: buildSupabasePublicHeaders({ apiKey: anonKey, accessToken }),
         signal: controller.signal,
       }),
       new Promise<never>((_, reject) =>
@@ -449,6 +454,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   profileRef.current = profile;
 
   const applySignedOutState = (nextStatus: AuthStatus = 'unauthenticated') => {
+    blockRevenueCatIdentityAccess();
     accessTokenRef.current = null;
     profileCacheRef.current = null;
     profileFetchPromiseRef.current = null;
@@ -774,6 +780,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
         if (initialSession?.user) {
+          await bindRevenueCatIdentity(initialSession.user.id).catch(() => {
+            logAuthRecoveryEvent('revenuecat_identity_bind_failed', {
+              reason: 'initial_session',
+            });
+          });
           // Profile creation is performed by fetchProfile only after a successful
           // server response confirms that the row is genuinely absent.
           let initialProfile = await fetchProfile(initialSession.user.id);
@@ -802,6 +813,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         } else {
           const restored = await restoreAuthSnapshot("initial_session_empty");
           if (!restored) {
+            detachRevenueCatIdentity('auth_bootstrap_unauthenticated');
             setProfile(null);
             setPhoneVerified(false);
           } else if (await probeReachableNetwork()) {
@@ -839,6 +851,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setAuthStatus('authenticated');
           const nextUserId = session.user.id;
           const previousUserId = currentSessionUserIdRef.current;
+          await bindRevenueCatIdentity(nextUserId).catch(() => {
+            logAuthRecoveryEvent('revenuecat_identity_bind_failed', {
+              reason: previousUserId && previousUserId !== nextUserId
+                ? 'account_switch'
+                : `auth_event:${_event}`,
+            });
+          });
           if (previousUserId && previousUserId !== nextUserId) {
             await Promise.all([
               resetChatDbForUserSignOut(previousUserId),
@@ -848,6 +867,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               clearChatAttachmentPreviewsForOwner(previousUserId),
               clearStagedOfflineChatUploadsForOwner(previousUserId),
               ChatUploadTransport.clearForOwner(previousUserId),
+              clearOfflineMutationQueuesForOwner(previousUserId),
             ]).catch((clearError) => {
               console.warn('[chat] clear local data on account switch failed', clearError);
             });
@@ -943,6 +963,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               }
             }
             if (!restored) {
+              detachRevenueCatIdentity('forced_authentication_reset');
               applySignedOutState();
             } else {
               setAuthStatus(networkReachable ? 'reconnecting_session' : 'offline_authenticated');
@@ -1151,6 +1172,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     return null;
   };
+
+  useEffect(() => {
+    if (!user?.id) return;
+    return subscribeToOfflineMutationEvents((event) => {
+      if (
+        event.type === 'failed' &&
+        event.mutation.kind === 'profile_update' &&
+        event.mutation.payload.userId === user.id
+      ) {
+        void fetchProfile(user.id, { force: true });
+      }
+    });
+  }, [user?.id]);
 
   const refreshPhoneState = async (): Promise<boolean> => {
     if (phoneRefreshInFlightRef.current && phoneRefreshPromiseRef.current) {
@@ -1552,6 +1586,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   ]);
 
   useEffect(() => {
+    if (!session?.user?.id || usingPersistedSessionFallback || authRecoveryPending) return;
+    void recordCurrentLegalAcceptance(session.user.id).catch((error) => {
+      console.warn('[legal] acceptance audit unavailable', error);
+    });
+  }, [authRecoveryPending, session?.user?.id, usingPersistedSessionFallback]);
+
+  useEffect(() => {
     const hasStableAccessNow =
       !!session &&
       !!user &&
@@ -1590,12 +1631,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setIsAuthenticating(true);
     try {
       // Use custom scheme for deep linking
-      const redirectUrl = 'https://getbetweener.com/auth/callback';
+      const redirectUrl = APP_WEB_AUTH_CALLBACK_URL;
       const { error } = await supabase.auth.signUp({
         email,
         password,
         options: {
           emailRedirectTo: redirectUrl,
+          data: {
+            terms_version: CURRENT_TERMS_VERSION,
+            privacy_version: CURRENT_PRIVACY_VERSION,
+            legal_acceptance_source: 'password_signup',
+          },
         },
       });
       return { error };
@@ -1604,7 +1650,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const signOut = async () => {
+  const signOut = async (options?: { clearRevenueCatSdkIdentity?: boolean; reason?: string }) => {
     signOutRequestedRef.current = true;
     const signedOutUserId = user?.id ?? null;
     await clearPersistedAuthSnapshot();
@@ -1617,9 +1663,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       void updatePresence(false);
     }
     try {
-      const { error } = await supabase.auth.signOut({ scope: 'local' });
-      if (error) {
-        console.error('Error signing out:', error);
+      const { supabaseError, revenueCatError } = await signOutSupabaseSession({
+        scope: 'local',
+        reason: options?.reason ?? 'explicit_sign_out',
+        clearRevenueCatSdkIdentity: options?.clearRevenueCatSdkIdentity,
+      });
+      if (supabaseError) {
+        console.error('Error signing out:', supabaseError);
+      }
+      if (revenueCatError) {
+        console.warn('RevenueCat sign out unavailable; local access was still cleared.');
       }
     } catch (error) {
       console.error('Error signing out:', error);
@@ -1641,6 +1694,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           clearChatAttachmentPreviewsForOwner(signedOutUserId),
           clearStagedOfflineChatUploadsForOwner(signedOutUserId),
           ChatUploadTransport.clearForOwner(signedOutUserId),
+          clearOfflineMutationQueuesForOwner(signedOutUserId),
         ]);
         clearChatBootCacheForUser(signedOutUserId);
         await clearAppIconBadgeCount();

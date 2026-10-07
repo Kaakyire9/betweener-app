@@ -21,6 +21,7 @@ const participantNotices = readFileSync(
   'features/live/odo/copilot/odo-copilot-participant-notice.ts',
   'utf8',
 );
+const health = readFileSync('supabase/verification/live_odo_phase10d_health.sql', 'utf8');
 
 const functionBody = (source: string, name: string): string => source.match(
   new RegExp(`create or replace function public\\.${name}[\\s\\S]*?\\n\\$\\$;`, 'i'),
@@ -116,6 +117,16 @@ test('the consolidated server clock recovers full Quick Connect without a Host p
   assert.match(maintenance, /rpc_service_reconcile_live_odo_full_quick_connect_v1/i);
   assert.match(maintenance, /next_wake_at <= timezone\('utc', now\(\)\)/i);
   assert.doesNotMatch(maintenance, /http|fetch|net\./i);
+});
+
+test('the health check follows the complete maintenance wrapper chain', () => {
+  assert.match(health, /procedure\.proname like 'run_live_maintenance%'/i);
+  assert.match(health, /string_agg\(pg_get_functiondef\(procedure\.oid\)/i);
+  assert.match(health, /in maintenance_protocol\.definition/i);
+  assert.doesNotMatch(
+    health,
+    /pg_get_functiondef\(to_regprocedure\('public\.run_live_maintenance\(\)'\)\)/i,
+  );
 });
 
 test('public lifecycle presentation is predefined and contains no pair identity', () => {

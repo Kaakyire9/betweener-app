@@ -8,6 +8,7 @@ import {
   cancelIntentRequestOfflineSafe,
   decideIntentRequestOfflineSafe,
 } from '@/lib/intents/offline-actions';
+import { mergeSuggestedMovesWithProfiles } from '@/lib/intents/suggested-moves';
 import { computeFirstReplyHours, computeInterestOverlapRatio } from '@/lib/match/match-score';
 import { Motion } from '@/lib/motion';
 import {
@@ -1494,7 +1495,19 @@ export default function IntentScreen() {
             setSuggestedError(null);
           }
         } else {
-          const next = ((data as SuggestedMove[]) || []);
+          const rawMoves = ((data as SuggestedMove[]) || []);
+          const candidateIds = rawMoves.map((item) => String(item.id)).filter(Boolean);
+          let next = rawMoves;
+          if (candidateIds.length > 0) {
+            const { data: candidateProfiles, error: candidateProfilesError } = await supabase
+              .from('profiles')
+              .select('id,full_name,age,avatar_url,photos,account_state,deleted_at')
+              .in('id', candidateIds);
+            if (!candidateProfilesError && Array.isArray(candidateProfiles)) {
+              next = mergeSuggestedMovesWithProfiles(rawMoves, candidateProfiles as any[]);
+            }
+          }
+          if (cancelled) return;
           setSuggestedMoves(next);
           setSuggestedError(null);
           void writeIntentSuggestedMovesSnapshot(currentProfileId, next);
@@ -2058,12 +2071,12 @@ export default function IntentScreen() {
                   ? 'Pass failed'
                   : 'Cancel failed'
             : queuedAction === 'create'
-              ? 'Queued'
+              ? 'Sending…'
               : queuedAction === 'accept'
-                ? 'Accept queued'
+                ? 'Accepting…'
                 : queuedAction === 'pass'
-                  ? 'Pass queued'
-                  : 'Cancel queued'
+                  ? 'Passing…'
+                  : 'Cancelling…'
           : pendingExpired
           ? 'Expired'
           : item.status === 'pending'
@@ -2376,14 +2389,14 @@ export default function IntentScreen() {
               {hasQueuedAction ? (
                 <View style={styles.matchedHintRow}>
                   <MaterialCommunityIcons
-                    name={queuedFailed ? 'cloud-alert-outline' : 'cloud-sync-outline'}
+                    name={queuedFailed ? 'alert-circle-outline' : 'clock-outline'}
                     size={14}
                     color={queuedFailed ? theme.danger : theme.tint}
                   />
                   <Text style={styles.matchedHintText}>
                     {queuedFailed
-                      ? 'This queued action could not sync. Retry from the offline sync badge when your connection is stable.'
-                      : 'Queued. Betweener will sync this when your connection returns.'}
+                      ? 'This action could not be completed. Please try again when your connection is stable.'
+                      : 'We will finish this automatically when your connection returns.'}
                   </Text>
                 </View>
               ) : null}

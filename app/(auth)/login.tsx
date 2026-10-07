@@ -18,6 +18,7 @@ import {
 } from "@/lib/auth-callback";
 import { setSignupIdentityHints } from "@/lib/signup-tracking";
 import { addBreadcrumb } from "@/lib/telemetry/sentry";
+import { APP_SCHEME } from "@/config/app-identity";
 
 const isAppleAuthCancelled = (error: unknown) => {
   if (!error || typeof error !== "object") return false;
@@ -62,7 +63,7 @@ export default function LoginScreen() {
 
   const getRedirectUrl = () =>
     makeRedirectUri({
-      scheme: "betweenerapp",
+      scheme: APP_SCHEME,
       path: "auth/callback",
     });
 

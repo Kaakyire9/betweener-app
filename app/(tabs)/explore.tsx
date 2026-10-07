@@ -1750,6 +1750,30 @@ export default function CirclesScreen() {
           })}
         </View>
 
+        {homeMode === 'mine' && liveNowGatherings.length > 0 ? (
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <View style={styles.sectionTitleRow}>
+                <View style={styles.liveNowDot} />
+                <Text style={styles.sectionTitle}>Live now</Text>
+              </View>
+              <Text style={styles.liveRoomCount}>
+                {liveNowGatherings.length} {liveNowGatherings.length === 1 ? 'room' : 'rooms'} live
+              </Text>
+            </View>
+            <CirclesLiveGateway
+              sessions={liveNowGatherings}
+              canSchedule={false}
+              viewerProfileId={null}
+              isDark={isDark}
+              onPress={() => router.push({
+                pathname: '/live/[sessionId]',
+                params: { sessionId: liveNowGatherings[0].id },
+              })}
+            />
+          </View>
+        ) : null}
+
         {homeMode === 'mine' ? joinedCirclesSection : null}
 
         {false ? <View style={styles.heroStage}>
@@ -1849,7 +1873,7 @@ export default function CirclesScreen() {
           })}
         </ScrollView> : null}
 
-        {homeMode === 'mine' && hasGatheringPriority ? (
+        {homeMode === 'mine' && hasGatheringPriority && liveNowGatherings.length === 0 ? (
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
               <View style={styles.sectionTitleRow}>
@@ -2945,6 +2969,22 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
     sectionIndexText: { color: palette.tealStrong, fontSize: 13, fontWeight: '900' },
     sectionTitle: { color: palette.text, fontSize: 17, fontWeight: '800' },
     sectionSubhead: { marginTop: 2, color: palette.textMuted, fontSize: 10.5, lineHeight: 14 },
+    liveNowDot: {
+      width: 9,
+      height: 9,
+      borderRadius: 5,
+      backgroundColor: '#F0657A',
+      shadowColor: '#F0657A',
+      shadowOpacity: 0.6,
+      shadowRadius: 8,
+      elevation: 4,
+    },
+    liveRoomCount: {
+      color: palette.textMuted,
+      fontSize: 10,
+      fontWeight: '700',
+      letterSpacing: 0.2,
+    },
     sectionHint: { color: palette.textMuted, fontSize: 12, fontWeight: '600' },
     manageLink: { color: palette.teal, fontSize: 12, fontWeight: '800' },
     creatorStudioCard: {

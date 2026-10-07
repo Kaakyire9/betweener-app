@@ -258,6 +258,24 @@ export function buildNotificationRoute(
     };
   }
 
+  if (
+    (
+      pushType === "live_host_assigned" ||
+      pushType === "live_starting_soon" ||
+      pushType === "live_now"
+    ) && data?.session_id
+  ) {
+    const sessionId = String(data.session_id);
+    return {
+      pathname: pushType === "live_now" ? "/live/[sessionId]" : "/live/event/[sessionId]",
+      params: { sessionId },
+    };
+  }
+
+  if (pushType === "live_host_revoked") {
+    return { pathname: "/live" };
+  }
+
   if (pushType === "live_quick_connect_opportunity" && data?.opportunity_id) {
     return {
       pathname: "/live/opportunity/[opportunityId]",

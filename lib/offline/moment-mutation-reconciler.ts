@@ -1,5 +1,4 @@
 import type { MomentMetadata } from '@/lib/moment-text-style';
-import { buildMomentSyncLabel, collectMomentSyncIssues } from '@/lib/offline/moment-sync-issues';
 import {
   getMomentOfflineMutationSnapshot,
   type FailedOfflineMutation,
@@ -23,16 +22,10 @@ type MomentRow = {
 
 type Counts = Record<string, number>;
 
-export type MomentSyncState = {
-  state: 'pending' | 'failed';
-  label: string;
-};
-
 type ReconciledMomentsResult = {
   moments: MomentRow[];
   reactionCounts: Counts;
   commentCounts: Counts;
-  syncStateByMomentId: Record<string, MomentSyncState>;
 };
 
 const isMomentMutation = (
@@ -59,10 +52,6 @@ const isMomentMutation = (
   mutation.kind === 'moment_comment_update' ||
   mutation.kind === 'moment_comment_delete' ||
   mutation.kind === 'moment_comment_reaction_sync';
-
-const isFailedMutation = (
-  mutation: OfflineMutation | FailedOfflineMutation,
-): mutation is FailedOfflineMutation => 'failedAt' in mutation;
 
 const isMomentCreateMutation = (
   mutation: OfflineMutation | FailedOfflineMutation,
@@ -115,13 +104,12 @@ export async function reconcileMomentRowsWithOfflineMutations(params: {
 }): Promise<ReconciledMomentsResult> {
   const snapshot = await getMomentOfflineMutationSnapshot();
   const pendingMutations = snapshot.pending.filter(isMomentMutation);
-  const failedMutations = snapshot.failed.filter(isMomentMutation);
-  const allMutations = [...failedMutations, ...pendingMutations];
+  // Terminal failures are not optimistic state. Their local snapshots are
+  // reconciled when the mutation is moved to the failed queue.
+  const allMutations = pendingMutations;
 
   const reactionCounts = { ...(params.reactionCounts ?? {}) };
   const commentCounts = { ...(params.commentCounts ?? {}) };
-  const syncStateByMomentId: Record<string, MomentSyncState> = {};
-
   const pendingDeletedMomentIds = new Set(
     pendingMutations
       .filter((mutation) => mutation.kind === 'moment_delete')
@@ -131,12 +119,7 @@ export async function reconcileMomentRowsWithOfflineMutations(params: {
   let nextMoments = params.moments.filter((moment) => !pendingDeletedMomentIds.has(moment.id));
 
   allMutations.forEach((mutation) => {
-    if (mutation.kind === 'moment_delete') {
-      if (isFailedMutation(mutation)) {
-        syncStateByMomentId[mutation.payload.momentId] = { state: 'failed', label: 'Delete failed' };
-      }
-      return;
-    }
+    if (mutation.kind === 'moment_delete') return;
 
     if (mutation.kind === 'moment_reaction_sync') {
       const previousEmoji = mutation.payload.previousEmoji ?? null;
@@ -165,23 +148,13 @@ export async function reconcileMomentRowsWithOfflineMutations(params: {
       return;
     }
 
-    if (mutation.kind === 'moment_comment_update') {
-      return;
-    }
-
-    if (mutation.kind === 'moment_comment_reaction_sync') {
-      return;
-    }
-
-    if (!isMomentCreateMutation(mutation)) {
-      return;
-    }
-
-    if (mutation.payload.userId !== params.currentUserId) {
-      return;
-    }
-
-    if (pendingDeletedMomentIds.has(mutation.payload.tempId)) {
+    if (
+      mutation.kind === 'moment_comment_update' ||
+      mutation.kind === 'moment_comment_reaction_sync' ||
+      !isMomentCreateMutation(mutation) ||
+      mutation.payload.userId !== params.currentUserId ||
+      pendingDeletedMomentIds.has(mutation.payload.tempId)
+    ) {
       return;
     }
 
@@ -189,35 +162,16 @@ export async function reconcileMomentRowsWithOfflineMutations(params: {
     nextMoments = [nextMoment, ...nextMoments.filter((moment) => moment.id !== nextMoment.id)];
     reactionCounts[nextMoment.id] = reactionCounts[nextMoment.id] ?? 0;
     commentCounts[nextMoment.id] = commentCounts[nextMoment.id] ?? 0;
-    syncStateByMomentId[nextMoment.id] = {
-      state: isFailedMutation(mutation) ? 'failed' : 'pending',
-      label: isFailedMutation(mutation) ? 'Sync failed' : 'Syncing…',
-    };
   });
 
   nextMoments = nextMoments.sort(
     (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
   );
 
-  nextMoments.forEach((moment) => {
-    const issues = collectMomentSyncIssues(allMutations, moment.id);
-    const label = buildMomentSyncLabel(issues);
-    if (!label) return;
-    syncStateByMomentId[moment.id] = {
-      state: issues.some((issue) => issue.state === 'failed') ? 'failed' : 'pending',
-      label,
-    };
-  });
-
   pendingDeletedMomentIds.forEach((momentId) => {
     delete reactionCounts[momentId];
     delete commentCounts[momentId];
   });
 
-  return {
-    moments: nextMoments,
-    reactionCounts,
-    commentCounts,
-    syncStateByMomentId,
-  };
+  return { moments: nextMoments, reactionCounts, commentCounts };
 }

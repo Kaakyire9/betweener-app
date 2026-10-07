@@ -3,6 +3,8 @@
 // remain in Edge Function env.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { corsHeaders } from './cors.ts';
+import { getSupabaseAdminKey } from './supabase-admin-key.ts';
+import { getSupabasePublicApiKey } from './supabase-public-key.ts';
 import {
   classifyImageSolicitation,
   mergeContentSafetyAssessments,
@@ -279,6 +281,7 @@ async function classify(text: string): Promise<SemanticClassification> {
 
 type ProfileGuardHandlerOptions = {
   requireOnboarding?: boolean;
+  onboardingContractVersion?: 1 | 2;
 };
 
 export const handleProfileGuardRequest = async (
@@ -293,8 +296,8 @@ export const handleProfileGuardRequest = async (
   if (!bearerMatch) return json({ code: 'AUTH_REQUIRED' }, 401);
 
   const url = Deno.env.get('SUPABASE_URL');
-  const anonKey = Deno.env.get('SUPABASE_ANON_KEY');
-  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  const anonKey = getSupabasePublicApiKey();
+  const serviceKey = getSupabaseAdminKey();
   if (!url || !anonKey || !serviceKey) return json({ code: 'PROFILE_GUARD_UNAVAILABLE' }, 503);
 
   // getUser(accessToken) calls Supabase Auth's verified-user endpoint. The
@@ -317,12 +320,37 @@ export const handleProfileGuardRequest = async (
   }
   const updateRecord = updates as Record<string, unknown>;
   const promptRecord = hasPrompt ? prompt as Record<string, unknown> : null;
+  const hardenedSafetyContract = body?.safety_contract_version === '1.2.0';
+  const onboardingV2 = options.onboardingContractVersion === 2;
+  const interestNames = Array.isArray(body.interest_names)
+    ? body.interest_names.filter((value): value is string => typeof value === 'string')
+    : [];
+  const completionRequestId = typeof body.completion_request_id === 'string'
+    ? body.completion_request_id.trim()
+    : '';
+  if (onboardingV2 && (
+    body.contract_version !== '2.0'
+    || !Array.isArray(body.interest_names)
+    || interestNames.length !== body.interest_names.length
+    || interestNames.length < 3
+    || interestNames.length > 5
+    || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(completionRequestId)
+  )) {
+    return json({
+      code: interestNames.length < 3 || interestNames.length > 5
+        ? 'ONBOARDING_INTERESTS_INVALID'
+        : 'INVALID_ONBOARDING_SUBMISSION',
+      field_names: interestNames.length < 3 || interestNames.length > 5 ? ['interests'] : [],
+    }, 400);
+  }
   if (hasForbiddenTargetIdentifier(body, { ...updateRecord, ...(promptRecord ?? {}) })) {
     return json({ code: 'PROFILE_TARGET_NOT_ALLOWED' }, 403);
   }
   const completionRequested = options.requireOnboarding === true
     || body.complete_onboarding === true;
   let writableUpdates = removeServerManagedProfileFields(updateRecord);
+  const guardedFieldNames = PROFILE_GUARD_PUBLIC_TEXT_FIELDS.filter((field) =>
+    Object.prototype.hasOwnProperty.call(writableUpdates, field));
   const promptAllowed = new Set([
     'prompt_key', 'prompt_title', 'answer', 'prompt_type', 'guess_mode',
     'guess_options', 'hint_text', 'reveal_policy',
@@ -345,12 +373,36 @@ export const handleProfileGuardRequest = async (
   }
 
   const admin = createClient(url, serviceKey, { auth: { persistSession: false } });
+  if (onboardingV2) {
+    const { data: receipt, error: receiptError } = await admin
+      .from('profile_onboarding_completion_receipts_v2')
+      .select('completion_request_id,committed_at')
+      .eq('user_id', authData.user.id)
+      .maybeSingle();
+    if (receiptError) return json({ code: 'PROFILE_GUARD_UNAVAILABLE', retryable: true }, 503);
+    if (receipt) {
+      if (receipt.completion_request_id !== completionRequestId) {
+        return json({ code: 'ONBOARDING_ALREADY_COMPLETED' }, 409);
+      }
+      return json({
+        ok: true,
+        committed: true,
+        already_completed: true,
+        completion_request_id: receipt.completion_request_id,
+        updated_at: receipt.committed_at,
+        semantic_used: false,
+      });
+    }
+  }
   const { data: configRow, error: configError } = await admin
     .from('profile_guard_configuration')
     .select('enabled,semantic_enabled,enforcement_mode,backfill_enabled')
     .eq('id', true)
     .maybeSingle();
   const config = resolveGuardConfiguration(configError ? null : configRow);
+  const semanticConfig = hardenedSafetyContract
+    ? { ...config, semanticEnabled: true }
+    : config;
   const configurationMissing = Boolean(configError || !configRow);
 
   const { data: currentProfile, error: profileError } = await admin
@@ -382,6 +434,12 @@ export const handleProfileGuardRequest = async (
       : [],
   ).filter((url) => !existingMedia.has(url)))];
   if (proposedMedia.length > 10) return json({ code: 'TOO_MANY_PROFILE_IMAGES' }, 400);
+  // Media bytes must pass the dedicated v1.2 finalizer, including deterministic
+  // hash, OCR/contact, and QR checks. This text/profile endpoint may retain or
+  // remove existing references, but it cannot mint a newly approved URL.
+  if (proposedMedia.length > 0) {
+    return json({ code: 'PROFILE_MEDIA_GUARDED_CLIENT_REQUIRED' }, 409);
+  }
 
   const sourceMediaToRemove: Array<{ bucket: string; path: string }> = [];
 
@@ -553,7 +611,7 @@ export const handleProfileGuardRequest = async (
   const semanticInvoked = shouldInvokeSemantic(
     deterministicDecision,
     semanticReviewRequired,
-    config,
+    semanticConfig,
     environmentSemanticEnabled,
   );
   if (semanticInvoked) {
@@ -579,14 +637,19 @@ export const handleProfileGuardRequest = async (
   }
 
   if (semanticInvoked && !scores) {
-    const fallback = semanticFailureFallback(deterministicDecision, ambiguous, config);
+    const fallback = semanticFailureFallback(deterministicDecision, ambiguous, semanticConfig);
     await admin.rpc('rpc_record_profile_guard_semantic_observation', {
       p_user_id: authData.user.id,
       p_decision: fallback,
       p_reason_code: classification.failureReason ?? 'SEMANTIC_PROVIDER_UNAVAILABLE',
     });
     if (fallback === 'REQUIRE_REWRITE') {
-      return json({ ok: false, code: 'PROFILE_CONTENT_NOT_ALLOWED', semantic_used: true });
+      return json({
+        ok: false,
+        code: 'PROFILE_CONTENT_NOT_ALLOWED',
+        semantic_used: true,
+        field_names: guardedFieldNames,
+      });
     }
   }
 
@@ -611,7 +674,12 @@ export const handleProfileGuardRequest = async (
         p_evidence_snapshot: evidenceSnapshot,
       });
       if (error) return json({ code: 'PROFILE_GUARD_UNAVAILABLE' }, 503);
-      return json({ ok: false, code: 'PROFILE_CONTENT_NOT_ALLOWED', semantic_used: true });
+      return json({
+        ok: false,
+        code: 'PROFILE_CONTENT_NOT_ALLOWED',
+        semantic_used: true,
+        field_names: guardedFieldNames,
+      });
     }
     await admin.rpc('rpc_record_profile_guard_semantic_observation', {
       p_user_id: authData.user.id,
@@ -631,12 +699,17 @@ export const handleProfileGuardRequest = async (
   // closed for ambiguous ENFORCE writes.
   if (
     ambiguous
-    && config.enabled
-    && (configurationMissing || (config.semanticEnabled && !environmentSemanticEnabled))
+    && semanticConfig.enabled
+    && (configurationMissing || (semanticConfig.semanticEnabled && !environmentSemanticEnabled))
   ) {
-    const fallback = semanticFailureFallback(deterministicDecision, true, config);
+    const fallback = semanticFailureFallback(deterministicDecision, true, semanticConfig);
     if (fallback === 'REQUIRE_REWRITE') {
-      return json({ ok: false, code: 'PROFILE_CONTENT_NOT_ALLOWED', semantic_used: false });
+      return json({
+        ok: false,
+        code: 'PROFILE_CONTENT_NOT_ALLOWED',
+        semantic_used: false,
+        field_names: guardedFieldNames,
+      });
     }
   }
 
@@ -666,14 +739,30 @@ export const handleProfileGuardRequest = async (
   }
 
   let data: Record<string, unknown> = { ok: true };
-  let error: { message?: string } | null = null;
+  let error: { message?: string; details?: string } | null = null;
   const guardedProfileUpdates = Object.fromEntries(
     PROFILE_GUARD_PUBLIC_TEXT_FIELDS
       .filter((field) => Object.prototype.hasOwnProperty.call(writableUpdates, field))
       .map((field) => [field, writableUpdates[field]]),
   );
   const evidenceSnapshot = { profile_updates: guardedProfileUpdates };
-  if (completionRequested) {
+  if (completionRequested && onboardingV2) {
+    const updateResult = await admin.rpc(
+      'rpc_service_complete_profile_onboarding_v2',
+      {
+        p_user_id: authData.user.id,
+        p_updates: writableUpdates,
+        p_interest_names: interestNames,
+        p_completion_request_id: completionRequestId,
+        p_expected_updated_at: currentProfile.updated_at,
+        // V3 accepts only the immutable guarded-field snapshot. Completion
+        // metadata is persisted by the V2 receipt inside the same transaction.
+        p_evidence_snapshot: evidenceSnapshot,
+      },
+    );
+    data = (updateResult.data as Record<string, unknown>) ?? { ok: false };
+    error = updateResult.error;
+  } else if (completionRequested) {
     const updateResult = await admin.rpc(
       'rpc_service_complete_profile_onboarding_with_guard_v1',
       {
@@ -703,11 +792,33 @@ export const handleProfileGuardRequest = async (
       'PROFILE_WRITE_CONFLICT',
       'ONBOARDING_REQUIREMENTS_NOT_MET',
       'PROFILE_REVIEW_REQUIRED',
+      'ONBOARDING_INTERESTS_INVALID',
+      'ONBOARDING_INTEREST_CATALOG_MISMATCH',
+      'INVALID_ONBOARDING_SUBMISSION',
+      'ONBOARDING_ALREADY_COMPLETED',
     ];
     const safeCode = knownCodes.find((code) => String(error.message).includes(code))
       ?? 'PROFILE_UPDATE_FAILED';
+    let requirementFields: string[] = [];
+    if (safeCode === 'ONBOARDING_REQUIREMENTS_NOT_MET') {
+      try {
+        const parsed = JSON.parse(String(error.details ?? '[]'));
+        if (Array.isArray(parsed)) {
+          requirementFields = parsed.filter((field): field is string =>
+            typeof field === 'string' && /^[a-z][a-z0-9_]{0,63}$/.test(field));
+        }
+      } catch {
+        requirementFields = [];
+      }
+    }
     return json(
-      { code: safeCode },
+      {
+        code: safeCode,
+        field_names: safeCode === 'ONBOARDING_INTERESTS_INVALID'
+          || safeCode === 'ONBOARDING_INTEREST_CATALOG_MISMATCH'
+          ? ['interests']
+          : requirementFields,
+      },
       safeCode === 'PROFILE_UPDATE_FAILED' ? 500 : safeCode === 'PROFILE_WRITE_CONFLICT' ? 409 : 400,
     );
   }

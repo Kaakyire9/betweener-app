@@ -1,0 +1,18 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appID": "A964DV394M.com.aduboffour.betweener.staging",
+        "paths": [
+          "/auth/callback*",
+          "/auth/*",
+          "/callback",
+          "/callback/*",
+          "/circles/*",
+          "/live/*"
+        ]
+      }
+    ]
+  }
+}

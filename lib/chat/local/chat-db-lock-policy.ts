@@ -30,3 +30,8 @@ export const getChatDbLockRetryDelays = (
       return [];
   }
 };
+
+export const shouldUseSynchronousChatTransaction = (
+  platform: string,
+  preferSynchronous?: boolean,
+) => platform !== 'ios' || (preferSynchronous ?? true);

@@ -151,3 +151,24 @@ test('visual media hydration excludes voice paths, deleted media, and duplicates
     ['sender/peer/photo.jpg', 'sender/peer/video.mp4'],
   );
 });
+
+test('visual media hydration includes safe replied-photo thumbnails but excludes view-once replies', () => {
+  const repliedPhoto = mediaMessage('image', 'sender/peer/replied-photo.jpg');
+  const messageWithReply = {
+    ...mediaMessage('text', ''),
+    replyTo: repliedPhoto,
+  };
+  const messageWithPrivateReply = {
+    ...mediaMessage('text', ''),
+    id: 'private-reply-message',
+    replyTo: {
+      ...mediaMessage('image', 'sender/peer/view-once.jpg'),
+      isViewOnce: true,
+    },
+  };
+
+  assert.deepEqual(
+    getChatVisualMediaPaths([messageWithReply, messageWithPrivateReply]),
+    ['sender/peer/replied-photo.jpg'],
+  );
+});

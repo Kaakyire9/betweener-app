@@ -18,7 +18,6 @@ import { VerificationNotifications } from "@/components/VerificationNotification
 import ProfileVideoModal from "@/components/ProfileVideoModal";
 import { Colors } from "@/constants/theme";
 import { useColorScheme, useColorSchemePreference } from "@/hooks/use-color-scheme";
-import { usePremiumOfflineQueueStatus } from "@/hooks/usePremiumOfflineQueueStatus";
 import { useVerificationStatus } from "@/hooks/use-verification-status";
 import { useAuth } from "@/lib/auth-context";
 import { logProfileGiftEvent } from "@/lib/gifts/events";
@@ -43,7 +42,6 @@ import {
 import {
   enqueueProfileGiftRevealMutation,
   enqueueNotificationPrefsUpdateMutation,
-  getOfflineMutationQueueSnapshot,
   getPendingProfileMediaSyncMutation,
   subscribeToOfflineMutationEvents,
 } from "@/lib/offline/mutation-queue";
@@ -54,9 +52,13 @@ import {
   normalizeGalleryPhotoList,
   normalizeProfilePhotoUri,
 } from "@/lib/profile/media";
-import { resolveProfileMediaDraft } from "@/lib/profile/media-studio";
+import { moveGalleryMedia, resolveProfileMediaDraft } from "@/lib/profile/media-studio";
 import { getPresenceDisplay } from "@/lib/presence";
 import { insertGuardedProfilePrompt } from "@/lib/profile-guard/prompt-write";
+import {
+  PUBLIC_PROFILE_GUARD_MESSAGE,
+  validatePublicProfilePrompt,
+} from "@/lib/profile-guard/public-profile-fields";
 import {
   DISTANCE_UNIT_OPTIONS,
   GIFT_SYSTEM_ENTITY_TYPES,
@@ -103,6 +105,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as AppleAuthentication from "expo-apple-authentication";
 import { makeRedirectUri } from "expo-auth-session";
+import { APP_SCHEME, APP_WEB_AUTH_CALLBACK_URL } from "@/config/app-identity";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -177,7 +180,7 @@ type LinkedIdentity = {
 
 export default function ProfileScreen() {
   WebBrowser.maybeCompleteAuthSession();
-  const { signOut, user, profile, refreshProfile } = useAuth();
+  const { signOut, user, profile, refreshProfile, updateProfile } = useAuth();
   const colorScheme = useColorScheme();
   const [isScreenFocused, setIsScreenFocused] = useState(true);
   const theme = Colors[colorScheme ?? 'light'];
@@ -186,7 +189,6 @@ export default function ProfileScreen() {
   const { status: verificationStatus, refreshStatus } = useVerificationStatus(profile?.user_id);
   const { preference: themePreference, setPreference: setThemePreference } = useColorSchemePreference();
   const { currentPlan, currentPlanEndsAt } = usePremiumState();
-  const premiumQueue = usePremiumOfflineQueueStatus();
   
   const [selectedPrompts, setSelectedPrompts] = useState<Record<string, number>>({
     two_truths_lie: 0,
@@ -279,6 +281,7 @@ export default function ProfileScreen() {
   const [userInterests, setUserInterests] = useState<string[]>([]);
   const [loadingInterests, setLoadingInterests] = useState(false);
   const [userPhotos, setUserPhotos] = useState<string[]>([]);
+  const [galleryReorderMode, setGalleryReorderMode] = useState(false);
   const [displayAvatarUrl, setDisplayAvatarUrl] = useState<string | null>(null);
   const [displayHeroImageUrl, setDisplayHeroImageUrl] = useState<string | null>(null);
   const [displayProfileVideo, setDisplayProfileVideo] = useState<string | null>(null);
@@ -345,8 +348,6 @@ export default function ProfileScreen() {
   const [receivedGifts, setReceivedGifts] = useState<ReceivedGiftItem[]>([]);
   const [selectedReceivedGift, setSelectedReceivedGift] = useState<ReceivedGiftItem | null>(null);
   const [matchQuality, setMatchQuality] = useState<number | null>(null);
-  const [profileSyncPending, setProfileSyncPending] = useState(false);
-  const [profileSyncFailed, setProfileSyncFailed] = useState(false);
   const profileStatsRef = useRef<MeProfileStatsSnapshot>({
     likesCount: 0,
     matchesCount: 0,
@@ -589,32 +590,6 @@ export default function ProfileScreen() {
     }
   };
 
-  const refreshProfileSyncState = useCallback(async () => {
-    const snapshot = await getOfflineMutationQueueSnapshot();
-    const isProfileMutation = (item: { kind: string }) =>
-      item.kind === 'profile_update' ||
-      item.kind === 'profile_interests_update' ||
-      item.kind === 'profile_media_sync';
-    setProfileSyncPending(snapshot.pending.some(isProfileMutation));
-    setProfileSyncFailed(snapshot.failed.some(isProfileMutation));
-  }, []);
-
-  useEffect(() => {
-    void refreshProfileSyncState();
-    return subscribeToOfflineMutationEvents((event) => {
-      if (
-        event.mutation.kind === 'profile_update' ||
-        event.mutation.kind === 'profile_interests_update' ||
-        event.mutation.kind === 'profile_media_sync'
-      ) {
-        void refreshProfileSyncState();
-        if (event.type === 'completed') {
-          void refreshProfile();
-        }
-      }
-    });
-  }, [refreshProfile, refreshProfileSyncState]);
-
   const applyPromptAnswers = useCallback(
     (rows: ProfilePromptAnswer[]) => {
       setPromptAnswers(rows);
@@ -648,6 +623,46 @@ export default function ProfileScreen() {
     },
     [cacheProfileId],
   );
+
+  useEffect(() => {
+    if (!user?.id) return;
+    return subscribeToOfflineMutationEvents((event) => {
+      if (
+        event.type !== 'failed' ||
+        event.mutation.kind !== 'profile_media_sync' ||
+        event.mutation.payload.userId !== user.id
+      ) {
+        return;
+      }
+
+      const stableAvatarUrl = normalizeProfilePhotoUri(profile?.avatar_url) || null;
+      const stableHeroImageUrl =
+        normalizeProfilePhotoUri((profile as any)?.hero_image_url) || null;
+      const stablePhotos = normalizeGalleryPhotoList(
+        (profile as any)?.photos || [],
+        stableAvatarUrl,
+      );
+      const stableProfileVideo = String(
+        (profile as any)?.profile_video || (profile as any)?.profileVideo || '',
+      ).trim() || null;
+
+      setDisplayAvatarUrl(stableAvatarUrl);
+      setDisplayHeroImageUrl(stableHeroImageUrl);
+      setDisplayProfileVideo(stableProfileVideo);
+      setUserPhotos(stablePhotos);
+      writeMeSnapshot({
+        avatarUrl: stableAvatarUrl,
+        heroImageUrl: stableHeroImageUrl,
+        photos: stablePhotos,
+        profileVideo: stableProfileVideo,
+      });
+      void refreshProfile();
+      Alert.alert(
+        'Profile media not updated',
+        'We restored your last saved profile. Please choose the photos again when your connection is stable.',
+      );
+    });
+  }, [profile, refreshProfile, user?.id, writeMeSnapshot]);
 
   const persistAccountSnapshot = useCallback(
     (patch: Partial<MeAccountSnapshot>) => {
@@ -1199,54 +1214,86 @@ export default function ProfileScreen() {
     }
   }, [profile?.id]);
 
-  // Remove photo function
-  const removePhoto = async (index: number) => {
-    if (!user?.id || index < 0 || index >= userPhotos.length) return;
-    
+  // Remove photo through the shared profile write path so My Profile, Edit,
+  // auth context, and the durable snapshot all observe the same media state.
+  const removePhoto = useCallback(async (index: number) => {
+    if (!user?.id || !profile?.id || index < 0 || index >= userPhotos.length) return;
+
+    const previousPhotos = userPhotos;
+    const previousHeroImageUrl =
+      normalizeProfilePhotoUri(displayHeroImageUrl)
+      || normalizeProfilePhotoUri((profile as any)?.hero_image_url)
+      || null;
+    const photoToRemove = previousPhotos[index];
+    const updatedPhotos = previousPhotos.filter((_, photoIndex) => photoIndex !== index);
+    const removedHero = normalizeProfilePhotoUri(photoToRemove) === previousHeroImageUrl;
+    const nextHeroImageUrl = removedHero
+      ? normalizeProfilePhotoUri(updatedPhotos[0])
+        || normalizeProfilePhotoUri(displayAvatarUrl)
+        || normalizeProfilePhotoUri(profile.avatar_url)
+        || null
+      : previousHeroImageUrl;
+
+    setUserPhotos(updatedPhotos);
+    setDisplayHeroImageUrl(nextHeroImageUrl);
+    writeMeSnapshot({ photos: updatedPhotos, heroImageUrl: nextHeroImageUrl });
+
     try {
-      const photoToRemove = userPhotos[index];
-      
-      // Remove from local state immediately for better UX
-      const updatedPhotos = userPhotos.filter((_, i) => i !== index);
-      setUserPhotos(updatedPhotos);
-      
-      // If photo is from storage, remove from storage
-      if (photoToRemove.includes('profile-photos')) {
-        // Extract filename from URL
-        const urlParts = photoToRemove.split('/');
-        const fileName = urlParts[urlParts.length - 1];
-        
-        const { error } = await supabase.storage
-          .from('profile-photos')
-          .remove([`${user.id}/${fileName}`]);
-          
-        if (error) {
-          console.error('Error removing photo from storage:', error);
-          // Revert local state on error
-          setUserPhotos(userPhotos);
-          return;
+      const result = await updateProfile({
+        photos: updatedPhotos,
+        hero_image_url: nextHeroImageUrl,
+      });
+      if (result.error) throw result.error;
+
+      // Legacy media can be cleaned up after the profile no longer references
+      // it. Moderated immutable media is retained by the server lifecycle.
+      if (!result.queued && photoToRemove.includes('profile-photos')) {
+        const fileName = photoToRemove.split('/').pop();
+        if (fileName) {
+          const { error: storageError } = await supabase.storage
+            .from('profile-photos')
+            .remove([`${user.id}/${fileName}`]);
+          if (storageError) console.warn('Legacy profile photo cleanup failed:', storageError);
         }
       }
-      
-      // Update profile.photos field if it exists
-      if ((profile as any)?.photos) {
-        const { error } = await supabase
-          .from('profiles')
-          .update({ photos: updatedPhotos })
-          .eq('id', profile.id);
-          
-        if (error) {
-          console.error('Error updating profile photos:', error);
-        }
-      }
-      
-      console.log('Photo removed successfully');
     } catch (error) {
       console.error('Error removing photo:', error);
-      // Revert local state on error
-      loadUserPhotos();
+      setUserPhotos(previousPhotos);
+      setDisplayHeroImageUrl(previousHeroImageUrl);
+      writeMeSnapshot({ photos: previousPhotos, heroImageUrl: previousHeroImageUrl });
+      Alert.alert('Photo not removed', 'Your gallery was restored. Please try again.');
     }
-  };
+  }, [
+    displayAvatarUrl,
+    displayHeroImageUrl,
+    profile,
+    updateProfile,
+    user?.id,
+    userPhotos,
+    writeMeSnapshot,
+  ]);
+
+  const movePhoto = useCallback(async (fromIndex: number, toIndex: number) => {
+    if (!profile?.id || fromIndex === toIndex) return;
+    const previousPhotos = userPhotos;
+    const updatedPhotos = moveGalleryMedia(previousPhotos, fromIndex, toIndex);
+    if (updatedPhotos === previousPhotos) return;
+
+    setUserPhotos(updatedPhotos);
+    writeMeSnapshot({ photos: updatedPhotos });
+    const { error } = await supabase
+      .from('profiles')
+      .update({ photos: updatedPhotos })
+      .eq('id', profile.id);
+
+    if (error) {
+      setUserPhotos(previousPhotos);
+      writeMeSnapshot({ photos: previousPhotos });
+      Alert.alert('Order not saved', 'Your previous gallery order has been restored. Please try again.');
+      return;
+    }
+    await refreshProfile();
+  }, [profile?.id, refreshProfile, userPhotos, writeMeSnapshot]);
   
   // Animation values
   const scrollY = useRef(new Animated.Value(0)).current;
@@ -1464,6 +1511,10 @@ export default function ProfileScreen() {
     const title = customPromptTitle.trim();
     const answer = customPromptAnswer.trim();
     if (!title || !answer) return;
+    if (!validatePublicProfilePrompt({ title, answer }).allowed) {
+      Alert.alert('Keep your profile personal', PUBLIC_PROFILE_GUARD_MESSAGE);
+      return;
+    }
     setCustomPromptSaving(true);
     const { error } = await insertGuardedProfilePrompt({
       prompt_key: 'custom',
@@ -1473,6 +1524,12 @@ export default function ProfileScreen() {
     setCustomPromptSaving(false);
     if (error) {
       console.log('[profile] custom prompt insert error', error);
+      Alert.alert(
+        'Prompt not saved',
+        (error as any)?.code === 'PROFILE_CONTENT_NOT_ALLOWED'
+          ? PUBLIC_PROFILE_GUARD_MESSAGE
+          : 'We could not save this prompt. Please try again.',
+      );
       return;
     }
     setCustomPromptTitle('');
@@ -1501,24 +1558,22 @@ export default function ProfileScreen() {
 
     if (guessPromptMode === 'multiple_choice' && (!options || options.length < 2)) return;
 
+    if (!validatePublicProfilePrompt({
+      title,
+      answer,
+      hint: guessPromptHint.trim() || null,
+      options,
+    }).allowed) {
+      Alert.alert('Keep your profile personal', PUBLIC_PROFILE_GUARD_MESSAGE);
+      return;
+    }
+
     setGuessPromptSaving(true);
     try {
       const existingGuessIds = promptAnswers
         .filter((row) => row.promptType === 'guess')
         .map((row) => row.id)
         .filter(Boolean);
-
-      if (existingGuessIds.length > 0) {
-        const { error: deleteError } = await supabase
-          .from('profile_prompts')
-          .delete()
-          .eq('profile_id', profile.id)
-          .in('id', existingGuessIds);
-        if (deleteError) {
-          console.log('[profile] guess prompt cleanup error', deleteError);
-          return;
-        }
-      }
 
       const { error } = await insertGuardedProfilePrompt({
         prompt_key: 'guess',
@@ -1533,7 +1588,26 @@ export default function ProfileScreen() {
 
       if (error) {
         console.log('[profile] guess prompt insert error', error);
+        Alert.alert(
+          'Prompt not saved',
+          (error as any)?.code === 'PROFILE_CONTENT_NOT_ALLOWED'
+            ? PUBLIC_PROFILE_GUARD_MESSAGE
+            : 'We could not save this prompt. Please try again.',
+        );
         return;
+      }
+
+      // Publish the approved replacement before removing the prior guess. A
+      // provider outage or server rejection must never erase valid content.
+      if (existingGuessIds.length > 0) {
+        const { error: deleteError } = await supabase
+          .from('profile_prompts')
+          .delete()
+          .eq('profile_id', profile.id)
+          .in('id', existingGuessIds);
+        if (deleteError) {
+          console.log('[profile] guess prompt cleanup error', deleteError);
+        }
       }
 
       resetGuessPromptComposer();
@@ -1722,7 +1796,7 @@ export default function ProfileScreen() {
       setEmailSaving(true);
       const { error } = await supabase.auth.updateUser(
         { email: trimmed },
-        { emailRedirectTo: 'https://getbetweener.com/auth/callback' },
+        { emailRedirectTo: APP_WEB_AUTH_CALLBACK_URL },
       );
       if (error) {
         setEmailError(error.message);
@@ -1794,7 +1868,7 @@ export default function ProfileScreen() {
   const getOAuthRedirectUrl = useCallback(
     () =>
       makeRedirectUri({
-        scheme: 'betweenerapp',
+        scheme: APP_SCHEME,
         path: 'auth/callback',
       }),
     [],
@@ -2447,7 +2521,10 @@ export default function ProfileScreen() {
       } catch {
         // ignore haptics failures
       }
-      await signOut();
+      await signOut({
+        clearRevenueCatSdkIdentity: true,
+        reason: 'deleted_account_cleanup',
+      });
       router.replace('/(auth)/welcome');
       Alert.alert(
         'Account deleted',
@@ -2579,6 +2656,17 @@ export default function ProfileScreen() {
     (displayProfileVideoSource && isLocalMediaUri(displayProfileVideoSource))
       ? displayProfileVideoSource
       : rawPersistedProfileVideoSource || displayProfileVideoSource || '';
+  const profileEditMediaSnapshot = useMemo(() => ({
+    avatarUrl: resolvedMediaDraft.avatarUrl || null,
+    heroImageUrl: resolvedMediaDraft.heroImageUrl || null,
+    photos: userPhotos,
+    profileVideo: resolvedMediaDraft.profileVideoUrl || null,
+  }), [
+    resolvedMediaDraft.avatarUrl,
+    resolvedMediaDraft.heroImageUrl,
+    resolvedMediaDraft.profileVideoUrl,
+    userPhotos,
+  ]);
   const heroVideoThumbnail =
     (profile as any)?.profile_video_thumbnail
     || (profile as any)?.profileVideoThumbnail
@@ -3481,11 +3569,7 @@ export default function ProfileScreen() {
             theme={theme}
             isDark={isDark}
             premiumExpiryReminder={premiumExpiryReminder}
-            premiumQueue={premiumQueue}
-            profileSyncPending={profileSyncPending}
-            profileSyncFailed={profileSyncFailed}
             onReviewPremium={() => router.push('/premium-plans')}
-            onOpenSyncActivity={() => router.push('/sync-activity')}
           />
 
           <MeReceivedGiftsCard
@@ -3628,13 +3712,29 @@ export default function ProfileScreen() {
             <Text style={[styles.sectionTitle, { color: theme.text }]}>
               Gallery
             </Text>
-            <TouchableOpacity
-              style={styles.addButton}
-              onPress={() => setShowEditModal(true)}
-            >
-              <MaterialCommunityIcons name="plus" size={20} color={Colors.light.tint} />
-              <Text style={styles.addButtonText}>Add</Text>
-            </TouchableOpacity>
+            <View style={styles.galleryHeaderActions}>
+              {userPhotos.length > 1 ? (
+                <TouchableOpacity
+                  style={styles.addButton}
+                  onPress={() => setGalleryReorderMode((current) => !current)}
+                  accessibilityLabel={galleryReorderMode ? 'Finish arranging gallery' : 'Arrange gallery'}
+                >
+                  <MaterialCommunityIcons
+                    name={galleryReorderMode ? 'check' : 'swap-horizontal'}
+                    size={18}
+                    color={Colors.light.tint}
+                  />
+                  <Text style={styles.addButtonText}>{galleryReorderMode ? 'Done' : 'Arrange'}</Text>
+                </TouchableOpacity>
+              ) : null}
+              <TouchableOpacity
+                style={styles.addButton}
+                onPress={() => setShowEditModal(true)}
+              >
+                <MaterialCommunityIcons name="plus" size={20} color={Colors.light.tint} />
+                <Text style={styles.addButtonText}>Add</Text>
+              </TouchableOpacity>
+            </View>
           </View>
           
           {hasGalleryMedia ? (
@@ -3646,6 +3746,8 @@ export default function ProfileScreen() {
               canEdit
               onAddPhoto={() => setShowEditModal(true)}
               onRemovePhoto={removePhoto}
+              onMovePhoto={(fromIndex, toIndex) => void movePhoto(fromIndex, toIndex)}
+              reorderEnabled={galleryReorderMode}
             />
           ) : (
             <View
@@ -4241,11 +4343,12 @@ export default function ProfileScreen() {
         <ProfileEditModal
           visible={showEditModal}
           onClose={() => setShowEditModal(false)}
+          mediaSnapshot={profileEditMediaSnapshot}
           onOpenVerification={() => {
             setShowEditModal(false);
             setIsVerificationModalVisible(true);
           }}
-          onSave={async (updatedProfile) => {
+          onSave={(updatedProfile) => {
             if (Array.isArray(updatedProfile?.__interests)) {
               setUserInterests(updatedProfile.__interests);
               writeMeSnapshot({ interests: updatedProfile.__interests });
@@ -4283,23 +4386,13 @@ export default function ProfileScreen() {
               });
             }
             if (updatedProfile?.__offlineQueued) {
-              setProfileSyncPending(true);
-              setProfileSyncFailed(false);
               setShowEditModal(false);
               return;
             }
-            // Force refresh the profile to ensure UI is updated
-            setRefreshing(true);
-            try {
-              await refreshProfile(); // This will update the profile state
-              await loadUserPhotos(); // Reload photos after profile update
-              console.log('Profile refreshed after save');
-            } catch (error) {
-              console.error('Error refreshing profile:', error);
-            } finally {
-              setRefreshing(false);
-              setShowEditModal(false);
-            }
+            // The editor already completed the server write. Keep the
+            // optimistic media above instead of reloading from this render's
+            // older profile closure; the auth refresh will confirm it.
+            setShowEditModal(false);
           }}
         />
       )}
@@ -4874,6 +4967,11 @@ const styles = StyleSheet.create({
   },
   
   // Buttons
+  galleryHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   addButton: {
     flexDirection: 'row',
     alignItems: 'center',

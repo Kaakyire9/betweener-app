@@ -1,6 +1,11 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
+set local role postgres;
+set search_path = public, extensions, pg_catalog;
+select pg_advisory_xact_lock(
+  hashtextextended('pgtap_live_maintenance_behavior', 0)
+);
 select no_plan();
 
 select has_table('public','live_odo_show_sessions','Show Director state exists');
@@ -55,13 +60,10 @@ select ok(not has_function_privilege('authenticated',
 select ok(not has_function_privilege('authenticated',
   'public.rpc_service_get_live_music_playback_v1(uuid,uuid)','EXECUTE'),
   'clients cannot choose catalogue paths through the service descriptor');
-select ok(position('rpc_service_reconcile_live_odo_show_v1'
-  in pg_get_functiondef('public.run_live_maintenance()'::regprocedure)) > 0,
-  'server maintenance can recover a due Show Director wake');
-
 insert into auth.users(id,email) values
   ('ea000000-0000-4000-8000-000000000001','show-host@example.test'),
   ('ea000000-0000-4000-8000-000000000002','show-member@example.test');
+select set_config('request.jwt.claim.role', 'service_role', true);
 select set_config('app.profile_guard_write','on',true);
 insert into public.profiles(
   id,user_id,full_name,age,gender,profile_completed,verification_level,
@@ -167,6 +169,16 @@ where session_id = 'ec000000-0000-4000-8000-000000000001';
 
 select set_config('request.jwt.claim.role','service_role',true);
 select set_config('request.jwt.claim.sub','',true);
+update public.live_odo_show_sessions
+set next_wake_at = timezone('utc',now()) - interval '1 second'
+where session_id = 'ec000000-0000-4000-8000-000000000001';
+create temporary table show_maintenance as
+select public.run_live_maintenance() payload;
+select is((select payload #>> '{showDirector,status}' from show_maintenance),'ok',
+  'server maintenance recovers a due Show Director wake');
+select cmp_ok((select (payload #>> '{showDirector,processed}')::integer
+  from show_maintenance),'>=',1,
+  'the maintenance clock executes at least one due Show Director wake');
 create temporary table show_reconcile as
 select public.rpc_service_reconcile_live_odo_show_v1(
   'ec000000-0000-4000-8000-000000000001',

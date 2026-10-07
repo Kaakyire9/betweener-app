@@ -25,6 +25,7 @@ const musicEdge = readFileSync('supabase/functions/live-music-playback/index.ts'
 const showDeno = readFileSync('supabase/functions/live-odo-show-director/deno.json', 'utf8');
 const musicDeno = readFileSync('supabase/functions/live-music-playback/deno.json', 'utf8');
 const route = readFileSync('app/live/[sessionId].tsx', 'utf8');
+const health = readFileSync('supabase/verification/live_odo_phase10e_health.sql', 'utf8');
 
 const functionBody = (source: string, name: string): string => source.match(
   new RegExp(`create or replace function public\\.${name}[\\s\\S]*?\\n\\$\\$;`, 'i'),
@@ -81,6 +82,16 @@ test('one shared Odo lease and server maintenance recover Show Director', () => 
   assert.match(maintenance, /control_lease_expires_at <= timezone\('utc', now\(\)\)/i);
 });
 
+test('the health check follows the complete maintenance wrapper chain', () => {
+  assert.match(health, /procedure\.proname like 'run_live_maintenance%'/i);
+  assert.match(health, /string_agg\(pg_get_functiondef\(procedure\.oid\)/i);
+  assert.match(health, /in maintenance_protocol\.definition/i);
+  assert.doesNotMatch(
+    health,
+    /pg_get_functiondef\('public\.run_live_maintenance\(\)'::regprocedure\)/i,
+  );
+});
+
 test('Edge requests cannot inject a scene, person, track, prompt or action', () => {
   assert.match(showDeno, /npm:@supabase\/supabase-js@2\.110\.7/i);
   assert.match(musicDeno, /npm:@supabase\/supabase-js@2\.110\.7/i);
@@ -94,12 +105,12 @@ test('Edge requests cannot inject a scene, person, track, prompt or action', () 
   assert.doesNotMatch(musicEdge, /body\.(?:track|path|bucket|url|uri)/i);
 });
 
-test('private experiences and publisher devices fail closed for music', () => {
+test('private experiences and every phone fail closed for local music playback', () => {
   const playback = functionBody(musicPolicyHardening, 'rpc_service_get_live_music_playback_v1');
   assert.match(playback, /private_experience_music_forbidden/i);
   assert.match(playback, /publisher_device_mix_unsupported/i);
   assert.match(playback, /live_private_sparks/i);
-  assert.match(route, /allowMusicPlayback: isLive && !canPublish/i);
+  assert.match(route, /allowMusicPlayback: false/i);
 });
 
 test('music kill switches are rechecked and Host overrides suppress Odo', () => {

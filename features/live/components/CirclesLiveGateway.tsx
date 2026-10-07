@@ -1,7 +1,7 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import { CalendarClock, ChevronRight, Radio, Sparkles } from 'lucide-react-native';
-import { memo, useMemo } from 'react';
-import { ImageBackground, Pressable, StyleSheet, Text, View } from 'react-native';
+import { memo, useEffect, useMemo, useRef } from 'react';
+import { AccessibilityInfo, Animated, Easing, ImageBackground, Pressable, StyleSheet, Text, View } from 'react-native';
 import { getLiveEventMediaUrl, partitionLiveLobbySessions, type LiveSessionSummary } from '../application/index.ts';
 import { Colors } from '@/constants/theme.ts';
 
@@ -38,11 +38,49 @@ export const CirclesLiveGateway = memo(function CirclesLiveGateway({
   const featuredSession = featuredLive ?? featuredUpcoming;
   const posterUrl = getLiveEventMediaUrl(featuredSession?.posterPath);
   const isHostGateway = hasHostLobby;
+  const broadcastPulse = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    let mounted = true;
+    let pulseLoop: Animated.CompositeAnimation | null = null;
+    if (!featuredLive) {
+      broadcastPulse.setValue(0);
+      return;
+    }
+    void AccessibilityInfo.isReduceMotionEnabled().then((reduceMotion) => {
+      if (!mounted) return;
+      if (reduceMotion) {
+        broadcastPulse.setValue(0.55);
+        return;
+      }
+      pulseLoop = Animated.loop(
+        Animated.sequence([
+          Animated.timing(broadcastPulse, {
+            toValue: 1,
+            duration: 1300,
+            easing: Easing.out(Easing.quad),
+            useNativeDriver: true,
+          }),
+          Animated.timing(broadcastPulse, {
+            toValue: 0,
+            duration: 1500,
+            easing: Easing.inOut(Easing.quad),
+            useNativeDriver: true,
+          }),
+        ]),
+      );
+      pulseLoop.start();
+    });
+    return () => {
+      mounted = false;
+      pulseLoop?.stop();
+    };
+  }, [broadcastPulse, featuredLive]);
 
   const title = isHostGateway
     ? owned.length > 0 ? 'Your rooms, beautifully hosted.' : 'Create your first Live room.'
     : featuredLive
-      ? `${featuredLive.title} is live now.`
+      ? featuredLive.title
       : featuredUpcoming
         ? `Next: ${featuredUpcoming.title}`
         : 'Hosted rooms with intention.';
@@ -66,14 +104,23 @@ export const CirclesLiveGateway = memo(function CirclesLiveGateway({
       <View pointerEvents="none" style={[styles.purpleOrb, { backgroundColor: isDark ? '#9B7CC81F' : '#7D5BA614' }]} />
       <View style={styles.topRow}>
         <View style={styles.markStage}>
-          <View style={[styles.markRing, { borderColor: isDark ? 'rgba(99,225,216,0.26)' : 'rgba(12,158,152,0.18)' }]} />
+          <Animated.View
+            style={[
+              styles.markRing,
+              { borderColor: isDark ? 'rgba(99,225,216,0.32)' : 'rgba(12,158,152,0.24)' },
+              featuredLive && {
+                opacity: broadcastPulse.interpolate({ inputRange: [0, 1], outputRange: [0.42, 0.08] }),
+                transform: [{ scale: broadcastPulse.interpolate({ inputRange: [0, 1], outputRange: [0.88, 1.2] }) }],
+              },
+            ]}
+          />
           <View style={[styles.mark, { backgroundColor: isDark ? '#20C4BD' : '#0C9E98' }]}>
-            {isHostGateway ? <Sparkles size={21} color="#071B19" /> : <Radio size={21} color="#071B19" />}
+            {isHostGateway ? <Sparkles size={19} color="#071B19" /> : <Radio size={19} color="#071B19" />}
           </View>
         </View>
         <View style={styles.copy}>
           <Text style={[styles.eyebrow, { color: isDark ? Colors.dark.tint : Colors.light.tint }]}>
-            {isHostGateway ? 'YOUR LIVE STUDIO' : featuredLive ? 'LIVE NOW · BETWEENER' : 'BETWEENER LIVE'}
+            {isHostGateway ? 'YOUR LIVE STUDIO' : 'BETWEENER LIVE'}
           </Text>
           <Text numberOfLines={2} style={[styles.title, { color: isDark || posterUrl ? '#FFF7EB' : '#152D29' }]}>{title}</Text>
         </View>
@@ -83,24 +130,30 @@ export const CirclesLiveGateway = memo(function CirclesLiveGateway({
 
       <View style={styles.bottomRail}>
         <View style={styles.statusRail}>
-          <View style={[styles.statusPill, liveNow.length > 0 && styles.livePill]}>
-            <Radio size={12} color={liveNow.length > 0 ? '#09201D' : isDark ? '#92A59F' : '#60736E'} />
-            <Text style={[styles.statusText, liveNow.length > 0 && styles.livePillText]}>
-              {liveNow.length} LIVE
-            </Text>
-          </View>
-          <View style={[styles.statusPill, { borderColor: isDark || posterUrl ? '#526A64' : '#C9C2AD' }]}>
-            <CalendarClock size={12} color={isDark || posterUrl ? '#CDBAF0' : Colors.light.accent} />
-            <Text style={[styles.statusText, { color: isDark || posterUrl ? '#E2D7F5' : Colors.light.accent }]}>
-              {upcoming.length > 0 ? `${upcoming.length} UPCOMING` : 'EXPLORE'}
-            </Text>
-          </View>
+          {liveNow.length > 0 ? (
+            <View style={styles.liveMeta}>
+              <View style={styles.liveMetaDot} />
+              <Text style={[styles.liveMetaText, { color: isDark || posterUrl ? '#F7C4CC' : '#B63E54' }]}>
+                {liveNow.length} {liveNow.length === 1 ? 'room' : 'rooms'} live
+              </Text>
+              <Text style={[styles.exploreText, { color: isDark || posterUrl ? '#91AAA3' : '#667B75' }]}>
+                {liveNow.length > 1 ? 'Featured now' : 'Open now'}
+              </Text>
+            </View>
+          ) : (
+            <View style={[styles.statusPill, { borderColor: isDark || posterUrl ? '#526A64' : '#C9C2AD' }]}>
+              <CalendarClock size={12} color={isDark || posterUrl ? '#CDBAF0' : Colors.light.accent} />
+              <Text style={[styles.statusText, { color: isDark || posterUrl ? '#E2D7F5' : Colors.light.accent }]}>
+                {upcoming.length > 0 ? `${upcoming.length} UPCOMING` : 'EXPLORE'}
+              </Text>
+            </View>
+          )}
         </View>
-        <View style={[styles.destinationPill, { borderColor: isDark || posterUrl ? '#5BC1BB47' : '#00808033' }]}>
-          <Text style={[styles.destinationText, { color: isDark || posterUrl ? '#BFEAE6' : Colors.light.tint }]}>
-            {featuredLive ? 'ENTER' : isHostGateway ? 'STUDIO' : 'OPEN'}
+        <View style={[styles.destinationPill, featuredLive && styles.destinationPillLive, { borderColor: isDark || posterUrl ? '#5BC1BB47' : '#00808033' }]}>
+          <Text style={[styles.destinationText, { color: featuredLive ? '#071B19' : isDark || posterUrl ? '#BFEAE6' : Colors.light.tint }]}>
+            {featuredLive ? 'ENTER LIVE' : isHostGateway ? 'STUDIO' : 'OPEN'}
           </Text>
-          <ChevronRight size={12} color={isDark || posterUrl ? '#BFEAE6' : Colors.light.tint} />
+          <ChevronRight size={12} color={featuredLive ? '#071B19' : isDark || posterUrl ? '#BFEAE6' : Colors.light.tint} />
         </View>
       </View>
       {featuredUpcoming?.scheduledStart && !featuredLive ? (
@@ -137,26 +190,29 @@ const styles = StyleSheet.create({
     elevation: 7,
   },
   pressed: { opacity: 0.92, transform: [{ scale: 0.992 }] },
-  poster: { minHeight: 188 },
+  poster: { minHeight: 164 },
   posterImage: { borderRadius: 28 },
-  card: { minHeight: 188, borderRadius: 28, borderWidth: 1, padding: 18, overflow: 'hidden' },
+  card: { minHeight: 164, borderRadius: 28, borderWidth: 1, padding: 16, overflow: 'hidden' },
   ambientOrb: { position: 'absolute', width: 180, height: 180, borderRadius: 90, top: -92, right: -42 },
   purpleOrb: { position: 'absolute', width: 120, height: 120, borderRadius: 60, bottom: -76, left: 24 },
-  topRow: { flexDirection: 'row', alignItems: 'center', gap: 13 },
-  markStage: { width: 56, height: 56, alignItems: 'center', justifyContent: 'center' },
-  markRing: { position: 'absolute', width: 56, height: 56, borderRadius: 28, borderWidth: 1 },
-  mark: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', shadowColor: '#20C4BD', shadowOpacity: 0.34, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 5 },
+  topRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  markStage: { width: 48, height: 48, alignItems: 'center', justifyContent: 'center' },
+  markRing: { position: 'absolute', width: 48, height: 48, borderRadius: 24, borderWidth: 1 },
+  mark: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', shadowColor: '#20C4BD', shadowOpacity: 0.26, shadowRadius: 10, shadowOffset: { width: 0, height: 3 }, elevation: 4 },
   copy: { flex: 1, gap: 3 },
   eyebrow: { fontSize: 9, letterSpacing: 1.7, fontFamily: 'Manrope_800ExtraBold' },
-  title: { fontSize: 19, lineHeight: 24, fontFamily: 'PlayfairDisplay_700Bold' },
-  body: { marginTop: 13, fontSize: 11.5, lineHeight: 18, fontFamily: 'Manrope_500Medium' },
-  bottomRail: { minHeight: 32, marginTop: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  title: { fontSize: 18, lineHeight: 22, fontFamily: 'PlayfairDisplay_700Bold' },
+  body: { marginTop: 10, fontSize: 11, lineHeight: 16, fontFamily: 'Manrope_500Medium' },
+  bottomRail: { minHeight: 30, marginTop: 13, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   statusRail: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 7 },
   statusPill: { minHeight: 28, borderRadius: 14, borderWidth: 1, borderColor: '#465B55', paddingHorizontal: 9, flexDirection: 'row', alignItems: 'center', gap: 5 },
-  livePill: { backgroundColor: Colors.dark.tint, borderColor: '#5BC1BB' },
   statusText: { color: '#A8BAB5', fontSize: 8, letterSpacing: 0.8, fontFamily: 'Manrope_800ExtraBold' },
-  livePillText: { color: '#09201D' },
+  liveMeta: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  liveMetaDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#F0657A' },
+  liveMetaText: { fontSize: 9, letterSpacing: 0.45, fontFamily: 'Manrope_800ExtraBold' },
+  exploreText: { fontSize: 9, fontFamily: 'Manrope_600SemiBold' },
   destinationPill: { minHeight: 28, borderRadius: 14, borderWidth: 1, paddingHorizontal: 9, flexDirection: 'row', alignItems: 'center', gap: 2, backgroundColor: 'rgba(5,25,26,0.34)' },
+  destinationPillLive: { backgroundColor: '#20C4BD', borderColor: '#5BE0D7' },
   destinationText: { fontSize: 8, letterSpacing: 0.9, fontFamily: 'Manrope_800ExtraBold' },
   nextTime: { marginTop: 8, textAlign: 'right', fontSize: 9, fontFamily: 'Manrope_600SemiBold' },
 });

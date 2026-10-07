@@ -1,10 +1,9 @@
-const required = (name: 'VITE_SUPABASE_URL' | 'VITE_SUPABASE_ANON_KEY'): string => {
-  const value = import.meta.env[name]?.trim();
-  if (!value) throw new Error(`Missing ${name}. Copy .env.example to .env.local.`);
-  return value;
-};
+import { resolveStudioEnvironment } from './studio-environment-resolver.ts';
 
-export const studioEnvironment = {
-  supabaseUrl: required('VITE_SUPABASE_URL'),
-  supabaseAnonKey: required('VITE_SUPABASE_ANON_KEY'),
-} as const;
+export const studioEnvironment = resolveStudioEnvironment({
+  environment: import.meta.env.VITE_APP_ENVIRONMENT,
+  supabaseUrl: import.meta.env.VITE_SUPABASE_URL,
+  supabasePublicKey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+  publicAppOrigin: import.meta.env.VITE_PUBLIC_APP_ORIGIN,
+  studioOrigin: import.meta.env.VITE_STUDIO_ORIGIN,
+});

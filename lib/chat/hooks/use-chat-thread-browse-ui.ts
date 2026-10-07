@@ -1,14 +1,60 @@
 import { useCallback, useMemo, useState } from "react";
 
 import type { MessageType } from "@/components/chat/types";
+import { extractChatLinks } from '@/lib/chat/links/chat-link-policy';
+import { getMessageMediaItems } from '@/lib/chat/media-album';
 
-type MediaHubItem = {
+export type MediaHubItem = {
   id: string;
   type: "image" | "video";
   url?: string | null;
+  thumbnailUrl?: string | null;
+  albumIndex: number;
   timestamp: Date;
   message: MessageType;
 };
+
+export const buildChatMediaHubItems = (
+  messages: readonly MessageType[],
+  mediaUrisByPath: Readonly<Record<string, string>> = {},
+): MediaHubItem[] => messages
+  .filter((msg) => (
+    !msg.deletedForAll &&
+    !msg.isViewOnce &&
+    (msg.type === "image" || msg.type === "video")
+  ))
+  .flatMap((msg) => getMessageMediaItems(msg).map((mediaItem, albumIndex) => {
+    const storageUri = mediaItem.storagePath
+      ? mediaUrisByPath[mediaItem.storagePath]
+      : null;
+    const previewUri = mediaItem.previewStoragePath
+      ? mediaUrisByPath[mediaItem.previewStoragePath]
+      : null;
+    const legacyUri = mediaItem.type === 'image'
+      ? (msg.offlineImageUri ?? msg.imageUrl)
+      : (msg.offlineVideoUri ?? msg.videoUrl);
+    const url = mediaItem.localUri ?? storageUri ?? mediaItem.signedUrl ?? legacyUri;
+    const thumbnailUrl = mediaItem.localPreviewUri
+      ?? previewUri
+      ?? mediaItem.previewSignedUrl
+      ?? (mediaItem.type === 'image' ? url : msg.previewUrl)
+      ?? null;
+    return {
+      id: `${msg.id}:${mediaItem.attachmentId}:${albumIndex}`,
+      type: mediaItem.type,
+      url,
+      thumbnailUrl,
+      albumIndex,
+      timestamp: msg.timestamp,
+      message: msg,
+    };
+  }))
+  .filter((item) => Boolean(
+    item.url ||
+    item.thumbnailUrl ||
+    getMessageMediaItems(item.message)[item.albumIndex]?.storagePath,
+  ))
+  .sort((left, right) => right.timestamp.getTime() - left.timestamp.getTime());
 
 type LinkHubItem = {
   id: string;
@@ -34,6 +80,7 @@ type UseChatThreadBrowseUiArgs = {
   pinnedMessageCount: number;
   primaryPinnedMessage: MessageType | null;
   jumpToMessage: (messageId: string) => void;
+  mediaUrisByPath?: Readonly<Record<string, string>>;
 };
 
 export const useChatThreadBrowseUi = ({
@@ -43,6 +90,7 @@ export const useChatThreadBrowseUi = ({
   pinnedMessageCount,
   primaryPinnedMessage,
   jumpToMessage,
+  mediaUrisByPath = {},
 }: UseChatThreadBrowseUiArgs) => {
   const [pinnedSheetVisible, setPinnedSheetVisible] = useState(false);
   const [pinnedBannerExpanded, setPinnedBannerExpanded] = useState(false);
@@ -74,35 +122,23 @@ export const useChatThreadBrowseUi = ({
   const matchMessageIdSet = useMemo(() => new Set(matchMessageIds), [matchMessageIds]);
 
   const mediaItems = useMemo<MediaHubItem[]>(() => {
-    return renderedMessages
-      .filter((msg) => !msg.deletedForAll && (msg.type === "image" || msg.type === "video"))
-      .map((msg) => ({
-        id: msg.id,
-        type: msg.type as "image" | "video",
-        url: msg.type === "image" ? (msg.offlineImageUri ?? msg.imageUrl) : (msg.offlineVideoUri ?? msg.videoUrl),
-        timestamp: msg.timestamp,
-        message: msg,
-      }))
-      .filter((item) => Boolean(item.url || item.message.storagePath));
-  }, [renderedMessages]);
+    return buildChatMediaHubItems(renderedMessages, mediaUrisByPath);
+  }, [mediaUrisByPath, renderedMessages]);
 
   const linkItems = useMemo<LinkHubItem[]>(() => {
-    const urlRegex = /(https?:\/\/[^\s]+)/gi;
     const items: LinkHubItem[] = [];
     renderedMessages.forEach((msg) => {
       if (msg.deletedForAll || msg.type !== "text" || !msg.text) return;
-      const matches = msg.text.match(urlRegex);
-      if (!matches) return;
-      matches.forEach((url) => {
+      extractChatLinks(msg.text).forEach((link) => {
         items.push({
           id: msg.id,
-          url,
+          url: link.normalizedUrl,
           timestamp: msg.timestamp,
           snippet: msg.text || "",
         });
       });
     });
-    return items;
+    return items.sort((left, right) => right.timestamp.getTime() - left.timestamp.getTime());
   }, [renderedMessages]);
 
   const docItems = useMemo<DocHubItem[]>(() => {
@@ -117,6 +153,7 @@ export const useChatThreadBrowseUi = ({
         timestamp: msg.timestamp,
         message: msg,
       }))
+      .sort((left, right) => right.timestamp.getTime() - left.timestamp.getTime());
   }, [renderedMessages]);
 
   const jumpToNextMatch = useCallback(

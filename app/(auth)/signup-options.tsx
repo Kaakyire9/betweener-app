@@ -25,6 +25,7 @@ import {
   LAST_DEEP_LINK_URL_KEY,
   markPendingAuthFlow,
 } from "@/lib/auth-callback";
+import { APP_SCHEME } from "@/config/app-identity";
 
 const isAppleAuthCancelled = (error: unknown) => {
   if (!(error instanceof Error)) {
@@ -64,7 +65,7 @@ export default function SignupOptionsScreen() {
 
   const getRedirectUrl = () =>
     makeRedirectUri({
-      scheme: "betweenerapp",
+      scheme: APP_SCHEME,
       path: "auth/callback",
     });
 

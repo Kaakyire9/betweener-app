@@ -120,6 +120,21 @@ test('applyLocalReactionToggle adds, swaps, and removes my reaction', () => {
   ]);
 });
 
+test('applyLocalReactionToggle repairs legacy messages without reactions', () => {
+  const legacyMessage = { ...baseMessage, id: 'legacy-react-1' };
+  delete legacyMessage.reactions;
+
+  const result = applyLocalReactionToggle({
+    items: [legacyMessage],
+    messageId: legacyMessage.id,
+    userId: 'me',
+    emoji: 'fire',
+  });
+
+  assert.deepEqual(result.previousReactions, []);
+  assert.deepEqual(result.items[0].reactions, [{ userId: 'me', emoji: 'fire' }]);
+});
+
 test('restoreMessageReactions reverts failed reaction mutations', () => {
   const previousReactions = [{ userId: 'peer', emoji: '❤️' }];
   const next = restoreMessageReactions({

@@ -1,5 +1,7 @@
 import {
+  parseLiveMusicCatalogue,
   parseStudioOperationalSnapshot,
+  type LiveMusicCatalogue,
   type ProgramSourceHealth,
   type ProgramSourceReadiness,
   type ProgramSourceRole,
@@ -35,6 +37,44 @@ export type StudioMediaAdmission = {
   };
 };
 
+export type LiveHostingManagement = {
+  schemaVersion: 1;
+  serverNow: string;
+  sessionId: string;
+  title: string;
+  status: string;
+  canDelegateHosts: boolean;
+  canExtend: boolean;
+  host: {
+    userId: string;
+    profileId: string;
+    fullName: string | null;
+    username: string | null;
+    avatarUrl: string | null;
+    delegated: boolean;
+  };
+  schedule: {
+    scheduledStart: string | null;
+    scheduledEnd: string | null;
+    runtimeEndAt: string | null;
+    durationMinutes: number;
+    endPolicy: 'scheduled' | 'manual';
+    lastExtendedAt: string | null;
+  };
+  traffic: { audienceNow: number; totalAttendees: number; reactions: number };
+};
+
+const parseHostingManagement = (value: unknown): LiveHostingManagement => {
+  const candidate = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+  if (candidate?.schemaVersion !== 1 || typeof candidate.sessionId !== 'string'
+    || !candidate.host || !candidate.schedule || !candidate.traffic) {
+    throw new Error('live_hosting_management_contract_invalid');
+  }
+  return candidate as LiveHostingManagement;
+};
+
 const rpc = async <T>(name: string, parameters: Record<string, unknown>): Promise<T> => {
   const { data, error } = await supabase.rpc(name, parameters);
   if (error) throw new Error(error.message || `${name}_failed`);
@@ -53,6 +93,71 @@ const parseCommandResult = (value: unknown): CommandResult => {
 };
 
 export const studioApi = {
+  async getHostingManagement(sessionId: string): Promise<LiveHostingManagement> {
+    return parseHostingManagement(await rpc('rpc_get_live_hosting_management_v1', {
+      p_session_id: sessionId,
+    }));
+  },
+
+  async delegateHost(sessionId: string, username: string): Promise<LiveHostingManagement> {
+    return parseHostingManagement(await rpc('rpc_admin_delegate_live_host_v1', {
+      p_session_id: sessionId,
+      p_username: username,
+    }));
+  },
+
+  async revokeHost(sessionId: string): Promise<LiveHostingManagement> {
+    return parseHostingManagement(await rpc('rpc_admin_revoke_live_host_v1', {
+      p_session_id: sessionId,
+    }));
+  },
+
+  async extendRuntime(
+    sessionId: string,
+    options: { minutes?: number; keepOpen?: boolean },
+  ): Promise<LiveHostingManagement> {
+    return parseHostingManagement(await rpc('rpc_extend_live_session_v1', {
+      p_session_id: sessionId,
+      p_extension_minutes: options.minutes ?? null,
+      p_keep_open: options.keepOpen === true,
+    }));
+  },
+  async getMusicCatalogue(sessionId: string): Promise<LiveMusicCatalogue> {
+    const parsed = parseLiveMusicCatalogue(await rpc(
+      'rpc_get_live_music_catalogue_v1',
+      { p_session_id: sessionId },
+    ));
+    if (!parsed) throw new Error('live_music_catalogue_invalid');
+    return parsed;
+  },
+
+  async uploadMusicTrack(input: {
+    file: File;
+    title: string;
+    artist: string;
+    mood: string;
+    durationSeconds: number;
+    licenseReference: string;
+    containsVocals: boolean;
+  }): Promise<{ trackId: string }> {
+    const form = new FormData();
+    form.set('file', input.file);
+    form.set('title', input.title);
+    form.set('artist', input.artist);
+    form.set('mood', input.mood);
+    form.set('durationSeconds', String(input.durationSeconds));
+    form.set('licenseReference', input.licenseReference);
+    form.set('containsVocals', String(input.containsVocals));
+    const { data, error } = await supabase.functions.invoke('live-music-library-admin', {
+      body: form,
+    });
+    if (error) throw new Error(error.message || 'live_music_upload_failed');
+    if (!data || data.ok !== true || typeof data.trackId !== 'string') {
+      throw new Error(String(data?.error ?? 'live_music_upload_invalid'));
+    }
+    return { trackId: data.trackId };
+  },
+
   async listSessions(): Promise<StudioSessionSummary[]> {
     const value = await rpc<unknown>('rpc_list_live_studio_control_sessions_v1', { p_limit: 60 });
     if (!Array.isArray(value)) throw new Error('live_studio_sessions_contract_invalid');
@@ -190,16 +295,18 @@ export const studioApi = {
 
   async controlMusic(input: {
     sessionId: string;
-    action: 'pause' | 'resume' | 'next' | 'set_volume' | 'set_mood'
+    action: 'play_track' | 'play_playlist' | 'pause' | 'resume' | 'next' | 'set_volume' | 'set_mood'
       | 'duck' | 'unduck' | 'stop' | 'repeat_off' | 'repeat_one' | 'repeat_all';
+    trackId?: string;
+    playlistId?: string;
     volume?: number;
     mood?: string;
   }): Promise<void> {
     const value = await rpc<Record<string, unknown>>('rpc_host_control_live_music_v1', {
       p_session_id: input.sessionId,
       p_action: input.action,
-      p_track_id: null,
-      p_playlist_id: null,
+      p_track_id: input.trackId ?? null,
+      p_playlist_id: input.playlistId ?? null,
       p_volume: input.volume ?? null,
       p_mood: input.mood ?? null,
       p_idempotency_key: crypto.randomUUID(),

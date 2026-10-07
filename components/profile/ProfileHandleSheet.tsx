@@ -3,6 +3,8 @@ import * as Haptics from 'expo-haptics';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Dimensions,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -60,12 +62,14 @@ export default function ProfileHandleSheet({ visible, onClose, onUpdated }: Prop
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => createStyles(theme, isDark, insets.bottom), [insets.bottom, isDark, theme]);
   const availabilityRequestRef = useRef(0);
+  const contentScrollRef = useRef<ScrollView>(null);
   const [handleState, setHandleState] = useState<ProfileHandleState | null>(null);
   const [draft, setDraft] = useState('');
   const [searchable, setSearchable] = useState(true);
   const [availability, setAvailability] = useState<AvailabilityViewState>(INITIAL_AVAILABILITY);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [androidKeyboardInset, setAndroidKeyboardInset] = useState(0);
   const [loadError, setLoadError] = useState('');
   const [saveMessage, setSaveMessage] = useState('');
 
@@ -101,10 +105,32 @@ export default function ProfileHandleSheet({ visible, onClose, onUpdated }: Prop
       setAvailability(INITIAL_AVAILABILITY);
       setLoadError('');
       setSaveMessage('');
+      setAndroidKeyboardInset(0);
       return;
     }
     void loadHandleState();
   // Loading is deliberately tied to sheet visibility only.
+  }, [visible]);
+
+  useEffect(() => {
+    if (!visible || Platform.OS !== 'android') return;
+    let revealTimer: ReturnType<typeof setTimeout> | null = null;
+    const showSubscription = Keyboard.addListener('keyboardDidShow', (event) => {
+      const windowHeight = Dimensions.get('window').height;
+      const overlap = Math.max(0, Math.round(windowHeight - event.endCoordinates.screenY));
+      setAndroidKeyboardInset(overlap);
+      revealTimer = setTimeout(() => {
+        contentScrollRef.current?.scrollTo({ y: 150, animated: true });
+      }, 80);
+    });
+    const hideSubscription = Keyboard.addListener('keyboardDidHide', () => {
+      setAndroidKeyboardInset(0);
+    });
+    return () => {
+      if (revealTimer) clearTimeout(revealTimer);
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
   }, [visible]);
 
   const normalizedDraft = normalizeProfileHandleDraft(draft);
@@ -204,7 +230,10 @@ export default function ProfileHandleSheet({ visible, onClose, onUpdated }: Prop
     <Modal visible={visible} transparent animationType="slide" onRequestClose={saving ? undefined : onClose}>
       <View style={styles.modal}>
         <Pressable style={styles.backdrop} onPress={saving ? undefined : onClose} />
-        <KeyboardAvoidingView style={styles.keyboardArea} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <KeyboardAvoidingView
+          style={[styles.keyboardArea, androidKeyboardInset > 0 && { paddingBottom: androidKeyboardInset }]}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
           <BlurViewSafe intensity={46} tint={isDark ? 'dark' : 'light'} style={styles.sheet}>
             <View style={styles.handle} />
             <View style={styles.header}>
@@ -233,7 +262,14 @@ export default function ProfileHandleSheet({ visible, onClose, onUpdated }: Prop
                 </TouchableOpacity>
               </View>
             ) : (
-              <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
+              <ScrollView
+                ref={contentScrollRef}
+                style={styles.contentScroller}
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={styles.content}
+              >
                 <View style={styles.signatureCard}>
                   <View style={styles.orbitLarge} />
                   <View style={styles.orbitSmall} />
@@ -375,6 +411,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, bottomInset: 
   errorText: { color: theme.textMuted, fontFamily: 'Manrope_400Regular', fontSize: 13, lineHeight: 20, textAlign: 'center' },
   retryButton: { marginTop: 6, minHeight: 42, paddingHorizontal: 22, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.tint },
   retryButtonText: { color: '#fff', fontFamily: 'Manrope_700Bold', fontSize: 13 },
+  contentScroller: { flex: 1 },
   content: { gap: 16, paddingBottom: 8 },
   signatureCard: { minHeight: 178, alignItems: 'center', justifyContent: 'center', padding: 22, borderRadius: 24, borderWidth: 1, borderColor: isDark ? 'rgba(155,124,200,0.46)' : 'rgba(125,91,166,0.34)', backgroundColor: isDark ? '#121C2D' : '#F0E8F6', overflow: 'hidden' },
   orbitLarge: { position: 'absolute', width: 260, height: 112, borderRadius: 130, borderWidth: 1, borderColor: isDark ? 'rgba(91,193,187,0.18)' : 'rgba(0,128,128,0.16)', transform: [{ rotate: '-9deg' }] },

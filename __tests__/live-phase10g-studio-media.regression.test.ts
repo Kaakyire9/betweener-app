@@ -13,6 +13,22 @@ const programStage = readFileSync('features/live/components/LiveAuthoritativePro
 const liveScreen = readFileSync('app/live/[sessionId].tsx', 'utf8');
 const workspace = readFileSync('apps/studio/src/workspace/StudioWorkspace.tsx', 'utf8');
 const studioMediaContext = readFileSync('apps/studio/src/media/studio-media-context.tsx', 'utf8');
+const programmeAudioMigration = readFileSync(
+  'supabase/migrations/20260912180000_live_program_audio_publisher.sql',
+  'utf8',
+);
+const programmeAudioService = readFileSync(
+  'supabase/functions/live-program-audio-publisher/index.ts',
+  'utf8',
+);
+const programmeAudioWorker = readFileSync('apps/program-audio-worker/src/worker.mjs', 'utf8');
+const programmeAudioCore = readFileSync('apps/program-audio-worker/src/program-audio.mjs', 'utf8');
+const musicPanel = readFileSync('features/live/components/LiveMusicLibraryPanel.tsx', 'utf8');
+const musicProgramStage = readFileSync('features/live/components/LiveMusicProgramStage.tsx', 'utf8');
+const odoProgramStage = readFileSync('features/live/components/OdoProgramStage.tsx', 'utf8');
+const programVisualSource = readFileSync('features/live/components/LiveProgramVisualSource.tsx', 'utf8');
+const programRenderer = readFileSync('apps/studio/src/program/ProgramRenderer.tsx', 'utf8');
+const studioStyles = readFileSync('apps/studio/src/styles.css', 'utf8');
 
 const allFiles = (root: string): string[] => readdirSync(root, { withFileTypes: true }).flatMap((entry) => {
   const path = join(root, entry.name);
@@ -79,19 +95,84 @@ test('Studio has separate Preview and Program with an explicit TAKE path', () =>
   assert.match(workspace, /stalePreview/i);
 });
 
+test('Studio monitors preview the same cut, auto, and fade choreography without remounting video', () => {
+  assert.match(programRenderer, /transitionCue\(state, label\)/);
+  assert.match(programRenderer, /program-transition-\$\{state\.transition\}/);
+  assert.match(programRenderer, /key=\{`\$\{version\}:\$\{state\.scene\}:\$\{state\.transition\}`\}/);
+  assert.match(studioStyles, /\.program-transition-cut/);
+  assert.match(studioStyles, /\.program-transition-fade/);
+  assert.match(studioStyles, /@keyframes program-transition-auto/);
+  assert.doesNotMatch(programRenderer, /ParticipantView[\s\S]{0,180}programVersion/);
+});
+
 test('Studio transport identities never become public stage seats or room headcount', () => {
   assert.match(stage, /!participant\.userId\.startsWith\('studio-'\)/i);
   assert.match(programStage, /trackType === 'screenShareTrack'/i);
   assert.match(programStage, /isStudioPresentationScene/i);
 });
 
+test('Programme Music has one fenced and invisible Stream publisher per Live', () => {
+  assert.match(programmeAudioMigration, /session_id uuid primary key/i);
+  assert.match(programmeAudioMigration, /pg_advisory_xact_lock/i);
+  assert.match(programmeAudioMigration, /program_audio_lease_lost/i);
+  assert.match(programmeAudioMigration, /system:programme_audio/i);
+  assert.match(programmeAudioMigration, /central_program_audio_required/i);
+  assert.match(programmeAudioMigration, /license_status <> 'approved'/i);
+  assert.match(programmeAudioMigration, /rpc_service_complete_live_program_audio_v1/i);
+  assert.match(programmeAudioMigration, /program_audio_repeat_all_advanced/i);
+  assert.match(programmeAudioService, /x-program-audio-worker-token/i);
+  assert.match(programmeAudioService, /constantTimeEqual/i);
+  assert.match(programmeAudioService, /generateUserToken/i);
+  assert.match(programmeAudioService, /ingress\?\.rtmp\?\.address/i);
+  assert.match(programmeAudioService, /grant_permissions: \['send-audio'\]/i);
+});
+
+test('Programme Audio worker publishes audio only and changes Duck gain without restarting', () => {
+  assert.match(programmeAudioCore, /'-vn'/i);
+  assert.doesNotMatch(programmeAudioCore, /libx264/i);
+  assert.match(programmeAudioService, /revoke_permissions: \['send-video', 'screenshare'\]/i);
+  assert.match(programmeAudioCore, /volume@programme=/i);
+  assert.match(programmeAudioCore, /azmq=/i);
+  assert.match(programmeAudioWorker, /gain-control\.py/i);
+  assert.match(programmeAudioWorker, /sameTransport/i);
+  assert.match(programmeAudioWorker, /await this\.setGain\(state, claim\.volume\)/i);
+  assert.match(programmeAudioWorker, /maximumSessions/i);
+  assert.match(liveScreen, /allowMusicPlayback: false/i);
+});
+
+test('Host can present a visual-only Now Playing stage without creating another music engine', () => {
+  assert.match(musicPanel, /Show music on stage/i);
+  assert.match(musicPanel, /Return people to stage/i);
+  assert.match(musicPanel, /setMusicStageVisible/i);
+  assert.match(odoProgramStage, /<LiveMusicProgramStage music=\{program\.music\}/i);
+  assert.match(musicProgramStage, /Betweener Music/i);
+  assert.match(musicProgramStage, /HOST MIC READY FOR INTRODUCTIONS/i);
+  assert.match(musicProgramStage, /backgroundColor: '#031915'/i);
+  assert.match(musicProgramStage, /top: 0[\s\S]*bottom: 0/i);
+  assert.match(musicProgramStage, /zIndex: 4/i);
+  assert.match(musicProgramStage, /pointerEvents="none"/i);
+  assert.match(musicProgramStage, /AccessibilityInfo\.isReduceMotionEnabled/i);
+  assert.doesNotMatch(musicProgramStage, /ExpoLiveMusicEngine|AudioPlayer|createAudioPlayer/i);
+});
+
 test('mobile Program is confined to Stage and never replaces Live chrome', () => {
-  assert.match(programStage, /root:\s*\{[\s\S]*top: '13%'[\s\S]*bottom: '34%'/i);
+  assert.match(programStage, /root:\s*\{[\s\S]*top: 0[\s\S]*bottom: 0/i);
+  assert.match(programStage, /program\.scene, program\.targetCanvas, program\.sourceAssignments/i);
   assert.doesNotMatch(programStage, /root:\s*\{[\s\S]*zIndex: 5/i);
   assert.match(liveScreen, /safe:\s*\{ position: 'relative', zIndex: 10, flex: 1 \}/i);
+  assert.match(liveScreen, /adaptiveStage:\s*\{ flex: 1, minHeight: 150/i);
   assert.match(liveScreen, /<LiveCompactHeader/i);
   assert.match(liveScreen, /<LiveConversationPanel/i);
   assert.match(liveScreen, /<LiveControlDock/i);
+});
+
+test('mobile Program renders server-owned pool, pair, Pulse, and Odo sources intentionally', () => {
+  assert.match(programStage, /<LiveProgramVisualSource source=\{source\}/);
+  assert.match(programStage, /source\?\.type === 'active_pair'/);
+  assert.match(programStage, /styles\.pairGrid/);
+  assert.match(programVisualSource, /quick_connect_pool/);
+  assert.match(programVisualSource, /audience_pulse/);
+  assert.match(programVisualSource, /odo_stage/);
 });
 
 test('Studio browser bundle cannot import Private Spark implementation', () => {

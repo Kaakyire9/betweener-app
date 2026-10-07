@@ -14,8 +14,10 @@ import { type LiveVisualTheme, useLiveVisualTheme } from './live-visual-tokens.t
 
 type LiveAudiencePreferencesProps = {
   openToIntroductions: boolean;
+  preferenceDecided?: boolean;
   busy: boolean;
   onChange: (open: boolean) => void;
+  presentation?: 'chip' | 'compact';
 };
 
 /**
@@ -25,8 +27,10 @@ type LiveAudiencePreferencesProps = {
  */
 export function LiveAudiencePreferences({
   openToIntroductions,
+  preferenceDecided = true,
   busy,
   onChange,
+  presentation = 'chip',
 }: LiveAudiencePreferencesProps) {
   const visual = useLiveVisualTheme();
   const styles = useMemo(() => createStyles(visual), [visual]);
@@ -34,7 +38,7 @@ export function LiveAudiencePreferences({
   const [visible, setVisible] = useState(false);
 
   const choose = (next: boolean) => {
-    if (busy || next === openToIntroductions) {
+    if (busy || (preferenceDecided && next === openToIntroductions)) {
       setVisible(false);
       return;
     }
@@ -48,22 +52,38 @@ export function LiveAudiencePreferences({
         accessibilityHint="Opens your private matching preferences for this Live"
         accessibilityLabel={openToIntroductions ? 'Introductions on' : 'Audience only'}
         accessibilityRole="button"
+        accessibilityState={{ disabled: busy }}
+        disabled={busy}
         onPress={() => setVisible(true)}
-        style={({ pressed }) => [styles.chipPressable, pressed && styles.pressed]}
+        style={({ pressed }) => [
+          styles.chipPressable,
+          presentation === 'compact' && styles.compactPressable,
+          pressed && styles.pressed,
+          busy && styles.disabled,
+        ]}
       >
-        <LiveGlassSurface intensity={34} style={styles.chip}>
-          <View style={[styles.chipIcon, openToIntroductions && styles.chipIconOpen]}>
+        <LiveGlassSurface
+          intensity={34}
+          style={[styles.chip, presentation === 'compact' && styles.compactChip]}
+        >
+          <View style={[
+            styles.chipIcon,
+            presentation === 'compact' && styles.compactIcon,
+            openToIntroductions && styles.chipIconOpen,
+          ]}>
             {openToIntroductions
               ? <Sparkles size={14} color={visual.color.purple} />
               : <UsersRound size={14} color={visual.color.textMuted} />}
           </View>
           <View style={styles.chipCopy}>
-            <Text style={styles.chipEyebrow}>MY LIVE MODE</Text>
-            <Text style={styles.chipLabel}>
+            {presentation !== 'compact' ? (
+              <Text style={styles.chipEyebrow}>MY LIVE MODE</Text>
+            ) : null}
+            <Text style={[styles.chipLabel, presentation === 'compact' && styles.compactLabel]}>
               {openToIntroductions ? 'Open to introductions' : 'Audience only'}
             </Text>
           </View>
-          <ChevronRight size={16} color={visual.color.textMuted} />
+          <ChevronRight size={presentation === 'compact' ? 14 : 16} color={visual.color.textMuted} />
         </LiveGlassSurface>
       </Pressable>
 
@@ -174,6 +194,7 @@ function PreferenceOption({
 
 const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
   chipPressable: { alignSelf: 'center', maxWidth: '88%' },
+  compactPressable: { maxWidth: '78%' },
   chip: {
     minHeight: 42,
     borderRadius: 21,
@@ -184,11 +205,14 @@ const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
     backgroundColor: visual.color.surfaceTranslucent,
     borderColor: visual.color.border,
   },
+  compactChip: { minHeight: 34, borderRadius: 17, paddingHorizontal: 8, gap: 7 },
   chipIcon: { width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.color.surfaceRaised },
+  compactIcon: { width: 22, height: 22, borderRadius: 11 },
   chipIconOpen: { backgroundColor: visual.color.purpleSoft, borderWidth: 1, borderColor: visual.color.borderStrong },
   chipCopy: { flexShrink: 1 },
   chipEyebrow: { color: visual.color.textMuted, fontSize: 7, letterSpacing: 1.25, fontFamily: 'Manrope_800ExtraBold' },
   chipLabel: { color: visual.color.text, fontSize: 11, fontFamily: 'Manrope_700Bold' },
+  compactLabel: { fontSize: 10 },
   modalRoot: { flex: 1, justifyContent: 'flex-end', backgroundColor: visual.color.scrim },
   sheetWrap: { paddingHorizontal: 12 },
   sheet: { borderRadius: 30, padding: 18, gap: 11, backgroundColor: visual.color.surfaceTranslucent, borderColor: visual.color.borderStrong },

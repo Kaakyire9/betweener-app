@@ -2,7 +2,7 @@ import OfflineImage from '@/components/media/OfflineImage';
 import { type ProfileMediaDraft } from '@/lib/profile/media-studio';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import { type StudioTheme, withAlpha } from './model';
@@ -16,6 +16,7 @@ type Props = {
   onMakeAvatar: (index: number) => void;
   onMoveGallery: (from: number, to: number) => void;
   onRemovePhoto: (index: number) => void;
+  focusReorderToken?: number;
 };
 
 export default function ProfileStudioGallery({
@@ -27,9 +28,17 @@ export default function ProfileStudioGallery({
   onMakeAvatar,
   onMoveGallery,
   onRemovePhoto,
+  focusReorderToken = 0,
 }: Props) {
+  const railRef = useRef<ScrollView | null>(null);
+
+  useEffect(() => {
+    if (focusReorderToken <= 0) return;
+    railRef.current?.scrollTo({ x: 0, animated: true });
+  }, [focusReorderToken]);
+
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.galleryRail}>
+    <ScrollView ref={railRef} horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.galleryRail}>
       {draft.gallery.map((uri, index) => {
         const isHero = draft.heroImageUrl === uri;
         return (

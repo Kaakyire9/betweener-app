@@ -206,7 +206,7 @@ export function getPremiumOnboardingSteps(
       ? {
           key: "current_location",
           title: "Choose your place in Ghana.",
-          subtitle: "Start with your region, then add a city or town only if it helps refine it.",
+          subtitle: "Choose your region and current city or town to shape nearby discovery.",
         }
       : {
           key: "current_location",
@@ -227,7 +227,7 @@ export function getPremiumOnboardingSteps(
     {
       key: "values",
       title: "What guides you?",
-      subtitle: "Faith and worldview can shape how we connect. Share what feels true to you.",
+      subtitle: "Faith and worldview can shape how we connect. Share only what feels right to you.",
     },
     {
       key: "interests",

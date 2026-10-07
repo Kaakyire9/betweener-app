@@ -1,4 +1,5 @@
 import { getStickerMessagePreview, parseStickerPreview } from '@/lib/chat-sticker-preview';
+import { getChatExpressionPreviewLabel } from '@/lib/chat/expressions/chat-expression-presentation';
 
 export const DATE_PLAN_TEXT_PREFIX = 'date_plan::';
 export const DOCUMENT_TEXT_PREFIX = '\u{1F4CE}';
@@ -68,20 +69,24 @@ const isRemoteMediaUrl = (value: string) => /^https?:\/\//i.test(value);
 export const getChatMessagePreviewText = ({
   text,
   messageType,
+  mediaKind,
   isViewOnce = false,
   status,
 }: {
   text?: string | null;
   messageType?: string | null;
+  mediaKind?: string | null;
   isViewOnce?: boolean;
   status?: string | null;
 }) => {
   const normalizedText = String(text || '').trim();
   const normalizedType = String(messageType || 'text');
+  const expressionPreview = getChatExpressionPreviewLabel(mediaKind);
 
   if (status === 'deleted') return 'Message deleted';
 
   if (status === 'pending' || status === 'queued' || status === 'sending') {
+    if (expressionPreview) return `Queued ${expressionPreview.toLowerCase()}`;
     if (normalizedType === 'image') return 'Queued photo';
     if (normalizedType === 'video') return 'Queued video';
     if (normalizedType === 'document') return 'Queued document';
@@ -90,8 +95,11 @@ export const getChatMessagePreviewText = ({
   }
 
   if (normalizedType === 'mood_sticker') {
-    return normalizedText ? `Sticker: ${getStickerMessagePreview(normalizedText)}` : 'Sticker';
+    const sticker = parseStickerPreview(normalizedText);
+    return sticker?.emoji ? `${sticker.emoji} Sticker` : 'Sticker';
   }
+
+  if (expressionPreview) return expressionPreview;
 
   const datePlanPreview = getDatePlanPreviewText(normalizedText);
   if (datePlanPreview) return datePlanPreview;

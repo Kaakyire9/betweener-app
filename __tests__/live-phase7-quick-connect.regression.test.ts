@@ -37,6 +37,10 @@ const route = readFileSync(
   new URL('../app/live/quick-connect/[sessionId].tsx', import.meta.url),
   'utf8',
 );
+const controlDock = readFileSync(
+  new URL('../features/live/components/LiveQuickConnectControlDock.tsx', import.meta.url),
+  'utf8',
+);
 
 const pairedSnapshot: LiveQuickConnectSnapshot = {
   sessionId: 'session-1',
@@ -133,6 +137,11 @@ test('Quick Connect RTC admission is exact, bounded and non-recording', () => {
   assert.match(route, /constrainMultiStage={false}/);
   assert.match(route, /pictureInPictureStage/);
   assert.match(route, /pictureInPictureHidden/);
+  assert.match(route, /<BetweenerLoader/);
+  assert.match(route, /<LiveGlassSurface style=\{\[styles\.header/);
+  assert.doesNotMatch(route, /<LiveReaction(?:Picker|BurstLayer|SummaryChip)/);
+  assert.match(controlDock, /useLiveVisualTheme/);
+  assert.match(controlDock, /accentBorderColor/);
   assert.doesNotMatch(route, /if \(pictureInPictureActive\) \{\s*return/);
 });
 
