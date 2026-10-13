@@ -93,7 +93,7 @@ test('Circles receives content-free Live discovery invalidations', () => {
   assert.match(hostMigration, /create table public\.live_discovery_updates/i);
   assert.match(hostMigration, /alter publication supabase_realtime add table public\.live_discovery_updates/i);
   assert.match(repository, /subscribeLiveDiscovery/i);
-  assert.match(circles, />Live now</i);
+  assert.match(circles, /liveNowGatherings\.length > 0 \? 'Live now' : 'Betweener Live'/i);
   assert.match(circles, /liveRoomCount/i);
   assert.doesNotMatch(circles, />ON AIR</i);
 });

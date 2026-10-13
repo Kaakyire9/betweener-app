@@ -153,7 +153,7 @@ export const parseCircleLiveSnapshot = (value: unknown): CircleLiveSnapshot => {
       return {
         sessionId: asString(item.session_id),
         gatheringId: asNullableString(item.gathering_id),
-        title: asString(item.title, 'Circle Live'),
+        title: asString(item.title, 'Gathering with Live'),
         description: asNullableString(item.description),
         status: parseStatus(item.status),
         scheduledStart: asNullableString(item.scheduled_start),

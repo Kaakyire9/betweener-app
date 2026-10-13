@@ -72,7 +72,7 @@ export default function LiveHomeScreen() {
           </Pressable>
           <View style={styles.headerCopy}>
             <Text style={styles.eyebrow}>BETWEENER LIVE</Text>
-            <Text style={styles.heading}>{hasHostLobby ? 'Your Live Studio.' : 'Rooms with intention.'}</Text>
+            <Text style={styles.heading}>{hasHostLobby ? 'Your Live Host Dashboard.' : 'Rooms with intention.'}</Text>
           </View>
           <Pressable accessibilityLabel="Refresh Live rooms" disabled={refreshing || recovering} onPress={() => void refresh()} style={styles.iconButton}>
             <RefreshCw size={19} color={visual.color.text} />
@@ -106,7 +106,7 @@ export default function LiveHomeScreen() {
               </View>
               <Text style={styles.studioBody}>Choose the format, schedule the moment, and decide whether Chemistry First shapes the room.</Text>
               <Pressable accessibilityRole="button" onPress={() => router.push('/live/schedule')} style={styles.scheduleButton}>
-                <Plus size={18} color={visual.color.accentContrast} /><Text style={styles.scheduleText}>Create a Live room</Text>
+                <Plus size={18} color={visual.color.accentContrast} /><Text style={styles.scheduleText}>Host a Live</Text>
               </Pressable>
             </View>
           ) : null}
@@ -166,8 +166,8 @@ export default function LiveHomeScreen() {
               />
             )) : showEmptyCatalogue ? (
               <View style={styles.empty}>
-                <Text style={styles.emptyTitle}>{canSchedule ? 'Your studio is ready.' : 'The next room is being curated.'}</Text>
-                <Text style={styles.emptyBody}>{canSchedule ? 'Create a room when the moment feels right.' : 'Live invitations will appear here when a verified host opens one for you.'}</Text>
+                <Text style={styles.emptyTitle}>{canSchedule ? 'Your Host Dashboard is ready.' : 'The next room is being curated.'}</Text>
+                <Text style={styles.emptyBody}>{canSchedule ? 'Host a Live when the moment feels right.' : 'Live invitations will appear here when a verified host opens one for you.'}</Text>
               </View>
             ) : null}
           </View> : null}

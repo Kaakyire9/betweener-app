@@ -78,14 +78,14 @@ export const CirclesLiveGateway = memo(function CirclesLiveGateway({
   }, [broadcastPulse, featuredLive]);
 
   const title = isHostGateway
-    ? owned.length > 0 ? 'Your rooms, beautifully hosted.' : 'Create your first Live room.'
+    ? owned.length > 0 ? 'Your Lives, beautifully hosted.' : 'Host your first Live.'
     : featuredLive
       ? featuredLive.title
       : featuredUpcoming
         ? `Next: ${featuredUpcoming.title}`
         : 'Hosted rooms with intention.';
   const body = isHostGateway
-    ? 'Create, prepare, or rejoin from one private host lobby.'
+    ? 'Host, prepare, or rejoin from one private Live dashboard.'
     : featuredLive?.description
       || featuredUpcoming?.description
       || 'Curated stages, protected conversation, and warmer introductions.';
@@ -120,7 +120,7 @@ export const CirclesLiveGateway = memo(function CirclesLiveGateway({
         </View>
         <View style={styles.copy}>
           <Text style={[styles.eyebrow, { color: isDark ? Colors.dark.tint : Colors.light.tint }]}>
-            {isHostGateway ? 'YOUR LIVE STUDIO' : 'BETWEENER LIVE'}
+            {isHostGateway ? 'LIVE HOST DASHBOARD' : 'BETWEENER LIVE'}
           </Text>
           <Text numberOfLines={2} style={[styles.title, { color: isDark || posterUrl ? '#FFF7EB' : '#152D29' }]}>{title}</Text>
         </View>
@@ -151,7 +151,7 @@ export const CirclesLiveGateway = memo(function CirclesLiveGateway({
         </View>
         <View style={[styles.destinationPill, featuredLive && styles.destinationPillLive, { borderColor: isDark || posterUrl ? '#5BC1BB47' : '#00808033' }]}>
           <Text style={[styles.destinationText, { color: featuredLive ? '#071B19' : isDark || posterUrl ? '#BFEAE6' : Colors.light.tint }]}>
-            {featuredLive ? 'ENTER LIVE' : isHostGateway ? 'STUDIO' : 'OPEN'}
+            {featuredLive ? 'ENTER LIVE' : isHostGateway ? 'HOST LIVE' : 'OPEN'}
           </Text>
           <ChevronRight size={12} color={featuredLive ? '#071B19' : isDark || posterUrl ? '#BFEAE6' : Colors.light.tint} />
         </View>
@@ -167,7 +167,7 @@ export const CirclesLiveGateway = memo(function CirclesLiveGateway({
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={isHostGateway ? 'Open your Betweener Live Studio' : 'Explore Betweener Live rooms'}
+      accessibilityLabel={isHostGateway ? 'Open your Betweener Live Host Dashboard' : 'Explore Betweener Live rooms'}
       onPress={onPress}
       style={({ pressed }) => [styles.shell, pressed && styles.pressed]}
     >

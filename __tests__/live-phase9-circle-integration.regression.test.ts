@@ -29,7 +29,8 @@ test('Circle hosts schedule a circle-context session and linked Pulse Gathering 
 
 test('Circle Live exposes empty, quorum, confirmed, live, and recap presentation states', () => {
   assert.match(circleScreen, /\['live', 'Live'\]/);
-  assert.match(component, /No Circle Live scheduled/);
+  assert.match(component, /No Gathering has Live yet/);
+  assert.match(component, /Add Live to Gathering/);
   assert.match(component, /ALMOST READY/);
   assert.match(component, /TONIGHT IS CONFIRMED/);
   assert.match(component, /LIVE NOW/);
@@ -47,7 +48,7 @@ test('every Circle Live entry carries an explicit return destination', () => {
 
 test('linked Pulse Gatherings use the Live quorum instead of duplicate attendance', () => {
   assert.match(circleScreen, /liveGatheringsById/);
-  assert.match(pulseBoard, /Upcoming Circle Live/);
+  assert.match(pulseBoard, /Upcoming Gathering with Live/);
   assert.match(pulseBoard, /places saved/);
   assert.match(pulseBoard, /Save a place/);
   assert.match(pulseBoard, /selectedLiveGathering\.viewerRsvpStatus === 'going' \? 'Open Live'/);

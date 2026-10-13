@@ -1,7 +1,5 @@
 import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
-import { useAuth } from "@/lib/auth-context";
-import { canAccessAdminTools } from "@/lib/internal-tools";
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { VideoView, useVideoPlayer } from "expo-video";
@@ -442,9 +440,10 @@ const formatMergeFailureMessage = (summary?: AccountMergeExecutionSummary | null
   return lines.filter(Boolean).join("\n");
 };
 
-export const AdminVerificationDashboard = () => {
-  const { user } = useAuth();
-  const isAllowed = canAccessAdminTools(user?.email ?? null);
+type AdminDashboardScope = "all" | "trust" | "accounts";
+type AdminDashboardTab = "verification" | "profile_guard" | "reports" | "concierge" | "recovery_requests" | "merges";
+
+export const AdminVerificationDashboard = ({ scope = "all" }: { scope?: AdminDashboardScope }) => {
   const colorScheme = useColorScheme();
   const resolvedScheme = (colorScheme ?? "light") === "dark" ? "dark" : "light";
   const theme = Colors[resolvedScheme];
@@ -483,7 +482,7 @@ export const AdminVerificationDashboard = () => {
   const [recoveryReviewNotesDraft, setRecoveryReviewNotesDraft] = useState("");
   const [recoveryReviewSubmitting, setRecoveryReviewSubmitting] = useState(false);
   const [recoveryReviewError, setRecoveryReviewError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"verification" | "profile_guard" | "reports" | "concierge" | "recovery_requests" | "merges">("verification");
+  const [activeTab, setActiveTab] = useState<AdminDashboardTab>(scope === "accounts" ? "recovery_requests" : "verification");
 
   const loadSignedUrls = useCallback(async (rows: VerificationRow[]) => {
     const nextMap: Record<string, string> = {};
@@ -500,22 +499,20 @@ export const AdminVerificationDashboard = () => {
   }, []);
 
   const loadDashboard = useCallback(async () => {
-    if (!isAllowed) {
-      setLoading(false);
-      return;
-    }
-
     setError(null);
+    const loadTrust = scope === "all" || scope === "trust";
+    const loadAccounts = scope === "all" || scope === "accounts";
+    const skipped = Promise.resolve({ data: [], error: null });
     const [overviewRes, verificationRes, guardRes, enforcementRes, contentSafetyRes, reportsRes, conciergeRes, recoveryRes, mergeRes] = await Promise.all([
       supabase.rpc("rpc_admin_dashboard_overview"),
-      supabase.rpc("rpc_admin_get_verification_queue"),
-      supabase.rpc("rpc_admin_get_profile_guard_review_queue", { p_include_resolved: false, p_limit: 100 }),
-      supabase.rpc("rpc_admin_get_profile_guard_enforcement_history", { p_limit: 100 }),
-      supabase.rpc("rpc_admin_get_content_moderation_events", { p_limit: 100 }),
-      supabase.rpc("rpc_admin_get_reports_queue"),
-      supabase.rpc("rpc_admin_get_date_plan_concierge_queue"),
-      supabase.rpc("rpc_admin_get_account_recovery_requests"),
-      supabase.rpc("rpc_admin_get_account_merge_queue"),
+      loadTrust ? supabase.rpc("rpc_admin_get_verification_queue") : skipped,
+      loadTrust ? supabase.rpc("rpc_admin_get_profile_guard_review_queue", { p_include_resolved: false, p_limit: 100 }) : skipped,
+      loadTrust ? supabase.rpc("rpc_admin_get_profile_guard_enforcement_history", { p_limit: 100 }) : skipped,
+      loadTrust ? supabase.rpc("rpc_admin_get_content_moderation_events", { p_limit: 100 }) : skipped,
+      loadTrust ? supabase.rpc("rpc_admin_get_reports_queue") : skipped,
+      loadAccounts ? supabase.rpc("rpc_admin_get_date_plan_concierge_queue") : skipped,
+      loadAccounts ? supabase.rpc("rpc_admin_get_account_recovery_requests") : skipped,
+      loadAccounts ? supabase.rpc("rpc_admin_get_account_merge_queue") : skipped,
     ]);
 
     const firstError = overviewRes.error || verificationRes.error || reportsRes.error;
@@ -568,7 +565,7 @@ export const AdminVerificationDashboard = () => {
     await loadSignedUrls(verificationData);
     setLoading(false);
     setRefreshing(false);
-  }, [isAllowed, loadSignedUrls]);
+  }, [loadSignedUrls, scope]);
 
   useEffect(() => {
     void loadDashboard();
@@ -1090,17 +1087,8 @@ export const AdminVerificationDashboard = () => {
   if (loading) {
     return (
       <View style={styles.centerState}>
-        <Text style={styles.centerTitle}>Loading internal dashboard...</Text>
-        <Text style={styles.centerBody}>Pulling verification, reports, and premium membership signals.</Text>
-      </View>
-    );
-  }
-
-  if (!isAllowed) {
-    return (
-      <View style={styles.centerState}>
-        <Text style={styles.centerTitle}>Internal tools disabled</Text>
-        <Text style={styles.centerBody}>This build does not expose admin operations.</Text>
+        <Text style={styles.centerTitle}>Loading secure workspace…</Text>
+        <Text style={styles.centerBody}>{scope === "accounts" ? "Pulling account support queues." : "Pulling verification and safety queues."}</Text>
       </View>
     );
   }
@@ -1247,6 +1235,13 @@ export const AdminVerificationDashboard = () => {
       icon: "account-convert-outline",
     },
   ];
+  const scopeTabs: AdminDashboardTab[] = scope === "trust"
+    ? ["verification", "profile_guard", "reports"]
+    : scope === "accounts"
+      ? ["concierge", "recovery_requests", "merges"]
+      : ["verification", "profile_guard", "reports", "concierge", "recovery_requests", "merges"];
+  const visibleMetricCards = metricCards.filter((metric) => scopeTabs.includes(metric.key));
+  const visibleOperationCards = operationCards.filter((card) => scopeTabs.includes(card.key));
 
   return (
     <View style={styles.container}>
@@ -1256,7 +1251,7 @@ export const AdminVerificationDashboard = () => {
         contentContainerStyle={styles.content}
       >
         <View style={styles.metricsGrid}>
-          {metricCards.map((metric) => (
+          {visibleMetricCards.map((metric) => (
             <Pressable key={metric.label} style={styles.metricCard} onPress={() => setActiveTab(metric.key)}>
               <View style={styles.metricIcon}>
                 <MaterialCommunityIcons name={metric.icon as any} size={18} color={theme.tint} />
@@ -1271,7 +1266,7 @@ export const AdminVerificationDashboard = () => {
         <View style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>Operations</Text>
           <View style={styles.operationsGrid}>
-            {operationCards.map((card) => (
+            {visibleOperationCards.map((card) => (
               <Pressable
                 key={card.title}
                 style={[styles.operationCard, activeTab === card.key && styles.operationCardActive]}
@@ -1288,29 +1283,31 @@ export const AdminVerificationDashboard = () => {
           </View>
         </View>
 
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Revenue and member health</Text>
-          <View style={styles.planRow}>
-            <View style={styles.planPill}>
-              <Text style={styles.planPillLabel}>Silver</Text>
-              <Text style={styles.planPillValue}>{overview.silver_active}</Text>
+        {scope === "all" ? (
+          <View style={styles.sectionCard}>
+            <Text style={styles.sectionTitle}>Revenue and member health</Text>
+            <View style={styles.planRow}>
+              <View style={styles.planPill}>
+                <Text style={styles.planPillLabel}>Silver</Text>
+                <Text style={styles.planPillValue}>{overview.silver_active}</Text>
+              </View>
+              <View style={styles.planPill}>
+                <Text style={styles.planPillLabel}>Gold</Text>
+                <Text style={styles.planPillValue}>{overview.gold_active}</Text>
+              </View>
             </View>
-            <View style={styles.planPill}>
-              <Text style={styles.planPillLabel}>Gold</Text>
-              <Text style={styles.planPillValue}>{overview.gold_active}</Text>
+            <View style={styles.planRow}>
+              <View style={styles.planPill}>
+                <Text style={styles.planPillLabel}>Active subscriptions</Text>
+                <Text style={styles.planPillValue}>{overview.active_subscriptions}</Text>
+              </View>
+              <View style={styles.planPill}>
+                <Text style={styles.planPillLabel}>New in 7 days</Text>
+                <Text style={styles.planPillValue}>{overview.members_last_7d}</Text>
+              </View>
             </View>
           </View>
-          <View style={styles.planRow}>
-            <View style={styles.planPill}>
-              <Text style={styles.planPillLabel}>Active subscriptions</Text>
-              <Text style={styles.planPillValue}>{overview.active_subscriptions}</Text>
-            </View>
-            <View style={styles.planPill}>
-              <Text style={styles.planPillLabel}>New in 7 days</Text>
-              <Text style={styles.planPillValue}>{overview.members_last_7d}</Text>
-            </View>
-          </View>
-        </View>
+        ) : null}
 
         {moduleWarnings.length > 0 ? (
           <View style={styles.sectionCard}>
@@ -1331,13 +1328,13 @@ export const AdminVerificationDashboard = () => {
             { key: "concierge", label: `Concierge (${openConciergeRequests.length})` },
             { key: "recovery_requests", label: `Requests (${openRecoveryRequests.length})` },
             { key: "merges", label: `Recovery (${openMergeCases.length})` },
-          ].map((tab) => {
+          ].filter((tab) => scopeTabs.includes(tab.key as AdminDashboardTab)).map((tab) => {
             const active = activeTab === tab.key;
             return (
               <Pressable
                 key={tab.key}
                 style={[styles.tabButton, active && styles.tabButtonActive]}
-                onPress={() => setActiveTab(tab.key as "verification" | "profile_guard" | "reports" | "concierge" | "recovery_requests" | "merges")}
+                onPress={() => setActiveTab(tab.key as AdminDashboardTab)}
               >
                 <Text style={[styles.tabButtonText, active && styles.tabButtonTextActive]}>{tab.label}</Text>
               </Pressable>

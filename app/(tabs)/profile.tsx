@@ -20,8 +20,8 @@ import { Colors } from "@/constants/theme";
 import { useColorScheme, useColorSchemePreference } from "@/hooks/use-color-scheme";
 import { useVerificationStatus } from "@/hooks/use-verification-status";
 import { useAuth } from "@/lib/auth-context";
+import { useAdminAccess } from "@/lib/admin/admin-access";
 import { logProfileGiftEvent } from "@/lib/gifts/events";
-import { canAccessAdminTools } from "@/lib/internal-tools";
 import { getInsightsInboxActivityItems } from "@/lib/inbox/badge-groups";
 import { buildLocationDisplay } from "@/lib/location/location-display";
 import { usePremiumState } from "@/hooks/use-premium-state";
@@ -364,7 +364,8 @@ export default function ProfileScreen() {
   const prevProgressRef = useRef(profileCompletion.percent);
   const [rewardText, setRewardText] = useState<string | null>(null);
   const [progressTrackWidth, setProgressTrackWidth] = useState(0);
-  const canSeeAdminTools = canAccessAdminTools(user?.email ?? null);
+  const adminAccess = useAdminAccess();
+  const canSeeAdminTools = adminAccess.isAdmin;
   const { items: inboxItems, freshness: inboxFreshness } = useInbox(user?.id ?? null);
   const visibleReceivedGifts = useMemo(
     () => receivedGifts.filter((gift) => !gift.revealedAt && !gift.archivedAt),

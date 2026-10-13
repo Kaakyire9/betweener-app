@@ -124,8 +124,8 @@ export const getLiveCreationStepError = (
   now = Date.now(),
 ): string | null => {
   if (step === 'moment') {
-    if (draft.circleId && draft.format !== 'circle_live') return 'Choose Circle Live for this Circle.';
-    if (!draft.circleId && draft.format === 'circle_live') return 'Open a Circle to create Circle Live.';
+    if (draft.circleId && draft.format !== 'circle_live') return 'Choose Gathering with Live for this Circle.';
+    if (!draft.circleId && draft.format === 'circle_live') return 'Open a Circle to add Live to a Gathering.';
     return null;
   }
   if (step === 'story') {

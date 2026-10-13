@@ -563,7 +563,7 @@ export default function LiveSessionScreen() {
         ? 'A host or moderator has ended your access to this room.'
         : 'The host has ended your participation in this room.',
       [{
-        text: returnsToCircle ? 'Return to Circle' : 'Return to Live Studio',
+        text: returnsToCircle ? 'Return to Circle' : 'Return to Live Host Dashboard',
         onPress: returnToLiveOrigin,
       }],
       { cancelable: false },
@@ -936,7 +936,7 @@ export default function LiveSessionScreen() {
       <View style={styles.invitationRoot}>
         <SafeAreaView style={styles.invitationSafe}>
           <View style={styles.header}>
-            <Pressable accessibilityLabel={returnsToCircle ? 'Back to Circle' : 'Back to Live Studio'} onPress={returnToLiveOrigin} style={styles.iconButton}><ChevronLeft size={25} color={visual.color.text} /></Pressable>
+            <Pressable accessibilityLabel={returnsToCircle ? 'Back to Circle' : 'Back to Live Host Dashboard'} onPress={returnToLiveOrigin} style={styles.iconButton}><ChevronLeft size={25} color={visual.color.text} /></Pressable>
             <View style={styles.scheduledPill}><Radio size={13} color={visual.color.teal} /><Text style={styles.scheduledText}>SCHEDULED LIVE</Text></View>
             <Pressable accessibilityLabel={isRoomHost ? 'Live options' : 'Invitation options'} onPress={() => setInvitationOptionsOpen(true)} style={styles.iconButton}><MoreHorizontal size={21} color={visual.color.text} /></Pressable>
           </View>
@@ -988,7 +988,7 @@ export default function LiveSessionScreen() {
       <View style={styles.invitationRoot}>
         <SafeAreaView style={styles.invitationSafe}>
           <View style={styles.header}>
-            <Pressable accessibilityLabel={returnsToCircle ? 'Back to Circle' : 'Back to Live Studio'} onPress={returnToLiveOrigin} style={styles.iconButton}><ChevronLeft size={25} color={visual.color.text} /></Pressable>
+            <Pressable accessibilityLabel={returnsToCircle ? 'Back to Circle' : 'Back to Live Host Dashboard'} onPress={returnToLiveOrigin} style={styles.iconButton}><ChevronLeft size={25} color={visual.color.text} /></Pressable>
             <View style={[styles.scheduledPill, styles.notificationPill]}><Radio size={13} color={visual.color.purple} /><Text style={[styles.scheduledText, styles.notificationText]}>HOST INVITATION</Text></View>
             <Pressable accessibilityLabel="Invitation options" onPress={() => setInvitationOptionsOpen(true)} style={styles.iconButton}><MoreHorizontal size={21} color={visual.color.text} /></Pressable>
           </View>
@@ -1305,13 +1305,13 @@ export default function LiveSessionScreen() {
           ) : null}
           {canManageStudio ? (
             <Pressable
-              accessibilityLabel="Open private Live Studio"
+              accessibilityLabel="Open private Live Control Room"
               accessibilityRole="button"
               onPress={openLiveStudio}
               style={styles.studioButton}
             >
               <SlidersHorizontal size={18} color={visual.color.teal} />
-              <Text style={styles.studioText}>Live Studio</Text>
+              <Text style={styles.studioText}>Control Room</Text>
             </Pressable>
           ) : null}
           {canPublish ? (

@@ -20,7 +20,7 @@ test('global reminders never cover a Live or private Live surface', () => {
   assert.match(reminder, /}, 4200\)/);
 });
 
-test('host operations are consolidated in one full-screen Live Studio', () => {
+test('host operations are consolidated in one full-screen Live Control Room', () => {
   assert.match(studio, /presentationStyle="fullScreen"/);
   ['stage', 'match', 'pulse', 'invite'].forEach((tab) => {
     assert.match(studio, new RegExp(`${tab}: \\{ label:`));

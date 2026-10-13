@@ -74,7 +74,7 @@ const GROUPS: (Omit<PulseGroup, 'items'> & { types: CirclePulseItemType[] })[] =
     key: 'gathering',
     eyebrow: 'COME TOGETHER',
     title: 'Gatherings on the horizon',
-    description: 'Circle Lives and in-person plans with a clear next step.',
+    description: 'Gatherings with Live and in-person plans with a clear next step.',
     types: ['gathering'],
   },
   {
@@ -117,7 +117,7 @@ const formatDate = (value?: string | null) => {
 
 const getItemLabel = (item: CirclePulseItem) => {
   if (item.type === 'prompt') return 'Circle Prompt';
-  if (item.type === 'gathering') return item.gatheringType === 'live' ? 'Circle Live' : 'Gathering';
+  if (item.type === 'gathering') return item.gatheringType === 'live' ? 'Gathering with Live' : 'Gathering';
   if (item.type === 'love_seat') return 'Love Seat';
   if (item.type === 'host_note') return 'From the host';
   if (item.mediaType === 'video') return item.momentId ? 'Video Moment' : 'Circle Video';
@@ -230,7 +230,7 @@ function PulseItemCard({
     ? `${item.featuredProfileName || 'Circle member'}${item.featuredProfileAge ? `, ${item.featuredProfileAge}` : ''}`
     : item.title || (item.type === 'host_note' ? 'A note from your host' : 'A thoughtful Circle spotlight');
   const body = item.type === 'love_seat' ? item.loveSeatQuote || item.body : item.body;
-  const itemLabel = selectedLiveGathering ? 'Upcoming Circle Live' : getItemLabel(item);
+  const itemLabel = selectedLiveGathering ? 'Upcoming Gathering with Live' : getItemLabel(item);
   const attendanceCopy = selectedLiveGathering
     ? selectedLiveGathering.quorumStatus === 'confirmed'
       ? `Confirmed · ${selectedLiveGathering.attendanceCount} places saved`
@@ -494,7 +494,7 @@ export default function CirclePulseBoard({
       ?? null
   ), [liveGatheringsById, nonWelcomeItems]);
   const heroContext = heroItem?.gatheringId && liveGatheringsById?.[heroItem.gatheringId]
-    ? 'Live gathering'
+    ? 'Gathering with Live'
     : heroItem?.type === 'gathering'
       ? 'Next gathering'
       : heroItem?.type === 'love_seat'

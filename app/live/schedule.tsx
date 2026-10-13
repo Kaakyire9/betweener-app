@@ -357,8 +357,8 @@ export default function ScheduleLiveScreen() {
             <ArrowLeft size={22} color={visual.text} />
           </Pressable>
           <View style={styles.headerCopy}>
-            <Text style={styles.eyebrow}>LIVE CREATION STUDIO</Text>
-            <Text style={styles.heading}>{isEditing ? 'Refine your Live' : duplicateSessionId ? 'Create from Live' : 'Create a Live'}</Text>
+            <Text style={styles.eyebrow}>LIVE HOST SETUP</Text>
+            <Text style={styles.heading}>{isEditing ? 'Refine your Live' : duplicateSessionId ? 'Host from a previous Live' : 'Host a Live'}</Text>
           </View>
           {!isEditing ? (
             <Pressable accessibilityLabel="Discard Live draft" onPress={discardDraft} style={styles.discardIcon}>

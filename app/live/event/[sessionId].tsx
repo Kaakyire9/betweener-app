@@ -151,14 +151,14 @@ export default function LiveEventScreen() {
   };
 
   if (loading && !session) return <View style={styles.loading}><ActivityIndicator color={visual.teal} /></View>;
-  if (!session) return <View style={styles.loading}><Text style={styles.missing}>This Live event is not available.</Text><Pressable onPress={leaveEvent}><Text style={styles.link}>{returnsToCircle ? 'Return to Circle' : 'Return to Live Studio'}</Text></Pressable></View>;
+  if (!session) return <View style={styles.loading}><Text style={styles.missing}>This Live event is not available.</Text><Pressable onPress={leaveEvent}><Text style={styles.link}>{returnsToCircle ? 'Return to Circle' : 'Return to Live Host Dashboard'}</Text></Pressable></View>;
 
   const cancelled = session.status === 'cancelled';
   return (
     <LinearGradient colors={visual.isDark ? [visual.canvas, visual.surfaceSoft, visual.canvas] : [visual.canvas, visual.bgSubtle, visual.surface]} style={styles.root}>
       <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
         <View style={styles.header}>
-          <Pressable accessibilityLabel={returnsToCircle ? 'Back to Circle' : 'Back to Live Studio'} onPress={leaveEvent} style={styles.icon}><ArrowLeft size={21} color={visual.text} /></Pressable>
+          <Pressable accessibilityLabel={returnsToCircle ? 'Back to Circle' : 'Back to Live Host Dashboard'} onPress={leaveEvent} style={styles.icon}><ArrowLeft size={21} color={visual.text} /></Pressable>
           <Text style={styles.headerTitle}>Live Event</Text>
           {canManageSession ? <Pressable accessibilityLabel="Manage Live" onPress={() => setManagementOpen(true)} style={styles.manageIcon}><MoreHorizontal size={22} color={visual.text} /></Pressable> : null}
         </View>

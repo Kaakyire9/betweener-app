@@ -3057,7 +3057,7 @@ export default function CircleDetailScreen() {
           ? String((error as { message?: unknown }).message || 'Please try again.')
           : 'Please try again.';
       showBetweenerAlert({
-        title: editingGatheringTarget ? 'Gathering update failed' : 'Gathering request failed',
+        title: editingGatheringTarget ? 'Gathering update failed' : 'Gathering could not be submitted',
         message,
         tone: 'error',
       });
@@ -4173,7 +4173,7 @@ export default function CircleDetailScreen() {
                   ? 'Open Circle overview'
                   : key === 'discover'
                     ? 'Discover people in this Circle'
-                    : 'Open Circle Live'}
+                    : 'Open Live Gathering'}
                 style={[styles.tabButton, active && styles.tabButtonActive]}
                 onPress={() => {
                   setActiveTab(key as DetailTab);
@@ -4271,7 +4271,7 @@ export default function CircleDetailScreen() {
                 ) : upcomingGathering ? (
                   <CircleNowSpotlight
                     accessibilityLabel={`Open ${upcomingGathering.title}`}
-                    eyebrow={upcomingGathering.live_session_id ? 'CIRCLE LIVE' : 'IN PERSON · UPCOMING'}
+                    eyebrow={upcomingGathering.live_session_id ? 'GATHERING WITH LIVE' : 'IN PERSON · UPCOMING'}
                     title={upcomingGathering.title}
                     description={upcomingGathering.description}
                     meta={joinMeta([
@@ -4844,7 +4844,7 @@ export default function CircleDetailScreen() {
                 {canHostGathering ? (
                   <View style={styles.inlineActions}>
                     <TouchableOpacity style={styles.primaryButton} onPress={() => void openGatheringComposer()}>
-                      <Text style={styles.primaryText}>Host Gathering</Text>
+                      <Text style={styles.primaryText}>Create a Gathering</Text>
                     </TouchableOpacity>
                   </View>
                 ) : null}
@@ -4883,7 +4883,7 @@ export default function CircleDetailScreen() {
                   ) : null}
                   <View style={styles.featureCardTop}>
                     <Text style={styles.kicker}>{gathering.gathering_type ?? 'Gathering'}</Text>
-                    <Text style={styles.featureMetaPill}>{gathering.live_session_id ? 'Live Gathering' : gathering.attendee_count === 1 ? '1 attending' : `${gathering.attendee_count ?? 0} attending`}</Text>
+                    <Text style={styles.featureMetaPill}>{gathering.live_session_id ? 'Gathering with Live' : gathering.attendee_count === 1 ? '1 attending' : `${gathering.attendee_count ?? 0} attending`}</Text>
                   </View>
                   <Text style={styles.featureTitle}>{gathering.title}</Text>
                   <Text style={styles.featureBody}>{joinMeta([compactDate(gathering.starts_at), gathering.city, gathering.venue_name])}</Text>
@@ -5447,11 +5447,11 @@ export default function CircleDetailScreen() {
           >
             <Pressable style={styles.modalCard} onPress={() => undefined}>
               <ScrollView style={styles.modalScroll} contentContainerStyle={styles.modalScrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-                <Text style={styles.modalTitle}>{editingGatheringTarget ? 'Edit Gathering' : 'Host Gathering'}</Text>
+                <Text style={styles.modalTitle}>{editingGatheringTarget ? 'Edit Gathering' : 'Create a Gathering'}</Text>
                 <Text style={styles.modalBody}>
                   {editingGatheringTarget
                     ? 'Refine the event details, timing, or poster without leaving this Circle.'
-                    : 'Propose a trusted Gathering directly from this Circle.'}
+                    : 'Create a trusted Gathering directly from this Circle. It will be submitted for review before publication.'}
                 </Text>
                 <TextInput
                   value={gatheringComposerTitle}

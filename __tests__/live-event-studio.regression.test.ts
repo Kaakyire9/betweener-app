@@ -146,7 +146,7 @@ test('Past Live remains visible to attendees with a privacy-safe personal recap'
 test('event back navigation returns to its explicit origin on button and hardware back', () => {
   assert.match(eventScreen, /router\.dismissTo\(getLiveExitDestination\(liveReturnParams\)\)/);
   assert.match(eventScreen, /BackHandler\.addEventListener\('hardwareBackPress'/);
-  assert.match(eventScreen, /returnsToCircle \? 'Back to Circle' : 'Back to Live Studio'/);
+  assert.match(eventScreen, /returnsToCircle \? 'Back to Circle' : 'Back to Live Host Dashboard'/);
 });
 
 test('backstage mirrors the server start-time guard before enabling the host CTA', () => {

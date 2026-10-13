@@ -138,7 +138,7 @@ test('host snapshot parser rejects invalid state and normalizes safe values', ()
   );
 });
 
-test('Live Studio and repository expose one host-control path', () => {
+test('Live Control Room and repository expose one host-control path', () => {
   assert.match(repository, /rpc_get_live_quick_connect_host_control/i);
   assert.match(repository, /rpc_configure_live_quick_connect/i);
   assert.match(repository, /rpc_control_live_quick_connect/i);

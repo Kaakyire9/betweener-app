@@ -160,12 +160,12 @@ export function LiveStudioModal({
     >
       <View style={[styles.root, { paddingTop: topInset, paddingBottom: bottomInset }]}>
         <View style={styles.header}>
-          <Pressable accessibilityLabel="Close Live Studio" accessibilityRole="button" hitSlop={10} onPress={onClose} style={styles.iconButton}>
+          <Pressable accessibilityLabel="Close Live Control Room" accessibilityRole="button" hitSlop={10} onPress={onClose} style={styles.iconButton}>
             <ChevronLeft color={visual.color.text} size={24} />
           </Pressable>
           <View style={styles.headerCopy}>
             <Text style={styles.eyebrow}>PRIVATE HOST CONSOLE</Text>
-            <Text style={styles.title}>Live Studio</Text>
+            <Text style={styles.title}>Live Control Room</Text>
           </View>
           <View style={styles.headerActions}>
             <Pressable
@@ -185,7 +185,7 @@ export function LiveStudioModal({
                 : <MicOff color={visual.color.dangerText} size={19} />}
             </Pressable>
             <Pressable
-              accessibilityLabel="Refresh Live Studio"
+              accessibilityLabel="Refresh Live Control Room"
               accessibilityRole="button"
               disabled={studioRefreshing}
               onPress={() => {

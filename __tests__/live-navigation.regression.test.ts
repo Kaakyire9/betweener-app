@@ -17,7 +17,7 @@ test('Circle-backed Live rooms return to the exact Circle surface', () => {
   });
 });
 
-test('global Live rooms return to the Live Studio', () => {
+test('global Live rooms return to the Live Host Dashboard', () => {
   assert.equal(getLiveExitDestination(null), '/live');
   assert.equal(getLiveExitDestination({ returnCircleId: '  ' }), '/live');
 });

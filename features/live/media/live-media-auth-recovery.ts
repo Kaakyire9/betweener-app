@@ -11,9 +11,6 @@ export const recoverLiveMediaAdmissionAuthentication = async (): Promise<boolean
   const sessionStatus = await ensureFreshSession();
   if (isRecovered(sessionStatus)) return true;
 
-  const recovery = await recoverSupabaseConnectivity(
-    'live_media_admission_unauthorized',
-    { maxRefreshAttempts: 1 },
-  );
+  const recovery = await recoverSupabaseConnectivity('live_media_admission_unauthorized');
   return isRecovered(recovery.status);
 };

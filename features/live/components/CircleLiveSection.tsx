@@ -112,7 +112,7 @@ export const CircleLiveSection = memo(function CircleLiveSection({ circleId, cir
   if (loading && !snapshot) return <View style={styles.loading}><ActivityIndicator color={visual.teal} /></View>;
   if (error && !snapshot) return (
     <View style={styles.empty}>
-      <Text style={styles.emptyTitle}>Circle Live could not load</Text>
+      <Text style={styles.emptyTitle}>Live for this Gathering could not load</Text>
       <Pressable onPress={() => void refresh()}><Text style={styles.retry}>Try again</Text></Pressable>
     </View>
   );
@@ -120,15 +120,15 @@ export const CircleLiveSection = memo(function CircleLiveSection({ circleId, cir
   return (
     <View style={styles.section}>
       <View style={styles.header}>
-        <View style={styles.headerCopy}><Text style={styles.heading}>Live in {circleName}</Text><Text style={styles.support}>Gather the Circle for intentional conversation and hosted introductions.</Text></View>
-        {canSchedule ? <Pressable onPress={schedule} style={styles.schedule}><Text style={styles.scheduleText}>Schedule</Text></Pressable> : null}
+        <View style={styles.headerCopy}><Text style={styles.heading}>Live in {circleName}</Text><Text style={styles.support}>Add a hosted Live room to a Circle Gathering for intentional conversation and introductions.</Text></View>
+        {canSchedule ? <Pressable onPress={schedule} style={styles.schedule}><Text style={styles.scheduleText}>Add Live</Text></Pressable> : null}
       </View>
       {active.length === 0 ? (
         <View style={styles.empty}>
           <View style={styles.emptyIcon}><Radio size={24} color={visual.teal} /></View>
-          <Text style={styles.emptyTitle}>No Circle Live scheduled</Text>
-          <Text style={styles.emptyBody}>When a host schedules one, its Gathering and quorum progress will appear here.</Text>
-          {canSchedule ? <Pressable onPress={schedule} style={styles.primary}><Text style={styles.primaryText}>Create Circle Live</Text></Pressable> : null}
+          <Text style={styles.emptyTitle}>No Gathering has Live yet</Text>
+          <Text style={styles.emptyBody}>Add Live to a Gathering and its room and attendance progress will appear here.</Text>
+          {canSchedule ? <Pressable onPress={schedule} style={styles.primary}><Text style={styles.primaryText}>Add Live to Gathering</Text></Pressable> : null}
         </View>
       ) : active.map((session) => <CircleLiveCardView key={session.sessionId} circleId={circleId} session={session} />)}
       {recaps.length > 0 ? <Text style={styles.recapHeading}>Recent Live moments</Text> : null}

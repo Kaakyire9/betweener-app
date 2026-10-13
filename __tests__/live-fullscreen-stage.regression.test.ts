@@ -134,10 +134,10 @@ test('full-screen presentation preserves deterministic one-to-four-person stage 
   });
 });
 
-test('stage management stays outside the public canvas in Live Studio', () => {
+test('stage management stays outside the public canvas in the Live Control Room', () => {
   assert.match(liveScreen, /const \[studioOpen, setStudioOpen\]/);
   assert.match(liveScreen, /openLiveStudio/);
-  assert.match(liveScreen, /Live Studio/);
+  assert.match(liveScreen, /Control Room/);
   assert.match(liveStudio, /presentationStyle="fullScreen"/);
   assert.match(liveStudio, /accessibilityLabel=\{microphoneEnabled \? 'Mute Host microphone' : 'Turn on Host microphone'\}/);
   assert.match(liveScreen, /microphoneControlEnabled=\{publicationReady\}/);
