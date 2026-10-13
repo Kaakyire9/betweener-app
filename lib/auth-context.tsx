@@ -48,6 +48,14 @@ import {
   detachRevenueCatIdentity,
 } from '@/lib/subscriptions';
 import { signOutSupabaseSession } from '@/lib/auth/sign-out-session';
+import {
+  beginSignInMethodAttempt,
+  cancelSignInMethodAttempt,
+  completeSignInMethodAttempt,
+  forgetSignInMethodOnDevice,
+  invalidatePendingSignInMethodAttempt,
+} from '@/lib/auth/last-sign-in-method';
+import { createAuthRecoveryGeneration } from '@/lib/auth/recovery-generation';
 
 type Profile = Database['public']['Tables']['profiles']['Row'];
 type FetchProfileOptions = { force?: boolean };
@@ -441,6 +449,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const sessionRecoveryInFlightRef = useRef<Promise<boolean> | null>(null);
   const authEventQueueRef = useRef<Promise<void>>(Promise.resolve());
   const nextSilentRecoveryAllowedAtRef = useRef(0);
+  const authEventSequenceRef = useRef(0);
+  const recoveryGenerationRef = useRef<ReturnType<typeof createAuthRecoveryGeneration> | null>(null);
+  if (!recoveryGenerationRef.current) {
+    recoveryGenerationRef.current = createAuthRecoveryGeneration();
+  }
 
   // Computed states
   const isAuthenticated = !!session && !!user;
@@ -491,9 +504,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
   };
 
-  const restoreAuthSnapshot = async (reason: string) => {
+  const restoreAuthSnapshot = async (
+    reason: string,
+    isStillRelevant: () => boolean = () => true,
+  ) => {
     const snapshot = await readPersistedAuthSnapshot();
-    if (!snapshot) return null;
+    if (!snapshot || !isStillRelevant()) return null;
 
     accessTokenRef.current = null;
     currentSessionUserIdRef.current = snapshot.userId;
@@ -533,10 +549,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const restoreProfileFromPersistedSnapshot = async (
     userId: string,
     reason: string,
-    nextSession?: Session | null
+    nextSession?: Session | null,
+    isStillRelevant: () => boolean = () => true,
   ): Promise<Profile | null> => {
     const snapshot = await readPersistedAuthSnapshot();
-    if (!snapshot?.profile || snapshot.userId !== userId) return null;
+    if (!snapshot?.profile || snapshot.userId !== userId || !isStillRelevant()) return null;
 
     const resolvedSession = nextSession ?? session ?? null;
     const resolvedUser = resolvedSession?.user ?? userRef.current ?? null;
@@ -599,31 +616,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setSentryUser(user?.id ?? null);
   }, [user?.id]);
 
-  useEffect(() => {
-    if (!user?.id) return;
-    const provider =
-      user.app_metadata?.provider === "google" || user.app_metadata?.provider === "apple"
-        ? user.app_metadata.provider
-        : "email";
-
-    void (async () => {
-      try {
-        await supabase
-          .from("profiles")
-          .update({ last_successful_auth_provider: provider })
-          .eq("user_id", user.id);
-
-        await supabase
-          .from("profiles")
-          .update({ created_via_provider: provider })
-          .eq("user_id", user.id)
-          .is("created_via_provider", null);
-      } catch {
-        // best effort only
-      }
-    })();
-  }, [user?.app_metadata?.provider, user?.id]);
-
   // Initialize auth state
   const getAccessToken = async () => {
     if (isSupabaseAccessTokenUsable(accessTokenRef.current)) {
@@ -662,8 +654,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return false;
     }
 
+    const recoveryToken = recoveryGenerationRef.current!.begin(
+      currentSessionUserIdRef.current ?? session?.user?.id ?? user?.id ?? null,
+    );
+    const isRecoveryCurrent = () => recoveryGenerationRef.current!.isCurrent(recoveryToken);
+    const discardStaleRecovery = (stage: string) => {
+      logAuthRecoveryEvent('stale_recovery_discarded', {
+        reason,
+        stage,
+        generation: recoveryToken.generation,
+      });
+      return false;
+    };
+
     const recoveryPromise = (async () => {
       const snapshot = await readPersistedAuthSnapshot();
+      if (!isRecoveryCurrent()) return discardStaleRecovery('snapshot_read');
       const hasCachedAccess =
         !!snapshot?.userId ||
         !!session?.user?.id ||
@@ -685,8 +691,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setAuthStatus('reconnecting_session');
 
       const recovery = await recoverSupabaseConnectivity(reason, {
-        maxRefreshAttempts: 2,
         onStateChange: (state) => {
+          if (!isRecoveryCurrent()) return;
           if (state === 'session_refreshing') {
             setAuthStatus('session_refreshing');
           } else {
@@ -694,9 +700,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           }
         },
       });
+      if (!isRecoveryCurrent()) return discardStaleRecovery('refresh_settled');
 
       if (recovery.status === 'ok' || recovery.status === 'refreshed') {
         const { data } = await supabase.auth.getSession();
+        if (!isRecoveryCurrent()) return discardStaleRecovery('session_reload');
 
         const recoveredSession = data?.session ?? null;
         if (recoveredSession?.user) {
@@ -718,9 +726,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       if (recovery.status === 'failed_unrecoverable') {
+        if (!isRecoveryCurrent()) return discardStaleRecovery('terminal_cleanup');
         nextSilentRecoveryAllowedAtRef.current = 0;
         await persistSessionExpiredReason('session_expired');
+        if (!isRecoveryCurrent()) return discardStaleRecovery('terminal_reason_persisted');
         await clearPersistedAuthSnapshot();
+        if (!isRecoveryCurrent()) return discardStaleRecovery('terminal_snapshot_cleared');
         setAuthRecoveryPending(false);
         setUsingPersistedSessionFallback(false);
         setAuthStatus('session_expired');
@@ -729,10 +740,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       const restored = snapshot
-        ? await restoreAuthSnapshot(`silent_recovery:${reason}`)
+        ? await restoreAuthSnapshot(`silent_recovery:${reason}`, isRecoveryCurrent)
         : null;
+      if (!isRecoveryCurrent()) return discardStaleRecovery('snapshot_restore');
       nextSilentRecoveryAllowedAtRef.current =
-        Date.now() + RECOVERABLE_SESSION_RETRY_BACKOFF_MS;
+        Math.max(
+          Date.now() + RECOVERABLE_SESSION_RETRY_BACKOFF_MS,
+          recovery.retryAt ?? 0,
+        );
       if (restored) {
         setAuthRecoveryPending(true);
         setAuthStatus('reconnecting_session');
@@ -838,7 +853,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     void initAuth();
 
-    const processAuthStateChange = async (_event: string, session: Session | null) => {
+    const processAuthStateChange = async (
+      _event: string,
+      session: Session | null,
+      eventSequence: number,
+    ) => {
+        const isEventCurrent = () => eventSequence === authEventSequenceRef.current;
+        const discardStaleEvent = (stage: string) => {
+          logAuthRecoveryEvent('stale_auth_event_discarded', {
+            event: _event,
+            stage,
+            eventSequence,
+          });
+        };
+        if (!isEventCurrent()) {
+          discardStaleEvent('queued');
+          return;
+        }
         accessTokenRef.current = isSupabaseAccessTokenUsable(session?.access_token)
           ? session?.access_token ?? null
           : null;
@@ -858,6 +889,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 : `auth_event:${_event}`,
             });
           });
+          if (!isEventCurrent()) return discardStaleEvent('identity_bind');
           if (previousUserId && previousUserId !== nextUserId) {
             await Promise.all([
               resetChatDbForUserSignOut(previousUserId),
@@ -871,6 +903,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             ]).catch((clearError) => {
               console.warn('[chat] clear local data on account switch failed', clearError);
             });
+            if (!isEventCurrent()) return discardStaleEvent('account_switch_cleanup');
             clearChatBootCacheForUser(previousUserId);
           }
           const isRedundantInitialSession =
@@ -890,13 +923,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           // Do not issue an unconditional profile write here. A transient network
           // failure must not be treated as proof that the profile is missing.
           const profileData = await fetchProfile(session.user.id);
+          if (!isEventCurrent()) return discardStaleEvent('profile_fetch');
           const metadata = await consumeSignupMetadata();
+          if (!isEventCurrent()) return discardStaleEvent('signup_metadata');
           await updateSignupEventForUser(session.user.id, metadata);
+          if (!isEventCurrent()) return discardStaleEvent('signup_event');
 
           await refreshPhoneState();
+          if (!isEventCurrent()) return discardStaleEvent('phone_refresh');
           const { verified } = await getSignupPhoneState();
+          if (!isEventCurrent()) return discardStaleEvent('phone_state');
           if (verified) {
             const ok = await finalizeSignupPhoneVerification();
+            if (!isEventCurrent()) return discardStaleEvent('phone_finalize');
             if (ok) {
               await clearSignupSession({ preserveOnboardingVariant: true });
             } else if (typeof __DEV__ !== "undefined" && __DEV__) {
@@ -908,13 +947,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           let finalProfile = profileData;
           if (!finalProfile) {
             finalProfile = await fetchProfile(session.user.id);
+            if (!isEventCurrent()) return discardStaleEvent('profile_refetch');
           }
           if (!finalProfile) {
             finalProfile = await restoreProfileFromPersistedSnapshot(
               session.user.id,
               `auth_event:${_event}:profile_fetch_failed`,
-              session
+              session,
+              isEventCurrent,
             );
+            if (!isEventCurrent()) return discardStaleEvent('profile_restore');
           }
           if (
             session.user.email_confirmed_at &&
@@ -928,6 +970,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             finalProfile ?? null,
             (finalProfile?.phone_verified === true) || phoneVerified
           );
+          if (!isEventCurrent()) return discardStaleEvent('snapshot_persist');
         } else {
           if (signOutRequestedRef.current) {
             signOutRequestedRef.current = false;
@@ -947,9 +990,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             lastUnrequestedSignedOutHandledAtRef.current = now;
             setAuthRecoveryPending(true);
             const networkReachable = await probeReachableNetwork();
+            if (!isEventCurrent()) return discardStaleEvent('signed_out_network_probe');
             const restored = await restoreAuthSnapshot(
-              "auth_event:SIGNED_OUT_unrequested"
+              "auth_event:SIGNED_OUT_unrequested",
+              isEventCurrent,
             );
+            if (!isEventCurrent()) return discardStaleEvent('signed_out_snapshot_restore');
             if (networkReachable) {
               logAuthRecoveryEvent('network_restored', {
                 reason: 'auth_event:SIGNED_OUT_unrequested',
@@ -958,6 +1004,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 'auth_event:SIGNED_OUT_unrequested',
                 { allowWithoutSnapshot: !restored }
               );
+              if (!isEventCurrent()) return discardStaleEvent('signed_out_recovery');
               if (recovered) {
                 return;
               }
@@ -973,6 +1020,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
           setAuthRecoveryPending(true);
           const restored = await restoreAuthSnapshot(`auth_event:${_event}`);
+          if (!isEventCurrent()) return discardStaleEvent('event_snapshot_restore');
           if (!restored) {
             applySignedOutState();
           } else {
@@ -985,6 +1033,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Queue the real work after the auth lock has been released.
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (_event, session) => {
+        const eventSequence = authEventSequenceRef.current + 1;
+        authEventSequenceRef.current = eventSequence;
+        recoveryGenerationRef.current?.invalidate(session?.user?.id ?? null);
         if (typeof __DEV__ !== "undefined" && __DEV__) {
           console.log("[auth] onAuthStateChange", {
             event: _event,
@@ -995,7 +1046,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setTimeout(() => {
           authEventQueueRef.current = authEventQueueRef.current
             .catch(() => undefined)
-            .then(() => processAuthStateChange(_event, session));
+            .then(() => processAuthStateChange(_event, session, eventSequence));
         }, 0);
       }
     );
@@ -1616,12 +1667,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signIn = async (email: string, password: string) => {
     setIsAuthenticating(true);
+    let methodAttempt: Awaited<ReturnType<typeof beginSignInMethodAttempt>> | null = null;
     try {
-      const { error } = await supabase.auth.signInWithPassword({
+      methodAttempt = await beginSignInMethodAttempt('password');
+      const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
+      if (error || !data.session?.user) {
+        await cancelSignInMethodAttempt(methodAttempt.attemptId);
+        return { error: error ?? new Error('password_session_empty') };
+      }
+      await completeSignInMethodAttempt({
+        attemptId: methodAttempt.attemptId,
+        method: 'password',
+        sessionUserId: data.session.user.id,
+      });
       return { error };
+    } catch (error) {
+      await cancelSignInMethodAttempt(methodAttempt?.attemptId);
+      return { error: error as Error };
     } finally {
       setIsAuthenticating(false);
     }
@@ -1652,6 +1717,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = async (options?: { clearRevenueCatSdkIdentity?: boolean; reason?: string }) => {
     signOutRequestedRef.current = true;
+    recoveryGenerationRef.current?.invalidate(null);
+    authEventSequenceRef.current += 1;
+    await invalidatePendingSignInMethodAttempt();
+    if (options?.reason === 'deleted_account_cleanup') {
+      await forgetSignInMethodOnDevice();
+    }
     const signedOutUserId = user?.id ?? null;
     await clearPersistedAuthSnapshot();
     try {

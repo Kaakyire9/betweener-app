@@ -1,4 +1,5 @@
 import { useAuth } from "@/lib/auth-context";
+import { haptics } from "@/lib/haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -63,7 +64,11 @@ export default function PasswordLoginScreen() {
   };
 
   const handleLogin = async () => {
-    if (!validate()) return;
+    if (!validate()) {
+      void haptics.error();
+      return;
+    }
+    void haptics.tap();
     Keyboard.dismiss();
     setError("");
     setSuccess("");
@@ -72,15 +77,28 @@ export default function PasswordLoginScreen() {
       const { error } = await signIn(email, password);
       if (error) {
         setError(error.message);
+        void haptics.error();
         return;
       }
       setSuccess("Signed in successfully.");
+      void haptics.success();
       setTimeout(() => {
         router.replace("/(auth)/gate");
       }, 800);
     } catch {
       setError("An unexpected error occurred. Please try again.");
+      void haptics.error();
     }
+  };
+
+  const handleBack = () => {
+    void haptics.tap();
+    Keyboard.dismiss();
+    if (router.canGoBack?.()) {
+      router.back();
+      return;
+    }
+    router.replace("/(auth)/login");
   };
 
   return (
@@ -105,6 +123,16 @@ export default function PasswordLoginScreen() {
             showsVerticalScrollIndicator={false}
           >
             <View style={styles.panel}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Back to sign in"
+                onPress={handleBack}
+                style={({ pressed }) => [styles.backButton, pressed && styles.linkPressed]}
+              >
+                <MaterialCommunityIcons name="chevron-left" size={21} color="#1F2A2A" />
+                <Text style={styles.backText}>Back</Text>
+              </Pressable>
+
               <View style={styles.brandWrap}>
                 <View style={styles.brandRow}>
                   <Text style={styles.brand}>Betweener</Text>
@@ -171,7 +199,10 @@ export default function PasswordLoginScreen() {
                   style={styles.input}
                 />
                 <Pressable
-                  onPress={() => setShowPassword((prev) => !prev)}
+                  onPress={() => {
+                    void haptics.tap();
+                    setShowPassword((prev) => !prev);
+                  }}
                   accessibilityRole="button"
                   accessibilityLabel={showPassword ? "Hide password" : "Show password"}
                   hitSlop={8}
@@ -215,8 +246,11 @@ export default function PasswordLoginScreen() {
               </TouchableOpacity>
 
               <Pressable
-                onPress={() => router.push("/(auth)/forgot-password")}
-                style={styles.forgotLink}
+                onPress={() => {
+                  void haptics.tap();
+                  router.push("/(auth)/forgot-password");
+                }}
+                style={({ pressed }) => [styles.forgotLink, pressed && styles.linkPressed]}
               >
                 <Text style={styles.forgotText}>Forgot your password?</Text>
               </Pressable>
@@ -227,7 +261,13 @@ export default function PasswordLoginScreen() {
                 <View style={styles.dividerLine} />
               </View>
 
-              <Pressable onPress={() => router.push("/(auth)/magic-link")} style={styles.emailLinkButton}>
+              <Pressable
+                onPress={() => {
+                  void haptics.tap();
+                  router.push("/(auth)/magic-link");
+                }}
+                style={({ pressed }) => [styles.emailLinkButton, pressed && styles.secondaryPressed]}
+              >
                 <MaterialCommunityIcons name="email-fast-outline" size={18} color="#087D79" />
                 <Text style={styles.emailLinkButtonText}>Send me a secure sign-in link</Text>
               </Pressable>
@@ -236,6 +276,35 @@ export default function PasswordLoginScreen() {
                 <MaterialCommunityIcons name="lock-outline" size={13} color="#64748B" />
                 <Text style={styles.privacyText}>Your sign-in stays private and protected</Text>
               </View>
+
+              <View style={styles.navigationDivider} />
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => {
+                  void haptics.tap();
+                  Keyboard.dismiss();
+                  router.replace("/(auth)/login");
+                }}
+                style={({ pressed }) => [styles.navigationRow, pressed && styles.secondaryPressed]}
+              >
+                <View style={styles.navigationIcon}>
+                  <MaterialCommunityIcons name="tune-variant" size={18} color="#008080" />
+                </View>
+                <Text style={styles.navigationText}>More sign-in options</Text>
+                <MaterialCommunityIcons name="chevron-right" size={20} color="#5F706C" />
+              </Pressable>
+
+              <Pressable
+                accessibilityRole="link"
+                onPress={() => {
+                  void haptics.tap();
+                  Keyboard.dismiss();
+                  router.push("/(auth)/welcome");
+                }}
+                style={({ pressed }) => [styles.createAccountLink, pressed && styles.linkPressed]}
+              >
+                <Text style={styles.createAccountText}>New here? Create an account</Text>
+              </Pressable>
             </View>
           </ScrollView>
         </KeyboardAvoidingView>
@@ -284,6 +353,20 @@ const styles = StyleSheet.create({
     shadowRadius: 30,
     shadowOffset: { width: 0, height: 18 },
     elevation: 8,
+  },
+  backButton: {
+    minHeight: 38,
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    marginLeft: -7,
+    marginBottom: 5,
+    paddingHorizontal: 4,
+  },
+  backText: {
+    color: "#1F2A2A",
+    fontFamily: "Manrope_700Bold",
+    fontSize: 13.5,
   },
   brandWrap: {
     alignItems: "center",
@@ -488,5 +571,49 @@ const styles = StyleSheet.create({
     color: "#64748B",
     fontFamily: "Manrope_400Regular",
     fontSize: 11,
+  },
+  navigationDivider: {
+    height: 1,
+    marginTop: 16,
+    marginBottom: 6,
+    backgroundColor: "rgba(95,112,108,0.14)",
+  },
+  navigationRow: {
+    minHeight: 48,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 4,
+  },
+  navigationIcon: {
+    width: 34,
+    height: 34,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 12,
+    backgroundColor: "rgba(0,128,128,0.08)",
+  },
+  navigationText: {
+    flex: 1,
+    color: "#1F2A2A",
+    fontFamily: "Manrope_700Bold",
+    fontSize: 13,
+  },
+  createAccountLink: {
+    minHeight: 42,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  createAccountText: {
+    color: "#008080",
+    fontFamily: "Manrope_600SemiBold",
+    fontSize: 13,
+  },
+  secondaryPressed: {
+    opacity: 0.7,
+    transform: [{ scale: 0.994 }],
+  },
+  linkPressed: {
+    opacity: 0.58,
   },
 });

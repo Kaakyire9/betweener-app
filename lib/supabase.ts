@@ -7,6 +7,11 @@ import { isNetworkConnectionAvailable } from '@/lib/network-state';
 import { addBreadcrumb, captureMessage } from '@/lib/telemetry/sentry';
 import { isSupabaseAccessTokenUsable } from '@/lib/auth/session-token';
 import { buildSupabasePublicHeaders } from '@/lib/supabase-public-headers';
+import {
+  createAuthFetchTransport,
+  TERMINAL_REFRESH_ERROR_CODES,
+} from '@/lib/auth/auth-transport';
+import { createDurableAuthStorage } from '@/lib/auth/durable-auth-storage';
 
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
 const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
@@ -74,6 +79,8 @@ export const getSupabaseNetEvents = (): SupabaseNetEvent[] => netEvents.slice();
 export const supabaseDebug = {
   getSupabaseNetEvents,
   getSupabaseConfigStatus,
+  getAuthRetryState: () => authTransport.getState(),
+  resetAuthTransportStateForTests: () => authTransport.resetForTests(),
 };
 
 const safeUrlPath = (input: RequestInfo | URL) => {
@@ -194,66 +201,23 @@ const safeStorageKey = (key: string) => {
 // before it is durable. Keep slow-operation telemetry, but always await the
 // native operation and propagate failures to Supabase Auth.
 const AUTH_STORAGE_SLOW_MS = 2_000;
-
-const logSlowAuthStorage = (op: 'getItem' | 'setItem' | 'removeItem', key: string, startedAt: number) => {
-  const ms = Date.now() - startedAt;
-  if (ms < AUTH_STORAGE_SLOW_MS) return;
-  logFetchIssueThrottled(
-    'auth_storage_slow',
-    { op, key: safeStorageKey(key), ms },
-    `auth_storage_slow|${op}|${safeStorageKey(key)}`,
-  );
-};
-
-const durableAuthStorage = {
-  async getItem(key: string) {
-    const startedAt = Date.now();
-    try {
-      return await AsyncStorage.getItem(key);
-    } catch (error) {
-      logFetchIssueThrottled(
-        'auth_storage_error',
-        { op: 'getItem', key: safeStorageKey(key) },
-        `auth_storage_error|getItem|${safeStorageKey(key)}`,
-      );
-      throw error;
-    } finally {
-      logSlowAuthStorage('getItem', key, startedAt);
-    }
+const durableAuthStorage = createDurableAuthStorage(AsyncStorage, {
+  slowMs: AUTH_STORAGE_SLOW_MS,
+  onSlow: (op, key, ms) => {
+    logFetchIssueThrottled(
+      'auth_storage_slow',
+      { op, key: safeStorageKey(key), ms },
+      `auth_storage_slow|${op}|${safeStorageKey(key)}`,
+    );
   },
-
-  async setItem(key: string, value: string) {
-    const startedAt = Date.now();
-    try {
-      await AsyncStorage.setItem(key, value);
-    } catch (error) {
-      logFetchIssueThrottled(
-        'auth_storage_error',
-        { op: 'setItem', key: safeStorageKey(key) },
-        `auth_storage_error|setItem|${safeStorageKey(key)}`,
-      );
-      throw error;
-    } finally {
-      logSlowAuthStorage('setItem', key, startedAt);
-    }
+  onError: (op, key) => {
+    logFetchIssueThrottled(
+      'auth_storage_error',
+      { op, key: safeStorageKey(key) },
+      `auth_storage_error|${op}|${safeStorageKey(key)}`,
+    );
   },
-
-  async removeItem(key: string) {
-    const startedAt = Date.now();
-    try {
-      await AsyncStorage.removeItem(key);
-    } catch (error) {
-      logFetchIssueThrottled(
-        'auth_storage_error',
-        { op: 'removeItem', key: safeStorageKey(key) },
-        `auth_storage_error|removeItem|${safeStorageKey(key)}`,
-      );
-      throw error;
-    } finally {
-      logSlowAuthStorage('removeItem', key, startedAt);
-    }
-  },
-};
+});
 
 // -----------------------------
 // Fetch wrapper (timeout + logs)
@@ -268,9 +232,9 @@ const looksLikeSignalUnsupported = (message: string) => {
 };
 
 let lastAuthFailureAt = 0;
-let lastAuthFailureStatus: 401 | 403 | null = null;
+let lastAuthFailureStatus: 401 | null = null;
 
-const recordAuthFailure = (status: 401 | 403) => {
+const recordAuthFailure = (status: 401) => {
   lastAuthFailureAt = Date.now();
   lastAuthFailureStatus = status;
 };
@@ -295,8 +259,8 @@ const logResponseIssue = (method: string, path: string, status: number, ms: numb
   // Call sites should use `.maybeSingle()` when "no row" is expected.
   if (status === 406) return;
 
-  if (status === 401 || status === 403) {
-    recordAuthFailure(status);
+  if (status === 401) {
+    recordAuthFailure(401);
     logFetchIssueThrottled(
       `auth_${status}`,
       { path, status, ms, via, method, message: 'auth_invalid_or_expired' },
@@ -310,6 +274,17 @@ const logResponseIssue = (method: string, path: string, status: number, ms: numb
     } catch {
       // ignore
     }
+    return;
+  }
+
+  if (status === 403) {
+    // A PostgREST/RPC 403 usually represents RLS or an application permission
+    // decision. It is not evidence that the access token needs refreshing.
+    logFetchIssueThrottled(
+      'http_403',
+      { path, status, ms, via, method, message: 'permission_denied' },
+      `http_403|${baseThrottleKey}`,
+    );
     return;
   }
 
@@ -462,6 +437,47 @@ const fetchWithTimeout: typeof fetch = async (input, init) => {
 // (e.g. edge functions) and want the same timeout + synthetic-response behavior.
 export const supabaseFetch: typeof fetch = fetchWithTimeout;
 
+// Auth gets a dedicated transport contract. Unlike the data client wrapper,
+// refresh timeouts/rejections must be thrown so Auth JS classifies them as
+// retryable and retains the canonical persisted session. Refresh-only 429 and
+// unknown/transient HTTP failures are gated before Auth JS can interpret them
+// as terminal credential rejection.
+const authTransport = createAuthFetchTransport({
+  fetchImpl: (input, init) => fetch(input, init),
+  timeoutMs: SUPABASE_FETCH_TIMEOUT_MS,
+  isConfigured: SUPABASE_IS_CONFIGURED,
+  onDiagnostic: (event) => {
+    const status = event.status ?? 0;
+    const context = {
+      path: event.path,
+      method: event.method,
+      status: event.status,
+      elapsedMs: event.elapsedMs,
+      retryAt: event.retryAt,
+      attempt: event.attempt,
+      networkRequest: event.networkRequest,
+      terminalCode: event.terminalCode ?? null,
+    };
+    recordNetEvent(event.method, event.path, status, event.elapsedMs, {
+      code: event.code,
+      via: `auth_${event.via}`,
+    });
+
+    if (event.code === 'success' || event.code === 'retry_deferred') {
+      addBreadcrumb(`[auth-transport] ${event.code}`, context);
+      return;
+    }
+
+    logFetchIssueThrottled(
+      `auth_transport_${event.code}`,
+      context,
+      `auth_transport_${event.code}|${event.path}|${event.status ?? 0}`,
+    );
+  },
+});
+
+export const getSupabaseAuthRetryState = () => authTransport.getState();
+
 // -----------------------------
 // Connectivity probe (case 2)
 // -----------------------------
@@ -564,7 +580,7 @@ supabaseAuth = createClient(SUPABASE_URL_FOR_CLIENT, SUPABASE_ANON_KEY_FOR_CLIEN
     detectSessionInUrl: false,
   },
   global: {
-    fetch: fetchWithTimeout,
+    fetch: authTransport.fetch,
   },
 });
 
@@ -785,14 +801,9 @@ export const initSupabaseAuthLifecycle = () => {
 // Session sanity check helper
 // -----------------------------
 
-// The HTTP wrapper owns cancellation. Keep the auth guard slightly longer so a
-// timed-out refresh settles before another attempt can begin. A shorter outer
-// timeout leaves the native request running and can create overlapping refreshes.
-const AUTH_REFRESH_GUARD_TIMEOUT_MS = SUPABASE_FETCH_TIMEOUT_MS + 2_000;
 const REFRESH_COOLDOWN_MS = 60_000;
 const EXPIRY_SOON_SECONDS = 90;
 const AUTH_FAILURE_GRACE_MS = 5 * 60_000;
-const SESSION_RECOVERY_BACKOFF_MS = [450, 1100, 2200] as const;
 
 type AuthRefreshAttempt =
   | { status: 'refreshed'; session: Session }
@@ -814,7 +825,18 @@ export type SupabaseSessionRecoveryResult = {
   reason: string;
   attempts: number;
   errorMessage?: string | null;
+  failureKind?: AuthRecoveryFailureKind | null;
+  retryAt?: number | null;
 };
+
+export type AuthRecoveryFailureKind =
+  | 'absent_credentials'
+  | 'network'
+  | 'rate_limited'
+  | 'storage'
+  | 'superseded'
+  | 'terminal_credentials'
+  | 'unknown';
 
 export const getRecentSupabaseAuthFailure = () => {
   if (!lastAuthFailureStatus || !lastAuthFailureAt) return null;
@@ -827,29 +849,15 @@ export const getRecentSupabaseAuthFailure = () => {
   } as const;
 };
 
-const withTimeout = async <T,>(p: Promise<T>, timeoutMs: number): Promise<T> => {
-  let timeoutId: ReturnType<typeof setTimeout> | null = null;
-  try {
-    return await Promise.race([
-      p,
-      new Promise<T>((_, reject) => {
-        timeoutId = setTimeout(() => reject(new Error('timeout')), timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timeoutId) clearTimeout(timeoutId);
-  }
-};
-
-const refreshAuthSession = async (currentSession?: Session): Promise<AuthRefreshAttempt> => {
+const refreshAuthSession = async (): Promise<AuthRefreshAttempt> => {
   if (refreshInFlight) return await refreshInFlight;
 
   const attempt = (async (): Promise<AuthRefreshAttempt> => {
     try {
-      const result: any = await withTimeout(
-        supabaseAuth.auth.refreshSession(currentSession),
-        AUTH_REFRESH_GUARD_TIMEOUT_MS,
-      );
+      // Auth JS owns refresh single-flight, retry duration, token rotation and
+      // stale-commit guards. The dedicated fetch transport is already bounded;
+      // an outer timeout race would release this guard while SDK work continues.
+      const result: any = await supabaseAuth.auth.refreshSession();
       if (result?.error) return { status: 'failed', error: result.error };
       if (!result?.data?.session) {
         return { status: 'failed', error: new Error('refresh_session_empty') };
@@ -880,45 +888,37 @@ const logSessionRecoveryEvent = (event: string, data?: Record<string, unknown>) 
   }
 };
 
-const getAuthRecoveryErrorText = (error: unknown) => {
-  const parts = [
-    (error as any)?.message,
-    (error as any)?.name,
-    (error as any)?.code,
-    (error as any)?.status,
-    (error as any)?.error_description,
-    (error as any)?.details,
-    error,
-  ];
-
-  return parts
-    .map((part) => {
-      if (!part) return '';
-      if (typeof part === 'string') return part;
-      try {
-        return JSON.stringify(part);
-      } catch {
-        return String(part);
-      }
-    })
-    .join(' ')
-    .trim();
+const getAuthRecoveryErrorSummary = (error: unknown) => {
+  const name = typeof (error as any)?.name === 'string' ? (error as any).name : 'Error';
+  const code = typeof (error as any)?.code === 'string' ? (error as any).code : null;
+  const status = typeof (error as any)?.status === 'number' ? (error as any).status : null;
+  return [name, code, status].filter((value) => value !== null && value !== '').join(':');
 };
 
-const isUnrecoverableAuthRecoveryError = (error: unknown) => {
-  const lower = getAuthRecoveryErrorText(error).toLowerCase();
-  if (!lower) return false;
+export const classifyAuthRecoveryError = (error: unknown): AuthRecoveryFailureKind => {
+  const code = typeof (error as any)?.code === 'string' ? (error as any).code : null;
+  const name = typeof (error as any)?.name === 'string' ? (error as any).name : '';
+  const status = typeof (error as any)?.status === 'number' ? (error as any).status : null;
+  const transportState = authTransport.getState();
 
-  return (
-    lower.includes('refresh token') ||
-    lower.includes('invalid refresh') ||
-    lower.includes('refresh_token') ||
-    lower.includes('invalid grant') ||
-    lower.includes('user not found') ||
-    lower.includes('user no longer exists') ||
-    lower.includes('token revoked') ||
-    lower.includes('revoked')
-  );
+  if (code === 'auth_storage_failed' || name === 'AuthStorageError') return 'storage';
+  if (name === 'AuthRefreshDiscardedError' || code === 'refresh_superseded') return 'superseded';
+  if (code && TERMINAL_REFRESH_ERROR_CODES.has(code)) return 'terminal_credentials';
+  if (status === 429 || transportState.retryCode === 'rate_limited') return 'rate_limited';
+  if (
+    name === 'AuthRetryableFetchError' ||
+    name === 'AuthTransientTransportError' ||
+    status === 0 ||
+    status === 408 ||
+    status === 425 ||
+    status === 598 ||
+    status === 599 ||
+    (typeof status === 'number' && status >= 500) ||
+    isLikelyNetworkError(error)
+  ) {
+    return 'network';
+  }
+  return 'unknown';
 };
 
 const getCurrentSession = async () => await supabaseAuth.auth.getSession();
@@ -949,6 +949,9 @@ const ensureFreshSessionOnce = async (): Promise<EnsureFreshSessionStatus> => {
       clearAuthFailure();
       return 'ok';
     }
+
+    const retryState = authTransport.getState();
+    if (retryState.retryAt && retryState.retryAt > Date.now()) return 'failed';
 
     if (refreshInFlight) {
       const activeRefresh = await refreshInFlight;
@@ -981,10 +984,60 @@ export async function ensureFreshSession(): Promise<EnsureFreshSessionStatus> {
 export async function recoverSupabaseConnectivity(
   reason: string = 'network_restored',
   options?: {
-    maxRefreshAttempts?: number;
     onStateChange?: (state: 'get_session' | 'session_refreshing') => void;
   },
 ): Promise<SupabaseSessionRecoveryResult> {
+  const failedRecoverable = (
+    kind: Exclude<AuthRecoveryFailureKind, 'terminal_credentials' | 'absent_credentials'>,
+    attempts: number,
+    error?: unknown,
+  ): SupabaseSessionRecoveryResult => {
+    const retryState = authTransport.getState();
+    const errorMessage = error ? getAuthRecoveryErrorSummary(error) : kind;
+    logSessionRecoveryEvent('supabase_refresh_failed_recoverable', {
+      reason,
+      attempts,
+      failureKind: kind,
+      retryAt: retryState.retryAt,
+      error: errorMessage,
+    });
+    return {
+      status: 'failed_recoverable',
+      reason,
+      attempts,
+      failureKind: kind,
+      retryAt: retryState.retryAt,
+      errorMessage,
+    };
+  };
+
+  const failedTerminal = (
+    kind: 'terminal_credentials' | 'absent_credentials',
+    attempts: number,
+    error?: unknown,
+  ): SupabaseSessionRecoveryResult => {
+    const transportState = authTransport.getState();
+    const errorMessage = error
+      ? getAuthRecoveryErrorSummary(error)
+      : transportState.lastTerminalCode ?? 'session_missing';
+    logSessionRecoveryEvent('supabase_refresh_failed_unrecoverable', {
+      reason,
+      attempts,
+      failureKind: kind,
+      error: errorMessage,
+      precedingTerminalCode: transportState.lastTerminalCode,
+      precedingTerminalStatus: transportState.lastTerminalStatus,
+    });
+    return {
+      status: 'failed_unrecoverable',
+      reason,
+      attempts,
+      failureKind: kind,
+      retryAt: null,
+      errorMessage,
+    };
+  };
+
   try {
     const networkState = await fetchNetInfo().catch(() => null);
     if (!isNetworkConnectionAvailable(networkState)) {
@@ -993,14 +1046,20 @@ export async function recoverSupabaseConnectivity(
         status: 'failed_recoverable',
         reason,
         attempts: 0,
+        failureKind: 'network',
+        retryAt: authTransport.getState().retryAt,
         errorMessage: 'network_unavailable',
       };
     }
 
-    // Airplane-mode recovery should not be blocked by the normal refresh cooldown.
-    lastRefreshAttemptAt = 0;
+    const retryState = authTransport.getState();
+    if (retryState.retryAt && retryState.retryAt > Date.now()) {
+      return failedRecoverable(
+        retryState.retryCode === 'rate_limited' ? 'rate_limited' : 'network',
+        0,
+      );
+    }
 
-    const maxRefreshAttempts = Math.max(1, Math.min(options?.maxRefreshAttempts ?? 3, 3));
     options?.onStateChange?.('get_session');
     logSessionRecoveryEvent('supabase_get_session_attempted', { reason });
 
@@ -1020,33 +1079,23 @@ export async function recoverSupabaseConnectivity(
       // best effort only
     }
 
-    if (error && isUnrecoverableAuthRecoveryError(error)) {
-      const errorMessage = getAuthRecoveryErrorText(error);
-      logSessionRecoveryEvent('supabase_refresh_failed_unrecoverable', {
-        reason,
-        stage: 'get_session',
-        error: errorMessage,
-      });
-      return {
-        status: 'failed_unrecoverable',
-        reason,
-        attempts: 0,
-        errorMessage,
-      };
+    if (error) {
+      const failureKind = classifyAuthRecoveryError(error);
+      if (failureKind === 'terminal_credentials') {
+        return failedTerminal('terminal_credentials', 0, error);
+      }
+      return failedRecoverable(
+        failureKind === 'absent_credentials' ? 'unknown' : failureKind,
+        0,
+        error,
+      );
     }
 
-    if (!session && !error) {
-      logSessionRecoveryEvent('supabase_refresh_failed_unrecoverable', {
-        reason,
-        stage: 'get_session',
-        error: 'session_missing',
-      });
-      return {
-        status: 'failed_unrecoverable',
-        reason,
-        attempts: 0,
-        errorMessage: 'session_missing',
-      };
+    if (!session) {
+      const transportState = authTransport.getState();
+      return transportState.lastTerminalCode
+        ? failedTerminal('terminal_credentials', 0)
+        : failedTerminal('absent_credentials', 0);
     }
 
     if (session && !expiresSoon && !recent401) {
@@ -1066,138 +1115,53 @@ export async function recoverSupabaseConnectivity(
         status: 'ok',
         reason,
         attempts: 0,
+        failureKind: null,
+        retryAt: null,
       };
     }
 
-    let lastRecoverableMessage =
-      error && !isLikelyNetworkError(error) ? getAuthRecoveryErrorText(error) : null;
-
-    for (let attempt = 1; attempt <= maxRefreshAttempts; attempt += 1) {
-      options?.onStateChange?.('session_refreshing');
-      logSessionRecoveryEvent('supabase_refresh_attempted', {
-        reason,
-        attempt,
-        maxRefreshAttempts,
-      });
-
-      try {
-        const refresh = await refreshAuthSession(session ?? undefined);
-        if (refresh.status === 'failed') {
-          if (isUnrecoverableAuthRecoveryError(refresh.error)) {
-            const errorMessage = getAuthRecoveryErrorText(refresh.error);
-            logSessionRecoveryEvent('supabase_refresh_failed_unrecoverable', {
-              reason,
-              attempt,
-              error: errorMessage,
-            });
-            return {
-              status: 'failed_unrecoverable',
-              reason,
-              attempts: attempt,
-              errorMessage,
-            };
-          }
-          lastRecoverableMessage = getAuthRecoveryErrorText(refresh.error);
-        } else {
-          try {
-            const realtime = supabaseData?.realtime;
-            realtime?.connect?.();
-          } catch {
-            // best effort only
-          }
-          logSessionRecoveryEvent('supabase_refresh_succeeded', {
-            reason,
-            attempt,
-          });
-          addBreadcrumb('[supabase] recover_connectivity', { reason, status: 'refreshed', attempt });
-          return {
-            status: 'refreshed',
-            reason,
-            attempts: attempt,
-          };
-        }
-      } catch (refreshError) {
-        if (isUnrecoverableAuthRecoveryError(refreshError)) {
-          const errorMessage = getAuthRecoveryErrorText(refreshError);
-          logSessionRecoveryEvent('supabase_refresh_failed_unrecoverable', {
-            reason,
-            attempt,
-            error: errorMessage,
-          });
-          return {
-            status: 'failed_unrecoverable',
-            reason,
-            attempts: attempt,
-            errorMessage,
-          };
-        }
-        lastRecoverableMessage = getAuthRecoveryErrorText(refreshError);
+    // One app-owned attempt only. Auth JS already owns refresh single-flight,
+    // retry duration and rotation. Additional app loops stack retry windows and
+    // can cause a resume/network/manual-retry storm.
+    options?.onStateChange?.('session_refreshing');
+    logSessionRecoveryEvent('supabase_refresh_attempted', { reason, attempt: 1 });
+    lastRefreshAttemptAt = Date.now();
+    const refresh = await refreshAuthSession();
+    if (refresh.status === 'failed') {
+      const failureKind = classifyAuthRecoveryError(refresh.error);
+      if (failureKind === 'terminal_credentials') {
+        return failedTerminal('terminal_credentials', 1, refresh.error);
       }
-
-      if (attempt < maxRefreshAttempts) {
-        await new Promise((resolve) =>
-          setTimeout(resolve, SESSION_RECOVERY_BACKOFF_MS[attempt - 1] ?? 1200),
-        );
-      }
+      return failedRecoverable(
+        failureKind === 'absent_credentials' ? 'unknown' : failureKind,
+        1,
+        refresh.error,
+      );
     }
 
     try {
-      const postRecovery = await getCurrentSession();
-      const token = postRecovery?.data?.session?.access_token ?? null;
-      setCachedAccessToken(token);
-      syncRealtimeAuth(token);
+      supabaseData?.realtime?.connect?.();
     } catch {
       // best effort only
     }
-
-    try {
-      const realtime = supabaseData?.realtime;
-      realtime?.connect?.();
-    } catch {
-      // best effort only
-    }
-
-    logSessionRecoveryEvent('supabase_refresh_failed_recoverable', {
-      reason,
-      attempts: maxRefreshAttempts,
-      error: lastRecoverableMessage,
-    });
-    addBreadcrumb('[supabase] recover_connectivity', {
-      reason,
-      status: 'failed_recoverable',
-      attempts: maxRefreshAttempts,
-    });
+    logSessionRecoveryEvent('supabase_refresh_succeeded', { reason, attempt: 1 });
+    addBreadcrumb('[supabase] recover_connectivity', { reason, status: 'refreshed', attempt: 1 });
     return {
-      status: 'failed_recoverable',
+      status: 'refreshed',
       reason,
-      attempts: maxRefreshAttempts,
-      errorMessage: lastRecoverableMessage,
+      attempts: 1,
+      failureKind: null,
+      retryAt: null,
     };
   } catch (error) {
-    if (isUnrecoverableAuthRecoveryError(error)) {
-      const errorMessage = getAuthRecoveryErrorText(error);
-      logSessionRecoveryEvent('supabase_refresh_failed_unrecoverable', {
-        reason,
-        attempts: 0,
-        error: errorMessage,
-      });
-      return {
-        status: 'failed_unrecoverable',
-        reason,
-        attempts: 0,
-        errorMessage,
-      };
+    const failureKind = classifyAuthRecoveryError(error);
+    if (failureKind === 'terminal_credentials') {
+      return failedTerminal('terminal_credentials', 0, error);
     }
-    logSessionRecoveryEvent('supabase_refresh_failed_recoverable', {
-      reason,
-      attempts: 0,
-      error: 'recover_connectivity_exception',
-    });
-    return {
-      status: 'failed_recoverable',
-      reason,
-      attempts: 0,
-      errorMessage: 'recover_connectivity_exception',
-    };
+    return failedRecoverable(
+      failureKind === 'absent_credentials' ? 'unknown' : failureKind,
+      0,
+      error,
+    );
   }
 }
