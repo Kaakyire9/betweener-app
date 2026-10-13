@@ -10,7 +10,7 @@ export type Database = {
   // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
-    PostgrestVersion: "14.5"
+    PostgrestVersion: "14.17"
   }
   public: {
     Tables: {
@@ -3346,6 +3346,60 @@ export type Database = {
         }
         Relationships: []
       }
+      database_capacity_alerts: {
+        Row: {
+          connections: number
+          created_at: string
+          id: number
+          level: string
+          usable_connections: number
+          utilization_percent: number
+        }
+        Insert: {
+          connections: number
+          created_at?: string
+          id?: number
+          level: string
+          usable_connections: number
+          utilization_percent: number
+        }
+        Update: {
+          connections?: number
+          created_at?: string
+          id?: number
+          level?: string
+          usable_connections?: number
+          utilization_percent?: number
+        }
+        Relationships: []
+      }
+      database_capacity_samples: {
+        Row: {
+          by_application: Json
+          connections: number
+          level: string
+          sampled_at: string
+          usable_connections: number
+          utilization_percent: number
+        }
+        Insert: {
+          by_application?: Json
+          connections: number
+          level: string
+          sampled_at?: string
+          usable_connections: number
+          utilization_percent: number
+        }
+        Update: {
+          by_application?: Json
+          connections?: number
+          level?: string
+          sampled_at?: string
+          usable_connections?: number
+          utilization_percent?: number
+        }
+        Relationships: []
+      }
       date_plan_concierge_requests: {
         Row: {
           assigned_admin_user_id: string | null
@@ -3631,6 +3685,215 @@ export type Database = {
           method?: string
           user1_id?: string
           user2_id?: string
+        }
+        Relationships: []
+      }
+      economic_risk_events: {
+        Row: {
+          created_at: string
+          disposition: string
+          environment: string
+          id: string
+          metadata: Json
+          resolved_at: string | null
+          risk_code: string
+          severity: string
+          spend_intent_id: string | null
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          disposition?: string
+          environment: string
+          id?: string
+          metadata?: Json
+          resolved_at?: string | null
+          risk_code: string
+          severity: string
+          spend_intent_id?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          disposition?: string
+          environment?: string
+          id?: string
+          metadata?: Json
+          resolved_at?: string | null
+          risk_code?: string
+          severity?: string
+          spend_intent_id?: string | null
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "economic_risk_events_spend_intent_id_fkey"
+            columns: ["spend_intent_id"]
+            isOneToOne: false
+            referencedRelation: "spark_spend_intents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      economy_action_rules: {
+        Row: {
+          action_code: string
+          active: boolean
+          created_at: string
+          effective_at: string
+          environment: string
+          expires_at: string | null
+          id: string
+          included: boolean
+          membership_tier: string
+          price_sparks: number
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          action_code: string
+          active?: boolean
+          created_at?: string
+          effective_at?: string
+          environment: string
+          expires_at?: string | null
+          id?: string
+          included?: boolean
+          membership_tier: string
+          price_sparks: number
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          action_code?: string
+          active?: boolean
+          created_at?: string
+          effective_at?: string
+          environment?: string
+          expires_at?: string | null
+          id?: string
+          included?: boolean
+          membership_tier?: string
+          price_sparks?: number
+          updated_at?: string
+          version?: number
+        }
+        Relationships: []
+      }
+      economy_feature_flags: {
+        Row: {
+          created_at: string
+          enabled: boolean
+          environment: string
+          flag_key: string
+          reason: string | null
+          updated_at: string
+          updated_by_user_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          enabled?: boolean
+          environment: string
+          flag_key: string
+          reason?: string | null
+          updated_at?: string
+          updated_by_user_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          enabled?: boolean
+          environment?: string
+          flag_key?: string
+          reason?: string | null
+          updated_at?: string
+          updated_by_user_id?: string | null
+        }
+        Relationships: []
+      }
+      economy_passes: {
+        Row: {
+          consumed_at: string | null
+          consumed_for_resource_id: string | null
+          created_at: string
+          environment: string
+          expires_at: string | null
+          id: string
+          idempotency_key: string
+          pass_code: string
+          source: string
+          user_id: string
+          valid_from: string
+        }
+        Insert: {
+          consumed_at?: string | null
+          consumed_for_resource_id?: string | null
+          created_at?: string
+          environment: string
+          expires_at?: string | null
+          id?: string
+          idempotency_key: string
+          pass_code: string
+          source: string
+          user_id: string
+          valid_from?: string
+        }
+        Update: {
+          consumed_at?: string | null
+          consumed_for_resource_id?: string | null
+          created_at?: string
+          environment?: string
+          expires_at?: string | null
+          id?: string
+          idempotency_key?: string
+          pass_code?: string
+          source?: string
+          user_id?: string
+          valid_from?: string
+        }
+        Relationships: []
+      }
+      economy_reconciliation_runs: {
+        Row: {
+          completed_at: string | null
+          created_at: string
+          cursor_value: string | null
+          environment: string
+          error_code: string | null
+          id: string
+          matched_count: number
+          mismatch_count: number
+          repaired_count: number
+          scanned_count: number
+          started_at: string
+          status: string
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string
+          cursor_value?: string | null
+          environment: string
+          error_code?: string | null
+          id?: string
+          matched_count?: number
+          mismatch_count?: number
+          repaired_count?: number
+          scanned_count?: number
+          started_at?: string
+          status?: string
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string
+          cursor_value?: string | null
+          environment?: string
+          error_code?: string | null
+          id?: string
+          matched_count?: number
+          mismatch_count?: number
+          repaired_count?: number
+          scanned_count?: number
+          started_at?: string
+          status?: string
         }
         Relationships: []
       }
@@ -12939,37 +13202,61 @@ export type Database = {
       }
       push_tokens: {
         Row: {
+          app_environment: string | null
           app_version: string | null
+          application_id: string | null
           created_at: string
           device_id: string | null
+          expo_project_id: string | null
           id: string
+          installation_id: string | null
           last_seen_at: string
           platform: string
+          provenance_status: string
+          quarantine_reason: string | null
+          quarantined_at: string | null
           token: string
           updated_at: string
           user_id: string
+          verified_at: string | null
         }
         Insert: {
+          app_environment?: string | null
           app_version?: string | null
+          application_id?: string | null
           created_at?: string
           device_id?: string | null
+          expo_project_id?: string | null
           id?: string
+          installation_id?: string | null
           last_seen_at?: string
           platform: string
+          provenance_status?: string
+          quarantine_reason?: string | null
+          quarantined_at?: string | null
           token: string
           updated_at?: string
           user_id: string
+          verified_at?: string | null
         }
         Update: {
+          app_environment?: string | null
           app_version?: string | null
+          application_id?: string | null
           created_at?: string
           device_id?: string | null
+          expo_project_id?: string | null
           id?: string
+          installation_id?: string | null
           last_seen_at?: string
           platform?: string
+          provenance_status?: string
+          quarantine_reason?: string | null
+          quarantined_at?: string | null
           token?: string
           updated_at?: string
           user_id?: string
+          verified_at?: string | null
         }
         Relationships: []
       }
@@ -13045,35 +13332,1222 @@ export type Database = {
           },
         ]
       }
+      relationship_gist_ai_draft_metadata: {
+        Row: {
+          claims_verified_at: string | null
+          claims_verified_by_user_id: string | null
+          created_at: string
+          discussion_prompt: string
+          generation_job_id: string
+          human_edited: boolean
+          model: string
+          prompt_version: string
+          provider: string
+          revision_id: string
+          safety_level: string
+          safety_rationale: string
+          schema_version: string
+          sensitive_topics: string[]
+          takeaway: string
+        }
+        Insert: {
+          claims_verified_at?: string | null
+          claims_verified_by_user_id?: string | null
+          created_at?: string
+          discussion_prompt: string
+          generation_job_id: string
+          human_edited?: boolean
+          model: string
+          prompt_version: string
+          provider: string
+          revision_id: string
+          safety_level: string
+          safety_rationale: string
+          schema_version: string
+          sensitive_topics?: string[]
+          takeaway: string
+        }
+        Update: {
+          claims_verified_at?: string | null
+          claims_verified_by_user_id?: string | null
+          created_at?: string
+          discussion_prompt?: string
+          generation_job_id?: string
+          human_edited?: boolean
+          model?: string
+          prompt_version?: string
+          provider?: string
+          revision_id?: string
+          safety_level?: string
+          safety_rationale?: string
+          schema_version?: string
+          sensitive_topics?: string[]
+          takeaway?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "relationship_gist_ai_draft_metadata_generation_job_id_fkey"
+            columns: ["generation_job_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_ai_generation_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "relationship_gist_ai_draft_metadata_revision_id_fkey"
+            columns: ["revision_id"]
+            isOneToOne: true
+            referencedRelation: "relationship_gist_revisions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      relationship_gist_ai_environment_policies: {
+        Row: {
+          cached_input_microusd_per_million: number | null
+          configured_by_user_id: string | null
+          daily_image_job_budget: number
+          daily_job_budget: number
+          daily_token_budget: number
+          enabled: boolean
+          environment: string
+          image_enabled: boolean
+          image_model: string
+          image_output_microusd_per_million: number | null
+          image_quality: string
+          image_size: string
+          image_text_input_microusd_per_million: number | null
+          input_microusd_per_million: number | null
+          is_current: boolean
+          max_attempts: number
+          max_output_tokens: number
+          model: string
+          output_microusd_per_million: number | null
+          provider: string
+          updated_at: string
+        }
+        Insert: {
+          cached_input_microusd_per_million?: number | null
+          configured_by_user_id?: string | null
+          daily_image_job_budget?: number
+          daily_job_budget?: number
+          daily_token_budget?: number
+          enabled?: boolean
+          environment: string
+          image_enabled?: boolean
+          image_model?: string
+          image_output_microusd_per_million?: number | null
+          image_quality?: string
+          image_size?: string
+          image_text_input_microusd_per_million?: number | null
+          input_microusd_per_million?: number | null
+          is_current?: boolean
+          max_attempts?: number
+          max_output_tokens?: number
+          model: string
+          output_microusd_per_million?: number | null
+          provider?: string
+          updated_at?: string
+        }
+        Update: {
+          cached_input_microusd_per_million?: number | null
+          configured_by_user_id?: string | null
+          daily_image_job_budget?: number
+          daily_job_budget?: number
+          daily_token_budget?: number
+          enabled?: boolean
+          environment?: string
+          image_enabled?: boolean
+          image_model?: string
+          image_output_microusd_per_million?: number | null
+          image_quality?: string
+          image_size?: string
+          image_text_input_microusd_per_million?: number | null
+          input_microusd_per_million?: number | null
+          is_current?: boolean
+          max_attempts?: number
+          max_output_tokens?: number
+          model?: string
+          output_microusd_per_million?: number | null
+          provider?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      relationship_gist_ai_generation_jobs: {
+        Row: {
+          attempt_count: number
+          cached_input_tokens: number | null
+          claimed_at: string | null
+          completed_at: string | null
+          cost_estimate_status: string
+          created_at: string
+          environment: string
+          estimated_cost_microusd: number | null
+          failed_at: string | null
+          failure_code: string | null
+          generated_revision_id: string | null
+          id: string
+          idempotency_key: string
+          input_tokens: number | null
+          model: string
+          output_tokens: number | null
+          prompt_version: string
+          provider: string
+          provider_request_id: string | null
+          requested_by_user_id: string
+          retryable: boolean
+          schema_version: string
+          status: string
+          topic_id: string
+          updated_at: string
+        }
+        Insert: {
+          attempt_count?: number
+          cached_input_tokens?: number | null
+          claimed_at?: string | null
+          completed_at?: string | null
+          cost_estimate_status?: string
+          created_at?: string
+          environment: string
+          estimated_cost_microusd?: number | null
+          failed_at?: string | null
+          failure_code?: string | null
+          generated_revision_id?: string | null
+          id?: string
+          idempotency_key: string
+          input_tokens?: number | null
+          model: string
+          output_tokens?: number | null
+          prompt_version: string
+          provider: string
+          provider_request_id?: string | null
+          requested_by_user_id: string
+          retryable?: boolean
+          schema_version: string
+          status?: string
+          topic_id: string
+          updated_at?: string
+        }
+        Update: {
+          attempt_count?: number
+          cached_input_tokens?: number | null
+          claimed_at?: string | null
+          completed_at?: string | null
+          cost_estimate_status?: string
+          created_at?: string
+          environment?: string
+          estimated_cost_microusd?: number | null
+          failed_at?: string | null
+          failure_code?: string | null
+          generated_revision_id?: string | null
+          id?: string
+          idempotency_key?: string
+          input_tokens?: number | null
+          model?: string
+          output_tokens?: number | null
+          prompt_version?: string
+          provider?: string
+          provider_request_id?: string | null
+          requested_by_user_id?: string
+          retryable?: boolean
+          schema_version?: string
+          status?: string
+          topic_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "relationship_gist_ai_generation_jobs_environment_fkey"
+            columns: ["environment"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_ai_environment_policies"
+            referencedColumns: ["environment"]
+          },
+          {
+            foreignKeyName: "relationship_gist_ai_generation_jobs_generated_revision_id_fkey"
+            columns: ["generated_revision_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_revisions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "relationship_gist_ai_generation_jobs_topic_id_fkey"
+            columns: ["topic_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_ai_topic_calendar"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      relationship_gist_ai_image_jobs: {
+        Row: {
+          attempt_count: number
+          claimed_at: string | null
+          completed_at: string | null
+          created_at: string
+          environment: string
+          estimated_cost_microusd: number | null
+          failed_at: string | null
+          failure_code: string | null
+          id: string
+          idempotency_key: string
+          image_output_tokens: number | null
+          image_size: string
+          model: string
+          perspective: string
+          prompt_version: string
+          provider: string
+          provider_request_id: string | null
+          quality: string
+          requested_by_user_id: string
+          retryable: boolean
+          revision_id: string
+          status: string
+          text_input_tokens: number | null
+          updated_at: string
+        }
+        Insert: {
+          attempt_count?: number
+          claimed_at?: string | null
+          completed_at?: string | null
+          created_at?: string
+          environment: string
+          estimated_cost_microusd?: number | null
+          failed_at?: string | null
+          failure_code?: string | null
+          id?: string
+          idempotency_key: string
+          image_output_tokens?: number | null
+          image_size: string
+          model: string
+          perspective: string
+          prompt_version?: string
+          provider?: string
+          provider_request_id?: string | null
+          quality: string
+          requested_by_user_id: string
+          retryable?: boolean
+          revision_id: string
+          status?: string
+          text_input_tokens?: number | null
+          updated_at?: string
+        }
+        Update: {
+          attempt_count?: number
+          claimed_at?: string | null
+          completed_at?: string | null
+          created_at?: string
+          environment?: string
+          estimated_cost_microusd?: number | null
+          failed_at?: string | null
+          failure_code?: string | null
+          id?: string
+          idempotency_key?: string
+          image_output_tokens?: number | null
+          image_size?: string
+          model?: string
+          perspective?: string
+          prompt_version?: string
+          provider?: string
+          provider_request_id?: string | null
+          quality?: string
+          requested_by_user_id?: string
+          retryable?: boolean
+          revision_id?: string
+          status?: string
+          text_input_tokens?: number | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "relationship_gist_ai_image_jobs_environment_fkey"
+            columns: ["environment"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_ai_environment_policies"
+            referencedColumns: ["environment"]
+          },
+          {
+            foreignKeyName: "relationship_gist_ai_image_jobs_revision_id_fkey"
+            columns: ["revision_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_revisions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      relationship_gist_ai_job_events: {
+        Row: {
+          actor_user_id: string | null
+          environment: string
+          event_type: string
+          failure_code: string | null
+          from_status: string | null
+          id: number
+          job_id: string
+          metadata: Json
+          occurred_at: string
+          to_status: string | null
+        }
+        Insert: {
+          actor_user_id?: string | null
+          environment: string
+          event_type: string
+          failure_code?: string | null
+          from_status?: string | null
+          id?: never
+          job_id: string
+          metadata?: Json
+          occurred_at?: string
+          to_status?: string | null
+        }
+        Update: {
+          actor_user_id?: string | null
+          environment?: string
+          event_type?: string
+          failure_code?: string | null
+          from_status?: string | null
+          id?: never
+          job_id?: string
+          metadata?: Json
+          occurred_at?: string
+          to_status?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "relationship_gist_ai_job_events_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_ai_generation_jobs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      relationship_gist_ai_owner_review_events: {
+        Row: {
+          action: string
+          actor_user_id: string
+          environment: string
+          id: number
+          image_id: string | null
+          metadata: Json
+          occurred_at: string
+          revision_id: string | null
+          topic_id: string | null
+        }
+        Insert: {
+          action: string
+          actor_user_id: string
+          environment: string
+          id?: never
+          image_id?: string | null
+          metadata?: Json
+          occurred_at?: string
+          revision_id?: string | null
+          topic_id?: string | null
+        }
+        Update: {
+          action?: string
+          actor_user_id?: string
+          environment?: string
+          id?: never
+          image_id?: string | null
+          metadata?: Json
+          occurred_at?: string
+          revision_id?: string | null
+          topic_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "relationship_gist_ai_owner_review_events_image_id_fkey"
+            columns: ["image_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_revision_images"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "relationship_gist_ai_owner_review_events_revision_id_fkey"
+            columns: ["revision_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_revisions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "relationship_gist_ai_owner_review_events_topic_id_fkey"
+            columns: ["topic_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_ai_topic_calendar"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      relationship_gist_ai_source_suggestions: {
+        Row: {
+          created_at: string
+          id: string
+          publisher: string
+          review_note: string | null
+          reviewed_at: string | null
+          reviewed_by_user_id: string | null
+          revision_id: string
+          title: string
+          url: string
+          verification_status: string
+          why_suggested: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          publisher: string
+          review_note?: string | null
+          reviewed_at?: string | null
+          reviewed_by_user_id?: string | null
+          revision_id: string
+          title: string
+          url: string
+          verification_status?: string
+          why_suggested: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          publisher?: string
+          review_note?: string | null
+          reviewed_at?: string | null
+          reviewed_by_user_id?: string | null
+          revision_id?: string
+          title?: string
+          url?: string
+          verification_status?: string
+          why_suggested?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "relationship_gist_ai_source_suggestions_revision_id_fkey"
+            columns: ["revision_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_revisions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      relationship_gist_ai_topic_calendar: {
+        Row: {
+          approved_at: string | null
+          approved_by_user_id: string | null
+          cancelled_at: string | null
+          consumed_at: string | null
+          created_at: string
+          created_by_user_id: string
+          environment: string
+          id: string
+          planned_for: string
+          requested_perspective: string
+          status: string
+          topic_brief: string
+          topic_fingerprint: string
+          topic_key: string
+          topic_title: string
+          updated_at: string
+        }
+        Insert: {
+          approved_at?: string | null
+          approved_by_user_id?: string | null
+          cancelled_at?: string | null
+          consumed_at?: string | null
+          created_at?: string
+          created_by_user_id: string
+          environment: string
+          id?: string
+          planned_for: string
+          requested_perspective: string
+          status?: string
+          topic_brief: string
+          topic_fingerprint: string
+          topic_key: string
+          topic_title: string
+          updated_at?: string
+        }
+        Update: {
+          approved_at?: string | null
+          approved_by_user_id?: string | null
+          cancelled_at?: string | null
+          consumed_at?: string | null
+          created_at?: string
+          created_by_user_id?: string
+          environment?: string
+          id?: string
+          planned_for?: string
+          requested_perspective?: string
+          status?: string
+          topic_brief?: string
+          topic_fingerprint?: string
+          topic_key?: string
+          topic_title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "relationship_gist_ai_topic_calendar_environment_fkey"
+            columns: ["environment"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_ai_environment_policies"
+            referencedColumns: ["environment"]
+          },
+        ]
+      }
+      relationship_gist_editions: {
+        Row: {
+          created_at: string
+          current_revision_id: string | null
+          id: string
+          legacy_gist_id: string
+          lifecycle_status: string
+          lock_version: number
+          published_revision_id: string | null
+          targeting_enforced: boolean
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          current_revision_id?: string | null
+          id?: string
+          legacy_gist_id: string
+          lifecycle_status?: string
+          lock_version?: number
+          published_revision_id?: string | null
+          targeting_enforced?: boolean
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          current_revision_id?: string | null
+          id?: string
+          legacy_gist_id?: string
+          lifecycle_status?: string
+          lock_version?: number
+          published_revision_id?: string | null
+          targeting_enforced?: boolean
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "relationship_gist_editions_current_revision_fk"
+            columns: ["current_revision_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_revisions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "relationship_gist_editions_legacy_gist_id_fkey"
+            columns: ["legacy_gist_id"]
+            isOneToOne: true
+            referencedRelation: "relationship_gists"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "relationship_gist_editions_published_revision_fk"
+            columns: ["published_revision_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_revisions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      relationship_gist_editorial_audit_events: {
+        Row: {
+          action: string
+          actor_user_id: string | null
+          edition_id: string
+          from_status: string | null
+          id: number
+          metadata: Json
+          occurred_at: string
+          reason: string | null
+          revision_id: string | null
+          to_status: string | null
+        }
+        Insert: {
+          action: string
+          actor_user_id?: string | null
+          edition_id: string
+          from_status?: string | null
+          id?: never
+          metadata?: Json
+          occurred_at?: string
+          reason?: string | null
+          revision_id?: string | null
+          to_status?: string | null
+        }
+        Update: {
+          action?: string
+          actor_user_id?: string | null
+          edition_id?: string
+          from_status?: string | null
+          id?: never
+          metadata?: Json
+          occurred_at?: string
+          reason?: string | null
+          revision_id?: string | null
+          to_status?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "relationship_gist_editorial_audit_events_edition_id_fkey"
+            columns: ["edition_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_editions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "relationship_gist_editorial_audit_events_revision_id_fkey"
+            columns: ["revision_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_revisions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      relationship_gist_engagement_rate_limits: {
+        Row: {
+          action: string
+          request_count: number
+          updated_at: string
+          user_id: string
+          window_started_at: string
+        }
+        Insert: {
+          action: string
+          request_count?: number
+          updated_at?: string
+          user_id: string
+          window_started_at?: string
+        }
+        Update: {
+          action?: string
+          request_count?: number
+          updated_at?: string
+          user_id?: string
+          window_started_at?: string
+        }
+        Relationships: []
+      }
+      relationship_gist_engagement_receipts: {
+        Row: {
+          created_at: string
+          operation_id: string
+          operation_kind: string
+          result: Json
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          operation_id: string
+          operation_kind: string
+          result?: Json
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          operation_id?: string
+          operation_kind?: string
+          result?: Json
+          user_id?: string
+        }
+        Relationships: []
+      }
+      relationship_gist_reactions: {
+        Row: {
+          created_at: string
+          edition_id: string
+          reaction: string
+          revision_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          edition_id: string
+          reaction: string
+          revision_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          edition_id?: string
+          reaction?: string
+          revision_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "relationship_gist_reactions_edition_id_fkey"
+            columns: ["edition_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_editions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "relationship_gist_reactions_revision_id_fkey"
+            columns: ["revision_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_revisions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      relationship_gist_reader_events: {
+        Row: {
+          client_event_id: string
+          edition_id: string
+          event_type: string
+          id: number
+          occurred_at: string
+          progress_bucket: number | null
+          revision_id: string
+          session_id: string | null
+          source: string
+          user_id: string
+        }
+        Insert: {
+          client_event_id: string
+          edition_id: string
+          event_type: string
+          id?: never
+          occurred_at?: string
+          progress_bucket?: number | null
+          revision_id: string
+          session_id?: string | null
+          source: string
+          user_id: string
+        }
+        Update: {
+          client_event_id?: string
+          edition_id?: string
+          event_type?: string
+          id?: never
+          occurred_at?: string
+          progress_bucket?: number | null
+          revision_id?: string
+          session_id?: string | null
+          source?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "relationship_gist_reader_events_edition_id_fkey"
+            columns: ["edition_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_editions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "relationship_gist_reader_events_revision_id_fkey"
+            columns: ["revision_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_revisions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      relationship_gist_reflections: {
+        Row: {
+          body: string
+          created_at: string
+          edition_id: string
+          revision_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          body: string
+          created_at?: string
+          edition_id: string
+          revision_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          body?: string
+          created_at?: string
+          edition_id?: string
+          revision_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "relationship_gist_reflections_edition_id_fkey"
+            columns: ["edition_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_editions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "relationship_gist_reflections_revision_id_fkey"
+            columns: ["revision_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_revisions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      relationship_gist_revision_images: {
+        Row: {
+          alt_text: string
+          approved_at: string | null
+          approved_by_user_id: string | null
+          created_at: string
+          generated_by_user_id: string
+          generation_job_id: string
+          height: number
+          id: string
+          mime_type: string
+          perspective: string
+          prompt: string
+          rejected_at: string | null
+          rejected_by_user_id: string | null
+          revision_id: string
+          sha256: string
+          status: string
+          storage_path: string
+          updated_at: string
+          width: number
+        }
+        Insert: {
+          alt_text: string
+          approved_at?: string | null
+          approved_by_user_id?: string | null
+          created_at?: string
+          generated_by_user_id: string
+          generation_job_id: string
+          height: number
+          id?: string
+          mime_type?: string
+          perspective: string
+          prompt: string
+          rejected_at?: string | null
+          rejected_by_user_id?: string | null
+          revision_id: string
+          sha256: string
+          status?: string
+          storage_path: string
+          updated_at?: string
+          width: number
+        }
+        Update: {
+          alt_text?: string
+          approved_at?: string | null
+          approved_by_user_id?: string | null
+          created_at?: string
+          generated_by_user_id?: string
+          generation_job_id?: string
+          height?: number
+          id?: string
+          mime_type?: string
+          perspective?: string
+          prompt?: string
+          rejected_at?: string | null
+          rejected_by_user_id?: string | null
+          revision_id?: string
+          sha256?: string
+          status?: string
+          storage_path?: string
+          updated_at?: string
+          width?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "relationship_gist_revision_images_generation_job_id_fkey"
+            columns: ["generation_job_id"]
+            isOneToOne: true
+            referencedRelation: "relationship_gist_ai_image_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "relationship_gist_revision_images_revision_id_fkey"
+            columns: ["revision_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_revisions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      relationship_gist_revision_variants: {
+        Row: {
+          body: string
+          created_at: string
+          perspective: string
+          revision_id: string
+          short_body: string | null
+          title: string
+        }
+        Insert: {
+          body: string
+          created_at?: string
+          perspective: string
+          revision_id: string
+          short_body?: string | null
+          title: string
+        }
+        Update: {
+          body?: string
+          created_at?: string
+          perspective?: string
+          revision_id?: string
+          short_body?: string | null
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "relationship_gist_revision_variants_revision_id_fkey"
+            columns: ["revision_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_revisions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      relationship_gist_revisions: {
+        Row: {
+          archived_at: string | null
+          audience_rules: Json
+          authored_by_user_id: string | null
+          created_at: string
+          edition_id: string
+          id: string
+          primary_perspective: string
+          published_at: string | null
+          quality_approved_at: string | null
+          quality_approved_by_user_id: string | null
+          requires_safety_review: boolean
+          revision_number: number
+          safety_approved_at: string | null
+          safety_approved_by_user_id: string | null
+          scheduled_for: string | null
+          source_revision_id: string | null
+          status: string
+          superseded_at: string | null
+          transition_reason: string | null
+          unpublished_at: string | null
+          updated_at: string
+        }
+        Insert: {
+          archived_at?: string | null
+          audience_rules?: Json
+          authored_by_user_id?: string | null
+          created_at?: string
+          edition_id: string
+          id?: string
+          primary_perspective?: string
+          published_at?: string | null
+          quality_approved_at?: string | null
+          quality_approved_by_user_id?: string | null
+          requires_safety_review?: boolean
+          revision_number: number
+          safety_approved_at?: string | null
+          safety_approved_by_user_id?: string | null
+          scheduled_for?: string | null
+          source_revision_id?: string | null
+          status?: string
+          superseded_at?: string | null
+          transition_reason?: string | null
+          unpublished_at?: string | null
+          updated_at?: string
+        }
+        Update: {
+          archived_at?: string | null
+          audience_rules?: Json
+          authored_by_user_id?: string | null
+          created_at?: string
+          edition_id?: string
+          id?: string
+          primary_perspective?: string
+          published_at?: string | null
+          quality_approved_at?: string | null
+          quality_approved_by_user_id?: string | null
+          requires_safety_review?: boolean
+          revision_number?: number
+          safety_approved_at?: string | null
+          safety_approved_by_user_id?: string | null
+          scheduled_for?: string | null
+          source_revision_id?: string | null
+          status?: string
+          superseded_at?: string | null
+          transition_reason?: string | null
+          unpublished_at?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "relationship_gist_revisions_edition_id_fkey"
+            columns: ["edition_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_editions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "relationship_gist_revisions_source_revision_id_fkey"
+            columns: ["source_revision_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_revisions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      relationship_gist_specialist_assignments: {
+        Row: {
+          active: boolean
+          assigned_by_user_id: string | null
+          created_at: string
+          review_type: string
+          user_id: string
+        }
+        Insert: {
+          active?: boolean
+          assigned_by_user_id?: string | null
+          created_at?: string
+          review_type: string
+          user_id: string
+        }
+        Update: {
+          active?: boolean
+          assigned_by_user_id?: string | null
+          created_at?: string
+          review_type?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      relationship_gist_specialist_reviews: {
+        Row: {
+          approved_at: string | null
+          approved_by_user_id: string | null
+          created_at: string
+          note: string | null
+          review_type: string
+          revision_id: string
+        }
+        Insert: {
+          approved_at?: string | null
+          approved_by_user_id?: string | null
+          created_at?: string
+          note?: string | null
+          review_type: string
+          revision_id: string
+        }
+        Update: {
+          approved_at?: string | null
+          approved_by_user_id?: string | null
+          created_at?: string
+          note?: string | null
+          review_type?: string
+          revision_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "relationship_gist_specialist_reviews_revision_id_fkey"
+            columns: ["revision_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_revisions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      relationship_gist_state_mutation_receipts: {
+        Row: {
+          created_at: string
+          gist_id: string
+          operation_id: string
+          profile_id: string
+          result: Json
+        }
+        Insert: {
+          created_at?: string
+          gist_id: string
+          operation_id: string
+          profile_id: string
+          result: Json
+        }
+        Update: {
+          created_at?: string
+          gist_id?: string
+          operation_id?: string
+          profile_id?: string
+          result?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "relationship_gist_state_mutation_receipts_gist_id_fkey"
+            columns: ["gist_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gists"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "relationship_gist_state_mutation_receipts_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "relationship_gist_state_mutation_receipts_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       relationship_gist_user_states: {
         Row: {
           gist_id: string
+          last_anchor: string | null
+          last_anchor_offset: number | null
           last_opened_at: string | null
           last_perspective: string | null
           last_read_at: string | null
           profile_id: string
           progress: number
+          read_acknowledged_at: string | null
+          reading_duration_ms: number
           saved: boolean
+          saved_version: number
+          scroll_completed_at: string | null
           updated_at: string
         }
         Insert: {
           gist_id: string
+          last_anchor?: string | null
+          last_anchor_offset?: number | null
           last_opened_at?: string | null
           last_perspective?: string | null
           last_read_at?: string | null
           profile_id: string
           progress?: number
+          read_acknowledged_at?: string | null
+          reading_duration_ms?: number
           saved?: boolean
+          saved_version?: number
+          scroll_completed_at?: string | null
           updated_at?: string
         }
         Update: {
           gist_id?: string
+          last_anchor?: string | null
+          last_anchor_offset?: number | null
           last_opened_at?: string | null
           last_perspective?: string | null
           last_read_at?: string | null
           profile_id?: string
           progress?: number
+          read_acknowledged_at?: string | null
+          reading_duration_ms?: number
           saved?: boolean
+          saved_version?: number
+          scroll_completed_at?: string | null
           updated_at?: string
         }
         Relationships: [
@@ -13308,6 +14782,75 @@ export type Database = {
         }
         Relationships: []
       }
+      revenuecat_webhook_inbox: {
+        Row: {
+          app_user_id: string | null
+          attempt_count: number
+          delivery_count: number
+          environment: string | null
+          environment_source: string
+          error: string | null
+          event_type: string
+          id: string
+          last_error_code: string | null
+          last_received_at: string
+          next_retry_at: string | null
+          payload: Json
+          payload_sha256: string
+          processed_at: string | null
+          processing_started_at: string | null
+          processing_state: string
+          received_at: string
+          retry_count: number
+          revenuecat_event_id: string
+          updated_at: string
+        }
+        Insert: {
+          app_user_id?: string | null
+          attempt_count?: number
+          delivery_count?: number
+          environment?: string | null
+          environment_source?: string
+          error?: string | null
+          event_type: string
+          id?: string
+          last_error_code?: string | null
+          last_received_at?: string
+          next_retry_at?: string | null
+          payload: Json
+          payload_sha256: string
+          processed_at?: string | null
+          processing_started_at?: string | null
+          processing_state?: string
+          received_at?: string
+          retry_count?: number
+          revenuecat_event_id: string
+          updated_at?: string
+        }
+        Update: {
+          app_user_id?: string | null
+          attempt_count?: number
+          delivery_count?: number
+          environment?: string | null
+          environment_source?: string
+          error?: string | null
+          event_type?: string
+          id?: string
+          last_error_code?: string | null
+          last_received_at?: string
+          next_retry_at?: string | null
+          payload?: Json
+          payload_sha256?: string
+          processed_at?: string | null
+          processing_started_at?: string | null
+          processing_state?: string
+          received_at?: string
+          retry_count?: number
+          revenuecat_event_id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       settings: {
         Row: {
           created_at: string
@@ -13415,6 +14958,133 @@ export type Database = {
           user_id?: string | null
         }
         Relationships: []
+      }
+      spark_ledger_events: {
+        Row: {
+          created_at: string
+          delta_sparks: number
+          environment: string
+          id: string
+          idempotency_key: string
+          observed_at: string | null
+          observed_balance_after: number | null
+          provider_transaction_id: string | null
+          reason: string
+          source: string
+          spend_intent_id: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          delta_sparks: number
+          environment: string
+          id?: string
+          idempotency_key: string
+          observed_at?: string | null
+          observed_balance_after?: number | null
+          provider_transaction_id?: string | null
+          reason: string
+          source: string
+          spend_intent_id?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          delta_sparks?: number
+          environment?: string
+          id?: string
+          idempotency_key?: string
+          observed_at?: string | null
+          observed_balance_after?: number | null
+          provider_transaction_id?: string | null
+          reason?: string
+          source?: string
+          spend_intent_id?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "spark_ledger_events_spend_intent_id_fkey"
+            columns: ["spend_intent_id"]
+            isOneToOne: false
+            referencedRelation: "spark_spend_intents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      spark_spend_intents: {
+        Row: {
+          action_code: string
+          created_at: string
+          environment: string
+          expires_at: string
+          failure_code: string | null
+          fulfilled_at: string | null
+          id: string
+          idempotency_key: string
+          included: boolean
+          membership_tier: string
+          provider_transaction_id: string | null
+          quoted_price_sparks: number
+          resource_id: string | null
+          resource_type: string | null
+          rule_id: string
+          rule_version: number
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          action_code: string
+          created_at?: string
+          environment: string
+          expires_at: string
+          failure_code?: string | null
+          fulfilled_at?: string | null
+          id?: string
+          idempotency_key: string
+          included?: boolean
+          membership_tier: string
+          provider_transaction_id?: string | null
+          quoted_price_sparks: number
+          resource_id?: string | null
+          resource_type?: string | null
+          rule_id: string
+          rule_version: number
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          action_code?: string
+          created_at?: string
+          environment?: string
+          expires_at?: string
+          failure_code?: string | null
+          fulfilled_at?: string | null
+          id?: string
+          idempotency_key?: string
+          included?: boolean
+          membership_tier?: string
+          provider_transaction_id?: string | null
+          quoted_price_sparks?: number
+          resource_id?: string | null
+          resource_type?: string | null
+          rule_id?: string
+          rule_version?: number
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "spark_spend_intents_rule_id_fkey"
+            columns: ["rule_id"]
+            isOneToOne: false
+            referencedRelation: "economy_action_rules"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       spatial_ref_sys: {
         Row: {
@@ -15508,6 +17178,7 @@ export type Database = {
           }
         | { Args: { schema_name: string; table_name: string }; Returns: string }
         | { Args: { table_name: string }; Returns: string }
+      economy_is_service_role: { Args: never; Returns: boolean }
       edit_message: {
         Args: { message_id: string; new_text: string }
         Returns: {
@@ -16205,6 +17876,10 @@ export type Database = {
       }
       has_live_capability: {
         Args: { p_capability: string; p_session_id: string; p_user_id?: string }
+        Returns: boolean
+      }
+      has_relationship_gist_editorial_capability: {
+        Args: { p_action: string; p_user_id?: string }
         Returns: boolean
       }
       has_usable_vibes_coordinates: {
@@ -17086,6 +18761,63 @@ export type Database = {
         Args: { p_target_profile_ids?: string[]; p_viewer_profile_id: string }
         Returns: number
       }
+      relationship_gist_ai_is_owner_editor: {
+        Args: { p_user_id?: string }
+        Returns: boolean
+      }
+      relationship_gist_ai_normalize_topic: {
+        Args: { p_value: string }
+        Returns: string
+      }
+      relationship_gist_ai_record_event: {
+        Args: {
+          p_actor_user_id: string
+          p_event_type: string
+          p_failure_code?: string
+          p_from_status: string
+          p_job_id: string
+          p_metadata?: Json
+          p_to_status: string
+        }
+        Returns: undefined
+      }
+      relationship_gist_ai_similarity: {
+        Args: { p_left: string; p_right: string }
+        Returns: number
+      }
+      relationship_gist_can_read_cover: {
+        Args: { p_storage_path: string }
+        Returns: boolean
+      }
+      relationship_gist_engagement_consume_rate_limit: {
+        Args: {
+          p_action: string
+          p_limit: number
+          p_user_id: string
+          p_window: string
+        }
+        Returns: undefined
+      }
+      relationship_gist_engagement_resolve: {
+        Args: { p_gist_id: string; p_revision_id?: string }
+        Returns: {
+          edition_id: string
+          revision_id: string
+        }[]
+      }
+      relationship_gist_v2_record_audit: {
+        Args: {
+          p_action: string
+          p_actor_user_id: string
+          p_edition_id: string
+          p_from_status: string
+          p_metadata?: Json
+          p_reason?: string
+          p_revision_id: string
+          p_to_status: string
+        }
+        Returns: undefined
+      }
       reset_daily_superlikes: { Args: never; Returns: undefined }
       resolve_live_capabilities: {
         Args: { p_session_id: string; p_user_id?: string }
@@ -17120,6 +18852,16 @@ export type Database = {
           p_expected_version: number
           p_session_id: string
           p_source: string
+        }
+        Returns: Json
+      }
+      rpc_add_relationship_gist_revision_variant: {
+        Args: {
+          p_body: string
+          p_perspective: string
+          p_revision_id: string
+          p_short_body: string
+          p_title: string
         }
         Returns: Json
       }
@@ -17389,6 +19131,17 @@ export type Database = {
           target_user_id: string
         }[]
       }
+      rpc_admin_get_database_capacity_v1: {
+        Args: { p_limit?: number }
+        Returns: {
+          by_application: Json
+          connections: number
+          level: string
+          sampled_at: string
+          usable_connections: number
+          utilization_percent: number
+        }[]
+      }
       rpc_admin_get_date_plan_concierge_queue: {
         Args: never
         Returns: {
@@ -17514,6 +19267,30 @@ export type Database = {
           risk_score: number
           semantic_used: boolean
           user_id: string
+        }[]
+      }
+      rpc_admin_get_relationship_gist_editions: {
+        Args: never
+        Returns: {
+          authored_by_user_id: string
+          body: string
+          edition_id: string
+          legacy_gist_id: string
+          lock_version: number
+          perspective: string
+          perspectives: string[]
+          published_at: string
+          quality_approved_at: string
+          requires_safety_review: boolean
+          revision_id: string
+          revision_number: number
+          safety_approved_at: string
+          scheduled_for: string
+          short_body: string
+          status: string
+          targeting_enforced: boolean
+          title: string
+          updated_at: string
         }[]
       }
       rpc_admin_get_relationship_gists: {
@@ -17863,6 +19640,25 @@ export type Database = {
             }
             Returns: undefined
           }
+      rpc_apply_relationship_gist_state_mutation_v2: {
+        Args: {
+          p_expected_saved_version?: number
+          p_gist_id: string
+          p_last_anchor?: string
+          p_last_anchor_offset?: number
+          p_last_perspective?: string
+          p_last_read_at?: string
+          p_mark_opened?: boolean
+          p_operation_id: string
+          p_owner_user_id: string
+          p_progress?: number
+          p_read_acknowledged?: boolean
+          p_reading_duration_delta_ms?: number
+          p_saved?: boolean
+          p_scroll_completed?: boolean
+        }
+        Returns: Json
+      }
       rpc_approve_circle: {
         Args: { p_circle_id: string }
         Returns: {
@@ -17977,6 +19773,14 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      rpc_approve_relationship_gist_ai_topic: {
+        Args: { p_topic_id: string }
+        Returns: Json
+      }
+      rpc_approve_relationship_gist_specialist_review: {
+        Args: { p_note?: string; p_review_type: string; p_revision_id: string }
+        Returns: Json
+      }
       rpc_archive_circle_pulse_item: {
         Args: { p_actor_profile_id: string; p_item_id: string }
         Returns: boolean
@@ -18073,6 +19877,10 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      rpc_attest_relationship_gist_ai_claims: {
+        Args: { p_revision_id: string }
+        Returns: Json
       }
       rpc_backfill_profile_contact_guard: {
         Args: {
@@ -18858,6 +20666,37 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_create_relationship_gist_ai_topic: {
+        Args: {
+          p_planned_for: string
+          p_requested_perspective: string
+          p_topic_brief: string
+          p_topic_key: string
+          p_topic_title: string
+        }
+        Returns: Json
+      }
+      rpc_create_relationship_gist_revision: {
+        Args: {
+          p_body?: string
+          p_edition_id?: string
+          p_legacy_gist_id?: string
+          p_perspective?: string
+          p_requires_safety_review?: boolean
+          p_short_body?: string
+          p_source_revision_id?: string
+          p_title?: string
+        }
+        Returns: Json
+      }
+      rpc_create_relationship_gist_rollback_revision: {
+        Args: {
+          p_edition_id: string
+          p_reason: string
+          p_source_revision_id: string
+        }
+        Returns: Json
+      }
       rpc_create_text_moment_v2: {
         Args: {
           p_caption?: string
@@ -18967,6 +20806,16 @@ export type Database = {
       rpc_delete_owned_circle: {
         Args: { p_actor_profile_id: string; p_circle_id: string }
         Returns: boolean
+      }
+      rpc_delete_relationship_gist_reflection: {
+        Args: {
+          p_gist_id: string
+          p_operation_id: string
+          p_owner_user_id: string
+          p_revision_id: string
+          p_source?: string
+        }
+        Returns: Json
       }
       rpc_enable_live_odo_full_quick_connect_v1: {
         Args: { p_session_id: string; p_settings?: Json }
@@ -20061,6 +21910,7 @@ export type Database = {
         Returns: Json
       }
       rpc_get_merged_account_redirect: { Args: never; Returns: Json }
+      rpc_get_my_admin_context: { Args: never; Returns: Json }
       rpc_get_my_circle_dating_preference: {
         Args: { p_circle_id: string }
         Returns: Json
@@ -20133,6 +21983,17 @@ export type Database = {
       rpc_get_my_profile_handle_state: { Args: never; Returns: Json }
       rpc_get_my_profile_interest: { Args: never; Returns: Json }
       rpc_get_my_recent_boost_analytics: { Args: never; Returns: Json }
+      rpc_get_my_relationship_gist_editorial_permissions: {
+        Args: never
+        Returns: {
+          can_archive: boolean
+          can_draft: boolean
+          can_publish: boolean
+          can_quality_approve: boolean
+          can_read: boolean
+          can_safety_review: boolean
+        }[]
+      }
       rpc_get_my_saved_profiles:
         | {
             Args: never
@@ -20166,6 +22027,27 @@ export type Database = {
               saved_at: string
             }[]
           }
+      rpc_get_my_saved_relationship_gists: {
+        Args: { p_perspective?: string }
+        Returns: {
+          availability: string
+          body: string
+          edition_id: string
+          gist_id: string
+          last_anchor: string
+          last_anchor_offset: number
+          last_opened_at: string
+          last_read_at: string
+          progress: number
+          read_acknowledged_at: string
+          revision_id: string
+          saved_at: string
+          selected_perspective: string
+          short_body: string
+          title: string
+          unavailable_reason: string
+        }[]
+      }
       rpc_get_phone_verification_status: { Args: never; Returns: Json }
       rpc_get_profile_boost_recommendations: { Args: never; Returns: Json }
       rpc_get_profile_card_context: {
@@ -20203,6 +22085,17 @@ export type Database = {
           verification_level: number
           wants_children: string
         }[]
+      }
+      rpc_get_relationship_gist_ai_image_studio: { Args: never; Returns: Json }
+      rpc_get_relationship_gist_ai_review_queue: { Args: never; Returns: Json }
+      rpc_get_relationship_gist_ai_studio: { Args: never; Returns: Json }
+      rpc_get_relationship_gist_cover: {
+        Args: { p_gist_id: string; p_perspective?: string }
+        Returns: Json
+      }
+      rpc_get_relationship_gist_engagement: {
+        Args: { p_gist_id: string }
+        Returns: Json
       }
       rpc_get_romantic_eligibility: {
         Args: {
@@ -20961,6 +22854,22 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_owner_acknowledge_relationship_gist_ai_specialist_review: {
+        Args: { p_note?: string; p_review_type: string; p_revision_id: string }
+        Returns: Json
+      }
+      rpc_owner_attest_relationship_gist_ai_claims: {
+        Args: { p_revision_id: string }
+        Returns: Json
+      }
+      rpc_owner_review_relationship_gist_ai_image: {
+        Args: { p_alt_text: string; p_decision: string; p_image_id: string }
+        Returns: Json
+      }
+      rpc_owner_review_relationship_gist_ai_source: {
+        Args: { p_note?: string; p_source_id: string; p_status: string }
+        Returns: Json
+      }
       rpc_pass_circle_dating_candidate: {
         Args: { p_circle_id: string; p_target_profile_id: string }
         Returns: undefined
@@ -20968,6 +22877,10 @@ export type Database = {
       rpc_pin_circle_pulse_comment: {
         Args: { p_comment_id: string; p_pinned?: boolean; p_profile_id: string }
         Returns: boolean
+      }
+      rpc_prepare_relationship_gist_ai_owner_topic: {
+        Args: { p_topic_id: string }
+        Returns: Json
       }
       rpc_prepare_view_once_attachment: {
         Args: { p_message_id: string }
@@ -21050,6 +22963,10 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      rpc_publish_relationship_gist_ai_owner_review: {
+        Args: { p_confirmation: string; p_revision_id: string }
+        Returns: Json
+      }
       rpc_record_circle_pulse_welcome_event: {
         Args: {
           p_circle_id: string
@@ -21070,6 +22987,19 @@ export type Database = {
       rpc_record_profile_guard_semantic_observation: {
         Args: { p_decision: string; p_reason_code: string; p_user_id: string }
         Returns: undefined
+      }
+      rpc_record_relationship_gist_reader_event: {
+        Args: {
+          p_client_event_id: string
+          p_event_type: string
+          p_gist_id: string
+          p_owner_user_id: string
+          p_progress_bucket?: number
+          p_revision_id: string
+          p_session_id?: string
+          p_source?: string
+        }
+        Returns: Json
       }
       rpc_refund_undone_superlike: {
         Args: {
@@ -21188,6 +23118,10 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      rpc_reject_relationship_gist_ai_draft: {
+        Args: { p_reason: string; p_revision_id: string }
+        Returns: Json
       }
       rpc_release_live_quick_connect_safety_hold: {
         Args: { p_user_id: string }
@@ -21317,6 +23251,18 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      rpc_request_relationship_gist_ai_generation: {
+        Args: { p_idempotency_key: string; p_topic_id: string }
+        Returns: Json
+      }
+      rpc_request_relationship_gist_ai_image_generation: {
+        Args: {
+          p_idempotency_key: string
+          p_perspective: string
+          p_revision_id: string
+        }
+        Returns: Json
       }
       rpc_resolve_live_seat_request: {
         Args: { p_approve: boolean; p_request_id: string }
@@ -21516,6 +23462,14 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      rpc_review_relationship_gist_ai_image: {
+        Args: { p_alt_text: string; p_decision: string; p_image_id: string }
+        Returns: Json
+      }
+      rpc_review_relationship_gist_ai_source: {
+        Args: { p_note?: string; p_source_id: string; p_status: string }
+        Returns: Json
       }
       rpc_rsvp_live_session: {
         Args: {
@@ -21961,6 +23915,10 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_service_assert_economy_feature_enabled_v1: {
+        Args: { p_environment: string; p_flag_key: string }
+        Returns: undefined
+      }
       rpc_service_begin_live_odo_call_v1: {
         Args: {
           p_action_id: string
@@ -22028,6 +23986,26 @@ export type Database = {
       }
       rpc_service_claim_push_notification_event_v1: {
         Args: { p_event_id: string }
+        Returns: Json
+      }
+      rpc_service_claim_relationship_gist_ai_image_job: {
+        Args: { p_environment: string; p_job_id: string }
+        Returns: Json
+      }
+      rpc_service_claim_relationship_gist_ai_job: {
+        Args: { p_environment: string; p_job_id: string }
+        Returns: Json
+      }
+      rpc_service_claim_revenuecat_webhook_event_v1: {
+        Args: {
+          p_app_user_id: string
+          p_environment: string
+          p_environment_source: string
+          p_event_type: string
+          p_payload: Json
+          p_payload_sha256: string
+          p_revenuecat_event_id: string
+        }
         Returns: Json
       }
       rpc_service_clear_live_odo_policy_pause_v1: {
@@ -22137,6 +24115,36 @@ export type Database = {
         }
         Returns: boolean
       }
+      rpc_service_complete_relationship_gist_ai_image_job: {
+        Args: {
+          p_alt_text: string
+          p_environment: string
+          p_estimated_cost_microusd: number
+          p_height: number
+          p_image_output_tokens: number
+          p_job_id: string
+          p_prompt: string
+          p_provider_request_id: string
+          p_sha256: string
+          p_storage_path: string
+          p_text_input_tokens: number
+          p_width: number
+        }
+        Returns: Json
+      }
+      rpc_service_complete_relationship_gist_ai_job: {
+        Args: {
+          p_cached_input_tokens: number
+          p_environment: string
+          p_estimated_cost_microusd: number
+          p_input_tokens: number
+          p_job_id: string
+          p_output: Json
+          p_output_tokens: number
+          p_provider_request_id: string
+        }
+        Returns: Json
+      }
       rpc_service_configure_test_hash_provider: {
         Args: { p_enabled: boolean; p_environment: string }
         Returns: boolean
@@ -22203,6 +24211,32 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_service_fail_relationship_gist_ai_image_job: {
+        Args: {
+          p_environment: string
+          p_failure_code: string
+          p_job_id: string
+          p_provider_request_id?: string
+          p_retryable: boolean
+          p_status: string
+        }
+        Returns: Json
+      }
+      rpc_service_fail_relationship_gist_ai_job: {
+        Args: {
+          p_cached_input_tokens?: number
+          p_environment: string
+          p_estimated_cost_microusd?: number
+          p_failure_code: string
+          p_input_tokens?: number
+          p_job_id: string
+          p_output_tokens?: number
+          p_provider_request_id?: string
+          p_retryable: boolean
+          p_status: string
+        }
+        Returns: Json
+      }
       rpc_service_finalize_live_quick_connect_opportunity_session_v1: {
         Args: {
           p_failure_reason_code?: string
@@ -22214,6 +24248,14 @@ export type Database = {
       }
       rpc_service_finalize_profile_onboarding: {
         Args: { p_user_id: string }
+        Returns: Json
+      }
+      rpc_service_get_economy_rule_v1: {
+        Args: {
+          p_action_code: string
+          p_environment: string
+          p_membership_tier: string
+        }
         Returns: Json
       }
       rpc_service_get_live_music_playback_v1: {
@@ -22428,6 +24470,19 @@ export type Database = {
           p_sha256?: string
         }
         Returns: Json
+      }
+      rpc_service_resolve_push_destinations_v1: {
+        Args: { p_user_id?: string }
+        Returns: {
+          app_environment: string
+          application_id: string
+          decision: string
+          expo_project_id: string
+          reason: string
+          token_hash_prefix: string
+          token_id: string
+          user_id: string
+        }[]
       }
       rpc_service_send_moderated_private_message: {
         Args: {
@@ -22789,6 +24844,17 @@ export type Database = {
         }
         Returns: boolean
       }
+      rpc_set_relationship_gist_reaction: {
+        Args: {
+          p_gist_id: string
+          p_operation_id: string
+          p_owner_user_id: string
+          p_reaction?: string
+          p_revision_id: string
+          p_source?: string
+        }
+        Returns: Json
+      }
       rpc_set_user_presence: { Args: { p_online: boolean }; Returns: number }
       rpc_signal_live_odo_autopilot_clock_v1: {
         Args: { p_session_id: string }
@@ -23045,6 +25111,15 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      rpc_transition_relationship_gist_revision: {
+        Args: {
+          p_action: string
+          p_reason?: string
+          p_revision_id: string
+          p_scheduled_for?: string
+        }
+        Returns: Json
       }
       rpc_update_circle_image: {
         Args: {
@@ -23697,6 +25772,17 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      rpc_upsert_relationship_gist_reflection: {
+        Args: {
+          p_body: string
+          p_gist_id: string
+          p_operation_id: string
+          p_owner_user_id: string
+          p_revision_id: string
+          p_source?: string
+        }
+        Returns: Json
+      }
       rpc_upsert_relationship_gist_user_state: {
         Args: {
           p_gist_id: string
@@ -23708,12 +25794,18 @@ export type Database = {
         }
         Returns: {
           gist_id: string
+          last_anchor: string | null
+          last_anchor_offset: number | null
           last_opened_at: string | null
           last_perspective: string | null
           last_read_at: string | null
           profile_id: string
           progress: number
+          read_acknowledged_at: string | null
+          reading_duration_ms: number
           saved: boolean
+          saved_version: number
+          scroll_completed_at: string | null
           updated_at: string
         }
         SetofOptions: {
@@ -24445,6 +26537,20 @@ export type Database = {
         Args: {
           p_app_version: string
           p_device_id: string
+          p_platform: string
+          p_token: string
+          p_user_id: string
+        }
+        Returns: undefined
+      }
+      upsert_push_token_v2: {
+        Args: {
+          p_app_environment: string
+          p_app_version: string
+          p_application_id: string
+          p_device_id: string
+          p_expo_project_id: string
+          p_installation_id: string
           p_platform: string
           p_token: string
           p_user_id: string
