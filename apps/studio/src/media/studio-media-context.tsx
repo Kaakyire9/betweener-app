@@ -37,13 +37,21 @@ const StudioMediaContext = createContext<StudioMediaContextValue | null>(null);
 export function StudioMediaProvider({
   sessionId,
   controllerInstanceId,
+  sourceKind = 'studio_host',
+  autoConnect = false,
   children,
-}: PropsWithChildren<{ sessionId: string; controllerInstanceId: string }>) {
+}: PropsWithChildren<{
+  sessionId: string;
+  controllerInstanceId: string;
+  sourceKind?: StudioMediaAdmission['sourceKind'];
+  autoConnect?: boolean;
+}>) {
   const [binding, setBinding] = useState<MediaBinding | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const bindingRef = useRef<MediaBinding | null>(null);
   const kickUnsubscribeRef = useRef<(() => void) | null>(null);
+  const autoConnectKeyRef = useRef<string | null>(null);
 
   const disconnect = useCallback(async () => {
     kickUnsubscribeRef.current?.();
@@ -67,10 +75,10 @@ export function StudioMediaProvider({
       const admission = await studioApi.requestMediaAdmission(
         sessionId,
         controllerInstanceId,
-        'studio_host',
+        sourceKind,
       );
       const tokenProvider = async () => (
-        await studioApi.requestMediaAdmission(sessionId, controllerInstanceId, 'studio_host')
+        await studioApi.requestMediaAdmission(sessionId, controllerInstanceId, sourceKind)
       ).token;
       const client = new StreamVideoClient({
         apiKey: admission.apiKey,
@@ -99,7 +107,14 @@ export function StudioMediaProvider({
     } finally {
       setConnecting(false);
     }
-  }, [connecting, controllerInstanceId, disconnect, sessionId]);
+  }, [connecting, controllerInstanceId, disconnect, sessionId, sourceKind]);
+
+  useEffect(() => {
+    const key = `${sessionId}:${sourceKind}`;
+    if (!autoConnect || autoConnectKeyRef.current === key) return;
+    autoConnectKeyRef.current = key;
+    void connect();
+  }, [autoConnect, connect, sessionId, sourceKind]);
 
   useEffect(() => () => { void disconnect(); }, [disconnect]);
 

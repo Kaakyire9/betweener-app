@@ -107,7 +107,7 @@ test('legacy and known cross-environment rows are quarantined instead of deleted
 });
 
 test('unicast and campaign selection both reject unproven destinations', () => {
-  assert.match(worker, /select\('id,user_id,token,app_version,app_environment,application_id,expo_project_id,installation_id,provenance_status,quarantined_at'\)/);
+  assert.match(worker, /rpc_service_list_live_campaign_tokens_v1/);
   assert.match(worker, /select\('id,token,last_seen_at,app_version,app_environment,application_id,expo_project_id,installation_id,provenance_status,quarantined_at'\)/);
   assert.match(worker, /evaluatePushTokenProvenance\(row, pushEnvironment\)/g);
   assert.match(worker, /push_environment_provenance_denied/);

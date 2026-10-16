@@ -23,6 +23,9 @@ import type {
   LiveHostedCandidate,
   LiveHostedMatchingSnapshot,
   LiveHostingManagementSnapshot,
+  LiveStudioOperatorManagementSnapshot,
+  LiveStudioSessionOperatorRole,
+  LiveStudioSessionOperatorStatus,
   LiveChemistrySnapshot,
   CircleLiveSnapshot,
   LiveQuickConnectDecision,
@@ -101,6 +104,48 @@ export const parseLiveHostingManagementSnapshot = (
       totalAttendees: Math.max(0, Math.floor(asNumber(value.traffic.totalAttendees))),
       reactions: Math.max(0, Math.floor(asNumber(value.traffic.reactions))),
     },
+  };
+};
+
+const LIVE_STUDIO_OPERATOR_ROLES = ['viewer', 'producer', 'moderator'] as const;
+const LIVE_STUDIO_OPERATOR_STATUSES = ['active', 'expired', 'revoked'] as const;
+
+export const parseLiveStudioOperatorManagementSnapshot = (
+  value: unknown,
+): LiveStudioOperatorManagementSnapshot => {
+  if (!isRecord(value) || !Array.isArray(value.operators)) {
+    throw new Error('live_studio_operator_management_snapshot_invalid');
+  }
+  const operators = value.operators.map((entry) => {
+    if (!isRecord(entry)
+      || !includes(LIVE_STUDIO_OPERATOR_ROLES, entry.operatorRole)
+      || !includes(LIVE_STUDIO_OPERATOR_STATUSES, entry.status)) {
+      throw new Error('live_studio_operator_invalid');
+    }
+    return {
+      assignmentId: asString(entry.assignmentId),
+      userId: asString(entry.userId),
+      email: asString(entry.email),
+      fullName: asNullableString(entry.fullName),
+      username: asNullableString(entry.username),
+      avatarUrl: asNullableString(entry.avatarUrl),
+      operatorRole: entry.operatorRole as LiveStudioSessionOperatorRole,
+      status: entry.status as LiveStudioSessionOperatorStatus,
+      assignedAt: asString(entry.assignedAt),
+      expiresAt: asString(entry.expiresAt),
+      note: asNullableString(entry.note),
+    };
+  });
+
+  return {
+    schemaVersion: 1,
+    serverNow: asString(value.serverNow),
+    sessionId: asString(value.sessionId),
+    sessionTitle: asString(value.sessionTitle),
+    sessionStatus: asString(value.sessionStatus),
+    canAssign: value.canAssign === true,
+    defaultExpiresAt: asString(value.defaultExpiresAt),
+    operators,
   };
 };
 
@@ -302,6 +347,7 @@ export const parseLiveSessionSummary = (value: unknown): LiveSessionSummary => {
       'host_unavailable',
       'not_enough_people',
       'safety',
+      'host_no_show',
       'other',
     ].includes(String(value.cancellation_reason))
       ? value.cancellation_reason as LiveSessionSummary['cancellationReason']

@@ -19,13 +19,75 @@ type CommandResult = {
   snapshot: StudioOperationalSnapshot;
 };
 
+export type StudioOperatorRole = 'viewer' | 'producer' | 'moderator' | 'supervisor';
+export type StudioRunCue = {
+  id: string;
+  position: number;
+  title: string;
+  notes: string | null;
+  cueType: 'note' | 'scene' | 'speaker' | 'music' | 'moderation' | 'break' | 'end';
+  status: 'pending' | 'ready' | 'live' | 'complete' | 'skipped';
+  expectedAt: string | null;
+};
+export type StudioPrivateMessage = {
+  id: number;
+  senderUserId: string;
+  audience: 'all' | 'producers' | 'moderators';
+  body: string;
+  createdAt: string;
+};
+export type StudioOperatorPresence = {
+  userId: string;
+  controllerInstanceId: string;
+  operatorRole: StudioOperatorRole;
+  readiness: 'standby' | 'ready' | 'primary' | 'offline';
+  lastSeenAt: string;
+};
+export type StudioOperationalAlert = {
+  id: number;
+  eventType: string;
+  severity: 'info' | 'warning' | 'critical';
+  details: Record<string, unknown>;
+  requiresAcknowledgement: boolean;
+  acknowledgedAt: string | null;
+  createdAt: string;
+};
+export type StudioOperatorConsole = {
+  schemaVersion: 1;
+  serverNow: string;
+  operatorRole: StudioOperatorRole;
+  aal2: boolean;
+  cues: StudioRunCue[];
+  messages: StudioPrivateMessage[];
+  operators: StudioOperatorPresence[];
+  alerts: StudioOperationalAlert[];
+};
+
+export type StudioPublicationControl = {
+  schemaVersion: 1;
+  serverNow: string;
+  sessionId: string;
+  status: string;
+  version: number;
+  scheduledStart: string | null;
+  startWindowClosesAt: string | null;
+  broadcastAuthority: 'mobile_host' | 'studio_producer';
+  currentAal: 'aal1' | 'aal2';
+  canOpenBackstage: boolean;
+  canStart: boolean;
+  canSetAuthority: boolean;
+  requiresStepUp: boolean;
+  controlSurface: 'mobile' | 'studio';
+};
+
 export type StudioMediaAdmission = {
   schemaVersion: 1;
   apiKey: string;
   token: string;
   expiresAt: string;
   sessionId: string;
-  sourceKind: 'studio_host' | 'host_camera' | 'host_microphone' | 'screen_share' | 'dj_audio';
+  sourceKind: 'studio_host' | 'host_camera' | 'host_microphone' | 'screen_share' | 'dj_audio'
+    | 'program_monitor';
   sourceKey: string;
   user: { id: string; name: string };
   call: { provider: 'stream'; type: string; id: string; cid: string };
@@ -90,6 +152,20 @@ const parseCommandResult = (value: unknown): CommandResult => {
   if (typeof candidate.applied !== 'boolean' || typeof candidate.reasonCode !== 'string'
     || !snapshot) throw new Error('live_studio_command_contract_invalid');
   return { applied: candidate.applied, reasonCode: candidate.reasonCode, snapshot };
+};
+
+const parseOperatorConsole = (value: unknown): StudioOperatorConsole => {
+  const candidate = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+  if (candidate?.schemaVersion !== 1 || typeof candidate.serverNow !== 'string'
+    || !['viewer', 'producer', 'moderator', 'supervisor'].includes(String(candidate.operatorRole))
+    || typeof candidate.aal2 !== 'boolean' || !Array.isArray(candidate.cues)
+    || !Array.isArray(candidate.messages) || !Array.isArray(candidate.operators)
+    || !Array.isArray(candidate.alerts)) {
+    throw new Error('live_studio_operator_console_contract_invalid');
+  }
+  return candidate as unknown as StudioOperatorConsole;
 };
 
 export const studioApi = {
@@ -215,7 +291,7 @@ export const studioApi = {
   },
 
   async takeProgram(command: StudioTakeCommand): Promise<CommandResult> {
-    return parseCommandResult(await rpc('rpc_studio_take_live_program_v1', {
+    return parseCommandResult(await rpc('rpc_studio_take_live_program_v2', {
       p_session_id: command.sessionId,
       p_controller_instance_id: command.controllerInstanceId,
       p_expected_controller_generation: command.expectedControllerGeneration,
@@ -324,38 +400,121 @@ export const studioApi = {
   },
 
   async startSession(sessionId: string): Promise<StudioOperationalSnapshot> {
-    const targets: Record<string, string | undefined> = {
-      scheduled: 'confirmed', waiting_for_quorum: 'confirmed',
-      confirmed: 'backstage', backstage: 'live',
-    };
-    for (let attempt = 0; attempt < 8; attempt += 1) {
-      const snapshot = await studioApi.getSnapshot(sessionId);
-      if (snapshot.session.status === 'live' || snapshot.session.status === 'ending') {
-        return snapshot;
-      }
-      const target = targets[snapshot.session.status];
-      if (!target) throw new Error(`live_session_start_unavailable:${snapshot.session.status}`);
-      try {
-        await rpc('rpc_transition_live_session', {
-          p_session_id: sessionId,
-          p_expected_version: snapshot.session.version,
-          p_target_status: target,
-        });
-      } catch (failure) {
-        if (failure instanceof Error && failure.message.includes('live_session_version_conflict')) {
-          continue;
-        }
-        throw failure;
-      }
+    let control = await this.getPublicationControl(sessionId);
+    if (control.broadcastAuthority !== 'studio_producer') {
+      throw new Error('This Live is assigned to the mobile host. Switch it to Studio control first.');
     }
-    throw new Error('live_session_version_conflict');
+    if (!['backstage', 'live', 'ending'].includes(control.status)) {
+      control = await rpc<StudioPublicationControl>('rpc_open_live_backstage_v1', {
+        p_session_id: sessionId,
+        p_expected_version: control.version,
+        p_command_id: crypto.randomUUID(),
+      });
+    }
+    await rpc<StudioPublicationControl>('rpc_start_live_session_v2', {
+      p_session_id: sessionId,
+      p_expected_version: control.version,
+      p_command_id: crypto.randomUUID(),
+    });
+    const value = await rpc<unknown>('rpc_get_live_studio_snapshot_v1', { p_session_id: sessionId });
+    const parsed = parseStudioOperationalSnapshot(value);
+    if (!parsed) throw new Error('live_studio_snapshot_contract_invalid');
+    return parsed;
   },
 
   async endSession(sessionId: string): Promise<void> {
-    const value = await rpc<Record<string, unknown>>('rpc_end_live_session_v1', {
+    const control = await this.getPublicationControl(sessionId);
+    const value = await rpc<StudioPublicationControl>('rpc_end_live_session_v2', {
       p_session_id: sessionId,
+      p_expected_version: control.version,
+      p_command_id: crypto.randomUUID(),
     });
     if (value.status !== 'ended') throw new Error('live_session_end_incomplete');
+  },
+
+  async getPublicationControl(sessionId: string): Promise<StudioPublicationControl> {
+    return rpc<StudioPublicationControl>('rpc_get_live_publication_control_v1', {
+      p_session_id: sessionId,
+    });
+  },
+
+  async setBroadcastAuthority(
+    sessionId: string,
+    expectedVersion: number,
+    authority: StudioPublicationControl['broadcastAuthority'],
+  ): Promise<StudioPublicationControl> {
+    return rpc<StudioPublicationControl>('rpc_set_live_broadcast_authority_v1', {
+      p_session_id: sessionId,
+      p_expected_version: expectedVersion,
+      p_broadcast_authority: authority,
+      p_command_id: crypto.randomUUID(),
+    });
+  },
+
+  async getOperatorConsole(sessionId: string): Promise<StudioOperatorConsole> {
+    return parseOperatorConsole(await rpc('rpc_get_live_studio_operator_console_v1', {
+      p_session_id: sessionId,
+    }));
+  },
+
+  async heartbeatOperator(
+    sessionId: string,
+    controllerInstanceId: string,
+    readiness: StudioOperatorPresence['readiness'],
+  ): Promise<void> {
+    await rpc('rpc_studio_operator_heartbeat_v1', {
+      p_session_id: sessionId,
+      p_controller_instance_id: controllerInstanceId,
+      p_readiness: readiness,
+    });
+  },
+
+  async upsertRunCue(sessionId: string, cue: Omit<StudioRunCue, 'id'> & { id?: string }): Promise<void> {
+    await rpc('rpc_studio_upsert_run_cue_v1', {
+      p_session_id: sessionId,
+      p_cue_id: cue.id ?? null,
+      p_position: cue.position,
+      p_title: cue.title,
+      p_notes: cue.notes,
+      p_cue_type: cue.cueType,
+      p_status: cue.status,
+      p_expected_at: cue.expectedAt,
+    });
+  },
+
+  async postPrivateMessage(
+    sessionId: string,
+    audience: StudioPrivateMessage['audience'],
+    body: string,
+  ): Promise<void> {
+    await rpc('rpc_studio_post_private_message_v1', {
+      p_session_id: sessionId, p_audience: audience, p_body: body,
+    });
+  },
+
+  async recordOperationalEvent(
+    sessionId: string,
+    eventType: string,
+    severity: StudioOperationalAlert['severity'],
+    details: Record<string, unknown> = {},
+    requiresAcknowledgement = false,
+  ): Promise<void> {
+    await rpc('rpc_studio_record_operational_event_v1', {
+      p_session_id: sessionId, p_event_type: eventType, p_severity: severity,
+      p_details: details, p_requires_acknowledgement: requiresAcknowledgement,
+    });
+  },
+
+  async acknowledgeAlert(sessionId: string, eventId: number): Promise<void> {
+    await rpc('rpc_studio_acknowledge_alert_v1', {
+      p_session_id: sessionId, p_event_id: eventId,
+    });
+  },
+
+  async emergencySafeScene(sessionId: string, reason: string): Promise<CommandResult> {
+    return parseCommandResult(await rpc('rpc_studio_emergency_safe_scene_v1', {
+      p_session_id: sessionId, p_reason: reason,
+    }));
   },
 
   async openAudiencePulse(sessionId: string): Promise<void> {

@@ -45,10 +45,12 @@ function ConnectedProgramRenderer({
   state,
   sources,
   label,
+  emptySourceMessage,
 }: {
   state: RenderState;
   sources: readonly ProgramSource[];
   label: string;
+  emptySourceMessage: string;
 }) {
   const { useParticipants } = useCallStateHooks();
   const participants = useParticipants();
@@ -102,7 +104,7 @@ function ConnectedProgramRenderer({
                 <span className="programme-orbit" />
                 <p className="eyebrow">{eyebrow}</p>
                 <strong>{title}</strong>
-                <small>{source ? `${source.readiness} · ${source.health}` : 'Choose a source in Preview'}</small>
+                <small>{source ? `${source.readiness} · ${source.health}` : emptySourceMessage}</small>
               </div>
             )}
           </div>
@@ -120,13 +122,16 @@ export function ProgramRenderer({
   state,
   sources,
   label,
+  emptySourceMessage = 'Choose a source in Preview',
 }: {
   state: RenderState;
   sources: readonly ProgramSource[];
   label: string;
+  emptySourceMessage?: string;
 }) {
   const { binding } = useStudioMedia();
-  if (binding) return <ConnectedProgramRenderer state={state} sources={sources} label={label} />;
+  if (binding) return <ConnectedProgramRenderer state={state} sources={sources} label={label}
+    emptySourceMessage={emptySourceMessage} />;
   const layout = resolveAssignedProgramLayout(
     state.scene, state.targetCanvas, state.sourceAssignments,
   );
@@ -142,7 +147,7 @@ export function ProgramRenderer({
           zIndex: region.zIndex,
         }}><div className="programme-visual"><span className="programme-orbit" />
           <p className="eyebrow">{eyebrow}</p><strong>{title}</strong>
-          <small>{source ? `${source.readiness} · ${source.health}` : 'Choose a source in Preview'}</small>
+          <small>{source ? `${source.readiness} · ${source.health}` : emptySourceMessage}</small>
         </div></div>;
       })}
       {transitionCue(state, label)}

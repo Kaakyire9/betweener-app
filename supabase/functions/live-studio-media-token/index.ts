@@ -7,6 +7,7 @@ import { getSupabasePublicApiKey } from '../_shared/supabase-public-key.ts';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SOURCE_KINDS = [
   'studio_host', 'host_camera', 'host_microphone', 'screen_share', 'dj_audio',
+  'program_monitor',
 ] as const;
 const TOKEN_TTL_SECONDS = 5 * 60;
 
@@ -54,6 +55,12 @@ const safeAdmissionError = (message: unknown): string => {
   if (normalized.includes('live_studio_media_session_unavailable')) {
     return 'live_studio_media_session_unavailable';
   }
+  if (normalized.includes('live_studio_monitor_forbidden')) {
+    return 'live_studio_monitor_forbidden';
+  }
+  if (normalized.includes('live_studio_step_up_required')) {
+    return 'live_studio_step_up_required';
+  }
   return 'live_studio_media_forbidden';
 };
 
@@ -93,7 +100,7 @@ Deno.serve(async (request) => {
       return json({ error: 'rate_limited' }, 429);
     }
 
-    const { data, error } = await caller.rpc('rpc_get_live_studio_media_admission_v1', {
+    const { data, error } = await caller.rpc('rpc_get_live_studio_media_admission_v2', {
       p_session_id: sessionId,
       p_controller_instance_id: controllerInstanceId,
       p_source_kind: sourceKind,

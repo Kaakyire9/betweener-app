@@ -8,6 +8,10 @@ const editorial = readFileSync('app/admin-editorial.tsx', 'utf8');
 const liveOperations = readFileSync('app/admin-live.tsx', 'utf8');
 const commerce = readFileSync('app/admin-commerce.tsx', 'utf8');
 const creatorWorkspace = readFileSync('app/circles/manage.tsx', 'utf8');
+const studio = readFileSync('app/studio.tsx', 'utf8');
+const studioModules = readFileSync('features/studio/config/studio-modules.ts', 'utf8');
+const circleComposer = readFileSync('features/studio/circles/CircleComposer.tsx', 'utf8');
+const gatheringComposer = readFileSync('features/studio/gatherings/GatheringComposer.tsx', 'utf8');
 const explore = readFileSync('app/(tabs)/explore.tsx', 'utf8');
 const access = readFileSync('lib/admin/admin-access.ts', 'utf8');
 const internalTools = readFileSync('lib/internal-tools.ts', 'utf8');
@@ -15,8 +19,8 @@ const migration = readFileSync('supabase/migrations/20261007180000_admin_operati
 
 test('operations hub routes each responsibility to a focused workspace', () => {
   for (const route of [
+    '/studio',
     '/admin-community',
-    '/admin-editorial',
     '/admin-live',
     '/admin-trust',
     '/admin-accounts',
@@ -33,8 +37,35 @@ test('community and editorial queues are separated from personal creator work', 
   assert.match(editorial, /rpc_admin_get_relationship_gists/);
   assert.doesNotMatch(creatorWorkspace, /rpc_admin_get_relationship_gists/);
   assert.doesNotMatch(creatorWorkspace, /Relationship Gist editorial/);
-  assert.match(creatorWorkspace, /Community Workspace/);
+  assert.match(creatorWorkspace, /Circle & Gathering Studio/);
+  assert.doesNotMatch(creatorWorkspace, /router\.push\('\/admin-editorial'\)/);
   assert.doesNotMatch(explore, /Editorial studio/);
+  assert.match(studioModules, /title: 'Relationship Gists'/);
+  assert.match(studioModules, /AI Editorial Studio/);
+});
+
+test('Betweener Studio centralizes creation without centralizing backend authorization', () => {
+  for (const label of ['Schedule Live', 'Create Circle', 'Create Gathering', 'Create Gist']) {
+    assert.match(studioModules, new RegExp(label));
+  }
+  assert.match(studio, /access\.can\('editorial'\)/);
+  assert.match(studio, /canCreateCircle/);
+  assert.match(studio, /canCreateGathering/);
+  assert.match(studio, /canSchedule/);
+  assert.match(circleComposer, /Submit for review/);
+  assert.match(gatheringComposer, /Submit for review/);
+});
+
+test('Circles overflow menu does not duplicate Studio creation actions', () => {
+  const menuStart = explore.indexOf('visible={actionsMenuOpen}');
+  const menuEnd = explore.indexOf('visible={commandOpen}', menuStart);
+  const overflowMenu = explore.slice(menuStart, menuEnd);
+
+  assert.ok(menuStart >= 0 && menuEnd > menuStart);
+  assert.match(overflowMenu, /Betweener Studio/);
+  assert.match(overflowMenu, /Circle Command/);
+  assert.doesNotMatch(overflowMenu, />Create Circle</);
+  assert.doesNotMatch(overflowMenu, />Create Gathering</);
 });
 
 test('admin access is server-authoritative and role-scoped', () => {
@@ -68,9 +99,13 @@ test('eligible hosts always receive a discoverable Live entry from Circles', () 
 });
 
 test('Gathering and Live use distinct product language', () => {
-  assert.match(explore, /Create a Gathering/);
+  assert.match(studioModules, /Create Gathering/);
   assert.match(explore, /Host a Live/);
   assert.doesNotMatch(explore, />Request Gathering</);
+  assert.doesNotMatch(explore, /handleCreateGatheringPress/);
+  assert.doesNotMatch(explore, /rpc_create_circle_request/);
+  assert.doesNotMatch(explore, /rpc_create_gathering_request/);
+  assert.match(explore, /\/circles\/manage\?create=circle/);
 });
 
 test('membership repair derives RevenueCat provenance from the current runtime', () => {

@@ -48,15 +48,19 @@ import {
   parseLiveDirectorEvent,
   parseOdoDirectorSnapshot,
 } from '../odo/domain/odo-validation.ts';
-import { getLiveSessionStartTarget } from '../domain/live-session-machine.ts';
 import {
   parseLiveStageAtmosphere,
   type LiveStageAtmosphere,
   type LiveStageAtmospherePreset,
 } from '../stage/live-stage-atmosphere.ts';
 import type { LiveParticipantArrivalEvent } from './live-participant-arrivals.ts';
-import type { CircleLiveSnapshot, LiveAudiencePoll, LiveCancellationReason, LiveChemistrySnapshot, LiveComment, LiveEventMediaInput, LiveHostedMatchingSnapshot, LiveHostingManagementSnapshot, LiveJoinNotice, LivePoolCandidatePreview, LivePrivateActivitySnapshot, LivePrivateSpark, LivePrivateSparkExitDecision, LiveQuickConnectConcurrency, LiveQuickConnectDecision, LiveQuickConnectHostAction, LiveQuickConnectHostSnapshot, LiveQuickConnectIntent, LiveQuickConnectPoolSnapshot, LiveQuickConnectRoundSeconds, LiveQuickConnectSafetyExperience, LiveQuickConnectSafetyReason, LiveQuickConnectSnapshot, LiveQuickConnectStageLayout, LiveQuorumPoolingSnapshot, LiveReactionEvent, LiveReactionKind, LiveReactionSummary, LiveReportReason, LiveRoomPulseSnapshot, LiveSessionRecap, LiveSessionSnapshot, LiveSessionSummary, ScheduleCircleLiveSessionInput, ScheduleLiveSessionInput, ScheduleLiveStudioSessionInput, UpdateLiveStudioSessionInput } from './live-models.ts';
+import type { CircleLiveSnapshot, LiveAudiencePoll, LiveCancellationReason, LiveChemistrySnapshot, LiveComment, LiveEventMediaInput, LiveHostedMatchingSnapshot, LiveHostingManagementSnapshot, LiveJoinNotice, LivePoolCandidatePreview, LivePrivateActivitySnapshot, LivePrivateSpark, LivePrivateSparkExitDecision, LiveQuickConnectConcurrency, LiveQuickConnectDecision, LiveQuickConnectHostAction, LiveQuickConnectHostSnapshot, LiveQuickConnectIntent, LiveQuickConnectPoolSnapshot, LiveQuickConnectRoundSeconds, LiveQuickConnectSafetyExperience, LiveQuickConnectSafetyReason, LiveQuickConnectSnapshot, LiveQuickConnectStageLayout, LiveQuorumPoolingSnapshot, LiveReactionEvent, LiveReactionKind, LiveReactionSummary, LiveReportReason, LiveRoomPulseSnapshot, LiveSessionRecap, LiveSessionSnapshot, LiveSessionSummary, LiveStudioOperatorManagementSnapshot, LiveStudioSessionOperatorRole, ScheduleCircleLiveSessionInput, ScheduleLiveSessionInput, ScheduleLiveStudioSessionInput, UpdateLiveStudioSessionInput } from './live-models.ts';
 import { parseLiveReactionEvent, parseLiveReactionSummary } from './live-reactions.ts';
+import {
+  parseLivePublicationControl,
+  type LiveBroadcastAuthority,
+  type LivePublicationControl,
+} from './live-publication-control.ts';
 import {
   parseLiveAudiencePoll,
   parseCircleLiveSnapshot,
@@ -64,6 +68,7 @@ import {
   parseLiveChemistrySnapshot,
   parseLiveHostedMatchingSnapshot,
   parseLiveHostingManagementSnapshot,
+  parseLiveStudioOperatorManagementSnapshot,
   parseLivePrivateActivitySnapshot,
   parseLivePrivateSpark,
   parseLivePoolCandidatePreview,
@@ -101,10 +106,104 @@ const invoke = async (name: string, args?: Record<string, unknown>): Promise<unk
 };
 
 export const liveRepository = {
+  async getPublicationControl(sessionId: string): Promise<LivePublicationControl> {
+    return parseLivePublicationControl(await invoke('rpc_get_live_publication_control_v1', {
+      p_session_id: sessionId,
+    }));
+  },
+
+  async openBackstage(
+    sessionId: string,
+    expectedVersion: number,
+    commandId = Crypto.randomUUID(),
+  ): Promise<LivePublicationControl> {
+    return parseLivePublicationControl(await invoke('rpc_open_live_backstage_v1', {
+      p_session_id: sessionId,
+      p_expected_version: expectedVersion,
+      p_command_id: commandId,
+    }));
+  },
+
+  async startSession(
+    sessionId: string,
+    expectedVersion: number,
+    commandId = Crypto.randomUUID(),
+  ): Promise<LivePublicationControl> {
+    return parseLivePublicationControl(await invoke('rpc_start_live_session_v2', {
+      p_session_id: sessionId,
+      p_expected_version: expectedVersion,
+      p_command_id: commandId,
+    }));
+  },
+
+  async endPublication(
+    sessionId: string,
+    expectedVersion: number,
+    commandId = Crypto.randomUUID(),
+  ): Promise<LivePublicationControl> {
+    return parseLivePublicationControl(await invoke('rpc_end_live_session_v2', {
+      p_session_id: sessionId,
+      p_expected_version: expectedVersion,
+      p_command_id: commandId,
+    }));
+  },
+
+  async setBroadcastAuthority(
+    sessionId: string,
+    expectedVersion: number,
+    authority: LiveBroadcastAuthority,
+    commandId = Crypto.randomUUID(),
+  ): Promise<LivePublicationControl> {
+    return parseLivePublicationControl(await invoke('rpc_set_live_broadcast_authority_v1', {
+      p_session_id: sessionId,
+      p_expected_version: expectedVersion,
+      p_broadcast_authority: authority,
+      p_command_id: commandId,
+    }));
+  },
+
   async getHostingManagement(sessionId: string): Promise<LiveHostingManagementSnapshot> {
     return parseLiveHostingManagementSnapshot(await invoke(
       'rpc_get_live_hosting_management_v1',
       { p_session_id: sessionId },
+    ));
+  },
+
+  async getStudioOperatorManagement(
+    sessionId: string,
+  ): Promise<LiveStudioOperatorManagementSnapshot> {
+    return parseLiveStudioOperatorManagementSnapshot(await invoke(
+      'rpc_get_live_studio_session_operators_v1',
+      { p_session_id: sessionId },
+    ));
+  },
+
+  async assignStudioOperator(input: {
+    sessionId: string;
+    email: string;
+    operatorRole: LiveStudioSessionOperatorRole;
+    expiresAt?: string | null;
+    note?: string | null;
+  }): Promise<LiveStudioOperatorManagementSnapshot> {
+    return parseLiveStudioOperatorManagementSnapshot(await invoke(
+      'rpc_admin_assign_live_studio_operator_v1',
+      {
+        p_session_id: input.sessionId,
+        p_email: input.email,
+        p_operator_role: input.operatorRole,
+        p_expires_at: input.expiresAt ?? null,
+        p_note: input.note ?? null,
+      },
+    ));
+  },
+
+  async revokeStudioOperator(
+    sessionId: string,
+    userId: string,
+  ): Promise<LiveStudioOperatorManagementSnapshot> {
+    return parseLiveStudioOperatorManagementSnapshot(await invoke(
+      'rpc_admin_revoke_live_studio_operator_v1',
+      { p_session_id: sessionId, p_user_id: userId },
     ));
   },
 
@@ -650,7 +749,7 @@ export const liveRepository = {
   },
 
   async scheduleStudio(input: ScheduleLiveStudioSessionInput): Promise<string> {
-    const value = await invoke('rpc_schedule_live_studio_session_v1', {
+    const value = await invoke('rpc_schedule_live_studio_session_v2', {
       p_client_request_id: input.clientRequestId,
       p_title: input.title,
       p_description: input.description,
@@ -660,6 +759,15 @@ export const liveRepository = {
       p_chemistry_first_enabled: input.chemistryFirstEnabled,
       p_circle_id: input.circleId ?? null,
       p_minimum_participants: input.minimumParticipants,
+      // Circle Live always inherits the Circle's server-owned Reach. Direct
+      // Live uses the reviewed targeting selected in Studio.
+      p_audience_scopes: input.circleId ? [] : input.audienceScopes,
+      p_country_code: input.circleId ? null : input.audienceCountryCode,
+      p_country_name: input.circleId ? null : input.audienceCountryName,
+      p_region: input.circleId ? null : input.audienceRegion,
+      p_city: input.circleId ? null : input.audienceCity,
+      p_diaspora_origin_country_codes: input.circleId ? [] : input.diasporaOriginCountryCodes,
+      p_diaspora_destination_country_codes: input.circleId ? [] : input.diasporaDestinationCountryCodes,
     });
     if (!value || typeof value !== 'object' || !('id' in value) || typeof value.id !== 'string') {
       throw new Error('live_studio_schedule_result_invalid');
@@ -1239,35 +1347,20 @@ export const liveRepository = {
   },
 
   async endSession(sessionId: string): Promise<void> {
-    const result = await invoke('rpc_end_live_session_v1', { p_session_id: sessionId });
-    if (!result || typeof result !== 'object' || !('status' in result) || result.status !== 'ended') {
+    const control = await this.getPublicationControl(sessionId);
+    const result = await this.endPublication(sessionId, control.version);
+    if (result.status !== 'ended') {
       throw new Error('live_session_end_incomplete');
     }
   },
 
   async prepareAndStartSession(sessionId: string): Promise<void> {
-    for (let attempt = 0; attempt < 8; attempt += 1) {
-      const snapshot = parseLiveSessionSnapshot(
-        await invoke('rpc_get_live_session_snapshot', { p_session_id: sessionId }),
-      );
-      if (snapshot.session.status === 'live' || snapshot.session.status === 'ending') return;
-      const targetStatus = getLiveSessionStartTarget(snapshot.session.status);
-      if (!targetStatus) {
-        throw new Error(`live_session_start_unavailable:${snapshot.session.status}`);
-      }
-      try {
-        await invoke('rpc_transition_live_session', {
-          p_session_id: sessionId,
-          p_expected_version: snapshot.session.version,
-          p_target_status: targetStatus,
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : '';
-        if (message.includes('live_session_version_conflict')) continue;
-        throw error;
-      }
+    let control = await this.getPublicationControl(sessionId);
+    if (!['backstage', 'live', 'ending'].includes(control.status)) {
+      control = await this.openBackstage(sessionId, control.version);
     }
-    throw new Error('live_session_version_conflict');
+    if (control.status === 'live' || control.status === 'ending') return;
+    await this.startSession(sessionId, control.version);
   },
 
   subscribe(

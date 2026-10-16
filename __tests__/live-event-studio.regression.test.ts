@@ -40,7 +40,8 @@ test('event creation enters preparation and Studio exposes lifecycle sections', 
   assert.match(studioScreen, /Upcoming Live/);
   assert.match(studioScreen, /Past Live/);
   assert.match(studioScreen, /useFocusEffect/);
-  assert.match(studioScreen, /refresh\(\{ attemptRecovery: false \}\)/);
+  assert.match(studioScreen, /refreshAll\(\{ attemptRecovery: false \}\)/);
+  assert.match(studioScreen, /circleLiveDiscovery\.refresh\(\)/);
 });
 
 test('Creation Studio is guided, recoverable, and idempotently published', () => {
@@ -152,13 +153,16 @@ test('event back navigation returns to its explicit origin on button and hardwar
 test('backstage mirrors the server start-time guard before enabling the host CTA', () => {
   assert.match(backstageScreen, /stageIsDue/);
   assert.match(backstageScreen, /Available in/);
-  assert.match(backstageScreen, /live_session_not_due/);
+  assert.match(repository, /rpc_start_live_session_v2/);
+  assert.match(repository, /p_expected_version/);
 });
 
 test('host preparation starts through valid lifecycle states and retries version races', () => {
-  assert.match(backstageScreen, /controller\.prepareAndStartSession\(\)/);
-  assert.match(repository, /getLiveSessionStartTarget/);
-  assert.match(repository, /live_session_version_conflict/);
+  assert.match(backstageScreen, /liveRepository\.openBackstage\(sessionId, next\.version\)/);
+  assert.match(backstageScreen, /liveRepository\.startSession\(sessionId, publication\.version\)/);
+  assert.match(backstageScreen, /LiveStepUpSheet/);
+  assert.match(backstageScreen, /broadcastAuthority === 'studio_producer'/);
+  assert.match(backstageScreen, /live_session_version_conflict/);
   assert.doesNotMatch(backstageScreen, /transitionSession\('live'\)/);
 });
 

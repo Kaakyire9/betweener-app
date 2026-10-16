@@ -6,7 +6,6 @@ import sys
 from pathlib import Path
 
 
-PROJECT_ID_FALLBACK = "jbyblhithbqwojhwlenv"
 SCHEMA = "public"
 OUT_FILE = Path("supabase/types/database.ts")
 
@@ -65,7 +64,14 @@ def main() -> int:
     parser.add_argument("--local", action="store_true", help="Generate from the running local Supabase database")
     args = parser.parse_args()
 
-    project_id = os.environ.get("SUPABASE_PROJECT_ID") or os.environ.get("SUPABASE_PROJECT_REF") or PROJECT_ID_FALLBACK
+    project_id = os.environ.get("SUPABASE_PROJECT_ID") or os.environ.get("SUPABASE_PROJECT_REF")
+    if not args.local and not project_id:
+        sys.stderr.write(
+            "Refusing implicit remote type generation. Set SUPABASE_PROJECT_REF "
+            "to the positively verified target project.\n"
+        )
+        return 2
+    project_id = project_id or "local"
     generated = run_cmd(project_id, local=args.local)
     source = "local database" if args.local else f"project {project_id}"
 

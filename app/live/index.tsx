@@ -1,12 +1,14 @@
 import { LinearGradient } from 'expo-linear-gradient';
+import { Image } from 'expo-image';
 import { router, useFocusEffect } from 'expo-router';
 import { ArrowLeft, Plus, Radio, RefreshCw } from 'lucide-react-native';
 import { useCallback, useMemo, useRef } from 'react';
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LiveAlwaysOnQuickConnectCard, LiveSessionCard } from '@/features/live/components/index.ts';
-import { getLiveSessionPhase, partitionLiveLobbySessions } from '@/features/live/application/index.ts';
+import { getLiveEventMediaUrl, getLiveSessionPhase, partitionLiveLobbySessions } from '@/features/live/application/index.ts';
 import { useLiveSessions } from '@/features/live/hooks/index.ts';
+import { useDiscoverableCircleLive } from '@/features/live/hooks/use-discoverable-circle-live';
 import { useAuth } from '@/lib/auth-context';
 import { type LiveVisualTheme, useLiveVisualTheme } from '@/features/live/components/live-visual-tokens.ts';
 
@@ -23,8 +25,15 @@ export default function LiveHomeScreen() {
     canSchedule,
     authUnavailable,
     authStatus,
-    refresh,
+    refresh: refreshSessions,
   } = useLiveSessions();
+  const circleLiveDiscovery = useDiscoverableCircleLive();
+  const refreshAll = useCallback(async (options?: { attemptRecovery?: boolean }) => {
+    await Promise.all([
+      refreshSessions(options),
+      circleLiveDiscovery.refresh(),
+    ]);
+  }, [circleLiveDiscovery.refresh, refreshSessions]);
   const hasCompletedInitialFocusRef = useRef(false);
 
   useFocusEffect(useCallback(() => {
@@ -32,8 +41,8 @@ export default function LiveHomeScreen() {
       hasCompletedInitialFocusRef.current = true;
       return;
     }
-    void refresh({ attemptRecovery: false });
-  }, [refresh]));
+    void refreshAll({ attemptRecovery: false });
+  }, [refreshAll]));
   const {
     owned: ownedSessions,
     liveNow,
@@ -45,6 +54,7 @@ export default function LiveHomeScreen() {
   const ownedUpcoming = ownedSessions.filter((session) => getLiveSessionPhase(session) === 'upcoming');
   const liveSessions = [...ownedLive, ...liveNow];
   const upcomingSessions = [...ownedUpcoming, ...upcoming];
+  const circleLivePreviews = circleLiveDiscovery.previews.filter((preview) => preview.viewerMembershipStatus !== 'active');
   const showEmptyCatalogue = !loading && !authUnavailable && !error && sessions.length === 0;
   const connectionCopy = authStatus === 'offline_authenticated'
     ? 'Live needs a connection before rooms can be opened or created.'
@@ -74,7 +84,7 @@ export default function LiveHomeScreen() {
             <Text style={styles.eyebrow}>BETWEENER LIVE</Text>
             <Text style={styles.heading}>{hasHostLobby ? 'Your Live Host Dashboard.' : 'Rooms with intention.'}</Text>
           </View>
-          <Pressable accessibilityLabel="Refresh Live rooms" disabled={refreshing || recovering} onPress={() => void refresh()} style={styles.iconButton}>
+          <Pressable accessibilityLabel="Refresh Live rooms" disabled={refreshing || recovering || circleLiveDiscovery.loading} onPress={() => void refreshAll()} style={styles.iconButton}>
             <RefreshCw size={19} color={visual.color.text} />
           </Pressable>
         </View>
@@ -82,7 +92,7 @@ export default function LiveHomeScreen() {
         <ScrollView
           contentContainerStyle={styles.content}
           showsVerticalScrollIndicator={false}
-          refreshControl={<RefreshControl refreshing={refreshing || recovering} onRefresh={() => void refresh()} tintColor={visual.color.teal} colors={[visual.color.teal]} />}
+          refreshControl={<RefreshControl refreshing={refreshing || recovering || circleLiveDiscovery.loading} onRefresh={() => void refreshAll()} tintColor={visual.color.teal} colors={[visual.color.teal]} />}
         >
           <View style={[styles.intro, hasHostLobby && styles.hostIntro]}>
             <View style={styles.liveMark}><Radio size={18} color={visual.color.teal} /></View>
@@ -118,6 +128,62 @@ export default function LiveHomeScreen() {
             })}
           />
 
+          {circleLivePreviews.length ? (
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>Live from Circles</Text>
+                <Text style={styles.sectionMeta}>Join the Circle to take part</Text>
+              </View>
+              {circleLivePreviews.map((preview) => {
+                const isLive = preview.status === 'live' || preview.status === 'backstage';
+                const posterUrl = getLiveEventMediaUrl(preview.posterPath);
+                const location = preview.reachScope === 'global'
+                  ? 'Global'
+                  : preview.reachScope === 'diaspora'
+                    ? `${preview.countryName ?? preview.countryCode ?? ''} diaspora`.trim()
+                    : preview.city ?? preview.countryName ?? preview.countryCode ?? preview.reachScope;
+                return (
+                  <Pressable
+                    key={preview.sessionId}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${preview.title}, hosted by ${preview.circleName}. Join the Circle to take part.`}
+                    onPress={() => router.push({ pathname: '/circles/[id]', params: { id: preview.circleId, openLiveSessionId: preview.sessionId } })}
+                    style={styles.circleLivePreview}
+                  >
+                    {posterUrl ? (
+                      <Image
+                        accessibilityLabel={`${preview.title} Live cover`}
+                        contentFit="cover"
+                        source={{ uri: posterUrl }}
+                        style={styles.circleLivePoster}
+                        transition={180}
+                      />
+                    ) : null}
+                    <View style={styles.circleLivePreviewTop}>
+                      <Text style={styles.circleLiveState}>{isLive ? 'LIVE NOW' : 'UPCOMING'}</Text>
+                      <Text style={styles.circleLiveScope}>{location}</Text>
+                    </View>
+                    <Text style={styles.circleLiveTitle}>{preview.title}</Text>
+                    <Text style={styles.circleLiveHost}>Hosted by {preview.circleName}</Text>
+                    <Text style={styles.circleLiveMeta}>
+                      {`${preview.memberCount} members`}
+                    </Text>
+                    <View style={styles.circleLiveAction}>
+                      <Text style={styles.circleLiveActionText}>{preview.accessPolicy === 'approval_required' ? 'Request to join' : 'Join Circle'}</Text>
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </View>
+          ) : null}
+
+          {circleLiveDiscovery.error && !circleLivePreviews.length ? (
+            <View style={styles.circleLiveNotice} accessibilityRole="alert">
+              <Text style={styles.circleLiveNoticeTitle}>Circle Live previews need a connection.</Text>
+              <Text style={styles.circleLiveNoticeBody}>Your eligible Circle Lives will return when discovery refreshes.</Text>
+            </View>
+          ) : null}
+
           {loading && !sessions.length ? (
             <View style={styles.center}><ActivityIndicator color={visual.color.teal} /></View>
           ) : null}
@@ -125,7 +191,7 @@ export default function LiveHomeScreen() {
             <View style={styles.empty}>
               <Text style={styles.emptyTitle}>{recovering ? 'Restoring your Live access…' : 'Reconnect to Live.'}</Text>
               <Text style={styles.emptyBody}>{connectionCopy}</Text>
-              <Pressable disabled={recovering} onPress={() => void refresh()} style={styles.retryButton}>
+              <Pressable disabled={recovering} onPress={() => void refreshAll()} style={styles.retryButton}>
                 {recovering ? <ActivityIndicator size="small" color={visual.color.accentContrast} /> : <Text style={styles.retryText}>Try again securely</Text>}
               </Pressable>
             </View>
@@ -133,7 +199,7 @@ export default function LiveHomeScreen() {
             <View style={styles.empty}>
               <Text style={styles.emptyTitle}>Live rooms need a moment.</Text>
               <Text style={styles.emptyBody}>Your place is safe. Pull to refresh when the connection returns.</Text>
-              <Pressable onPress={() => void refresh()} style={styles.retryButton}><Text style={styles.retryText}>Try again</Text></Pressable>
+              <Pressable onPress={() => void refreshAll()} style={styles.retryButton}><Text style={styles.retryText}>Try again</Text></Pressable>
             </View>
           ) : null}
 
@@ -218,4 +284,17 @@ const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
   emptyBody: { color: visual.color.textMuted, fontSize: 12, lineHeight: 19, fontFamily: 'Manrope_500Medium', marginTop: 7 },
   retryButton: { alignSelf: 'flex-start', minHeight: 40, borderRadius: 20, paddingHorizontal: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.color.teal, marginTop: 16 },
   retryText: { color: visual.color.accentContrast, fontSize: 11, fontFamily: 'Manrope_800ExtraBold' },
+  circleLivePreview: { padding: 18, borderRadius: 24, gap: 7, backgroundColor: visual.color.surfaceRaised, borderWidth: 1, borderColor: visual.color.borderStrong },
+  circleLivePoster: { width: '100%', aspectRatio: 16 / 9, borderRadius: 16, marginBottom: 7, backgroundColor: visual.color.surfaceSoft },
+  circleLivePreviewTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  circleLiveState: { color: visual.color.teal, fontSize: 9, letterSpacing: 1.5, fontFamily: 'Manrope_800ExtraBold' },
+  circleLiveScope: { color: visual.color.textMuted, fontSize: 10, fontFamily: 'Manrope_700Bold' },
+  circleLiveTitle: { color: visual.color.text, fontSize: 20, fontFamily: 'PlayfairDisplay_700Bold' },
+  circleLiveHost: { color: visual.color.text, fontSize: 12, fontFamily: 'Manrope_700Bold' },
+  circleLiveMeta: { color: visual.color.textMuted, fontSize: 11, fontFamily: 'Manrope_500Medium' },
+  circleLiveAction: { alignSelf: 'flex-start', marginTop: 5, minHeight: 38, paddingHorizontal: 14, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.color.teal },
+  circleLiveActionText: { color: visual.color.accentContrast, fontSize: 11, fontFamily: 'Manrope_800ExtraBold' },
+  circleLiveNotice: { marginTop: 18, borderRadius: 20, padding: 16, backgroundColor: visual.color.surfaceRaised, borderWidth: 1, borderColor: visual.color.border },
+  circleLiveNoticeTitle: { color: visual.color.text, fontSize: 13, fontFamily: 'Manrope_700Bold' },
+  circleLiveNoticeBody: { color: visual.color.textMuted, fontSize: 11, lineHeight: 17, fontFamily: 'Manrope_500Medium', marginTop: 4 },
 });

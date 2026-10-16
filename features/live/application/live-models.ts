@@ -18,6 +18,7 @@ export type LiveCancellationReason =
   | 'host_unavailable'
   | 'not_enough_people'
   | 'safety'
+  | 'host_no_show'
   | 'other';
 export type LiveReportReason =
   | 'harassment'
@@ -387,11 +388,27 @@ export type ScheduleLiveStudioSessionInput = {
   chemistryFirstEnabled: boolean;
   circleId?: string | null;
   minimumParticipants: number;
+  audienceScopes: ('global' | 'country' | 'local' | 'diaspora' | 'invite_only')[];
+  audienceCountryCode: string | null;
+  audienceCountryName: string | null;
+  audienceRegion: string | null;
+  audienceCity: string | null;
+  diasporaOriginCountryCodes: string[];
+  diasporaDestinationCountryCodes: string[];
 };
 
 export type UpdateLiveStudioSessionInput = Omit<
   ScheduleLiveStudioSessionInput,
-  'clientRequestId' | 'format' | 'circleId'
+  | 'clientRequestId'
+  | 'format'
+  | 'circleId'
+  | 'audienceScopes'
+  | 'audienceCountryCode'
+  | 'audienceCountryName'
+  | 'audienceRegion'
+  | 'audienceCity'
+  | 'diasporaOriginCountryCodes'
+  | 'diasporaDestinationCountryCodes'
 > & {
   sessionId: string;
   expectedVersion: number;
@@ -696,4 +713,32 @@ export type LiveHostingManagementSnapshot = {
     totalAttendees: number;
     reactions: number;
   };
+};
+
+export type LiveStudioSessionOperatorRole = 'viewer' | 'producer' | 'moderator';
+export type LiveStudioSessionOperatorStatus = 'active' | 'expired' | 'revoked';
+
+export type LiveStudioSessionOperator = {
+  assignmentId: string;
+  userId: string;
+  email: string;
+  fullName: string | null;
+  username: string | null;
+  avatarUrl: string | null;
+  operatorRole: LiveStudioSessionOperatorRole;
+  status: LiveStudioSessionOperatorStatus;
+  assignedAt: string;
+  expiresAt: string;
+  note: string | null;
+};
+
+export type LiveStudioOperatorManagementSnapshot = {
+  schemaVersion: 1;
+  serverNow: string;
+  sessionId: string;
+  sessionTitle: string;
+  sessionStatus: string;
+  canAssign: boolean;
+  defaultExpiresAt: string;
+  operators: readonly LiveStudioSessionOperator[];
 };

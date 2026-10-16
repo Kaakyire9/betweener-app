@@ -40,7 +40,16 @@ type PushNotificationEventClaim = {
 type LiveNotificationCampaign = {
   id: string
   sessionId: string
-  kind: 'starting_soon' | 'live_now'
+  kind:
+    | 'starting_soon'
+    | 'host_backstage_available'
+    | 'host_starts_soon'
+    | 'host_due'
+    | 'host_guests_waiting'
+    | 'attendee_starting_soon'
+    | 'attendee_delayed'
+    | 'live_now'
+    | 'missed'
   title: string
   body: string
   data: Record<string, unknown>
@@ -69,6 +78,7 @@ const LIVE_NOTIFICATIONS_MIN_APP_VERSION = resolveLiveRoutingMinimumAppVersion(
   Deno.env.get('LIVE_NOTIFICATIONS_MIN_APP_VERSION'),
 )
 const MAX_TOKENS_PER_RECIPIENT = 10
+const MAX_CAMPAIGN_RECIPIENTS = 10_000
 const MAX_CAMPAIGN_TOKENS = 20_000
 const CAMPAIGN_PAGE_SIZE = 500
 const EXPO_BATCH_SIZE = 100
@@ -345,15 +355,16 @@ const sendLiveNotificationCampaign = async (
 
   const campaign = claimed as LiveNotificationCampaign
   const countResult = await service
-    .from('push_tokens')
-    .select('id', { count: 'exact', head: true })
-  if (countResult.error) throw new Error(`campaign_token_count_failed:${countResult.error.code || 'unknown'}`)
-  if ((countResult.count ?? 0) > MAX_CAMPAIGN_TOKENS) {
+    .from('live_notification_campaign_recipients')
+    .select('recipient_user_id', { count: 'exact', head: true })
+    .eq('campaign_id', campaign.id)
+  if (countResult.error) throw new Error(`campaign_recipient_count_failed:${countResult.error.code || 'unknown'}`)
+  if ((countResult.count ?? 0) > MAX_CAMPAIGN_RECIPIENTS) {
     console.warn('push-notifications anomalous campaign volume rejected', {
       event: 'campaign_volume_rejected',
       campaign_id: campaign.id,
-      token_count: countResult.count,
-      limit: MAX_CAMPAIGN_TOKENS,
+      recipient_count: countResult.count,
+      limit: MAX_CAMPAIGN_RECIPIENTS,
     })
     throw new Error('campaign_recipient_limit_exceeded')
   }
@@ -365,20 +376,24 @@ const sendLiveNotificationCampaign = async (
   let suppressedIncompatibleTokens = 0
   let suppressedProvenanceTokens = 0
   const provenanceRejections = new Map<string, number>()
-  const notificationType = `live_${campaign.kind}`
+  const notificationType = typeof campaign.data?.type === 'string'
+    ? campaign.data.type
+    : campaign.kind === 'live_now' ? 'live_now' : 'live_starting_soon'
 
   try {
     while (true) {
-      let tokenQuery = service
-        .from('push_tokens')
-        .select('id,user_id,token,app_version,app_environment,application_id,expo_project_id,installation_id,provenance_status,quarantined_at')
-        .order('id')
-        .limit(CAMPAIGN_PAGE_SIZE)
-      if (lastTokenId) tokenQuery = tokenQuery.gt('id', lastTokenId)
-      const { data: tokenRows, error: tokenError } = await tokenQuery
+      const { data: tokenRows, error: tokenError } = await service.rpc(
+        'rpc_service_list_live_campaign_tokens_v1',
+        {
+          p_campaign_id: campaign.id,
+          p_after_token_id: lastTokenId,
+          p_limit: CAMPAIGN_PAGE_SIZE,
+        },
+      )
       if (tokenError) throw new Error(`campaign_tokens_failed:${tokenError.code || 'unknown'}`)
       if (!tokenRows?.length) break
       scannedTokens += tokenRows.length
+      if (scannedTokens > MAX_CAMPAIGN_TOKENS) throw new Error('campaign_token_limit_exceeded')
 
       const userIds = [...new Set(tokenRows.map((row) => row.user_id).filter(Boolean))]
       const { data: preferenceRows, error: preferenceError } = await service
@@ -410,9 +425,9 @@ const sendLiveNotificationCampaign = async (
         }
         const preference = preferences.get(row.user_id)
         if (preference?.push_enabled === false) return []
-        const allowed = campaign.kind === 'starting_soon'
-          ? preference?.live_reminders !== false
-          : preference?.live_started !== false
+        const allowed = campaign.kind === 'live_now'
+          ? preference?.live_started !== false
+          : preference?.live_reminders !== false
         if (!allowed) return []
         recipientUserIds.add(row.user_id)
         return [{

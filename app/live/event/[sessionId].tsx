@@ -33,6 +33,7 @@ import {
   type LiveReturnRouteParams,
 } from '@/features/live/navigation/live-navigation.ts';
 import { useAuth } from '@/lib/auth-context';
+import { useAdminAccess } from '@/lib/admin/admin-access';
 import { buildWebUrl } from '@/config/app-identity';
 
 const formatDate = (value: string | null) => value
@@ -52,6 +53,7 @@ export default function LiveEventScreen() {
   const params = useLocalSearchParams<{ sessionId: string } & LiveReturnRouteParams>();
   const sessionId = typeof params.sessionId === 'string' ? params.sessionId : '';
   const { profile } = useAuth();
+  const adminAccess = useAdminAccess();
   const { sessions, loading, refresh } = useLiveSessions();
   const quorumPooling = useLiveQuorumPooling(sessionId);
   const [clock, setClock] = useState(Date.now());
@@ -64,7 +66,9 @@ export default function LiveEventScreen() {
   const phase = session ? getLiveSessionPhase(session, clock) : 'upcoming';
   const recap = useLiveSessionRecap(sessionId, phase === 'past' && session?.status === 'ended');
   const isOwner = session?.createdByProfileId === profile?.id;
+  const canAssignOperators = adminAccess.can('live');
   const canManageSession = isOwner || hosting.snapshot?.canDelegateHosts === true;
+  const canOpenManagement = canManageSession || canAssignOperators;
   const isDue = Boolean(session?.scheduledStart && Date.parse(session.scheduledStart) <= clock);
   const posterUrl = getLiveEventMediaUrl(session?.posterPath);
   const teaserUrl = getLiveEventMediaUrl(session?.teaserVideoPath);
@@ -160,7 +164,7 @@ export default function LiveEventScreen() {
         <View style={styles.header}>
           <Pressable accessibilityLabel={returnsToCircle ? 'Back to Circle' : 'Back to Live Host Dashboard'} onPress={leaveEvent} style={styles.icon}><ArrowLeft size={21} color={visual.text} /></Pressable>
           <Text style={styles.headerTitle}>Live Event</Text>
-          {canManageSession ? <Pressable accessibilityLabel="Manage Live" onPress={() => setManagementOpen(true)} style={styles.manageIcon}><MoreHorizontal size={22} color={visual.text} /></Pressable> : null}
+          {canOpenManagement ? <Pressable accessibilityLabel="Manage Live" onPress={() => setManagementOpen(true)} style={styles.manageIcon}><MoreHorizontal size={22} color={visual.text} /></Pressable> : null}
         </View>
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <ImageBackground source={posterUrl ? { uri: posterUrl } : undefined} style={styles.hero} imageStyle={styles.heroImage}>
@@ -219,7 +223,7 @@ export default function LiveEventScreen() {
           {isOwner && phase === 'upcoming' ? <LiveHostPreparationCard session={session} now={clock} onOpenBackstage={enter} onManage={() => setManagementOpen(true)} onShare={() => void shareEvent()} /> : null}
           {phase === 'live' ? <Pressable onPress={enter} style={styles.primary}><Text style={styles.primaryText}>Enter Live room</Text></Pressable> : null}
         </ScrollView>
-        {canManageSession ? (
+        {canOpenManagement ? (
           <LiveEventManagementSheet
             visible={managementOpen}
             session={session}
@@ -231,6 +235,8 @@ export default function LiveEventScreen() {
             onCancel={(reason) => void cancelEvent(reason)}
             onArchive={archiveEvent}
             hostingController={hosting}
+            canManageEvent={canManageSession}
+            canAssignOperators={canAssignOperators}
           />
         ) : null}
       </SafeAreaView>

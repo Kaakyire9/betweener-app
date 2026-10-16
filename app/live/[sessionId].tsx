@@ -51,6 +51,7 @@ import {
   LiveRoomEventNotice,
   LiveSafetyReportSheet,
   LiveStageInvitationPrompt,
+  LiveStepUpSheet,
   LiveStudioModal,
 } from '@/features/live/components/index.ts';
 import type { LiveRoomEventNoticeKind } from '@/features/live/components/index.ts';
@@ -154,6 +155,7 @@ export default function LiveSessionScreen() {
   const [connectedParticipantCount, setConnectedParticipantCount] = useState<number | null>(null);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [studioOpen, setStudioOpen] = useState(false);
+  const [endStepUpVisible, setEndStepUpVisible] = useState(false);
   const [roomPulseMode, setRoomPulseMode] = useState<LiveRoomPulseMode>(() => (
     initialLiveRoomPulseMode(viewport.width, viewport.height)
   ));
@@ -738,6 +740,13 @@ export default function LiveSessionScreen() {
       ],
     );
   }, [close]);
+  const endAfterVerification = useCallback(async () => {
+    const ended = await controller.endSession();
+    if (!ended) throw new Error(controller.error || 'live_end_failed');
+    setEndStepUpVisible(false);
+    await openSessionRecap();
+  }, [controller.endSession, controller.error, openSessionRecap]);
+
   const confirmEndLive = useCallback(() => {
     if (controller.busyAction !== null) return;
     Alert.alert(
@@ -748,18 +757,11 @@ export default function LiveSessionScreen() {
         {
           text: 'End Live',
           style: 'destructive',
-          onPress: () => void (async () => {
-            const ended = await controller.endSession();
-            if (ended) {
-              await openSessionRecap();
-              return;
-            }
-            Alert.alert('Live not ended', 'The room may have changed elsewhere. Refresh and try again.');
-          })(),
+          onPress: () => setEndStepUpVisible(true),
         },
       ],
     );
-  }, [controller.busyAction, controller.endSession, openSessionRecap]);
+  }, [controller.busyAction]);
   const confirmLeaveStage = useCallback(() => {
     Alert.alert(
       'Leave the stage?',
@@ -1432,6 +1434,12 @@ export default function LiveSessionScreen() {
           recipientId={intentMember?.profileId ?? null}
           recipientName={intentMember?.fullName ?? null}
           visible={intentMember !== null}
+        />
+        <LiveStepUpSheet
+          visible={endStepUpVisible}
+          actionLabel="End Live"
+          onCancel={() => setEndStepUpVisible(false)}
+          onVerified={endAfterVerification}
         />
         </SafeAreaView> : null}
       </KeyboardAvoidingView>

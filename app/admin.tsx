@@ -17,8 +17,7 @@ type OperationsModule = {
 };
 
 const MODULES: OperationsModule[] = [
-  { capability: 'community', title: 'Community', detail: 'Review Circle and Gathering requests.', icon: 'account-group-outline', route: '/admin-community', tone: 'teal' },
-  { capability: 'editorial', title: 'Editorial', detail: 'Draft and publish Relationship Gists.', icon: 'book-edit-outline', route: '/admin-editorial', tone: 'violet' },
+  { capability: 'community', title: 'Community Review', detail: 'Approve or return Circle and Gathering submissions.', icon: 'clipboard-check-outline', route: '/admin-community', tone: 'teal' },
   { capability: 'live', title: 'Live Operations', detail: 'Inspect rollout gates and active sessions.', icon: 'broadcast', route: '/admin-live', tone: 'rose' },
   { capability: 'trust', title: 'Trust & Safety', detail: 'Verification, reports, and policy review.', icon: 'shield-check-outline', route: '/admin-trust', tone: 'teal' },
   { capability: 'accounts', title: 'Members & Accounts', detail: 'Recovery requests and account merge cases.', icon: 'account-cog-outline', route: '/admin-accounts', tone: 'violet' },
@@ -33,19 +32,38 @@ export default function AdminScreen() {
   const access = useAdminAccess();
 
   return (
-    <AdminScreenShell title="Betweener Operations" subtitle="Focused tools for community, safety, Live, accounts, and commerce.">
+    <AdminScreenShell title="Betweener Operations" subtitle="Governance, review, safety, accounts, and platform operations.">
       <View style={styles.hero}>
         <View style={styles.heroIcon}>
           <MaterialCommunityIcons name="view-dashboard-outline" size={24} color={theme.tint} />
         </View>
         <Text style={styles.heroEyebrow}>OPERATIONS CONSOLE</Text>
         <Text style={styles.heroTitle}>One clear place to run Betweener.</Text>
-        <Text style={styles.heroBody}>Each workspace loads independently, so one unavailable service cannot block the rest of the console.</Text>
+        <Text style={styles.heroBody}>Creation lives in Betweener Studio. This console stays focused on review, safety, and system operations.</Text>
       </View>
 
+      {access.can('overview') ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Open Betweener Studio"
+          style={({ pressed }) => [styles.studioCard, pressed && styles.cardPressed]}
+          onPress={() => router.push('/studio')}
+        >
+          <View style={styles.studioIcon}>
+            <MaterialCommunityIcons name="creation-outline" size={25} color={theme.tint} />
+          </View>
+          <View style={styles.cardCopy}>
+            <Text style={styles.studioEyebrow}>CREATE & MANAGE</Text>
+            <Text style={styles.studioTitle}>Betweener Studio</Text>
+            <Text style={styles.cardDetail}>Live, Circles, Gatherings, Relationship Gists, and AI Editorial Studio.</Text>
+          </View>
+          <MaterialCommunityIcons name="chevron-right" size={21} color={theme.textMuted} />
+        </Pressable>
+      ) : null}
+
       <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Workspaces</Text>
-        <Text style={styles.sectionHint}>Choose a focused task</Text>
+        <Text style={styles.sectionTitle}>Review & Operations</Text>
+        <Text style={styles.sectionHint}>Choose a governed task</Text>
       </View>
 
       <View style={styles.grid}>
@@ -84,6 +102,10 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     heroEyebrow: { color: theme.tint, fontSize: 10, letterSpacing: 1.5, fontFamily: 'Archivo_700Bold' },
     heroTitle: { color: theme.text, fontSize: 26, lineHeight: 32, fontFamily: 'PlayfairDisplay_700Bold' },
     heroBody: { color: theme.textMuted, fontSize: 13, lineHeight: 20, fontFamily: 'Manrope_500Medium' },
+    studioCard: { minHeight: 112, padding: 17, borderRadius: 24, flexDirection: 'row', alignItems: 'center', gap: 13, backgroundColor: isDark ? 'rgba(19,168,168,0.10)' : 'rgba(255,255,255,0.82)', borderWidth: 1, borderColor: isDark ? 'rgba(19,168,168,0.28)' : 'rgba(0,128,128,0.20)' },
+    studioIcon: { width: 52, height: 52, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: isDark ? 'rgba(19,168,168,0.14)' : 'rgba(0,128,128,0.10)' },
+    studioEyebrow: { color: theme.tint, fontSize: 9, letterSpacing: 1.3, fontFamily: 'Archivo_700Bold' },
+    studioTitle: { color: theme.text, fontSize: 20, fontFamily: 'PlayfairDisplay_700Bold' },
     sectionHeader: { marginTop: 4, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' },
     sectionTitle: { color: theme.text, fontSize: 20, fontFamily: 'PlayfairDisplay_700Bold' },
     sectionHint: { color: theme.textMuted, fontSize: 11, fontFamily: 'Manrope_600SemiBold' },

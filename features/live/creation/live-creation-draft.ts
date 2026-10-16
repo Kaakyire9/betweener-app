@@ -6,12 +6,18 @@ import type {
   ScheduleLiveStudioSessionInput,
   UpdateLiveStudioSessionInput,
 } from '../application/live-models.ts';
+import {
+  getLiveAudiencePolicyError,
+  normalizeAudienceCountryCodes,
+  normalizeLiveAudienceScopes,
+  type LiveAudiencePolicyDraft,
+} from './live-audience-policy.ts';
 
-export const LIVE_CREATION_DRAFT_VERSION = 1;
+export const LIVE_CREATION_DRAFT_VERSION = 2;
 export const LIVE_CREATION_MIN_LEAD_MS = 10 * 60 * 1000;
 export const LIVE_CREATION_MAX_LEAD_MS = 90 * 24 * 60 * 60 * 1000;
 export const LIVE_CREATION_DURATION_OPTIONS = [45, 60, 90] as const;
-export const LIVE_CREATION_STEPS = ['moment', 'story', 'room', 'review'] as const;
+export const LIVE_CREATION_STEPS = ['moment', 'story', 'audience', 'room', 'review'] as const;
 
 export type LiveCreationStep = (typeof LIVE_CREATION_STEPS)[number];
 export type LiveCreationFormat = Extract<
@@ -19,11 +25,12 @@ export type LiveCreationFormat = Extract<
   'hosted_match_night' | 'quick_connect' | 'circle_live'
 >;
 
-export type LiveCreationDraft = {
+export type LiveCreationDraft = LiveAudiencePolicyDraft & {
   schemaVersion: typeof LIVE_CREATION_DRAFT_VERSION;
   clientRequestId: string;
   circleId: string | null;
   circleName: string | null;
+  circleReachLabel: string | null;
   format: LiveCreationFormat;
   title: string;
   description: string;
@@ -38,6 +45,7 @@ type CreateDraftOptions = {
   clientRequestId: string;
   circleId?: string | null;
   circleName?: string | null;
+  circleReachLabel?: string | null;
   now?: Date;
 };
 
@@ -51,12 +59,14 @@ export const createLiveCreationDraft = ({
   clientRequestId,
   circleId = null,
   circleName = null,
+  circleReachLabel = null,
   now = new Date(),
 }: CreateDraftOptions): LiveCreationDraft => ({
   schemaVersion: LIVE_CREATION_DRAFT_VERSION,
   clientRequestId,
   circleId,
   circleName,
+  circleReachLabel,
   format: circleId ? 'circle_live' : 'hosted_match_night',
   title: '',
   description: '',
@@ -64,6 +74,13 @@ export const createLiveCreationDraft = ({
   durationMinutes: 90,
   chemistryFirstEnabled: false,
   minimumParticipants: 2,
+  audienceScopes: ['global'],
+  audienceCountryCode: '',
+  audienceCountryName: '',
+  audienceRegion: '',
+  audienceCity: '',
+  diasporaOriginCountryCodes: [],
+  diasporaDestinationCountryCodes: [],
   updatedAt: now.toISOString(),
 });
 
@@ -75,9 +92,9 @@ export const parseLiveCreationDraft = (
   expectedCircleId: string | null,
 ): LiveCreationDraft | null => {
   if (!value || typeof value !== 'object') return null;
-  const draft = value as Partial<LiveCreationDraft>;
+  const draft = value as Partial<Omit<LiveCreationDraft, 'schemaVersion'>> & { schemaVersion?: number };
   if (
-    draft.schemaVersion !== LIVE_CREATION_DRAFT_VERSION
+    (draft.schemaVersion !== 1 && draft.schemaVersion !== LIVE_CREATION_DRAFT_VERSION)
     || typeof draft.clientRequestId !== 'string'
     || draft.clientRequestId.length < 8
     || (draft.circleId ?? null) !== expectedCircleId
@@ -99,12 +116,23 @@ export const parseLiveCreationDraft = (
 
   return {
     ...draft,
+    schemaVersion: LIVE_CREATION_DRAFT_VERSION,
     circleId: expectedCircleId,
     circleName: typeof draft.circleName === 'string' ? draft.circleName : null,
+    circleReachLabel: typeof draft.circleReachLabel === 'string' ? draft.circleReachLabel : null,
     title: draft.title.slice(0, 120),
     description: draft.description.slice(0, 1000),
     minimumParticipants: Math.floor(draft.minimumParticipants),
     durationMinutes: Math.floor(draft.durationMinutes),
+    audienceScopes: expectedCircleId
+      ? []
+      : normalizeLiveAudienceScopes(draft.audienceScopes),
+    audienceCountryCode: String(draft.audienceCountryCode ?? '').trim().toUpperCase(),
+    audienceCountryName: String(draft.audienceCountryName ?? '').trim(),
+    audienceRegion: String(draft.audienceRegion ?? '').trim(),
+    audienceCity: String(draft.audienceCity ?? '').trim(),
+    diasporaOriginCountryCodes: normalizeAudienceCountryCodes(draft.diasporaOriginCountryCodes),
+    diasporaDestinationCountryCodes: normalizeAudienceCountryCodes(draft.diasporaDestinationCountryCodes),
   } as LiveCreationDraft;
 };
 
@@ -134,6 +162,9 @@ export const getLiveCreationStepError = (
     if (draft.description.length > 1000) return 'Keep the host note within 1,000 characters.';
     return null;
   }
+  if (step === 'audience') {
+    return draft.circleId ? null : getLiveAudiencePolicyError(draft);
+  }
   if (step === 'room') {
     const scheduledStart = Date.parse(draft.scheduledStart);
     if (!Number.isFinite(scheduledStart)) return 'Choose a valid start time.';
@@ -153,7 +184,7 @@ export const getLiveCreationStepError = (
   }
 
   return LIVE_CREATION_STEPS
-    .slice(0, 3)
+    .slice(0, 4)
     .map((candidate) => getLiveCreationStepError(draft, candidate, now))
     .find((error): error is string => Boolean(error)) ?? null;
 };
@@ -170,6 +201,13 @@ export const toScheduleLiveStudioInput = (
   chemistryFirstEnabled: draft.chemistryFirstEnabled,
   circleId: draft.circleId,
   minimumParticipants: draft.minimumParticipants,
+  audienceScopes: draft.circleId ? [] : normalizeLiveAudienceScopes(draft.audienceScopes),
+  audienceCountryCode: draft.audienceCountryCode.trim().toUpperCase() || null,
+  audienceCountryName: draft.audienceCountryName.trim() || null,
+  audienceRegion: draft.audienceRegion.trim() || null,
+  audienceCity: draft.audienceCity.trim() || null,
+  diasporaOriginCountryCodes: normalizeAudienceCountryCodes(draft.diasporaOriginCountryCodes),
+  diasporaDestinationCountryCodes: normalizeAudienceCountryCodes(draft.diasporaDestinationCountryCodes),
 });
 
 export const toUpdateLiveStudioInput = (
@@ -189,7 +227,7 @@ export const toUpdateLiveStudioInput = (
 export const createLiveCreationDraftFromSession = (
   session: LiveSessionSummary,
   clientRequestId: string,
-  options?: { duplicate?: boolean; circleName?: string | null; now?: Date },
+  options?: { duplicate?: boolean; circleName?: string | null; circleReachLabel?: string | null; now?: Date },
 ): LiveCreationDraft => {
   const now = options?.now ?? new Date();
   const existingStart = session.scheduledStart ? new Date(session.scheduledStart) : null;
@@ -208,6 +246,7 @@ export const createLiveCreationDraftFromSession = (
     clientRequestId,
     circleId: session.circleId,
     circleName: options?.circleName ?? null,
+    circleReachLabel: options?.circleReachLabel ?? null,
     format,
     title: session.title,
     description: session.description ?? '',
@@ -215,6 +254,13 @@ export const createLiveCreationDraftFromSession = (
     durationMinutes: session.scheduledDurationMinutes,
     chemistryFirstEnabled: session.chemistryFirstEnabled,
     minimumParticipants: session.minimumParticipants,
+    audienceScopes: session.circleId ? [] : ['global'],
+    audienceCountryCode: '',
+    audienceCountryName: '',
+    audienceRegion: '',
+    audienceCity: '',
+    diasporaOriginCountryCodes: [],
+    diasporaDestinationCountryCodes: [],
     updatedAt: now.toISOString(),
   };
 };

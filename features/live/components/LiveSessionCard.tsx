@@ -1,6 +1,6 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import { CalendarClock, Check, Radio, Sparkles, Users } from 'lucide-react-native';
-import { memo, useMemo } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import { ImageBackground, Pressable, StyleSheet, Text, View } from 'react-native';
 import { getLiveEventMediaUrl, getLiveSessionPhase, type LiveSessionSummary } from '../application/index.ts';
 import { type LiveVisualTheme, useLiveVisualTheme } from './live-visual-tokens.ts';
@@ -11,8 +11,11 @@ const sessionTime = (value: string | null) => value
 
 export const formatLiveCountdown = (value: string | null, now = Date.now()) => {
   if (!value) return 'Date to be announced';
-  const difference = Math.max(0, new Date(value).getTime() - now);
-  if (difference <= 60_000) return 'Starting shortly';
+  const difference = new Date(value).getTime() - now;
+  if (difference <= -30 * 60_000) return 'Didn’t start';
+  if (difference <= -5 * 60_000) return 'Delayed';
+  if (difference <= 0) return 'Host is preparing';
+  if (difference <= 5 * 60_000) return 'Starting shortly';
   const days = Math.floor(difference / 86_400_000);
   if (days > 0) return `Starts in ${days}d`;
   const hours = Math.floor(difference / 3_600_000);
@@ -28,12 +31,19 @@ export const LiveSessionCard = memo(function LiveSessionCard({ session, onPress 
   const isGoing = session.rsvpStatus === 'going';
   const needsReconfirmation = session.rsvpStatus === 'needs_reconfirmation';
   const isCancelled = session.status === 'cancelled';
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (phase !== 'upcoming') return;
+    const timer = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(timer);
+  }, [phase]);
+  const countdown = formatLiveCountdown(session.scheduledStart, now);
   const content = (
     <LinearGradient colors={posterUrl ? ['rgba(5,17,15,0.08)', 'rgba(5,17,15,0.94)'] : ['#173933', '#111B1A']} locations={[0.12, 1]} style={styles.card}>
       <View style={styles.topRow}>
         <View style={[styles.status, phase === 'live' && styles.liveStatus]}>
           {phase === 'live' ? <Radio size={13} color={visual.accentContrast} /> : <CalendarClock size={13} color={visual.teal} />}
-          <Text style={[styles.statusText, phase === 'live' && styles.liveStatusText]}>{isCancelled ? 'CANCELLED' : phase === 'live' ? 'LIVE NOW' : phase === 'past' ? 'PAST LIVE' : needsReconfirmation ? 'TIME CHANGED' : formatLiveCountdown(session.scheduledStart).toUpperCase()}</Text>
+          <Text style={[styles.statusText, phase === 'live' && styles.liveStatusText]}>{isCancelled ? 'CANCELLED' : phase === 'live' ? 'LIVE NOW' : phase === 'past' ? 'PAST LIVE' : needsReconfirmation ? 'TIME CHANGED' : countdown.toUpperCase()}</Text>
         </View>
         <View style={styles.count}><Users size={14} color="#DDE8E4" /><Text style={styles.countText}>{phase === 'past' ? session.totalAttendeeCount : phase === 'upcoming' ? session.reservationCount : session.audienceCount + session.stageCount}</Text></View>
       </View>

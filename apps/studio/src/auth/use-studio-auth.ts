@@ -1,6 +1,7 @@
 import type { Session } from '@supabase/supabase-js';
 import { useCallback, useEffect, useState } from 'react';
 
+import { studioEnvironment } from '../lib/environment.ts';
 import { supabase } from '../lib/supabase.ts';
 
 export const useStudioAuth = () => {
@@ -32,10 +33,32 @@ export const useStudioAuth = () => {
     if (error) throw error;
   }, []);
 
+  const signInWithGoogle = useCallback(async () => {
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: studioEnvironment.studioOrigin,
+        queryParams: { prompt: 'select_account' },
+      },
+    });
+    if (error) throw error;
+  }, []);
+
+  const sendMagicLink = useCallback(async (email: string) => {
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: {
+        shouldCreateUser: false,
+        emailRedirectTo: studioEnvironment.studioOrigin,
+      },
+    });
+    if (error) throw error;
+  }, []);
+
   const signOut = useCallback(async () => {
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
   }, []);
 
-  return { session, loading, signIn, signOut };
+  return { session, loading, signIn, signInWithGoogle, sendMagicLink, signOut };
 };
