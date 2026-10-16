@@ -1,8 +1,10 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import React from 'react';
-import { AccessibilityInfo, Animated, type GestureResponderEvent, Image, Pressable, StyleSheet, Text, TouchableOpacity, View, type StyleProp, type ViewStyle } from 'react-native';
-import { getCircleScopePresentation } from '@/lib/circles/circle-display';
+import { AccessibilityInfo, Animated, type GestureResponderEvent, Pressable, StyleSheet, Text, TouchableOpacity, View, type StyleProp, type ViewStyle } from 'react-native';
+import OfflineImage from '@/components/media/OfflineImage';
+import { getCircleAccessLabel, getCircleScopePresentation } from '@/lib/circles/circle-display';
+import { formatCircleMemberCount } from '@/lib/circles/circle-member-previews';
 import { useCirclePulsePalette, type CirclePulsePalette } from '@/lib/circles/pulse/circle-pulse-theme';
 import { normalizeProfilePhotoUri } from '@/lib/profile/media';
 import SignatureSystemBubble from '@/components/signature/SignatureSystemBubble';
@@ -17,6 +19,11 @@ type CircleCardData = {
   country_name?: string | null;
   country_code?: string | null;
   visibility_scope?: string | null;
+  reach_scope?: string | null;
+  reach_scopes?: string[] | null;
+  access_policy?: string | null;
+  diaspora_origin_country_codes?: string[] | null;
+  diaspora_destination_country_codes?: string[] | null;
   faith_tags?: string[] | null;
   diaspora_tags?: string[] | null;
   circle_type?: string | null;
@@ -108,7 +115,7 @@ const getCircleActivityLabel = (circle: CircleCardData) => {
 };
 
 const getCircleMemberLineLabel = (circle: CircleCardData) =>
-  (circle.member_count ?? 0) > 0 ? `${circle.member_count} members` : 'Trusted space';
+  formatCircleMemberCount(circle.member_count);
 
 const toReasonChips = (reason: string | null | undefined) =>
   String(reason ?? '')
@@ -331,9 +338,9 @@ function GatheringFooter({
         <View style={styles.avatarStack}>
           {gatheringMemberPreviews?.length ? (
             gatheringMemberPreviews.slice(0, 3).map((member, index) => (
-              <Image
+              <OfflineImage
                 key={member.profile_id}
-                source={{ uri: String(member.avatar_url) }}
+                uri={String(member.avatar_url)}
                 style={[styles.avatarStackImage, index > 0 && styles.avatarStackOverlap]}
                 accessibilityLabel={member.full_name ? `${member.full_name} attending avatar` : 'Attending avatar'}
               />
@@ -394,8 +401,8 @@ function GeneralGatheringHomeCard({
     <>
       {metrics.posterUri ? (
         <View style={styles.gatheringPosterCinemaShell}>
-          <Image
-            source={{ uri: metrics.posterUri }}
+          <OfflineImage
+            uri={metrics.posterUri}
             style={styles.gatheringPosterCinemaImage}
             accessibilityLabel={`${gathering.title} Gathering poster`}
           />
@@ -496,7 +503,7 @@ function SeatLinkedGatheringHomeCard({
         >
           {metrics.seatPortraitUri ? (
             <View style={styles.gatheringAvatarCinemaRing}>
-              <Image source={{ uri: metrics.seatPortraitUri }} style={styles.gatheringAvatarCinemaImage} />
+              <OfflineImage uri={metrics.seatPortraitUri} style={styles.gatheringAvatarCinemaImage} />
             </View>
           ) : (
             <View style={styles.gatheringAvatarCinemaFallback}>
@@ -542,12 +549,16 @@ export function CircleHeroCard({
 }) {
   const { palette, styles } = useCircleHomeStyles();
   const scopePresentation = getCircleScopePresentation(circle);
+  const audienceLabel = [
+    scopePresentation?.label,
+    getCircleAccessLabel(circle),
+  ].filter(Boolean).join(' · ');
   const memberLineLabel = getCircleMemberLineLabel(circle);
   return (
     <Pressable style={styles.circleCard} onPress={onOpen}>
       <View style={styles.circleHero}>
         {imageUrl ? (
-          <Image source={{ uri: imageUrl }} style={styles.circleImage} />
+          <OfflineImage uri={imageUrl} style={styles.circleImage} />
         ) : (
           <LinearGradient colors={palette.fallbackGradient} style={styles.circleImageFallback}>
             <MaterialCommunityIcons name="account-group-outline" size={28} color="rgba(244,232,208,0.8)" />
@@ -578,11 +589,10 @@ export function CircleHeroCard({
           <View style={styles.softBadgeRow}>
             <Text style={styles.softBadge}>{memberLineLabel}</Text>
             {scopePresentation ? (
-              <MaterialCommunityIcons
-                name={scopePresentation.icon as any}
-                size={10}
-                color={palette.teal}
-              />
+              <>
+                <MaterialCommunityIcons name={scopePresentation.icon as any} size={10} color={palette.teal} />
+                <Text style={styles.softBadge} numberOfLines={1}>{audienceLabel}</Text>
+              </>
             ) : null}
           </View>
         </View>
@@ -595,9 +605,9 @@ export function CircleHeroCard({
           <View style={styles.avatarStack}>
             {memberPreviews?.length ? (
               memberPreviews.slice(0, 3).map((member, index) => (
-                <Image
+                <OfflineImage
                   key={member.profile_id}
-                  source={{ uri: String(member.avatar_url) }}
+                  uri={String(member.avatar_url)}
                   style={[styles.avatarStackImage, index > 0 && styles.avatarStackOverlap]}
                   accessibilityLabel={member.full_name ? `${member.full_name} profile photo` : 'Circle member profile photo'}
                 />
@@ -647,6 +657,9 @@ export function CircleCompactCard({
   const { palette, styles } = useCircleHomeStyles();
   const badges = getCircleBadges(circle);
   const scopePresentation = getCircleScopePresentation(circle);
+  const audienceLabel = [scopePresentation?.label, getCircleAccessLabel(circle)]
+    .filter(Boolean)
+    .join(' · ');
   const activityLabel = getCircleActivityLabel(circle);
   const memberLineLabel = getCircleMemberLineLabel(circle);
 
@@ -654,7 +667,7 @@ export function CircleCompactCard({
     <Pressable style={[styles.compactCircleCard, style]} onPress={onOpen}>
       <View style={styles.compactCircleGlow} />
       {imageUrl ? (
-        <Image source={{ uri: imageUrl }} style={styles.compactCircleImage} />
+        <OfflineImage uri={imageUrl} style={styles.compactCircleImage} />
       ) : (
         <LinearGradient colors={palette.fallbackGradient} style={styles.compactCircleImageFallback}>
           <MaterialCommunityIcons name="account-group-outline" size={22} color="rgba(244,232,208,0.8)" />
@@ -667,11 +680,10 @@ export function CircleCompactCard({
             <View style={styles.scopeMetaRowCompact}>
               <Text style={styles.compactCircleMeta} numberOfLines={1}>{memberLineLabel}</Text>
               {scopePresentation ? (
-                <MaterialCommunityIcons
-                  name={scopePresentation.icon as any}
-                  size={10}
-                  color={palette.teal}
-                />
+                <>
+                  <MaterialCommunityIcons name={scopePresentation.icon as any} size={10} color={palette.teal} />
+                  <Text style={styles.compactCircleMeta} numberOfLines={1}>{audienceLabel}</Text>
+                </>
               ) : null}
             </View>
           </View>
@@ -733,7 +745,7 @@ export function CirclePickCard({
     >
       <View style={[styles.pickPortrait, cardWidth ? { height: Math.round(cardWidth * 1.44) } : null]}>
         {avatarUri ? (
-          <Image source={{ uri: avatarUri }} style={styles.pickAvatar} resizeMode="cover" />
+          <OfflineImage uri={avatarUri} style={styles.pickAvatar} contentFit="cover" />
         ) : (
           <View style={styles.pickAvatarFallback}>
             <MaterialCommunityIcons name="account-heart-outline" size={44} color="rgba(244,232,208,0.64)" />

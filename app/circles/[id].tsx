@@ -16,6 +16,7 @@ import {
   CirclePeopleRibbon,
 } from '@/components/circles/CircleOverviewModules';
 import { CircleDatingPanel, CircleEntryContextSheet } from '@/features/circles/components';
+import CircleNotificationPreferencesSheet from '@/features/circles/components/CircleNotificationPreferencesSheet';
 import { useCircleEntryContext } from '@/features/circles/hooks/use-circle-entry-context';
 import { showBetweenerAlert } from '@/components/ui/BetweenerAlertHost';
 import Notice from '@/components/ui/Notice';
@@ -30,7 +31,7 @@ import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useResolvedProfileId } from '@/hooks/useResolvedProfileId';
 import { useAuth } from '@/lib/auth-context';
-import { getCircleScopeLabel } from '@/lib/circles/circle-display';
+import { getCircleAccessLabel, getCircleScopeLabel } from '@/lib/circles/circle-display';
 import { getCircleLocationAffinity } from '@/lib/location/location-intelligence';
 import { buildLocationDisplay } from '@/lib/location/location-display';
 import { endCircleLoveSeat, fetchCirclePulseDiscussionReadStates } from '@/lib/circles/pulse/circle-pulse-service';
@@ -110,6 +111,13 @@ type Circle = {
   circle_type?: string | null;
   status?: string | null;
   visibility_scope?: string | null;
+  reach_scope?: string | null;
+  reach_scopes?: string[] | null;
+  access_policy?: string | null;
+  diaspora_origin_country_codes?: string[] | null;
+  diaspora_destination_country_codes?: string[] | null;
+  membership_eligibility_policy?: string | null;
+  live_discovery_policy?: string | null;
   country_code?: string | null;
   country_name?: string | null;
   region?: string | null;
@@ -507,7 +515,12 @@ export default function CircleDetailScreen() {
   const params = useLocalSearchParams();
   const circleId = String(params?.id ?? '');
   const requestedTab = typeof params?.tab === 'string' ? params.tab : Array.isArray(params?.tab) ? params.tab[0] : null;
-  const initialRequestedTab = resolveRequestedTab(requestedTab);
+  const requestedLiveSessionId = typeof params?.openLiveSessionId === 'string'
+    ? params.openLiveSessionId
+    : Array.isArray(params?.openLiveSessionId)
+      ? params.openLiveSessionId[0]
+      : null;
+  const initialRequestedTab = requestedLiveSessionId ? 'circle' : resolveRequestedTab(requestedTab);
   const requestedPulseItemId =
     typeof params?.openPulseItemId === 'string'
       ? params.openPulseItemId
@@ -628,6 +641,7 @@ export default function CircleDetailScreen() {
   const [pulseModerationOpen, setPulseModerationOpen] = useState(false);
   const [inviteSheetOpen, setInviteSheetOpen] = useState(false);
   const [circleOptionsOpen, setCircleOptionsOpen] = useState(false);
+  const [notificationPreferencesOpen, setNotificationPreferencesOpen] = useState(false);
   const [pulseDiscussionUnreadByItemId, setPulseDiscussionUnreadByItemId] = useState<Record<string, number>>({});
   const [presenceNow, setPresenceNow] = useState(() => Date.now());
   const handledPulseNotificationKeyRef = useRef<string | null>(null);
@@ -651,6 +665,21 @@ export default function CircleDetailScreen() {
     return () => clearInterval(timer);
   }, []);
 
+  const clearCircleDetailSnapshot = useCallback(() => {
+    setCircle(null);
+    setMembership(null);
+    setMembers([]);
+    setPendingMembers([]);
+    setPrompts([]);
+    setPromptResponsesByPromptId({});
+    setGatherings([]);
+    setGatheringAttendance({});
+    setMoments([]);
+    setMomentLoadError(null);
+    setRoleRequests([]);
+    setModerationReports([]);
+  }, []);
+
   const applyCircleDetailSnapshot = useCallback((snapshot: OfflineCircleDetailSnapshot) => {
     setCircle((snapshot.circle as Circle | null) ?? null);
     setMembership((snapshot.membership as MemberRow | null) ?? null);
@@ -672,9 +701,15 @@ export default function CircleDetailScreen() {
 
   useEffect(() => {
     let cancelled = false;
-    if (!circleId) return () => {
-      cancelled = true;
-    };
+    if (!circleId || !currentProfileId) {
+      setDetailSnapshotInfo({ hasSnapshot: false, savedAt: null, isStale: false });
+      clearCircleDetailSnapshot();
+      return () => {
+        cancelled = true;
+      };
+    }
+    clearCircleDetailSnapshot();
+    setDetailSnapshotInfo({ hasSnapshot: false, savedAt: null, isStale: false });
     void (async () => {
       const snapshotState = await readCircleDetailSnapshotState(circleId, currentProfileId);
       if (cancelled) return;
@@ -690,10 +725,10 @@ export default function CircleDetailScreen() {
     return () => {
       cancelled = true;
     };
-  }, [applyCircleDetailSnapshot, circleId, currentProfileId]);
+  }, [applyCircleDetailSnapshot, circleId, clearCircleDetailSnapshot, currentProfileId]);
 
   const persistCircleDetailSnapshot = useCallback(async (patch?: Partial<OfflineCircleDetailSnapshot>) => {
-    if (!circleId) return;
+    if (!circleId || !currentProfileId) return;
     const savedAt = Date.now();
     await writeCircleDetailSnapshot(circleId, currentProfileId, {
       circle: ((patch && 'circle' in patch) ? patch.circle : circle) ?? null,
@@ -740,7 +775,7 @@ export default function CircleDetailScreen() {
 
     const circlePromise = db
       .from('circles')
-      .select('id,name,slug,description,short_description,visibility,category,created_by_profile_id,created_by_user_id,cover_image_url,icon_url,image_path,image_updated_at,circle_type,status,visibility_scope,country_code,country_name,region,city,is_official,is_partner,is_featured,requires_join_approval,rules,safety_note,member_count,gathering_count,archived_at,host_note,host_note_updated_at,host_note_updated_by_profile_id')
+      .select('id,name,slug,description,short_description,visibility,category,created_by_profile_id,created_by_user_id,cover_image_url,icon_url,image_path,image_updated_at,circle_type,status,visibility_scope,reach_scope,reach_scopes,access_policy,diaspora_origin_country_codes,diaspora_destination_country_codes,membership_eligibility_policy,live_discovery_policy,country_code,country_name,region,city,is_official,is_partner,is_featured,requires_join_approval,rules,safety_note,member_count,gathering_count,archived_at,host_note,host_note_updated_at,host_note_updated_by_profile_id')
       .eq('id', circleId)
       .maybeSingle();
 
@@ -1544,6 +1579,11 @@ export default function CircleDetailScreen() {
   const showCircleEntry = isMember && !circleEntry.loading && circleEntry.context?.needs_entry === true;
 
   useEffect(() => {
+    if (!requestedLiveSessionId || !isMember) return;
+    setActiveTab('live');
+  }, [isMember, requestedLiveSessionId]);
+
+  useEffect(() => {
     if (!showCircleEntry || entryOpenedRef.current) return;
     entryOpenedRef.current = true;
     void circleEntry.log('entry_opened');
@@ -1649,6 +1689,7 @@ export default function CircleDetailScreen() {
     [circle, profile],
   );
   const circleScopeLabel = getCircleScopeLabel(circle) || 'Global';
+  const circleAccessLabel = getCircleAccessLabel(circle);
   const mastheadTitle = (() => {
     const shortDescription = normalizeCopy(circle?.short_description);
     if (!shortDescription || isSameCopy(shortDescription, circle?.name)) {
@@ -4131,6 +4172,7 @@ export default function CircleDetailScreen() {
                 ? 'Private Circle'
                 : 'Community Circle'}
           scopeLabel={circleScopeLabel}
+          accessLabel={circleAccessLabel}
           locationInsight={circleScopeLabel.toLowerCase() === 'global' ? null : circleLocationInsight}
           memberCount={circle?.member_count ?? members.length}
           members={heroPeople}
@@ -4141,6 +4183,18 @@ export default function CircleDetailScreen() {
           coverUpdating={imageUploading}
           onEditCover={handlePickImage}
         />
+
+        {requestedLiveSessionId && !isMember ? (
+          <Notice
+            title={`Live hosted by ${circle?.name ?? 'this Circle'}`}
+            message={membership?.status === 'pending'
+              ? 'Your membership request is waiting for approval. Live access opens after your membership becomes active.'
+              : 'Join this Circle before entering its Live room. The room and its participants remain private to active members.'}
+            actionLabel={membership?.status === 'pending' ? undefined : joinLabel}
+            onAction={membership?.status === 'pending' ? undefined : handleJoin}
+            icon="radio-tower"
+          />
+        ) : null}
 
         {canEditCircle && editingName ? (
           <View style={styles.editNameCard}>
@@ -4844,7 +4898,7 @@ export default function CircleDetailScreen() {
                 {canHostGathering ? (
                   <View style={styles.inlineActions}>
                     <TouchableOpacity style={styles.primaryButton} onPress={() => void openGatheringComposer()}>
-                      <Text style={styles.primaryText}>Create a Gathering</Text>
+                      <Text style={styles.primaryText}>Create Gathering</Text>
                     </TouchableOpacity>
                   </View>
                 ) : null}
@@ -4938,6 +4992,7 @@ export default function CircleDetailScreen() {
             <CircleLiveSection
               circleId={circleId}
               circleName={circle.name}
+              circleReachLabel={circleScopeLabel}
               canHost={canHostGathering}
               snapshot={circleLive.snapshot}
               loading={circleLive.loading}
@@ -5003,6 +5058,18 @@ export default function CircleDetailScreen() {
                 >
                   <MaterialCommunityIcons name="shield-account-outline" size={18} color={theme.tint} />
                   <Text style={styles.optionActionText}>Circle settings and stewardship</Text>
+                </TouchableOpacity>
+              ) : null}
+              {isMember ? (
+                <TouchableOpacity
+                  style={styles.optionAction}
+                  onPress={() => {
+                    setCircleOptionsOpen(false);
+                    setNotificationPreferencesOpen(true);
+                  }}
+                >
+                  <MaterialCommunityIcons name="bell-outline" size={18} color={theme.tint} />
+                  <Text style={styles.optionActionText}>Circle notifications</Text>
                 </TouchableOpacity>
               ) : null}
               {canEditCircle ? (
@@ -5094,6 +5161,14 @@ export default function CircleDetailScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      <CircleNotificationPreferencesSheet
+        visible={notificationPreferencesOpen}
+        circleId={circleId}
+        circleName={circle?.name || 'this Circle'}
+        accountId={user?.id}
+        onClose={() => setNotificationPreferencesOpen(false)}
+      />
 
       <Modal visible={promptAnswerOpen} transparent animationType="fade" onRequestClose={() => setPromptAnswerOpen(false)}>
         <Pressable style={styles.modalBackdrop} onPress={() => setPromptAnswerOpen(false)}>
@@ -5447,7 +5522,7 @@ export default function CircleDetailScreen() {
           >
             <Pressable style={styles.modalCard} onPress={() => undefined}>
               <ScrollView style={styles.modalScroll} contentContainerStyle={styles.modalScrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-                <Text style={styles.modalTitle}>{editingGatheringTarget ? 'Edit Gathering' : 'Create a Gathering'}</Text>
+                <Text style={styles.modalTitle}>{editingGatheringTarget ? 'Edit Gathering' : 'Create Gathering'}</Text>
                 <Text style={styles.modalBody}>
                   {editingGatheringTarget
                     ? 'Refine the event details, timing, or poster without leaving this Circle.'

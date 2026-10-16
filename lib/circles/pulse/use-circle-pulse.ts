@@ -107,11 +107,13 @@ export function useCirclePulse({
 
   useEffect(() => {
     canPersistSnapshotRef.current = false;
+    setItems([]);
+    setError(null);
   }, [circleId, enabled, viewerProfileId]);
 
   useEffect(() => {
     let cancelled = false;
-    if (!circleId || !enabled) return () => {
+    if (!circleId || !enabled || !viewerProfileId) return () => {
       cancelled = true;
     };
 
@@ -128,7 +130,7 @@ export function useCirclePulse({
   }, [circleId, enabled, viewerProfileId]);
 
   const reload = useCallback(async () => {
-    if (!circleId || !enabled) {
+    if (!circleId || !enabled || !viewerProfileId) {
       canPersistSnapshotRef.current = false;
       setItems([]);
       setLoading(false);

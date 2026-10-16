@@ -10,6 +10,7 @@ import { type LiveVisualTheme, useLiveVisualTheme } from './live-visual-tokens.t
 type Props = {
   circleId: string;
   circleName: string;
+  circleReachLabel?: string;
   canHost: boolean;
   snapshot: CircleLiveSnapshot | null;
   loading: boolean;
@@ -97,7 +98,7 @@ const CircleLiveCardView = ({ circleId, session }: { circleId: string; session: 
   );
 };
 
-export const CircleLiveSection = memo(function CircleLiveSection({ circleId, circleName, canHost, snapshot, loading, error, refresh }: Props) {
+export const CircleLiveSection = memo(function CircleLiveSection({ circleId, circleName, circleReachLabel, canHost, snapshot, loading, error, refresh }: Props) {
   const visual = useLiveVisualTheme();
   const styles = useMemo(() => createStyles(visual), [visual]);
   const canSchedule = canHost && snapshot?.canSchedule === true;
@@ -106,7 +107,7 @@ export const CircleLiveSection = memo(function CircleLiveSection({ circleId, cir
 
   const schedule = () => router.push({
     pathname: '/live/schedule',
-    params: { circleId, circleName },
+    params: { circleId, circleName, ...(circleReachLabel ? { circleReachLabel } : {}) },
   });
 
   if (loading && !snapshot) return <View style={styles.loading}><ActivityIndicator color={visual.teal} /></View>;

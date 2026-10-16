@@ -11,11 +11,13 @@ import Notice from '@/components/ui/Notice';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/lib/auth-context';
+import { useAdminAccess } from '@/lib/admin/admin-access';
 import { CirclesLiveGateway } from '@/features/live/components/index.ts';
 import { useLiveSessions } from '@/features/live/hooks/index.ts';
 import { getLiveSessionPhase } from '@/features/live/application/index.ts';
 import { getCirclePulsePalette } from '@/lib/circles/pulse/circle-pulse-theme';
 import { canCreateCircle, canCreateGathering, type CircleAccessEntitlements } from '@/lib/circles/circle-access';
+import { isCircleDiscoverableForViewer } from '@/lib/circles/circle-discovery-audience';
 import {
   type CircleDiscoveryScope,
   sortCirclesByRelevance,
@@ -25,6 +27,9 @@ import {
   createCircleQueryFailureError,
   getCircleProfileBindingError,
 } from '@/lib/circles/circle-load-health';
+import {
+  groupCircleMemberPreviewRows,
+} from '@/lib/circles/circle-member-previews';
 import { getCircleLocationAffinity } from '@/lib/location/location-intelligence';
 import {
   buildRelationshipGistReaderContent,
@@ -40,7 +45,9 @@ import {
   type RelationshipGist,
 } from '@/features/relationship-gists/domain/relationship-gist';
 import { RELATIONSHIP_GIST_EDITORIAL_V2_ENABLED } from '@/features/relationship-gists/config/relationship-gist-editorial-v2-flags';
-import { fetchCurrentRelationshipGists } from '@/features/relationship-gists/data/relationship-gist-repository';
+import { createCurrentRelationshipGistLinks } from '@/features/relationship-gists/config/relationship-gist-link-runtime';
+import { loadRelationshipGistCatalog } from '@/features/relationship-gists/data/relationship-gist-catalog';
+import { writeRelationshipGistContentCache } from '@/features/relationship-gists/data/relationship-gist-content-cache';
 import { RelationshipGistEngagementPanel } from '@/features/relationship-gists/components/RelationshipGistEngagementPanel';
 import { RelationshipGistCover } from '@/features/relationship-gists/components/RelationshipGistCover';
 import { getRelationshipGistProgressBucket } from '@/features/relationship-gists/engagement/relationship-gist-engagement';
@@ -55,6 +62,7 @@ import {
 } from '@/lib/offline/circles-store';
 import { resolveOfflineImageUri } from '@/lib/offline/image-store';
 import { isNetworkConnectionAvailable } from '@/lib/network-state';
+import { normalizeProfilePhotoUri } from '@/lib/profile/media';
 import {
   clampRelationshipGistProgress,
   getDefaultRelationshipGistLocalState,
@@ -72,7 +80,6 @@ import {
   Dimensions,
   type GestureResponderEvent,
   Keyboard,
-  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
@@ -102,6 +109,13 @@ type CircleV2 = {
   circle_type?: string | null;
   status?: string | null;
   visibility_scope?: string | null;
+  reach_scope?: string | null;
+  reach_scopes?: string[] | null;
+  access_policy?: string | null;
+  diaspora_origin_country_codes?: string[] | null;
+  diaspora_destination_country_codes?: string[] | null;
+  membership_eligibility_policy?: string | null;
+  live_discovery_policy?: string | null;
   country_code?: string | null;
   country_name?: string | null;
   region?: string | null;
@@ -275,6 +289,7 @@ const CIRCLE_SECTION_PREVIEW_LIMIT = 8;
 
 export default function CirclesScreen() {
   const { profile, user } = useAuth();
+  const adminAccess = useAdminAccess();
   const gistRouteParams = useLocalSearchParams<{
     openGistId?: string;
     gistPerspective?: string;
@@ -324,25 +339,8 @@ export default function CirclesScreen() {
   });
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
-  const [createOpen, setCreateOpen] = useState(false);
-  const [gatheringOpen, setGatheringOpen] = useState(false);
-  const [paywallOpen, setPaywallOpen] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const [creatingGathering, setCreatingGathering] = useState(false);
   const [premiumState, setPremiumState] = useState<CircleAccessEntitlements | null>(null);
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [newPurpose, setNewPurpose] = useState('');
-  const [newCity, setNewCity] = useState(profile?.city ?? '');
-  const [newScope, setNewScope] = useState<'country' | 'local' | 'diaspora' | 'global' | 'invite_only'>('country');
-  const [newGatheringTitle, setNewGatheringTitle] = useState('');
-  const [newGatheringDescription, setNewGatheringDescription] = useState('');
-  const [newGatheringDate, setNewGatheringDate] = useState('');
-  const [newGatheringTime, setNewGatheringTime] = useState('');
-  const [newGatheringCity, setNewGatheringCity] = useState(profile?.city ?? '');
-  const [newGatheringVenue, setNewGatheringVenue] = useState('');
-  const [newGatheringType, setNewGatheringType] = useState<'physical' | 'online' | 'hybrid'>('physical');
-  const [newGatheringCircleId, setNewGatheringCircleId] = useState<string | null>(null);
+  const isCommunityAdmin = adminAccess.can('community');
   const [promptAnswerOpen, setPromptAnswerOpen] = useState(false);
   const [promptAnswer, setPromptAnswer] = useState('');
   const [discoveryQuery, setDiscoveryQuery] = useState('');
@@ -411,13 +409,9 @@ export default function CirclesScreen() {
     let cancelled = false;
     if (!user?.id) return;
     void (async () => {
-      const [{ data: premium }, { data: admin }] = await Promise.all([
-        db.rpc('rpc_get_my_premium_state'),
-        db.rpc('is_internal_admin'),
-      ]);
+      const { data: premium } = await db.rpc('rpc_get_my_premium_state');
       if (cancelled) return;
       setPremiumState(premium ?? null);
-      setIsAdmin(admin === true);
     })();
     return () => {
       cancelled = true;
@@ -468,21 +462,46 @@ export default function CirclesScreen() {
       });
       if (!offlineState.data) return;
       applyCirclesSnapshot(offlineState.data, { preserveExisting: true });
+      if (user?.id && offlineState.data.gists?.length) {
+        void writeRelationshipGistContentCache(user.id, offlineState.data.gists as RelationshipGist[])
+          .catch(() => undefined);
+      }
     })();
     return () => {
       cancelled = true;
     };
-  }, [applyCirclesSnapshot, circlesSnapshotKey, currentProfileId, scope]);
+  }, [applyCirclesSnapshot, circlesSnapshotKey, currentProfileId, scope, user?.id]);
+
+  const loadGlobalGists = useCallback(async (networkAllowed: boolean) => {
+    if (!user?.id) return null;
+    try {
+      const result = await loadRelationshipGistCatalog(db, user.id, { networkAllowed });
+      if (result.source === 'cache' && !result.items.length) return null;
+      if (result.networkError) {
+        logger.warn('[circles] global_gists_rpc_failed', {
+          message: String((result.networkError as any)?.message ?? 'unknown'),
+          fallback: result.source,
+        });
+      }
+      setGists(result.items);
+      return result.items;
+    } catch (error) {
+      logger.warn('[circles] global_gists_load_failed', {
+        code: String((error as any)?.code ?? (error as Error)?.name ?? 'unknown'),
+      });
+      return null;
+    }
+  }, [user?.id]);
 
   const canSubmitCircle = canCreateCircle(premiumState, {
     id: currentProfileId,
     user_id: user?.id ?? null,
-    is_internal_admin: isAdmin,
+    is_internal_admin: isCommunityAdmin,
   });
   const canSubmitGathering = canCreateGathering(premiumState, {
     id: currentProfileId,
     user_id: user?.id ?? null,
-    is_internal_admin: isAdmin,
+    is_internal_admin: isCommunityAdmin,
   });
 
   const refreshImageUrls = useCallback(async (circles: CircleV2[]) => {
@@ -539,42 +558,49 @@ export default function CirclesScreen() {
     const visibleCircleIds = [...new Set(circleIds.filter(Boolean))];
     if (visibleCircleIds.length === 0) return {};
 
-    const { data } = await db
-      .from('circle_members')
-      .select('circle_id,profile_id,profiles(id,full_name,avatar_url)')
-      .in('circle_id', visibleCircleIds)
-      .eq('status', 'active')
-      .eq('is_visible', true)
-      .order('joined_at', { ascending: false })
-      .limit(Math.max(18, visibleCircleIds.length * 6));
+    const previewResult = await db.rpc('rpc_list_circle_member_previews_v1', {
+      p_circle_ids: visibleCircleIds,
+      p_per_circle_limit: 3,
+    });
 
-    const previews = (data ?? []).reduce((acc: Record<string, CircleMemberPreview[]>, row: any) => {
-      const circleId = String(row.circle_id);
-      const pickedProfile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
-      if (!pickedProfile?.id || !pickedProfile.avatar_url) return acc;
-      const existing = acc[circleId] ?? [];
-      if (existing.length >= 12 || existing.some((item) => item.profile_id === String(pickedProfile.id))) return acc;
-      acc[circleId] = [
-        ...existing,
-        {
-          profile_id: String(pickedProfile.id),
-          full_name: pickedProfile.full_name ?? null,
-          avatar_url: pickedProfile.avatar_url,
-        },
-      ];
-      return acc;
-    }, {} as Record<string, CircleMemberPreview[]>);
+    let previewRows = previewResult.data ?? [];
+    if (previewResult.error) {
+      logger.warn('[circles] member_preview_rpc_failed', {
+        code: String(previewResult.error.code ?? 'unknown'),
+      });
+      const fallbackResult = await db
+        .from('circle_members')
+        .select('circle_id,profile_id,profiles(id,full_name,avatar_url,hero_image_url,photos)')
+        .in('circle_id', visibleCircleIds)
+        .eq('status', 'active')
+        .eq('is_visible', true)
+        .order('joined_at', { ascending: false })
+        .limit(Math.max(18, visibleCircleIds.length * 6));
+      if (fallbackResult.error) {
+        logger.warn('[circles] member_preview_fallback_failed', {
+          code: String(fallbackResult.error.code ?? 'unknown'),
+        });
+        return {};
+      }
+      previewRows = fallbackResult.data ?? [];
+    }
+
+    const previews = groupCircleMemberPreviewRows(previewRows, 3);
     const hydratedEntries = await Promise.all(
       (Object.entries(previews) as [string, CircleMemberPreview[]][]).map(async ([circleId, members]) => ([
         circleId,
         await Promise.all(
-          members.map(async (member) => ({
-            ...member,
-            avatar_url: await resolveOfflineImageUri(
-              `circle-member-preview:${circleId}:${member.profile_id}:${member.avatar_url ?? 'none'}`,
-              member.avatar_url,
-            ),
-          })),
+          members.map(async (member) => {
+            const sourceUri = normalizeProfilePhotoUri(member.avatar_url);
+            return {
+              profile_id: member.profile_id,
+              full_name: member.full_name ?? null,
+              avatar_url: await resolveOfflineImageUri(
+                `circle-member-preview:${circleId}:${member.profile_id}:${sourceUri || 'none'}`,
+                sourceUri,
+              ),
+            };
+          }),
         ),
       ] as const)),
     );
@@ -602,15 +628,25 @@ export default function CirclesScreen() {
         });
         if (offlineState.data) {
           applyCirclesSnapshot(offlineState.data);
+          if (user?.id && offlineState.data.gists?.length) {
+            void writeRelationshipGistContentCache(user.id, offlineState.data.gists as RelationshipGist[])
+              .catch(() => undefined);
+          }
+          await loadGlobalGists(false);
           return;
         }
+        await loadGlobalGists(false);
         setLoadError('Circles need a connection the first time they load on this device.');
         return;
       }
 
+      // Gist availability is intentionally independent from Circle prompts,
+      // Gatherings, discovery, and warm-introduction queries.
+      const globalGistsPromise = loadGlobalGists(true);
+
       const membershipsPromise = db
         .from('circle_members')
-        .select('id,circle_id,role,status,circles(id,name,slug,description,short_description,visibility,category,created_by_profile_id,cover_image_url,icon_url,image_path,image_updated_at,circle_type,status,visibility_scope,country_code,country_name,region,city,diaspora_tags,culture_tags,faith_tags,interest_tags,audience_tags,is_official,is_partner,is_featured,requires_join_approval,member_count,active_this_week_count,gathering_count,archived_at)')
+        .select('id,circle_id,role,status,circles(id,name,slug,description,short_description,visibility,category,created_by_profile_id,cover_image_url,icon_url,image_path,image_updated_at,circle_type,status,visibility_scope,reach_scope,reach_scopes,access_policy,diaspora_origin_country_codes,diaspora_destination_country_codes,membership_eligibility_policy,live_discovery_policy,country_code,country_name,region,city,diaspora_tags,culture_tags,faith_tags,interest_tags,audience_tags,is_official,is_partner,is_featured,requires_join_approval,member_count,active_this_week_count,gathering_count,archived_at)')
         .eq('profile_id', currentProfileId);
 
       const circlesPromise = db.rpc('get_ranked_circles_for_profile' as any, {
@@ -621,7 +657,7 @@ export default function CirclesScreen() {
 
       const creatorCirclesPromise = db
         .from('circles')
-        .select('id,name,slug,description,short_description,visibility,category,created_by_profile_id,cover_image_url,icon_url,image_path,image_updated_at,circle_type,status,visibility_scope,country_code,country_name,region,city,diaspora_tags,culture_tags,faith_tags,interest_tags,audience_tags,is_official,is_partner,is_featured,requires_join_approval,member_count,active_this_week_count,gathering_count,archived_at,rejected_reason,created_at')
+        .select('id,name,slug,description,short_description,visibility,category,created_by_profile_id,cover_image_url,icon_url,image_path,image_updated_at,circle_type,status,visibility_scope,reach_scope,reach_scopes,access_policy,diaspora_origin_country_codes,diaspora_destination_country_codes,membership_eligibility_policy,live_discovery_policy,country_code,country_name,region,city,diaspora_tags,culture_tags,faith_tags,interest_tags,audience_tags,is_official,is_partner,is_featured,requires_join_approval,member_count,active_this_week_count,gathering_count,archived_at,rejected_reason,created_at')
         .eq('created_by_profile_id', currentProfileId)
         .in('status', ['draft', 'pending_review', 'approved', 'rejected'])
         .order('created_at', { ascending: false })
@@ -650,8 +686,6 @@ export default function CirclesScreen() {
         .order('created_at', { ascending: false })
         .limit(8);
 
-      const gistsPromise = fetchCurrentRelationshipGists(db);
-
       const warmIntroPromise = db
         .from('warm_introductions')
         .select('id,circle_id,profile_a_id,profile_b_id,reason,shared_context')
@@ -667,7 +701,6 @@ export default function CirclesScreen() {
         { data: promptRows, error: promptsError },
         { data: gatheringRows, error: gatheringsError },
         { data: creatorGatheringRows, error: creatorGatheringsError },
-        gistResult,
         { data: warmIntroRows, error: warmIntrosError },
       ] = await Promise.all([
         membershipsPromise,
@@ -676,9 +709,10 @@ export default function CirclesScreen() {
         promptsPromise,
         gatheringsPromise,
         creatorGatheringsPromise,
-        gistsPromise,
         warmIntroPromise,
       ]);
+
+      const globalGists = (await globalGistsPromise) ?? [];
 
       if (membershipError) throw membershipError;
       const supplementalFailures = collectCircleQueryFailures([
@@ -695,14 +729,6 @@ export default function CirclesScreen() {
         throw createCircleQueryFailureError(supplementalFailures);
       }
 
-      const globalGistRows = gistResult.data;
-      if (gistResult.primaryError) {
-        logger.warn('[circles] global_gists_rpc_failed', {
-          message: gistResult.primaryError.message,
-          fallback: gistResult.source,
-        });
-      }
-
       let discoverCircleRows = (circleRows ?? []) as CircleV2[];
       if (circlesError) {
         logger.warn('[circles] ranked_discover_rpc_failed', {
@@ -711,7 +737,7 @@ export default function CirclesScreen() {
         });
         const { data: fallbackCircleRows, error: fallbackCirclesError } = await db
           .from('circles')
-          .select('id,name,slug,description,short_description,visibility,category,created_by_profile_id,cover_image_url,icon_url,image_path,image_updated_at,circle_type,status,visibility_scope,country_code,country_name,region,city,diaspora_tags,culture_tags,faith_tags,interest_tags,audience_tags,is_official,is_partner,is_featured,requires_join_approval,member_count,active_this_week_count,gathering_count,archived_at')
+          .select('id,name,slug,description,short_description,visibility,category,created_by_profile_id,cover_image_url,icon_url,image_path,image_updated_at,circle_type,status,visibility_scope,reach_scope,reach_scopes,access_policy,diaspora_origin_country_codes,diaspora_destination_country_codes,membership_eligibility_policy,live_discovery_policy,country_code,country_name,region,city,diaspora_tags,culture_tags,faith_tags,interest_tags,audience_tags,is_official,is_partner,is_featured,requires_join_approval,member_count,active_this_week_count,gathering_count,archived_at')
           .eq('status', 'approved')
           .is('archived_at', null)
           .order('is_featured', { ascending: false })
@@ -720,6 +746,25 @@ export default function CirclesScreen() {
         if (fallbackCirclesError) throw fallbackCirclesError;
         discoverCircleRows = (fallbackCircleRows ?? []) as CircleV2[];
       }
+
+      if (!circlesError && discoverCircleRows.length > 0) {
+        const discoverIds = discoverCircleRows.map((circle) => circle.id).filter(Boolean);
+        const { data: audienceRows, error: audienceError } = await db
+          .from('circles')
+          .select('id,reach_scope,reach_scopes,access_policy,diaspora_origin_country_codes,diaspora_destination_country_codes,membership_eligibility_policy,live_discovery_policy')
+          .in('id', discoverIds);
+        if (audienceError) throw audienceError;
+        const audienceById = new Map<string, Partial<CircleV2>>(
+          (audienceRows ?? []).map((row: any) => [String(row.id), row as Partial<CircleV2>]),
+        );
+        discoverCircleRows = discoverCircleRows.map((circle) => ({
+          ...circle,
+          ...(audienceById.get(String(circle.id)) ?? {}),
+        }));
+      }
+
+      discoverCircleRows = discoverCircleRows.filter((circle) =>
+        isCircleDiscoverableForViewer(circle, profile as any, scope));
 
       const affinityCircleIds = new Set<string>();
       for (const row of membershipRows ?? []) {
@@ -796,16 +841,7 @@ export default function CirclesScreen() {
           visibleCircles,
           profile as any,
           scope,
-        ).filter((circle) => {
-          if (scope === 'global') return true;
-          if (scope === 'diaspora') return circle.visibility_scope === 'diaspora' || (circle.diaspora_tags?.length ?? 0) > 0;
-          const userCountry = String((profile as any)?.current_country_code ?? '').toUpperCase();
-          const matchesCountry = !circle.country_code || !userCountry || String(circle.country_code).toUpperCase() === userCountry;
-          if (!matchesCountry && circle.visibility_scope !== 'global') return false;
-          if (scope !== 'near_me' || circle.visibility_scope === 'global') return true;
-          const userCity = String((profile as any)?.city ?? '').trim().toLowerCase();
-          return !circle.city || !userCity || String(circle.city).trim().toLowerCase() === userCity;
-        }).map((circle) => decorateCircleWithLocationInsight(circle))
+        ).map((circle) => decorateCircleWithLocationInsight(circle))
         : visibleCircles.map((circle) =>
           decorateCircleWithLocationInsight(circle, { allowClientFallback: false }));
 
@@ -830,8 +866,6 @@ export default function CirclesScreen() {
       setCreatorGatherings((creatorGatheringRows ?? []) as Gathering[]);
       setPrompts((promptRows ?? []) as CirclePrompt[]);
       setGatherings((gatheringRows ?? []) as Gathering[]);
-      const globalGists = globalGistRows.filter((item) => !item.circle_id);
-      setGists(globalGists);
       setWarmIntros((warmIntroRows ?? []) as WarmIntro[]);
       setPicks(nextPicks);
       setImageUrls(nextImages);
@@ -869,12 +903,17 @@ export default function CirclesScreen() {
       });
       if (offlineState.data) {
         applyCirclesSnapshot(offlineState.data);
+        if (user?.id && offlineState.data.gists?.length) {
+          void writeRelationshipGistContentCache(user.id, offlineState.data.gists as RelationshipGist[])
+            .catch(() => undefined);
+        }
       }
+      await loadGlobalGists(false);
       setLoadError(error instanceof Error ? error.message : 'Could not load Circles.');
     } finally {
       setLoading(false);
     }
-  }, [applyCirclesSnapshot, currentProfileId, loadCircleMemberPreviews, loadCirclePicks, profile, refreshImageUrls, scope]);
+  }, [applyCirclesSnapshot, currentProfileId, loadCircleMemberPreviews, loadCirclePicks, loadGlobalGists, profile, refreshImageUrls, scope, user?.id]);
 
   const retryCirclesLoad = useCallback(() => {
     if (currentProfileId) {
@@ -896,195 +935,8 @@ export default function CirclesScreen() {
   }, []);
 
   const handleCreatePress = useCallback(() => {
-    if (!canSubmitCircle) {
-      setPaywallOpen(true);
-      return;
-    }
-    setNewName('');
-    setNewPurpose('');
-    setNewCity(profile?.city ?? '');
-    setNewScope('country');
-    setCreateOpen(true);
-  }, [canSubmitCircle, profile?.city]);
-
-  const handleCreateGatheringPress = useCallback(() => {
-    if (!canSubmitGathering) {
-      setPaywallOpen(true);
-      return;
-    }
-    setNewGatheringTitle('');
-    setNewGatheringDescription('');
-    setNewGatheringDate('');
-    setNewGatheringTime('');
-    setNewGatheringCity(profile?.city ?? '');
-    setNewGatheringVenue('');
-    setNewGatheringType('physical');
-    setNewGatheringCircleId(creatorCircles.find((circle) => circle.status === 'approved')?.id ?? null);
-    setGatheringOpen(true);
-  }, [canSubmitGathering, creatorCircles, profile?.city]);
-
-  const handleSubmitCircle = useCallback(async () => {
-    Keyboard.dismiss();
-    const name = newName.trim();
-    const purpose = newPurpose.trim();
-    if (!name || name.length < 3) {
-      showBetweenerAlert({
-        title: 'Circle name',
-        message: 'Add a clear Circle name.',
-        tone: 'warning',
-      });
-      return;
-    }
-    if (!purpose || purpose.length < 10) {
-      showBetweenerAlert({
-        title: 'Circle purpose',
-        message: 'Add a short purpose so Betweener can review it.',
-        tone: 'warning',
-      });
-      return;
-    }
-    if (creating) return;
-    setCreating(true);
-    try {
-      const { data, error } = await db.rpc('rpc_create_circle_request', {
-        p_name: name,
-        p_description: purpose,
-        p_short_description: purpose.slice(0, 140),
-        p_circle_type: isAdmin ? 'official' : 'gold_community',
-        p_visibility_scope: newScope,
-        p_country_code: (profile as any)?.current_country_code ?? null,
-        p_country_name: (profile as any)?.current_country ?? null,
-        p_region: (profile as any)?.region ?? null,
-        p_city: newCity.trim() || ((profile as any)?.city ?? null),
-        p_diaspora_tags: [],
-        p_culture_tags: [],
-        p_faith_tags: [],
-        p_interest_tags: [],
-        p_audience_tags: [],
-        p_requires_join_approval: newScope === 'invite_only',
-        p_rules: null,
-      });
-      if (error) throw error;
-      setCreateOpen(false);
-      setNewName('');
-      setNewPurpose('');
-      await loadCircles();
-      if (data?.id) {
-        showBetweenerAlert({
-          title: isAdmin ? 'Circle published' : 'Submitted for review',
-          message: isAdmin ? 'Your official Circle is live.' : "We'll notify you once Betweener approves it.",
-          tone: 'success',
-        });
-      }
-    } catch (error) {
-      showBetweenerAlert({
-        title: 'Circle request failed',
-        message: error instanceof Error ? error.message : 'Please try again.',
-        tone: 'error',
-      });
-    } finally {
-      setCreating(false);
-    }
-  }, [creating, isAdmin, loadCircles, newCity, newName, newPurpose, newScope, profile]);
-
-  const handleSubmitGathering = useCallback(async () => {
-    Keyboard.dismiss();
-    const title = newGatheringTitle.trim();
-    const description = newGatheringDescription.trim();
-    const datePart = newGatheringDate.trim();
-    const timePart = newGatheringTime.trim();
-    if (!title || title.length < 3) {
-      showBetweenerAlert({
-        title: 'Gathering title',
-        message: 'Add a clear Gathering title.',
-        tone: 'warning',
-      });
-      return;
-    }
-    if (!description || description.length < 10) {
-      showBetweenerAlert({
-        title: 'Gathering details',
-        message: 'Add a short description so Betweener can review it.',
-        tone: 'warning',
-      });
-      return;
-    }
-    if (!datePart || !timePart) {
-      showBetweenerAlert({
-        title: 'Start time',
-        message: 'Add a valid date and time.',
-        tone: 'warning',
-      });
-      return;
-    }
-    const startsAt = new Date(`${datePart}T${timePart}`);
-    if (Number.isNaN(startsAt.getTime()) || startsAt.getTime() <= Date.now()) {
-      showBetweenerAlert({
-        title: 'Start time',
-        message: 'Use a future date and time.',
-        tone: 'warning',
-      });
-      return;
-    }
-    if (creatingGathering) return;
-    setCreatingGathering(true);
-    try {
-      const { data, error } = await db.rpc('rpc_create_gathering_request', {
-        p_circle_id: newGatheringCircleId,
-        p_title: title,
-        p_description: description,
-        p_gathering_type: newGatheringType,
-        p_country_code: (profile as any)?.current_country_code ?? null,
-        p_country_name: (profile as any)?.current_country ?? null,
-        p_region: (profile as any)?.region ?? null,
-        p_city: newGatheringCity.trim() || ((profile as any)?.city ?? null),
-        p_venue_name: newGatheringVenue.trim() || null,
-        p_address_visibility: newGatheringType === 'online' ? 'hidden' : 'attendees_only',
-        p_starts_at: startsAt.toISOString(),
-        p_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        p_tags: [],
-      });
-      if (error) throw error;
-      setGatheringOpen(false);
-      setNewGatheringTitle('');
-      setNewGatheringDescription('');
-      setNewGatheringDate('');
-      setNewGatheringTime('');
-      setNewGatheringCity(profile?.city ?? '');
-      setNewGatheringVenue('');
-      setNewGatheringType('physical');
-      setNewGatheringCircleId(null);
-      await loadCircles();
-      if (data?.id) {
-        showBetweenerAlert({
-          title: isAdmin ? 'Gathering published' : 'Submitted for review',
-          message: isAdmin ? 'Your Gathering is live.' : "We'll notify you once Betweener approves it.",
-          tone: 'success',
-        });
-      }
-    } catch (error) {
-      showBetweenerAlert({
-        title: 'Gathering could not be submitted',
-        message: error instanceof Error ? error.message : 'Please try again.',
-        tone: 'error',
-      });
-    } finally {
-      setCreatingGathering(false);
-    }
-  }, [
-    creatingGathering,
-    isAdmin,
-    loadCircles,
-    newGatheringCircleId,
-    newGatheringCity,
-    newGatheringDate,
-    newGatheringDescription,
-    newGatheringTime,
-    newGatheringTitle,
-    newGatheringType,
-    newGatheringVenue,
-    profile,
-  ]);
+    router.push('/circles/manage?create=circle');
+  }, []);
 
   const handleJoin = useCallback(async (circle: CircleV2) => {
     if (!currentProfileId) return;
@@ -1253,10 +1105,12 @@ export default function CirclesScreen() {
     }
   }, [activePrompt?.id, promptAnswer]);
 
-  const upcomingGathering = gatherings.find((gathering) => {
+  const shouldFeatureLiveGathering = (gathering: Gathering) => {
     const type = String(gathering.gathering_type ?? '').trim().toLowerCase();
     return !['online', 'virtual', 'livestream', 'live'].includes(type);
-  }) ?? null;
+  };
+  const upcomingGathering = gatherings.find(shouldFeatureLiveGathering) ?? null;
+  const hasGatheringPriority = Boolean(upcomingGathering);
   const warmIntro = warmIntros[0] ?? null;
   const allAvailableGistPerspectives = [...new Set(gists.map((item) => String(item.perspective ?? 'general').toLowerCase()))];
   const preferredGistPerspective = getPreferredRelationshipGistPerspective((profile as any)?.religion);
@@ -1314,8 +1168,7 @@ export default function CirclesScreen() {
     warmIntros.length > 0 ||
     picks.length > 0;
   const effectiveLoadError = profileBindingError ?? loadError;
-  const approvedCreatorCircles = creatorCircles.filter((circle) => circle.status === 'approved');
-  const creatorStudioVisible = canSubmitCircle || canSubmitGathering || creatorCircles.length > 0 || creatorGatherings.length > 0;
+  const creatorStudioVisible = canHostLive || isCommunityAdmin || canSubmitCircle || canSubmitGathering || creatorCircles.length > 0 || creatorGatherings.length > 0;
   const scopeLabel = SCOPES.find((item) => item.key === scope)?.label ?? 'My country';
   const filteredDiscoverCircles = useMemo(() => {
     const query = discoveryQuery.trim().toLowerCase();
@@ -1564,16 +1417,17 @@ export default function CirclesScreen() {
 
   const handleShareGist = useCallback(async () => {
     if (!gist) return;
-    const message = [
-      gist.title?.trim() || 'Relationship Gist',
-      gistReaderContent.lead,
-      gistReaderContent.takeaway && gistReaderContent.takeaway !== gistReaderContent.lead
-        ? gistReaderContent.takeaway
-        : null,
-      'Shared from Betweener.',
-    ].filter(Boolean).join('\n\n');
     try {
-      const result = await Share.share({ message });
+      const links = createCurrentRelationshipGistLinks(gist.id, gistPerspective);
+      const message = [
+        gist.title?.trim() || 'Relationship Gist',
+        gistReaderContent.lead,
+        gistReaderContent.takeaway && gistReaderContent.takeaway !== gistReaderContent.lead
+          ? gistReaderContent.takeaway
+          : null,
+        links.webLink,
+      ].filter(Boolean).join('\n\n');
+      const result = await Share.share({ message, url: links.webLink });
       if (result.action === Share.sharedAction) void gistEngagement.track('share');
     } catch (error) {
       logger.warn('[circles] gist_share_failed', {
@@ -1581,7 +1435,7 @@ export default function CirclesScreen() {
         message: error instanceof Error ? error.message : String(error),
       });
     }
-  }, [gist, gistEngagement, gistReaderContent.lead, gistReaderContent.takeaway]);
+  }, [gist, gistEngagement, gistPerspective, gistReaderContent.lead, gistReaderContent.takeaway]);
 
   const handleCloseGistReader = useCallback(() => {
     void flushGistReaderProgress();
@@ -1697,7 +1551,7 @@ export default function CirclesScreen() {
           <Text style={styles.emptyBody}>Join trusted spaces shaped around culture, values, lifestyle, and intent.</Text>
           <View style={styles.emptyActions}>
             <TouchableOpacity style={styles.primaryButton} onPress={handleCreatePress}>
-              <Text style={styles.primaryButtonText}>Request a Circle</Text>
+              <Text style={styles.primaryButtonText}>Create Circle</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.secondaryButton} onPress={() => setScope('my_country')}>
               <Text style={styles.secondaryButtonText}>Browse local</Text>
@@ -1869,7 +1723,7 @@ export default function CirclesScreen() {
               </TouchableOpacity>
               {!joinedCircles.length ? (
                 <TouchableOpacity style={styles.secondaryButton} onPress={handleCreatePress}>
-                  <Text style={styles.secondaryButtonText}>Request a Circle</Text>
+                  <Text style={styles.secondaryButtonText}>Create Circle</Text>
                 </TouchableOpacity>
               ) : null}
             </View>
@@ -1892,7 +1746,7 @@ export default function CirclesScreen() {
           })}
         </ScrollView> : null}
 
-        {homeMode === 'mine' && upcomingGathering ? (
+        {homeMode === 'mine' && hasGatheringPriority && upcomingGathering ? (
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
               <View style={styles.sectionTitleRow}>
@@ -2033,7 +1887,13 @@ export default function CirclesScreen() {
               availablePerspectives={availableGistPerspectives}
               selectedPerspective={gistPerspective}
               onOpenPerspectivePicker={handleOpenPreviewGistLensPicker}
-              onOpenReader={() => setGistReaderOpen(true)}
+              onOpenReader={() => {
+                if (!gist?.id) return;
+                router.push({
+                  pathname: '/gists/[gistId]',
+                  params: { gistId: gist.id, perspective: gistPerspective, source: 'circles' },
+                });
+              }}
               saved={currentGistLocalState?.saved === true}
               progressLabel={gistProgressLabel}
               onToggleSaved={handleToggleSaveGist}
@@ -2197,6 +2057,7 @@ export default function CirclesScreen() {
               gistId={gist?.id ?? null}
               perspective={gistPerspective}
               active={gistReaderOpen}
+              ownerUserId={user?.id ?? null}
             />
             <View
               style={styles.readerHeroCard}
@@ -2456,13 +2317,13 @@ export default function CirclesScreen() {
                 style={styles.actionsMenuItem}
                 onPress={() => {
                   setActionsMenuOpen(false);
-                  router.push('/circles/manage');
+                  router.push('/studio');
                 }}
               >
                 <View style={styles.actionsMenuItemCopy}>
-                  <Text style={styles.actionsMenuItemTitle}>Community workspace</Text>
+                  <Text style={styles.actionsMenuItemTitle}>Betweener Studio</Text>
                   <Text style={styles.actionsMenuItemBody}>
-                    {creatorQueueCount ? `Manage ${creatorQueueCount} submissions` : 'Manage your Circle requests and Gatherings'}
+                    {creatorQueueCount ? `Manage ${creatorQueueCount} community submissions and more` : 'Create Live, Circles, Gatherings, and Relationship Gists'}
                   </Text>
                 </View>
                 <MaterialCommunityIcons name="chevron-right" size={18} color={theme.textMuted} />
@@ -2477,40 +2338,12 @@ export default function CirclesScreen() {
               }}
             >
               <View style={styles.actionsMenuItemCopy}>
-                <Text style={styles.actionsMenuItemTitle}>Circle activity</Text>
+                <Text style={styles.actionsMenuItemTitle}>Circle Command</Text>
                 <Text style={styles.actionsMenuItemBody}>
-                  {heroLeadSignal ? heroLeadSignal.summary : 'See which Circle deserves your attention first.'}
+                  {heroLeadSignal ? heroLeadSignal.summary : 'See which Circle needs your attention first.'}
                 </Text>
               </View>
               <MaterialCommunityIcons name="radar" size={18} color={theme.textMuted} />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.actionsMenuItem}
-              onPress={() => {
-                setActionsMenuOpen(false);
-                handleCreatePress();
-              }}
-            >
-              <View style={styles.actionsMenuItemCopy}>
-                <Text style={styles.actionsMenuItemTitle}>Request Circle</Text>
-                <Text style={styles.actionsMenuItemBody}>Propose a new trusted space.</Text>
-              </View>
-              <MaterialCommunityIcons name="plus-circle-outline" size={18} color={theme.textMuted} />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.actionsMenuItem}
-              onPress={() => {
-                setActionsMenuOpen(false);
-                handleCreateGatheringPress();
-              }}
-            >
-              <View style={styles.actionsMenuItemCopy}>
-                <Text style={styles.actionsMenuItemTitle}>Create a Gathering</Text>
-                <Text style={styles.actionsMenuItemBody}>Plan an in-person, online, or hybrid event.</Text>
-              </View>
-              <MaterialCommunityIcons name="calendar-plus" size={18} color={theme.textMuted} />
             </TouchableOpacity>
 
           </Pressable>
@@ -2528,7 +2361,7 @@ export default function CirclesScreen() {
               <View style={styles.heroCommandDeck}>
                 <View style={styles.heroCommandHeader}>
                   <View style={styles.heroCommandCopy}>
-                    <Text style={styles.heroCommandEyebrow}>Circle Activity</Text>
+                    <Text style={styles.heroCommandEyebrow}>Circle Command</Text>
                     <Text style={styles.heroCommandTitle}>{heroTitle}</Text>
                     <Text style={styles.heroCommandBody}>{heroBody}</Text>
                   </View>
@@ -2624,208 +2457,13 @@ export default function CirclesScreen() {
                         handleCreatePress();
                       }}
                     >
-                      <Text style={styles.secondaryButtonText}>Request a Circle</Text>
+                      <Text style={styles.secondaryButtonText}>Create Circle</Text>
                     </TouchableOpacity>
                   ) : null}
                 </View>
               </View>
             </ScrollView>
           </Pressable>
-        </Pressable>
-      </Modal>
-
-      <Modal visible={paywallOpen} transparent animationType="fade" onRequestClose={() => setPaywallOpen(false)}>
-        <Pressable style={styles.modalBackdrop} onPress={() => setPaywallOpen(false)}>
-          <Pressable style={styles.modalCard} onPress={() => undefined}>
-            <Text style={styles.modalTitle}>Create trusted spaces with Gold</Text>
-            <Text style={styles.modalBody}>Gold members can request community Circles and create curated Gatherings.</Text>
-            <TouchableOpacity
-              style={styles.primaryButton}
-              onPress={() => {
-                setPaywallOpen(false);
-                router.push('/premium-plans');
-              }}
-            >
-              <Text style={styles.primaryButtonText}>Upgrade to Gold</Text>
-            </TouchableOpacity>
-          </Pressable>
-        </Pressable>
-      </Modal>
-
-      <Modal visible={createOpen} transparent animationType="fade" onRequestClose={() => setCreateOpen(false)}>
-        <Pressable style={styles.modalBackdrop} onPress={() => setCreateOpen(false)}>
-          <KeyboardAvoidingView
-            style={styles.modalKeyboardWrap}
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          >
-            <Pressable style={styles.modalCard} onPress={() => undefined}>
-              <ScrollView
-                style={styles.modalScroll}
-                contentContainerStyle={styles.modalScrollContent}
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
-              >
-                <Text style={styles.modalTitle}>Request Circle</Text>
-                <TextInput
-                  value={newName}
-                  onChangeText={setNewName}
-                  placeholder="Circle name"
-                  placeholderTextColor={theme.textMuted}
-                  style={styles.input}
-                  returnKeyType="next"
-                />
-                <TextInput
-                  value={newPurpose}
-                  onChangeText={setNewPurpose}
-                  placeholder="Purpose and who it is for"
-                  placeholderTextColor={theme.textMuted}
-                  multiline
-                  style={[styles.input, styles.multiline]}
-                />
-                <TextInput
-                  value={newCity}
-                  onChangeText={setNewCity}
-                  placeholder="City"
-                  placeholderTextColor={theme.textMuted}
-                  style={styles.input}
-                  returnKeyType="done"
-                />
-                <View style={styles.visibilityRow}>
-                  {(['country', 'local', 'diaspora', 'global', 'invite_only'] as const).map((item) => (
-                    <Pressable
-                      key={item}
-                      style={[styles.visibilityPill, newScope === item && styles.visibilityPillActive]}
-                      onPress={() => setNewScope(item)}
-                    >
-                      <Text style={[styles.visibilityText, newScope === item && styles.visibilityTextActive]}>
-                        {item === 'invite_only' ? 'Private' : item[0].toUpperCase() + item.slice(1)}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </View>
-                <View style={styles.modalActions}>
-                  <TouchableOpacity style={styles.secondaryButton} onPress={() => setCreateOpen(false)}>
-                    <Text style={styles.secondaryButtonText}>Cancel</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.primaryButton} disabled={creating} onPress={handleSubmitCircle}>
-                    <Text style={styles.primaryButtonText}>{creating ? 'Submitting' : 'Submit for review'}</Text>
-                  </TouchableOpacity>
-                </View>
-              </ScrollView>
-            </Pressable>
-          </KeyboardAvoidingView>
-        </Pressable>
-      </Modal>
-
-      <Modal visible={gatheringOpen} transparent animationType="fade" onRequestClose={() => setGatheringOpen(false)}>
-        <Pressable style={styles.modalBackdrop} onPress={() => setGatheringOpen(false)}>
-          <KeyboardAvoidingView
-            style={styles.modalKeyboardWrap}
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          >
-            <Pressable style={styles.modalCard} onPress={() => undefined}>
-              <ScrollView
-                style={styles.modalScroll}
-                contentContainerStyle={styles.modalScrollContent}
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
-              >
-                <Text style={styles.modalTitle}>Create a Gathering</Text>
-                <TextInput
-                  value={newGatheringTitle}
-                  onChangeText={setNewGatheringTitle}
-                  placeholder="Gathering title"
-                  placeholderTextColor={theme.textMuted}
-                  style={styles.input}
-                  returnKeyType="next"
-                />
-                <TextInput
-                  value={newGatheringDescription}
-                  onChangeText={setNewGatheringDescription}
-                  placeholder="What is this Gathering for?"
-                  placeholderTextColor={theme.textMuted}
-                  multiline
-                  style={[styles.input, styles.multiline]}
-                />
-                {approvedCreatorCircles.length ? (
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.visibilityRow} keyboardShouldPersistTaps="handled">
-                    <Pressable
-                      style={[styles.visibilityPill, !newGatheringCircleId && styles.visibilityPillActive]}
-                      onPress={() => setNewGatheringCircleId(null)}
-                    >
-                      <Text style={[styles.visibilityText, !newGatheringCircleId && styles.visibilityTextActive]}>General</Text>
-                    </Pressable>
-                    {approvedCreatorCircles.map((circle) => (
-                      <Pressable
-                        key={circle.id}
-                        style={[styles.visibilityPill, newGatheringCircleId === circle.id && styles.visibilityPillActive]}
-                        onPress={() => setNewGatheringCircleId(circle.id)}
-                      >
-                        <Text style={[styles.visibilityText, newGatheringCircleId === circle.id && styles.visibilityTextActive]}>{circle.name}</Text>
-                      </Pressable>
-                    ))}
-                  </ScrollView>
-                ) : null}
-                <View style={styles.visibilityRow}>
-                  {(['physical', 'online', 'hybrid'] as const).map((item) => (
-                    <Pressable
-                      key={item}
-                      style={[styles.visibilityPill, newGatheringType === item && styles.visibilityPillActive]}
-                      onPress={() => setNewGatheringType(item)}
-                    >
-                      <Text style={[styles.visibilityText, newGatheringType === item && styles.visibilityTextActive]}>
-                        {item[0].toUpperCase() + item.slice(1)}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </View>
-                <View style={styles.rowInputs}>
-                  <TextInput
-                    value={newGatheringDate}
-                    onChangeText={setNewGatheringDate}
-                    placeholder="YYYY-MM-DD"
-                    placeholderTextColor={theme.textMuted}
-                    style={[styles.input, styles.rowInput]}
-                    returnKeyType="next"
-                  />
-                  <TextInput
-                    value={newGatheringTime}
-                    onChangeText={setNewGatheringTime}
-                    placeholder="HH:MM"
-                    placeholderTextColor={theme.textMuted}
-                    style={[styles.input, styles.rowInput]}
-                    returnKeyType="next"
-                  />
-                </View>
-                <TextInput
-                  value={newGatheringCity}
-                  onChangeText={setNewGatheringCity}
-                  placeholder="City"
-                  placeholderTextColor={theme.textMuted}
-                  style={styles.input}
-                  returnKeyType="next"
-                />
-                {newGatheringType !== 'online' ? (
-                  <TextInput
-                    value={newGatheringVenue}
-                    onChangeText={setNewGatheringVenue}
-                    placeholder="Venue name"
-                    placeholderTextColor={theme.textMuted}
-                    style={styles.input}
-                    returnKeyType="done"
-                  />
-                ) : null}
-                <View style={styles.modalActions}>
-                  <TouchableOpacity style={styles.secondaryButton} onPress={() => setGatheringOpen(false)}>
-                    <Text style={styles.secondaryButtonText}>Cancel</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.primaryButton} disabled={creatingGathering} onPress={handleSubmitGathering}>
-                    <Text style={styles.primaryButtonText}>{creatingGathering ? 'Submitting' : 'Submit for review'}</Text>
-                  </TouchableOpacity>
-                </View>
-              </ScrollView>
-            </Pressable>
-          </KeyboardAvoidingView>
         </Pressable>
       </Modal>
 
@@ -3757,10 +3395,6 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
       padding: 20,
       backgroundColor: palette.overlay,
     },
-    modalKeyboardWrap: {
-      width: '100%',
-      justifyContent: 'center',
-    },
     modalCard: {
       padding: 18,
       borderRadius: 24,
@@ -3788,21 +3422,6 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
       fontSize: 13,
     },
     multiline: { minHeight: 92, textAlignVertical: 'top' },
-    gistBodyInput: { minHeight: 132 },
-    rowInputs: { flexDirection: 'row', gap: 10 },
-    rowInput: { flex: 1 },
-    visibilityRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-    visibilityPill: {
-      paddingHorizontal: 11,
-      paddingVertical: 8,
-      borderRadius: 999,
-      borderWidth: 1,
-      borderColor: palette.outline,
-      backgroundColor: palette.surfaceMuted,
-    },
-    visibilityPillActive: { backgroundColor: palette.tealStrong, borderColor: palette.tealStrong },
-    visibilityText: { color: palette.textSoft, fontSize: 11, fontWeight: '800' },
-    visibilityTextActive: { color: palette.tealInk },
     modalActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, justifyContent: 'flex-end' },
   });
 };

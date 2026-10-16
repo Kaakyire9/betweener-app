@@ -149,4 +149,20 @@ describe('useCirclePulse', () => {
     await waitFor(() => expect(result.current.items[0]?.id).toBe('pulse-saved'));
     expect(result.current.error).toBe('Showing saved Circle Pulse.');
   });
+
+  it('clears private Pulse data before loading another account snapshot', async () => {
+    mockFetchCirclePulseItems.mockResolvedValue([liveItem]);
+    const { result, rerender } = await renderHook(
+      ({ viewerProfileId }) => useCirclePulse({ circleId: 'circle-1', enabled: true, viewerProfileId }),
+      { initialProps: { viewerProfileId: 'profile-1' } },
+    );
+
+    await waitFor(() => expect(result.current.items[0]?.id).toBe('pulse-live'));
+    mockFetchCirclePulseItems.mockImplementation(() => new Promise(() => undefined));
+
+    rerender({ viewerProfileId: 'profile-2' });
+
+    await waitFor(() => expect(result.current.items).toEqual([]));
+    expect(mockReadCirclePulseSnapshotState).toHaveBeenCalledWith('circle-1', 'profile-2');
+  });
 });

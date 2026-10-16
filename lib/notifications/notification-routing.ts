@@ -259,6 +259,30 @@ export function buildNotificationRoute(
   }
 
   if (
+    (pushType === "circle_live_starting_soon" || pushType === "circle_live_now") &&
+    data?.circle_id &&
+    data?.session_id
+  ) {
+    return {
+      pathname: "/circles/[id]",
+      params: {
+        id: String(data.circle_id),
+        openLiveSessionId: String(data.session_id),
+      },
+    };
+  }
+
+  if (pushType === "circle_gathering_reminder" && data?.circle_id) {
+    return {
+      pathname: "/circles/[id]",
+      params: {
+        id: String(data.circle_id),
+        tab: "gatherings",
+      },
+    };
+  }
+
+  if (
     (
       pushType === "live_host_assigned" ||
       pushType === "live_starting_soon" ||

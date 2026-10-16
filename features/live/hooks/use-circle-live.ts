@@ -1,16 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/lib/auth-context';
 import { liveRepository, type CircleLiveSnapshot } from '../application/index.ts';
+import { readCircleLiveSnapshotState, writeCircleLiveSnapshot } from '@/lib/offline/circle-live-store';
 
 export const useCircleLive = (circleId: string, enabled = true) => {
-  const { authStatus, canPerformAuthenticatedWrites } = useAuth();
+  const { authStatus, canPerformAuthenticatedWrites, user } = useAuth();
   const [snapshot, setSnapshot] = useState<CircleLiveSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const requestRef = useRef(0);
+  const accountId = user?.id ?? null;
 
   const refresh = useCallback(async () => {
     if (!enabled || !circleId || authStatus !== 'authenticated' || !canPerformAuthenticatedWrites) {
+      setSnapshot(null);
+      setError(null);
       setLoading(false);
       return;
     }
@@ -20,25 +24,39 @@ export const useCircleLive = (circleId: string, enabled = true) => {
       if (request === requestRef.current) {
         setSnapshot(next);
         setError(null);
+        void writeCircleLiveSnapshot(circleId, accountId, next);
       }
     } catch (nextError) {
       if (request === requestRef.current) {
-        setError(nextError instanceof Error ? nextError.message : 'circle_live_unavailable');
+        const cached = await readCircleLiveSnapshotState(circleId, accountId);
+        if (cached.data) {
+          setSnapshot(cached.data);
+          setError('Showing saved Circle Live information.');
+        } else {
+          setSnapshot(null);
+          setError(nextError instanceof Error ? nextError.message : 'circle_live_unavailable');
+        }
       }
     } finally {
       if (request === requestRef.current) setLoading(false);
     }
-  }, [authStatus, canPerformAuthenticatedWrites, circleId, enabled]);
+  }, [accountId, authStatus, canPerformAuthenticatedWrites, circleId, enabled]);
 
   useEffect(() => {
-    if (!enabled || !circleId) {
+    if (!enabled || !circleId || !accountId) {
+      requestRef.current += 1;
+      setSnapshot(null);
+      setError(null);
       setLoading(false);
       return;
     }
+    requestRef.current += 1;
+    setSnapshot(null);
+    setError(null);
     setLoading(true);
     void refresh();
     return liveRepository.subscribeCircleLive(circleId, () => void refresh());
-  }, [circleId, enabled, refresh]);
+  }, [accountId, circleId, enabled, refresh]);
 
   return { snapshot, loading, error, refresh };
 };
