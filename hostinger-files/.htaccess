@@ -5,6 +5,10 @@ RewriteEngine On
 RewriteCond %{HTTPS} off
 RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
 
+# Keep canonical Relationship Gist URLs useful when the app is not installed.
+RewriteRule ^gists/[^/]+/?$ /gists/index.html [L]
+RewriteRule ^live/[^/]+/?$ /live/index.html [L]
+
 # Apple App Site Association file configuration
 <Files "apple-app-site-association">
     ForceType application/json

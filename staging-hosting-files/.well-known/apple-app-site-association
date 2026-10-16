@@ -10,7 +10,8 @@
           "/callback",
           "/callback/*",
           "/circles/*",
-          "/live/*"
+          "/live/*",
+          "/gists/*"
         ]
       }
     ]
