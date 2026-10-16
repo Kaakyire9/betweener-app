@@ -128,11 +128,11 @@ export default function SavedRelationshipGistsScreen() {
               accessibilityState={{ disabled: !available }}
               style={[styles.card, !available && styles.cardUnavailable]}
               onPress={() => router.push({
-                pathname: '/(tabs)/explore',
+                pathname: '/gists/[gistId]',
                 params: {
-                  openGistId: gist.gist_id,
-                  gistPerspective: gist.selected_perspective,
-                  gistSource: 'saved_library',
+                  gistId: gist.gist_id,
+                  perspective: gist.selected_perspective,
+                  source: 'saved_library',
                 },
               })}
             >

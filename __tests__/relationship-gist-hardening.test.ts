@@ -168,11 +168,13 @@ test('dedicated Gist editor remains isolated behind its compatibility wrapper', 
 });
 
 test('Creator Studio makes Editorial 2.0 and AI-assisted drafting discoverable', () => {
-  const creatorStudio = read('app/circles/manage.tsx');
+  const creatorStudio = read('app/studio.tsx');
+  const studioModules = read('features/studio/config/studio-modules.ts');
   const editorialWorkspace = read('features/relationship-gists/editorial/RelationshipGistEditorialV2Workspace.tsx');
 
-  assert.match(creatorStudio, /router\.push\('\/admin-editorial'\)/);
-  assert.match(creatorStudio, /accessibilityLabel="Open Relationship Gist Editorial Studio"/);
+  assert.match(creatorStudio, /RELATIONSHIP_GIST_AI_STUDIO_ENABLED/);
+  assert.match(studioModules, /actionHref: '\/admin-editorial'/);
+  assert.match(studioModules, /AI Editorial Studio/);
   assert.match(editorialWorkspace, /RELATIONSHIP_GIST_AI_STUDIO_ENABLED/);
   assert.match(editorialWorkspace, /RelationshipGistAIStudio/);
 });

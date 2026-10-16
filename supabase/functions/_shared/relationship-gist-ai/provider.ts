@@ -91,6 +91,12 @@ export class OpenAIRelationshipGistDraftProvider {
     topicTitle: string;
     topicBrief: string;
     perspective: RelationshipGistAIPerspective;
+    sourceRevision?: {
+      title: string;
+      summary: string;
+      body: string;
+      instruction: string;
+    } | null;
   }): Promise<{ value: RelationshipGistAIDraft; metadata: RelationshipGistAIProviderMetadata }> {
     const attempts = Math.max(1, Math.min(3, this.options.maxAttempts));
     let lastError: RelationshipGistAIProviderError | null = null;
@@ -113,6 +119,12 @@ export class OpenAIRelationshipGistDraftProvider {
     topicTitle: string;
     topicBrief: string;
     perspective: RelationshipGistAIPerspective;
+    sourceRevision?: {
+      title: string;
+      summary: string;
+      body: string;
+      instruction: string;
+    } | null;
   }, attempt: number) {
     const startedAt = Date.now();
     const controller = new AbortController();

@@ -55,13 +55,15 @@ test('reader-state v2 is additive and retains installed-client signatures', () =
   assert.match(flags, /=== 'true'/);
 });
 
-test('Circles and reader integration retain the legacy fetch fallback and unrelated product paths', () => {
+test('Circles and reader integration retain the isolated Gist catalog and unrelated product paths', () => {
   const screen = read('app/(tabs)/explore.tsx');
+  const catalog = read('features/relationship-gists/data/relationship-gist-catalog.ts');
   const repository = read('features/relationship-gists/data/relationship-gist-repository.ts');
   const migration = read('supabase/migrations/20261010121000_relationship_gist_reader_state_idempotency.sql');
   assert.match(screen, /useLiveSessions/);
   assert.match(screen, /CirclesLiveGateway/);
-  assert.match(screen, /fetchCurrentRelationshipGists/);
+  assert.match(screen, /loadRelationshipGistCatalog/);
+  assert.match(catalog, /fetchCurrentRelationshipGists/);
   assert.match(repository, /rpc_get_global_relationship_gists/);
   assert.match(repository, /from\('relationship_gists'\)/);
   assert.match(migration, /rpc_upsert_relationship_gist_user_state/);

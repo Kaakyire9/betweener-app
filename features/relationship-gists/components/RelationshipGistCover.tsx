@@ -1,6 +1,11 @@
-import { RELATIONSHIP_GIST_AI_IMAGES_ENABLED } from '@/features/relationship-gists/config/relationship-gist-ai-flags';
+import { RELATIONSHIP_GIST_COVERS_ENABLED } from '@/features/relationship-gists/config/relationship-gist-ai-flags';
 import { fetchRelationshipGistCover, type RelationshipGistCover as Cover } from '@/features/relationship-gists/media/relationship-gist-cover-repository';
-import { resolveOfflineImageUri } from '@/lib/offline/image-store';
+import {
+  readRelationshipGistCoverCache,
+  relationshipGistCoverImageKey,
+  writeRelationshipGistCoverCache,
+} from '@/features/relationship-gists/media/relationship-gist-cover-cache';
+import { getOfflineImageUriForOwner, resolveOfflineImageUriForOwner } from '@/lib/offline/image-store';
 import { supabase } from '@/lib/supabase';
 import { logger } from '@/lib/telemetry/logger';
 import { Image } from 'expo-image';
@@ -11,39 +16,51 @@ export function RelationshipGistCover({
   gistId,
   perspective,
   active,
+  ownerUserId,
 }: {
   gistId: string | null;
   perspective: string;
   active: boolean;
+  ownerUserId?: string | null;
 }) {
   const [asset, setAsset] = useState<{ cover: Cover; uri: string } | null>(null);
 
   useEffect(() => {
     let current = true;
     setAsset(null);
-    if (!RELATIONSHIP_GIST_AI_IMAGES_ENABLED || !active || !gistId) return () => { current = false; };
-    void fetchRelationshipGistCover(supabase as any, gistId, perspective)
-      .then(async (result) => {
-        if (!result || !current) return;
-        const uri = await resolveOfflineImageUri(
-          `relationship-gist-cover:${result.cover.id}:${result.cover.sha256}`,
-          result.signedUrl,
+    if (!RELATIONSHIP_GIST_COVERS_ENABLED || !active || !gistId || !ownerUserId) {
+      return () => { current = false; };
+    }
+    void (async () => {
+      const cached = await readRelationshipGistCoverCache(ownerUserId, gistId, perspective);
+      if (cached) {
+        const cachedUri = await getOfflineImageUriForOwner(
+          ownerUserId,
+          relationshipGistCoverImageKey(cached),
         );
+        if (current && cachedUri) setAsset({ cover: cached, uri: cachedUri });
+      }
+      try {
+        const result = await fetchRelationshipGistCover(supabase as any, gistId, perspective);
+        if (!result || !current) return;
+        const imageKey = relationshipGistCoverImageKey(result.cover);
+        const uri = await resolveOfflineImageUriForOwner(ownerUserId, imageKey, result.signedUrl);
+        await writeRelationshipGistCoverCache(ownerUserId, gistId, perspective, result.cover);
         if (current && uri) setAsset({ cover: result.cover, uri });
-      })
-      .catch((error) => {
+      } catch (error) {
         logger.warn('[relationship-gist] cover_load_failed', {
           code: String((error as any)?.code ?? (error as Error)?.name ?? 'unknown'),
         });
-      });
+      }
+    })();
     return () => { current = false; };
-  }, [active, gistId, perspective]);
+  }, [active, gistId, ownerUserId, perspective]);
 
   if (!asset) return null;
   return (
     <View style={styles.frame}>
       <Image
-        source={{ uri: asset.uri, cacheKey: `relationship-gist-cover:${asset.cover.id}:${asset.cover.sha256}` }}
+        source={{ uri: asset.uri, cacheKey: relationshipGistCoverImageKey(asset.cover) }}
         style={styles.image}
         contentFit="cover"
         transition={180}

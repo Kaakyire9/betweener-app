@@ -5,6 +5,9 @@ import test from 'node:test';
 import { canShowRelationshipGistEditorialNavigation } from '../features/relationship-gists/editorial/relationship-gist-editorial-permissions.ts';
 
 const adminScreen = readFileSync(new URL('../app/admin.tsx', import.meta.url), 'utf8');
+const studioScreen = readFileSync(new URL('../app/studio.tsx', import.meta.url), 'utf8');
+const studioModules = readFileSync(new URL('../features/studio/config/studio-modules.ts', import.meta.url), 'utf8');
+const studioCard = readFileSync(new URL('../features/studio/components/StudioModuleCard.tsx', import.meta.url), 'utf8');
 const adminAccess = readFileSync(new URL('../lib/admin/admin-access.ts', import.meta.url), 'utf8');
 const adminEditorial = readFileSync(new URL('../app/admin-editorial.tsx', import.meta.url), 'utf8');
 
@@ -17,11 +20,13 @@ test('editorial navigation is shown only when the server grants read access', ()
 
 test('admin dashboard uses the shared server-backed capability model for its accessible route entry', () => {
   assert.match(adminAccess, /rpc_get_my_admin_context/);
-  assert.match(adminScreen, /capability: 'editorial'/);
+  assert.match(adminScreen, /router\.push\('\/studio'\)/);
   assert.match(adminScreen, /MODULES\.filter\(\(module\) => access\.can\(module\.capability\)\)/);
-  assert.match(adminScreen, /route: '\/admin-editorial'/);
+  assert.match(studioScreen, /access\.can\('editorial'\)/);
+  assert.match(studioModules, /actionHref: '\/admin-editorial'/);
+  assert.match(studioModules, /AI Editorial Studio/);
   assert.match(adminScreen, /accessibilityRole="button"/);
-  assert.match(adminScreen, /accessibilityLabel=\{`Open \$\{module\.title\}`\}/);
+  assert.match(studioCard, /accessibilityLabel=\{module\.actionLabel\}/);
 });
 
 test('navigation authorization fails closed when permission verification errors', () => {

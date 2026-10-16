@@ -1,6 +1,7 @@
 import { addEventListener as addNetInfoListener, fetch as fetchNetInfo } from '@react-native-community/netinfo';
 import * as Crypto from 'expo-crypto';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { AppState } from 'react-native';
 
 import {
   RELATIONSHIP_GIST_ANALYTICS_ENABLED,
@@ -18,8 +19,14 @@ import {
 import {
   drainRelationshipGistEngagementOutbox,
   enqueueRelationshipGistEngagement,
+  readRelationshipGistEngagementOutbox,
   type RelationshipGistEngagementOutboxItem,
 } from '@/features/relationship-gists/engagement/relationship-gist-engagement-outbox';
+import {
+  applyRelationshipGistReactionIntent,
+  readRelationshipGistEngagementCache,
+  writeRelationshipGistEngagementCache,
+} from '@/features/relationship-gists/engagement/relationship-gist-engagement-cache';
 import type {
   RelationshipGistEngagementSnapshot,
   RelationshipGistEngagementSource,
@@ -64,17 +71,43 @@ export function useRelationshipGistEngagement({
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const activeUserRef = useRef(userId);
+  const activeGistRef = useRef(gistId);
+  const readerOpenRef = useRef(readerOpen);
   const eventKeysRef = useRef(new Set<string>());
   const sessionIdRef = useRef(Crypto.randomUUID());
   activeUserRef.current = userId;
+  activeGistRef.current = gistId;
+
+  const mergePendingReaction = useCallback(async (
+    next: RelationshipGistEngagementSnapshot,
+  ) => {
+    if (!userId || !gistId) return { snapshot: next, pending: undefined };
+    const queued = await readRelationshipGistEngagementOutbox(userId);
+    const pending = [...queued].reverse().find((item) => (
+      item.kind === 'reaction'
+      && item.gistId === gistId
+      && item.revisionId === next.revisionId
+    ));
+    if (!pending) return { snapshot: next, pending: undefined };
+    return {
+      snapshot: applyRelationshipGistReactionIntent(
+        next,
+        next.reaction,
+        pending.reaction ?? null,
+      ),
+      pending: pending.reaction ?? null,
+    };
+  }, [gistId, userId]);
 
   const refresh = useCallback(async () => {
     if (!RELATIONSHIP_GIST_ENGAGEMENT_ENABLED || !userId || !gistId) return null;
     try {
       const next = await fetchRelationshipGistEngagement(supabase as any, gistId);
-      if (activeUserRef.current === userId) {
-        setSnapshot(next);
-        setPendingReaction(undefined);
+      await writeRelationshipGistEngagementCache(userId, next);
+      const display = await mergePendingReaction(next);
+      if (activeUserRef.current === userId && activeGistRef.current === gistId) {
+        setSnapshot(display.snapshot);
+        setPendingReaction(display.pending);
         setNotice(null);
       }
       return next;
@@ -85,7 +118,7 @@ export function useRelationshipGistEngagement({
       if (activeUserRef.current === userId) setNotice('Engagement will be ready when you are online.');
       return null;
     }
-  }, [gistId, userId]);
+  }, [gistId, mergePendingReaction, userId]);
 
   const sendOutboxItem = useCallback((item: RelationshipGistEngagementOutboxItem) => {
     if (item.kind === 'reaction') {
@@ -121,6 +154,13 @@ export function useRelationshipGistEngagement({
       if ((result.processed > 0 || result.discarded > 0) && gistId) await refresh();
       if (result.failures.length && activeUserRef.current === userId) {
         const code = result.failures.at(-1)?.code;
+        if (result.discarded > 0 && result.items.length === 0) {
+          logger.info('[relationship-gist] engagement_stale_queue_cleaned', {
+            code: code ?? 'unknown',
+            discarded: result.discarded,
+          });
+          return;
+        }
         logger.warn(result.discarded > 0
           ? '[relationship-gist] engagement_rpc_discarded'
           : '[relationship-gist] engagement_rpc_deferred', {
@@ -174,8 +214,34 @@ export function useRelationshipGistEngagement({
     eventKeysRef.current = new Set();
     sessionIdRef.current = Crypto.randomUUID();
     if (!RELATIONSHIP_GIST_ENGAGEMENT_ENABLED || !userId || !gistId) return;
-    void refresh();
-  }, [gistId, userId]); // reader-open is handled separately below
+    let current = true;
+    void (async () => {
+      const cached = await readRelationshipGistEngagementCache(userId, gistId);
+      if (cached) {
+        const display = await mergePendingReaction(cached);
+        if (current && activeUserRef.current === userId && activeGistRef.current === gistId) {
+          setSnapshot(display.snapshot);
+          setPendingReaction(display.pending);
+        }
+      }
+      if (current) await refresh();
+    })();
+    return () => { current = false; };
+  }, [gistId, mergePendingReaction, refresh, userId]); // reader-open is handled separately below
+
+  useEffect(() => {
+    const wasOpen = readerOpenRef.current;
+    readerOpenRef.current = readerOpen;
+    if (readerOpen && !wasOpen) void refresh();
+  }, [readerOpen, refresh]);
+
+  useEffect(() => {
+    if (!RELATIONSHIP_GIST_ENGAGEMENT_ENABLED || !readerOpen || !userId || !gistId) return;
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void refresh();
+    });
+    return () => subscription.remove();
+  }, [gistId, readerOpen, refresh, userId]);
 
   useEffect(() => {
     if (!snapshot) return;
@@ -195,7 +261,11 @@ export function useRelationshipGistEngagement({
   const selectReaction = useCallback(async (reaction: RelationshipGistReaction) => {
     if (!RELATIONSHIP_GIST_REACTIONS_ENABLED || !userId || !gistId || !snapshot) return;
     const desired = (pendingReaction ?? snapshot.reaction) === reaction ? null : reaction;
+    const previous = pendingReaction === undefined ? snapshot.reaction : pendingReaction;
     setPendingReaction(desired);
+    setSnapshot((current) => current
+      ? applyRelationshipGistReactionIntent(current, previous, desired)
+      : current);
     try {
       await enqueueRelationshipGistEngagement({
         ownerUserId: userId,
@@ -205,11 +275,16 @@ export function useRelationshipGistEngagement({
         kind: 'reaction',
         reaction: desired,
       });
-      setNotice('Reaction saved on this device.');
+      if (activeUserRef.current === userId && activeGistRef.current === gistId) {
+        setNotice('Reaction saved on this device.');
+      }
       void drain();
     } catch (error) {
-      setPendingReaction(undefined);
-      setNotice('This reaction could not be saved on this device.');
+      if (activeUserRef.current === userId && activeGistRef.current === gistId) {
+        setPendingReaction(undefined);
+        setSnapshot(snapshot);
+        setNotice('This reaction could not be saved on this device.');
+      }
       logger.warn('[relationship-gist] reaction_queue_failed', {
         code: String((error as Error)?.name ?? 'unknown'),
       });

@@ -1,5 +1,8 @@
 import { Colors } from '@/constants/theme';
-import { relationshipGistAIErrorMessage } from '@/features/relationship-gists/ai/relationship-gist-ai-errors';
+import {
+  relationshipGistAIErrorMessage,
+  relationshipGistAIJobFailureMessage,
+} from '@/features/relationship-gists/ai/relationship-gist-ai-errors';
 import { RelationshipGistAIImagePanel } from '@/features/relationship-gists/ai/RelationshipGistAIImagePanel';
 import { RELATIONSHIP_GIST_PERSPECTIVES } from '@/features/relationship-gists/domain/relationship-gist';
 import {
@@ -50,9 +53,11 @@ const emptyTopic = (): TopicDraft => ({
 export function RelationshipGistAIStudio({
   permissions,
   onEditorialChanged,
+  refreshToken = 0,
 }: {
   permissions: RelationshipGistEditorialPermissions;
   onEditorialChanged: () => Promise<void>;
+  refreshToken?: number;
 }) {
   const colorScheme = useColorScheme();
   const theme = Colors[(colorScheme ?? 'light') === 'dark' ? 'dark' : 'light'];
@@ -63,6 +68,7 @@ export function RelationshipGistAIStudio({
   const [imageBackendAvailable, setImageBackendAvailable] = useState(false);
   const [topicDraft, setTopicDraft] = useState<TopicDraft | null>(null);
   const [working, setWorking] = useState(false);
+  const [activityExpanded, setActivityExpanded] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null | undefined>(undefined);
   const ownerReview = permissions.canDraft
     && permissions.canQualityApprove
@@ -94,7 +100,7 @@ export function RelationshipGistAIStudio({
     void load().catch((error) => {
       Alert.alert('AI Editorial Studio', relationshipGistAIErrorMessage(error, 'Unable to load AI editorial state.'));
     });
-  }, [load]);
+  }, [load, refreshToken]);
 
   const run = useCallback(async (operation: () => Promise<unknown>) => {
     if (working) return;
@@ -103,6 +109,7 @@ export function RelationshipGistAIStudio({
       await operation();
       await Promise.all([load(), onEditorialChanged()]);
     } catch (error) {
+      await load().catch(() => undefined);
       Alert.alert('AI Editorial Studio', relationshipGistAIErrorMessage(error));
     } finally {
       setWorking(false);
@@ -161,6 +168,15 @@ export function RelationshipGistAIStudio({
   }, [run]);
 
   if (!snapshot) return <Text style={styles.muted}>Loading AI Editorial Studio…</Text>;
+  const activeTopics = snapshot.topics.filter((topic) => ['draft', 'approved'].includes(topic.status));
+  const activeReviews = reviews.filter((review) => ['draft', 'in_review', 'approved'].includes(review.status));
+  const jobSummary = snapshot.job_summary ?? {
+    active_count: snapshot.jobs.filter((job) => ['queued', 'processing'].includes(job.status)).length,
+    unresolved_failure_count: snapshot.jobs.filter((job) => job.status === 'failed').length,
+    today_completed_count: 0,
+    today_estimated_cost_microusd: 0,
+  };
+  const estimatedCost = `$${(Number(jobSummary.today_estimated_cost_microusd || 0) / 1_000_000).toFixed(4)}`;
 
   return (
     <View style={styles.section}>
@@ -184,7 +200,7 @@ export function RelationshipGistAIStudio({
 
       <Text style={styles.meta}>Environment: {snapshot.environment ?? 'not configured'} · server policy {snapshot.enabled ? 'enabled' : 'disabled'}</Text>
 
-      {snapshot.topics.map((topic) => (
+      {activeTopics.map((topic) => (
         <View key={topic.id} style={styles.card}>
           <Text style={styles.eyebrow}>EDITORIAL BRIEF · INSTRUCTIONS FOR AI</Text>
           <View style={styles.headingRow}>
@@ -214,7 +230,7 @@ export function RelationshipGistAIStudio({
         </View>
       ))}
 
-      {reviews.map((review) => {
+      {activeReviews.map((review) => {
         const sourcesReady = review.sources.every((source) => source.verification_status !== 'unverified');
         const specialistChecksReady = review.specialist_reviews.every((item) => item.approved_at != null);
         const imageryReady = !imageStudio.images.some((image) => (
@@ -327,16 +343,29 @@ export function RelationshipGistAIStudio({
         );
       })}
 
-      <Text style={styles.subheading}>Generation jobs</Text>
-      {snapshot.jobs.map((job) => (
+      <Pressable style={styles.activitySummary} onPress={() => setActivityExpanded((value) => !value)}>
+        <View style={styles.headingCopy}>
+          <Text style={styles.subheading}>AI activity</Text>
+          <Text style={styles.meta}>
+            {jobSummary.active_count} active · {jobSummary.unresolved_failure_count} need attention · {jobSummary.today_completed_count} completed today · {estimatedCost} today
+          </Text>
+        </View>
+        <MaterialCommunityIcons name={activityExpanded ? 'chevron-up' : 'chevron-down'} size={22} color={theme.textMuted} />
+      </Pressable>
+      {activityExpanded ? snapshot.jobs.map((job) => (
         <View key={job.id} style={styles.jobRow}>
           <View style={styles.headingCopy}>
             <Text style={styles.sourceTitle}>{job.status}</Text>
             <Text style={styles.meta}>{job.model} · attempt {job.attempt_count} · {job.input_tokens ?? 0}+{job.output_tokens ?? 0} tokens</Text>
+            {job.failure_code ? (
+              <Text style={styles.failureText}>{relationshipGistAIJobFailureMessage(job.failure_code)}</Text>
+            ) : null}
           </View>
-          <Text style={styles.meta}>{job.estimated_cost_microusd == null ? 'Cost rate not configured' : `${job.estimated_cost_microusd} µUSD estimated`}</Text>
+          <Text style={styles.meta}>{job.estimated_cost_microusd == null
+            ? job.status === 'failed' ? 'No billable usage recorded' : 'Cost pending'
+            : `$${(job.estimated_cost_microusd / 1_000_000).toFixed(4)} estimated`}</Text>
         </View>
-      ))}
+      )) : null}
 
       <Modal visible={topicDraft != null} transparent animationType="fade" onRequestClose={() => setTopicDraft(null)}>
         <View style={styles.overlay}><View style={styles.modalCard}>
@@ -375,6 +404,7 @@ const createStyles = (theme: (typeof Colors)[keyof typeof Colors]) => StyleSheet
   muted: { color: theme.textMuted, fontFamily: 'Archivo_400Regular', fontSize: 12, lineHeight: 18 },
   body: { color: theme.text, fontFamily: 'Archivo_400Regular', fontSize: 13, lineHeight: 20 },
   meta: { color: theme.textMuted, fontFamily: 'Archivo_400Regular', fontSize: 10, lineHeight: 15 },
+  failureText: { color: theme.danger, fontFamily: 'Archivo_700Bold', fontSize: 10, lineHeight: 15 },
   warning: { flexDirection: 'row', gap: 9, padding: 12, borderRadius: 14, borderWidth: 1, borderColor: theme.outline, backgroundColor: theme.backgroundSubtle },
   warningText: { flex: 1, color: theme.text, fontFamily: 'Archivo_700Bold', fontSize: 11, lineHeight: 17 },
   card: { padding: 15, gap: 7, borderRadius: 16, borderWidth: 1, borderColor: theme.outline, backgroundColor: theme.backgroundSubtle },
@@ -395,6 +425,7 @@ const createStyles = (theme: (typeof Colors)[keyof typeof Colors]) => StyleSheet
   selected: { borderColor: theme.tint, backgroundColor: theme.backgroundSubtle },
   disabledButton: { opacity: 0.45 },
   jobRow: { flexDirection: 'row', gap: 12, padding: 12, borderRadius: 13, borderWidth: 1, borderColor: theme.outline },
+  activitySummary: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 6 },
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.65)', justifyContent: 'center', padding: 20 },
   modalCard: { maxHeight: '88%', padding: 18, borderRadius: 20, backgroundColor: theme.background, borderWidth: 1, borderColor: theme.outline },
   input: { minHeight: 46, marginTop: 10, paddingHorizontal: 12, borderRadius: 12, borderWidth: 1, borderColor: theme.outline, color: theme.text, backgroundColor: theme.backgroundSubtle, fontFamily: 'Archivo_400Regular' },

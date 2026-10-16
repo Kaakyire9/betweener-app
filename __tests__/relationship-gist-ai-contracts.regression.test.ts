@@ -3,10 +3,12 @@ import test from 'node:test';
 
 import {
   buildRelationshipGistAIInstructions,
+  RELATIONSHIP_GIST_AI_JSON_SCHEMA,
   RELATIONSHIP_GIST_AI_SCHEMA_VERSION,
   validateRelationshipGistAIDraft,
   type RelationshipGistAIDraft,
 } from '../supabase/functions/_shared/relationship-gist-ai/contracts.ts';
+
 import {
   estimateRelationshipGistAICostMicrousd,
   OpenAIRelationshipGistDraftProvider,
@@ -17,6 +19,10 @@ import {
   estimateRelationshipGistImageCostMicrousd,
   OpenAIRelationshipGistImageProvider,
 } from '../supabase/functions/_shared/relationship-gist-ai/image-provider.ts';
+
+test('provider schema uses only the supported strict Structured Outputs subset', () => {
+  assert.doesNotMatch(JSON.stringify(RELATIONSHIP_GIST_AI_JSON_SCHEMA), /uniqueItems/);
+});
 
 const validDraft = (): RelationshipGistAIDraft => ({
   schema_version: RELATIONSHIP_GIST_AI_SCHEMA_VERSION,

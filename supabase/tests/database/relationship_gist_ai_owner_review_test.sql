@@ -18,6 +18,7 @@ insert into auth.users(id, email) values
   ('c3500000-0000-4000-8000-000000000002', 'owner-operations@example.invalid')
 on conflict (id) do nothing;
 
+select set_config('request.jwt.claim.role', 'service_role', true);
 select set_config('app.profile_guard_write', 'on', true);
 insert into public.profiles(id, user_id, full_name) values
   ('c3500000-0000-4000-8000-000000000011', 'c3500000-0000-4000-8000-000000000001', 'Owner reviewer'),

@@ -117,7 +117,7 @@ serve(async (request) => {
     const provider = new OpenAIRelationshipGistDraftProvider({
       apiKey: openAIKey,
       model: String(claim.model),
-      timeoutMs: 30_000,
+      timeoutMs: 60_000,
       // The database claim count is the job-wide retry budget. One provider call
       // per claim prevents nested retries from exceeding that configured limit.
       maxAttempts: 1,
@@ -127,6 +127,12 @@ serve(async (request) => {
       topicTitle: String(claim.topic_title),
       topicBrief: String(claim.topic_brief),
       perspective,
+      sourceRevision: claim.source_revision_id ? {
+        title: String(claim.source_title ?? ''),
+        summary: String(claim.source_summary ?? ''),
+        body: String(claim.source_body ?? ''),
+        instruction: String(claim.revision_instruction ?? ''),
+      } : null,
     });
     const estimatedCostMicrousd = estimateRelationshipGistAICostMicrousd({
       inputTokens: generated.metadata.inputTokens,

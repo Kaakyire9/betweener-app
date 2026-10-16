@@ -42,6 +42,7 @@ export type RelationshipGistEditorialRevision = {
   lock_version: number;
   targeting_enforced: boolean;
   updated_at: string;
+  ai_generated?: boolean;
 };
 
 export const getRelationshipGistEditorialActions = (

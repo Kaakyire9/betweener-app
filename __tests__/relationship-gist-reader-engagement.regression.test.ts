@@ -52,10 +52,19 @@ test('reader controls are accessible and preserve canonical Saved Gist navigatio
   assert.match(panel, /accessibilityRole="radiogroup"/);
   assert.match(panel, /accessibilityRole="radio"/);
   assert.match(panel, /Only you can read this/);
-  assert.match(saved, /openGistId: gist\.gist_id/);
-  assert.match(saved, /gistSource: 'saved_library'/);
+  assert.match(saved, /pathname: '\/gists\/\[gistId\]'/);
+  assert.match(saved, /gistId: gist\.gist_id/);
+  assert.match(saved, /source: 'saved_library'/);
   assert.match(explore, /RelationshipGistEngagementPanel/);
   assert.match(explore, /CirclesLiveGateway/);
+});
+
+test('engagement totals refresh when the reader reopens and the app returns to foreground', () => {
+  const hook = read('features/relationship-gists/hooks/use-relationship-gist-engagement.ts');
+  assert.match(hook, /if \(readerOpen && !wasOpen\) void refresh\(\)/);
+  assert.match(hook, /AppState\.addEventListener\('change'/);
+  assert.match(hook, /if \(state === 'active'\) void refresh\(\)/);
+  assert.match(hook, /return \(\) => subscription\.remove\(\)/);
 });
 
 test('Milestone 3 operational gaps are explicit and are not described as end-to-end proof', () => {

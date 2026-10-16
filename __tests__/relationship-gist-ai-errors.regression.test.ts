@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { relationshipGistAIErrorMessage } from '../features/relationship-gists/ai/relationship-gist-ai-errors.ts';
+import {
+  relationshipGistAIErrorMessage,
+  relationshipGistAIJobFailureMessage,
+} from '../features/relationship-gists/ai/relationship-gist-ai-errors.ts';
 
 test('AI editorial errors direct owner briefs into the streamlined generation flow', () => {
   assert.equal(
@@ -28,5 +31,24 @@ test('AI editorial errors do not expose unknown backend details', () => {
   assert.equal(
     relationshipGistAIErrorMessage({ code: 'XX000', details: 'private database detail' }),
     'The operation could not be completed.',
+  );
+});
+
+test('AI editorial jobs expose actionable, allowlisted provider failures', () => {
+  assert.equal(
+    relationshipGistAIJobFailureMessage('openai_http_400'),
+    'Provider rejected the draft schema',
+  );
+  assert.equal(
+    relationshipGistAIJobFailureMessage('private_provider_detail'),
+    'Draft generation failed',
+  );
+  assert.equal(relationshipGistAIJobFailureMessage(null), null);
+});
+
+test('AI editorial errors replace the generic Edge Function transport message', () => {
+  assert.equal(
+    relationshipGistAIErrorMessage(new Error('Edge Function returned a non-2xx status code')),
+    'AI draft generation failed. Refresh the Studio and check the latest job for the provider status.',
   );
 });

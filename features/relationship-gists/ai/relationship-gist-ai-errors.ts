@@ -29,7 +29,44 @@ const ERROR_MESSAGES: Record<string, string> = {
     'AI-assisted drafting is currently disabled for this environment.',
   gist_ai_budget_exceeded:
     'The staging AI allowance has been reached. Try again after the daily allowance resets.',
+  GIST_AI_GENERATION_FAILED:
+    'AI draft generation failed. Refresh the Studio and check the latest job for the provider status.',
+  GIST_AI_PERSISTENCE_FAILED:
+    'The AI draft was generated but could not be saved. No published Gist was changed.',
+  GIST_AI_MODERATION_UNAVAILABLE:
+    'The safety check is temporarily unavailable. Please try again.',
+  GIST_AI_UNSAFE:
+    'The generated revision did not pass the safety check and was not saved.',
+  GIST_AI_OUTPUT_INVALID:
+    'The provider returned an invalid draft. Please revise the instruction and try again.',
+  GIST_AI_JOB_NOT_CLAIMABLE:
+    'This AI job can no longer run. Refresh the Studio and start a new revision.',
+  GIST_AI_JOB_NOT_RETRYABLE:
+    'This AI job cannot be retried. Refresh the Studio and start a new revision.',
+  GIST_AI_REQUEST_DENIED:
+    'Your session or editorial permission could not be verified. Refresh and try again.',
+  GIST_AI_UNAVAILABLE:
+    'AI drafting is temporarily unavailable in this environment.',
+  GIST_AI_REQUEST_FAILED:
+    'The AI request could not be completed. Please try again.',
 };
+
+const JOB_FAILURE_MESSAGES: Record<string, string> = {
+  openai_http_400: 'Provider rejected the draft schema',
+  openai_http_401: 'Provider credentials were rejected',
+  openai_http_403: 'Provider access is not permitted',
+  openai_http_429: 'Provider allowance or rate limit reached',
+  openai_timeout: 'Provider request timed out',
+  openai_unavailable: 'Provider is temporarily unavailable',
+  malformed_provider_response: 'Provider returned an unreadable response',
+  malformed_provider_json: 'Provider returned invalid structured content',
+  empty_provider_output: 'Provider returned no draft content',
+};
+
+export function relationshipGistAIJobFailureMessage(code: string | null) {
+  if (!code) return null;
+  return JOB_FAILURE_MESSAGES[code] ?? 'Draft generation failed';
+}
 
 const errorText = (error: unknown) => {
   if (typeof error === 'string') return error;
@@ -52,6 +89,9 @@ export function relationshipGistAIErrorMessage(
   const text = errorText(error);
   const knownCode = Object.keys(ERROR_MESSAGES).find((code) => text.includes(code));
   if (knownCode) return ERROR_MESSAGES[knownCode];
+  if (text.includes('Edge Function returned a non-2xx status code')) {
+    return ERROR_MESSAGES.GIST_AI_GENERATION_FAILED;
+  }
   if (error instanceof Error && error.message.trim()) return error.message;
   return fallback;
 }

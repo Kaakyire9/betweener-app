@@ -9,6 +9,8 @@ export type RelationshipGistAITopic = {
   status: 'draft' | 'approved' | 'cancelled' | 'consumed';
   created_by_user_id: string;
   approved_by_user_id: string | null;
+  source_revision_id?: string | null;
+  revision_instruction?: string | null;
 };
 
 export type RelationshipGistAIJob = {
@@ -68,6 +70,12 @@ export type RelationshipGistAIStudioSnapshot = {
   enabled: boolean;
   topics: RelationshipGistAITopic[];
   jobs: RelationshipGistAIJob[];
+  job_summary?: {
+    active_count: number;
+    unresolved_failure_count: number;
+    today_completed_count: number;
+    today_estimated_cost_microusd: number;
+  };
 };
 
 export type RelationshipGistAIImageJob = {
@@ -91,6 +99,7 @@ export type RelationshipGistAIImage = {
   alt_text: string;
   width: number;
   height: number;
+  source?: 'ai' | 'manual';
   created_at: string;
 };
 
@@ -104,6 +113,31 @@ type RpcClient = {
   functions: {
     invoke: (name: string, options: { body: Record<string, unknown> }) => PromiseLike<{ data: unknown; error: any }>;
   };
+};
+
+type RelationshipGistAIFunctionFailure = Error & {
+  code: string;
+  jobId: string | null;
+  retryable: boolean;
+};
+
+const parseFunctionFailure = async (error: any): Promise<RelationshipGistAIFunctionFailure> => {
+  let payload: Record<string, unknown> = {};
+  try {
+    const context = error?.context;
+    const response = typeof context?.clone === 'function' ? context.clone() : context;
+    if (typeof response?.json === 'function') payload = await response.json();
+  } catch {
+    // The transport message remains the safe fallback when no JSON body exists.
+  }
+  const code = typeof payload.code === 'string' && payload.code
+    ? payload.code
+    : String(error?.code ?? 'GIST_AI_REQUEST_FAILED');
+  return Object.assign(new Error(code), {
+    code,
+    jobId: typeof payload.jobId === 'string' ? payload.jobId : null,
+    retryable: payload.retryable === true,
+  });
 };
 
 const unwrap = <T>(data: unknown, error: any): T => {
@@ -138,6 +172,18 @@ export async function createRelationshipGistAITopic(client: RpcClient, input: {
   return unwrap<Record<string, unknown>>(data, error);
 }
 
+export async function createRelationshipGistAIRevisionTopic(
+  client: RpcClient,
+  sourceRevisionId: string,
+  instruction: string,
+) {
+  const { data, error } = await client.rpc('rpc_create_relationship_gist_ai_revision_topic', {
+    p_source_revision_id: sourceRevisionId,
+    p_instruction: instruction,
+  });
+  return unwrap<{ topic_id: string; source_revision_id: string; status: string }>(data, error);
+}
+
 export async function approveRelationshipGistAITopic(client: RpcClient, topicId: string) {
   const { data, error } = await client.rpc('rpc_approve_relationship_gist_ai_topic', {
     p_topic_id: topicId,
@@ -150,10 +196,19 @@ export async function generateRelationshipGistAIDraft(
   topicId: string,
   idempotencyKey: string,
 ) {
-  const { data, error } = await client.functions.invoke('relationship-gist-ai-draft', {
-    body: { topicId, idempotencyKey },
+  const maxAttempts = 2;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const { data, error } = await client.functions.invoke('relationship-gist-ai-draft', {
+      body: { topicId, idempotencyKey },
+    });
+    if (!error) return data as Record<string, unknown>;
+    const failure = await parseFunctionFailure(error);
+    if (!failure.retryable || attempt === maxAttempts) throw failure;
+    await new Promise((resolve) => setTimeout(resolve, 350));
+  }
+  throw Object.assign(new Error('GIST_AI_REQUEST_FAILED'), {
+    code: 'GIST_AI_REQUEST_FAILED', jobId: null, retryable: false,
   });
-  return unwrap<Record<string, unknown>>(data, error);
 }
 
 export async function prepareRelationshipGistAIOwnerTopic(client: RpcClient, topicId: string) {

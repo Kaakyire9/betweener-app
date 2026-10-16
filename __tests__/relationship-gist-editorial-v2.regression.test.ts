@@ -117,7 +117,8 @@ test('Saved Library is account scoped and keeps legacy Gist identity for resume'
   assert.match(repository, /ownerUserId/);
   assert.match(repository, /perspective \?\? 'all'/);
   assert.match(repository, /rpc_get_my_saved_relationship_gists/);
-  assert.match(screen, /openGistId: gist\.gist_id/);
+  assert.match(screen, /pathname: '\/gists\/\[gistId\]'/);
+  assert.match(screen, /gistId: gist\.gist_id/);
   assert.match(screen, /unavailable_reason/);
 });
 

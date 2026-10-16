@@ -15,8 +15,25 @@ const unwrap = <T>(data: unknown, error: any): T => {
 export async function fetchRelationshipGistEditorialRevisions(
   client: RpcClient,
 ): Promise<RelationshipGistEditorialRevision[]> {
-  const { data, error } = await client.rpc('rpc_admin_get_relationship_gist_editions');
-  return unwrap<RelationshipGistEditorialRevision[]>(data ?? [], error);
+  const current = await client.rpc('rpc_admin_get_relationship_gist_editions_v2');
+  if (!current.error) return (current.data ?? []) as RelationshipGistEditorialRevision[];
+  const missingRpc = current.error?.code === 'PGRST202'
+    || String(current.error?.message ?? '').includes('rpc_admin_get_relationship_gist_editions_v2');
+  if (!missingRpc) throw current.error;
+  const legacy = await client.rpc('rpc_admin_get_relationship_gist_editions');
+  return unwrap<RelationshipGistEditorialRevision[]>(legacy.data ?? [], legacy.error);
+}
+
+export async function publishRelationshipGistOwnerReview(
+  client: RpcClient,
+  input: { revisionId: string; safetyAcknowledged: boolean },
+) {
+  const { data, error } = await client.rpc('rpc_publish_relationship_gist_owner_review', {
+    p_revision_id: input.revisionId,
+    p_confirmation: 'I reviewed this Gist and accept publishing responsibility.',
+    p_safety_acknowledged: input.safetyAcknowledged,
+  });
+  return unwrap<Record<string, unknown>>(data, error);
 }
 
 export async function createRelationshipGistRevision(
