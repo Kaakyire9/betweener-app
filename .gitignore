@@ -43,6 +43,8 @@ supabase/.temp/
 
 # typescript
 *.tsbuildinfo
+apps/studio/test-results/
+apps/studio/playwright-report/
 
 app-example
 

@@ -9,20 +9,23 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
-    "typecheck": "tsc -b --pretty false"
+    "typecheck": "tsc -b --pretty false",
+    "test:e2e": "playwright test",
+    "test:canary": "playwright test --project=staging-canary"
   },
   "dependencies": {
     "@betweener/live-program-domain": "0.1.0",
-    "@stream-io/video-react-sdk": "^1.43.2",
-    "@supabase/supabase-js": "2.117.2",
-    "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "@stream-io/video-react-sdk": "^1.44.0",
+    "@supabase/supabase-js": "^2.118.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.1",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
     "typescript": "7.0.2",
-    "vite": "^8.3.3"
+    "vite": "^8.3.4"
   }
 }

@@ -102,7 +102,7 @@ test('Stream ongoing-call runtime is initialized once at the native app entry po
 
 test('Windows Metro keeps the Stream module graph within a bounded handle budget', () => {
   assert.match(metroConfig, /process\.platform === ["']win32["']/);
-  assert.match(metroConfig, /config\.maxWorkers = 1/);
+  assert.match(metroConfig, /config\.maxWorkers = 4/);
   assert.match(metroConfig, /unstable_workerThreads:\s*false/);
   assert.match(metroConfig, /boundCacheStores\(config\.cacheStores/);
   assert.match(metroConfig, /maxConcurrency:\s*8/);
