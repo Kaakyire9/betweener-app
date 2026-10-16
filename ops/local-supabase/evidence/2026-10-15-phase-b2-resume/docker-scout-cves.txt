@@ -1,0 +1,14 @@
+## Overview
+
+| Analyzed image field | Value |
+| --- | --- |
+| Target | `local://haproxy:3.2.26-alpine` |
+| Digest | `51f173c68257` |
+| Platform | `linux/amd64` |
+| Vulnerabilities | `0 critical, 0 high, 0 medium, 0 low` |
+| Size | `21 MB` |
+| Packages | `30` |
+
+## Packages and Vulnerabilities
+
+No vulnerable packages detected.

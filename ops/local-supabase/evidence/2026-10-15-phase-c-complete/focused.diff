@@ -1,0 +1,88 @@
+--- accepted-baseline/ops/local-supabase/vector-docker-api-proxy.compose.yml
++++ workspace/ops/local-supabase/vector-docker-api-proxy.compose.yml
+@@ -22,6 +22,11 @@ services:
+     cpus: 0.25
+     restart: unless-stopped
+     stop_grace_period: 5s
++    logging:
++      driver: json-file
++      options:
++        max-size: "5m"
++        max-file: "2"
+     volumes:
+       - type: bind
+         source: ./haproxy-vector-readonly.cfg
+--- accepted-baseline/scripts/local-supabase.ps1
++++ workspace/scripts/local-supabase.ps1
+@@ -95,6 +95,39 @@ function Assert-DockerIdentity {
+     }
+ }
+
++function Assert-RenderedComposeLogging {
++    $result = Invoke-Docker -Arguments @(
++        'compose', '--project-name', $ComposeProject, '--file', $ComposePath,
++        'config', '--format', 'json'
++    )
++    $jsonStart = $result.Text.IndexOf('{')
++    if ($jsonStart -lt 0) {
++        throw 'Docker Compose did not return rendered JSON configuration.'
++    }
++    $rendered = $result.Text.Substring($jsonStart) | ConvertFrom-Json
++    $serviceProperty = $rendered.services.PSObject.Properties['docker-api-proxy']
++    if ($null -eq $serviceProperty) {
++        throw "Rendered Compose configuration has no 'docker-api-proxy' service."
++    }
++
++    $loggingProperty = $serviceProperty.Value.PSObject.Properties['logging']
++    if ($null -eq $loggingProperty) {
++        throw "Rendered Compose configuration has no logging policy for 'docker-api-proxy'."
++    }
++
++    $logging = $loggingProperty.Value
++    $optionsProperty = $logging.PSObject.Properties['options']
++    $driverProperty = $logging.PSObject.Properties['driver']
++    $maxSizeProperty = if ($null -ne $optionsProperty) { $optionsProperty.Value.PSObject.Properties['max-size'] } else { $null }
++    $maxFileProperty = if ($null -ne $optionsProperty) { $optionsProperty.Value.PSObject.Properties['max-file'] } else { $null }
++    if ($null -eq $driverProperty -or $driverProperty.Value -ne 'json-file' -or
++        $null -eq $maxSizeProperty -or [string]$maxSizeProperty.Value -ne '5m' -or
++        $null -eq $maxFileProperty -or [string]$maxFileProperty.Value -ne '2') {
++        throw "Rendered Compose logging policy must be json-file with max-size=5m and max-file=2."
++    }
++}
++
+ function Get-AnalyticsEnabled {
+@@ -164,6 +197,12 @@ function Assert-ProxyIdentity {
+     $socketMounts = @($Proxy.Mounts | Where-Object { $_.Source -eq '/var/run/docker.sock' -and $_.Destination -eq '/var/run/docker.sock' -and -not $_.RW })
+     $configMounts = @($Proxy.Mounts | Where-Object { $_.Destination -eq '/usr/local/etc/haproxy/haproxy.cfg' -and -not $_.RW })
+     $securityOpt = @($Proxy.HostConfig.SecurityOpt | Where-Object { $_ -like 'no-new-privileges*' })
++    $logConfig = $Proxy.HostConfig.LogConfig
++    $logOptions = $logConfig.Config
++    $loggingValid = $logConfig.Type -eq 'json-file' -and
++        $null -ne $logOptions.PSObject.Properties['max-size'] -and $logOptions.'max-size' -eq '5m' -and
++        $null -ne $logOptions.PSObject.Properties['max-file'] -and $logOptions.'max-file' -eq '2' -and
++        (Get-PropertyCount $logOptions) -eq 2
+
+     if ($Proxy.Config.Labels.$RepairLabelName -ne $RepairLabelValue -or
+@@ -179,6 +218,7 @@ function Assert-ProxyIdentity {
+         $Proxy.HostConfig.PidsLimit -ne 64 -or
+         $Proxy.HostConfig.Memory -ne 67108864 -or
+         $Proxy.HostConfig.NanoCpus -ne 250000000 -or
++        -not $loggingValid -or
+         (Get-PropertyCount $Proxy.HostConfig.PortBindings) -ne 0 -or
+@@ -219,6 +259,7 @@ function Test-PrivateAlias {
+ }
+
+ Assert-DockerIdentity
++Assert-RenderedComposeLogging
+ $analyticsEnabled = Get-AnalyticsEnabled
+--- accepted-baseline/supabase/config.toml
++++ workspace/supabase/config.toml
+@@ -414,7 +414,7 @@
+ # [edge_runtime.secrets]
+ # secret_key = "env(SECRET_VALUE)"
+
+ [analytics]
+-enabled = false
++enabled = true
+ port = 54327
+ # Configure one of the supported backends: `postgres`, `bigquery`.
