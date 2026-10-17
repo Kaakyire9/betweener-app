@@ -1783,6 +1783,51 @@ export type Database = {
           },
         ]
       }
+      circle_member_notification_preferences: {
+        Row: {
+          circle_id: string
+          discussion_activity: boolean
+          gathering_reminders: boolean
+          live_notifications: boolean
+          notification_level: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          circle_id: string
+          discussion_activity?: boolean
+          gathering_reminders?: boolean
+          live_notifications?: boolean
+          notification_level?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          circle_id?: string
+          discussion_activity?: boolean
+          gathering_reminders?: boolean
+          live_notifications?: boolean
+          notification_level?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circle_member_notification_preferences_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circle_location_features"
+            referencedColumns: ["circle_id"]
+          },
+          {
+            foreignKeyName: "circle_member_notification_preferences_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       circle_members: {
         Row: {
           circle_id: string
@@ -1850,6 +1895,150 @@ export type Database = {
             columns: ["profile_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      circle_notification_campaigns: {
+        Row: {
+          actor_user_id: string | null
+          body: string
+          circle_id: string
+          completed_at: string | null
+          created_at: string
+          data: Json
+          gathering_id: string | null
+          id: string
+          kind: string
+          revision: number
+          session_id: string | null
+          status: string
+          title: string
+        }
+        Insert: {
+          actor_user_id?: string | null
+          body: string
+          circle_id: string
+          completed_at?: string | null
+          created_at?: string
+          data?: Json
+          gathering_id?: string | null
+          id?: string
+          kind: string
+          revision?: number
+          session_id?: string | null
+          status?: string
+          title: string
+        }
+        Update: {
+          actor_user_id?: string | null
+          body?: string
+          circle_id?: string
+          completed_at?: string | null
+          created_at?: string
+          data?: Json
+          gathering_id?: string | null
+          id?: string
+          kind?: string
+          revision?: number
+          session_id?: string | null
+          status?: string
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circle_notification_campaigns_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circle_location_features"
+            referencedColumns: ["circle_id"]
+          },
+          {
+            foreignKeyName: "circle_notification_campaigns_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_notification_campaigns_gathering_id_fkey"
+            columns: ["gathering_id"]
+            isOneToOne: false
+            referencedRelation: "gatherings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_notification_campaigns_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      circle_notification_deliveries: {
+        Row: {
+          attempt_count: number
+          campaign_id: string
+          circle_id: string
+          created_at: string
+          dispatched_at: string | null
+          failure_reason: string | null
+          id: string
+          next_attempt_at: string
+          recipient_user_id: string
+          seen_at: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          attempt_count?: number
+          campaign_id: string
+          circle_id: string
+          created_at?: string
+          dispatched_at?: string | null
+          failure_reason?: string | null
+          id?: string
+          next_attempt_at?: string
+          recipient_user_id: string
+          seen_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          attempt_count?: number
+          campaign_id?: string
+          circle_id?: string
+          created_at?: string
+          dispatched_at?: string | null
+          failure_reason?: string | null
+          id?: string
+          next_attempt_at?: string
+          recipient_user_id?: string
+          seen_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circle_notification_deliveries_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "circle_notification_campaigns"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_notification_deliveries_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circle_location_features"
+            referencedColumns: ["circle_id"]
+          },
+          {
+            foreignKeyName: "circle_notification_deliveries_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circles"
             referencedColumns: ["id"]
           },
         ]
@@ -2974,6 +3163,7 @@ export type Database = {
       }
       circles: {
         Row: {
+          access_policy: string
           active_this_week_count: number
           approved_at: string | null
           approved_by_admin_id: string | null
@@ -2990,6 +3180,8 @@ export type Database = {
           created_by_user_id: string | null
           culture_tags: string[]
           description: string | null
+          diaspora_destination_country_codes: string[]
+          diaspora_origin_country_codes: string[]
           diaspora_tags: string[]
           faith_tags: string[]
           gathering_count: number
@@ -3005,9 +3197,13 @@ export type Database = {
           is_official: boolean
           is_partner: boolean
           latitude: number | null
+          live_discovery_policy: string
           longitude: number | null
           member_count: number
+          membership_eligibility_policy: string
           name: string
+          reach_scope: string
+          reach_scopes: string[]
           region: string | null
           rejected_reason: string | null
           report_count: number
@@ -3022,6 +3218,7 @@ export type Database = {
           visibility_scope: string
         }
         Insert: {
+          access_policy?: string
           active_this_week_count?: number
           approved_at?: string | null
           approved_by_admin_id?: string | null
@@ -3038,6 +3235,8 @@ export type Database = {
           created_by_user_id?: string | null
           culture_tags?: string[]
           description?: string | null
+          diaspora_destination_country_codes?: string[]
+          diaspora_origin_country_codes?: string[]
           diaspora_tags?: string[]
           faith_tags?: string[]
           gathering_count?: number
@@ -3053,9 +3252,13 @@ export type Database = {
           is_official?: boolean
           is_partner?: boolean
           latitude?: number | null
+          live_discovery_policy?: string
           longitude?: number | null
           member_count?: number
+          membership_eligibility_policy?: string
           name: string
+          reach_scope?: string
+          reach_scopes?: string[]
           region?: string | null
           rejected_reason?: string | null
           report_count?: number
@@ -3070,6 +3273,7 @@ export type Database = {
           visibility_scope?: string
         }
         Update: {
+          access_policy?: string
           active_this_week_count?: number
           approved_at?: string | null
           approved_by_admin_id?: string | null
@@ -3086,6 +3290,8 @@ export type Database = {
           created_by_user_id?: string | null
           culture_tags?: string[]
           description?: string | null
+          diaspora_destination_country_codes?: string[]
+          diaspora_origin_country_codes?: string[]
           diaspora_tags?: string[]
           faith_tags?: string[]
           gathering_count?: number
@@ -3101,9 +3307,13 @@ export type Database = {
           is_official?: boolean
           is_partner?: boolean
           latitude?: number | null
+          live_discovery_policy?: string
           longitude?: number | null
           member_count?: number
+          membership_eligibility_policy?: string
           name?: string
+          reach_scope?: string
+          reach_scopes?: string[]
           region?: string | null
           rejected_reason?: string | null
           report_count?: number
@@ -5739,6 +5949,35 @@ export type Database = {
         }
         Relationships: []
       }
+      live_notification_campaign_recipients: {
+        Row: {
+          campaign_id: string
+          created_at: string
+          recipient_role: string
+          recipient_user_id: string
+        }
+        Insert: {
+          campaign_id: string
+          created_at?: string
+          recipient_role: string
+          recipient_user_id: string
+        }
+        Update: {
+          campaign_id?: string
+          created_at?: string
+          recipient_role?: string
+          recipient_user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_notification_campaign_recipients_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "live_notification_campaigns"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       live_notification_campaigns: {
         Row: {
           accepted_ticket_count: number
@@ -8268,6 +8507,44 @@ export type Database = {
         }
         Relationships: []
       }
+      live_publication_commands: {
+        Row: {
+          actor_user_id: string
+          command_id: string
+          command_type: string
+          created_at: string
+          result_status: string
+          result_version: number
+          session_id: string
+        }
+        Insert: {
+          actor_user_id: string
+          command_id: string
+          command_type: string
+          created_at?: string
+          result_status: string
+          result_version: number
+          session_id: string
+        }
+        Update: {
+          actor_user_id?: string
+          command_id?: string
+          command_type?: string
+          created_at?: string
+          result_status?: string
+          result_version?: number
+          session_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_publication_commands_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       live_quick_connect_availability: {
         Row: {
           available_from: string
@@ -9396,6 +9673,56 @@ export type Database = {
           },
         ]
       }
+      live_session_audience_policies: {
+        Row: {
+          city: string | null
+          country_code: string | null
+          country_name: string | null
+          created_at: string
+          diaspora_destination_country_codes: string[]
+          diaspora_origin_country_codes: string[]
+          policy_mode: string
+          reach_scopes: string[]
+          region: string | null
+          session_id: string
+          updated_at: string
+        }
+        Insert: {
+          city?: string | null
+          country_code?: string | null
+          country_name?: string | null
+          created_at?: string
+          diaspora_destination_country_codes?: string[]
+          diaspora_origin_country_codes?: string[]
+          policy_mode?: string
+          reach_scopes?: string[]
+          region?: string | null
+          session_id: string
+          updated_at?: string
+        }
+        Update: {
+          city?: string | null
+          country_code?: string | null
+          country_name?: string | null
+          created_at?: string
+          diaspora_destination_country_codes?: string[]
+          diaspora_origin_country_codes?: string[]
+          policy_mode?: string
+          reach_scopes?: string[]
+          region?: string | null
+          session_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_session_audience_policies_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: true
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       live_session_capability_assignments: {
         Row: {
           assigned_by_user_id: string
@@ -9758,6 +10085,9 @@ export type Database = {
         Row: {
           archived_at: string | null
           backstage_opened_at: string | null
+          broadcast_authority: string
+          broadcast_authority_set_at: string | null
+          broadcast_authority_set_by_user_id: string | null
           cancellation_reason: string | null
           cancelled_at: string | null
           captions_enabled: boolean
@@ -9809,6 +10139,9 @@ export type Database = {
         Insert: {
           archived_at?: string | null
           backstage_opened_at?: string | null
+          broadcast_authority?: string
+          broadcast_authority_set_at?: string | null
+          broadcast_authority_set_by_user_id?: string | null
           cancellation_reason?: string | null
           cancelled_at?: string | null
           captions_enabled?: boolean
@@ -9860,6 +10193,9 @@ export type Database = {
         Update: {
           archived_at?: string | null
           backstage_opened_at?: string | null
+          broadcast_authority?: string
+          broadcast_authority_set_at?: string | null
+          broadcast_authority_set_by_user_id?: string | null
           cancellation_reason?: string | null
           cancelled_at?: string | null
           captions_enabled?: boolean
@@ -10098,6 +10434,7 @@ export type Database = {
           created_by_user_id: string | null
           expires_at: string | null
           note: string | null
+          operator_role: string
           updated_at: string
           user_id: string
         }
@@ -10113,6 +10450,7 @@ export type Database = {
           created_by_user_id?: string | null
           expires_at?: string | null
           note?: string | null
+          operator_role?: string
           updated_at?: string
           user_id: string
         }
@@ -10128,10 +10466,234 @@ export type Database = {
           created_by_user_id?: string | null
           expires_at?: string | null
           note?: string | null
+          operator_role?: string
           updated_at?: string
           user_id?: string
         }
         Relationships: []
+      }
+      live_studio_operational_events: {
+        Row: {
+          acknowledged_at: string | null
+          acknowledged_by_user_id: string | null
+          actor_user_id: string | null
+          created_at: string
+          details: Json
+          event_type: string
+          id: number
+          requires_acknowledgement: boolean
+          session_id: string
+          severity: string
+        }
+        Insert: {
+          acknowledged_at?: string | null
+          acknowledged_by_user_id?: string | null
+          actor_user_id?: string | null
+          created_at?: string
+          details?: Json
+          event_type: string
+          id?: never
+          requires_acknowledgement?: boolean
+          session_id: string
+          severity?: string
+        }
+        Update: {
+          acknowledged_at?: string | null
+          acknowledged_by_user_id?: string | null
+          actor_user_id?: string | null
+          created_at?: string
+          details?: Json
+          event_type?: string
+          id?: never
+          requires_acknowledgement?: boolean
+          session_id?: string
+          severity?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_studio_operational_events_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_studio_operator_presence: {
+        Row: {
+          controller_instance_id: string
+          created_at: string
+          last_seen_at: string
+          operator_role: string
+          readiness: string
+          session_id: string
+          user_id: string
+        }
+        Insert: {
+          controller_instance_id: string
+          created_at?: string
+          last_seen_at?: string
+          operator_role: string
+          readiness?: string
+          session_id: string
+          user_id: string
+        }
+        Update: {
+          controller_instance_id?: string
+          created_at?: string
+          last_seen_at?: string
+          operator_role?: string
+          readiness?: string
+          session_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_studio_operator_presence_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_studio_private_messages: {
+        Row: {
+          audience: string
+          body: string
+          created_at: string
+          id: number
+          sender_user_id: string
+          session_id: string
+        }
+        Insert: {
+          audience: string
+          body: string
+          created_at?: string
+          id?: never
+          sender_user_id: string
+          session_id: string
+        }
+        Update: {
+          audience?: string
+          body?: string
+          created_at?: string
+          id?: never
+          sender_user_id?: string
+          session_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_studio_private_messages_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_studio_run_cues: {
+        Row: {
+          created_at: string
+          created_by_user_id: string
+          cue_type: string
+          expected_at: string | null
+          id: string
+          notes: string | null
+          position: number
+          session_id: string
+          status: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by_user_id: string
+          cue_type?: string
+          expected_at?: string | null
+          id?: string
+          notes?: string | null
+          position: number
+          session_id: string
+          status?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by_user_id?: string
+          cue_type?: string
+          expected_at?: string | null
+          id?: string
+          notes?: string | null
+          position?: number
+          session_id?: string
+          status?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_studio_run_cues_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_studio_session_operators: {
+        Row: {
+          assigned_at: string
+          assigned_by_user_id: string
+          expires_at: string
+          id: string
+          note: string | null
+          operator_role: string
+          revoked_at: string | null
+          revoked_by_user_id: string | null
+          session_id: string
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          assigned_at?: string
+          assigned_by_user_id: string
+          expires_at: string
+          id?: string
+          note?: string | null
+          operator_role: string
+          revoked_at?: string | null
+          revoked_by_user_id?: string | null
+          session_id: string
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          assigned_at?: string
+          assigned_by_user_id?: string
+          expires_at?: string
+          id?: string
+          note?: string | null
+          operator_role?: string
+          revoked_at?: string | null
+          revoked_by_user_id?: string | null
+          session_id?: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_studio_session_operators_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       match_celebration_events: {
         Row: {
@@ -13842,6 +14404,8 @@ export type Database = {
           id: string
           planned_for: string
           requested_perspective: string
+          revision_instruction: string | null
+          source_revision_id: string | null
           status: string
           topic_brief: string
           topic_fingerprint: string
@@ -13860,6 +14424,8 @@ export type Database = {
           id?: string
           planned_for: string
           requested_perspective: string
+          revision_instruction?: string | null
+          source_revision_id?: string | null
           status?: string
           topic_brief: string
           topic_fingerprint: string
@@ -13878,6 +14444,8 @@ export type Database = {
           id?: string
           planned_for?: string
           requested_perspective?: string
+          revision_instruction?: string | null
+          source_revision_id?: string | null
           status?: string
           topic_brief?: string
           topic_fingerprint?: string
@@ -13892,6 +14460,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "relationship_gist_ai_environment_policies"
             referencedColumns: ["environment"]
+          },
+          {
+            foreignKeyName: "relationship_gist_ai_topic_calendar_source_revision_id_fkey"
+            columns: ["source_revision_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_revisions"
+            referencedColumns: ["id"]
           },
         ]
       }
@@ -14200,7 +14775,7 @@ export type Database = {
           approved_by_user_id: string | null
           created_at: string
           generated_by_user_id: string
-          generation_job_id: string
+          generation_job_id: string | null
           height: number
           id: string
           mime_type: string
@@ -14210,6 +14785,7 @@ export type Database = {
           rejected_by_user_id: string | null
           revision_id: string
           sha256: string
+          source: string
           status: string
           storage_path: string
           updated_at: string
@@ -14221,7 +14797,7 @@ export type Database = {
           approved_by_user_id?: string | null
           created_at?: string
           generated_by_user_id: string
-          generation_job_id: string
+          generation_job_id?: string | null
           height: number
           id?: string
           mime_type?: string
@@ -14231,6 +14807,7 @@ export type Database = {
           rejected_by_user_id?: string | null
           revision_id: string
           sha256: string
+          source?: string
           status?: string
           storage_path: string
           updated_at?: string
@@ -14242,7 +14819,7 @@ export type Database = {
           approved_by_user_id?: string | null
           created_at?: string
           generated_by_user_id?: string
-          generation_job_id?: string
+          generation_job_id?: string | null
           height?: number
           id?: string
           mime_type?: string
@@ -14252,6 +14829,7 @@ export type Database = {
           rejected_by_user_id?: string | null
           revision_id?: string
           sha256?: string
+          source?: string
           status?: string
           storage_path?: string
           updated_at?: string
@@ -17235,6 +17813,10 @@ export type Database = {
         }
       }
       enablelongtransactions: { Args: never; Returns: string }
+      enqueue_circle_live_notification_campaigns_v1: {
+        Args: never
+        Returns: number
+      }
       enqueue_circle_pulse_push: {
         Args: {
           p_actor_user_id: string
@@ -18069,6 +18651,18 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      live_assert_publication_command_v1: {
+        Args: {
+          p_command_id: string
+          p_command_type: string
+          p_session_id: string
+        }
+        Returns: boolean
+      }
+      live_audience_policy_matches_user_v1: {
+        Args: { p_purpose?: string; p_session_id: string; p_user_id?: string }
+        Returns: boolean
+      }
       live_audience_poll_json: {
         Args: { p_poll_id: string; p_user_id?: string }
         Returns: Json
@@ -18088,6 +18682,10 @@ export type Database = {
       live_chemistry_profile_context: {
         Args: { p_profile_id: string }
         Returns: Json
+      }
+      live_circle_reach_matches_user_v1: {
+        Args: { p_circle_id: string; p_user_id?: string }
+        Returns: boolean
       }
       live_cross_session_pair_is_eligible: {
         Args: {
@@ -18534,6 +19132,10 @@ export type Database = {
         Args: { p_preferred_scene: string; p_session_id: string }
         Returns: Json
       }
+      live_publication_control_snapshot_v1: {
+        Args: { p_session_id: string; p_user_id: string }
+        Returns: Json
+      }
       live_quick_connect_has_active_safety_hold: {
         Args: { p_user_id: string }
         Returns: boolean
@@ -18570,6 +19172,16 @@ export type Database = {
         Args: { p_session_id: string }
         Returns: Json
       }
+      live_record_publication_command_v1: {
+        Args: {
+          p_command_id: string
+          p_command_type: string
+          p_result_status: string
+          p_result_version: number
+          p_session_id: string
+        }
+        Returns: undefined
+      }
       live_role_capabilities: { Args: { p_role: string }; Returns: string[] }
       live_session_has_active_delegated_host_v1: {
         Args: { p_session_id: string; p_user_id: string }
@@ -18579,11 +19191,24 @@ export type Database = {
         Args: { p_session_id: string }
         Returns: Json
       }
+      live_studio_has_aal2_v1: { Args: never; Returns: boolean }
       live_studio_is_authorized_v1: {
         Args: { p_capability?: string; p_session_id: string; p_user_id: string }
         Returns: boolean
       }
+      live_studio_operator_role_v1: {
+        Args: { p_session_id: string; p_user_id: string }
+        Returns: string
+      }
+      live_studio_session_operator_role_v1: {
+        Args: { p_session_id: string; p_user_id: string }
+        Returns: string
+      }
       longtransactionsenabled: { Args: never; Returns: boolean }
+      normalize_circle_reach_scopes: {
+        Args: { p_fallback?: string; p_reach_scopes: string[] }
+        Returns: string[]
+      }
       normalize_live_quick_connect_intent: {
         Args: { p_value: string }
         Returns: string
@@ -18785,7 +19410,15 @@ export type Database = {
         Args: { p_left: string; p_right: string }
         Returns: number
       }
+      relationship_gist_can_cleanup_manual_cover: {
+        Args: { p_storage_path: string }
+        Returns: boolean
+      }
       relationship_gist_can_read_cover: {
+        Args: { p_storage_path: string }
+        Returns: boolean
+      }
+      relationship_gist_can_upload_manual_cover: {
         Args: { p_storage_path: string }
         Returns: boolean
       }
@@ -18862,6 +19495,16 @@ export type Database = {
           p_revision_id: string
           p_short_body: string
           p_title: string
+        }
+        Returns: Json
+      }
+      rpc_admin_assign_live_studio_operator_v1: {
+        Args: {
+          p_email: string
+          p_expires_at?: string
+          p_note?: string
+          p_operator_role: string
+          p_session_id: string
         }
         Returns: Json
       }
@@ -19048,6 +19691,7 @@ export type Database = {
       rpc_admin_get_circles_queue: {
         Args: never
         Returns: {
+          access_policy: string
           active_this_week_count: number
           approved_at: string | null
           approved_by_admin_id: string | null
@@ -19064,6 +19708,8 @@ export type Database = {
           created_by_user_id: string | null
           culture_tags: string[]
           description: string | null
+          diaspora_destination_country_codes: string[]
+          diaspora_origin_country_codes: string[]
           diaspora_tags: string[]
           faith_tags: string[]
           gathering_count: number
@@ -19079,9 +19725,13 @@ export type Database = {
           is_official: boolean
           is_partner: boolean
           latitude: number | null
+          live_discovery_policy: string
           longitude: number | null
           member_count: number
+          membership_eligibility_policy: string
           name: string
+          reach_scope: string
+          reach_scopes: string[]
           region: string | null
           rejected_reason: string | null
           report_count: number
@@ -19293,6 +19943,31 @@ export type Database = {
           updated_at: string
         }[]
       }
+      rpc_admin_get_relationship_gist_editions_v2: {
+        Args: never
+        Returns: {
+          ai_generated: boolean
+          authored_by_user_id: string
+          body: string
+          edition_id: string
+          legacy_gist_id: string
+          lock_version: number
+          perspective: string
+          perspectives: string[]
+          published_at: string
+          quality_approved_at: string
+          requires_safety_review: boolean
+          revision_id: string
+          revision_number: number
+          safety_approved_at: string
+          scheduled_for: string
+          short_body: string
+          status: string
+          targeting_enforced: boolean
+          title: string
+          updated_at: string
+        }[]
+      }
       rpc_admin_get_relationship_gists: {
         Args: never
         Returns: {
@@ -19447,6 +20122,10 @@ export type Database = {
         Args: { p_session_id: string }
         Returns: Json
       }
+      rpc_admin_revoke_live_studio_operator_v1: {
+        Args: { p_session_id: string; p_user_id: string }
+        Returns: Json
+      }
       rpc_admin_set_live_odo_always_on_access_v1: {
         Args: {
           p_allowed: boolean
@@ -19466,6 +20145,17 @@ export type Database = {
           p_capabilities?: Json
           p_expires_at?: string
           p_note?: string
+          p_user_id: string
+        }
+        Returns: Json
+      }
+      rpc_admin_set_live_studio_access_v2: {
+        Args: {
+          p_allowed: boolean
+          p_capabilities?: Json
+          p_expires_at?: string
+          p_note?: string
+          p_operator_role: string
           p_user_id: string
         }
         Returns: Json
@@ -19662,6 +20352,7 @@ export type Database = {
       rpc_approve_circle: {
         Args: { p_circle_id: string }
         Returns: {
+          access_policy: string
           active_this_week_count: number
           approved_at: string | null
           approved_by_admin_id: string | null
@@ -19678,6 +20369,8 @@ export type Database = {
           created_by_user_id: string | null
           culture_tags: string[]
           description: string | null
+          diaspora_destination_country_codes: string[]
+          diaspora_origin_country_codes: string[]
           diaspora_tags: string[]
           faith_tags: string[]
           gathering_count: number
@@ -19693,9 +20386,13 @@ export type Database = {
           is_official: boolean
           is_partner: boolean
           latitude: number | null
+          live_discovery_policy: string
           longitude: number | null
           member_count: number
+          membership_eligibility_policy: string
           name: string
+          reach_scope: string
+          reach_scopes: string[]
           region: string | null
           rejected_reason: string | null
           report_count: number
@@ -19790,6 +20487,9 @@ export type Database = {
         Returns: {
           archived_at: string | null
           backstage_opened_at: string | null
+          broadcast_authority: string
+          broadcast_authority_set_at: string | null
+          broadcast_authority_set_by_user_id: string | null
           cancellation_reason: string | null
           cancelled_at: string | null
           captions_enabled: boolean
@@ -19981,6 +20681,9 @@ export type Database = {
         Returns: {
           archived_at: string | null
           backstage_opened_at: string | null
+          broadcast_authority: string
+          broadcast_authority_set_at: string | null
+          broadcast_authority_set_by_user_id: string | null
           cancellation_reason: string | null
           cancelled_at: string | null
           captions_enabled: boolean
@@ -20301,6 +21004,7 @@ export type Database = {
           p_visibility_scope?: string
         }
         Returns: {
+          access_policy: string
           active_this_week_count: number
           approved_at: string | null
           approved_by_admin_id: string | null
@@ -20317,6 +21021,8 @@ export type Database = {
           created_by_user_id: string | null
           culture_tags: string[]
           description: string | null
+          diaspora_destination_country_codes: string[]
+          diaspora_origin_country_codes: string[]
           diaspora_tags: string[]
           faith_tags: string[]
           gathering_count: number
@@ -20332,9 +21038,182 @@ export type Database = {
           is_official: boolean
           is_partner: boolean
           latitude: number | null
+          live_discovery_policy: string
           longitude: number | null
           member_count: number
+          membership_eligibility_policy: string
           name: string
+          reach_scope: string
+          reach_scopes: string[]
+          region: string | null
+          rejected_reason: string | null
+          report_count: number
+          requires_join_approval: boolean
+          rules: string | null
+          safety_note: string | null
+          short_description: string | null
+          slug: string | null
+          status: string
+          updated_at: string
+          visibility: string
+          visibility_scope: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "circles"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      rpc_create_circle_request_v2: {
+        Args: {
+          p_access_policy?: string
+          p_audience_tags?: string[]
+          p_circle_type?: string
+          p_city?: string
+          p_country_code?: string
+          p_country_name?: string
+          p_culture_tags?: string[]
+          p_description?: string
+          p_diaspora_destination_country_codes?: string[]
+          p_diaspora_origin_country_codes?: string[]
+          p_faith_tags?: string[]
+          p_interest_tags?: string[]
+          p_live_discovery_policy?: string
+          p_membership_eligibility_policy?: string
+          p_name: string
+          p_reach_scope?: string
+          p_region?: string
+          p_rules?: string
+          p_short_description?: string
+        }
+        Returns: {
+          access_policy: string
+          active_this_week_count: number
+          approved_at: string | null
+          approved_by_admin_id: string | null
+          archived_at: string | null
+          audience_tags: string[]
+          category: string | null
+          circle_type: string
+          city: string | null
+          country_code: string | null
+          country_name: string | null
+          cover_image_url: string | null
+          created_at: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
+          culture_tags: string[]
+          description: string | null
+          diaspora_destination_country_codes: string[]
+          diaspora_origin_country_codes: string[]
+          diaspora_tags: string[]
+          faith_tags: string[]
+          gathering_count: number
+          host_note: string | null
+          host_note_updated_at: string | null
+          host_note_updated_by_profile_id: string | null
+          icon_url: string | null
+          id: string
+          image_path: string | null
+          image_updated_at: string | null
+          interest_tags: string[]
+          is_featured: boolean
+          is_official: boolean
+          is_partner: boolean
+          latitude: number | null
+          live_discovery_policy: string
+          longitude: number | null
+          member_count: number
+          membership_eligibility_policy: string
+          name: string
+          reach_scope: string
+          reach_scopes: string[]
+          region: string | null
+          rejected_reason: string | null
+          report_count: number
+          requires_join_approval: boolean
+          rules: string | null
+          safety_note: string | null
+          short_description: string | null
+          slug: string | null
+          status: string
+          updated_at: string
+          visibility: string
+          visibility_scope: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "circles"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      rpc_create_circle_request_v3: {
+        Args: {
+          p_access_policy?: string
+          p_audience_tags?: string[]
+          p_circle_type?: string
+          p_city?: string
+          p_country_code?: string
+          p_country_name?: string
+          p_culture_tags?: string[]
+          p_description?: string
+          p_diaspora_destination_country_codes?: string[]
+          p_diaspora_origin_country_codes?: string[]
+          p_faith_tags?: string[]
+          p_interest_tags?: string[]
+          p_live_discovery_policy?: string
+          p_membership_eligibility_policy?: string
+          p_name: string
+          p_reach_scope?: string
+          p_reach_scopes?: string[]
+          p_region?: string
+          p_rules?: string
+          p_short_description?: string
+        }
+        Returns: {
+          access_policy: string
+          active_this_week_count: number
+          approved_at: string | null
+          approved_by_admin_id: string | null
+          archived_at: string | null
+          audience_tags: string[]
+          category: string | null
+          circle_type: string
+          city: string | null
+          country_code: string | null
+          country_name: string | null
+          cover_image_url: string | null
+          created_at: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
+          culture_tags: string[]
+          description: string | null
+          diaspora_destination_country_codes: string[]
+          diaspora_origin_country_codes: string[]
+          diaspora_tags: string[]
+          faith_tags: string[]
+          gathering_count: number
+          host_note: string | null
+          host_note_updated_at: string | null
+          host_note_updated_by_profile_id: string | null
+          icon_url: string | null
+          id: string
+          image_path: string | null
+          image_updated_at: string | null
+          interest_tags: string[]
+          is_featured: boolean
+          is_official: boolean
+          is_partner: boolean
+          latitude: number | null
+          live_discovery_policy: string
+          longitude: number | null
+          member_count: number
+          membership_eligibility_policy: string
+          name: string
+          reach_scope: string
+          reach_scopes: string[]
           region: string | null
           rejected_reason: string | null
           report_count: number
@@ -20500,6 +21379,9 @@ export type Database = {
         Returns: {
           archived_at: string | null
           backstage_opened_at: string | null
+          broadcast_authority: string
+          broadcast_authority_set_at: string | null
+          broadcast_authority_set_by_user_id: string | null
           cancellation_reason: string | null
           cancelled_at: string | null
           captions_enabled: boolean
@@ -20664,6 +21546,10 @@ export type Database = {
           p_focus_mode?: string
           p_metadata?: Json
         }
+        Returns: Json
+      }
+      rpc_create_relationship_gist_ai_revision_topic: {
+        Args: { p_instruction: string; p_source_revision_id: string }
         Returns: Json
       }
       rpc_create_relationship_gist_ai_topic: {
@@ -20838,6 +21724,14 @@ export type Database = {
         Returns: Json
       }
       rpc_end_live_session_v1: { Args: { p_session_id: string }; Returns: Json }
+      rpc_end_live_session_v2: {
+        Args: {
+          p_command_id: string
+          p_expected_version: number
+          p_session_id: string
+        }
+        Returns: Json
+      }
       rpc_enforce_profile_contact_guard: {
         Args: { p_profile_id: string }
         Returns: Json
@@ -21276,6 +22170,18 @@ export type Database = {
           isOneToOne: false
           isSetofReturn: true
         }
+      }
+      rpc_finalize_relationship_gist_manual_cover: {
+        Args: {
+          p_alt_text: string
+          p_height: number
+          p_perspective: string
+          p_revision_id: string
+          p_sha256: string
+          p_storage_path: string
+          p_width: number
+        }
+        Returns: Json
       }
       rpc_finish_live_odo_quick_connect_v1: {
         Args: { p_session_id: string }
@@ -21803,6 +22709,10 @@ export type Database = {
         Args: { p_session_id: string }
         Returns: Json
       }
+      rpc_get_live_publication_control_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
       rpc_get_live_quick_connect: {
         Args: { p_session_id: string }
         Returns: Json
@@ -21903,6 +22813,22 @@ export type Database = {
           p_session_id: string
           p_source_kind: string
         }
+        Returns: Json
+      }
+      rpc_get_live_studio_media_admission_v2: {
+        Args: {
+          p_controller_instance_id: string
+          p_session_id: string
+          p_source_kind: string
+        }
+        Returns: Json
+      }
+      rpc_get_live_studio_operator_console_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      rpc_get_live_studio_session_operators_v1: {
+        Args: { p_session_id: string }
         Returns: Json
       }
       rpc_get_live_studio_snapshot_v1: {
@@ -22447,6 +23373,15 @@ export type Database = {
           status: string
         }[]
       }
+      rpc_list_circle_member_previews_v1: {
+        Args: { p_circle_ids: string[]; p_per_circle_limit?: number }
+        Returns: {
+          avatar_url: string
+          circle_id: string
+          full_name: string
+          profile_id: string
+        }[]
+      }
       rpc_list_circle_pulse_comment_reports: {
         Args: { p_actor_profile_id: string; p_circle_id: string }
         Returns: {
@@ -22478,6 +23413,28 @@ export type Database = {
           reason: string
           reporter_profile_id: string
           status: string
+        }[]
+      }
+      rpc_list_discoverable_circle_live_previews: {
+        Args: { p_limit?: number }
+        Returns: {
+          access_policy: string
+          circle_id: string
+          circle_name: string
+          circle_slug: string
+          city: string
+          country_code: string
+          country_name: string
+          live_description: string
+          live_status: string
+          live_title: string
+          member_count: number
+          poster_path: string
+          reach_scope: string
+          region: string
+          scheduled_start: string
+          session_id: string
+          viewer_membership_status: string
         }[]
       }
       rpc_list_live_comments: {
@@ -22601,6 +23558,21 @@ export type Database = {
           message: string
         }[]
       }
+      rpc_list_my_circle_notifications_v1: {
+        Args: { p_limit?: number }
+        Returns: {
+          body: string
+          circle_id: string
+          circle_name: string
+          created_at: string
+          data: Json
+          delivery_id: string
+          dispatched_at: string
+          kind: string
+          seen_at: string
+          title: string
+        }[]
+      }
       rpc_list_sent_circle_invitations: {
         Args: { p_actor_profile_id: string; p_circle_id: string }
         Returns: {
@@ -22686,6 +23658,10 @@ export type Database = {
       rpc_mark_chat_thread_read: {
         Args: { p_peer_user_id: string }
         Returns: number
+      }
+      rpc_mark_circle_notification_seen_v1: {
+        Args: { p_delivery_id: string }
+        Returns: boolean
       }
       rpc_mark_circle_pulse_discussion_seen: {
         Args: {
@@ -22854,6 +23830,14 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_open_live_backstage_v1: {
+        Args: {
+          p_command_id: string
+          p_expected_version: number
+          p_session_id: string
+        }
+        Returns: Json
+      }
       rpc_owner_acknowledge_relationship_gist_ai_specialist_review: {
         Args: { p_note?: string; p_review_type: string; p_revision_id: string }
         Returns: Json
@@ -22967,6 +23951,14 @@ export type Database = {
         Args: { p_confirmation: string; p_revision_id: string }
         Returns: Json
       }
+      rpc_publish_relationship_gist_owner_review: {
+        Args: {
+          p_confirmation: string
+          p_revision_id: string
+          p_safety_acknowledged?: boolean
+        }
+        Returns: Json
+      }
       rpc_record_circle_pulse_welcome_event: {
         Args: {
           p_circle_id: string
@@ -23012,6 +24004,7 @@ export type Database = {
       rpc_reject_circle: {
         Args: { p_circle_id: string; p_reason: string }
         Returns: {
+          access_policy: string
           active_this_week_count: number
           approved_at: string | null
           approved_by_admin_id: string | null
@@ -23028,6 +24021,8 @@ export type Database = {
           created_by_user_id: string | null
           culture_tags: string[]
           description: string | null
+          diaspora_destination_country_codes: string[]
+          diaspora_origin_country_codes: string[]
           diaspora_tags: string[]
           faith_tags: string[]
           gathering_count: number
@@ -23043,9 +24038,13 @@ export type Database = {
           is_official: boolean
           is_partner: boolean
           latitude: number | null
+          live_discovery_policy: string
           longitude: number | null
           member_count: number
+          membership_eligibility_policy: string
           name: string
+          reach_scope: string
+          reach_scopes: string[]
           region: string | null
           rejected_reason: string | null
           report_count: number
@@ -23531,6 +24530,9 @@ export type Database = {
         Returns: {
           archived_at: string | null
           backstage_opened_at: string | null
+          broadcast_authority: string
+          broadcast_authority_set_at: string | null
+          broadcast_authority_set_by_user_id: string | null
           cancellation_reason: string | null
           cancelled_at: string | null
           captions_enabled: boolean
@@ -23595,6 +24597,9 @@ export type Database = {
         Returns: {
           archived_at: string | null
           backstage_opened_at: string | null
+          broadcast_authority: string
+          broadcast_authority_set_at: string | null
+          broadcast_authority_set_by_user_id: string | null
           cancellation_reason: string | null
           cancelled_at: string | null
           captions_enabled: boolean
@@ -23661,6 +24666,9 @@ export type Database = {
         Returns: {
           archived_at: string | null
           backstage_opened_at: string | null
+          broadcast_authority: string
+          broadcast_authority_set_at: string | null
+          broadcast_authority_set_by_user_id: string | null
           cancellation_reason: string | null
           cancelled_at: string | null
           captions_enabled: boolean
@@ -23731,6 +24739,89 @@ export type Database = {
         Returns: {
           archived_at: string | null
           backstage_opened_at: string | null
+          broadcast_authority: string
+          broadcast_authority_set_at: string | null
+          broadcast_authority_set_by_user_id: string | null
+          cancellation_reason: string | null
+          cancelled_at: string | null
+          captions_enabled: boolean
+          chemistry_first_enabled: boolean
+          circle_id: string | null
+          configuration: Json
+          context_id: string | null
+          context_type: string
+          created_at: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
+          creation_request_id: string | null
+          description: string | null
+          end_policy: string
+          ended_at: string | null
+          format: string
+          gathering_id: string | null
+          id: string
+          maximum_participants: number
+          maximum_publishers: number
+          minimum_participants: number
+          ownership_type: string
+          produced_by_profile_id: string | null
+          produced_by_user_id: string | null
+          provider: string
+          provider_call_id: string
+          provider_call_type: string
+          quorum_pairability_required: boolean
+          quorum_reached_at: string | null
+          quorum_required_pairs: number
+          recording_enabled: boolean
+          rescheduled_at: string | null
+          runtime_end_at: string | null
+          runtime_extended_at: string | null
+          runtime_extended_by_user_id: string | null
+          schedule_revision: number
+          scheduled_duration_minutes: number
+          scheduled_end: string | null
+          scheduled_start: string | null
+          stage_request_capacity: number
+          stage_requests_open: boolean
+          started_at: string | null
+          status: string
+          system_session_kind: string | null
+          title: string
+          updated_at: string
+          version: number
+        }
+        SetofOptions: {
+          from: "*"
+          to: "live_sessions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      rpc_schedule_live_studio_session_v2: {
+        Args: {
+          p_audience_scopes?: string[]
+          p_chemistry_first_enabled?: boolean
+          p_circle_id?: string
+          p_city?: string
+          p_client_request_id: string
+          p_country_code?: string
+          p_country_name?: string
+          p_description: string
+          p_diaspora_destination_country_codes?: string[]
+          p_diaspora_origin_country_codes?: string[]
+          p_duration_minutes: number
+          p_format?: string
+          p_minimum_participants?: number
+          p_region?: string
+          p_scheduled_start: string
+          p_title: string
+        }
+        Returns: {
+          archived_at: string | null
+          backstage_opened_at: string | null
+          broadcast_authority: string
+          broadcast_authority_set_at: string | null
+          broadcast_authority_set_by_user_id: string | null
           cancellation_reason: string | null
           cancelled_at: string | null
           captions_enabled: boolean
@@ -24333,6 +25424,25 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_service_list_live_campaign_tokens_v1: {
+        Args: {
+          p_after_token_id?: string
+          p_campaign_id: string
+          p_limit?: number
+        }
+        Returns: {
+          app_environment: string
+          app_version: string
+          application_id: string
+          expo_project_id: string
+          id: string
+          installation_id: string
+          provenance_status: string
+          quarantined_at: string
+          token: string
+          user_id: string
+        }[]
+      }
       rpc_service_list_live_program_audio_work_v1: {
         Args: { p_limit?: number; p_worker_instance_id: string }
         Returns: Json
@@ -24546,6 +25656,7 @@ export type Database = {
       rpc_set_circle_host_note: {
         Args: { p_circle_id: string; p_note?: string; p_profile_id: string }
         Returns: {
+          access_policy: string
           active_this_week_count: number
           approved_at: string | null
           approved_by_admin_id: string | null
@@ -24562,6 +25673,8 @@ export type Database = {
           created_by_user_id: string | null
           culture_tags: string[]
           description: string | null
+          diaspora_destination_country_codes: string[]
+          diaspora_origin_country_codes: string[]
           diaspora_tags: string[]
           faith_tags: string[]
           gathering_count: number
@@ -24577,9 +25690,13 @@ export type Database = {
           is_official: boolean
           is_partner: boolean
           latitude: number | null
+          live_discovery_policy: string
           longitude: number | null
           member_count: number
+          membership_eligibility_policy: string
           name: string
+          reach_scope: string
+          reach_scopes: string[]
           region: string | null
           rejected_reason: string | null
           report_count: number
@@ -24608,6 +25725,15 @@ export type Database = {
           p_role: string
         }
         Returns: boolean
+      }
+      rpc_set_live_broadcast_authority_v1: {
+        Args: {
+          p_broadcast_authority: string
+          p_command_id: string
+          p_expected_version: number
+          p_session_id: string
+        }
+        Returns: Json
       }
       rpc_set_live_chemistry_ready: {
         Args: { p_conversation_id: string }
@@ -24660,6 +25786,38 @@ export type Database = {
         Args: { p_session_id: string; p_stage_layout: string }
         Returns: Json
       }
+      rpc_set_live_session_audience_policy_v1: {
+        Args: {
+          p_city?: string
+          p_country_code?: string
+          p_country_name?: string
+          p_diaspora_destination_country_codes?: string[]
+          p_diaspora_origin_country_codes?: string[]
+          p_expected_version: number
+          p_reach_scopes: string[]
+          p_region?: string
+          p_session_id: string
+        }
+        Returns: {
+          city: string | null
+          country_code: string | null
+          country_name: string | null
+          created_at: string
+          diaspora_destination_country_codes: string[]
+          diaspora_origin_country_codes: string[]
+          policy_mode: string
+          reach_scopes: string[]
+          region: string | null
+          session_id: string
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "live_session_audience_policies"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       rpc_set_live_stage_participant: {
         Args: {
           p_on_stage: boolean
@@ -24704,6 +25862,9 @@ export type Database = {
         Returns: {
           archived_at: string | null
           backstage_opened_at: string | null
+          broadcast_authority: string
+          broadcast_authority_set_at: string | null
+          broadcast_authority_set_by_user_id: string | null
           cancellation_reason: string | null
           cancelled_at: string | null
           captions_enabled: boolean
@@ -24764,6 +25925,9 @@ export type Database = {
         Returns: {
           archived_at: string | null
           backstage_opened_at: string | null
+          broadcast_authority: string
+          broadcast_authority_set_at: string | null
+          broadcast_authority_set_by_user_id: string | null
           cancellation_reason: string | null
           cancelled_at: string | null
           captions_enabled: boolean
@@ -24864,6 +26028,22 @@ export type Database = {
         Args: { p_session_id: string; p_target_profile_id: string }
         Returns: Json
       }
+      rpc_start_live_session_v2: {
+        Args: {
+          p_command_id: string
+          p_expected_version: number
+          p_session_id: string
+        }
+        Returns: Json
+      }
+      rpc_studio_acknowledge_alert_v1: {
+        Args: { p_event_id: number; p_session_id: string }
+        Returns: boolean
+      }
+      rpc_studio_emergency_safe_scene_v1: {
+        Args: { p_reason?: string; p_session_id: string }
+        Returns: Json
+      }
       rpc_studio_end_live_program_source_v1: {
         Args: {
           p_reason_code?: string
@@ -24871,6 +26051,32 @@ export type Database = {
           p_source_key: string
         }
         Returns: Json
+      }
+      rpc_studio_end_live_session_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      rpc_studio_operator_heartbeat_v1: {
+        Args: {
+          p_controller_instance_id: string
+          p_readiness?: string
+          p_session_id: string
+        }
+        Returns: Json
+      }
+      rpc_studio_post_private_message_v1: {
+        Args: { p_audience: string; p_body: string; p_session_id: string }
+        Returns: number
+      }
+      rpc_studio_record_operational_event_v1: {
+        Args: {
+          p_details?: Json
+          p_event_type: string
+          p_requires_acknowledgement?: boolean
+          p_session_id: string
+          p_severity?: string
+        }
+        Returns: number
       }
       rpc_studio_renew_live_program_control_v1: {
         Args: {
@@ -24889,6 +26095,10 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_studio_start_live_session_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
       rpc_studio_take_live_program_control_v1: {
         Args: {
           p_command_id: string
@@ -24900,6 +26110,20 @@ export type Database = {
         Returns: Json
       }
       rpc_studio_take_live_program_v1: {
+        Args: {
+          p_command_id: string
+          p_controller_instance_id: string
+          p_expected_controller_generation: number
+          p_expected_program_version: number
+          p_scene: string
+          p_session_id: string
+          p_source_assignments: Json
+          p_target_canvas: string
+          p_transition?: string
+        }
+        Returns: Json
+      }
+      rpc_studio_take_live_program_v2: {
         Args: {
           p_command_id: string
           p_controller_instance_id: string
@@ -24928,6 +26152,19 @@ export type Database = {
           p_source_type: string
         }
         Returns: Json
+      }
+      rpc_studio_upsert_run_cue_v1: {
+        Args: {
+          p_cue_id: string
+          p_cue_type?: string
+          p_expected_at?: string
+          p_notes?: string
+          p_position: number
+          p_session_id: string
+          p_status?: string
+          p_title: string
+        }
+        Returns: string
       }
       rpc_submit_live_private_spark_exit: {
         Args: { p_decision: string; p_private_spark_id: string }
@@ -25057,6 +26294,9 @@ export type Database = {
         Returns: {
           archived_at: string | null
           backstage_opened_at: string | null
+          broadcast_authority: string
+          broadcast_authority_set_at: string | null
+          broadcast_authority_set_by_user_id: string | null
           cancellation_reason: string | null
           cancelled_at: string | null
           captions_enabled: boolean
@@ -25128,6 +26368,7 @@ export type Database = {
           p_image_path: string
         }
         Returns: {
+          access_policy: string
           active_this_week_count: number
           approved_at: string | null
           approved_by_admin_id: string | null
@@ -25144,6 +26385,8 @@ export type Database = {
           created_by_user_id: string | null
           culture_tags: string[]
           description: string | null
+          diaspora_destination_country_codes: string[]
+          diaspora_origin_country_codes: string[]
           diaspora_tags: string[]
           faith_tags: string[]
           gathering_count: number
@@ -25159,9 +26402,13 @@ export type Database = {
           is_official: boolean
           is_partner: boolean
           latitude: number | null
+          live_discovery_policy: string
           longitude: number | null
           member_count: number
+          membership_eligibility_policy: string
           name: string
+          reach_scope: string
+          reach_scopes: string[]
           region: string | null
           rejected_reason: string | null
           report_count: number
@@ -25189,6 +26436,7 @@ export type Database = {
           p_name: string
         }
         Returns: {
+          access_policy: string
           active_this_week_count: number
           approved_at: string | null
           approved_by_admin_id: string | null
@@ -25205,6 +26453,8 @@ export type Database = {
           created_by_user_id: string | null
           culture_tags: string[]
           description: string | null
+          diaspora_destination_country_codes: string[]
+          diaspora_origin_country_codes: string[]
           diaspora_tags: string[]
           faith_tags: string[]
           gathering_count: number
@@ -25220,9 +26470,13 @@ export type Database = {
           is_official: boolean
           is_partner: boolean
           latitude: number | null
+          live_discovery_policy: string
           longitude: number | null
           member_count: number
+          membership_eligibility_policy: string
           name: string
+          reach_scope: string
+          reach_scopes: string[]
           region: string | null
           rejected_reason: string | null
           report_count: number
@@ -25360,6 +26614,7 @@ export type Database = {
           p_visibility_scope?: string
         }
         Returns: {
+          access_policy: string
           active_this_week_count: number
           approved_at: string | null
           approved_by_admin_id: string | null
@@ -25376,6 +26631,8 @@ export type Database = {
           created_by_user_id: string | null
           culture_tags: string[]
           description: string | null
+          diaspora_destination_country_codes: string[]
+          diaspora_origin_country_codes: string[]
           diaspora_tags: string[]
           faith_tags: string[]
           gathering_count: number
@@ -25391,9 +26648,184 @@ export type Database = {
           is_official: boolean
           is_partner: boolean
           latitude: number | null
+          live_discovery_policy: string
           longitude: number | null
           member_count: number
+          membership_eligibility_policy: string
           name: string
+          reach_scope: string
+          reach_scopes: string[]
+          region: string | null
+          rejected_reason: string | null
+          report_count: number
+          requires_join_approval: boolean
+          rules: string | null
+          safety_note: string | null
+          short_description: string | null
+          slug: string | null
+          status: string
+          updated_at: string
+          visibility: string
+          visibility_scope: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "circles"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      rpc_update_circle_request_v2: {
+        Args: {
+          p_access_policy?: string
+          p_audience_tags?: string[]
+          p_circle_id: string
+          p_circle_type?: string
+          p_city?: string
+          p_country_code?: string
+          p_country_name?: string
+          p_culture_tags?: string[]
+          p_description?: string
+          p_diaspora_destination_country_codes?: string[]
+          p_diaspora_origin_country_codes?: string[]
+          p_faith_tags?: string[]
+          p_interest_tags?: string[]
+          p_live_discovery_policy?: string
+          p_membership_eligibility_policy?: string
+          p_name: string
+          p_reach_scope?: string
+          p_region?: string
+          p_rules?: string
+          p_short_description?: string
+        }
+        Returns: {
+          access_policy: string
+          active_this_week_count: number
+          approved_at: string | null
+          approved_by_admin_id: string | null
+          archived_at: string | null
+          audience_tags: string[]
+          category: string | null
+          circle_type: string
+          city: string | null
+          country_code: string | null
+          country_name: string | null
+          cover_image_url: string | null
+          created_at: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
+          culture_tags: string[]
+          description: string | null
+          diaspora_destination_country_codes: string[]
+          diaspora_origin_country_codes: string[]
+          diaspora_tags: string[]
+          faith_tags: string[]
+          gathering_count: number
+          host_note: string | null
+          host_note_updated_at: string | null
+          host_note_updated_by_profile_id: string | null
+          icon_url: string | null
+          id: string
+          image_path: string | null
+          image_updated_at: string | null
+          interest_tags: string[]
+          is_featured: boolean
+          is_official: boolean
+          is_partner: boolean
+          latitude: number | null
+          live_discovery_policy: string
+          longitude: number | null
+          member_count: number
+          membership_eligibility_policy: string
+          name: string
+          reach_scope: string
+          reach_scopes: string[]
+          region: string | null
+          rejected_reason: string | null
+          report_count: number
+          requires_join_approval: boolean
+          rules: string | null
+          safety_note: string | null
+          short_description: string | null
+          slug: string | null
+          status: string
+          updated_at: string
+          visibility: string
+          visibility_scope: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "circles"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      rpc_update_circle_request_v3: {
+        Args: {
+          p_access_policy?: string
+          p_audience_tags?: string[]
+          p_circle_id: string
+          p_circle_type?: string
+          p_city?: string
+          p_country_code?: string
+          p_country_name?: string
+          p_culture_tags?: string[]
+          p_description?: string
+          p_diaspora_destination_country_codes?: string[]
+          p_diaspora_origin_country_codes?: string[]
+          p_faith_tags?: string[]
+          p_interest_tags?: string[]
+          p_live_discovery_policy?: string
+          p_membership_eligibility_policy?: string
+          p_name: string
+          p_reach_scope?: string
+          p_reach_scopes?: string[]
+          p_region?: string
+          p_rules?: string
+          p_short_description?: string
+        }
+        Returns: {
+          access_policy: string
+          active_this_week_count: number
+          approved_at: string | null
+          approved_by_admin_id: string | null
+          archived_at: string | null
+          audience_tags: string[]
+          category: string | null
+          circle_type: string
+          city: string | null
+          country_code: string | null
+          country_name: string | null
+          cover_image_url: string | null
+          created_at: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
+          culture_tags: string[]
+          description: string | null
+          diaspora_destination_country_codes: string[]
+          diaspora_origin_country_codes: string[]
+          diaspora_tags: string[]
+          faith_tags: string[]
+          gathering_count: number
+          host_note: string | null
+          host_note_updated_at: string | null
+          host_note_updated_by_profile_id: string | null
+          icon_url: string | null
+          id: string
+          image_path: string | null
+          image_updated_at: string | null
+          interest_tags: string[]
+          is_featured: boolean
+          is_official: boolean
+          is_partner: boolean
+          latitude: number | null
+          live_discovery_policy: string
+          longitude: number | null
+          member_count: number
+          membership_eligibility_policy: string
+          name: string
+          reach_scope: string
+          reach_scopes: string[]
           region: string | null
           rejected_reason: string | null
           report_count: number
@@ -25503,6 +26935,9 @@ export type Database = {
         Returns: {
           archived_at: string | null
           backstage_opened_at: string | null
+          broadcast_authority: string
+          broadcast_authority_set_at: string | null
+          broadcast_authority_set_by_user_id: string | null
           cancellation_reason: string | null
           cancelled_at: string | null
           captions_enabled: boolean
@@ -25572,6 +27007,9 @@ export type Database = {
         Returns: {
           archived_at: string | null
           backstage_opened_at: string | null
+          broadcast_authority: string
+          broadcast_authority_set_at: string | null
+          broadcast_authority_set_by_user_id: string | null
           cancellation_reason: string | null
           cancelled_at: string | null
           captions_enabled: boolean
