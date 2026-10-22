@@ -1,4 +1,4 @@
-import { BarChart3, Bot, CalendarClock, ChevronLeft, Mic, MicOff, Music2, Palette, RefreshCw, Share2, Shuffle, Sparkles, UsersRound } from 'lucide-react-native';
+import { BarChart3, Bot, CalendarClock, ChevronLeft, Mic, MicOff, Music2, Palette, PanelsTopLeft, RefreshCw, Share2, Shuffle, Sparkles, UsersRound } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -24,6 +24,7 @@ import { OdoShowDirectorPanel } from './OdoShowDirectorPanel.tsx';
 import { LiveMusicLibraryPanel } from './LiveMusicLibraryPanel.tsx';
 import { LiveStageAtmospherePanel } from './LiveStageAtmosphere.tsx';
 import { LiveHostingManagementPanel } from './LiveHostingManagementPanel.tsx';
+import { LiveMobileProgrammePanel } from './LiveMobileProgrammePanel.tsx';
 import { type LiveVisualTheme, useLiveVisualTheme } from './live-visual-tokens.ts';
 import { useLiveOdoCopilot } from '../odo/copilot/use-live-odo-copilot.ts';
 import { useLiveOdoAutopilot } from '../odo/autopilot/use-live-odo-autopilot.ts';
@@ -32,8 +33,10 @@ import { useLiveOdoShowDirector } from '../odo/show/use-live-odo-show-director.t
 import type { LiveStageAtmosphereController } from '../hooks/use-live-stage-atmosphere.ts';
 import { useLiveHostingManagement } from '../hooks/use-live-hosting-management.ts';
 import { createCurrentLiveSessionLinks } from '../config/live-link-runtime.ts';
+import type { LiveMobileProgrammeController } from '../hooks/use-live-mobile-programme-control.ts';
+import type { LiveProgramSnapshotV2 } from '../odo/show/odo-show-contracts.ts';
 
-type LiveStudioTab = 'rotation' | 'stage' | 'match' | 'pulse' | 'music'
+type LiveStudioTab = 'programme' | 'rotation' | 'stage' | 'match' | 'pulse' | 'music'
   | 'atmosphere' | 'odo' | 'session' | 'invite';
 
 export type LiveStudioModalProps = {
@@ -54,9 +57,12 @@ export type LiveStudioModalProps = {
   odoAutopilotOperational?: boolean;
   onOdoSuggestionUsed?: () => void | Promise<void>;
   atmosphereController?: LiveStageAtmosphereController | null;
+  programme: LiveProgramSnapshotV2 | null;
+  programmeController: LiveMobileProgrammeController;
 };
 
 const TAB_META: Record<LiveStudioTab, { label: string; icon: LucideIcon }> = {
+  programme: { label: 'Program', icon: PanelsTopLeft },
   stage: { label: 'Stage', icon: UsersRound },
   rotation: { label: 'Rotation', icon: Shuffle },
   match: { label: 'Match', icon: Sparkles },
@@ -86,6 +92,8 @@ export function LiveStudioModal({
   odoAutopilotOperational = false,
   onOdoSuggestionUsed,
   atmosphereController = null,
+  programme,
+  programmeController,
 }: LiveStudioModalProps) {
   const visual = useLiveVisualTheme();
   const styles = useMemo(() => createStyles(visual), [visual]);
@@ -125,13 +133,13 @@ export function LiveStudioModal({
     || hasShowDirector;
   const tabs = useMemo<readonly LiveStudioTab[]>(
     () => hasQuickConnectControls
-      ? ['rotation', 'stage', 'pulse', 'music', 'atmosphere', ...(hasOdo ? ['odo' as const] : []), 'session', 'invite']
+      ? ['programme', 'rotation', 'stage', 'pulse', 'music', 'atmosphere', ...(hasOdo ? ['odo' as const] : []), 'session', 'invite']
       : hasMatchingControls
-        ? ['stage', 'match', 'pulse', 'music', 'atmosphere', ...(hasOdo ? ['odo' as const] : []), 'session', 'invite']
-        : ['stage', 'pulse', 'music', 'atmosphere', ...(hasOdo ? ['odo' as const] : []), 'session', 'invite'],
+        ? ['programme', 'stage', 'match', 'pulse', 'music', 'atmosphere', ...(hasOdo ? ['odo' as const] : []), 'session', 'invite']
+        : ['programme', 'stage', 'pulse', 'music', 'atmosphere', ...(hasOdo ? ['odo' as const] : []), 'session', 'invite'],
     [hasMatchingControls, hasOdo, hasQuickConnectControls],
   );
-  const [selectedTab, setSelectedTab] = useState<LiveStudioTab>('stage');
+  const [selectedTab, setSelectedTab] = useState<LiveStudioTab>('programme');
   const activeTab = tabs.includes(selectedTab) ? selectedTab : tabs[0];
   const studioRefreshing = refreshing || odo.loading || autopilot.loading
     || fullQuickConnect.loading || showDirector.loading || hosting.loading;
@@ -196,6 +204,7 @@ export function LiveStudioModal({
                 void showDirector.refresh();
                 void atmosphereController?.refresh();
                 void hosting.refresh();
+                void programmeController.refresh();
               }}
               style={styles.iconButton}
             >
@@ -235,6 +244,14 @@ export function LiveStudioModal({
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
+          {activeTab === 'programme' ? (
+            <>
+              <Text style={styles.sectionTitle}>Direct the programme.</Text>
+              <Text style={styles.sectionBody}>Preview a responsive scene, then verify before taking it live. Public output changes atomically across Studio and phones.</Text>
+              <LiveMobileProgrammePanel controller={programmeController} programme={programme} />
+            </>
+          ) : null}
+
           {activeTab === 'rotation' && quickConnectProps ? (
             <>
               <Text style={styles.sectionTitle}>Guide the rotation.</Text>

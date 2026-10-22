@@ -1,0 +1,28 @@
+{
+  "name": "@betweener/program-compositor-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "24.x"
+  },
+  "scripts": {
+    "build": "tsc -b && vite build",
+    "check": "node --check src/compositor-runtime.mjs && node --check src/worker.mjs && tsc -b --pretty false",
+    "start": "node src/worker.mjs",
+    "test": "node --test test/compositor-runtime.test.mjs"
+  },
+  "dependencies": {
+    "@betweener/live-program-domain": "0.1.0",
+    "@stream-io/video-react-sdk": "^1.44.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.10",
+    "@types/react-dom": "~19.2.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "typescript": "7.0.2",
+    "vite": "^8.3.4"
+  }
+}

@@ -16,6 +16,7 @@ type LiveConfiguration = {
   studio_screen_audio_enabled: boolean;
   studio_external_audio_enabled: boolean;
   studio_closed_beta: boolean;
+  large_panel_enabled: boolean;
   updated_at: string;
 };
 
@@ -26,6 +27,7 @@ const FLAGS: { key: keyof LiveConfiguration; label: string; detail: string }[] =
   { key: 'studio_media_publishing_enabled', label: 'Media publishing', detail: 'Allows authorized program publishing.' },
   { key: 'screen_share_enabled', label: 'Screen sharing', detail: 'Allows screen-share media admission.' },
   { key: 'studio_external_audio_enabled', label: 'External audio', detail: 'Allows external program audio sources.' },
+  { key: 'large_panel_enabled', label: 'Six-person panels', detail: 'Allows AAL2 operators to opt individual Lives into a six-person stage.' },
 ];
 
 export default function AdminLiveScreen() {
@@ -40,7 +42,7 @@ export default function AdminLiveScreen() {
   const load = useCallback(async () => {
     setLoading(true);
     const [configurationResult, sessionsResult] = await Promise.all([
-      (supabase as any).from('live_odo_configuration').select('betweener_studio_enabled,betweener_studio_control_enabled,studio_session_discovery_enabled,studio_media_publishing_enabled,screen_share_enabled,studio_screen_audio_enabled,studio_external_audio_enabled,studio_closed_beta,updated_at').eq('id', true).maybeSingle(),
+      (supabase as any).from('live_odo_configuration').select('betweener_studio_enabled,betweener_studio_control_enabled,studio_session_discovery_enabled,studio_media_publishing_enabled,screen_share_enabled,studio_screen_audio_enabled,studio_external_audio_enabled,studio_closed_beta,large_panel_enabled,updated_at').eq('id', true).maybeSingle(),
       (supabase as any).rpc('rpc_list_live_studio_control_sessions_v1', { p_limit: 30 }),
     ]);
     setLoading(false);

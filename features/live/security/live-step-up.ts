@@ -5,23 +5,37 @@ export type LiveStepUpPreparation =
   | {
       kind: 'challenge';
       factorId: string;
-      challengeId: string;
     }
   | {
       kind: 'enrollment';
       factorId: string;
-      challengeId: string;
       qrCode: string;
       secret: string;
       uri: string;
     };
+
+const LIVE_STEP_UP_TIMEOUT_MS = 12_000;
+
+const withStepUpTimeout = async <T>(operation: Promise<T>, errorCode: string): Promise<T> => {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<T>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(errorCode)), LIVE_STEP_UP_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+};
 
 const challengeFactor = async (factorId: string) => {
   const { data, error } = await supabase.auth.mfa.challenge({ factorId });
   if (error) throw new Error(error.message || 'live_step_up_challenge_failed');
   return data.id;
 };
-export const prepareLiveStepUp = async (): Promise<LiveStepUpPreparation> => {
+const prepareLiveStepUpOperation = async (): Promise<LiveStepUpPreparation> => {
   const { data: assurance, error: assuranceError } =
     await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
   if (assuranceError) {
@@ -36,7 +50,6 @@ export const prepareLiveStepUp = async (): Promise<LiveStepUpPreparation> => {
     return {
       kind: 'challenge',
       factorId: verified.id,
-      challengeId: await challengeFactor(verified.id),
     };
   }
 
@@ -59,12 +72,14 @@ export const prepareLiveStepUp = async (): Promise<LiveStepUpPreparation> => {
   return {
     kind: 'enrollment',
     factorId: enrollment.id,
-    challengeId: await challengeFactor(enrollment.id),
     qrCode: enrollment.totp.qr_code,
     secret: enrollment.totp.secret,
     uri: enrollment.totp.uri,
   };
 };
+
+export const prepareLiveStepUp = (): Promise<LiveStepUpPreparation> =>
+  withStepUpTimeout(prepareLiveStepUpOperation(), 'live_step_up_preparation_timeout');
 
 export const verifyLiveStepUp = async (
   preparation: Exclude<LiveStepUpPreparation, { kind: 'satisfied' }>,
@@ -73,12 +88,15 @@ export const verifyLiveStepUp = async (
   const normalizedCode = code.replace(/\D/g, '').slice(0, 6);
   if (normalizedCode.length !== 6) throw new Error('live_step_up_code_invalid');
 
-  const { error } = await supabase.auth.mfa.verify({
-    factorId: preparation.factorId,
-    challengeId: preparation.challengeId,
-    code: normalizedCode,
-  });
-  if (error) throw new Error(error.message || 'live_step_up_verify_failed');
+  await withStepUpTimeout((async () => {
+    const challengeId = await challengeFactor(preparation.factorId);
+    const { error } = await supabase.auth.mfa.verify({
+      factorId: preparation.factorId,
+      challengeId,
+      code: normalizedCode,
+    });
+    if (error) throw new Error(error.message || 'live_step_up_verify_failed');
+  })(), 'live_step_up_verification_timeout');
 };
 
 export const liveStepUpErrorMessage = (error: unknown): string => {
@@ -88,6 +106,12 @@ export const liveStepUpErrorMessage = (error: unknown): string => {
   }
   if (message.toLowerCase().includes('expired')) {
     return 'That verification expired. Close this sheet and try again.';
+  }
+  if (message.toLowerCase().includes('timeout')) {
+    return 'Verification is taking too long. Check your connection and try again.';
+  }
+  if (message.includes('live_step_up_action_')) {
+    return 'The secure change could not be completed. Try again or close this sheet to review the action error.';
   }
   return 'Authenticator verification could not be completed. Please try again.';
 };

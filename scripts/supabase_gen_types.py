@@ -8,16 +8,27 @@ from pathlib import Path
 
 SCHEMA = "public"
 OUT_FILE = Path("supabase/types/database.ts")
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def run_cmd(project_id: str, local: bool = False) -> str:
     # npm-installed CLIs are exposed as .cmd shims on Windows. Passing the
     # extension explicitly avoids CreateProcess WinError 2 from Python.
-    supabase_cli = "supabase.cmd" if os.name == "nt" else "supabase"
-    if os.name == "nt" and shutil.which(supabase_cli) is None:
-        cmd = ["npm.cmd", "exec", "--", "supabase"]
+    if os.name == "nt" and not local:
+        cmd = [
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(REPO_ROOT / "scripts" / "invoke-pinned-supabase.ps1"),
+        ]
     else:
-        cmd = [supabase_cli]
+        supabase_cli = "supabase.cmd" if os.name == "nt" else "supabase"
+        if os.name == "nt" and shutil.which(supabase_cli) is None:
+            cmd = ["npm.cmd", "exec", "--", "supabase"]
+        else:
+            cmd = [supabase_cli]
     cmd.extend(["gen", "types", "--lang", "typescript"])
     local_db_url = os.environ.get("SUPABASE_LOCAL_DB_URL") or "postgresql://postgres:postgres@127.0.0.1:54322/postgres"
     cmd.extend(["--db-url", local_db_url] if local else ["--project-id", project_id])

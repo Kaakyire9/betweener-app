@@ -17,6 +17,8 @@ build-artifacts/
 *.jks
 *.keystore
 credentials.json
+*.dpapi
+__pycache__/
 *.p8
 *.p12
 *.key

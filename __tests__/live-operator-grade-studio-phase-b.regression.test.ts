@@ -28,6 +28,7 @@ const backstage = readFileSync('app/live/backstage/[sessionId].tsx', 'utf8');
 const liveRoom = readFileSync('app/live/[sessionId].tsx', 'utf8');
 const sessionCard = readFileSync('features/live/components/LiveSessionCard.tsx', 'utf8');
 const mobileStepUp = readFileSync('features/live/security/live-step-up.ts', 'utf8');
+const mobileStepUpSheet = readFileSync('features/live/components/LiveStepUpSheet.tsx', 'utf8');
 const pushWorker = readFileSync('supabase/functions/push-notifications/index.ts', 'utf8');
 
 test('TAKE, media publication, Start Live and End Live use AAL2 RPCs', () => {
@@ -41,7 +42,7 @@ test('TAKE, media publication, Start Live and End Live use AAL2 RPCs', () => {
   assert.match(migration, /revoke execute on function public\.rpc_studio_take_live_program_v1[\s\S]*from authenticated/i);
   assert.match(migration, /live_sessions_studio_step_up_transition_v1/i);
   assert.match(migration, /new\.status in \('live','ended'\)/i);
-  assert.match(api, /rpc_studio_take_live_program_v2/i);
+  assert.match(api, /rpc_studio_take_live_program_v3/i);
   assert.match(api, /rpc_start_live_session_v2/i);
   assert.match(api, /rpc_end_live_session_v2/i);
   assert.match(publicationMigration, /broadcast_authority in \('mobile_host', 'studio_producer'\)/i);
@@ -63,9 +64,13 @@ test('operators can enrol and verify TOTP before entering Studio', () => {
   assert.match(studioSignIn, /Continue with Google/i);
   assert.match(studioSignIn, /Email me a secure sign-in link/i);
   assert.match(mfaGate, /mfa\.listFactors/i);
+  assert.match(mfaGate, /mfa\.getAuthenticatorAssuranceLevel/i);
   assert.match(mfaGate, /mfa\.enroll\(\{[\s\S]*factorType: 'totp'/i);
   assert.match(mfaGate, /mfa\.challengeAndVerify/i);
   assert.match(mfaGate, /currentLevel !== 'aal2'/i);
+  assert.match(mfaGate, /setSessionVerified\(assuranceResult\.data\.currentLevel === 'aal2'\)/i);
+  assert.match(mfaGate, /Verify this operator session\./i);
+  assert.match(mfaGate, /Verify and open Studio/i);
   assert.match(mfaGate, /mfa\.unenroll/i);
   assert.doesNotMatch(mfaGate, /console\.(log|debug|info)/i);
 });
@@ -83,6 +88,12 @@ test('mobile Host publication uses explicit authority, idempotency and per-sessi
   assert.match(mobileStepUp, /getAuthenticatorAssuranceLevel/i);
   assert.match(mobileStepUp, /mfa\.challenge/i);
   assert.match(mobileStepUp, /mfa\.verify/i);
+  assert.match(mobileStepUp, /const challengeId = await challengeFactor\(preparation\.factorId\)/i);
+  assert.doesNotMatch(mobileStepUp, /challengeId: await challengeFactor/i);
+  assert.match(mobileStepUp, /live_step_up_preparation_timeout/i);
+  assert.match(mobileStepUpSheet, /Preparing secure verification/i);
+  assert.match(mobileStepUpSheet, /Try verification again/i);
+  assert.match(mobileStepUpSheet, /keyboardShouldPersistTaps="handled"/i);
 });
 
 test('overdue cards reconcile and Live notifications target hosts or saved attendees only', () => {

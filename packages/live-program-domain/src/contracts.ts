@@ -1,4 +1,5 @@
-export const LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT = 4;
+export const LIVE_STANDARD_STAGE_PUBLISHER_LIMIT = 4;
+export const LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT = 6;
 export const LIVE_STUDIO_VISUAL_PUBLISHER_RESERVE = 1;
 export const LIVE_PROGRAM_VIDEO_SOURCE_LIMIT = LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT
   + LIVE_STUDIO_VISUAL_PUBLISHER_RESERVE;
@@ -13,6 +14,7 @@ export type ProgramControllerSource = (typeof PROGRAM_CONTROLLER_SOURCES)[number
 
 export const PROGRAM_SCENES = [
   'host_focus',
+  'panel_focus',
   'host_plus_pool',
   'pool_focus',
   'pair_forming',
@@ -94,6 +96,8 @@ export const PROGRAM_SOURCE_SLOTS = [
   'guest_1',
   'guest_2',
   'guest_3',
+  'guest_4',
+  'guest_5',
   'pair',
   'pool',
   'pulse',

@@ -8,6 +8,7 @@ import { type LiveVisualTheme, useLiveVisualTheme } from './live-visual-tokens.t
 
 const SCENE_LABELS: Record<ProgramScene, string> = {
   host_focus: 'Host Focus',
+  panel_focus: 'Panel',
   host_plus_pool: 'Host & Room',
   pool_focus: 'Room Focus',
   pair_forming: 'Pair Forming',

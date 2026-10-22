@@ -66,6 +66,7 @@ import {
   useLiveQuickConnectHostControl,
   useLiveQuickConnectPool,
   useLiveReactions,
+  useLiveMobileProgrammeControl,
   useLiveSessionController,
   useLiveStageAtmosphere,
 } from '@/features/live/hooks/index.ts';
@@ -218,8 +219,11 @@ export default function LiveSessionScreen() {
   const canPublish = snapshot?.capabilities.includes('live.publish') === true;
   const canManageStage = snapshot?.capabilities.includes('live.manage_stage') === true;
   const canModerateComments = snapshot?.capabilities.includes('live.moderate_comments') === true;
+  const hasHostAuthority = canManageStage
+    && snapshot?.capabilities.includes('live.view_host_console') === true;
   const isRoomHost = me?.role === 'host'
-    || snapshot?.session.createdByUserId === user?.id;
+    || snapshot?.session.createdByUserId === user?.id
+    || hasHostAuthority;
   const canReportLive = !isRoomHost
     && snapshot?.capabilities.includes('live.report') === true;
   const canReportMembers = snapshot?.capabilities.includes('live.report') === true;
@@ -240,6 +244,13 @@ export default function LiveSessionScreen() {
     // Programme Music is a single hidden Stream publisher. No phone creates a
     // second local audio mix, including listener-only audience devices.
     allowMusicPlayback: false,
+  });
+  const mobileProgramme = useLiveMobileProgrammeControl({
+    enabled: isLive && participantAdmissionReady,
+    sessionId,
+    programme: liveProgram.state,
+    onProgrammeChanged: liveProgram.refresh,
+    onRoomChanged: controller.refresh,
   });
   const director = useLiveDirectorEvents(sessionId, isLive);
   const odoStageScene = useMemo(() => {
@@ -269,6 +280,8 @@ export default function LiveSessionScreen() {
     )?.startsAt ?? null
     : null;
   const canManageStudio = canManageStage
+    || mobileProgramme.access?.canControl === true
+    || mobileProgramme.access?.canConfigureLargePanel === true
     || hostedMatching.snapshot?.canManage === true
     || controller.audiencePulse.canManage
     || quickConnectHost.snapshot?.canManage === true
@@ -1036,6 +1049,7 @@ export default function LiveSessionScreen() {
               scene={odoStageScene}
               program={liveProgram.state?.program ?? null}
               programSources={liveProgram.state?.sources ?? []}
+              maximumPublishers={snapshot.session.maximumPublishers}
               atmosphere={stageAtmosphere.state}
               allowAtmosphereFraming={!isQuickConnectLive}
             />
@@ -1351,6 +1365,8 @@ export default function LiveSessionScreen() {
             controller.refresh(),
           ]).then(() => undefined)}
           atmosphereController={stageAtmosphere}
+          programme={liveProgram.state}
+          programmeController={mobileProgramme}
           stageDeskProps={{
             audience: snapshot.audience,
             backstage: snapshot.backstage,

@@ -57,3 +57,4 @@ export * from './LivePrivateActivityIndicator.tsx';
 export * from './LiveSafetyReportSheet.tsx';
 export * from './LiveStepUpSheet.tsx';
 export * from './LiveOperatorAssignmentPanel.tsx';
+export * from './LiveMobileProgrammePanel.tsx';

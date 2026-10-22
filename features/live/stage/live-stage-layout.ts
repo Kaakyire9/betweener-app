@@ -36,7 +36,19 @@ export type LiveStageTilePlacement =
   | 'quad-top-left'
   | 'quad-top-right'
   | 'quad-bottom-left'
-  | 'quad-bottom-right';
+  | 'quad-bottom-right'
+  | 'six-landscape-1'
+  | 'six-landscape-2'
+  | 'six-landscape-3'
+  | 'six-landscape-4'
+  | 'six-landscape-5'
+  | 'six-landscape-6'
+  | 'six-portrait-1'
+  | 'six-portrait-2'
+  | 'six-portrait-3'
+  | 'six-portrait-4'
+  | 'six-portrait-5'
+  | 'six-portrait-6';
 
 const mediaScore = <T>(candidate: LiveStageCandidate<T>): number => (
   (candidate.isLocalParticipant ? 16 : 0)
@@ -247,6 +259,13 @@ export const liveStageTilePlacement = (
     if (index === 0) return 'trio-lead';
     return index === 1 ? 'trio-bottom-left' : 'trio-bottom-right';
   }
+  if (participantCount >= 5) {
+    const placements: readonly LiveStageTilePlacement[] = [
+      'six-landscape-1', 'six-landscape-2', 'six-landscape-3',
+      'six-landscape-4', 'six-landscape-5', 'six-landscape-6',
+    ];
+    return placements[Math.min(Math.max(index, 0), placements.length - 1)];
+  }
   const placements: readonly LiveStageTilePlacement[] = [
     'quad-top-left',
     'quad-top-right',
@@ -269,7 +288,14 @@ export const liveStageTilePlacementForViewport = (
   const supportsPortraitEditorialTrio = viewportWidth > 0
     && viewportHeight >= viewportWidth * 0.72;
   if (participantCount !== 3 || !supportsPortraitEditorialTrio) {
-    return liveStageTilePlacement(participantCount, index);
+    if (participantCount < 5 || !supportsPortraitEditorialTrio) {
+      return liveStageTilePlacement(participantCount, index);
+    }
+    const placements: readonly LiveStageTilePlacement[] = [
+      'six-portrait-1', 'six-portrait-2', 'six-portrait-3',
+      'six-portrait-4', 'six-portrait-5', 'six-portrait-6',
+    ];
+    return placements[Math.min(Math.max(index, 0), placements.length - 1)];
   }
   if (index === 0) return 'trio-lead-left';
   return index === 1 ? 'trio-top-right' : 'trio-bottom-right-portrait';

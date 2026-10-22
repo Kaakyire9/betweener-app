@@ -21,3 +21,4 @@ export * from './use-live-private-activity.ts';
 export * from './use-live-reactions.ts';
 export * from './use-live-hosting-management.ts';
 export * from './use-live-operator-management.ts';
+export * from './use-live-mobile-programme-control.ts';

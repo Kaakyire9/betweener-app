@@ -20,6 +20,27 @@ export type LivePublicationControl = {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
+const hasExplicitTimezone = (value: string) =>
+  /(?:z|[+-]\d{2}(?::?\d{2})?)$/iu.test(value);
+
+export const parseLiveServerTimestamp = (value: string): number => {
+  const timestamp = value.trim();
+  if (!timestamp) return Number.NaN;
+
+  // Older publication snapshots serialized `timezone('utc', now())`, which
+  // produces an ISO-looking timestamp without a zone. Treat that legacy
+  // contract as UTC so daylight-saving offsets cannot move the server clock.
+  return Date.parse(hasExplicitTimezone(timestamp) ? timestamp : `${timestamp}Z`);
+};
+
+export const getLiveServerClockOffsetMs = (
+  serverNow: string,
+  deviceNow = Date.now(),
+): number => {
+  const serverNowMs = parseLiveServerTimestamp(serverNow);
+  return Number.isFinite(serverNowMs) ? serverNowMs - deviceNow : 0;
+};
+
 export const parseLivePublicationControl = (value: unknown): LivePublicationControl => {
   if (!isRecord(value)
     || value.schemaVersion !== 1

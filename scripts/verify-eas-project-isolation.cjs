@@ -1,5 +1,6 @@
 /* global __dirname */
 
+const { readFileSync } = require('node:fs');
 const path = require('node:path');
 
 const projectRoot = path.resolve(__dirname, '..');
@@ -38,6 +39,22 @@ const resolve = (variant) => {
     else process.env.APP_VARIANT = previousVariant;
     if (previousNoDotenv === undefined) delete process.env.EXPO_NO_DOTENV;
     else process.env.EXPO_NO_DOTENV = previousNoDotenv;
+  }
+};
+
+const resolveInferred = ({ environment, supabaseUrl }) => {
+  const names = ['APP_VARIANT', 'EXPO_PUBLIC_ENVIRONMENT', 'EXPO_PUBLIC_SUPABASE_URL'];
+  const previous = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  delete process.env.APP_VARIANT;
+  process.env.EXPO_PUBLIC_ENVIRONMENT = environment;
+  process.env.EXPO_PUBLIC_SUPABASE_URL = supabaseUrl;
+  try {
+    return appConfigFactory({ config: appJson.expo || appJson });
+  } finally {
+    for (const [name, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
   }
 };
 
@@ -151,6 +168,53 @@ try {
 }
 if (!invalidVariantRejected) throw new Error('Unknown APP_VARIANT values must fail closed.');
 
+const inferredStaging = resolveInferred({
+  environment: 'staging',
+  supabaseUrl: 'https://xsgzxadwuxuziubglvps.supabase.co',
+});
+assertEqual('inferredStaging.name', inferredStaging.name, IDENTITIES.staging.name);
+assertEqual('inferredStaging.scheme', inferredStaging.scheme, IDENTITIES.staging.scheme);
+assertEqual(
+  'inferredStaging.bundleIdentifier',
+  inferredStaging.ios?.bundleIdentifier,
+  IDENTITIES.staging.bundleIdentifier,
+);
+
+let crossEnvironmentInferenceRejected = false;
+try {
+  resolveInferred({
+    environment: 'production',
+    supabaseUrl: 'https://xsgzxadwuxuziubglvps.supabase.co',
+  });
+} catch {
+  crossEnvironmentInferenceRejected = true;
+}
+if (!crossEnvironmentInferenceRejected) {
+  throw new Error('Cross-environment local configuration must fail closed.');
+}
+
+const stagingAuthCallback = readFileSync(
+  path.join(projectRoot, 'staging-hosting-files', 'auth', 'callback', 'index.html'),
+  'utf8',
+);
+for (const expectedValue of [
+  'betweenerstaging://auth/callback',
+  'https://xsgzxadwuxuziubglvps.supabase.co',
+  'staging.getbetweener.com',
+]) {
+  if (!stagingAuthCallback.includes(expectedValue)) {
+    throw new Error(`Staging auth callback is missing ${expectedValue}.`);
+  }
+}
+for (const forbiddenValue of [
+  'betweenerapp://auth/callback',
+  'jbyblhithbqwojhwlenv.supabase.co',
+]) {
+  if (stagingAuthCallback.includes(forbiddenValue)) {
+    throw new Error(`Staging auth callback contains production value ${forbiddenValue}.`);
+  }
+}
+
 resolveBuild('staging');
 resolveBuild('production');
 expectBuildRejection('production Supabase in staging', 'staging', {
@@ -184,6 +248,9 @@ assertEqual('production.APP_VARIANT', easConfig.build.production.env?.APP_VARIAN
 
 console.log(JSON.stringify({
   easProjectIsolation: 'PASS',
+  localEnvironmentInference: 'PASS',
+  crossEnvironmentInferenceRejected: 'PASS',
+  stagingAuthCallbackIsolation: 'PASS',
   invalidVariantFailClosed: 'PASS',
   buildTimeIsolationNegativeCases: 6,
   production: {

@@ -59,11 +59,9 @@ function ConnectedProgramRenderer({
   );
   const byKey = new Map(sources.map((source) => [source.key, source]));
   const studioParticipants = participants.filter((participant) => participant.userId.startsWith('studio-'));
-  const roomParticipants = participants.filter((participant) => !participant.userId.startsWith('studio-'));
 
   const participantFor = (source: ProgramSource | undefined) =>
-    participants.find((participant) => participant.userId === source?.providerUserId)
-      ?? (source?.type === 'host_camera' ? roomParticipants[0] : undefined);
+    participants.find((participant) => participant.userId === source?.providerUserId);
 
   const renderParticipant = (
     participant: StreamVideoParticipant,
@@ -84,9 +82,6 @@ function ConnectedProgramRenderer({
         const key = state.sourceAssignments[region.slot];
         const source = key ? byKey.get(key) : undefined;
         const participant = participantFor(source);
-        const pool = source?.type === 'quick_connect_pool' || source?.type === 'active_pair'
-          ? roomParticipants.slice(0, source.type === 'active_pair' ? 2 : 4)
-          : [];
         const [eyebrow, title] = visualCopy(source);
         return (
           <div className={`program-region treatment-${region.treatment}`} key={region.slot}
@@ -95,11 +90,7 @@ function ConnectedProgramRenderer({
               width: `${region.width * 100}%`, height: `${region.height * 100}%`,
               zIndex: region.zIndex,
             }}>
-            {participant ? renderParticipant(participant, source) : pool.length ? (
-              <div className={`participant-grid participants-${pool.length}`}>
-                {pool.map((member) => renderParticipant(member, source))}
-              </div>
-            ) : (
+            {participant ? renderParticipant(participant, source) : (
               <div className="programme-visual">
                 <span className="programme-orbit" />
                 <p className="eyebrow">{eyebrow}</p>

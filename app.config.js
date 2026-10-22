@@ -2,7 +2,30 @@
 
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 const { withDangerousMod } = require('expo/config-plugins');
+
+const ADAPTIVE_STAGE_MANIFEST_VERSION = 'adaptive-stage-v2.0.0-m1';
+const ADAPTIVE_STAGE_LAYOUT_RESOLVER_VERSION = 'layout-plan-v2.0.0-m1';
+
+const resolveSourceRevision = () => {
+  const configured = String(
+    process.env.EXPO_PUBLIC_SOURCE_REVISION
+      || process.env.EAS_BUILD_GIT_COMMIT_HASH
+      || '',
+  ).trim().toLowerCase();
+  if (/^[0-9a-f]{40}$/.test(configured)) return configured;
+  try {
+    const revision = execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd: __dirname,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim().toLowerCase();
+    return /^[0-9a-f]{40}$/.test(revision) ? revision : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+};
 
 const PRODUCTION_IDENTITY = Object.freeze({
   variant: 'production',
@@ -36,10 +59,46 @@ const STAGING_IDENTITY = Object.freeze({
   revenueCatGoogleApiKey: 'goog_jnufIIiUIJcDZsvkpvFnGqeNolV',
 });
 
+const inferIdentityFromPublicEnvironment = () => {
+  const environment = String(process.env.EXPO_PUBLIC_ENVIRONMENT || '').trim().toLowerCase();
+  const supabaseUrl = String(process.env.EXPO_PUBLIC_SUPABASE_URL || '').trim();
+  let supabaseProjectRef = '';
+
+  try {
+    supabaseProjectRef = new URL(supabaseUrl).hostname.split('.')[0]?.toLowerCase() || '';
+  } catch {
+    // An absent or malformed backend URL is validated by EAS builds later.
+  }
+
+  const environmentVariant = ['development', 'preview', 'staging'].includes(environment)
+    ? 'staging'
+    : environment === 'production'
+      ? 'production'
+      : null;
+  const backendVariant = supabaseProjectRef === STAGING_IDENTITY.supabaseProjectRef
+    ? 'staging'
+    : supabaseProjectRef === PRODUCTION_IDENTITY.supabaseProjectRef
+      ? 'production'
+      : null;
+
+  if (environmentVariant && backendVariant && environmentVariant !== backendVariant) {
+    throw new Error(
+      `[app-config] EXPO_PUBLIC_ENVIRONMENT=${environment} conflicts with Supabase project ${supabaseProjectRef}.`,
+    );
+  }
+
+  return backendVariant || environmentVariant;
+};
+
 const resolveIdentity = () => {
   const variant = String(process.env.APP_VARIANT || '').trim().toLowerCase();
   if (variant === 'staging') return STAGING_IDENTITY;
-  if (!variant || variant === 'production') return PRODUCTION_IDENTITY;
+  if (variant === 'production') return PRODUCTION_IDENTITY;
+  if (!variant) {
+    return inferIdentityFromPublicEnvironment() === 'staging'
+      ? STAGING_IDENTITY
+      : PRODUCTION_IDENTITY;
+  }
   throw new Error(`[app-config] Unsupported APP_VARIANT=${variant}.`);
 };
 
@@ -341,6 +400,12 @@ module.exports = ({ config }) => {
         bundleIdentifier: identity.bundleIdentifier,
         webOrigin: identity.webOrigin,
         easProjectId: identity.easProjectId,
+      },
+      release: {
+        sourceRevision: resolveSourceRevision(),
+        buildIdentifier: String(process.env.EAS_BUILD_ID || 'local').trim(),
+        manifestVersion: ADAPTIVE_STAGE_MANIFEST_VERSION,
+        resolverVersion: ADAPTIVE_STAGE_LAYOUT_RESOLVER_VERSION,
       },
     },
     plugins: [

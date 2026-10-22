@@ -57,7 +57,7 @@ test('active Host can extend safely or opt into a manual end', () => {
   assert.match(extend, /set end_policy = 'manual', runtime_end_at = null/i);
   assert.match(extend, /if v_new_duration > 1440/i);
   assert.match(studio, /LiveHostingManagementPanel controller=\{hosting\}/i);
-  assert.match(eventRoute, /canManageSession = isOwner \|\| hosting\.snapshot\?\.canDelegateHosts/i);
+  assert.match(eventRoute, /canManageSession = isOwner \|\| hosting\.snapshot\?\.canManageSession/i);
 });
 
 test('public Live campaigns are durable, retryable and privacy bounded', () => {

@@ -685,11 +685,12 @@ export type LiveHostedMatchingSnapshot = {
 };
 
 export type LiveHostingManagementSnapshot = {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   serverNow: string;
   sessionId: string;
   title: string;
   status: string;
+  canManageSession: boolean;
   canDelegateHosts: boolean;
   canExtend: boolean;
   host: {

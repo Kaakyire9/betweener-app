@@ -16,7 +16,8 @@ export function StudioMfaGate({
   onSignOut: () => Promise<void>;
 }) {
   const [loading, setLoading] = useState(true);
-  const [verified, setVerified] = useState(false);
+  const [sessionVerified, setSessionVerified] = useState(false);
+  const [verifiedFactorId, setVerifiedFactorId] = useState<string | null>(null);
   const [enrollment, setEnrollment] = useState<Enrollment | null>(null);
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
@@ -24,10 +25,22 @@ export function StudioMfaGate({
 
   useEffect(() => {
     let active = true;
-    void supabase.auth.mfa.listFactors().then(({ data, error: listError }) => {
+    void Promise.all([
+      supabase.auth.mfa.listFactors(),
+      supabase.auth.mfa.getAuthenticatorAssuranceLevel(),
+    ]).then(([factorsResult, assuranceResult]) => {
       if (!active) return;
-      if (listError) setError(listError.message);
-      else setVerified(data.totp.some((factor) => factor.status === 'verified'));
+      if (factorsResult.error) setError(factorsResult.error.message);
+      else if (assuranceResult.error) setError(assuranceResult.error.message);
+      else {
+        const factor = factorsResult.data.totp.find((candidate) => candidate.status === 'verified');
+        setVerifiedFactorId(factor?.id ?? null);
+        setSessionVerified(assuranceResult.data.currentLevel === 'aal2');
+      }
+      setLoading(false);
+    }).catch((failure) => {
+      if (!active) return;
+      setError(errorMessage(failure, 'Operator security could not be checked.'));
       setLoading(false);
     });
     return () => { active = false; };
@@ -103,7 +116,37 @@ export function StudioMfaGate({
       }
       setEnrollment(null);
       setCode('');
-      setVerified(true);
+      setVerifiedFactorId(enrollment.factorId);
+      setSessionVerified(true);
+    } catch (failure) {
+      setError(errorMessage(failure, 'Authenticator verification failed.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const verifyExistingFactor = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!verifiedFactorId || !/^\d{6}$/.test(code)) {
+      setError('Enter the six-digit code from your authenticator.');
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const { error: verifyError } = await supabase.auth.mfa.challengeAndVerify({
+        factorId: verifiedFactorId,
+        code,
+      });
+      if (verifyError) throw verifyError;
+      const { data: assurance, error: assuranceError } =
+        await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+      if (assuranceError) throw assuranceError;
+      if (assurance.currentLevel !== 'aal2') {
+        throw new Error('Authenticator verification did not establish an AAL2 session.');
+      }
+      setCode('');
+      setSessionVerified(true);
     } catch (failure) {
       setError(errorMessage(failure, 'Authenticator verification failed.'));
     } finally {
@@ -114,7 +157,7 @@ export function StudioMfaGate({
   if (loading) {
     return <main className="workspace-loading"><div className="loading-panel">Checking operator security...</div></main>;
   }
-  if (verified) return children;
+  if (sessionVerified) return children;
 
   return (
     <main className="auth-shell">
@@ -124,13 +167,27 @@ export function StudioMfaGate({
           <div><strong>BETWEENER</strong><span>STUDIO SECURITY</span></div>
         </div>
         <p className="eyebrow">OPERATOR PROTECTION</p>
-        <h1 id="studio-mfa-title">Secure this console.</h1>
+        <h1 id="studio-mfa-title">
+          {verifiedFactorId ? 'Verify this operator session.' : 'Secure this console.'}
+        </h1>
         <p className="muted">
-          Studio requires a verified authenticator before TAKE, media publication,
-          Start Live or End Live can run.
+          {verifiedFactorId
+            ? 'Enter your current authenticator code before opening this private Studio workspace.'
+            : 'Studio requires a verified authenticator before TAKE, media publication, Start Live or End Live can run.'}
         </p>
 
-        {enrollment ? (
+        {verifiedFactorId ? (
+          <form className="auth-form" onSubmit={verifyExistingFactor}>
+            <label>Authenticator code
+              <input autoComplete="one-time-code" inputMode="numeric" maxLength={6}
+                pattern="[0-9]{6}" required autoFocus value={code}
+                onChange={(event) => setCode(event.target.value.replace(/\D/g, ''))} />
+            </label>
+            {error ? <p className="error-banner" role="alert">{error}</p> : null}
+            <button className="button button-primary" disabled={busy || code.length !== 6}
+              type="submit">{busy ? 'Verifying...' : 'Verify and open Studio'}</button>
+          </form>
+        ) : enrollment ? (
           <form className="auth-form" onSubmit={verifyEnrollment}>
             <div className="mfa-qr-frame">
               <img src={enrollment.qrCode} alt="QR code for Betweener Studio authenticator setup" />

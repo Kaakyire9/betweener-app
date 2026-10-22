@@ -1,0 +1,82 @@
+:root {
+  color-scheme: dark;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif;
+  background: #031b19;
+  color: #f7f0e7;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+body { background: #031b19; }
+audio { display: none; }
+
+.program-output,
+.program-fallback {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 15% 5%, rgba(42, 190, 181, 0.16), transparent 34%),
+    linear-gradient(145deg, #062824, #031815 65%);
+}
+
+.program-region { position: absolute; overflow: hidden; background: #062824; }
+.participant-grid { width: 100%; height: 100%; display: grid; gap: 3px; background: #031815; }
+.participants-1 { grid-template-columns: 1fr; }
+.participants-2 { grid-template-columns: repeat(2, 1fr); }
+.participants-3, .participants-4 { grid-template-columns: repeat(2, 1fr); }
+.participant-grid > *,
+.str-video__participant-view,
+.str-video__participant-view video { width: 100%; height: 100%; object-fit: cover; }
+.str-video__participant-view { position: relative; }
+
+.program-visual,
+.program-fallback {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 6%;
+}
+
+.program-visual p,
+.program-fallback p {
+  margin: 0 0 1.5rem;
+  color: #55e2d7;
+  font-size: clamp(14px, 1.7vw, 26px);
+  font-weight: 800;
+  letter-spacing: 0.24em;
+}
+
+.program-visual strong,
+.program-fallback strong {
+  z-index: 1;
+  max-width: 80%;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: clamp(42px, 7vw, 112px);
+  line-height: 0.96;
+}
+
+.program-visual small { margin-top: 1.4rem; color: #aac4bf; font-size: clamp(12px, 1.3vw, 20px); }
+.program-orbit {
+  position: absolute;
+  width: min(62vw, 62vh);
+  aspect-ratio: 1;
+  border: 1px solid rgba(85, 226, 215, 0.2);
+  border-radius: 50%;
+}
+
+.program-safe-area {
+  position: absolute;
+  inset: 4%;
+  z-index: 100;
+  border: 1px solid rgba(255, 255, 255, 0.025);
+  pointer-events: none;
+}
+
+.program-transition { position: absolute; inset: 0; z-index: 200; pointer-events: none; }
+.transition-fade { animation: programme-fade 420ms ease-out both; background: #031815; }
+.transition-auto { animation: programme-fade 240ms ease-out both; background: #031815; }
+@keyframes programme-fade { from { opacity: 1; } to { opacity: 0; } }

@@ -10,18 +10,20 @@ import {
   type ProgramTargetCanvas,
   type ProgramTransition,
 } from '@betweener/live-program-domain';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { studioApi, type StudioPublicationControl } from '../api/studio-api.ts';
 import { useControllerLease } from '../hooks/use-controller-lease.ts';
 import { useOperatorConsole } from '../hooks/use-operator-console.ts';
 import { useStudioSnapshot } from '../hooks/use-studio-snapshot.ts';
 import { errorMessage, friendlyReason } from '../lib/errors.ts';
+import { studioReleaseProvenance } from '../lib/release-provenance.ts';
 import { StudioDjSource } from '../media/StudioDjSource.tsx';
 import { StudioMediaControls } from '../media/StudioMediaControls.tsx';
 import { StudioMediaProvider } from '../media/studio-media-context.tsx';
 import { OperationalPanels } from '../panels/OperationalPanels.tsx';
 import { HostAndRuntimePanel } from '../panels/HostAndRuntimePanel.tsx';
+import { StudioTeamPanel } from '../panels/StudioTeamPanel.tsx';
 import { OperatorSafetyPanel } from '../operations/OperatorSafetyPanel.tsx';
 import { PrivateOperationsChannel } from '../operations/PrivateOperationsChannel.tsx';
 import { RunOfShowPanel } from '../operations/RunOfShowPanel.tsx';
@@ -29,6 +31,10 @@ import { StudioPreflightPanel } from '../operations/StudioPreflightPanel.tsx';
 import { ProgramRenderer } from '../program/ProgramRenderer.tsx';
 import { assignmentsForScene, SceneLibrary } from '../program/SceneLibrary.tsx';
 import { assignmentsContainTerminalSource } from '../program/source-assignments.ts';
+import {
+  adaptiveStageV2StudioFlags,
+  resolveStudioAdaptiveStageShadow,
+} from '../program/adaptive-stage-shadow.ts';
 import { useOperatorStepUp } from '../security/use-operator-step-up.tsx';
 import { ModeratorWorkspace } from './ModeratorWorkspace.tsx';
 
@@ -47,6 +53,7 @@ export function StudioWorkspace({
   const [busy, setBusy] = useState<string | null>(null);
   const [preflightReady, setPreflightReady] = useState(false);
   const [publicationControl, setPublicationControl] = useState<StudioPublicationControl | null>(null);
+  const lastShadowKey = useRef<string | null>(null);
   const stepUp = useOperatorStepUp();
 
   useEffect(() => {
@@ -61,6 +68,21 @@ export function StudioWorkspace({
       return current;
     });
   }, [snapshot]);
+
+  useEffect(() => {
+    if (!snapshot || !adaptiveStageV2StudioFlags.shadow) return;
+    const shadow = resolveStudioAdaptiveStageShadow(snapshot);
+    const key = `${snapshot.program.programVersion}:${shadow.plan?.planHash ?? shadow.events[0]?.details.reason_code ?? 'error'}`;
+    if (lastShadowKey.current === key) return;
+    lastShadowKey.current = key;
+    shadow.events.forEach((event) => {
+      void studioApi.recordAdaptiveStageDiagnostic(sessionId, event.name, {
+        ...event.details,
+        ...studioReleaseProvenance,
+      })
+        .catch(() => undefined);
+    });
+  }, [sessionId, snapshot]);
 
   useEffect(() => {
     let active = true;
@@ -323,6 +345,7 @@ export function StudioWorkspace({
           </section>
 
           <aside className="right-rail stack-md"><HostAndRuntimePanel sessionId={sessionId} />
+            <StudioTeamPanel sessionId={sessionId} authorize={stepUp.runWithStepUp} />
             {operatorConsole.consoleState ? <>
               <OperatorSafetyPanel consoleState={operatorConsole.consoleState}
                 canTakeover={snapshot.access.canControl} canModerate={snapshot.access.canModerate}

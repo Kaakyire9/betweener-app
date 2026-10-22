@@ -1,8 +1,13 @@
 import * as Crypto from 'expo-crypto';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import {
+  ADAPTIVE_STAGE_MANIFEST_VERSION,
   LIVE_MUSIC_REPEAT_MODES,
   parseLiveMusicCatalogue,
+  type ProgramScene,
+  type ProgramSourceAssignments,
+  type ProgramTargetCanvas,
+  type ProgramTransition,
   type LiveMusicCatalogue,
   type LiveMusicRepeatMode,
 } from '@betweener/live-program-domain';
@@ -97,6 +102,32 @@ export type LiveSessionRealtimeStatus =
 export type LiveDirectorRead = {
   events: readonly LiveDirectorEvent[];
   snapshot: OdoDirectorSnapshot;
+};
+
+export type LiveMobileProgrammeAccess = {
+  canControl: boolean;
+  canConfigureLargePanel: boolean;
+  largePanelEnabled: boolean;
+  maximumPublishers: number;
+};
+
+const parseLiveMobileProgrammeAccess = (value: unknown): LiveMobileProgrammeAccess => {
+  if (!value || typeof value !== 'object') throw new Error('live_mobile_programme_access_invalid');
+  const candidate = value as Record<string, unknown>;
+  if (typeof candidate.canControl !== 'boolean'
+    || typeof candidate.canConfigureLargePanel !== 'boolean'
+    || typeof candidate.largePanelEnabled !== 'boolean'
+    || !Number.isSafeInteger(Number(candidate.maximumPublishers))
+    || Number(candidate.maximumPublishers) < 1
+    || Number(candidate.maximumPublishers) > 6) {
+    throw new Error('live_mobile_programme_access_invalid');
+  }
+  return {
+    canControl: candidate.canControl,
+    canConfigureLargePanel: candidate.canConfigureLargePanel,
+    largePanelEnabled: candidate.largePanelEnabled,
+    maximumPublishers: Number(candidate.maximumPublishers),
+  };
 };
 
 const invoke = async (name: string, args?: Record<string, unknown>): Promise<unknown> => {
@@ -352,6 +383,73 @@ export const liveRepository = {
     ));
     if (parsed.ok === false) throw new Error(parsed.reasonCode);
     return parsed.value;
+  },
+
+  async getLiveMobileProgrammeAccess(sessionId: string): Promise<LiveMobileProgrammeAccess> {
+    return parseLiveMobileProgrammeAccess(await invoke(
+      'rpc_get_live_mobile_programme_access_v1',
+      { p_session_id: sessionId },
+    ));
+  },
+
+  async setLivePanelCapacity(sessionId: string, maximumPublishers: 4 | 6): Promise<void> {
+    const value = await invoke('rpc_set_live_panel_capacity_v1', {
+      p_session_id: sessionId,
+      p_maximum_publishers: maximumPublishers,
+    });
+    if (!value || typeof value !== 'object'
+      || Number((value as Record<string, unknown>).maximumPublishers) !== maximumPublishers) {
+      throw new Error('live_panel_capacity_update_failed');
+    }
+  },
+
+  async takeMobileLiveProgram(input: {
+    sessionId: string;
+    expectedProgramVersion: number;
+    scene: ProgramScene;
+    targetCanvas: ProgramTargetCanvas;
+    sourceAssignments: ProgramSourceAssignments;
+    transition: ProgramTransition;
+  }): Promise<void> {
+    const graphVersion = Number(await invoke(
+      'rpc_get_live_program_source_graph_version_v1',
+      { p_session_id: input.sessionId },
+    ));
+    if (!Number.isSafeInteger(graphVersion) || graphVersion < 0) {
+      throw new Error('live_program_source_graph_invalid');
+    }
+    const value = await invoke('rpc_mobile_take_live_program_v2', {
+      p_session_id: input.sessionId,
+      p_command_id: Crypto.randomUUID(),
+      p_expected_program_version: input.expectedProgramVersion,
+      p_expected_source_graph_version: graphVersion,
+      p_manifest_version: ADAPTIVE_STAGE_MANIFEST_VERSION,
+      p_scene: input.scene,
+      p_target_canvas: input.targetCanvas,
+      p_source_assignments: input.sourceAssignments,
+      p_transition: input.transition,
+      p_shadow_plan_hash: null,
+    });
+    if (!value || typeof value !== 'object'
+      || (value as Record<string, unknown>).applied !== true) {
+      const reason = value && typeof value === 'object'
+        && typeof (value as Record<string, unknown>).reasonCode === 'string'
+        ? String((value as Record<string, unknown>).reasonCode)
+        : 'live_mobile_programme_take_failed';
+      throw new Error(reason);
+    }
+  },
+
+  async recordAdaptiveStageDiagnostic(
+    sessionId: string,
+    eventName: string,
+    safeDetails: Record<string, string | number | boolean | null>,
+  ): Promise<void> {
+    await invoke('rpc_record_adaptive_stage_v2_diagnostic_v1', {
+      p_session_id: sessionId,
+      p_event_name: eventName,
+      p_safe_details: safeDetails,
+    });
   },
 
   async enableOdoShowDirector(sessionId: string): Promise<void> {

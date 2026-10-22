@@ -19,6 +19,14 @@ const region = (
 
 const CONVERSATION_LAYOUTS: Partial<Record<ProgramScene, readonly ProgramRegion[]>> = {
   host_focus: [region('host', 0, 0, 1, 1, 1, 'full')],
+  panel_focus: [
+    region('host', 0, 0, 1 / 3, 0.5),
+    region('guest_1', 1 / 3, 0, 1 / 3, 0.5),
+    region('guest_2', 2 / 3, 0, 1 / 3, 0.5),
+    region('guest_3', 0, 0.5, 1 / 3, 0.5),
+    region('guest_4', 1 / 3, 0.5, 1 / 3, 0.5),
+    region('guest_5', 2 / 3, 0.5, 1 / 3, 0.5),
+  ],
   host_plus_pool: [
     region('host', 0, 0, 1, 0.5),
     region('pool', 0, 0.5, 1, 0.5),
@@ -46,17 +54,21 @@ const PRESENTATION_LAYOUTS: Partial<Record<ProgramScene, readonly ProgramRegion[
   ],
   screen_plus_panel: [
     region('primary', 0, 0, 0.7, 1, 1, 'full'),
-    region('host', 0.7, 0, 0.3, 0.25),
-    region('guest_1', 0.7, 0.25, 0.3, 0.25),
-    region('guest_2', 0.7, 0.5, 0.3, 0.25),
-    region('guest_3', 0.7, 0.75, 0.3, 0.25),
+    region('host', 0.7, 0, 0.3, 1 / 6),
+    region('guest_1', 0.7, 1 / 6, 0.3, 1 / 6),
+    region('guest_2', 0.7, 2 / 6, 0.3, 1 / 6),
+    region('guest_3', 0.7, 3 / 6, 0.3, 1 / 6),
+    region('guest_4', 0.7, 4 / 6, 0.3, 1 / 6),
+    region('guest_5', 0.7, 5 / 6, 0.3, 1 / 6),
   ],
   screen_discussion: [
     region('primary', 0, 0, 1, 0.62, 1, 'full'),
-    region('host', 0, 0.62, 0.25, 0.38),
-    region('guest_1', 0.25, 0.62, 0.25, 0.38),
-    region('guest_2', 0.5, 0.62, 0.25, 0.38),
-    region('guest_3', 0.75, 0.62, 0.25, 0.38),
+    region('host', 0, 0.62, 1 / 6, 0.38),
+    region('guest_1', 1 / 6, 0.62, 1 / 6, 0.38),
+    region('guest_2', 2 / 6, 0.62, 1 / 6, 0.38),
+    region('guest_3', 3 / 6, 0.62, 1 / 6, 0.38),
+    region('guest_4', 4 / 6, 0.62, 1 / 6, 0.38),
+    region('guest_5', 5 / 6, 0.62, 1 / 6, 0.38),
   ],
   screen_plus_pool: [
     region('primary', 0, 0, 1, 0.68, 1, 'full'),
@@ -117,10 +129,11 @@ const portraitPresentation = (
     }
 
     if (scene === 'screen_plus_panel' || scene === 'screen_discussion') {
-      const order = item.slot === 'host' ? 0 : item.slot === 'guest_1' ? 1
-        : item.slot === 'guest_2' ? 2 : 3;
+      const panelOrder = ['host', 'guest_1', 'guest_2', 'guest_3', 'guest_4', 'guest_5']
+        .indexOf(item.slot);
+      const order = Math.max(panelOrder, 0);
       const y = scene === 'screen_discussion' ? screenDiscussionSplit : screenDominantSplit;
-      return { ...item, x: order * 0.25, y, width: 0.25, height: 1 - y };
+      return { ...item, x: order / 6, y, width: 1 / 6, height: 1 - y };
     }
 
     return item;
@@ -138,7 +151,9 @@ export const resolveProgramLayout = (
   return { scene, canvas, regions };
 };
 
-const PANEL_SLOTS: readonly ProgramSourceSlot[] = ['host', 'guest_1', 'guest_2', 'guest_3'];
+const PANEL_SLOTS: readonly ProgramSourceSlot[] = [
+  'host', 'guest_1', 'guest_2', 'guest_3', 'guest_4', 'guest_5',
+];
 
 export const visualSlotsForScene = (scene: ProgramScene): readonly ProgramSourceSlot[] => {
   const regions = CONVERSATION_LAYOUTS[scene] ?? PRESENTATION_LAYOUTS[scene] ?? [];
@@ -158,14 +173,31 @@ export const resolveAssignedProgramLayout = (
   assignments: ProgramSourceAssignments,
 ): ProgramLayout => {
   const layout = resolveProgramLayout(scene, canvas);
-  if (scene !== 'screen_discussion' && scene !== 'screen_plus_panel') return layout;
+  if (scene !== 'panel_focus' && scene !== 'screen_discussion' && scene !== 'screen_plus_panel') {
+    return layout;
+  }
 
   const required = new Set(requiredSlotsForScene(scene));
   const participants = layout.regions.filter((item) => PANEL_SLOTS.includes(item.slot)
     && (required.has(item.slot) || Boolean(assignments[item.slot])));
+  if (scene === 'panel_focus') {
+    const columns = canvas === 'portrait_9_16' ? 2 : participants.length <= 4 ? 2 : 3;
+    const rows = Math.max(1, Math.ceil(participants.length / columns));
+    return {
+      ...layout,
+      regions: participants.map((item, index) => ({
+        ...item,
+        x: (index % columns) / columns,
+        y: Math.floor(index / columns) / rows,
+        width: 1 / columns,
+        height: 1 / rows,
+      })),
+    };
+  }
+  const largePanel = participants.length > 4;
   const participantStart = canvas === 'portrait_9_16'
-    ? scene === 'screen_discussion' ? 0.44 : 0.68
-    : scene === 'screen_discussion' ? 0.62 : 0;
+    ? scene === 'screen_discussion' ? 0.44 : largePanel ? 0.5 : 0.68
+    : scene === 'screen_discussion' || largePanel ? 0.62 : 0;
   const retained = layout.regions
     .filter((item) => !PANEL_SLOTS.includes(item.slot))
     .map((item) => scene === 'screen_discussion' && item.slot === 'primary'
@@ -173,17 +205,18 @@ export const resolveAssignedProgramLayout = (
       : item);
 
   const participantRegions = participants.map((item, index) => {
-    if (scene === 'screen_discussion' || canvas === 'portrait_9_16') {
+    if (scene === 'screen_discussion' || canvas === 'portrait_9_16' || largePanel) {
       const y = participantStart;
-      const usePanelGrid = scene === 'screen_discussion'
-        && canvas === 'portrait_9_16'
-        && participants.length === 4;
+      const columns = participants.length > 4 ? 3
+        : canvas === 'portrait_9_16' && participants.length >= 4 ? 2
+        : participants.length;
+      const rows = Math.max(1, Math.ceil(participants.length / columns));
       return {
         ...item,
-        x: usePanelGrid ? (index % 2) * 0.5 : index / participants.length,
-        y: usePanelGrid ? y + Math.floor(index / 2) * ((1 - y) / 2) : y,
-        width: usePanelGrid ? 0.5 : 1 / participants.length,
-        height: usePanelGrid ? (1 - y) / 2 : 1 - y,
+        x: (index % columns) / columns,
+        y: y + Math.floor(index / columns) * ((1 - y) / rows),
+        width: 1 / columns,
+        height: (1 - y) / rows,
       };
     }
     return {
@@ -200,6 +233,18 @@ export const resolveAssignedProgramLayout = (
 
 export const requiredSlotsForScene = (scene: ProgramScene): readonly ProgramSourceSlot[] => {
   switch (scene) {
+    case 'host_focus': return ['host'];
+    case 'panel_focus': return ['host'];
+    case 'host_plus_pool': return ['host', 'pool'];
+    case 'pool_focus':
+    case 'pair_forming': return ['pool'];
+    case 'quick_connect_active': return ['pair'];
+    case 'audience_pulse': return ['pulse'];
+    case 'conversation_topic':
+    case 'odo_stage':
+    case 'music_intermission':
+    case 'branded_intermission':
+    case 'session_closing': return ['odo'];
     case 'screen_full': return ['primary'];
     case 'screen_plus_host': return ['primary', 'host'];
     case 'screen_plus_pair': return ['primary', 'pair'];

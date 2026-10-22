@@ -29,6 +29,13 @@ const odoProgramStage = readFileSync('features/live/components/OdoProgramStage.t
 const programVisualSource = readFileSync('features/live/components/LiveProgramVisualSource.tsx', 'utf8');
 const programRenderer = readFileSync('apps/studio/src/program/ProgramRenderer.tsx', 'utf8');
 const studioStyles = readFileSync('apps/studio/src/styles.css', 'utf8');
+const rootPackage = JSON.parse(readFileSync('package.json', 'utf8')) as {
+  dependencies: Record<string, string>;
+};
+const studioPackage = JSON.parse(readFileSync('apps/studio/package.json', 'utf8')) as {
+  dependencies: Record<string, string>;
+};
+const studioViteConfig = readFileSync('apps/studio/vite.config.ts', 'utf8');
 
 const allFiles = (root: string): string[] => readdirSync(root, { withFileTypes: true }).flatMap((entry) => {
   const path = join(root, entry.name);
@@ -44,6 +51,12 @@ test('Studio media token is call-scoped and permission-minimal', () => {
   assert.match(token, /providerUserId\.startsWith\('studio-'\)/i);
   assert.doesNotMatch(token, /SUPABASE_SERVICE_ROLE_KEY[\s\S]*return json/i);
   assert.doesNotMatch(token, /VIDEO_API_SECRET[^\n]*json\(/i);
+});
+
+test('Studio and Stream media share one React runtime', () => {
+  assert.equal(studioPackage.dependencies.react, rootPackage.dependencies.react);
+  assert.equal(studioPackage.dependencies['react-dom'], rootPackage.dependencies['react-dom']);
+  assert.match(studioViteConfig, /dedupe:\s*\['react',\s*'react-dom'\]/i);
 });
 
 test('Host disconnect revokes Studio publishing and evicts browser transports', () => {
@@ -166,11 +179,12 @@ test('mobile Program is confined to Stage and never replaces Live chrome', () =>
   assert.match(liveScreen, /<LiveControlDock/i);
 });
 
-test('mobile Program renders server-owned pool, pair, Pulse, and Odo sources intentionally', () => {
+test('mobile Program renders aggregate sources without substituting arbitrary RTC people', () => {
   assert.match(programStage, /<LiveProgramVisualSource source=\{source\}/);
-  assert.match(programStage, /source\?\.type === 'active_pair'/);
-  assert.match(programStage, /styles\.pairGrid/);
+  assert.doesNotMatch(programStage, /stageSeats\.filter[\s\S]*slice\(0, 2\)/);
+  assert.doesNotMatch(programStage, /\?\?\s*stageSeats\[0\]/);
   assert.match(programVisualSource, /quick_connect_pool/);
+  assert.match(programVisualSource, /active_pair/);
   assert.match(programVisualSource, /audience_pulse/);
   assert.match(programVisualSource, /odo_stage/);
 });

@@ -1,4 +1,5 @@
 import {
+  ADAPTIVE_STAGE_MANIFEST_VERSION,
   parseLiveMusicCatalogue,
   parseStudioOperationalSnapshot,
   type LiveMusicCatalogue,
@@ -10,8 +11,20 @@ import {
   type StudioSessionSummary,
   type StudioTakeCommand,
 } from '@betweener/live-program-domain';
+import { FunctionsHttpError } from '@supabase/supabase-js';
 
 import { supabase } from '../lib/supabase.ts';
+
+const edgeFunctionErrorCode = async (error: unknown, fallback: string): Promise<string> => {
+  if (error instanceof FunctionsHttpError) {
+    const payload = await error.context.clone().json().catch(() => null) as unknown;
+    if (payload && typeof payload === 'object' && !Array.isArray(payload)
+      && typeof (payload as Record<string, unknown>).error === 'string') {
+      return (payload as Record<string, string>).error;
+    }
+  }
+  return error instanceof Error && error.message.trim() ? error.message : fallback;
+};
 
 type CommandResult = {
   applied: boolean;
@@ -63,6 +76,40 @@ export type StudioOperatorConsole = {
   alerts: StudioOperationalAlert[];
 };
 
+export type StudioTeamOperatorRole = 'viewer' | 'producer' | 'moderator';
+export type StudioTeamAssignmentStatus = 'active' | 'expired' | 'revoked';
+export type StudioTeamPerson = {
+  assignmentId: string;
+  userId: string;
+  email: string | null;
+  fullName: string | null;
+  username: string | null;
+  avatarUrl: string | null;
+  status: StudioTeamAssignmentStatus;
+  assignedAt: string;
+  expiresAt: string;
+};
+export type StudioTeamOperator = StudioTeamPerson & {
+  operatorRole: StudioTeamOperatorRole;
+};
+export type StudioTeamSnapshot = {
+  schemaVersion: 1;
+  serverNow: string;
+  sessionId: string;
+  sessionTitle: string;
+  sessionStatus: string;
+  canManageTeam: boolean;
+  primaryHost: {
+    userId: string;
+    profileId: string;
+    fullName: string | null;
+    username: string | null;
+    avatarUrl: string | null;
+  };
+  operators: StudioTeamOperator[];
+  onAirHosts: (StudioTeamPerson & { profileId: string })[];
+};
+
 export type StudioPublicationControl = {
   schemaVersion: 1;
   serverNow: string;
@@ -100,11 +147,12 @@ export type StudioMediaAdmission = {
 };
 
 export type LiveHostingManagement = {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   serverNow: string;
   sessionId: string;
   title: string;
   status: string;
+  canManageSession: boolean;
   canDelegateHosts: boolean;
   canExtend: boolean;
   host: {
@@ -130,7 +178,8 @@ const parseHostingManagement = (value: unknown): LiveHostingManagement => {
   const candidate = value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null;
-  if (candidate?.schemaVersion !== 1 || typeof candidate.sessionId !== 'string'
+  if ((candidate?.schemaVersion !== 1 && candidate?.schemaVersion !== 2)
+    || typeof candidate.sessionId !== 'string'
     || !candidate.host || !candidate.schedule || !candidate.traffic) {
     throw new Error('live_hosting_management_contract_invalid');
   }
@@ -166,6 +215,20 @@ const parseOperatorConsole = (value: unknown): StudioOperatorConsole => {
     throw new Error('live_studio_operator_console_contract_invalid');
   }
   return candidate as unknown as StudioOperatorConsole;
+};
+
+const parseStudioTeam = (value: unknown): StudioTeamSnapshot => {
+  const candidate = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+  if (candidate?.schemaVersion !== 1 || typeof candidate.serverNow !== 'string'
+    || typeof candidate.sessionId !== 'string' || typeof candidate.sessionTitle !== 'string'
+    || typeof candidate.canManageTeam !== 'boolean'
+    || !candidate.primaryHost || typeof candidate.primaryHost !== 'object'
+    || !Array.isArray(candidate.operators) || !Array.isArray(candidate.onAirHosts)) {
+    throw new Error('live_studio_team_contract_invalid');
+  }
+  return candidate as unknown as StudioTeamSnapshot;
 };
 
 export const studioApi = {
@@ -291,16 +354,26 @@ export const studioApi = {
   },
 
   async takeProgram(command: StudioTakeCommand): Promise<CommandResult> {
-    return parseCommandResult(await rpc('rpc_studio_take_live_program_v2', {
+    const graphVersion = Number(await rpc<unknown>(
+      'rpc_get_live_program_source_graph_version_v1',
+      { p_session_id: command.sessionId },
+    ));
+    if (!Number.isSafeInteger(graphVersion) || graphVersion < 0) {
+      throw new Error('live_program_source_graph_invalid');
+    }
+    return parseCommandResult(await rpc('rpc_studio_take_live_program_v3', {
       p_session_id: command.sessionId,
       p_controller_instance_id: command.controllerInstanceId,
       p_expected_controller_generation: command.expectedControllerGeneration,
       p_expected_program_version: command.expectedProgramVersion,
+      p_expected_source_graph_version: graphVersion,
+      p_manifest_version: ADAPTIVE_STAGE_MANIFEST_VERSION,
       p_command_id: command.commandId,
       p_scene: command.scene,
       p_target_canvas: command.targetCanvas,
       p_source_assignments: command.sourceAssignments,
       p_transition: command.transition,
+      p_shadow_plan_hash: null,
     }));
   },
 
@@ -362,7 +435,7 @@ export const studioApi = {
     const { data, error } = await supabase.functions.invoke('live-studio-media-token', {
       body: { sessionId, controllerInstanceId, sourceKind },
     });
-    if (error) throw new Error(error.message || 'live_studio_media_unavailable');
+    if (error) throw new Error(await edgeFunctionErrorCode(error, 'live_studio_media_unavailable'));
     if (!data || data.schemaVersion !== 1 || typeof data.token !== 'string') {
       throw new Error('live_studio_media_contract_invalid');
     }
@@ -457,6 +530,50 @@ export const studioApi = {
     }));
   },
 
+  async getTeam(sessionId: string): Promise<StudioTeamSnapshot> {
+    return parseStudioTeam(await rpc('rpc_get_live_studio_team_v1', {
+      p_session_id: sessionId,
+    }));
+  },
+
+  async assignOperator(input: {
+    sessionId: string;
+    email: string;
+    operatorRole: StudioTeamOperatorRole;
+  }): Promise<StudioTeamSnapshot> {
+    await rpc('rpc_admin_assign_live_studio_operator_v1', {
+      p_session_id: input.sessionId,
+      p_email: input.email,
+      p_operator_role: input.operatorRole,
+      p_expires_at: null,
+      p_note: `Assigned from Studio as ${input.operatorRole}`,
+    });
+    return this.getTeam(input.sessionId);
+  },
+
+  async revokeOperator(sessionId: string, userId: string): Promise<StudioTeamSnapshot> {
+    await rpc('rpc_admin_revoke_live_studio_operator_v1', {
+      p_session_id: sessionId,
+      p_user_id: userId,
+    });
+    return this.getTeam(sessionId);
+  },
+
+  async assignOnAirHost(sessionId: string, email: string): Promise<StudioTeamSnapshot> {
+    return parseStudioTeam(await rpc('rpc_admin_assign_live_on_air_host_v1', {
+      p_session_id: sessionId,
+      p_email: email,
+      p_note: 'Assigned from Studio as an on-air co-host',
+    }));
+  },
+
+  async revokeOnAirHost(sessionId: string, userId: string): Promise<StudioTeamSnapshot> {
+    return parseStudioTeam(await rpc('rpc_admin_revoke_live_on_air_host_v1', {
+      p_session_id: sessionId,
+      p_user_id: userId,
+    }));
+  },
+
   async heartbeatOperator(
     sessionId: string,
     controllerInstanceId: string,
@@ -505,6 +622,18 @@ export const studioApi = {
     });
   },
 
+  async recordAdaptiveStageDiagnostic(
+    sessionId: string,
+    eventName: string,
+    safeDetails: Record<string, unknown>,
+  ): Promise<void> {
+    await rpc('rpc_record_adaptive_stage_v2_diagnostic_v1', {
+      p_session_id: sessionId,
+      p_event_name: eventName,
+      p_safe_details: safeDetails,
+    });
+  },
+
   async acknowledgeAlert(sessionId: string, eventId: number): Promise<void> {
     await rpc('rpc_studio_acknowledge_alert_v1', {
       p_session_id: sessionId, p_event_id: eventId,
@@ -542,6 +671,16 @@ export const studioApi = {
       }, invalidate)
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'live_program_source_updates',
+        filter: `session_id=eq.${sessionId}`,
+      }, invalidate)
+      .subscribe();
+    return () => { void supabase.removeChannel(channel); };
+  },
+
+  subscribeTeam(sessionId: string, invalidate: () => void): () => void {
+    const channel = supabase.channel(`studio-team:${sessionId}:${crypto.randomUUID()}`)
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'live_studio_team_updates',
         filter: `session_id=eq.${sessionId}`,
       }, invalidate)
       .subscribe();

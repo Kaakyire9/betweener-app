@@ -15,6 +15,10 @@ verify_jwt = false
 # The private audio worker authenticates with x-program-audio-worker-token.
 verify_jwt = false
 
+[functions.live-broadcast-orchestrator]
+# The private compositor authenticates with x-broadcast-worker-token.
+verify_jwt = false
+
 [functions.moderation-evidence-retention]
 # Scheduled requests authenticate with x-cron-secret; the database scheduler
 # cannot mint an end-user JWT.

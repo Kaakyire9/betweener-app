@@ -87,9 +87,9 @@ const music = {
 };
 
 test('10G presentation scenes have deterministic source requirements and layouts', () => {
-  assert.equal(LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT, 4);
+  assert.equal(LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT, 6);
   assert.equal(LIVE_STUDIO_VISUAL_PUBLISHER_RESERVE, 1);
-  assert.equal(LIVE_PROGRAM_VIDEO_SOURCE_LIMIT, 5);
+  assert.equal(LIVE_PROGRAM_VIDEO_SOURCE_LIMIT, 7);
   for (const scene of [
     'screen_full', 'screen_plus_host', 'screen_plus_pair', 'screen_plus_panel',
     'screen_discussion', 'screen_plus_pool', 'screen_plus_audience_pulse',
@@ -103,7 +103,7 @@ test('10G presentation scenes have deterministic source requirements and layouts
   assert.equal(isStudioPresentationScene('host_focus'), false);
   assert.deepEqual(requiredSlotsForScene('screen_plus_host'), ['primary', 'host']);
   assert.equal(resolveProgramLayout('screen_plus_host', 'portrait_9_16').regions[1]?.treatment, 'pip');
-  assert.equal(resolveProgramLayout('screen_plus_panel', 'landscape_16_9').regions.length, 5);
+  assert.equal(resolveProgramLayout('screen_plus_panel', 'landscape_16_9').regions.length, 7);
 });
 
 test('Screen Discussion only renders assigned people and divides the stage evenly', () => {
@@ -125,7 +125,7 @@ test('Screen Discussion only renders assigned people and divides the stage evenl
   assert.equal(discussion.regions[0]?.height, 0.44);
   assert.ok(Math.abs((discussion.regions[1]?.height ?? 0) - 0.56) < 0.0001);
   assert.deepEqual(visualSlotsForScene('screen_discussion'), [
-    'primary', 'host', 'guest_1', 'guest_2', 'guest_3',
+    'primary', 'host', 'guest_1', 'guest_2', 'guest_3', 'guest_4', 'guest_5',
   ]);
 
   const fullPanel = resolveAssignedProgramLayout('screen_discussion', 'portrait_9_16', {

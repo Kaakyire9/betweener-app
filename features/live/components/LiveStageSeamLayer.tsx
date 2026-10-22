@@ -46,6 +46,17 @@ const baseSeamsFor = (tileCount: number, portraitTrio: boolean): readonly SeamSp
     ];
   }
   if (tileCount >= 4) {
+    if (tileCount >= 5) {
+      return portraitTrio ? [
+        vertical('six-portrait-vertical', '50%', 13, 13),
+        horizontal('six-portrait-upper', '33.333%', 13, 13),
+        horizontal('six-portrait-lower', '66.667%', 13, 13),
+      ] : [
+        vertical('six-landscape-left', '33.333%', 13, 13),
+        vertical('six-landscape-right', '66.667%', 13, 13),
+        horizontal('six-landscape-horizontal', '50%', 13, 13),
+      ];
+    }
     return [
       vertical('quad-vertical', '50%', 13, 13),
       horizontal('quad-horizontal', '50%', 13, 13),
@@ -77,7 +88,8 @@ const activeSeamsFor = (
       vertical('active-trio-branch', '50%', '56%', 16),
     ];
   }
-  if (tileCount >= 4) {
+  if (tileCount >= 5) return [];
+  if (tileCount === 4) {
     const left = focusedIndex % 2 === 0;
     const upper = focusedIndex < 2;
     return [
@@ -180,9 +192,9 @@ export const LiveStageSeamLayer = memo(function LiveStageSeamLayer({
       {activeSeams.map((seam) => (
         <Seam key={seam.key} active opacity={activeOpacity} seam={seam} />
       ))}
-      <View style={[styles.junctionHalo, junctionStyle]}>
+      {tileCount <= 4 ? <View style={[styles.junctionHalo, junctionStyle]}>
         <View style={styles.junctionGem} />
-      </View>
+      </View> : null}
     </View>
   );
 });

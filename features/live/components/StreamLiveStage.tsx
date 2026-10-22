@@ -1,6 +1,8 @@
 import {
   isStudioPresentationScene,
   LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT,
+  resolveAdaptiveStageShadowV2,
+  sourceGraphVersionFromSources,
   type ProgramSource,
   type ProgramState,
 } from '@betweener/live-program-domain';
@@ -11,9 +13,11 @@ import {
   type StreamVideoClient,
   type StreamVideoParticipant,
 } from '@stream-io/video-client';
-import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, StyleSheet, Text, View, type LayoutChangeEvent, type ViewStyle } from 'react-native';
 import type { LiveParticipant } from '../application/live-models.ts';
+import { liveRepository } from '../application/live-repository.ts';
+import { adaptiveStageNativeReleaseProvenance } from '../config/adaptive-stage-release-provenance.ts';
 import type { OdoCopilotScene } from '../odo/copilot/odo-copilot-contracts.ts';
 import type { StreamLiveMediaBindings } from '../media/stream-live-media-provider.ts';
 import type { StreamVideoSdkModule } from '../media/load-stream-video-sdk.ts';
@@ -42,6 +46,7 @@ import { LiveStageSeamLayer } from './LiveStageSeamLayer.tsx';
 import { LivePrivateStageSeam } from './LivePrivateStageSeam.tsx';
 import { LiveConcealedMediaStage } from './LiveConcealedMediaStage.tsx';
 import { PrivateSparkParticipantSurface } from './PrivateSparkParticipantSurface.tsx';
+import { logger } from '@/lib/telemetry/logger';
 
 export type StreamLiveStageProps = {
   bindings: StreamLiveMediaBindings;
@@ -57,6 +62,7 @@ export type StreamLiveStageProps = {
   scene?: OdoCopilotScene | null;
   program?: ProgramState | null;
   programSources?: readonly ProgramSource[];
+  maximumPublishers?: number;
   atmosphere?: LiveStageAtmosphere | null;
   allowAtmosphereFraming?: boolean;
   visualsConcealed?: boolean;
@@ -140,6 +146,18 @@ const PLACEMENT_STYLES: Record<LiveStageTilePlacement, ViewStyle> = {
   'quad-top-right': { right: 0, top: 0, width: '50%', height: '50%' },
   'quad-bottom-left': { left: 0, bottom: 0, width: '50%', height: '50%' },
   'quad-bottom-right': { right: 0, bottom: 0, width: '50%', height: '50%' },
+  'six-landscape-1': { left: 0, top: 0, width: '33.333%', height: '50%' },
+  'six-landscape-2': { left: '33.333%', top: 0, width: '33.334%', height: '50%' },
+  'six-landscape-3': { right: 0, top: 0, width: '33.333%', height: '50%' },
+  'six-landscape-4': { left: 0, bottom: 0, width: '33.333%', height: '50%' },
+  'six-landscape-5': { left: '33.333%', bottom: 0, width: '33.334%', height: '50%' },
+  'six-landscape-6': { right: 0, bottom: 0, width: '33.333%', height: '50%' },
+  'six-portrait-1': { left: 0, top: 0, width: '50%', height: '33.333%' },
+  'six-portrait-2': { right: 0, top: 0, width: '50%', height: '33.333%' },
+  'six-portrait-3': { left: 0, top: '33.333%', width: '50%', height: '33.334%' },
+  'six-portrait-4': { right: 0, top: '33.333%', width: '50%', height: '33.334%' },
+  'six-portrait-5': { left: 0, bottom: 0, width: '50%', height: '33.333%' },
+  'six-portrait-6': { right: 0, bottom: 0, width: '50%', height: '33.333%' },
 };
 
 const StageGrid = memo(function StageGrid({
@@ -155,17 +173,19 @@ const StageGrid = memo(function StageGrid({
   scene,
   program,
   programSources,
+  maximumPublishers,
   atmosphere,
   allowAtmosphereFraming,
   visualsConcealed,
   stageWidth,
   stageHeight,
-}: Pick<StreamLiveStageProps, 'sdk' | 'stageParticipants' | 'localPublisherUserId' | 'onConnectedParticipantCountChange' | 'constrainMultiStage' | 'presentation' | 'tileFooterInset' | 'requestSeat' | 'scene' | 'program' | 'programSources' | 'atmosphere' | 'allowAtmosphereFraming' | 'visualsConcealed'> & {
+}: Pick<StreamLiveStageProps, 'sdk' | 'stageParticipants' | 'localPublisherUserId' | 'onConnectedParticipantCountChange' | 'constrainMultiStage' | 'presentation' | 'tileFooterInset' | 'requestSeat' | 'scene' | 'program' | 'programSources' | 'maximumPublishers' | 'atmosphere' | 'allowAtmosphereFraming' | 'visualsConcealed'> & {
   isInPictureInPicture: boolean;
   stageWidth: number;
   stageHeight: number;
 }) {
   const { useParticipants } = sdk.useCallStateHooks();
+  const lastShadowKey = useRef<string | null>(null);
   const rtcParticipants = useParticipants();
   const publicRtcParticipants = useMemo(
     () => rtcParticipants.filter((participant: StreamVideoParticipant) => (
@@ -212,6 +232,41 @@ const StageGrid = memo(function StageGrid({
     () => resolveLivePictureInPictureProgramSource(program ?? null, programSources ?? []),
     [program, programSources],
   );
+  const adaptiveStageShadow = useMemo(() => {
+    const configured = process.env.EXPO_PUBLIC_ADAPTIVE_STAGE_V2_SHADOW_ENABLED;
+    const enabled = configured === 'true'
+      || (configured === undefined && process.env.EXPO_PUBLIC_ENVIRONMENT === 'staging');
+    if (!enabled || presentation !== 'public' || !program || !programSources
+      || stageWidth <= 0 || stageHeight <= 0) return null;
+    const capacity: 4 | 6 = maximumPublishers === 6 ? 6 : 4;
+    return resolveAdaptiveStageShadowV2({
+      programState: program,
+      sourceGraph: programSources,
+      sourceGraphVersion: sourceGraphVersionFromSources(programSources),
+      viewport: { width: stageWidth, height: stageHeight },
+      maximumPublishers: capacity,
+      largePanelEnabled: capacity === 6,
+    });
+  }, [maximumPublishers, presentation, program, programSources, stageHeight, stageWidth]);
+
+  useEffect(() => {
+    if (!adaptiveStageShadow) return;
+    const key = `${program?.programVersion ?? 0}:${adaptiveStageShadow.plan?.planHash ?? adaptiveStageShadow.events[0]?.details.reason_code ?? 'error'}`;
+    if (lastShadowKey.current === key) return;
+    lastShadowKey.current = key;
+    const diagnosticsEnabled = process.env.EXPO_PUBLIC_ADAPTIVE_STAGE_V2_DIAGNOSTICS_ENABLED === 'true';
+    adaptiveStageShadow.events.forEach((event) => {
+      const details = { ...event.details, ...adaptiveStageNativeReleaseProvenance };
+      logger.info(event.name, details);
+      if (diagnosticsEnabled && program?.sessionId) {
+        void liveRepository.recordAdaptiveStageDiagnostic(program.sessionId, event.name, details)
+          .catch((error) => logger.warn('adaptive_stage_v2_diagnostic_failed', {
+            renderer_source: 'native',
+            reason: error instanceof Error ? error.message : 'unknown',
+          }));
+      }
+    });
+  }, [adaptiveStageShadow, program?.programVersion, program?.sessionId]);
   // Odo scenes are presentation-only. They must never hide the audience's
   // manual seat-request path or interfere with Host stage admission.
   const visibleRequestSeat = presentation === 'public' && !isInPictureInPicture
@@ -248,9 +303,10 @@ const StageGrid = memo(function StageGrid({
           participant.userId === pictureInPictureProgramSource.providerUserId
         ))
       : undefined;
-    const pictureInPictureSeat = participants.find(
-      (seat) => seat.userId === (programParticipant?.userId ?? pictureInPictureCandidate?.userId),
-    ) ?? participants[0];
+    const selectedUserId = pictureInPictureProgramSource
+      ? programParticipant?.userId
+      : pictureInPictureCandidate?.userId;
+    const pictureInPictureSeat = participants.find((seat) => seat.userId === selectedUserId);
     const selectedParticipant = programParticipant
       ?? pictureInPictureSeat?.candidate?.participant
       ?? null;
@@ -406,6 +462,7 @@ export const StreamLiveStage = memo(function StreamLiveStage({
   scene,
   program,
   programSources,
+  maximumPublishers,
   atmosphere,
   allowAtmosphereFraming,
   visualsConcealed = false,
@@ -449,6 +506,7 @@ export const StreamLiveStage = memo(function StreamLiveStage({
             scene={scene}
             program={program}
             programSources={programSources}
+            maximumPublishers={maximumPublishers}
             atmosphere={atmosphere}
             allowAtmosphereFraming={allowAtmosphereFraming}
             visualsConcealed={visualsConcealed}

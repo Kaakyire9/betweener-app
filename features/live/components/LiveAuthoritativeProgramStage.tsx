@@ -62,9 +62,6 @@ export const LiveAuthoritativeProgramStage = memo(function LiveAuthoritativeProg
           height: percent(region.height),
           zIndex: region.zIndex,
         };
-        const pairSeats = source?.type === 'active_pair'
-          ? stageSeats.filter((candidate) => candidate.identity?.role !== 'host').slice(0, 2)
-          : [];
         return (
           <View key={region.slot} style={[styles.region, regionStyle,
             region.treatment === 'pip' && styles.pip]}>
@@ -77,20 +74,6 @@ export const LiveAuthoritativeProgramStage = memo(function LiveAuthoritativeProg
                 editorialFocus={participant.userId === focusedSpeakerUserId}
                 ParticipantViewComponent={sdk.ParticipantView}
               />
-            ) : pairSeats.length ? (
-              <View style={styles.pairGrid}>
-                {pairSeats.map((pairSeat) => (
-                  <View key={pairSeat.userId} style={styles.pairTile}>
-                    <LiveStageParticipantTile
-                      participant={pairSeat.candidate?.participant ?? null}
-                      identity={pairSeat.identity}
-                      fit="cover"
-                      editorialFocus={pairSeat.userId === focusedSpeakerUserId}
-                      ParticipantViewComponent={sdk.ParticipantView}
-                    />
-                  </View>
-                ))}
-              </View>
             ) : <LiveProgramVisualSource source={source} />}
           </View>
         );
@@ -117,6 +100,4 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: LIVE_VISUAL.color.borderStrong,
   },
-  pairGrid: { flex: 1, flexDirection: 'row', backgroundColor: '#071815' },
-  pairTile: { flex: 1, minWidth: 0, overflow: 'hidden' },
 });

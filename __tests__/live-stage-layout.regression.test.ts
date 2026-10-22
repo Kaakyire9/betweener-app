@@ -222,7 +222,7 @@ test('authoritative camera-off stage members render before an RTC participant ex
   ]);
 });
 
-test('stage layouts are deterministic for one through four publishers', () => {
+test('stage layouts are deterministic for one through six publishers', () => {
   assert.deepEqual([liveStageTilePlacement(1, 0)], ['single']);
   assert.deepEqual(
     [0, 1].map((index) => liveStageTilePlacement(2, index)),
@@ -235,6 +235,14 @@ test('stage layouts are deterministic for one through four publishers', () => {
   assert.deepEqual(
     [0, 1, 2, 3].map((index) => liveStageTilePlacement(4, index)),
     ['quad-top-left', 'quad-top-right', 'quad-bottom-left', 'quad-bottom-right'],
+  );
+  assert.deepEqual(
+    [0, 1, 2, 3, 4, 5].map((index) => liveStageTilePlacementForViewport(6, index, 844, 390)),
+    ['six-landscape-1', 'six-landscape-2', 'six-landscape-3', 'six-landscape-4', 'six-landscape-5', 'six-landscape-6'],
+  );
+  assert.deepEqual(
+    [0, 1, 2, 3, 4, 5].map((index) => liveStageTilePlacementForViewport(6, index, 390, 844)),
+    ['six-portrait-1', 'six-portrait-2', 'six-portrait-3', 'six-portrait-4', 'six-portrait-5', 'six-portrait-6'],
   );
 });
 

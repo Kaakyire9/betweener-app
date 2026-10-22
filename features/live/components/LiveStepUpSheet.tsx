@@ -8,6 +8,7 @@ import {
   Modal,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -49,6 +50,7 @@ export function LiveStepUpSheet({
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [preparationAttempt, setPreparationAttempt] = useState(0);
   const onVerifiedRef = useRef(onVerified);
   onVerifiedRef.current = onVerified;
 
@@ -62,6 +64,8 @@ export function LiveStepUpSheet({
     }
 
     let active = true;
+    setPreparation(null);
+    setError(null);
     setBusy(true);
     void prepareLiveStepUp().then(async (next) => {
       if (!active) return;
@@ -76,7 +80,7 @@ export function LiveStepUpSheet({
       if (active) setBusy(false);
     });
     return () => { active = false; };
-  }, [visible]);
+  }, [preparationAttempt, visible]);
 
   const verify = async () => {
     if (!preparation || preparation.kind === 'satisfied' || busy) return;
@@ -99,6 +103,12 @@ export function LiveStepUpSheet({
         style={styles.backdrop}
       >
         <View style={styles.sheet}>
+          <ScrollView
+            contentContainerStyle={styles.sheetContent}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            style={styles.scroll}
+          >
           <View style={styles.header}>
             <View style={styles.icon}><ShieldCheck size={22} color={visual.teal} /></View>
             <Pressable accessibilityLabel="Close verification" onPress={onCancel} style={styles.close}>
@@ -128,7 +138,12 @@ export function LiveStepUpSheet({
             </View>
           ) : null}
 
-          {busy && !preparation ? <ActivityIndicator color={visual.teal} style={styles.loader} /> : null}
+          {busy && !preparation ? (
+            <View accessibilityLiveRegion="polite" style={styles.loadingState}>
+              <ActivityIndicator color={visual.teal} />
+              <Text style={styles.loadingText}>Preparing secure verification…</Text>
+            </View>
+          ) : null}
           {preparation && preparation.kind !== 'satisfied' ? (
             <>
               <Text style={styles.label}>AUTHENTICATOR CODE</Text>
@@ -156,6 +171,16 @@ export function LiveStepUpSheet({
             </>
           ) : null}
           {error ? <Text accessibilityLiveRegion="polite" style={styles.error}>{error}</Text> : null}
+          {error && !preparation ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setPreparationAttempt((current) => current + 1)}
+              style={styles.retryButton}
+            >
+              <Text style={styles.retryText}>Try verification again</Text>
+            </Pressable>
+          ) : null}
+          </ScrollView>
         </View>
       </KeyboardAvoidingView>
     </Modal>
@@ -164,7 +189,9 @@ export function LiveStepUpSheet({
 
 const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
   backdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(1,8,8,0.76)' },
-  sheet: { paddingHorizontal: 24, paddingTop: 20, paddingBottom: 34, borderTopLeftRadius: 30, borderTopRightRadius: 30, backgroundColor: '#082420', borderWidth: 1, borderColor: '#2D514B' },
+  sheet: { height: '82%', maxHeight: 720, borderTopLeftRadius: 30, borderTopRightRadius: 30, backgroundColor: '#082420', borderWidth: 1, borderColor: '#2D514B' },
+  scroll: { flex: 1 },
+  sheetContent: { flexGrow: 1, paddingHorizontal: 24, paddingTop: 20, paddingBottom: 34 },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   icon: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0C3430' },
   close: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#31534D' },
@@ -177,11 +204,14 @@ const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
   setupActions: { flexDirection: 'row', gap: 10, marginTop: 12 },
   secondaryButton: { minHeight: 42, paddingHorizontal: 14, borderRadius: 21, justifyContent: 'center', borderWidth: 1, borderColor: '#3B625B' },
   secondaryText: { color: '#D7E4E0', fontSize: 11, fontFamily: 'Manrope_700Bold' },
-  loader: { marginVertical: 28 },
+  loadingState: { minHeight: 112, marginTop: 24, gap: 12, alignItems: 'center', justifyContent: 'center', borderRadius: 18, backgroundColor: '#0A2C28', borderWidth: 1, borderColor: '#31534D' },
+  loadingText: { color: '#B7C7C3', fontSize: 12, fontFamily: 'Manrope_600SemiBold' },
   label: { marginTop: 22, color: '#AFC2BD', fontSize: 10, letterSpacing: 1.1, fontFamily: 'Manrope_800ExtraBold' },
   input: { height: 56, marginTop: 8, borderRadius: 16, borderWidth: 1, borderColor: '#42645E', paddingHorizontal: 18, color: '#FFF7EC', fontSize: 22, letterSpacing: 8, textAlign: 'center', fontFamily: 'Manrope_700Bold' },
   primary: { height: 54, marginTop: 16, borderRadius: 27, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.teal },
   primaryText: { color: visual.accentContrast, fontSize: 14, fontFamily: 'Manrope_800ExtraBold' },
   disabled: { opacity: 0.42 },
   error: { marginTop: 12, color: '#F0AAA5', fontSize: 11, lineHeight: 17, textAlign: 'center', fontFamily: 'Manrope_600SemiBold' },
+  retryButton: { minHeight: 48, marginTop: 14, borderRadius: 24, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#3B625B' },
+  retryText: { color: '#D7E4E0', fontSize: 12, fontFamily: 'Manrope_800ExtraBold' },
 });

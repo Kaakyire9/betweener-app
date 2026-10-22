@@ -7,6 +7,7 @@ import { LiveBackstagePreview, LiveStepUpSheet } from '@/features/live/component
 import { type LiveVisualTheme, useLiveVisualTheme } from '@/features/live/components/live-visual-tokens.ts';
 import { useLiveDeviceReadiness, useLiveSessionController } from '@/features/live/hooks/index.ts';
 import {
+  getLiveServerClockOffsetMs,
   getLivePublicationErrorCode,
   getLivePublicationErrorMessage,
   liveRepository,
@@ -38,7 +39,10 @@ export default function LiveBackstageScreen() {
   const [stepUpVisible, setStepUpVisible] = useState(false);
   const [publicationBusy, setPublicationBusy] = useState(false);
   const canOpenStage = controller.snapshot?.capabilities.includes('live.start_session') === true;
-  const serverOffsetMs = publication ? Date.parse(publication.serverNow) - Date.now() : 0;
+  const serverOffsetMs = useMemo(
+    () => publication ? getLiveServerClockOffsetMs(publication.serverNow) : 0,
+    [publication?.serverNow],
+  );
   const authoritativeNow = clock + serverOffsetMs;
   const scheduledStartMs = publication?.scheduledStart
     ? Date.parse(publication.scheduledStart)

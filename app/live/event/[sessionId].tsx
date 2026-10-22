@@ -67,7 +67,7 @@ export default function LiveEventScreen() {
   const recap = useLiveSessionRecap(sessionId, phase === 'past' && session?.status === 'ended');
   const isOwner = session?.createdByProfileId === profile?.id;
   const canAssignOperators = adminAccess.can('live');
-  const canManageSession = isOwner || hosting.snapshot?.canDelegateHosts === true;
+  const canManageSession = isOwner || hosting.snapshot?.canManageSession === true;
   const canOpenManagement = canManageSession || canAssignOperators;
   const isDue = Boolean(session?.scheduledStart && Date.parse(session.scheduledStart) <= clock);
   const posterUrl = getLiveEventMediaUrl(session?.posterPath);

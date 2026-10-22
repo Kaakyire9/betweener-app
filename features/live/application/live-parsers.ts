@@ -1,4 +1,7 @@
-import { LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT } from '@betweener/live-program-domain';
+import {
+  LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT,
+  LIVE_STANDARD_STAGE_PUBLISHER_LIMIT,
+} from '@betweener/live-program-domain';
 import {
   LIVE_CAPABILITIES,
   type LiveCapability,
@@ -76,11 +79,12 @@ export const parseLiveHostingManagementSnapshot = (
     throw new Error('live_hosting_management_end_policy_invalid');
   }
   return {
-    schemaVersion: 1,
+    schemaVersion: value.schemaVersion === 2 ? 2 : 1,
     serverNow: asString(value.serverNow),
     sessionId: asString(value.sessionId),
     title: asString(value.title),
     status: asString(value.status),
+    canManageSession: value.canManageSession === true || value.canDelegateHosts === true,
     canDelegateHosts: value.canDelegateHosts === true,
     canExtend: value.canExtend === true,
     host: {
@@ -286,7 +290,7 @@ export const parseLiveComment = (value: unknown): LiveComment => {
 const parseSessionRecord = (value: unknown): LiveSessionRecord => {
   if (!isRecord(value)) throw new Error('live_session_invalid');
   const maximumPublishers = Math.max(1, Math.min(
-    asNumber(value.maximum_publishers, LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT),
+    asNumber(value.maximum_publishers, LIVE_STANDARD_STAGE_PUBLISHER_LIMIT),
     LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT,
   ));
   const maximumGuestSeats = Math.max(0, maximumPublishers - 1);
@@ -362,7 +366,7 @@ export const parseLiveSessionSummary = (value: unknown): LiveSessionSummary => {
       ? null
       : Math.max(0, asNumber(value.teaser_duration_seconds)),
     maximumPublishers: Math.max(1, Math.min(
-      asNumber(value.maximum_publishers, LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT),
+      asNumber(value.maximum_publishers, LIVE_STANDARD_STAGE_PUBLISHER_LIMIT),
       LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT,
     )),
     rsvpStatus: parseRsvp(value.rsvp_status),
