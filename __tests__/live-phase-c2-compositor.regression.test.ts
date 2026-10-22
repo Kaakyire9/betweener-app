@@ -59,4 +59,10 @@ test('container runs the compositor as an unprivileged user', () => {
   assert.match(dockerfile, /USER node/i);
   assert.match(dockerfile, /chromium dbus ffmpeg/i);
   assert.match(dockerfile, /pulseaudio pulseaudio-utils xvfb/i);
+  assert.match(dockerfile, /ARG ADAPTIVE_STAGE_V2_SHADOW_ENABLED=false/i);
+  assert.match(dockerfile, /VITE_ADAPTIVE_STAGE_V2_SHADOW_ENABLED=\$ADAPTIVE_STAGE_V2_SHADOW_ENABLED/i);
+  assert.match(dockerfile, /ARG ADAPTIVE_STAGE_V2_DIAGNOSTICS_ENABLED=false/i);
+  assert.match(dockerfile, /VITE_ADAPTIVE_STAGE_V2_DIAGNOSTICS_ENABLED=\$ADAPTIVE_STAGE_V2_DIAGNOSTICS_ENABLED/i);
+  assert.match(dockerfile, /ARG ADAPTIVE_STAGE_V2_COMPOSITOR_RENDER_ENABLED=false/i);
+  assert.match(dockerfile, /VITE_ADAPTIVE_STAGE_V2_COMPOSITOR_RENDER_ENABLED=\$ADAPTIVE_STAGE_V2_COMPOSITOR_RENDER_ENABLED/i);
 });
