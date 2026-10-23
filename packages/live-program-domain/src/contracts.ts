@@ -1,4 +1,5 @@
-export const LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT = 4;
+export const LIVE_STANDARD_STAGE_PUBLISHER_LIMIT = 4;
+export const LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT = 6;
 export const LIVE_STUDIO_VISUAL_PUBLISHER_RESERVE = 1;
 export const LIVE_PROGRAM_VIDEO_SOURCE_LIMIT = LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT
   + LIVE_STUDIO_VISUAL_PUBLISHER_RESERVE;
@@ -13,6 +14,7 @@ export type ProgramControllerSource = (typeof PROGRAM_CONTROLLER_SOURCES)[number
 
 export const PROGRAM_SCENES = [
   'host_focus',
+  'panel_focus',
   'host_plus_pool',
   'pool_focus',
   'pair_forming',
@@ -94,6 +96,8 @@ export const PROGRAM_SOURCE_SLOTS = [
   'guest_1',
   'guest_2',
   'guest_3',
+  'guest_4',
+  'guest_5',
   'pair',
   'pool',
   'pulse',
@@ -108,6 +112,30 @@ export type ProgramSourceAssignments = Partial<Record<ProgramSourceSlot, string>
 
 export const LIVE_MUSIC_REPEAT_MODES = ['off', 'one', 'all'] as const;
 export type LiveMusicRepeatMode = (typeof LIVE_MUSIC_REPEAT_MODES)[number];
+
+export type LiveMusicCatalogueTrack = {
+  id: string;
+  title: string;
+  artist: string;
+  mood: string;
+  energy: number;
+  durationSeconds: number;
+  containsVocals: boolean;
+};
+
+export type LiveMusicCataloguePlaylist = {
+  id: string;
+  name: string;
+  mood: string | null;
+  trackIds: readonly string[];
+};
+
+export type LiveMusicCatalogue = {
+  schemaVersion: 1;
+  canManageLibrary: boolean;
+  tracks: readonly LiveMusicCatalogueTrack[];
+  playlists: readonly LiveMusicCataloguePlaylist[];
+};
 
 export type ProgramSource = {
   id: string;

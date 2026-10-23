@@ -18,8 +18,43 @@ export type LiveCancellationReason =
   | 'host_unavailable'
   | 'not_enough_people'
   | 'safety'
+  | 'host_no_show'
   | 'other';
-export type LiveReactionKind = 'heart' | 'spark' | 'applause' | 'support';
+export type LiveReportReason =
+  | 'harassment'
+  | 'hate'
+  | 'sexual_content'
+  | 'spam'
+  | 'impersonation'
+  | 'unsafe_behaviour'
+  | 'other';
+export type LiveReactionKind =
+  | 'heart'
+  | 'spark'
+  | 'applause'
+  | 'support'
+  | 'joy'
+  | 'wow'
+  | 'insight'
+  | 'celebrate';
+
+export type LiveReactionCounts = Readonly<Record<LiveReactionKind, number>>;
+
+export type LiveReactionSummary = {
+  sessionId: string;
+  totalCount: number;
+  version: number;
+  updatedAt: string | null;
+  counts: LiveReactionCounts;
+};
+
+export type LiveReactionEvent = {
+  eventId: string;
+  sessionId: string;
+  reaction: LiveReactionKind;
+  emittedAt: string;
+  summary?: LiveReactionSummary;
+};
 export type LiveAudiencePollKind = 'question_poll' | 'room_poll';
 export type LiveAudiencePollState = 'open' | 'closed' | 'cancelled';
 
@@ -197,6 +232,7 @@ export type LiveParticipant = {
   state: LiveParticipantState;
   rsvpStatus: LiveRsvpStatus;
   openToIntroductions: boolean;
+  introductionPreferenceDecidedAt: string | null;
   stageSlot: number | null;
   connectionQualityState: string;
   microphoneMutedByModerator: boolean;
@@ -300,6 +336,29 @@ export type LiveSessionSnapshot = {
   commentCount: number;
 };
 
+export type LivePublicPairFormation = {
+  roundId: string;
+  activatedAt: string;
+  participantA: LiveMatchRoundPerson;
+  participantB: LiveMatchRoundPerson;
+};
+
+/**
+ * Public private-activity atmosphere. Pair identity is exposed only for a
+ * short formation window after that same pair was introduced publicly.
+ */
+export type LivePrivateActivitySnapshot = {
+  sessionId: string;
+  hostedPairCount: number;
+  quickConnectPairCount: number;
+  activePairCount: number;
+  activePeopleCount: number;
+  latestHostedPairRoundId: string | null;
+  latestHostedPairActivatedAt: string | null;
+  latestHostedPairFormation: LivePublicPairFormation | null;
+  serverNow: string;
+};
+
 export type LiveRoomPulseSnapshot = {
   comments: readonly LiveComment[];
   commentCount: number;
@@ -329,11 +388,27 @@ export type ScheduleLiveStudioSessionInput = {
   chemistryFirstEnabled: boolean;
   circleId?: string | null;
   minimumParticipants: number;
+  audienceScopes: ('global' | 'country' | 'local' | 'diaspora' | 'invite_only')[];
+  audienceCountryCode: string | null;
+  audienceCountryName: string | null;
+  audienceRegion: string | null;
+  audienceCity: string | null;
+  diasporaOriginCountryCodes: string[];
+  diasporaDestinationCountryCodes: string[];
 };
 
 export type UpdateLiveStudioSessionInput = Omit<
   ScheduleLiveStudioSessionInput,
-  'clientRequestId' | 'format' | 'circleId'
+  | 'clientRequestId'
+  | 'format'
+  | 'circleId'
+  | 'audienceScopes'
+  | 'audienceCountryCode'
+  | 'audienceCountryName'
+  | 'audienceRegion'
+  | 'audienceCity'
+  | 'diasporaOriginCountryCodes'
+  | 'diasporaDestinationCountryCodes'
 > & {
   sessionId: string;
   expectedVersion: number;
@@ -493,6 +568,20 @@ export type LiveQuickConnectPoolMember = {
   expressedInterest: boolean;
 };
 
+export type LiveQuickConnectPublicFormationPerson = {
+  userId: string;
+  profileId: string;
+  fullName: string | null;
+  avatarUrl: string | null;
+};
+
+export type LiveQuickConnectPublicFormation = {
+  pairingId: string;
+  startsAt: string;
+  participantA: LiveQuickConnectPublicFormationPerson;
+  participantB: LiveQuickConnectPublicFormationPerson;
+};
+
 export type LiveQuickConnectPoolSnapshot = {
   sessionId: string;
   stageLayout: LiveQuickConnectStageLayout;
@@ -505,6 +594,7 @@ export type LiveQuickConnectPoolSnapshot = {
   connectionIntent: LiveQuickConnectIntent | null;
   myState: LiveQuickConnectParticipantState;
   members: readonly LiveQuickConnectPoolMember[];
+  publicFormations: readonly LiveQuickConnectPublicFormation[];
   queue: LiveQuickConnectSnapshot | null;
 };
 
@@ -592,4 +682,64 @@ export type LiveHostedMatchingSnapshot = {
   candidates: readonly LiveHostedCandidate[];
   activeRound: LiveMatchRound | null;
   privateSpark: LivePrivateSpark | null;
+};
+
+export type LiveHostingManagementSnapshot = {
+  schemaVersion: 1 | 2;
+  serverNow: string;
+  sessionId: string;
+  title: string;
+  status: string;
+  canManageSession: boolean;
+  canDelegateHosts: boolean;
+  canExtend: boolean;
+  host: {
+    userId: string;
+    profileId: string;
+    fullName: string | null;
+    username: string | null;
+    avatarUrl: string | null;
+    delegated: boolean;
+  };
+  schedule: {
+    scheduledStart: string | null;
+    scheduledEnd: string | null;
+    runtimeEndAt: string | null;
+    durationMinutes: number;
+    endPolicy: 'scheduled' | 'manual';
+    lastExtendedAt: string | null;
+  };
+  traffic: {
+    audienceNow: number;
+    totalAttendees: number;
+    reactions: number;
+  };
+};
+
+export type LiveStudioSessionOperatorRole = 'viewer' | 'producer' | 'moderator';
+export type LiveStudioSessionOperatorStatus = 'active' | 'expired' | 'revoked';
+
+export type LiveStudioSessionOperator = {
+  assignmentId: string;
+  userId: string;
+  email: string;
+  fullName: string | null;
+  username: string | null;
+  avatarUrl: string | null;
+  operatorRole: LiveStudioSessionOperatorRole;
+  status: LiveStudioSessionOperatorStatus;
+  assignedAt: string;
+  expiresAt: string;
+  note: string | null;
+};
+
+export type LiveStudioOperatorManagementSnapshot = {
+  schemaVersion: 1;
+  serverNow: string;
+  sessionId: string;
+  sessionTitle: string;
+  sessionStatus: string;
+  canAssign: boolean;
+  defaultExpiresAt: string;
+  operators: readonly LiveStudioSessionOperator[];
 };

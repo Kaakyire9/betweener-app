@@ -17,6 +17,9 @@ module.exports = defineConfig([
       '**/.expo/**',
       '**/.vercel/**',
       '**/.turbo/**',
+      '**/cdk.out/**',
+      // Release-candidate snapshots are immutable verification artifacts, not source inputs.
+      'tmp/**',
       '**/android/**',
       '**/ios/**',
       // Supabase edge functions use Deno-style remote imports; lint them separately.

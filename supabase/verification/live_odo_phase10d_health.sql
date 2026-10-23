@@ -204,6 +204,13 @@ with migration_blockers as (
     ) or has_table_privilege(
       'service_role',format('public.%I',expected.name),'DELETE'
     )
+), maintenance_protocol as (
+  select coalesce(string_agg(pg_get_functiondef(procedure.oid), E'\n'), '') definition
+  from pg_proc procedure
+  join pg_namespace namespace on namespace.oid = procedure.pronamespace
+  where namespace.nspname = 'public'
+    and procedure.proname like 'run_live_maintenance%'
+    and pg_get_function_identity_arguments(procedure.oid) = ''
 ), protocol_blockers as (
   select case when
     exists (select 1 from pg_publication_tables
@@ -215,12 +222,12 @@ with migration_blockers as (
     and exists (select 1 from pg_index where indexrelid =
       to_regclass('public.live_odo_full_quick_actions_session_idx')
         and indisvalid and indisready)
-    and to_regprocedure('public.run_live_maintenance()') is not null
     and position(
       'rpc_service_reconcile_live_odo_full_quick_connect_v1'
-      in pg_get_functiondef(to_regprocedure('public.run_live_maintenance()'))
+      in maintenance_protocol.definition
     ) > 0
     then 0::bigint else 1::bigint end affected
+  from maintenance_protocol
 ), allowlist_blockers as (
   select count(*)::bigint affected
   from public.live_odo_full_quick_connect_settings settings

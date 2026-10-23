@@ -1,6 +1,8 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
+set local role postgres;
+set search_path = public, extensions, pg_catalog;
 select plan(31);
 
 select ok(
@@ -100,6 +102,7 @@ insert into auth.users(id, email) values
   ('9d000000-0000-4000-8000-000000000001', 'handle-one@example.test'),
   ('9d000000-0000-4000-8000-000000000002', 'handle-two@example.test'),
   ('9d000000-0000-4000-8000-000000000003', 'handle-three@example.test');
+select set_config('request.jwt.claim.role', 'service_role', true);
 select set_config('app.profile_guard_write', 'on', true);
 insert into public.profiles(id, user_id, full_name, profile_completed, identity_status) values
   ('9d000000-0000-4000-8000-000000000001', '9d000000-0000-4000-8000-000000000001', 'Handle One', true, 'active'),
@@ -167,7 +170,7 @@ select is(
   'another member cannot claim an active handle'
 );
 
-reset role;
+set local role postgres;
 select set_config('request.jwt.claim.role', '', true);
 select set_config('request.jwt.claim.sub', '', true);
 update public.profiles
@@ -195,9 +198,10 @@ select is(
   'brand lookalike handles stay protected'
 );
 
-reset role;
+set local role postgres;
 select set_config('request.jwt.claim.role', '', true);
 select set_config('request.jwt.claim.sub', '', true);
+select set_config('request.jwt.claim.role', 'service_role', true);
 select set_config('app.profile_guard_write', 'on', true);
 insert into public.profiles(
   id, user_id, full_name, username, username_searchable,
@@ -224,6 +228,6 @@ select is(
   'a grandfathered owner can still opt into handle discovery'
 );
 
-reset role;
+set local role postgres;
 select * from finish();
 rollback;

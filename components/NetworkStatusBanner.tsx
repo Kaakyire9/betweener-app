@@ -3,13 +3,14 @@ import type { NetInfoState } from '@react-native-community/netinfo';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, StyleSheet, Text, View } from 'react-native';
+import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/lib/auth-context';
 import { getNetworkQualitySnapshot, subscribeToNetworkQuality } from '@/lib/network-quality-monitor';
+import { getSupabaseAuthRetryState } from '@/lib/supabase';
 
 type NetworkBannerState = {
   tone: 'offline' | 'weak' | 'slow';
@@ -43,12 +44,13 @@ const getBannerState = (state: NetInfoState): NetworkBannerState | null => {
 export default function NetworkStatusBanner() {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
-  const { authStatus } = useAuth();
+  const { authStatus, retrySessionRecovery } = useAuth();
   const insets = useSafeAreaInsets();
   const [netInfoBanner, setNetInfoBanner] = useState<NetworkBannerState | null>(null);
   const [networkQuality, setNetworkQuality] = useState(getNetworkQualitySnapshot);
   const [qualityClock, setQualityClock] = useState(0);
   const [visibleBanner, setVisibleBanner] = useState<NetworkBannerState | null>(null);
+  const [retryClock, setRetryClock] = useState(0);
   const opacity = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(-12)).current;
   const showTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -72,6 +74,12 @@ export default function NetworkStatusBanner() {
   useEffect(() => subscribeToNetworkQuality(setNetworkQuality), []);
 
   useEffect(() => {
+    if (authStatus !== 'reconnecting_session' && authStatus !== 'session_refreshing') return;
+    const timer = setInterval(() => setRetryClock((value) => value + 1), 1_000);
+    return () => clearInterval(timer);
+  }, [authStatus]);
+
+  useEffect(() => {
     if (networkQuality.activeSlowRequests > 0) return;
 
     const delay = networkQuality.slowUntil - Date.now();
@@ -86,11 +94,15 @@ export default function NetworkStatusBanner() {
 
   const banner = useMemo<NetworkBannerState | null>(() => {
     if (authStatus === 'reconnecting_session' || authStatus === 'session_refreshing') {
+      const retryAt = getSupabaseAuthRetryState().retryAt;
+      const retrySeconds = retryAt ? Math.max(1, Math.ceil((retryAt - Date.now()) / 1_000)) : 0;
       return {
         tone: 'slow',
         title: 'Reconnecting securely...',
         body:
-          authStatus === 'session_refreshing'
+          retrySeconds > 0
+            ? `The server asked us to wait. Try again in ${retrySeconds}s.`
+            : authStatus === 'session_refreshing'
             ? 'Refreshing your secure session in the background.'
             : 'Keeping your space open while Betweener restores your session.',
       };
@@ -110,7 +122,7 @@ export default function NetworkStatusBanner() {
     }
 
     return netInfoBanner;
-  }, [authStatus, netInfoBanner, networkQuality.activeSlowRequests, networkQuality.slowUntil, qualityClock]);
+  }, [authStatus, netInfoBanner, networkQuality.activeSlowRequests, networkQuality.slowUntil, qualityClock, retryClock]);
 
   useEffect(() => {
     if (showTimerRef.current) {
@@ -242,9 +254,17 @@ export default function NetworkStatusBanner() {
   const railColor = visibleBanner.tone === 'offline' ? '#F59E0B' : visibleBanner.tone === 'slow' ? '#E7C78D' : theme.tint;
   const iconName = visibleBanner.tone === 'offline' ? 'wifi-off' : visibleBanner.tone === 'slow' ? 'timer-sand' : 'signal-cellular-2';
 
+  const recoveryVisible = authStatus === 'reconnecting_session' || authStatus === 'session_refreshing';
+  const retryAt = getSupabaseAuthRetryState().retryAt;
+  const retryDeferred = !!retryAt && retryAt > Date.now();
+
   return (
-    <Animated.View pointerEvents="none" style={containerStyle}>
-      <View
+    <Animated.View pointerEvents={recoveryVisible ? 'box-none' : 'none'} style={containerStyle}>
+      <Pressable
+        disabled={!recoveryVisible || retryDeferred}
+        accessibilityRole={recoveryVisible ? 'button' : undefined}
+        accessibilityLabel={recoveryVisible ? 'Retry secure session recovery' : undefined}
+        onPress={() => void retrySessionRecovery('network_banner_manual_retry')}
         style={[
           styles.card,
           {
@@ -274,7 +294,12 @@ export default function NetworkStatusBanner() {
           </Text>
           <Text style={[styles.body, { color: theme.textMuted }]}>{visibleBanner.body}</Text>
         </View>
-      </View>
+        {recoveryVisible ? (
+          <Text style={[styles.retryText, retryDeferred && styles.retryTextDisabled]}>
+            {retryDeferred ? 'Waiting' : 'Try again'}
+          </Text>
+        ) : null}
+      </Pressable>
     </Animated.View>
   );
 }
@@ -329,5 +354,13 @@ const styles = StyleSheet.create({
     fontSize: 11.5,
     lineHeight: 16,
     fontFamily: 'Manrope_500Medium',
+  },
+  retryText: {
+    color: '#0F766E',
+    fontFamily: 'Manrope_700Bold',
+    fontSize: 11.5,
+  },
+  retryTextDisabled: {
+    color: '#94A3B8',
   },
 });

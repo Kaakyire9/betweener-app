@@ -1,6 +1,8 @@
 // @ts-nocheck -- checked by the function-local Deno configuration.
 import { createClient } from '@supabase/supabase-js';
 import { corsHeaders } from '../_shared/cors.ts';
+import { getSupabaseAdminKey } from '../_shared/supabase-admin-key.ts';
+import { getSupabasePublicApiKey } from '../_shared/supabase-public-key.ts';
 import {
   ODO_COPILOT_CONSTITUTION_VERSION,
   OdoModelRouter,
@@ -69,7 +71,7 @@ Deno.serve(async (request) => {
   if (!body) return json({ error: 'invalid_request' }, 400);
 
   const url = env('SUPABASE_URL');
-  const caller = createClient(url, env('SUPABASE_ANON_KEY'), {
+  const caller = createClient(url, getSupabasePublicApiKey(), {
     auth: { autoRefreshToken: false, persistSession: false },
     global: { headers: { Authorization: authorization } },
   });
@@ -83,7 +85,7 @@ Deno.serve(async (request) => {
   });
   // Phase 10B always takes the routine Luna route. It never escalates synchronously.
   const route = router.route(body.task, 'routine');
-  const service = createClient(url, env('SUPABASE_SERVICE_ROLE_KEY'), {
+  const service = createClient(url, getSupabaseAdminKey(), {
     auth: { autoRefreshToken: false, persistSession: false },
   });
   const actionId = crypto.randomUUID();

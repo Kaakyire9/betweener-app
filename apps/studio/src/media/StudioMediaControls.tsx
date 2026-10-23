@@ -14,10 +14,12 @@ export function StudioMediaControls({
   snapshot,
   controllerInstanceId,
   onChanged,
+  authorizePublish,
 }: {
   snapshot: StudioOperationalSnapshot;
   controllerInstanceId: string;
   onChanged: () => void;
+  authorizePublish: (label: string, operation: () => Promise<void>) => Promise<void>;
 }) {
   const media = useStudioMedia();
   const call = media.binding?.call;
@@ -230,7 +232,9 @@ export function StudioMediaControls({
     return (
       <div className="stack-sm">
         <p className="muted compact">Connect only when you are ready to grant browser media access.</p>
-        <button className="button button-secondary" disabled={media.connecting} onClick={() => void media.connect()}>
+        <button className="button button-secondary" disabled={media.connecting}
+          onClick={() => void authorizePublish('Connect studio media', media.connect)
+            .catch((failure) => setError(errorMessage(failure, 'Step-up failed.')))}>
           {media.connecting ? 'Connecting…' : 'Connect studio media'}
         </button>
         {media.error ? <p className="error-copy" role="alert">{media.error}</p> : null}

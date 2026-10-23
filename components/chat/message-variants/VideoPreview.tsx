@@ -13,6 +13,7 @@ type VideoPreviewProps = {
   url: string;
   resolvedUrl?: string;
   posterUri?: string | null;
+  recyclingKey?: string;
   onError?: () => void;
 };
 
@@ -50,12 +51,13 @@ const VideoPlaybackSurface = ({
   );
 };
 
-const VideoPreview = memo(({ styles, url, resolvedUrl, posterUri, onError }: VideoPreviewProps) => {
+const VideoPreview = memo(({ styles, url, resolvedUrl, posterUri, recyclingKey, onError }: VideoPreviewProps) => {
   return (
     <View style={[styles.messageVideo, styles.videoPreviewWrap]}>
       {posterUri ? (
         <ExpoImage
           source={{ uri: posterUri }}
+          recyclingKey={recyclingKey}
           style={StyleSheet.absoluteFill}
           contentFit="cover"
           cachePolicy="memory-disk"

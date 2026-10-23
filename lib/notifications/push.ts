@@ -1,6 +1,9 @@
+import * as Application from 'expo-application';
 import Constants from 'expo-constants';
+import * as Crypto from 'expo-crypto';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
+import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 import { ensureFreshSession, supabase } from '@/lib/supabase';
 import { captureMessage } from '@/lib/telemetry/sentry';
@@ -18,6 +21,37 @@ Notifications.setNotificationHandler({
 const LOG_THROTTLE_MS = 60_000;
 const PUSH_TOKEN_RETRY_DELAYS_MS = [0, 900, 2_400] as const;
 const logLastAtByKey = new Map<string, number>();
+const INSTALLATION_ID_PREFIX = 'betweener.push.installation-id';
+
+type AppIdentity = {
+  variant: 'staging' | 'production'
+  bundleIdentifier: string
+}
+
+type PushRegistrationError = {
+  status?: number | null
+  code?: string | null
+  message?: string | null
+}
+
+type PushRegistrationResult = {
+  error: PushRegistrationError | null
+}
+
+const upsertPushTokenV2 = supabase.rpc as unknown as (
+  functionName: 'upsert_push_token_v2',
+  args: {
+    p_user_id: string
+    p_token: string
+    p_platform: string
+    p_device_id: string
+    p_app_version: string | null
+    p_app_environment: string
+    p_application_id: string
+    p_expo_project_id: string
+    p_installation_id: string
+  },
+) => PromiseLike<PushRegistrationResult>;
 
 const wait = (delayMs: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, delayMs));
@@ -68,6 +102,50 @@ const getProjectId = () => {
     Constants.expoConfig?.extra?.projectId ||
     undefined
   );
+};
+
+const getPushAppIdentity = (): AppIdentity | null => {
+  const configured = Constants.expoConfig?.extra?.appIdentity;
+  const variant = String(configured?.variant || '').trim().toLowerCase();
+  const bundleIdentifier = String(configured?.bundleIdentifier || '').trim();
+  const nativeApplicationId = String(Application.applicationId || '').trim();
+  if (
+    (variant !== 'staging' && variant !== 'production')
+    || !bundleIdentifier
+    || !nativeApplicationId
+    || bundleIdentifier !== nativeApplicationId
+  ) {
+    return null;
+  }
+  const expectedApplicationId = variant === 'staging'
+    ? 'com.aduboffour.betweener.staging'
+    : 'com.aduboffour.betweener';
+  if (nativeApplicationId !== expectedApplicationId) return null;
+  const expectedSupabaseProjectRef = variant === 'staging'
+    ? 'xsgzxadwuxuziubglvps'
+    : 'jbyblhithbqwojhwlenv';
+  try {
+    const supabaseHost = new URL(
+      process.env.EXPO_PUBLIC_SUPABASE_URL || '',
+    ).hostname.toLowerCase();
+    if (supabaseHost !== `${expectedSupabaseProjectRef}.supabase.co`) return null;
+  } catch {
+    return null;
+  }
+  return { variant, bundleIdentifier };
+};
+
+const getInstallationId = async (applicationId: string) => {
+  const key = `${INSTALLATION_ID_PREFIX}.${applicationId}`;
+  const existing = String(await SecureStore.getItemAsync(key) || '').trim();
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(existing)) {
+    return existing;
+  }
+  const installationId = Crypto.randomUUID();
+  await SecureStore.setItemAsync(key, installationId, {
+    keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+  });
+  return installationId;
 };
 
 const ensureAndroidChannel = async () => {
@@ -248,12 +326,15 @@ export const registerPushToken = async (userId: string) => {
   }
 
   const projectId = getProjectId();
-  if (!projectId) {
-    console.log('[push] missing projectId');
-    logOnce('missing_project_id', {
+  const appIdentity = getPushAppIdentity();
+  if (!projectId || !appIdentity) {
+    console.log('[push] missing or ambiguous application provenance');
+    logOnce('missing_application_provenance', {
       hasEasProjectId: Boolean(Constants.easConfig?.projectId),
       hasExpoExtraEasProjectId: Boolean(Constants.expoConfig?.extra?.eas?.projectId),
       hasExpoExtraProjectId: Boolean(Constants.expoConfig?.extra?.projectId),
+      hasNativeApplicationId: Boolean(Application.applicationId),
+      hasConfiguredAppIdentity: Boolean(Constants.expoConfig?.extra?.appIdentity),
     });
     return;
   }
@@ -269,7 +350,15 @@ export const registerPushToken = async (userId: string) => {
   }
   if (!token) return;
 
-  const deviceId = (Constants as any).deviceId || Device.osBuildId || null;
+  let installationId: string;
+  try {
+    installationId = await getInstallationId(appIdentity.bundleIdentifier);
+  } catch (error) {
+    logOnce('installation_id_unavailable', {
+      message: String((error as any)?.message || error || 'installation_id_unavailable'),
+    });
+    return;
+  }
   const appVersion = Constants.nativeAppVersion || null;
 
   // Ensure the auth token is warm before calling an authenticated-only RPC.
@@ -286,13 +375,25 @@ export const registerPushToken = async (userId: string) => {
     // best-effort only
   }
 
-  const { error } = await supabase.rpc('upsert_push_token', {
-    p_user_id: userId,
-    p_token: token,
-    p_platform: Platform.OS,
-    p_device_id: deviceId,
-    p_app_version: appVersion,
-  });
+  const { error } = appIdentity.variant === 'staging'
+    ? await upsertPushTokenV2('upsert_push_token_v2', {
+      p_user_id: userId,
+      p_token: token,
+      p_platform: Platform.OS,
+      p_device_id: installationId,
+      p_app_version: appVersion,
+      p_app_environment: appIdentity.variant,
+      p_application_id: appIdentity.bundleIdentifier,
+      p_expo_project_id: projectId,
+      p_installation_id: installationId,
+    })
+    : await supabase.rpc('upsert_push_token', {
+      p_user_id: userId,
+      p_token: token,
+      p_platform: Platform.OS,
+      p_device_id: installationId,
+      p_app_version: appVersion,
+    });
 
   if (error) {
     console.log('[push] token upsert error', error);
@@ -301,7 +402,7 @@ export const registerPushToken = async (userId: string) => {
       code: (error as any)?.code ?? null,
       message: String((error as any)?.message || error),
       platform: Platform.OS,
-      hasDeviceId: Boolean(deviceId),
+      hasInstallationId: Boolean(installationId),
       hasAppVersion: Boolean(appVersion),
     });
   } else {

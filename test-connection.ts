@@ -1,4 +1,5 @@
 import { supabase } from './lib/supabase';
+import { isSupabasePublicApiKey } from './lib/supabase-public-headers';
 
 export async function testSupabaseConnection() {
   try {
@@ -45,6 +46,6 @@ export function testEnvironmentVariables() {
     hasUrl: !!supabaseUrl,
     hasKey: !!supabaseKey,
     urlValid: supabaseUrl?.startsWith('https://'),
-    keyValid: supabaseKey?.startsWith('eyJ')
+    keyValid: isSupabasePublicApiKey(supabaseKey)
   };
 }

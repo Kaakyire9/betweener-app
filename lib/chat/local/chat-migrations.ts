@@ -158,6 +158,13 @@ async function runV8Migration(db: SQLiteDatabase): Promise<void> {
   });
 }
 
+async function runV9Migration(db: SQLiteDatabase): Promise<void> {
+  await db.withTransactionAsync(async () => {
+    await addColumnIfMissing(db, 'chat_threads', 'last_message_media_kind', 'text null');
+    await setChatSchemaVersion(db, 9);
+  });
+}
+
 export async function runChatMigrations(db: SQLiteDatabase): Promise<void> {
   try {
     const currentVersion = await getChatSchemaVersion(db);
@@ -191,6 +198,9 @@ export async function runChatMigrations(db: SQLiteDatabase): Promise<void> {
     }
     if (currentVersion < 8) {
       await runV8Migration(db);
+    }
+    if (currentVersion < 9) {
+      await runV9Migration(db);
     }
 
     captureMessage('chat_db_migration_succeeded', {

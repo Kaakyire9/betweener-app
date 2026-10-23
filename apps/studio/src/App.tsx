@@ -4,15 +4,26 @@ import { StudioSignIn } from './auth/StudioSignIn.tsx';
 import { useStudioAuth } from './auth/use-studio-auth.ts';
 import { useStudioSessions } from './hooks/use-studio-sessions.ts';
 import { studioControllerInstanceId } from './hooks/use-controller-lease.ts';
+import { StudioMfaGate } from './security/StudioMfaGate.tsx';
 import { StudioSessionPicker } from './sessions/StudioSessionPicker.tsx';
 
 const StudioWorkspace = lazy(async () => import('./workspace/StudioWorkspace.tsx').then((module) => ({
   default: module.StudioWorkspace,
 })));
+const StudioPreflightHarness = import.meta.env.DEV
+  ? lazy(async () => import('./e2e/StudioPreflightHarness.tsx').then((module) => ({
+    default: module.StudioPreflightHarness,
+  })))
+  : null;
+const AdaptiveStageM2PreviewHarness = import.meta.env.DEV
+  ? lazy(async () => import('./e2e/AdaptiveStageM2PreviewHarness.tsx').then((module) => ({
+    default: module.AdaptiveStageM2PreviewHarness,
+  })))
+  : null;
 
 const sessionFromLocation = () => new URL(window.location.href).searchParams.get('session');
 
-export default function App() {
+function StudioRuntime() {
   const auth = useStudioAuth();
   const sessions = useStudioSessions();
   const [sessionId, setSessionId] = useState<string | null>(sessionFromLocation);
@@ -35,19 +46,35 @@ export default function App() {
   if (auth.loading) {
     return <main className="workspace-loading"><div className="loading-panel">Opening Studio...</div></main>;
   }
-  if (!auth.session) return <StudioSignIn onSignIn={auth.signIn} />;
-  if (sessionId) {
-    return <Suspense fallback={<main className="workspace-loading"><div className="loading-panel">Preparing production desk...</div></main>}>
-      <StudioWorkspace sessionId={sessionId} controllerInstanceId={controllerInstanceId}
-        onBack={() => navigateToSession(null)} />
-    </Suspense>;
+  if (!auth.session) {
+    return <StudioSignIn onSignIn={auth.signIn} onGoogleSignIn={auth.signInWithGoogle}
+      onMagicLinkSignIn={auth.sendMagicLink} />;
   }
-  return (
-    <>
-      <button className="sign-out-button" onClick={() => void auth.signOut()}>Sign out</button>
-      <StudioSessionPicker sessions={sessions.sessions} loading={sessions.loading}
-        error={sessions.error} onOpen={(id) => navigateToSession(id)}
-        onRefresh={() => void sessions.refresh()} />
-    </>
-  );
+  return <StudioMfaGate onSignOut={auth.signOut}>
+    {sessionId ? (
+      <Suspense fallback={<main className="workspace-loading"><div className="loading-panel">Preparing production desk...</div></main>}>
+        <StudioWorkspace sessionId={sessionId} controllerInstanceId={controllerInstanceId}
+          onBack={() => navigateToSession(null)} />
+      </Suspense>
+    ) : (
+      <>
+        <button className="sign-out-button" onClick={() => void auth.signOut()}>Sign out</button>
+        <StudioSessionPicker sessions={sessions.sessions} loading={sessions.loading}
+          error={sessions.error} onOpen={(id) => navigateToSession(id)}
+          onRefresh={() => void sessions.refresh()} />
+      </>
+    )}
+  </StudioMfaGate>;
+}
+
+export default function App() {
+  const e2eHarness = import.meta.env.DEV
+    ? new URL(window.location.href).searchParams.get('e2eHarness')
+    : null;
+  if (e2eHarness === 'm2-preview' && AdaptiveStageM2PreviewHarness) {
+    return <Suspense fallback={null}><AdaptiveStageM2PreviewHarness /></Suspense>;
+  }
+  return e2eHarness === 'preflight' && StudioPreflightHarness
+    ? <Suspense fallback={null}><StudioPreflightHarness /></Suspense>
+    : <StudioRuntime />;
 }

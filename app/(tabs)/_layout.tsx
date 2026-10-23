@@ -9,6 +9,7 @@ import { useResolvedProfileId } from '@/hooks/useResolvedProfileId';
 import { useAuth } from '@/lib/auth-context';
 import { ChatRepository } from '@/lib/chat/local/chat-db';
 import { useCircleInvitationCount } from '@/lib/circles/use-circle-invitation-count';
+import { useLiveSessions } from '@/features/live/hooks/use-live-sessions';
 import {
   getInsightsInboxActivityItems,
   getMeInboxActivityItems,
@@ -34,6 +35,9 @@ export default function TabLayout() {
   });
   const { items: inboxItems, freshness: inboxFreshness } = useInbox(user?.id ?? null);
   const { count: circleInvitationCount } = useCircleInvitationCount(profileId);
+  const { sessions: liveSessions } = useLiveSessions();
+  const activeLiveCount = liveSessions.filter((session) =>
+    session.status === 'live' || session.status === 'ending').length;
 
   const [unreadChats, setUnreadChats] = useState(0);
 
@@ -127,6 +131,7 @@ export default function TabLayout() {
               chat: unreadChats,
               profile: trustedMeBadgeCount,
             }}
+            liveIndicators={{ circles: activeLiveCount > 0 }}
             isDark={isDark}
             responsive={responsive}
             theme={theme}

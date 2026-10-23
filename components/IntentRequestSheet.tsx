@@ -135,7 +135,12 @@ export default function IntentRequestSheet({
           `and(actor_id.eq.${myProfileId},recipient_id.eq.${recipientId}),and(actor_id.eq.${recipientId},recipient_id.eq.${myProfileId})`,
         )
         .limit(1);
-      if (pendingErr) throw pendingErr;
+      // This read is only a UX optimization. The creation RPC is the
+      // authoritative pair-level guard and must still run when a deployment's
+      // RLS policy does not expose intent_requests directly to the client.
+      if (pendingErr) {
+        console.warn('[intent] pending request preflight unavailable; using server guard', pendingErr);
+      }
       if (Array.isArray(pendingBetween) && pendingBetween.length > 0) {
         const existing = pendingBetween[0] as any;
         const incoming = String(existing?.actor_id) === String(recipientId);

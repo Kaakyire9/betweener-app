@@ -10,6 +10,10 @@ const supabaseSource = readFileSync(
   new URL('../lib/supabase.ts', import.meta.url),
   'utf8',
 );
+const authStorageSource = readFileSync(
+  new URL('../lib/auth/durable-auth-storage.ts', import.meta.url),
+  'utf8',
+);
 const liveSessionsHook = readFileSync(
   new URL('../features/live/hooks/use-live-sessions.ts', import.meta.url),
   'utf8',
@@ -38,6 +42,10 @@ const phoneVerification = readFileSync(
   new URL('../lib/phone-verification.ts', import.meta.url),
   'utf8',
 );
+const signOutSession = readFileSync(
+  new URL('../lib/auth/sign-out-session.ts', import.meta.url),
+  'utf8',
+);
 
 test('persisted profile fallback never authorizes protected writes', () => {
   assert.match(
@@ -45,22 +53,21 @@ test('persisted profile fallback never authorizes protected writes', () => {
     /canPerformAuthenticatedWrites:\s*authStatus === 'authenticated' && !!session\?\.user/,
   );
   assert.match(authContext, /retrySessionRecovery: \(reason = 'manual_retry'\)/);
-  assert.match(authContext, /maxRefreshAttempts: 2/);
+  assert.doesNotMatch(authContext, /maxRefreshAttempts/);
   assert.doesNotMatch(authContext, /RESUME_REFRESH_TIMEOUT_MS/);
 
-  assert.match(
-    supabaseSource,
-    /AUTH_REFRESH_GUARD_TIMEOUT_MS = SUPABASE_FETCH_TIMEOUT_MS \+ 2_000/,
-  );
+  assert.match(supabaseSource, /fetch: authTransport\.fetch/);
   assert.match(supabaseSource, /const refreshAuthSession = async/);
+  assert.doesNotMatch(supabaseSource, /AUTH_REFRESH_GUARD_TIMEOUT_MS/);
+  assert.doesNotMatch(
+    supabaseSource.match(/const refreshAuthSession = async[\s\S]*?\n\};/)?.[0] ?? '',
+    /await Promise\.race|withTimeout/,
+  );
   assert.doesNotMatch(supabaseSource, /processLock|lockAcquireTimeout/);
   assert.match(authContext, /allowWithoutSnapshot: true,[\s\S]*force: true/);
 });
 
 test('rotated refresh credentials have one durable storage authority', () => {
-  const storageBlock = supabaseSource.match(
-    /const durableAuthStorage = \{([\s\S]*?)\n\};/,
-  )?.[0] ?? '';
   const dataTokenBlock = supabaseSource.match(
     /const getDataAccessToken = async[\s\S]*?\n\};/,
   )?.[0] ?? '';
@@ -68,10 +75,10 @@ test('rotated refresh credentials have one durable storage authority', () => {
     /type PersistedAuthSnapshot = \{([\s\S]*?)\n\};/,
   )?.[0] ?? '';
 
-  assert.match(storageBlock, /await AsyncStorage\.getItem\(key\)/);
-  assert.match(storageBlock, /await AsyncStorage\.setItem\(key, value\)/);
-  assert.match(storageBlock, /await AsyncStorage\.removeItem\(key\)/);
-  assert.doesNotMatch(storageBlock, /Promise\.race|setTimeout|return null|best-effort only/);
+  assert.match(supabaseSource, /createDurableAuthStorage\(AsyncStorage/);
+  assert.match(authStorageSource, /return await task\(\)/);
+  assert.match(authStorageSource, /throw new AuthStorageError\(operation, error\)/);
+  assert.doesNotMatch(authStorageSource, /Promise\.race|setTimeout|return null|best-effort only/);
   assert.doesNotMatch(supabaseSource, /AUTH_STORAGE_TIMEOUT_MS|storageWithTimeout/);
   assert.match(dataTokenBlock, /await supabaseAuth\.auth\.getSession\(\)/);
   assert.match(dataTokenBlock, /catch \(error\)[\s\S]*throw error/);
@@ -102,12 +109,13 @@ test('session recovery is single-flight and missing credentials require reauthen
   );
   assert.match(
     supabaseSource,
-    /if \(!session && !error\)[\s\S]*status: 'failed_unrecoverable'[\s\S]*errorMessage: 'session_missing'/,
+    /if \(!session\)[\s\S]*failedTerminal\('absent_credentials', 0\)/,
   );
   assert.doesNotMatch(supabaseSource, /fallbackSession|sessionForRefresh/);
-  assert.match(authContext, /supabase\.auth\.signOut\(\{ scope: 'local' \}\)/);
+  assert.match(authContext, /signOutSupabaseSession\(\{[\s\S]*scope: 'local'/);
+  assert.match(signOutSession, /supabase\.auth\.signOut\(\{ scope: options\.scope \}\)/);
   assert.match(authContext, /finally \{[\s\S]*applySignedOutState\(\)/);
-  assert.match(packageManifest, /"@supabase\/supabase-js": "2\.116\.0"/);
+  assert.match(packageManifest, /"@supabase\/supabase-js": "\^2\.118\.0"/);
 });
 
 test('Live catalogue waits for real auth and reloads after auth recovery', () => {

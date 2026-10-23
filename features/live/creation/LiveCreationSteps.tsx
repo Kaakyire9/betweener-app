@@ -4,6 +4,7 @@ import {
   Check,
   Film,
   ImagePlus,
+  Globe2,
   ShieldCheck,
   Sparkles,
   TimerReset,
@@ -26,10 +27,12 @@ import type {
   LiveCreationFormat,
   LiveCreationStep,
 } from './live-creation-draft.ts';
+import { getLiveAudienceSummary } from './live-audience-policy.ts';
 
 const STEP_LABELS: Record<LiveCreationStep, string> = {
   moment: 'Moment',
   story: 'Story',
+  audience: 'Reach',
   room: 'Room',
   review: 'Review',
 };
@@ -42,7 +45,7 @@ const formatDate = (value: string) => new Intl.DateTimeFormat(undefined, {
 const formatLabel = (format: LiveCreationFormat) => format === 'quick_connect'
   ? 'Quick Connect'
   : format === 'circle_live'
-    ? 'Circle Live'
+    ? 'Gathering with Live'
     : 'Hosted Match Night';
 
 export function LiveCreationProgress({ current }: { current: LiveCreationStep }) {
@@ -117,8 +120,8 @@ export function LiveCreationMomentStep({
         <FormatCard
           active
           icon={<UsersRound size={21} color={visual.accentContrast} />}
-          title="Circle Live"
-          description={`A private gathering for ${draft.circleName || 'your Circle'}, with quorum-aware confirmation.`}
+          title="Gathering with Live"
+          description={`A Circle Gathering with a linked Live room for ${draft.circleName || 'your Circle'}, with quorum-aware confirmation.`}
           onPress={() => onFormatChange('circle_live')}
         />
       ) : (
@@ -337,10 +340,12 @@ export function LiveCreationReviewStep({
   draft,
   posterUri,
   isEditing,
+  preserveExistingAudience,
 }: {
   draft: LiveCreationDraft;
   posterUri: string | null;
   isEditing: boolean;
+  preserveExistingAudience?: boolean;
 }) {
   const visual = useLiveVisualTheme();
   const styles = useMemo(() => createStyles(visual), [visual]);
@@ -348,9 +353,10 @@ export function LiveCreationReviewStep({
     <View style={styles.step}>
       <Text style={styles.kicker}>GUEST VIEW</Text>
       <Text style={styles.stepTitle}>{isEditing ? 'Review the new version.' : 'One last look before it goes out.'}</Text>
-      <Text style={styles.stepCopy}>This is the promise guests will see in Live and, for Circle Live, in the linked Gathering.</Text>
+      <Text style={styles.stepCopy}>This is the promise guests will see in Live and, for a Gathering with Live, on the linked Gathering.</Text>
       <LiveCreationPreviewCard draft={draft} posterUri={posterUri} />
       <View style={styles.reviewFacts}>
+        <View style={styles.reviewFact}><Globe2 size={16} color={visual.teal} /><Text style={styles.reviewFactText}>{draft.circleId ? `${draft.circleReachLabel || 'Circle Reach'} · inherited from ${draft.circleName || 'this Circle'}` : preserveExistingAudience ? 'Existing audience policy remains unchanged' : getLiveAudienceSummary(draft)}</Text></View>
         <View style={styles.reviewFact}><Check size={16} color={visual.teal} /><Text style={styles.reviewFactText}>Private backstage and device check included</Text></View>
         <View style={styles.reviewFact}><Check size={16} color={visual.teal} /><Text style={styles.reviewFactText}>Guests are notified if you reschedule or cancel</Text></View>
         <View style={styles.reviewFact}><Check size={16} color={visual.teal} /><Text style={styles.reviewFactText}>Published Lives retain a safety record; completed or cancelled rooms can be archived</Text></View>

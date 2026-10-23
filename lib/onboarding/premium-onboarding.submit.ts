@@ -115,10 +115,18 @@ export function buildPremiumOnboardingProfileData({
     occupation: resolvedOccupation,
     region: region || null,
     tribe: resolvedTribe,
-    roots: originCountryIsGhana && normalizedRoots.length > 0 ? normalizedRoots : null,
+    roots:
+      originCountryIsGhana && normalizedRoots.length > 0
+        ? normalizedRoots
+        : resolvedTribe
+          ? [resolvedTribe]
+          : null,
     roots_note: originCountryIsGhana ? normalizeOtherText(form.rootsNote) || null : null,
-    roots_visibility: originCountryIsGhana ? form.rootsVisibility : "VISIBLE",
-    religion: normalizeReligionForProfile(form.religion) as any,
+    roots_visibility: form.rootsVisibility,
+    religion:
+      !form.religion || form.religion === "Prefer not to say"
+        ? null
+        : normalizeReligionForProfile(form.religion) as any,
     looking_for: form.lookingFor,
     avatar_url: imageUrl,
     phone_number: phoneNumber,
@@ -146,7 +154,7 @@ export function buildPremiumOnboardingProfileData({
         : currentCountryName === "Ghana"
           ? "residence_backfill"
           : "unknown",
-    years_in_diaspora: 0,
+    years_in_diaspora: null,
     profile_completed: true,
     identity_status: "active",
     onboarding_completed_at: completedAt,

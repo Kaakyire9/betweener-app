@@ -24,10 +24,12 @@ export function StudioDjSource({
   snapshot,
   controllerInstanceId,
   onChanged,
+  authorizePublish,
 }: {
   snapshot: StudioOperationalSnapshot;
   controllerInstanceId: string;
   onChanged: () => void;
+  authorizePublish: (label: string, operation: () => Promise<void>) => Promise<void>;
 }) {
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState('');
@@ -231,7 +233,8 @@ export function StudioDjSource({
       </label>
       <div className="button-row">
         <button className="button button-secondary" disabled={busy}
-          onClick={() => void (binding ? stop() : start())}>
+          onClick={() => void (binding ? stop() : authorizePublish('Start DJ input', start)
+            .catch((failure) => setError(errorMessage(failure, 'Step-up failed.'))))}>
           {busy ? 'Working…' : binding ? 'Stop DJ input' : 'Start DJ input'}
         </button>
         {binding ? <button className={`button ${muted ? 'button-danger' : 'button-quiet'}`}

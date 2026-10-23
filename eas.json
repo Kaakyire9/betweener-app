@@ -9,6 +9,7 @@
       "channel": "development",
       "developmentClient": true,
       "distribution": "internal",
+      "environment": "preview",
       "ios": {
         "image": "latest",
         "cache": {
@@ -16,6 +17,7 @@
         }
       },
       "env": {
+        "APP_VARIANT": "staging",
         "EXPO_PUBLIC_ENVIRONMENT": "development",
         "EXPO_USE_POD_REPO_UPDATE": "1",
         "SENTRY_DISABLE_AUTO_UPLOAD": "true",
@@ -26,7 +28,9 @@
       "node": "24.18.0",
       "channel": "preview",
       "distribution": "internal",
+      "environment": "preview",
       "env": {
+        "APP_VARIANT": "staging",
         "EXPO_PUBLIC_ENVIRONMENT": "preview",
         "EXPO_PUBLIC_ENABLE_INTERNAL_TOOLS": "false",
         "EXPO_USE_POD_REPO_UPDATE": "1"
@@ -38,10 +42,31 @@
         }
       }
     },
+    "staging": {
+      "node": "24.18.0",
+      "channel": "staging",
+      "distribution": "internal",
+      "environment": "preview",
+      "env": {
+        "APP_VARIANT": "staging",
+        "EXPO_PUBLIC_ENVIRONMENT": "staging",
+        "EXPO_PUBLIC_ENABLE_INTERNAL_TOOLS": "false",
+        "EXPO_USE_POD_REPO_UPDATE": "1",
+        "SENTRY_DISABLE_AUTO_UPLOAD": "true",
+        "SENTRY_DISABLE_NATIVE_DEBUG_UPLOAD": "true"
+      },
+      "ios": {
+        "image": "latest",
+        "cache": {
+          "disabled": true
+        }
+      }
+    },
     "playInternal": {
       "node": "24.18.0",
-      "channel": "preview",
+      "channel": "staging",
       "distribution": "store",
+      "environment": "preview",
       "autoIncrement": true,
       "buildArtifactPaths": [
         "android/app/build/outputs/mapping/release/mapping.txt"
@@ -50,19 +75,53 @@
         "gradleCommand": ":app:bundleRelease -Pandroid.enableMinifyInReleaseBuilds=true -Pandroid.enableShrinkResourcesInReleaseBuilds=true"
       },
       "env": {
-        "EXPO_PUBLIC_ENVIRONMENT": "preview",
+        "APP_VARIANT": "staging",
+        "EXPO_PUBLIC_ENVIRONMENT": "staging",
         "EXPO_PUBLIC_ENABLE_INTERNAL_TOOLS": "false",
         "EXPO_USE_POD_REPO_UPDATE": "1"
       }
     },
-    "playVerification": {
+    "playStaging": {
       "node": "24.18.0",
       "channel": "staging",
+      "distribution": "store",
+      "environment": "preview",
+      "autoIncrement": true,
+      "android": {
+        "buildType": "app-bundle"
+      },
+      "env": {
+        "APP_VARIANT": "staging",
+        "EXPO_PUBLIC_ENABLE_INTERNAL_TOOLS": "false",
+        "EXPO_USE_POD_REPO_UPDATE": "1"
+      }
+    },
+    "testflightStaging": {
+      "node": "24.18.0",
+      "channel": "staging",
+      "distribution": "store",
+      "environment": "preview",
+      "autoIncrement": true,
+      "env": {
+        "APP_VARIANT": "staging",
+        "EXPO_PUBLIC_ENVIRONMENT": "staging",
+        "EXPO_PUBLIC_ENABLE_INTERNAL_TOOLS": "false",
+        "EXPO_USE_POD_REPO_UPDATE": "1"
+      },
+      "ios": {
+        "image": "latest"
+      }
+    },
+    "playVerification": {
+      "node": "24.18.0",
+      "channel": "production-verification",
       "distribution": "internal",
+      "environment": "production",
       "android": {
         "gradleCommand": ":app:assembleRelease -PreactNativeArchitectures=arm64-v8a -Pandroid.enableMinifyInReleaseBuilds=true -Pandroid.enableShrinkResourcesInReleaseBuilds=true"
       },
       "env": {
+        "APP_VARIANT": "production",
         "EXPO_PUBLIC_ENVIRONMENT": "production",
         "EXPO_PUBLIC_ENABLE_INTERNAL_TOOLS": "false",
         "GOOGLE_PLAY_PACKAGE_VERIFICATION_TOKEN": "CSMCKSCOJWUC2AAAAAAAAAAAAA",
@@ -72,14 +131,17 @@
     "production": {
       "node": "24.18.0",
       "channel": "production",
+      "environment": "production",
       "autoIncrement": true,
       "buildArtifactPaths": [
-        "android/app/build/outputs/mapping/release/mapping.txt"
+        "android/app/build/outputs/mapping/release/mapping.txt",
+        "build-artifacts/android-release-symbols/release-mapping-manifest.json"
       ],
       "android": {
         "gradleCommand": ":app:bundleRelease -Pandroid.enableMinifyInReleaseBuilds=true -Pandroid.enableShrinkResourcesInReleaseBuilds=true"
       },
       "env": {
+        "APP_VARIANT": "production",
         "EXPO_PUBLIC_ENVIRONMENT": "production",
         "EXPO_PUBLIC_ENABLE_INTERNAL_TOOLS": "false",
         "EXPO_USE_POD_REPO_UPDATE": "1"
@@ -90,7 +152,17 @@
     }
   },
   "submit": {
-    "playInternal": {},
+    "playInternal": {
+      "android": {
+        "track": "internal",
+        "releaseStatus": "draft"
+      }
+    },
+    "testflightStaging": {
+      "ios": {
+        "ascAppId": "6816619525"
+      }
+    },
     "production": {}
   }
 }

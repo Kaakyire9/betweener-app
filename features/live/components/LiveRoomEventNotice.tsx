@@ -14,6 +14,7 @@ type Props = {
   onAction: () => void;
   onDismiss: () => void;
   title: string;
+  presentation?: 'inline' | 'overlay';
 };
 
 /** Actionable room event that never owns or mutates the durable event itself. */
@@ -24,6 +25,7 @@ export const LiveRoomEventNotice = memo(function LiveRoomEventNotice({
   onAction,
   onDismiss,
   title,
+  presentation = 'inline',
 }: Props) {
   const visual = useLiveVisualTheme();
   const styles = useMemo(() => createStyles(visual), [visual]);
@@ -31,8 +33,14 @@ export const LiveRoomEventNotice = memo(function LiveRoomEventNotice({
     ? UserRoundPlus
     : kind === 'audience_pulse' ? BarChart3 : Sparkles;
   return (
-    <LiveGlassSurface intensity={60} style={styles.surface}>
-      <View accessibilityLiveRegion="assertive" style={styles.notice}>
+    <LiveGlassSurface
+      intensity={60}
+      style={[styles.surface, presentation === 'overlay' && styles.surfaceOverlay]}
+    >
+      <View
+        accessibilityLiveRegion="assertive"
+        style={[styles.notice, presentation === 'overlay' && styles.noticeOverlay]}
+      >
         <View style={styles.iconShell}>
           <Icon color={visual.color.purple} size={18} />
         </View>
@@ -80,6 +88,14 @@ const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
     borderColor: visual.color.borderStrong,
     backgroundColor: visual.color.surfaceTranslucent,
   },
+  surfaceOverlay: {
+    marginHorizontal: 0,
+    marginTop: 0,
+    shadowColor: '#000000',
+    shadowOpacity: 0.28,
+    shadowRadius: 18,
+    elevation: 10,
+  },
   notice: {
     minHeight: 60,
     paddingLeft: 9,
@@ -89,6 +105,7 @@ const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
     alignItems: 'center',
     gap: 9,
   },
+  noticeOverlay: { minHeight: 54 },
   iconShell: {
     width: 34,
     height: 34,

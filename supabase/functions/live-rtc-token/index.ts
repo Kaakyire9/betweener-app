@@ -2,6 +2,7 @@
 import { StreamClient } from '@stream-io/node-sdk';
 import { createClient } from '@supabase/supabase-js';
 import { corsHeaders } from '../_shared/cors.ts';
+import { getSupabasePublicApiKey } from '../_shared/supabase-public-key.ts';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PUBLIC_TOKEN_TTL_SECONDS = 10 * 60;
@@ -99,7 +100,7 @@ Deno.serve(async (request) => {
     if (!sessionId) return json({ error: 'invalid_session_id' }, 400);
 
     const supabaseUrl = requiredEnv('SUPABASE_URL');
-    const anonKey = requiredEnv('SUPABASE_ANON_KEY');
+    const anonKey = getSupabasePublicApiKey();
     const streamApiKey = requiredEnv('STREAM_VIDEO_API_KEY');
     const streamSecret = requiredEnv('STREAM_VIDEO_API_SECRET');
     const authClient = createClient(supabaseUrl, anonKey, {

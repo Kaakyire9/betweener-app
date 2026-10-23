@@ -1,23 +1,28 @@
 import { Colors } from '@/constants/theme';
+import { CircleComposer } from '@/features/studio/circles/CircleComposer';
+import { GatheringComposer } from '@/features/studio/gatherings/GatheringComposer';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useResolvedProfileId } from '@/hooks/useResolvedProfileId';
 import { useAuth } from '@/lib/auth-context';
+import { useAdminAccess } from '@/lib/admin/admin-access';
 import { canCreateCircle, canCreateGathering, type CircleAccessEntitlements } from '@/lib/circles/circle-access';
+import {
+  resolveLegacyCircleAudience,
+  type CircleReachScope,
+  type CircleAccessPolicy,
+  type CircleLiveDiscoveryPolicy,
+  type CircleMembershipEligibilityPolicy,
+} from '@/lib/circles/circle-audience';
 import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { router } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { router, useLocalSearchParams } from 'expo-router';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Keyboard,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -29,10 +34,21 @@ type CreatorCircle = {
   description?: string | null;
   short_description?: string | null;
   city?: string | null;
+  region?: string | null;
   country_name?: string | null;
+  country_code?: string | null;
   status?: string | null;
   rejected_reason?: string | null;
   visibility_scope?: string | null;
+  visibility?: string | null;
+  requires_join_approval?: boolean | null;
+  reach_scope?: string | null;
+  reach_scopes?: string[] | null;
+  access_policy?: string | null;
+  diaspora_origin_country_codes?: string[] | null;
+  diaspora_destination_country_codes?: string[] | null;
+  membership_eligibility_policy?: string | null;
+  live_discovery_policy?: string | null;
   circle_type?: string | null;
   created_at?: string | null;
 };
@@ -51,21 +67,7 @@ type CreatorGathering = {
   created_at?: string | null;
 };
 
-type CreatorGist = {
-  id: string;
-  circle_id?: string | null;
-  title: string;
-  short_body?: string | null;
-  body?: string | null;
-  perspective?: string | null;
-  status?: string | null;
-  published_at?: string | null;
-  updated_at?: string | null;
-  created_at?: string | null;
-};
-
 const db = supabase as any;
-const GIST_PERSPECTIVES = ['general', 'christian', 'muslim', 'culture', 'safety', 'communication'] as const;
 
 const compactDate = (value?: string | null) => {
   if (!value) return 'Soon';
@@ -97,33 +99,41 @@ const creatorStatusLabel = (status?: string | null) => {
   }
 };
 
-export default function CircleCreatorManageScreen() {
+export default function CircleGatheringStudioScreen() {
   const { profile, user } = useAuth();
+  const createIntent = useLocalSearchParams<{ create?: string; circleId?: string }>();
   const { profileId: currentProfileId } = useResolvedProfileId(user?.id ?? null, profile?.id ?? null);
+  const adminAccess = useAdminAccess();
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = (colorScheme ?? 'light') === 'dark';
   const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
   const [creatorCircles, setCreatorCircles] = useState<CreatorCircle[]>([]);
   const [creatorGatherings, setCreatorGatherings] = useState<CreatorGathering[]>([]);
-  const [creatorGists, setCreatorGists] = useState<CreatorGist[]>([]);
   const [premiumState, setPremiumState] = useState<CircleAccessEntitlements | null>(null);
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [entitlementsLoaded, setEntitlementsLoaded] = useState(false);
+  const [creatorDataLoaded, setCreatorDataLoaded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [gatheringOpen, setGatheringOpen] = useState(false);
-  const [gistEditorOpen, setGistEditorOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [creatingGathering, setCreatingGathering] = useState(false);
-  const [savingGist, setSavingGist] = useState(false);
   const [editingCircleId, setEditingCircleId] = useState<string | null>(null);
   const [editingCircleStatus, setEditingCircleStatus] = useState<string | null>(null);
   const [editingGatheringId, setEditingGatheringId] = useState<string | null>(null);
-  const [editingGistId, setEditingGistId] = useState<string | null>(null);
   const [newName, setNewName] = useState('');
   const [newPurpose, setNewPurpose] = useState('');
   const [newCity, setNewCity] = useState(profile?.city ?? '');
-  const [newScope, setNewScope] = useState<'country' | 'local' | 'diaspora' | 'global' | 'invite_only'>('country');
+  const [newRegion, setNewRegion] = useState(String((profile as any)?.region ?? ''));
+  const [newReachScope, setNewReachScope] = useState<CircleReachScope>('country');
+  const [newReachScopes, setNewReachScopes] = useState<CircleReachScope[]>(['country']);
+  const [newAccessPolicy, setNewAccessPolicy] = useState<CircleAccessPolicy>('open');
+  const [newCountryCode, setNewCountryCode] = useState(String((profile as any)?.current_country_code ?? ''));
+  const [newCountryName, setNewCountryName] = useState(String((profile as any)?.current_country ?? ''));
+  const [newDiasporaOriginCountryCodes, setNewDiasporaOriginCountryCodes] = useState<string[]>([]);
+  const [newDiasporaDestinationCountryCodes, setNewDiasporaDestinationCountryCodes] = useState<string[]>([]);
+  const [newMembershipEligibilityPolicy, setNewMembershipEligibilityPolicy] = useState<CircleMembershipEligibilityPolicy>('recommend_only');
+  const [newLiveDiscoveryPolicy, setNewLiveDiscoveryPolicy] = useState<CircleLiveDiscoveryPolicy>('members_only');
   const [newGatheringTitle, setNewGatheringTitle] = useState('');
   const [newGatheringDescription, setNewGatheringDescription] = useState('');
   const [newGatheringDate, setNewGatheringDate] = useState('');
@@ -132,22 +142,21 @@ export default function CircleCreatorManageScreen() {
   const [newGatheringVenue, setNewGatheringVenue] = useState('');
   const [newGatheringType, setNewGatheringType] = useState<'physical' | 'online' | 'hybrid'>('physical');
   const [newGatheringCircleId, setNewGatheringCircleId] = useState<string | null>(null);
-  const [gistTitleDraft, setGistTitleDraft] = useState('');
-  const [gistShortBodyDraft, setGistShortBodyDraft] = useState('');
-  const [gistBodyDraft, setGistBodyDraft] = useState('');
-  const [gistPerspectiveDraft, setGistPerspectiveDraft] = useState<(typeof GIST_PERSPECTIVES)[number]>('general');
+  const createIntentHandledRef = useRef<string | null>(null);
+  const isAdmin = adminAccess.can('community');
 
   useEffect(() => {
     let cancelled = false;
-    if (!user?.id) return;
+    setEntitlementsLoaded(false);
+    if (!user?.id) {
+      setEntitlementsLoaded(true);
+      return;
+    }
     void (async () => {
-      const [{ data: premium }, { data: admin }] = await Promise.all([
-        db.rpc('rpc_get_my_premium_state'),
-        db.rpc('is_internal_admin'),
-      ]);
+      const { data: premium } = await db.rpc('rpc_get_my_premium_state');
       if (cancelled) return;
       setPremiumState(premium ?? null);
-      setIsAdmin(admin === true);
+      setEntitlementsLoaded(true);
     })();
     return () => {
       cancelled = true;
@@ -158,10 +167,10 @@ export default function CircleCreatorManageScreen() {
     if (!currentProfileId) return;
     setLoading(true);
     try {
-      const [{ data: circles }, { data: gatherings }, gistResponse] = await Promise.all([
+      const [{ data: circles }, { data: gatherings }] = await Promise.all([
         db
           .from('circles')
-          .select('id,name,description,short_description,city,country_name,status,rejected_reason,visibility_scope,circle_type,created_at')
+          .select('id,name,description,short_description,city,region,country_code,country_name,status,rejected_reason,visibility,visibility_scope,requires_join_approval,reach_scope,reach_scopes,access_policy,diaspora_origin_country_codes,diaspora_destination_country_codes,membership_eligibility_policy,live_discovery_policy,circle_type,created_at')
           .eq('created_by_profile_id', currentProfileId)
           .in('status', ['draft', 'pending_review', 'approved', 'rejected'])
           .order('created_at', { ascending: false })
@@ -173,20 +182,15 @@ export default function CircleCreatorManageScreen() {
           .in('status', ['draft', 'pending_review', 'approved', 'rejected', 'cancelled', 'completed'])
           .order('created_at', { ascending: false })
           .limit(20),
-        isAdmin
-          ? db.rpc('rpc_admin_get_relationship_gists')
-          : Promise.resolve({ data: [], error: null }),
       ]);
-
-      if (gistResponse?.error) throw gistResponse.error;
 
       setCreatorCircles((circles ?? []) as CreatorCircle[]);
       setCreatorGatherings((gatherings ?? []) as CreatorGathering[]);
-      setCreatorGists((gistResponse?.data ?? []) as CreatorGist[]);
     } catch (error) {
-      Alert.alert('Creator studio', error instanceof Error ? error.message : 'Could not load your submissions.');
+      Alert.alert('Circle & Gathering Studio', error instanceof Error ? error.message : 'Could not load your submissions.');
     } finally {
       setLoading(false);
+      setCreatorDataLoaded(true);
     }
   }, [currentProfileId, isAdmin]);
 
@@ -229,13 +233,22 @@ export default function CircleCreatorManageScreen() {
     setNewName('');
     setNewPurpose('');
     setNewCity(profile?.city ?? '');
-    setNewScope('country');
+    setNewRegion(String((profile as any)?.region ?? ''));
+    setNewReachScope('country');
+    setNewReachScopes(['country']);
+    setNewAccessPolicy('open');
+    setNewCountryCode(String((profile as any)?.current_country_code ?? ''));
+    setNewCountryName(String((profile as any)?.current_country ?? ''));
+    setNewDiasporaOriginCountryCodes([]);
+    setNewDiasporaDestinationCountryCodes([]);
+    setNewMembershipEligibilityPolicy('recommend_only');
+    setNewLiveDiscoveryPolicy('members_only');
     setEditingCircleId(null);
     setEditingCircleStatus(null);
     setCreateOpen(true);
-  }, [canSubmitCircle, profile?.city]);
+  }, [canSubmitCircle, profile]);
 
-  const openCreateGathering = useCallback(() => {
+  const openCreateGathering = useCallback((preferredCircleId?: string | null) => {
     if (!canSubmitGathering) {
       router.push('/premium-plans');
       return;
@@ -247,22 +260,42 @@ export default function CircleCreatorManageScreen() {
     setNewGatheringCity(profile?.city ?? '');
     setNewGatheringVenue('');
     setNewGatheringType('physical');
-    setNewGatheringCircleId(approvedCreatorCircles[0]?.id ?? null);
+    setNewGatheringCircleId(preferredCircleId ?? approvedCreatorCircles[0]?.id ?? null);
     setEditingGatheringId(null);
     setGatheringOpen(true);
   }, [approvedCreatorCircles, canSubmitGathering, profile?.city]);
 
+  useEffect(() => {
+    const intentKey = `${createIntent.create ?? ''}:${createIntent.circleId ?? ''}`;
+    if (createIntentHandledRef.current === intentKey || !entitlementsLoaded || adminAccess.loading || !creatorDataLoaded) return;
+    if (createIntent.create !== 'circle' && createIntent.create !== 'gathering') return;
+    createIntentHandledRef.current = intentKey;
+    if (createIntent.create === 'circle') {
+      openCreateCircle();
+      return;
+    }
+    openCreateGathering(createIntent.circleId ?? null);
+  }, [adminAccess.loading, createIntent.circleId, createIntent.create, creatorDataLoaded, entitlementsLoaded, openCreateCircle, openCreateGathering]);
+
   const prefillCircleRequest = useCallback((circle: CreatorCircle) => {
+    const audience = resolveLegacyCircleAudience(circle);
     setEditingCircleId(circle.id);
     setEditingCircleStatus(circle.status ?? null);
     setNewName(circle.name ?? '');
     setNewPurpose(circle.description ?? circle.short_description ?? '');
     setNewCity(circle.city ?? (profile?.city ?? ''));
-    setNewScope(['country', 'local', 'diaspora', 'global', 'invite_only'].includes(String(circle.visibility_scope ?? ''))
-      ? (circle.visibility_scope as 'country' | 'local' | 'diaspora' | 'global' | 'invite_only')
-      : 'country');
+    setNewRegion(circle.region ?? String((profile as any)?.region ?? ''));
+    setNewCountryCode(circle.country_code ?? String((profile as any)?.current_country_code ?? ''));
+    setNewCountryName(circle.country_name ?? String((profile as any)?.current_country ?? ''));
+    setNewReachScope(audience.reachScope);
+    setNewReachScopes(audience.reachScopes);
+    setNewAccessPolicy(audience.accessPolicy);
+    setNewDiasporaOriginCountryCodes(circle.diaspora_origin_country_codes ?? []);
+    setNewDiasporaDestinationCountryCodes(circle.diaspora_destination_country_codes ?? []);
+    setNewMembershipEligibilityPolicy(circle.membership_eligibility_policy === 'target_only' ? 'target_only' : 'recommend_only');
+    setNewLiveDiscoveryPolicy(circle.live_discovery_policy === 'discoverable_join_required' ? 'discoverable_join_required' : 'members_only');
     setCreateOpen(true);
-  }, [profile?.city]);
+  }, [profile]);
 
   const prefillGatheringRequest = useCallback((gathering: CreatorGathering) => {
     setEditingGatheringId(gathering.id);
@@ -294,36 +327,15 @@ export default function CircleCreatorManageScreen() {
     }
   }, [openCircle, prefillGatheringRequest]);
 
-  const resetGistEditor = useCallback(() => {
-    setEditingGistId(null);
-    setGistTitleDraft('');
-    setGistShortBodyDraft('');
-    setGistBodyDraft('');
-    setGistPerspectiveDraft('general');
-  }, []);
-
-  const openCreateGist = useCallback(() => {
-    resetGistEditor();
-    setGistEditorOpen(true);
-  }, [resetGistEditor]);
-
-  const openEditGist = useCallback((gist: CreatorGist) => {
-    setEditingGistId(gist.id);
-    setGistTitleDraft(gist.title ?? '');
-    setGistShortBodyDraft(gist.short_body ?? '');
-    setGistBodyDraft(gist.body ?? '');
-    setGistPerspectiveDraft(
-      GIST_PERSPECTIVES.includes(String(gist.perspective ?? '').toLowerCase() as (typeof GIST_PERSPECTIVES)[number])
-        ? (String(gist.perspective ?? '').toLowerCase() as (typeof GIST_PERSPECTIVES)[number])
-        : 'general',
-    );
-    setGistEditorOpen(true);
-  }, []);
-
   const handleSubmitCircle = useCallback(async () => {
     Keyboard.dismiss();
     const name = newName.trim();
     const purpose = newPurpose.trim();
+    const hasGlobalReach = newReachScopes.includes('global');
+    const hasCountryReach = newReachScopes.includes('country');
+    const hasLocalReach = newReachScopes.includes('local');
+    const hasLocationReach = hasCountryReach || hasLocalReach;
+    const hasDiasporaReach = newReachScopes.includes('diaspora');
     if (!name || name.length < 3) {
       Alert.alert('Circle name', 'Add a clear Circle name.');
       return;
@@ -332,27 +344,47 @@ export default function CircleCreatorManageScreen() {
       Alert.alert('Circle purpose', 'Add a short purpose so Betweener can review it.');
       return;
     }
+    if (!hasGlobalReach && (hasLocationReach || hasDiasporaReach) && !/^[A-Z]{2}$/.test(newCountryCode.trim().toUpperCase())) {
+      Alert.alert('Circle country', 'Add the two-letter country code for the audience this Circle serves.');
+      return;
+    }
+    if (!hasGlobalReach && (hasLocationReach || hasDiasporaReach) && !newCountryName.trim()) {
+      Alert.alert('Circle country', 'Add the country name for this Circle.');
+      return;
+    }
+    if (hasLocalReach && !newCity.trim()) {
+      Alert.alert('Circle city', 'Add the city this local Circle serves.');
+      return;
+    }
+    if (hasDiasporaReach && newDiasporaOriginCountryCodes.length === 0) {
+      Alert.alert('Diaspora origin', 'Add at least one heritage country code, for example GH.');
+      return;
+    }
     if (creating) return;
     setCreating(true);
     try {
-      const rpcName = editingCircleId ? 'rpc_update_circle_request' : 'rpc_create_circle_request';
+      const rpcName = editingCircleId ? 'rpc_update_circle_request_v3' : 'rpc_create_circle_request_v3';
       const { error } = await db.rpc(rpcName, {
         ...(editingCircleId ? { p_circle_id: editingCircleId } : {}),
         p_name: name,
         p_description: purpose,
         p_short_description: purpose.slice(0, 140),
         p_circle_type: isAdmin ? 'official' : 'gold_community',
-        p_visibility_scope: newScope,
-        p_country_code: (profile as any)?.current_country_code ?? null,
-        p_country_name: (profile as any)?.current_country ?? null,
-        p_region: (profile as any)?.region ?? null,
-        p_city: newCity.trim() || ((profile as any)?.city ?? null),
-        p_diaspora_tags: [],
+        p_reach_scope: newReachScope,
+        p_reach_scopes: newReachScopes,
+        p_access_policy: newAccessPolicy,
+        p_country_code: hasGlobalReach ? null : newCountryCode.trim().toUpperCase(),
+        p_country_name: hasGlobalReach ? null : newCountryName.trim(),
+        p_region: hasLocalReach ? newRegion.trim() || null : null,
+        p_city: hasLocalReach ? newCity.trim() : null,
+        p_diaspora_origin_country_codes: hasDiasporaReach ? newDiasporaOriginCountryCodes : [],
+        p_diaspora_destination_country_codes: hasDiasporaReach ? newDiasporaDestinationCountryCodes : [],
+        p_membership_eligibility_policy: newMembershipEligibilityPolicy,
+        p_live_discovery_policy: newAccessPolicy === 'invite_only' ? 'members_only' : newLiveDiscoveryPolicy,
         p_culture_tags: [],
         p_faith_tags: [],
         p_interest_tags: [],
         p_audience_tags: [],
-        p_requires_join_approval: newScope === 'invite_only',
         p_rules: null,
       });
       if (error) throw error;
@@ -381,7 +413,7 @@ export default function CircleCreatorManageScreen() {
     } finally {
       setCreating(false);
     }
-  }, [creating, editingCircleId, editingCircleStatus, isAdmin, loadCreatorData, newCity, newName, newPurpose, newScope, profile]);
+  }, [creating, editingCircleId, editingCircleStatus, isAdmin, loadCreatorData, newAccessPolicy, newCity, newCountryCode, newCountryName, newDiasporaDestinationCountryCodes, newDiasporaOriginCountryCodes, newLiveDiscoveryPolicy, newMembershipEligibilityPolicy, newName, newPurpose, newReachScope, newReachScopes, newRegion]);
 
   const handleSubmitGathering = useCallback(async () => {
     Keyboard.dismiss();
@@ -435,7 +467,7 @@ export default function CircleCreatorManageScreen() {
         isAdmin ? 'Your Gathering is live.' : editingGatheringId ? 'Your Gathering changes were saved and sent back for review.' : "We'll notify you once Betweener approves it.",
       );
     } catch (error) {
-      Alert.alert('Gathering request failed', error instanceof Error ? error.message : 'Please try again.');
+      Alert.alert('Gathering could not be submitted', error instanceof Error ? error.message : 'Please try again.');
     } finally {
       setCreatingGathering(false);
     }
@@ -455,93 +487,6 @@ export default function CircleCreatorManageScreen() {
     profile,
   ]);
 
-  const handleSaveGist = useCallback(async (status: 'draft' | 'published') => {
-    Keyboard.dismiss();
-    const title = gistTitleDraft.trim();
-    const shortBody = gistShortBodyDraft.trim();
-    const body = gistBodyDraft.trim();
-    if (!currentProfileId) {
-      Alert.alert('Relationship Gist', 'Your profile is still loading. Try again in a moment.');
-      return;
-    }
-    if (!title || title.length < 3) {
-      Alert.alert('Relationship Gist', 'Add a clear gist title.');
-      return;
-    }
-    if (!body || body.length < 20) {
-      Alert.alert('Relationship Gist', 'Add fuller guidance before saving.');
-      return;
-    }
-    if (savingGist) return;
-    setSavingGist(true);
-    try {
-      const { error } = await db.rpc('rpc_upsert_relationship_gist_editorial', {
-        p_gist_id: editingGistId,
-        p_actor_profile_id: currentProfileId,
-        p_title: title,
-        p_short_body: shortBody || null,
-        p_body: body,
-        p_perspective: gistPerspectiveDraft,
-        p_status: status,
-      });
-      if (error) throw error;
-      setGistEditorOpen(false);
-      resetGistEditor();
-      await loadCreatorData();
-      Alert.alert(
-        status === 'published' ? 'Gist published' : 'Draft saved',
-        status === 'published'
-          ? 'This Relationship Gist is now live for everyone on Betweener.'
-          : 'Your editorial draft was saved.',
-      );
-    } catch (error) {
-      Alert.alert('Relationship Gist', error instanceof Error ? error.message : 'Please try again.');
-    } finally {
-      setSavingGist(false);
-    }
-  }, [
-    currentProfileId,
-    editingGistId,
-    gistBodyDraft,
-    gistPerspectiveDraft,
-    gistShortBodyDraft,
-    gistTitleDraft,
-    loadCreatorData,
-    resetGistEditor,
-    savingGist,
-  ]);
-
-  const handleDeleteGist = useCallback(() => {
-    if (!editingGistId || !currentProfileId || savingGist) return;
-    Alert.alert('Delete Gist', 'This will remove the Gist from the live editorial flow.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: () => {
-          void (async () => {
-            setSavingGist(true);
-            try {
-              const { error } = await db.rpc('rpc_archive_relationship_gist_editorial', {
-                p_gist_id: editingGistId,
-                p_actor_profile_id: currentProfileId,
-              });
-              if (error) throw error;
-              setGistEditorOpen(false);
-              resetGistEditor();
-              await loadCreatorData();
-              Alert.alert('Gist deleted', 'The editorial entry has been removed.');
-            } catch (error) {
-              Alert.alert('Delete failed', error instanceof Error ? error.message : 'Please try again.');
-            } finally {
-              setSavingGist(false);
-            }
-          })();
-        },
-      },
-    ]);
-  }, [currentProfileId, editingGistId, loadCreatorData, resetGistEditor, savingGist]);
-
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
@@ -550,10 +495,8 @@ export default function CircleCreatorManageScreen() {
             <MaterialCommunityIcons name="arrow-left" size={20} color={theme.text} />
           </TouchableOpacity>
           <View style={styles.headerCopy}>
-            <Text style={styles.headerTitle}>Creator Studio</Text>
-            <Text style={styles.headerSubtitle}>
-              {isAdmin ? 'Manage Circle requests, Gathering requests, and global Relationship Gist editorial.' : 'Manage your Circle and Gathering submissions.'}
-            </Text>
+            <Text style={styles.headerTitle}>Circle & Gathering Studio</Text>
+          <Text style={styles.headerSubtitle}>Create trusted spaces and events, then follow them through review.</Text>
           </View>
           <TouchableOpacity style={styles.refreshButton} onPress={() => void loadCreatorData()}>
             <MaterialCommunityIcons name="refresh" size={18} color={theme.text} />
@@ -561,13 +504,9 @@ export default function CircleCreatorManageScreen() {
         </View>
 
         <View style={styles.heroCard}>
-          <Text style={styles.heroKicker}>Trusted creation</Text>
-          <Text style={styles.heroTitle}>Request, review, and refine the spaces you want Betweener to stand behind.</Text>
-          <Text style={styles.heroBody}>
-            {isAdmin
-              ? 'Keep public creation curated. Review community submissions and publish only the Relationship Gists strong enough for every member on Betweener.'
-              : 'Keep public community creation curated. Use this studio to track review states and resubmit with stronger details when needed.'}
-          </Text>
+          <Text style={styles.heroKicker}>Community creation</Text>
+          <Text style={styles.heroTitle}>Create and refine the spaces and events you want Betweener to stand behind.</Text>
+          <Text style={styles.heroBody}>Track review states, refine your ideas, and resubmit with stronger details when needed.</Text>
           <View style={styles.snapshotRow}>
             <View style={styles.snapshotCard}>
               <Text style={styles.snapshotValue}>{approvedCreatorCircles.length}</Text>
@@ -575,11 +514,11 @@ export default function CircleCreatorManageScreen() {
             </View>
             <View style={styles.snapshotCard}>
               <Text style={styles.snapshotValue}>{approvedGatheringCount}</Text>
-              <Text style={styles.snapshotLabel}>Live Gatherings</Text>
+              <Text style={styles.snapshotLabel}>Published Gatherings</Text>
             </View>
             <View style={styles.snapshotCard}>
-              <Text style={styles.snapshotValue}>{isAdmin ? creatorGists.filter((gist) => gist.status === 'published').length : creatorGists.length}</Text>
-              <Text style={styles.snapshotLabel}>{isAdmin ? 'Live Gists' : 'Published Gists'}</Text>
+              <Text style={styles.snapshotValue}>{creatorCircles.length + creatorGatherings.length}</Text>
+              <Text style={styles.snapshotLabel}>Total submissions</Text>
             </View>
             <View style={styles.snapshotCard}>
               <Text style={styles.snapshotValue}>{pendingReviewCount}</Text>
@@ -588,16 +527,11 @@ export default function CircleCreatorManageScreen() {
           </View>
           <View style={styles.heroActions}>
             <TouchableOpacity style={styles.primaryButton} onPress={openCreateCircle}>
-              <Text style={styles.primaryText}>Request Circle</Text>
+              <Text style={styles.primaryText}>Create Circle</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.secondaryButton} onPress={openCreateGathering}>
-              <Text style={styles.secondaryText}>Request Gathering</Text>
+            <TouchableOpacity style={styles.secondaryButton} onPress={() => openCreateGathering()}>
+              <Text style={styles.secondaryText}>Create Gathering</Text>
             </TouchableOpacity>
-            {isAdmin ? (
-              <TouchableOpacity style={styles.secondaryButton} onPress={openCreateGist}>
-                <Text style={styles.secondaryText}>Write Gist</Text>
-              </TouchableOpacity>
-            ) : null}
           </View>
         </View>
 
@@ -682,278 +616,86 @@ export default function CircleCreatorManageScreen() {
           )) : (
             <View style={styles.emptyCard}>
               <Text style={styles.emptyTitle}>No Gathering submissions yet</Text>
-              <Text style={styles.emptyBody}>Propose intimate, safe events once you have a clear reason for people to attend.</Text>
+              <Text style={styles.emptyBody}>Create your first trusted event when you have a clear reason for people to attend.</Text>
             </View>
           )}
         </View>
-        {isAdmin ? (
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Relationship Gist editorial</Text>
-            <Text style={styles.sectionHint}>{loading ? 'Refreshing' : `${creatorGists.length} items`}</Text>
-          </View>
-          {creatorGists.length ? creatorGists.map((gist) => (
-            <View key={`editorial:${gist.id}`} style={styles.card}>
-              <View style={styles.cardTop}>
-                <Text style={styles.cardType}>Relationship Gist</Text>
-                <Text style={styles.statusPill}>{creatorStatusLabel(gist.status)}</Text>
-              </View>
-              <Text style={styles.cardTitle}>{gist.title}</Text>
-              <Text style={styles.linkedMeta}>
-                {String(gist.perspective ?? 'general').replace(/^\w/, (match) => match.toUpperCase())}
-              </Text>
-              <Text style={styles.cardMeta}>
-                {[gist.status === 'published' ? compactDate(gist.published_at) : null, compactDate(gist.updated_at || gist.created_at)].filter(Boolean).join(' · ')}
-              </Text>
-              <Text style={styles.cardBody}>{gist.short_body || gist.body || 'No summary yet.'}</Text>
-              <View style={styles.cardActions}>
-                <TouchableOpacity style={styles.primaryButton} onPress={() => openEditGist(gist)}>
-                  <Text style={styles.primaryText}>{gist.status === 'draft' ? 'Open draft' : 'Open editor'}</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          )) : (
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyTitle}>No editorial Gists yet</Text>
-              <Text style={styles.emptyBody}>Draft relationship guidance here, then publish only when it is strong enough for everyone on Betweener.</Text>
-            </View>
-          )}
-        </View>
-        ) : null}
-
-
-        {false ? (
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Relationship Gist editorial</Text>
-            <Text style={styles.sectionHint}>{loading ? 'Refreshing' : `${creatorGists.length} items`}</Text>
-          </View>
-          {creatorGists.length ? creatorGists.map((gist) => (
-            <View key={gist.id} style={styles.card}>
-              <View style={styles.cardTop}>
-                <Text style={styles.cardType}>Relationship Gist</Text>
-                <Text style={styles.statusPill}>{creatorStatusLabel(gist.status)}</Text>
-              </View>
-              <Text style={styles.cardTitle}>{gist.title}</Text>
-              <Text style={styles.cardMeta}>
-                {[gist.circle_id ? circleNameById[gist.circle_id] ?? 'Circle' : null, compactDate(gist.updated_at || gist.created_at)].filter(Boolean).join(' Â· ')}
-              </Text>
-              <Text style={styles.cardBody}>{gist.short_body || gist.body || 'No summary yet.'}</Text>
-              <View style={styles.cardActions}>
-                {gist.circle_id ? (
-                  <TouchableOpacity style={styles.primaryButton} onPress={() => openCircle(gist.circle_id, 'gist')}>
-                    <Text style={styles.primaryText}>Edit in Circle</Text>
-                  </TouchableOpacity>
-                ) : null}
-              </View>
-            </View>
-          )) : (
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyTitle}>No Circle-specific gists yet</Text>
-              <Text style={styles.emptyBody}>Publish Circle guidance from the Circle detail screen, then track it here like the rest of your signature content.</Text>
-            </View>
-          )}
-        </View>
-        ) : null}
       </ScrollView>
 
-      <Modal visible={gistEditorOpen} transparent animationType="fade" onRequestClose={() => { setGistEditorOpen(false); resetGistEditor(); }}>
-        <Pressable style={styles.modalBackdrop} onPress={() => { setGistEditorOpen(false); resetGistEditor(); }}>
-          <KeyboardAvoidingView
-            style={styles.modalKeyboardWrap}
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          >
-            <Pressable style={styles.modalCard} onPress={() => undefined}>
-              <ScrollView
-                style={styles.modalScroll}
-                contentContainerStyle={styles.modalScrollContent}
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
-              >
-                <Text style={styles.modalTitle}>{editingGistId ? 'Edit Relationship Gist' : 'Write Relationship Gist'}</Text>
-                <Text style={styles.modalBody}>Global editorial guidance for everyone on Betweener. Save drafts here, publish only when the piece is ready.</Text>
-                <Text style={styles.inputLabel}>Title</Text>
-                <TextInput
-                  value={gistTitleDraft}
-                  onChangeText={setGistTitleDraft}
-                  placeholder="Gist title"
-                  placeholderTextColor={theme.textMuted}
-                  style={styles.input}
-                  returnKeyType="next"
-                  maxLength={140}
-                  accessibilityLabel="Relationship Gist title"
-                />
-                <Text style={styles.editorCount}>{gistTitleDraft.length}/140</Text>
-                <Text style={styles.inputLabel}>Card summary</Text>
-                <TextInput
-                  value={gistShortBodyDraft}
-                  onChangeText={setGistShortBodyDraft}
-                  placeholder="Short summary for the preview card"
-                  placeholderTextColor={theme.textMuted}
-                  style={styles.input}
-                  returnKeyType="next"
-                  maxLength={420}
-                  accessibilityLabel="Relationship Gist card summary"
-                />
-                <Text style={styles.editorCount}>{gistShortBodyDraft.length}/420</Text>
-                <Text style={styles.inputLabel}>Full guidance</Text>
-                <TextInput
-                  value={gistBodyDraft}
-                  onChangeText={setGistBodyDraft}
-                  placeholder="Full relationship guidance"
-                  placeholderTextColor={theme.textMuted}
-                  multiline
-                  style={[styles.input, styles.multiline, styles.gistBodyInput]}
-                  maxLength={5000}
-                  accessibilityLabel="Relationship Gist full guidance"
-                />
-                <Text style={styles.editorCount}>{gistBodyDraft.length}/5000</Text>
-                <Text style={styles.inputLabel}>Editorial perspective</Text>
-                <View style={styles.visibilityRow}>
-                  {GIST_PERSPECTIVES.map((item) => (
-                    <Pressable
-                      key={item}
-                      style={[styles.visibilityPill, gistPerspectiveDraft === item && styles.visibilityPillActive]}
-                      onPress={() => setGistPerspectiveDraft(item)}
-                    >
-                      <Text style={[styles.visibilityText, gistPerspectiveDraft === item && styles.visibilityTextActive]}>
-                        {item === 'general' ? 'General' : item[0].toUpperCase() + item.slice(1)}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </View>
-                <View style={styles.modalActions}>
-                  {editingGistId ? (
-                    <TouchableOpacity style={styles.secondaryButton} disabled={savingGist} onPress={handleDeleteGist}>
-                      <Text style={styles.secondaryText}>{savingGist ? 'Working...' : 'Delete'}</Text>
-                    </TouchableOpacity>
-                  ) : null}
-                  <TouchableOpacity style={styles.secondaryButton} onPress={() => { setGistEditorOpen(false); resetGistEditor(); }}>
-                    <Text style={styles.secondaryText}>Cancel</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.secondaryButton} disabled={savingGist} onPress={() => void handleSaveGist('draft')}>
-                    <Text style={styles.secondaryText}>{savingGist ? 'Saving...' : 'Save draft'}</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.primaryButton} disabled={savingGist} onPress={() => void handleSaveGist('published')}>
-                    <Text style={styles.primaryText}>{savingGist ? 'Publishing...' : 'Publish live'}</Text>
-                  </TouchableOpacity>
-                </View>
-              </ScrollView>
-            </Pressable>
-          </KeyboardAvoidingView>
-        </Pressable>
-      </Modal>
+      <CircleComposer
+        visible={createOpen}
+        name={newName}
+        purpose={newPurpose}
+        city={newCity}
+        region={newRegion}
+        countryCode={newCountryCode}
+        countryName={newCountryName}
+        reachScope={newReachScope}
+        reachScopes={newReachScopes}
+        accessPolicy={newAccessPolicy}
+        diasporaOriginCountryCodes={newDiasporaOriginCountryCodes}
+        diasporaDestinationCountryCodes={newDiasporaDestinationCountryCodes}
+        membershipEligibilityPolicy={newMembershipEligibilityPolicy}
+        liveDiscoveryPolicy={newLiveDiscoveryPolicy}
+        editing={Boolean(editingCircleId)}
+        editingApproved={editingCircleStatus === 'approved'}
+        saving={creating}
+        onNameChange={setNewName}
+        onPurposeChange={setNewPurpose}
+        onCityChange={setNewCity}
+        onRegionChange={setNewRegion}
+        onCountryChange={(code, name) => {
+          setNewCountryCode(code);
+          setNewCountryName(name);
+        }}
+        onReachScopeChange={(value) => {
+          setNewReachScope(value);
+          if (value === 'diaspora' && newDiasporaOriginCountryCodes.length === 0 && /^[A-Z]{2}$/.test(newCountryCode)) {
+            setNewDiasporaOriginCountryCodes([newCountryCode]);
+          }
+        }}
+        onReachScopesChange={(values) => {
+          setNewReachScopes(values);
+          if (values.includes('diaspora') && newDiasporaOriginCountryCodes.length === 0 && /^[A-Z]{2}$/.test(newCountryCode)) {
+            setNewDiasporaOriginCountryCodes([newCountryCode]);
+          }
+        }}
+        onAccessPolicyChange={(value) => {
+          setNewAccessPolicy(value);
+          if (value === 'invite_only') setNewLiveDiscoveryPolicy('members_only');
+        }}
+        onDiasporaOriginCountryCodesChange={setNewDiasporaOriginCountryCodes}
+        onDiasporaDestinationCountryCodesChange={setNewDiasporaDestinationCountryCodes}
+        onMembershipEligibilityPolicyChange={setNewMembershipEligibilityPolicy}
+        onLiveDiscoveryPolicyChange={setNewLiveDiscoveryPolicy}
+        onClose={() => { setCreateOpen(false); setEditingCircleId(null); setEditingCircleStatus(null); }}
+        onSubmit={() => void handleSubmitCircle()}
+      />
 
-      <Modal visible={createOpen} transparent animationType="fade" onRequestClose={() => { setCreateOpen(false); setEditingCircleId(null); setEditingCircleStatus(null); }}>
-        <Pressable style={styles.modalBackdrop} onPress={() => { setCreateOpen(false); setEditingCircleId(null); setEditingCircleStatus(null); }}>
-          <KeyboardAvoidingView
-            style={styles.modalKeyboardWrap}
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          >
-            <Pressable style={styles.modalCard} onPress={() => undefined}>
-              <ScrollView
-                style={styles.modalScroll}
-                contentContainerStyle={styles.modalScrollContent}
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
-              >
-                <Text style={styles.modalTitle}>
-                  {editingCircleId
-                    ? editingCircleStatus === 'approved'
-                      ? 'Edit Circle'
-                      : 'Edit Circle request'
-                    : 'Request Circle'}
-                </Text>
-                <TextInput value={newName} onChangeText={setNewName} placeholder="Circle name" placeholderTextColor={theme.textMuted} style={styles.input} returnKeyType="next" />
-                <TextInput value={newPurpose} onChangeText={setNewPurpose} placeholder="Purpose and who it is for" placeholderTextColor={theme.textMuted} multiline style={[styles.input, styles.multiline]} returnKeyType="default" />
-                <TextInput value={newCity} onChangeText={setNewCity} placeholder="City" placeholderTextColor={theme.textMuted} style={styles.input} returnKeyType="done" />
-                <View style={styles.visibilityRow}>
-                  {(['country', 'local', 'diaspora', 'global', 'invite_only'] as const).map((item) => (
-                    <Pressable key={item} style={[styles.visibilityPill, newScope === item && styles.visibilityPillActive]} onPress={() => setNewScope(item)}>
-                      <Text style={[styles.visibilityText, newScope === item && styles.visibilityTextActive]}>
-                        {item === 'invite_only' ? 'Private' : item[0].toUpperCase() + item.slice(1)}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </View>
-                <View style={styles.modalActions}>
-                  <TouchableOpacity style={styles.secondaryButton} onPress={() => { setCreateOpen(false); setEditingCircleId(null); setEditingCircleStatus(null); }}>
-                    <Text style={styles.secondaryText}>Cancel</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.primaryButton} disabled={creating} onPress={handleSubmitCircle}>
-                    <Text style={styles.primaryText}>
-                      {creating
-                        ? 'Submitting'
-                        : editingCircleId
-                          ? editingCircleStatus === 'approved'
-                            ? 'Save changes'
-                            : 'Save and resubmit'
-                          : 'Submit for review'}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              </ScrollView>
-            </Pressable>
-          </KeyboardAvoidingView>
-        </Pressable>
-      </Modal>
-
-      <Modal visible={gatheringOpen} transparent animationType="fade" onRequestClose={() => { setGatheringOpen(false); setEditingGatheringId(null); }}>
-        <Pressable style={styles.modalBackdrop} onPress={() => { setGatheringOpen(false); setEditingGatheringId(null); }}>
-          <KeyboardAvoidingView
-            style={styles.modalKeyboardWrap}
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          >
-            <Pressable style={styles.modalCard} onPress={() => undefined}>
-              <ScrollView
-                style={styles.modalScroll}
-                contentContainerStyle={styles.modalScrollContent}
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
-              >
-                <Text style={styles.modalTitle}>{editingGatheringId ? 'Edit Gathering request' : 'Request Gathering'}</Text>
-                <TextInput value={newGatheringTitle} onChangeText={setNewGatheringTitle} placeholder="Gathering title" placeholderTextColor={theme.textMuted} style={styles.input} returnKeyType="next" />
-                <TextInput value={newGatheringDescription} onChangeText={setNewGatheringDescription} placeholder="What is this Gathering for?" placeholderTextColor={theme.textMuted} multiline style={[styles.input, styles.multiline]} returnKeyType="default" />
-                {approvedCreatorCircles.length ? (
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.visibilityRow} keyboardShouldPersistTaps="handled">
-                    <Pressable style={[styles.visibilityPill, !newGatheringCircleId && styles.visibilityPillActive]} onPress={() => setNewGatheringCircleId(null)}>
-                      <Text style={[styles.visibilityText, !newGatheringCircleId && styles.visibilityTextActive]}>General</Text>
-                    </Pressable>
-                    {approvedCreatorCircles.map((circle) => (
-                      <Pressable key={circle.id} style={[styles.visibilityPill, newGatheringCircleId === circle.id && styles.visibilityPillActive]} onPress={() => setNewGatheringCircleId(circle.id)}>
-                        <Text style={[styles.visibilityText, newGatheringCircleId === circle.id && styles.visibilityTextActive]}>{circle.name}</Text>
-                      </Pressable>
-                    ))}
-                  </ScrollView>
-                ) : null}
-                <View style={styles.visibilityRow}>
-                  {(['physical', 'online', 'hybrid'] as const).map((item) => (
-                    <Pressable key={item} style={[styles.visibilityPill, newGatheringType === item && styles.visibilityPillActive]} onPress={() => setNewGatheringType(item)}>
-                      <Text style={[styles.visibilityText, newGatheringType === item && styles.visibilityTextActive]}>{item[0].toUpperCase() + item.slice(1)}</Text>
-                    </Pressable>
-                  ))}
-                </View>
-                <View style={styles.rowInputs}>
-                  <TextInput value={newGatheringDate} onChangeText={setNewGatheringDate} placeholder="YYYY-MM-DD" placeholderTextColor={theme.textMuted} style={[styles.input, styles.rowInput]} returnKeyType="next" />
-                  <TextInput value={newGatheringTime} onChangeText={setNewGatheringTime} placeholder="HH:MM" placeholderTextColor={theme.textMuted} style={[styles.input, styles.rowInput]} returnKeyType="next" />
-                </View>
-                <TextInput value={newGatheringCity} onChangeText={setNewGatheringCity} placeholder="City" placeholderTextColor={theme.textMuted} style={styles.input} returnKeyType={newGatheringType !== 'online' ? 'next' : 'done'} />
-                {newGatheringType !== 'online' ? (
-                  <TextInput value={newGatheringVenue} onChangeText={setNewGatheringVenue} placeholder="Venue name" placeholderTextColor={theme.textMuted} style={styles.input} returnKeyType="done" />
-                ) : null}
-                <View style={styles.modalActions}>
-                  <TouchableOpacity style={styles.secondaryButton} onPress={() => { setGatheringOpen(false); setEditingGatheringId(null); }}>
-                    <Text style={styles.secondaryText}>Cancel</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.primaryButton} disabled={creatingGathering} onPress={handleSubmitGathering}>
-                    <Text style={styles.primaryText}>{creatingGathering ? 'Submitting' : editingGatheringId ? 'Save and resubmit' : 'Submit for review'}</Text>
-                  </TouchableOpacity>
-                </View>
-              </ScrollView>
-            </Pressable>
-          </KeyboardAvoidingView>
-        </Pressable>
-      </Modal>
+      <GatheringComposer
+        visible={gatheringOpen}
+        title={newGatheringTitle}
+        description={newGatheringDescription}
+        date={newGatheringDate}
+        time={newGatheringTime}
+        city={newGatheringCity}
+        venue={newGatheringVenue}
+        format={newGatheringType}
+        circleId={newGatheringCircleId}
+        circles={approvedCreatorCircles}
+        editing={Boolean(editingGatheringId)}
+        saving={creatingGathering}
+        onTitleChange={setNewGatheringTitle}
+        onDescriptionChange={setNewGatheringDescription}
+        onDateChange={setNewGatheringDate}
+        onTimeChange={setNewGatheringTime}
+        onCityChange={setNewGatheringCity}
+        onVenueChange={setNewGatheringVenue}
+        onFormatChange={setNewGatheringType}
+        onCircleChange={setNewGatheringCircleId}
+        onClose={() => { setGatheringOpen(false); setEditingGatheringId(null); }}
+        onSubmit={() => void handleSubmitGathering()}
+      />
     </SafeAreaView>
   );
 }
@@ -1074,54 +816,4 @@ const createStyles = (_theme: typeof Colors.light, _isDark: boolean) =>
       justifyContent: 'center',
     },
     secondaryText: { color: '#F4E8D0', fontSize: 12, fontWeight: '800' },
-    modalBackdrop: { flex: 1, justifyContent: 'center', padding: 20, backgroundColor: 'rgba(0,0,0,0.6)' },
-    modalKeyboardWrap: {
-      width: '100%',
-      justifyContent: 'center',
-    },
-    modalCard: {
-      padding: 18,
-      borderRadius: 24,
-      borderWidth: 1,
-      borderColor: 'rgba(244,232,208,0.12)',
-      backgroundColor: '#0B2427',
-      gap: 12,
-    },
-    modalScroll: {
-      maxHeight: '88%',
-    },
-    modalScrollContent: {
-      gap: 12,
-    },
-    modalTitle: { color: '#F4E8D0', fontSize: 20, fontFamily: 'PlayfairDisplay_700Bold' },
-    modalBody: { color: 'rgba(244,232,208,0.72)', fontSize: 13, lineHeight: 19 },
-    inputLabel: { color: '#F4E8D0', fontSize: 12, fontWeight: '800', marginTop: 2 },
-    editorCount: { color: 'rgba(244,232,208,0.5)', fontSize: 10, textAlign: 'right', marginTop: -8 },
-    input: {
-      borderRadius: 14,
-      borderWidth: 1,
-      borderColor: 'rgba(244,232,208,0.12)',
-      backgroundColor: 'rgba(255,255,255,0.045)',
-      paddingHorizontal: 12,
-      paddingVertical: 11,
-      color: '#F4E8D0',
-      fontSize: 13,
-    },
-    multiline: { minHeight: 92, textAlignVertical: 'top' },
-    gistBodyInput: { minHeight: 148 },
-    rowInputs: { flexDirection: 'row', gap: 10 },
-    rowInput: { flex: 1 },
-    visibilityRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-    visibilityPill: {
-      paddingHorizontal: 11,
-      paddingVertical: 8,
-      borderRadius: 999,
-      borderWidth: 1,
-      borderColor: 'rgba(244,232,208,0.12)',
-      backgroundColor: 'rgba(255,255,255,0.04)',
-    },
-    visibilityPillActive: { backgroundColor: '#13A8A8', borderColor: '#13A8A8' },
-    visibilityText: { color: 'rgba(244,232,208,0.72)', fontSize: 11, fontWeight: '800' },
-    visibilityTextActive: { color: '#071E22' },
-    modalActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, justifyContent: 'flex-end' },
   });

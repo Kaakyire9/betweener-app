@@ -50,6 +50,7 @@ type Props = {
   onOpenFeaturedProfile?: (profileId: string) => void;
   onSendSignal?: (profileId: string, name?: string | null) => void;
   onEndLoveSeat?: (item: CirclePulseItem) => void;
+  onReportItem?: (item: CirclePulseItem) => void;
   viewerProfileId?: string | null;
 };
 
@@ -73,7 +74,7 @@ const GROUPS: (Omit<PulseGroup, 'items'> & { types: CirclePulseItemType[] })[] =
     key: 'gathering',
     eyebrow: 'COME TOGETHER',
     title: 'Gatherings on the horizon',
-    description: 'Circle Lives and in-person plans with a clear next step.',
+    description: 'Gatherings with Live and in-person plans with a clear next step.',
     types: ['gathering'],
   },
   {
@@ -116,7 +117,7 @@ const formatDate = (value?: string | null) => {
 
 const getItemLabel = (item: CirclePulseItem) => {
   if (item.type === 'prompt') return 'Circle Prompt';
-  if (item.type === 'gathering') return item.gatheringType === 'live' ? 'Circle Live' : 'Gathering';
+  if (item.type === 'gathering') return item.gatheringType === 'live' ? 'Gathering with Live' : 'Gathering';
   if (item.type === 'love_seat') return 'Love Seat';
   if (item.type === 'host_note') return 'From the host';
   if (item.mediaType === 'video') return item.momentId ? 'Video Moment' : 'Circle Video';
@@ -188,6 +189,7 @@ function PulseItemCard({
   onOpenFeaturedProfile,
   onSendSignal,
   onEndLoveSeat,
+  onReportItem,
   viewerProfileId,
   canManage,
 }: {
@@ -205,6 +207,7 @@ function PulseItemCard({
   onOpenFeaturedProfile?: Props['onOpenFeaturedProfile'];
   onSendSignal?: Props['onSendSignal'];
   onEndLoveSeat?: Props['onEndLoveSeat'];
+  onReportItem?: Props['onReportItem'];
   viewerProfileId?: string | null;
   canManage: boolean;
 }) {
@@ -227,7 +230,7 @@ function PulseItemCard({
     ? `${item.featuredProfileName || 'Circle member'}${item.featuredProfileAge ? `, ${item.featuredProfileAge}` : ''}`
     : item.title || (item.type === 'host_note' ? 'A note from your host' : 'A thoughtful Circle spotlight');
   const body = item.type === 'love_seat' ? item.loveSeatQuote || item.body : item.body;
-  const itemLabel = selectedLiveGathering ? 'Upcoming Circle Live' : getItemLabel(item);
+  const itemLabel = selectedLiveGathering ? 'Upcoming Gathering with Live' : getItemLabel(item);
   const attendanceCopy = selectedLiveGathering
     ? selectedLiveGathering.quorumStatus === 'confirmed'
       ? `Confirmed · ${selectedLiveGathering.attendanceCount} places saved`
@@ -435,6 +438,13 @@ function PulseItemCard({
             <Text style={[styles.commentCount, { color: palette.textMuted }]}>{item.commentCount}</Text>
           ) : null}
         </TouchableOpacity>
+        <TouchableOpacity
+          accessibilityLabel={`Report ${itemLabel}`}
+          style={[styles.reportAction, { borderColor: palette.outline, backgroundColor: palette.surfaceMuted }]}
+          onPress={withSelectionHaptic(() => onReportItem?.(item))}
+        >
+          <MaterialCommunityIcons name="alert-outline" size={15} color={palette.textMuted} />
+        </TouchableOpacity>
       </View>
       )}
     </LinearGradient>
@@ -461,6 +471,7 @@ export default function CirclePulseBoard({
   onOpenFeaturedProfile,
   onSendSignal,
   onEndLoveSeat,
+  onReportItem,
   viewerProfileId,
 }: Props) {
   const palette = useCirclePulsePalette();
@@ -483,7 +494,7 @@ export default function CirclePulseBoard({
       ?? null
   ), [liveGatheringsById, nonWelcomeItems]);
   const heroContext = heroItem?.gatheringId && liveGatheringsById?.[heroItem.gatheringId]
-    ? 'Live gathering'
+    ? 'Gathering with Live'
     : heroItem?.type === 'gathering'
       ? 'Next gathering'
       : heroItem?.type === 'love_seat'
@@ -574,6 +585,7 @@ export default function CirclePulseBoard({
                 onOpenFeaturedProfile={onOpenFeaturedProfile}
                 onSendSignal={onSendSignal}
                 onEndLoveSeat={onEndLoveSeat}
+                onReportItem={onReportItem}
                 viewerProfileId={viewerProfileId}
                 canManage={canManage}
               />
@@ -616,6 +628,7 @@ export default function CirclePulseBoard({
                     onOpenFeaturedProfile={onOpenFeaturedProfile}
                     onSendSignal={onSendSignal}
                     onEndLoveSeat={onEndLoveSeat}
+                    onReportItem={onReportItem}
                     viewerProfileId={viewerProfileId}
                     canManage={canManage}
                   />
@@ -695,6 +708,7 @@ const styles = StyleSheet.create({
   primaryAction: { minHeight: 40, paddingHorizontal: 13, borderRadius: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
   primaryActionText: { fontSize: 11, fontWeight: '900' },
   discussionAction: { minHeight: 40, flex: 1, minWidth: 142, paddingHorizontal: 11, borderRadius: 20, borderWidth: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
+  reportAction: { width: 40, minHeight: 40, borderRadius: 20, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   discussionActionText: { flexShrink: 1, fontSize: 10, fontWeight: '900' },
   commentCount: { fontSize: 10, fontWeight: '900' },
   unreadPill: { minWidth: 19, height: 19, paddingHorizontal: 5, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },

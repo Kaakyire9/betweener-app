@@ -262,7 +262,11 @@ export function LiveHostedMatchingPanel({
   const otherPerson = activeRound
     ? activeRound.participantA.userId === currentUserId ? activeRound.participantB : activeRound.participantA
     : null;
-  if (!privateSparkCard && !activeRound && !showAvailabilityControl && !errorCopy) return null;
+  const hasPrivateRoundNotice = Boolean(
+    (isMyInvitation && otherPerson)
+    || (activeRound?.state === 'both_accepted' && activeRound.isParticipant),
+  );
+  if (!privateSparkCard && !hasPrivateRoundNotice && !showAvailabilityControl && !errorCopy) return null;
   return (
     <View style={styles.memberPanel}>
       {privateSparkCard}
@@ -288,7 +292,18 @@ export function LiveHostedMatchingPanel({
 
 const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
   panel: { borderTopWidth: 1, borderBottomWidth: 1, borderColor: visual.color.border, backgroundColor: visual.color.surface, padding: 16, gap: 13 },
-  memberPanel: { backgroundColor: visual.color.surface, paddingHorizontal: 16, paddingVertical: 10 },
+  memberPanel: {
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: visual.color.borderStrong,
+    backgroundColor: visual.color.surfaceTranslucent,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    shadowColor: '#000000',
+    shadowOpacity: 0.3,
+    shadowRadius: 18,
+    elevation: 11,
+  },
   headingRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   headingIcon: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.color.purpleSoft },
   headingCopy: { flex: 1, gap: 2 },

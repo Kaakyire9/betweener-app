@@ -1,4 +1,4 @@
-import { memo, useMemo } from "react";
+import { memo, useMemo, useRef } from "react";
 import { Animated, Text, TouchableOpacity, View } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors } from "@/constants/theme";
@@ -14,6 +14,7 @@ type VoiceMessageContentProps = {
   theme: typeof Colors.light;
   isDark: boolean;
   onToggleVoice: (messageId: string) => void;
+  onLongPress?: () => void;
 };
 
 const VoiceMessageContent = memo(
@@ -25,7 +26,9 @@ const VoiceMessageContent = memo(
     theme,
     isDark,
     onToggleVoice,
+    onLongPress,
   }: VoiceMessageContentProps) => {
+    const handledLongPressRef = useRef(false);
     const waveformBars = useMemo(() => {
       if (item.type !== 'voice' || !item.voiceMessage?.waveform) return null;
       return item.voiceMessage.waveform.map((height, idx) => (
@@ -54,7 +57,22 @@ const VoiceMessageContent = memo(
             isMyMessage ? styles.voicePlayButtonMy : styles.voicePlayButtonTheir,
             isPlaying && (isMyMessage ? styles.voicePlayButtonMyActive : styles.voicePlayButtonTheirActive),
           ]}
-          onPress={() => onToggleVoice(item.id)}
+          onPressIn={() => {
+            handledLongPressRef.current = false;
+          }}
+          onLongPress={(event) => {
+            handledLongPressRef.current = true;
+            event.stopPropagation();
+            onLongPress?.();
+          }}
+          delayLongPress={450}
+          onPress={() => {
+            if (handledLongPressRef.current) {
+              handledLongPressRef.current = false;
+              return;
+            }
+            onToggleVoice(item.id);
+          }}
         >
           <MaterialCommunityIcons
             name={isPlaying ? 'pause' : 'play'}

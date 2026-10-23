@@ -27,8 +27,8 @@ The health result must finish with `release_blockers = 0` and `healthy = true`.
 The Edge Function requires the existing project secrets:
 
 - `SUPABASE_URL`
-- `SUPABASE_ANON_KEY`
-- `SUPABASE_SERVICE_ROLE_KEY`
+- `SUPABASE_PUBLISHABLE_KEYS` (injected automatically; uses the `default` publishable key)
+- `SUPABASE_SECRET_KEYS` (injected automatically; uses the `default` secret key)
 - `STREAM_VIDEO_API_KEY`
 - `STREAM_VIDEO_API_SECRET`
 

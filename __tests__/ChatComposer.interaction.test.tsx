@@ -65,6 +65,15 @@ describe("ChatComposer interactions", () => {
     expect(props.onChangeText).toHaveBeenCalledWith("Hello there");
   });
 
+  it("keeps the resting composer visually quiet", async () => {
+    const { getByTestId, queryByPlaceholderText } = await render(
+      <ChatComposer {...buildProps()} />
+    );
+
+    expect(getByTestId("chat-composer-input").props.placeholder).toBe("");
+    expect(queryByPlaceholderText("Say something thoughtful...")).toBeNull();
+  });
+
   it("shows the send button for non-empty text and triggers send", async () => {
     const props = buildProps({ inputText: "Hello there" });
     const { getByTestId } = await render(<ChatComposer {...props} />);

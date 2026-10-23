@@ -1,5 +1,32 @@
 import type { MessageType } from '@/components/chat/types';
 import type { ChatMessageRow } from '@/lib/chat/local/chat-db';
+import { parseChatProviderMediaReference } from './expressions/chat-gif-provider.ts';
+
+type CachedReplyTarget = {
+  id: string;
+  text: string;
+  senderId: string;
+  timestamp: string;
+  type: MessageType['type'];
+  mediaKind?: MessageType['mediaKind'];
+  deletedForAll?: boolean;
+  isViewOnce?: boolean;
+  imageUrl?: string;
+  offlineImageUri?: string;
+  storagePath?: string | null;
+  previewStoragePath?: string | null;
+  offlinePreviewUri?: string | null;
+  previewUrl?: string | null;
+  document?: MessageType['document'];
+  location?: Omit<NonNullable<MessageType['location']>, 'expiresAt'> & {
+    expiresAt?: string | null;
+  };
+  dateInvite?: Omit<NonNullable<MessageType['dateInvite']>, 'scheduledFor'> & {
+    scheduledFor: string;
+  };
+  sticker?: MessageType['sticker'];
+  providerMedia?: MessageType['providerMedia'];
+};
 
 export type CachedMessageType = Omit<
   MessageType,
@@ -15,6 +42,7 @@ export type CachedMessageType = Omit<
   dateInvite?: Omit<NonNullable<MessageType['dateInvite']>, 'scheduledFor'> & {
     scheduledFor: string;
   };
+  replyTo?: CachedReplyTarget;
 };
 
 export type MessageDatabaseRow = {
@@ -50,11 +78,111 @@ export type MessageDatabaseRow = {
   media_expected_count?: number | null;
   media_group_id?: string | null;
   media_caption?: string | null;
+  media_kind?: string | null;
+  provider_media?: unknown;
+};
+
+const serializeReplyTarget = (message: MessageType | undefined): CachedReplyTarget | undefined => {
+  if (!message) return undefined;
+  const timestamp = message.timestamp instanceof Date
+    ? message.timestamp.toISOString()
+    : new Date().toISOString();
+  if (message.deletedForAll) {
+    return {
+      id: message.id,
+      text: 'Message deleted',
+      senderId: message.senderId,
+      timestamp,
+      type: 'text',
+      deletedForAll: true,
+    };
+  }
+  const isPrivateViewOnce = Boolean(
+    message.isViewOnce && (message.type === 'image' || message.type === 'video'),
+  );
+  return {
+    id: message.id,
+    text: isPrivateViewOnce ? '' : message.text,
+    senderId: message.senderId,
+    timestamp,
+    type: message.type,
+    mediaKind: message.mediaKind,
+    isViewOnce: message.isViewOnce,
+    imageUrl: isPrivateViewOnce ? undefined : message.imageUrl,
+    offlineImageUri: isPrivateViewOnce ? undefined : message.offlineImageUri,
+    storagePath: isPrivateViewOnce ? undefined : message.storagePath,
+    previewStoragePath: isPrivateViewOnce ? undefined : message.previewStoragePath,
+    offlinePreviewUri: isPrivateViewOnce ? undefined : message.offlinePreviewUri,
+    previewUrl: isPrivateViewOnce ? undefined : message.previewUrl,
+    document: isPrivateViewOnce ? undefined : message.document,
+    location: isPrivateViewOnce
+      ? undefined
+      : message.location
+        ? {
+            ...message.location,
+            expiresAt: message.location.expiresAt instanceof Date
+              ? message.location.expiresAt.toISOString()
+              : (message.location.expiresAt ?? null),
+          }
+        : undefined,
+    dateInvite: isPrivateViewOnce
+      ? undefined
+      : message.dateInvite
+        ? {
+            ...message.dateInvite,
+            scheduledFor: message.dateInvite.scheduledFor instanceof Date
+              ? message.dateInvite.scheduledFor.toISOString()
+              : new Date().toISOString(),
+          }
+        : undefined,
+    sticker: isPrivateViewOnce ? undefined : message.sticker,
+    providerMedia: isPrivateViewOnce ? undefined : message.providerMedia,
+  };
+};
+
+const EPOCH_DATE = new Date(0);
+
+const deserializeCachedDate = (
+  value: string | number | Date | null | undefined,
+  fallback: Date = EPOCH_DATE,
+) => {
+  const candidate = value instanceof Date ? value : value ? new Date(value) : null;
+  return candidate && Number.isFinite(candidate.getTime())
+    ? candidate
+    : new Date(fallback.getTime());
+};
+
+const deserializeReplyTarget = (
+  message: CachedReplyTarget | undefined,
+  fallbackTimestamp: Date = EPOCH_DATE,
+): MessageType | undefined => {
+  if (!message) return undefined;
+  const timestamp = deserializeCachedDate(message.timestamp, fallbackTimestamp);
+  return {
+    ...message,
+    providerMedia: parseChatProviderMediaReference(message.providerMedia),
+    timestamp,
+    reactions: [],
+    status: 'sent',
+    location: message.location
+      ? {
+          ...message.location,
+          expiresAt: message.location.expiresAt ? new Date(message.location.expiresAt) : null,
+        }
+      : undefined,
+    dateInvite: message.dateInvite
+      ? {
+          ...message.dateInvite,
+          scheduledFor: deserializeCachedDate(message.dateInvite.scheduledFor, timestamp),
+        }
+      : undefined,
+  };
 };
 
 export const serializeCachedMessages = (messages: MessageType[]): CachedMessageType[] =>
   (messages || []).map((message) => ({
     ...message,
+    providerMedia: parseChatProviderMediaReference(message.providerMedia),
     timestamp: message.timestamp instanceof Date ? message.timestamp.toISOString() : new Date().toISOString(),
     readAt: message.readAt instanceof Date ? message.readAt.toISOString() : undefined,
     deletedAt: message.deletedAt instanceof Date ? message.deletedAt.toISOString() : (message.deletedAt ?? null),
@@ -76,33 +204,43 @@ export const serializeCachedMessages = (messages: MessageType[]): CachedMessageT
               : new Date().toISOString(),
         }
       : undefined,
-    replyTo: undefined,
+    replyTo: serializeReplyTarget(message.replyTo),
   }));
 
-export const deserializeCachedMessages = (raw: unknown): MessageType[] => {
+export const deserializeCachedMessages = (
+  raw: unknown,
+  fallbackTimestamp: Date = EPOCH_DATE,
+): MessageType[] => {
   if (!Array.isArray(raw)) return [];
-  return (raw as CachedMessageType[]).map((message) => ({
-    ...message,
-    timestamp: message.timestamp ? new Date(message.timestamp) : new Date(),
-    readAt: message.readAt ? new Date(message.readAt) : undefined,
-    deletedAt: message.deletedAt ? new Date(message.deletedAt) : null,
-    editedAt: message.editedAt ? new Date(message.editedAt) : null,
-    location: message.location
-      ? {
-          ...message.location,
-          expiresAt: message.location.expiresAt ? new Date(message.location.expiresAt) : null,
-        }
-      : undefined,
-    dateInvite: message.dateInvite
-      ? {
-          ...message.dateInvite,
-          scheduledFor: message.dateInvite.scheduledFor
-            ? new Date(message.dateInvite.scheduledFor)
-            : new Date(),
-        }
-      : undefined,
-    replyTo: undefined,
-  }));
+  return (raw as CachedMessageType[]).map((message) => {
+    // Legacy and partially-written optimistic snapshots can be missing date
+    // fields. Never use the wall clock while hydrating them: doing so changes
+    // the message revision on every render and recursively reapplies SQLite.
+    const timestamp = deserializeCachedDate(message.timestamp, fallbackTimestamp);
+    return {
+      ...message,
+      providerMedia: parseChatProviderMediaReference(message.providerMedia),
+      timestamp,
+      readAt: message.readAt ? deserializeCachedDate(message.readAt, timestamp) : undefined,
+      deletedAt: message.deletedAt ? deserializeCachedDate(message.deletedAt, timestamp) : null,
+      editedAt: message.editedAt ? deserializeCachedDate(message.editedAt, timestamp) : null,
+      location: message.location
+        ? {
+            ...message.location,
+            expiresAt: message.location.expiresAt
+              ? deserializeCachedDate(message.location.expiresAt, timestamp)
+              : null,
+          }
+        : undefined,
+      dateInvite: message.dateInvite
+        ? {
+            ...message.dateInvite,
+            scheduledFor: deserializeCachedDate(message.dateInvite.scheduledFor, timestamp),
+          }
+        : undefined,
+      replyTo: deserializeReplyTarget(message.replyTo, timestamp),
+    };
+  });
 };
 
 export const safeJsonStringify = (value: unknown): string | null => {
@@ -189,11 +327,15 @@ export const localRowToChatMessage = (row: ChatMessageRow): MessageType => {
 
   if (row.metadata_json) {
     try {
-      const hydrated = deserializeCachedMessages([JSON.parse(row.metadata_json)])[0];
+      const hydrated = deserializeCachedMessages(
+        [JSON.parse(row.metadata_json)],
+        deserializeCachedDate(row.created_at),
+      )[0];
       if (hydrated) {
         return {
           ...hydrated,
           status: structuredStatus,
+          sendErrorCode: row.error_code ?? null,
           deletedForAll: row.status === 'deleted',
           deletedAt: row.deleted_at ? new Date(row.deleted_at) : hydrated.deletedAt ?? null,
           editedAt: row.edited_at ? new Date(row.edited_at) : hydrated.editedAt ?? null,
@@ -214,9 +356,20 @@ export const localRowToChatMessage = (row: ChatMessageRow): MessageType => {
     type: row.message_type === 'audio' ? 'voice' : (row.message_type as MessageType['type']),
     reactions: [],
     status: structuredStatus,
+    sendErrorCode: row.error_code ?? null,
     deletedForAll: row.status === 'deleted',
     deletedAt: row.deleted_at ? new Date(row.deleted_at) : null,
     isViewOnce: row.is_view_once === 1,
+    providerMedia: parseChatProviderMediaReference(
+      (() => {
+        if (!row.metadata_json) return null;
+        try {
+          return (JSON.parse(row.metadata_json) as { providerMedia?: unknown }).providerMedia;
+        } catch {
+          return null;
+        }
+      })(),
+    ),
     replyToId: row.reply_to_message_id,
   };
 };

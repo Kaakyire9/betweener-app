@@ -28,6 +28,9 @@ export type OdoShowStateName = (typeof ODO_SHOW_STATES)[number];
 
 export const ODO_SHOW_SCENES = [
   'host_focus',
+  // Manual Program control may pause Odo on the six-person scene. Odo never
+  // selects it autonomously, but its read model must remain valid while live.
+  'panel_focus',
   'host_plus_pool',
   'pool_focus',
   'pair_forming',

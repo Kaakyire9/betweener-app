@@ -2,9 +2,10 @@
 // Edge Function: background V4 Vibes summary repair / backfill jobs
 //
 // Deploy this function and schedule it to run periodically (recommended: every 15 minutes).
-// It calls the DB RPC `rpc_process_vibes_v4_jobs()` using the service role key.
+// It calls the DB RPC `rpc_process_vibes_v4_jobs()` using a privileged server key.
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { getSupabaseAdminHeaders } from "../_shared/supabase-admin-key.ts";
 
 serve(async (req) => {
   const cronSecret = Deno.env.get("VIBES_V4_JOBS_SECRET");
@@ -17,19 +18,16 @@ serve(async (req) => {
 
   try {
     const url = Deno.env.get("SUPABASE_URL") ?? "";
-    const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-    if (!url || !key) {
-      console.error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
+    if (!url) {
+      console.error("Missing SUPABASE_URL");
       return new Response("Missing config", { status: 500 });
     }
 
     const resp = await fetch(`${url}/rest/v1/rpc/rpc_process_vibes_v4_jobs`, {
       method: "POST",
-      headers: {
+      headers: getSupabaseAdminHeaders({
         "Content-Type": "application/json",
-        apikey: key,
-        Authorization: `Bearer ${key}`,
-      },
+      }),
       body: "{}",
     });
 

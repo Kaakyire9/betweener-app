@@ -15,7 +15,6 @@ import {
   type MomentRecentViewer,
   type MomentViewerSegments,
 } from '@/lib/moments-views';
-import { collectMomentSyncIssues } from '@/lib/offline/moment-sync-issues';
 import { reconcileMomentRowsWithOfflineMutations } from '@/lib/offline/moment-mutation-reconciler';
 import {
   mergeOwnMomentsSnapshot,
@@ -29,7 +28,7 @@ import {
   writeOwnMomentRecentViewersSnapshot,
   writeMomentReactorsSnapshot,
 } from '@/lib/offline/moments-store';
-import { getMomentOfflineMutationSnapshot, retryFailedOfflineMutations, subscribeToOfflineMutationEvents } from '@/lib/offline/mutation-queue';
+import { subscribeToOfflineMutationEvents } from '@/lib/offline/mutation-queue';
 import { normalizeProfilePhotoUri } from '@/lib/profile/media';
 import { getSafeRemoteImageUri } from '@/lib/profile/display-name';
 import { supabase } from '@/lib/supabase';
@@ -142,7 +141,6 @@ export default function MyMomentsScreen() {
   const [reactionCounts, setReactionCounts] = useState<Record<string, number>>({});
   const [commentCounts, setCommentCounts] = useState<Record<string, number>>({});
   const [viewCounts, setViewCounts] = useState<Record<string, number>>({});
-  const [syncStateByMomentId, setSyncStateByMomentId] = useState<Record<string, { state: 'pending' | 'failed'; label: string }>>({});
   const [viewerVisible, setViewerVisible] = useState(false);
   const [viewerStartMomentId, setViewerStartMomentId] = useState<string | null>(null);
   const [commentsVisible, setCommentsVisible] = useState(false);
@@ -252,7 +250,6 @@ export default function MyMomentsScreen() {
       if (viewerSegmentsResult) {
         setViewerSegments(viewerSegmentsResult);
       }
-      setSyncStateByMomentId(reconciled.syncStateByMomentId);
       setMoments(reconciled.moments);
       await mergeOwnMomentsSnapshot(user.id, {
         moments: reconciled.moments,
@@ -438,43 +435,11 @@ export default function MyMomentsScreen() {
   };
 
   const openMomentActions = (moment: Moment) => {
-    const open = async () => {
-      const snapshot = await getMomentOfflineMutationSnapshot();
-      const issues = collectMomentSyncIssues([...snapshot.failed, ...snapshot.pending], moment.id);
-      const failedIssues = issues.filter((issue) => issue.state === 'failed');
-      const buttons: NonNullable<Parameters<typeof Alert.alert>[2]> = [
-        { text: 'Share', onPress: () => handleShare(moment) },
-      ];
-      if (issues.length > 0) {
-        buttons.push({
-          text: 'Review sync issues',
-          onPress: () => {
-            Alert.alert(
-              'Moment sync status',
-              issues
-                .slice(0, 4)
-                .map((issue, index) => `${index + 1}. ${issue.title}\n${issue.detail}`)
-                .join('\n\n'),
-            );
-          },
-        });
-      }
-      if (failedIssues.length > 0) {
-        buttons.push({
-          text: 'Retry sync',
-          onPress: async () => {
-            await retryFailedOfflineMutations((mutation) =>
-              failedIssues.some((issue) => issue.id === mutation.id),
-            );
-            void fetchMoments();
-          },
-        });
-      }
-      buttons.push({ text: 'Delete', style: 'destructive', onPress: () => handleDelete(moment) });
-      buttons.push({ text: 'Cancel', style: 'cancel' });
-      Alert.alert('Moment options', undefined, buttons);
-    };
-    void open();
+    Alert.alert('Moment options', undefined, [
+      { text: 'Share', onPress: () => handleShare(moment) },
+      { text: 'Delete', style: 'destructive', onPress: () => handleDelete(moment) },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
   };
 
   const openComments = (momentId: string) => {
@@ -991,7 +956,6 @@ export default function MyMomentsScreen() {
             const views = viewCounts[moment.id] ?? 0;
             const reactions = reactionCounts[moment.id] ?? 0;
             const comments = commentCounts[moment.id] ?? 0;
-            const syncState = syncStateByMomentId[moment.id] ?? null;
             const title = moment.caption?.trim() || getMomentKindLabel(moment);
             const textDensity = moment.type === 'text' ? getTextPreviewDensity(moment.text_body) : null;
             const reactionRate = formatRate(reactions, views);
@@ -1013,23 +977,6 @@ export default function MyMomentsScreen() {
                     />
                     <Text style={styles.kindPillText}>{getMomentKindLabel(moment)}</Text>
                   </View>
-                  {syncState ? (
-                    <View
-                      style={[
-                        styles.syncStatusPill,
-                        syncState.state === 'failed' ? styles.syncStatusPillFailed : styles.syncStatusPillPending,
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.syncStatusText,
-                          syncState.state === 'failed' ? styles.syncStatusTextFailed : styles.syncStatusTextPending,
-                        ]}
-                      >
-                        {syncState.label}
-                      </Text>
-                    </View>
-                  ) : null}
                   <TouchableOpacity style={styles.moreButton} onPress={() => openMomentActions(moment)}>
                     <MaterialCommunityIcons name="dots-horizontal" size={20} color={theme.textMuted} />
                   </TouchableOpacity>
@@ -1558,31 +1505,6 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       fontSize: 11,
       textTransform: 'uppercase',
       letterSpacing: 0.7,
-    },
-    syncStatusPill: {
-      paddingHorizontal: 10,
-      paddingVertical: 6,
-      borderRadius: 999,
-      borderWidth: 1,
-    },
-    syncStatusPillPending: {
-      backgroundColor: withAlpha(theme.tint, isDark ? 0.12 : 0.08),
-      borderColor: withAlpha(theme.tint, isDark ? 0.24 : 0.16),
-    },
-    syncStatusPillFailed: {
-      backgroundColor: withAlpha(theme.danger, isDark ? 0.14 : 0.08),
-      borderColor: withAlpha(theme.danger, isDark ? 0.26 : 0.18),
-    },
-    syncStatusText: {
-      fontFamily: 'Manrope_700Bold',
-      fontSize: 10.5,
-      letterSpacing: 0.2,
-    },
-    syncStatusTextPending: {
-      color: theme.tint,
-    },
-    syncStatusTextFailed: {
-      color: theme.danger,
     },
     moreButton: {
       width: 36,

@@ -71,7 +71,7 @@ test('welcome exposure state is private, membership-scoped and Supabase-owned', 
 
 test('Live remains the server-backed priority hero and reuses authoritative quorum', () => {
   assert.match(board, /liveGatheringsById/);
-  assert.match(board, /Upcoming Circle Live/);
+  assert.match(board, /Upcoming Gathering with Live/);
   assert.match(board, /selectedLiveGathering\.quorumStatus/);
   assert.match(board, /selectedLiveGathering\.attendanceCount/);
   assert.match(board, /selectedLiveGathering\.viewerRsvpStatus === 'going'/);

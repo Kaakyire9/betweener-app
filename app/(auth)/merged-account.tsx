@@ -1,6 +1,6 @@
 import { Colors } from "@/constants/theme";
 import { TRUST_LINKS, openSupportEmail } from "@/lib/trust-links";
-import { supabase } from "@/lib/supabase";
+import { signOutSupabaseSession } from "@/lib/auth/sign-out-session";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
@@ -42,9 +42,10 @@ export default function MergedAccountScreen() {
         : `Use one of these sign-in methods to return to your kept account: ${methodLabels.join(", ")}.`;
 
   const handleSignOut = async () => {
-    const { error } = await supabase.auth.signOut();
-    if (error) {
-      Alert.alert("Sign out failed", error.message || "Unable to sign out right now.");
+    const { supabaseError } = await signOutSupabaseSession({ reason: 'merged_account_sign_out' });
+    if (supabaseError) {
+      const message = supabaseError instanceof Error ? supabaseError.message : "Unable to sign out right now.";
+      Alert.alert("Sign out failed", message);
       return;
     }
     router.replace("/(auth)/welcome");

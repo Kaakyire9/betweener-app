@@ -11,9 +11,11 @@ const profileScreen = readFileSync('app/profile-view.tsx', 'utf8');
 const profileActions = readFileSync('components/profile/ProfileViewActions.tsx', 'utf8');
 const entrySheet = readFileSync('features/circles/components/CircleEntryContextSheet.tsx', 'utf8');
 const homeCards = readFileSync('components/circles/CirclesHomeCards.tsx', 'utf8');
+const offlineImage = readFileSync('components/media/OfflineImage.tsx', 'utf8');
 const constellation = readFileSync('components/circles/CirclePicksConstellation.tsx', 'utf8');
 const liveGateway = readFileSync('features/live/components/CirclesLiveGateway.tsx', 'utf8');
 const premiumTabBar = readFileSync('components/navigation/PremiumBottomTabBar.tsx', 'utf8');
+const tabLayout = readFileSync('app/(tabs)/_layout.tsx', 'utf8');
 
 test('Circle entry context is private, optional, and distinct from dating consent', () => {
   assert.match(migration, /create table if not exists public\.circle_member_context/i);
@@ -87,7 +89,11 @@ test('Circles home keeps Gatherings as its only priority module and restores pri
   assert.doesNotMatch(circlesHome, />Today in your Circles</);
   assert.doesNotMatch(circlesHome, /onPress=\{\(\) => setHomeMode\('find'\)\}[\s\S]{0,160}Discover more Circles/);
   assert.doesNotMatch(liveGateway, /styles\.arrow/);
-  assert.match(liveGateway, /featuredLive \? 'ENTER'/);
+  assert.match(liveGateway, /featuredLive \? 'ENTER LIVE'/);
+  assert.match(liveGateway, /AccessibilityInfo\.isReduceMotionEnabled/);
+  assert.match(premiumTabBar, /liveIndicators/);
+  assert.match(tabLayout, /circles: circleInvitationCount,/);
+  assert.match(tabLayout, /liveIndicators=\{\{ circles: activeLiveCount > 0 \}\}/);
 });
 
 test('discovery telemetry stores no raw score or private preference payload', () => {
@@ -109,4 +115,12 @@ test('Circle Picks aggregate opted-in shared Circles without exposing scores', (
   assert.match(pickRotationMigration, /interval '12 hours'/i);
   assert.match(pickRotationMigration, /last_impression_at asc nulls first/i);
   assert.match(circlesHome, /picks\.slice\(0, 2\)/);
+});
+
+test('Circle cards render durable local images without the core iOS image request queue', () => {
+  assert.match(homeCards, /import OfflineImage from '@\/components\/media\/OfflineImage'/);
+  assert.doesNotMatch(homeCards, /<Image\b/);
+  assert.match(homeCards, /<OfflineImage\b/);
+  assert.match(offlineImage, /normalizedUri\.startsWith\("file:\/\/"\) \? "none" : cachePolicy/);
+  assert.match(offlineImage, /cachePolicy=\{effectiveCachePolicy\}/);
 });

@@ -1,7 +1,12 @@
 import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { Motion } from "@/lib/motion";
-import { TRUST_LINKS, openExternalUrl, openSupportEmail } from "@/lib/trust-links";
+import {
+  TRUST_LINKS,
+  openChildSafetyEmail,
+  openExternalUrl,
+  openSupportEmail,
+} from "@/lib/trust-links";
 import { addEventListener as addNetInfoListener, fetch as fetchNetInfo } from "@react-native-community/netinfo";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
@@ -32,6 +37,13 @@ const LEGAL_ROWS = [
     body: "A simple breakdown of tracking, analytics, and browser/device storage.",
     icon: "cookie-outline",
     url: TRUST_LINKS.cookies,
+  },
+  {
+    id: "child-safety",
+    title: "Child Safety Standards",
+    body: "Betweener's zero-tolerance standards, reporting process, and safety contact.",
+    icon: "shield-account-outline",
+    url: TRUST_LINKS.childSafety,
   },
 ] as const;
 
@@ -173,9 +185,9 @@ export default function TrustCenterScreen() {
                 onPress={() =>
                   void handleExternalAction(
                     () =>
-                      openSupportEmail(
+                      openChildSafetyEmail(
                         "Betweener support",
-                        "Hello Betweener team,%0D%0A%0D%0AI need help with:%0D%0A"
+                        "Hello Betweener team,\n\nI need help with:\n"
                       ),
                     "Email support",
                   )
@@ -193,6 +205,32 @@ export default function TrustCenterScreen() {
                   <Text style={styles.actionBody}>{TRUST_LINKS.supportEmail}</Text>
                 </View>
                 <MaterialCommunityIcons name="email-fast-outline" size={20} color={theme.tint} />
+              </Pressable>
+              <Pressable
+                style={styles.actionRow}
+                onPress={() =>
+                  void handleExternalAction(
+                    () =>
+                      openSupportEmail(
+                        "Urgent child-safety concern",
+                        "Hello Betweener Safety team,\n\nI need to report a child-safety concern:\n"
+                      ),
+                    "Contact the safety team",
+                  )
+                }
+              >
+                <View>
+                  <View style={styles.rowTitleLine}>
+                    <Text style={styles.actionTitle}>Contact the safety team</Text>
+                    {!networkReady ? (
+                      <View style={styles.offlinePill}>
+                        <Text style={styles.offlinePillText}>Requires connection</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                  <Text style={styles.actionBody}>{TRUST_LINKS.childSafetyEmail}</Text>
+                </View>
+                <MaterialCommunityIcons name="shield-alert-outline" size={20} color={theme.tint} />
               </Pressable>
               <Pressable
                 style={styles.actionRow}

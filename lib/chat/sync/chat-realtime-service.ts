@@ -7,6 +7,7 @@ import {
   THREAD_ACTIVITY_HEARTBEAT_MS,
 } from "@/lib/chat/thread-activity";
 import { canSendWebsocketBroadcast } from "@/lib/chat/realtime-channel";
+import { subscribeUserChatBroadcast } from "@/lib/realtime/user-chat-broadcast";
 
 import type {
   ChatRealtimeStatus,
@@ -38,106 +39,42 @@ export const subscribeThreadMessageRealtime = ({
   onSystemInsert,
 }: SubscribeThreadMessageRealtimeArgs) => {
   let stopped = false;
-  const channelStates = new Map<string, ChatRealtimeStatus>();
-  let reportedSubscribed = false;
-  let reportedFailure: ChatRealtimeStatus | null = null;
-  const reportStatus = (channelName: string, status: ChatRealtimeStatus) => {
+  const reportStatus = (status: ChatRealtimeStatus) => {
     // Removing a Supabase channel emits CLOSED. That is an intentional
     // teardown, not a connectivity failure, and must never start recovery
     // work while the user is navigating away from the thread.
     if (stopped) return;
-    channelStates.set(channelName, status);
-    if (status === 'SUBSCRIBED') {
-      reportedFailure = null;
-      if (
-        !reportedSubscribed &&
-        channelStates.get('inbox') === 'SUBSCRIBED' &&
-        channelStates.get('sent') === 'SUBSCRIBED' &&
-        channelStates.get('system') === 'SUBSCRIBED'
-      ) {
-        reportedSubscribed = true;
-        onStatus('SUBSCRIBED');
-      }
-      return;
-    }
-    if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-      reportedSubscribed = false;
-      if (reportedFailure !== status) {
-        reportedFailure = status;
-        onStatus(status);
-      }
-    }
+    onStatus(status);
   };
 
-  const inboxChannel = supabase
-    .channel(`messages:thread:inbox:${currentUserId}:${peerUserId}`)
-    .on(
-      'postgres_changes',
-      {
-        event: '*',
-        schema: 'public',
-        table: 'messages',
-        filter: `receiver_id=eq.${currentUserId}`,
-      },
-      (payload) => {
-        if (payload.eventType === 'DELETE') return;
-        const row = payload.new as RemoteThreadMessageRow;
-        if (row.sender_id !== peerUserId) return;
-        if (payload.eventType === 'INSERT') {
-          onInboxInsert(row);
+  const unsubscribe = subscribeUserChatBroadcast(
+    currentUserId,
+    (change) => {
+      if (change.eventType === 'DELETE') return;
+      if (change.table === 'messages') {
+        const row = change.new as unknown as RemoteThreadMessageRow;
+        if (row.receiver_id === currentUserId && row.sender_id === peerUserId) {
+          if (change.eventType === 'INSERT') onInboxInsert(row);
+          else onInboxUpdate(row);
           return;
         }
-        onInboxUpdate(row);
-      },
-    )
-    .subscribe((status) => reportStatus('inbox', status));
-
-  const sentChannel = supabase
-    .channel(`messages:thread:sent:${currentUserId}:${peerUserId}`)
-    .on(
-      'postgres_changes',
-      {
-        event: '*',
-        schema: 'public',
-        table: 'messages',
-        filter: `sender_id=eq.${currentUserId}`,
-      },
-      (payload) => {
-        if (payload.eventType === 'DELETE') return;
-        const row = payload.new as RemoteThreadMessageRow;
-        if (row.receiver_id !== peerUserId) return;
-        if (payload.eventType === 'INSERT') {
-          onSentInsert(row);
-          return;
+        if (row.sender_id === currentUserId && row.receiver_id === peerUserId) {
+          if (change.eventType === 'INSERT') onSentInsert(row);
+          else onSentUpdate(row);
         }
-        onSentUpdate(row);
-      },
-    )
-    .subscribe((status) => reportStatus('sent', status));
-
-  const systemChannel = supabase
-    .channel(`system_messages:${currentUserId}:${peerUserId}`)
-    .on(
-      'postgres_changes',
-      {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'system_messages',
-        filter: `user_id=eq.${currentUserId}`,
-      },
-      (payload) => {
-        const row = payload.new as RemoteSystemMessageRow;
-        if (row.peer_user_id !== peerUserId) return;
-        onSystemInsert(row);
-      },
-    )
-    .subscribe((status) => reportStatus('system', status));
+        return;
+      }
+      if (change.table === 'system_messages' && change.eventType === 'INSERT') {
+        const row = change.new as unknown as RemoteSystemMessageRow;
+        if (row.peer_user_id === peerUserId) onSystemInsert(row);
+      }
+    },
+    (status) => reportStatus(status as ChatRealtimeStatus),
+  );
 
   return () => {
     stopped = true;
-    supabase.removeChannel(inboxChannel);
-    supabase.removeChannel(sentChannel);
-    supabase.removeChannel(systemChannel);
+    unsubscribe();
   };
 };
 
@@ -160,8 +97,8 @@ export const subscribeThreadAncillaryRealtime = ({
   onReactionDelete,
   onMessageViewInsert,
 }: SubscribeThreadAncillaryRealtimeArgs) => {
-  const reactionsChannel = supabase
-    .channel(`message_reactions:${conversationId}:${currentUserId}`)
+  const channel = supabase
+    .channel(`chat:ancillary:${conversationId}:${currentUserId}`)
     .on(
       'postgres_changes',
       {
@@ -181,10 +118,6 @@ export const subscribeThreadAncillaryRealtime = ({
         }
       },
     )
-    .subscribe();
-
-  const viewsChannel = supabase
-    .channel(`message_views:${conversationId}:${currentUserId}`)
     .on(
       'postgres_changes',
       {
@@ -202,8 +135,7 @@ export const subscribeThreadAncillaryRealtime = ({
     .subscribe();
 
   return () => {
-    supabase.removeChannel(reactionsChannel);
-    supabase.removeChannel(viewsChannel);
+    supabase.removeChannel(channel);
   };
 };
 

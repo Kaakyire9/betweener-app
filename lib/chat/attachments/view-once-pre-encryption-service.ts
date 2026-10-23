@@ -1,4 +1,4 @@
-import { getSafeAttachmentExtension } from '@/lib/chat/attachment-lifecycle';
+import { getSafeAttachmentExtension , CHAT_ATTACHMENT_GUARD_CONTRACT_V1_2 } from '@/lib/chat/attachment-lifecycle';
 import { ChatUploadTransport } from '@/lib/chat/transfer/chat-upload-transport';
 import { supabase } from '@/lib/supabase';
 import type { Database } from '@/supabase/types/database';
@@ -68,6 +68,7 @@ export const moderateEncryptAndSendViewOnceImage = async (input: {
   const { data, error } = await supabase.functions.invoke('chat-attachment-finalize', {
     body: {
       mode: 'finalize_view_once_plaintext',
+      contractVersion: CHAT_ATTACHMENT_GUARD_CONTRACT_V1_2,
       receiverId: input.receiverId,
       clientMessageId: input.clientMessageId,
       attachmentId: input.attachmentId,

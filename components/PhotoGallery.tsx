@@ -1,8 +1,10 @@
 import { Colors } from '@/constants/theme';
 import OfflineImage from '@/components/media/OfflineImage';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 import { getSafeRemoteImageUri } from '@/lib/profile/display-name';
 import { useResponsiveMetrics } from '@/lib/responsive';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useState } from 'react';
 import {
     Alert,
@@ -22,6 +24,8 @@ interface PhotoGalleryProps {
   canEdit?: boolean;
   onAddPhoto?: () => void;
   onRemovePhoto?: (index: number) => void;
+  onMovePhoto?: (fromIndex: number, toIndex: number) => void;
+  reorderEnabled?: boolean;
 }
 
 export default function PhotoGallery({ 
@@ -31,12 +35,20 @@ export default function PhotoGallery({
   onOpenVideo,
   canEdit = false, 
   onAddPhoto,
-  onRemovePhoto 
+  onRemovePhoto,
+  onMovePhoto,
+  reorderEnabled = false,
 }: PhotoGalleryProps) {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const [gridWidth, setGridWidth] = useState(0);
   const responsive = useResponsiveMetrics();
+  const colorScheme = useColorScheme();
+  const theme = Colors[colorScheme ?? 'light'];
   const insets = responsive.insets;
-  const safePhotos = photos.map((photo) => getSafeRemoteImageUri(photo)).filter(Boolean) as string[];
+  const safePhotoItems = photos
+    .map((photo, originalIndex) => ({ uri: getSafeRemoteImageUri(photo), originalIndex }))
+    .filter((item): item is { uri: string; originalIndex: number } => Boolean(item.uri));
+  const safePhotos = safePhotoItems.map((item) => item.uri);
   const safeIntroVideoUrl = introVideoUrl ? getSafeRemoteImageUri(introVideoUrl) : null;
   const hasIntroVideoMedia = Boolean(safeIntroVideoUrl);
   const safeIntroVideoThumbnail = hasIntroVideoMedia
@@ -75,18 +87,34 @@ export default function PhotoGallery({
     }
   };
 
-  // Calculate grid layout
-  const gridPadding = responsive.compactWidth ? 16 : 20;
+  // Measure the card itself: the parent already owns its horizontal padding.
+  // Using the window width here caused a third tile to wrap, leaving a false
+  // empty column on the right on Android and narrower devices.
   const gridGap = responsive.compactWidth ? 7 : 8;
-  const itemWidth = Math.floor((responsive.usableWidth - gridPadding * 2 - gridGap * 2) / 3);
-  const itemHeight = itemWidth * 1.25; // 4:5 aspect ratio
+  const availableGridWidth = gridWidth || responsive.contentWidth;
+  const columnCount = availableGridWidth >= 320 ? 3 : 2;
+  const itemWidth = Math.max(
+    86,
+    Math.floor((availableGridWidth - gridGap * (columnCount - 1)) / columnCount),
+  );
+  const itemHeight = Math.round(itemWidth * 1.24);
+  const framedTileStyle = {
+    backgroundColor: theme.background,
+    borderColor: colorScheme === 'dark' ? 'rgba(91,193,187,0.30)' : 'rgba(0,128,128,0.20)',
+  } as const;
 
   return (
     <View style={styles.container}>
-      <View style={[styles.grid, { gap: gridGap, paddingHorizontal: gridPadding }]}>
+      <View
+        style={[styles.grid, { gap: gridGap }]}
+        onLayout={({ nativeEvent }) => {
+          const nextWidth = Math.floor(nativeEvent.layout.width);
+          if (nextWidth > 0 && nextWidth !== gridWidth) setGridWidth(nextWidth);
+        }}
+      >
         {hasIntroVideoMedia && safeIntroVideoThumbnail ? (
           <TouchableOpacity
-            style={[styles.photoContainer, { width: itemWidth, height: itemHeight }]}
+            style={[styles.photoContainer, framedTileStyle, { width: itemWidth, height: itemHeight }]}
             onPress={onOpenVideo}
             activeOpacity={0.85}
           >
@@ -96,42 +124,94 @@ export default function PhotoGallery({
               cachePolicy="memory-disk"
             />
             <View style={styles.videoOverlay} />
+            <LinearGradient
+              pointerEvents="none"
+              colors={['rgba(255,255,255,0.08)', 'transparent', 'rgba(3,13,16,0.34)']}
+              locations={[0, 0.55, 1]}
+              style={StyleSheet.absoluteFill}
+            />
+            <View style={styles.sceneBadge}>
+              <Text style={styles.sceneBadgeText}>INTRO</Text>
+            </View>
             <View style={styles.videoBadge}>
               <MaterialCommunityIcons name="play" size={18} color="#fff" />
             </View>
-            <Text style={styles.videoHint}>Tap to play</Text>
           </TouchableOpacity>
         ) : null}
-        {safePhotos.map((photo, index) => (
+        {safePhotoItems.map((photoItem, index) => (
           <TouchableOpacity
-            key={index}
-            style={[styles.photoContainer, { width: itemWidth, height: itemHeight }]}
+            key={`${photoItem.uri}-${photoItem.originalIndex}`}
+            style={[styles.photoContainer, framedTileStyle, { width: itemWidth, height: itemHeight }]}
             onPress={() => handlePhotoPress(index)}
+            activeOpacity={0.88}
           >
             <OfflineImage
-              uri={photo}
+              uri={photoItem.uri}
               style={styles.photo}
               cachePolicy="memory-disk"
             />
+            <LinearGradient
+              pointerEvents="none"
+              colors={['rgba(255,255,255,0.07)', 'transparent', 'rgba(3,13,16,0.32)']}
+              locations={[0, 0.58, 1]}
+              style={StyleSheet.absoluteFill}
+            />
+            {!reorderEnabled ? (
+              <View style={styles.sceneBadge}>
+                <Text style={styles.sceneBadgeText}>{String(index + 1).padStart(2, '0')}</Text>
+              </View>
+            ) : null}
             {canEdit && (
               <TouchableOpacity
                 style={styles.removeButton}
-                onPress={() => handleRemovePhoto(index)}
+                onPress={() => handleRemovePhoto(photoItem.originalIndex)}
               >
                 <MaterialCommunityIcons name="close" size={12} color="#fff" />
               </TouchableOpacity>
             )}
+            {canEdit && reorderEnabled && onMovePhoto && safePhotoItems.length > 1 ? (
+              <View style={styles.reorderControls}>
+                <TouchableOpacity
+                  style={[styles.reorderButton, index === 0 && styles.reorderButtonDisabled]}
+                  disabled={index === 0}
+                  onPress={() => onMovePhoto(photoItem.originalIndex, safePhotoItems[index - 1].originalIndex)}
+                  accessibilityLabel={`Move photo ${index + 1} left`}
+                >
+                  <MaterialCommunityIcons name="chevron-left" size={16} color="#fff" />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.reorderButton, index === safePhotoItems.length - 1 && styles.reorderButtonDisabled]}
+                  disabled={index === safePhotoItems.length - 1}
+                  onPress={() => onMovePhoto(photoItem.originalIndex, safePhotoItems[index + 1].originalIndex)}
+                  accessibilityLabel={`Move photo ${index + 1} right`}
+                >
+                  <MaterialCommunityIcons name="chevron-right" size={16} color="#fff" />
+                </TouchableOpacity>
+              </View>
+            ) : null}
           </TouchableOpacity>
         ))}
         
         {/* Add Photo Button */}
         {canEdit && photos.length < 6 && (
           <TouchableOpacity
-            style={[styles.addPhotoContainer, { width: itemWidth, height: itemHeight }]}
+            style={[
+              styles.addPhotoContainer,
+              {
+                width: itemWidth,
+                height: itemHeight,
+                backgroundColor: theme.background,
+                borderColor: theme.outline,
+              },
+            ]}
             onPress={onAddPhoto}
+            activeOpacity={0.82}
           >
-            <MaterialCommunityIcons name="camera-plus" size={32} color="#9ca3af" />
-            <Text style={styles.addPhotoText}>Add Photo</Text>
+            <View style={[styles.addPhotoIcon, { backgroundColor: `${theme.tint}18` }]}>
+              <MaterialCommunityIcons name="image-plus" size={22} color={theme.tint} />
+            </View>
+            <Text style={[styles.addPhotoText, { color: theme.text }]}>Add scene</Text>
+            <Text style={[styles.addPhotoHint, { color: theme.textMuted }]}>Up to six</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -165,7 +245,7 @@ export default function PhotoGallery({
               {canEdit && selectedIndex !== null && (
                 <TouchableOpacity
                   style={styles.deleteButton}
-                  onPress={() => handleRemovePhoto(selectedIndex)}
+                  onPress={() => handleRemovePhoto(safePhotoItems[selectedIndex]?.originalIndex ?? selectedIndex)}
                   hitSlop={{ top: 12, right: 12, bottom: 12, left: 12 }}
                   activeOpacity={0.85}
                 >
@@ -225,7 +305,7 @@ export default function PhotoGallery({
               >
                 {safePhotos.map((photo, index) => (
                   <TouchableOpacity
-                    key={index}
+                    key={`${photo}-${safePhotoItems[index]?.originalIndex ?? index}`}
                     style={[
                       styles.thumbnail,
                       selectedIndex === index && styles.activeThumbnail
@@ -250,16 +330,24 @@ export default function PhotoGallery({
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
+    width: '100%',
+    alignSelf: 'stretch',
   },
   grid: {
+    width: '100%',
     flexDirection: 'row',
     flexWrap: 'wrap',
   },
   photoContainer: {
-    borderRadius: 12,
+    borderRadius: 15,
     overflow: 'hidden',
     position: 'relative',
+    borderWidth: StyleSheet.hairlineWidth,
+    shadowColor: '#001716',
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.16,
+    shadowRadius: 10,
+    elevation: 3,
   },
   photo: {
     width: '100%',
@@ -267,34 +355,88 @@ const styles = StyleSheet.create({
   },
   removeButton: {
     position: 'absolute',
-    top: 6,
-    right: 6,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    top: 7,
+    right: 7,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: 'rgba(5, 18, 20, 0.76)',
     justifyContent: 'center',
     alignItems: 'center',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.28)',
+  },
+  sceneBadge: {
+    position: 'absolute',
+    left: 7,
+    bottom: 7,
+    minWidth: 28,
+    height: 21,
+    paddingHorizontal: 7,
+    borderRadius: 999,
+    backgroundColor: 'rgba(5,18,20,0.68)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.24)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sceneBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    letterSpacing: 0.8,
+    fontFamily: 'Manrope_700Bold',
+  },
+  reorderControls: {
+    position: 'absolute',
+    left: 7,
+    bottom: 7,
+    flexDirection: 'row',
+    gap: 5,
+  },
+  reorderButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(7,20,26,0.78)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.24)',
+  },
+  reorderButtonDisabled: {
+    opacity: 0.34,
   },
   addPhotoContainer: {
-    borderRadius: 12,
-    backgroundColor: '#f9fafb',
-    borderWidth: 2,
-    borderColor: '#e5e7eb',
+    borderRadius: 15,
+    borderWidth: 1,
     borderStyle: 'dashed',
     justifyContent: 'center',
     alignItems: 'center',
+    paddingHorizontal: 8,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
     elevation: 1,
   },
+  addPhotoIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
   addPhotoText: {
-    fontSize: 12,
-    color: '#9ca3af',
-    marginTop: 4,
-    fontWeight: '500',
+    fontSize: 12.5,
+    fontFamily: 'Manrope_700Bold',
+    textAlign: 'center',
+  },
+  addPhotoHint: {
+    marginTop: 2,
+    fontSize: 9.5,
+    fontFamily: 'Manrope_500Medium',
+    textAlign: 'center',
   },
   videoOverlay: {
     ...StyleSheet.absoluteFill,
@@ -312,17 +454,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.6)',
-  },
-  videoHint: {
-    position: 'absolute',
-    left: 8,
-    bottom: 8,
-    fontSize: 11,
-    color: 'rgba(255,255,255,0.9)',
-    fontWeight: '600',
-    textShadowColor: 'rgba(0,0,0,0.5)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 2,
   },
   modalContainer: {
     flex: 1,

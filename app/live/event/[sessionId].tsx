@@ -25,7 +25,7 @@ import {
 } from '@/features/live/components/index.ts';
 import { formatLiveCountdown } from '@/features/live/components/LiveSessionCard.tsx';
 import { type LiveVisualTheme, useLiveVisualTheme } from '@/features/live/components/live-visual-tokens.ts';
-import { useLiveQuorumPooling, useLiveSessionRecap, useLiveSessions } from '@/features/live/hooks/index.ts';
+import { useLiveHostingManagement, useLiveQuorumPooling, useLiveSessionRecap, useLiveSessions } from '@/features/live/hooks/index.ts';
 import {
   getLiveExitDestination,
   getLiveReturnParams,
@@ -33,6 +33,8 @@ import {
   type LiveReturnRouteParams,
 } from '@/features/live/navigation/live-navigation.ts';
 import { useAuth } from '@/lib/auth-context';
+import { useAdminAccess } from '@/lib/admin/admin-access';
+import { buildWebUrl } from '@/config/app-identity';
 
 const formatDate = (value: string | null) => value
   ? new Intl.DateTimeFormat(undefined, { dateStyle: 'full', timeStyle: 'short' }).format(new Date(value))
@@ -51,6 +53,7 @@ export default function LiveEventScreen() {
   const params = useLocalSearchParams<{ sessionId: string } & LiveReturnRouteParams>();
   const sessionId = typeof params.sessionId === 'string' ? params.sessionId : '';
   const { profile } = useAuth();
+  const adminAccess = useAdminAccess();
   const { sessions, loading, refresh } = useLiveSessions();
   const quorumPooling = useLiveQuorumPooling(sessionId);
   const [clock, setClock] = useState(Date.now());
@@ -59,9 +62,13 @@ export default function LiveEventScreen() {
   const [lifecycleBusy, setLifecycleBusy] = useState(false);
   useEffect(() => { const timer = setInterval(() => setClock(Date.now()), 30_000); return () => clearInterval(timer); }, []);
   const session = useMemo(() => sessions.find((item) => item.id === sessionId), [sessionId, sessions]);
+  const hosting = useLiveHostingManagement({ sessionId, enabled: Boolean(sessionId) });
   const phase = session ? getLiveSessionPhase(session, clock) : 'upcoming';
   const recap = useLiveSessionRecap(sessionId, phase === 'past' && session?.status === 'ended');
   const isOwner = session?.createdByProfileId === profile?.id;
+  const canAssignOperators = adminAccess.can('live');
+  const canManageSession = isOwner || hosting.snapshot?.canManageSession === true;
+  const canOpenManagement = canManageSession || canAssignOperators;
   const isDue = Boolean(session?.scheduledStart && Date.parse(session.scheduledStart) <= clock);
   const posterUrl = getLiveEventMediaUrl(session?.posterPath);
   const teaserUrl = getLiveEventMediaUrl(session?.teaserVideoPath);
@@ -107,7 +114,7 @@ export default function LiveEventScreen() {
     if (!session) return;
     await Share.share({
       title: session.title,
-      message: `${session.title}\n${formatDate(session.scheduledStart)}\nhttps://getbetweener.com/live/${session.id}`,
+      message: `${session.title}\n${formatDate(session.scheduledStart)}\n${buildWebUrl(`live/${session.id}`)}`,
     });
   };
 
@@ -148,16 +155,16 @@ export default function LiveEventScreen() {
   };
 
   if (loading && !session) return <View style={styles.loading}><ActivityIndicator color={visual.teal} /></View>;
-  if (!session) return <View style={styles.loading}><Text style={styles.missing}>This Live event is not available.</Text><Pressable onPress={leaveEvent}><Text style={styles.link}>{returnsToCircle ? 'Return to Circle' : 'Return to Live Studio'}</Text></Pressable></View>;
+  if (!session) return <View style={styles.loading}><Text style={styles.missing}>This Live event is not available.</Text><Pressable onPress={leaveEvent}><Text style={styles.link}>{returnsToCircle ? 'Return to Circle' : 'Return to Live Host Dashboard'}</Text></Pressable></View>;
 
   const cancelled = session.status === 'cancelled';
   return (
     <LinearGradient colors={visual.isDark ? [visual.canvas, visual.surfaceSoft, visual.canvas] : [visual.canvas, visual.bgSubtle, visual.surface]} style={styles.root}>
       <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
         <View style={styles.header}>
-          <Pressable accessibilityLabel={returnsToCircle ? 'Back to Circle' : 'Back to Live Studio'} onPress={leaveEvent} style={styles.icon}><ArrowLeft size={21} color={visual.text} /></Pressable>
+          <Pressable accessibilityLabel={returnsToCircle ? 'Back to Circle' : 'Back to Live Host Dashboard'} onPress={leaveEvent} style={styles.icon}><ArrowLeft size={21} color={visual.text} /></Pressable>
           <Text style={styles.headerTitle}>Live Event</Text>
-          {isOwner ? <Pressable accessibilityLabel="Manage Live" onPress={() => setManagementOpen(true)} style={styles.manageIcon}><MoreHorizontal size={22} color={visual.text} /></Pressable> : null}
+          {canOpenManagement ? <Pressable accessibilityLabel="Manage Live" onPress={() => setManagementOpen(true)} style={styles.manageIcon}><MoreHorizontal size={22} color={visual.text} /></Pressable> : null}
         </View>
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <ImageBackground source={posterUrl ? { uri: posterUrl } : undefined} style={styles.hero} imageStyle={styles.heroImage}>
@@ -216,7 +223,7 @@ export default function LiveEventScreen() {
           {isOwner && phase === 'upcoming' ? <LiveHostPreparationCard session={session} now={clock} onOpenBackstage={enter} onManage={() => setManagementOpen(true)} onShare={() => void shareEvent()} /> : null}
           {phase === 'live' ? <Pressable onPress={enter} style={styles.primary}><Text style={styles.primaryText}>Enter Live room</Text></Pressable> : null}
         </ScrollView>
-        {isOwner ? (
+        {canOpenManagement ? (
           <LiveEventManagementSheet
             visible={managementOpen}
             session={session}
@@ -227,6 +234,9 @@ export default function LiveEventScreen() {
             onDuplicate={() => { setManagementOpen(false); router.push({ pathname: '/live/schedule', params: { duplicateSessionId: session.id } }); }}
             onCancel={(reason) => void cancelEvent(reason)}
             onArchive={archiveEvent}
+            hostingController={hosting}
+            canManageEvent={canManageSession}
+            canAssignOperators={canAssignOperators}
           />
         ) : null}
       </SafeAreaView>

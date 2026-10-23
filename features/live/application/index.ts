@@ -4,6 +4,8 @@ export * from './live-refresh-policy.ts';
 export * from './live-repository.ts';
 export * from './live-member-actions.ts';
 export * from './live-participant-arrivals.ts';
+export * from './live-reactions.ts';
 export * from './live-lobby.ts';
 export * from './live-event-media.ts';
+export * from './live-publication-control.ts';
 export * from '../always-on/index.ts';

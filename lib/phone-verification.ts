@@ -15,6 +15,7 @@
 // Important: use a single import path for the Supabase client to avoid bundlers (Metro)
 // creating multiple module instances (which can lead to missing sessions in some files).
 import { supabase, supabaseFetch } from '@/lib/supabase';
+import { buildSupabasePublicHeaders } from '@/lib/supabase-public-headers';
 
 /**
  * Result interface for phone verification operations
@@ -112,8 +113,8 @@ export class PhoneVerificationService {
    */
   private static getSupabaseConfig() {
     // Get configuration from environment or use defaults for development
-    const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
-    const supabaseKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+    const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+    const supabaseKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
     
     if (!supabaseUrl || !supabaseKey) {
       throw new Error('Supabase configuration not found. Please check your environment variables.');
@@ -226,10 +227,8 @@ export class PhoneVerificationService {
       const response = await supabaseFetch(`${config.supabaseUrl}/functions/v1/send-verification`, {
         method: 'POST',
         headers: {
+          ...buildSupabasePublicHeaders({ apiKey: config.supabaseKey, accessToken }),
           'Content-Type': 'application/json',
-          // Supabase gateway expects Authorization + apikey. If not authenticated, use anon key.
-          'Authorization': `Bearer ${accessToken ?? config.supabaseKey}`,
-          'apikey': config.supabaseKey,
         },
         body: JSON.stringify({
           phoneNumber: cleanedPhone,
@@ -245,7 +244,11 @@ export class PhoneVerificationService {
           console.log('[phone] send-verification failed', { status: response.status, body: raw });
         }
         if (data?.code === 'missing_config') {
-          return { success: false, error: 'Backend configuration missing. Please update/reinstall this build.' };
+          return {
+            success: false,
+            error: 'Phone verification is temporarily unavailable. Please try again later or contact support.',
+            code: 'missing_config',
+          };
         }
         if (data?.code === 'network_timeout') {
           return { success: false, error: 'Network timeout. Please try again.' };
@@ -265,11 +268,17 @@ export class PhoneVerificationService {
             'SMS to this country is currently blocked on our provider. Please try again later or contact support.';
         }
         if (
+          twilioMessage.includes('unverified') ||
+          twilioMessage.includes('service not found') ||
+          twilioCode.includes('20404') ||
+          twilioCode.includes('21608')
+        ) {
+          errorMessage =
+            'Phone verification is temporarily unavailable for this number. Please contact support.';
+        } else if (
           twilioMessage.includes('invalid') ||
           twilioMessage.includes('not a valid') ||
-          twilioMessage.includes('unverified') ||
-          twilioCode.includes('60200') ||
-          twilioCode.includes('20404')
+          twilioCode.includes('60200')
         ) {
           errorMessage = 'That phone number looks invalid. Please check the country code and number.';
         }
@@ -341,10 +350,8 @@ export class PhoneVerificationService {
       const response = await supabaseFetch(`${config.supabaseUrl}/functions/v1/verify-phone`, {
         method: 'POST',
         headers: {
+          ...buildSupabasePublicHeaders({ apiKey: config.supabaseKey, accessToken }),
           'Content-Type': 'application/json',
-          // Supabase gateway expects Authorization + apikey. If not authenticated, use anon key.
-          'Authorization': `Bearer ${accessToken ?? config.supabaseKey}`,
-          'apikey': config.supabaseKey,
         },
         body: JSON.stringify({
           phoneNumber: cleanedPhone,

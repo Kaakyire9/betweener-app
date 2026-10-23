@@ -1,4 +1,3 @@
-import Constants from "expo-constants";
 import * as Sentry from "@sentry/react-native";
 import { redact } from "@/lib/telemetry/redact";
 
@@ -10,11 +9,6 @@ export const initSentry = () => {
   const dsn = process.env.EXPO_PUBLIC_SENTRY_DSN;
   if (!dsn) return;
 
-  const release =
-    Constants.nativeAppVersion ||
-    (typeof Constants.expoConfig?.version === "string" ? Constants.expoConfig.version : undefined) ||
-    undefined;
-
   Sentry.init({
     dsn,
     enabled: true,
@@ -23,8 +17,6 @@ export const initSentry = () => {
     // Keep default PII off; we explicitly set user id only elsewhere.
     sendDefaultPii: false,
     environment: process.env.EXPO_PUBLIC_ENVIRONMENT || (isDev ? "development" : "production"),
-    release,
-
     // Keep this conservative for early testing; adjust after you see volume.
     tracesSampleRate: isDev ? 1.0 : 0.15,
 

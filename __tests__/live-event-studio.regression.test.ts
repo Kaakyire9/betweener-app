@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import {
+  getLiveServerClockOffsetMs,
+  parseLiveServerTimestamp,
+} from '../features/live/application/live-publication-control.ts';
 
 const migration = readFileSync('supabase/migrations/20260826100000_live_event_studio.sql', 'utf8');
 const lifecycleMigration = readFileSync('supabase/migrations/20260906170000_live_creation_studio_lifecycle.sql', 'utf8');
@@ -17,6 +21,10 @@ const liveRoomScreen = readFileSync('app/live/[sessionId].tsx', 'utf8');
 const repository = readFileSync('features/live/application/live-repository.ts', 'utf8');
 const invitationOptions = readFileSync('features/live/components/LiveInvitationOptionsSheet.tsx', 'utf8');
 const teaserTrimmer = readFileSync('features/live/creation/live-teaser-trimmer.ts', 'utf8');
+const publicationClockMigration = readFileSync(
+  'supabase/migrations/20261017193838_live_publication_timezone_safe_clock.sql',
+  'utf8',
+);
 
 test('the database prevents a scheduled Live from starting early', () => {
   assert.match(migration, /create or replace function public\.enforce_live_session_start_time/i);
@@ -40,7 +48,8 @@ test('event creation enters preparation and Studio exposes lifecycle sections', 
   assert.match(studioScreen, /Upcoming Live/);
   assert.match(studioScreen, /Past Live/);
   assert.match(studioScreen, /useFocusEffect/);
-  assert.match(studioScreen, /refresh\(\{ attemptRecovery: false \}\)/);
+  assert.match(studioScreen, /refreshAll\(\{ attemptRecovery: false \}\)/);
+  assert.match(studioScreen, /circleLiveDiscovery\.refresh\(\)/);
 });
 
 test('Creation Studio is guided, recoverable, and idempotently published', () => {
@@ -146,19 +155,35 @@ test('Past Live remains visible to attendees with a privacy-safe personal recap'
 test('event back navigation returns to its explicit origin on button and hardware back', () => {
   assert.match(eventScreen, /router\.dismissTo\(getLiveExitDestination\(liveReturnParams\)\)/);
   assert.match(eventScreen, /BackHandler\.addEventListener\('hardwareBackPress'/);
-  assert.match(eventScreen, /returnsToCircle \? 'Back to Circle' : 'Back to Live Studio'/);
+  assert.match(eventScreen, /returnsToCircle \? 'Back to Circle' : 'Back to Live Host Dashboard'/);
 });
 
 test('backstage mirrors the server start-time guard before enabling the host CTA', () => {
   assert.match(backstageScreen, /stageIsDue/);
   assert.match(backstageScreen, /Available in/);
-  assert.match(backstageScreen, /live_session_not_due/);
+  assert.match(repository, /rpc_start_live_session_v2/);
+  assert.match(repository, /p_expected_version/);
+});
+
+test('backstage uses a timezone-safe server clock that continues advancing', () => {
+  const expected = Date.parse('2026-10-17T19:31:00.000Z');
+  assert.equal(parseLiveServerTimestamp('2026-10-17T19:31:00.000'), expected);
+  assert.equal(parseLiveServerTimestamp('2026-10-17T19:31:00.000+00:00'), expected);
+  assert.equal(
+    getLiveServerClockOffsetMs('2026-10-17T19:31:00.000', expected - 5_000),
+    5_000,
+  );
+  assert.match(backstageScreen, /useMemo\([\s\S]*getLiveServerClockOffsetMs\(publication\.serverNow\)/);
+  assert.match(publicationClockMigration, /'serverNow',\s*now\(\)/i);
+  assert.doesNotMatch(publicationClockMigration, /'serverNow',\s*timezone\('utc',\s*now\(\)\)/i);
 });
 
 test('host preparation starts through valid lifecycle states and retries version races', () => {
-  assert.match(backstageScreen, /controller\.prepareAndStartSession\(\)/);
-  assert.match(repository, /getLiveSessionStartTarget/);
-  assert.match(repository, /live_session_version_conflict/);
+  assert.match(backstageScreen, /liveRepository\.openBackstage\(sessionId, next\.version\)/);
+  assert.match(backstageScreen, /liveRepository\.startSession\(sessionId, publication\.version\)/);
+  assert.match(backstageScreen, /LiveStepUpSheet/);
+  assert.match(backstageScreen, /broadcastAuthority === 'studio_producer'/);
+  assert.match(backstageScreen, /live_session_version_conflict/);
   assert.doesNotMatch(backstageScreen, /transitionSession\('live'\)/);
 });
 

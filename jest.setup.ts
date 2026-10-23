@@ -14,6 +14,16 @@ jest.mock("@react-native-community/netinfo", () => ({
   })),
 }));
 
+jest.mock("@sentry/react-native", () => ({
+  addBreadcrumb: jest.fn(),
+  captureException: jest.fn(),
+  captureMessage: jest.fn(),
+  init: jest.fn(),
+  setContext: jest.fn(),
+  setUser: jest.fn(),
+  wrap: jest.fn((component) => component),
+}));
+
 jest.mock("expo", () => ({
   useEvent: (_emitter: any, _eventName: string, initialState: any) => initialState ?? {},
   requireNativeModule: jest.fn(() => ({})),
@@ -34,6 +44,16 @@ jest.mock("expo-constants", () => ({
     executionEnvironment: "storeClient",
   },
   ExecutionEnvironment: { StoreClient: "storeClient" },
+}));
+
+jest.mock("expo-application", () => ({
+  __esModule: true,
+  applicationId: "com.betweener.test",
+  applicationName: "Betweener",
+  nativeApplicationVersion: "1.2.0",
+  nativeBuildVersion: "1",
+  getIosApplicationReleaseTypeAsync: jest.fn(async () => 1),
+  getInstallationTimeAsync: jest.fn(async () => new Date(0)),
 }));
 
 jest.mock("expo-keep-awake", () => ({

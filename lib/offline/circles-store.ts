@@ -24,6 +24,13 @@ export type CircleHubCircleSnapshot = {
   circle_type?: string | null;
   status?: string | null;
   visibility_scope?: string | null;
+  reach_scope?: string | null;
+  reach_scopes?: string[] | null;
+  access_policy?: string | null;
+  diaspora_origin_country_codes?: string[] | null;
+  diaspora_destination_country_codes?: string[] | null;
+  membership_eligibility_policy?: string | null;
+  live_discovery_policy?: string | null;
   country_code?: string | null;
   country_name?: string | null;
   region?: string | null;

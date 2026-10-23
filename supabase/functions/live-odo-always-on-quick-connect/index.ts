@@ -2,6 +2,8 @@
 import { StreamClient } from '@stream-io/node-sdk';
 import { createClient } from '@supabase/supabase-js';
 import { corsHeaders } from '../_shared/cors.ts';
+import { getSupabaseAdminKey } from '../_shared/supabase-admin-key.ts';
+import { getSupabasePublicApiKey } from '../_shared/supabase-public-key.ts';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_BODY_BYTES = 512;
@@ -62,8 +64,8 @@ Deno.serve(async (request) => {
 
   try {
     const url = requiredEnv('SUPABASE_URL');
-    const anonKey = requiredEnv('SUPABASE_ANON_KEY');
-    const serviceRoleKey = requiredEnv('SUPABASE_SERVICE_ROLE_KEY');
+    const anonKey = getSupabasePublicApiKey();
+    const serviceRoleKey = getSupabaseAdminKey();
     const bearer = authorization.slice('Bearer '.length);
     const serviceInvocation = bearer === serviceRoleKey;
     const caller = createClient(url, anonKey, {

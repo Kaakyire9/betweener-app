@@ -4,6 +4,7 @@ import type { MomentMetadata } from '@/lib/moment-text-style';
 import { isMomentPostingEligibilityError, MOMENT_POSTING_EXPLAINER } from '@/lib/moments-eligibility';
 import { rememberOfflineImageUri } from '@/lib/offline/image-store';
 import { rememberOfflineVideoUri } from '@/lib/offline/video-store';
+import { isMissingIdempotentRpc } from '@/lib/offline/idempotent-rpc';
 import { supabase } from '@/lib/supabase';
 
 type MomentType = 'video' | 'photo' | 'text';
@@ -14,11 +15,13 @@ type CreateMomentBase = {
   visibility?: MomentVisibility;
   caption?: string | null;
   metadata?: MomentMetadata | null;
+  clientOperationId?: string | null;
 };
 
 type CreateMediaMomentInput = CreateMomentBase & {
   type: Exclude<MomentType, 'text'>;
   uri: string;
+  momentId?: string | null;
 };
 
 type CreateTextMomentInput = CreateMomentBase & {
@@ -68,31 +71,40 @@ const toMomentError = (error: unknown, stage: 'insert' | 'upload' | 'update' | '
 };
 
 export async function createMomentFromMediaStrict(input: CreateMediaMomentInput) {
-  const { userId, type, uri, caption, visibility = 'matches', metadata } = input;
-  const momentId = ExpoCrypto.randomUUID();
+  const { userId, type, uri, caption, visibility = 'matches', metadata, clientOperationId } = input;
+  const momentId = input.momentId || ExpoCrypto.randomUUID();
   const ext = getFileExtension(uri);
-  const fileName = `${Date.now()}.${ext}`;
+  const fileName = input.momentId ? `${momentId}.${ext}` : `${Date.now()}.${ext}`;
   const filePath = `${userId}/${momentId}/${fileName}`;
   const contentType = getContentType(type, ext);
 
   const bytes = await readFileAsUint8Array(uri);
   const upload = await supabase.storage.from('moments').upload(filePath, bytes, {
     contentType,
-    upsert: false,
+    upsert: Boolean(input.momentId),
   });
 
   if (upload.error) {
     throw toMomentError(upload.error, 'upload');
   }
 
-  const { data, error } = await supabase.rpc('rpc_create_media_moment', {
+  const rpcPayload = {
     p_moment_id: momentId,
     p_type: type,
     p_media_url: filePath,
     p_caption: caption ?? null,
     p_visibility: visibility,
     p_metadata: metadata ?? {},
-  });
+  };
+  let { data, error } = clientOperationId
+    ? await supabase.rpc('rpc_create_media_moment_v2' as any, {
+        p_client_operation_id: clientOperationId,
+        ...rpcPayload,
+      })
+    : await supabase.rpc('rpc_create_media_moment', rpcPayload);
+  if (clientOperationId && error && isMissingIdempotentRpc(error)) {
+    ({ data, error } = await supabase.rpc('rpc_create_media_moment', rpcPayload));
+  }
 
   const createdMomentId = typeof data === 'string' ? data : null;
 
@@ -124,14 +136,25 @@ export async function createMomentFromMedia(input: CreateMediaMomentInput) {
 }
 
 export async function createTextMomentStrict(input: CreateTextMomentInput) {
-  const { textBody, caption, visibility = 'matches', metadata } = input;
-  const { data, error } = await supabase.rpc('rpc_create_moment', {
-    p_type: 'text',
+  const { textBody, caption, visibility = 'matches', metadata, clientOperationId } = input;
+  const rpcPayload = {
     p_text_body: textBody,
     p_caption: caption ?? null,
     p_visibility: visibility,
     p_metadata: metadata ?? {},
-  });
+  };
+  let { data, error } = clientOperationId
+    ? await supabase.rpc('rpc_create_text_moment_v2' as any, {
+        p_client_operation_id: clientOperationId,
+        ...rpcPayload,
+      })
+    : await supabase.rpc('rpc_create_moment', { p_type: 'text', ...rpcPayload });
+  if (clientOperationId && error && isMissingIdempotentRpc(error)) {
+    ({ data, error } = await supabase.rpc('rpc_create_moment', {
+      p_type: 'text',
+      ...rpcPayload,
+    }));
+  }
 
   const momentId = typeof data === 'string' ? data : null;
 

@@ -2,6 +2,8 @@
 import { StreamClient } from '@stream-io/node-sdk';
 import { createClient } from '@supabase/supabase-js';
 import { corsHeaders } from '../_shared/cors.ts';
+import { getSupabaseAdminKey } from '../_shared/supabase-admin-key.ts';
+import { getSupabasePublicApiKey } from '../_shared/supabase-public-key.ts';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -40,7 +42,7 @@ Deno.serve(async (request) => {
     if (!UUID_PATTERN.test(privateSparkId)) return json({ error: 'invalid_private_spark_id' }, 400);
 
     const url = env('SUPABASE_URL');
-    const caller = createClient(url, env('SUPABASE_ANON_KEY'), {
+    const caller = createClient(url, getSupabasePublicApiKey(), {
       auth: { autoRefreshToken: false, persistSession: false },
       global: { headers: { Authorization: authorization } },
     });
@@ -55,7 +57,7 @@ Deno.serve(async (request) => {
     if (transitionError) return json({ error: 'live_private_spark_end_denied' }, 403);
 
     step = 'provider_identity';
-    const service = createClient(url, env('SUPABASE_SERVICE_ROLE_KEY'), {
+    const service = createClient(url, getSupabaseAdminKey(), {
       auth: { autoRefreshToken: false, persistSession: false },
     });
     const { data: providerState, error: providerStateError } = await service

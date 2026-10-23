@@ -118,6 +118,27 @@ test('server and cache snapshots cannot downgrade delivered or read receipts', (
   assert.equal(read.readAt, readAt);
 });
 
+test('local outbox failure snapshots replace queued and sending states immediately', () => {
+  const queuedFailure = mergeMessageWithMonotonicReceipt(
+    { ...baseMessage, status: 'queued' },
+    { ...baseMessage, status: 'failed', sendErrorCode: 'image_content_not_allowed' },
+  );
+  assert.equal(queuedFailure.status, 'failed');
+  assert.equal(queuedFailure.sendErrorCode, 'image_content_not_allowed');
+
+  const sendingFailure = mergeMessageWithMonotonicReceipt(
+    { ...baseMessage, status: 'sending' },
+    { ...baseMessage, status: 'failed', sendErrorCode: 'image_moderation_unavailable' },
+  );
+  assert.equal(sendingFailure.status, 'failed');
+
+  const retried = mergeMessageWithMonotonicReceipt(
+    { ...baseMessage, status: 'failed' },
+    { ...baseMessage, status: 'queued', sendErrorCode: null },
+  );
+  assert.equal(retried.status, 'queued');
+});
+
 test('reconcileMessageWithServer preserves a more advanced local receipt', () => {
   const reconciled = reconcileMessageWithServer({
     items: [{ ...baseMessage, status: 'delivered' }],
@@ -329,6 +350,35 @@ test('chat image viewer reuses a valid local copy without requesting another sig
 
   assert.equal(resolution.uri, 'file:///offline/photo.jpg');
   assert.equal(signed, false);
+});
+
+test('chat image viewer recovers when a cached album item is missing from disk', async () => {
+  const signedPaths: string[] = [];
+  const resolution = await resolveChatImageViewerUri(
+    {
+      imageUrl: 'https://old.example/album-item.jpg?token=expired',
+      offlineImageUri: 'file:///missing/album-item.jpg',
+      storagePath: 'user-a/user-b/album/album-item.jpg',
+    },
+    'https://old.example/album-item.jpg?token=expired',
+    {
+      online: true,
+      findCachedUri: async () => 'file:///missing/cached-album-item.jpg',
+      localUriExists: async (uri) => uri === 'file:///recovered/album-item.jpg',
+      createSignedUrl: async (path) => {
+        signedPaths.push(path);
+        return 'https://fresh.example/album-item.jpg?token=valid';
+      },
+      cacheRemoteImage: async () => 'file:///recovered/album-item.jpg',
+    },
+  );
+
+  assert.deepEqual(signedPaths, ['user-a/user-b/album/album-item.jpg']);
+  assert.equal(resolution.uri, 'file:///recovered/album-item.jpg');
+  assert.equal(
+    resolution.refreshedRemoteUri,
+    'https://fresh.example/album-item.jpg?token=valid',
+  );
 });
 
 test('chat video viewer falls back to the signed remote URI', () => {

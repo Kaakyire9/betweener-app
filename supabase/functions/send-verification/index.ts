@@ -7,10 +7,16 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { corsHeaders } from '../_shared/cors.ts'
+import { getSupabaseAdminKey } from '../_shared/supabase-admin-key.ts'
 
 const twilioAccountSid = Deno.env.get('TWILIO_ACCOUNT_SID')!
 const twilioAuthToken = Deno.env.get('TWILIO_AUTH_TOKEN')!
 const twilioVerifyServiceSid = Deno.env.get('TWILIO_VERIFY_SERVICE_SID')!
+
+const hasTwilioVerifyConfig =
+  /^AC[a-zA-Z0-9]{32}$/.test(twilioAccountSid || '') &&
+  Boolean(twilioAuthToken?.trim()) &&
+  /^VA[a-zA-Z0-9]{32}$/.test(twilioVerifyServiceSid || '')
 
 interface SendVerificationRequest {
   phoneNumber: string
@@ -138,12 +144,26 @@ serve(async (req) => {
       )
     }
 
+    if (!hasTwilioVerifyConfig) {
+      console.error('Twilio Verify configuration is missing or invalid')
+      return new Response(
+        JSON.stringify({
+          error: 'Phone verification is temporarily unavailable',
+          code: 'missing_config',
+        }),
+        {
+          status: 503,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        }
+      )
+    }
+
     // Clean and format phone number
     const cleanedPhone = cleanPhoneNumber(phoneNumber)
     
     // Create Supabase client
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    const supabaseServiceKey = getSupabaseAdminKey()
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
     // Only trust userId when the caller is authenticated as that user.

@@ -20,6 +20,7 @@ import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/lib/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { logger } from "@/lib/telemetry/logger";
+import { buildSupabasePublicHeaders } from "@/lib/supabase-public-headers";
 
 const normalizeRecoveryMethod = (value?: string | null) => {
   const normalized = String(value ?? "").trim().toLowerCase();
@@ -309,8 +310,7 @@ export default function VerifyPhoneScreen() {
                       fetch(url, {
                         method: "PATCH",
                         headers: {
-                          apikey: anonKey,
-                          Authorization: `Bearer ${accessToken || anonKey}`,
+                          ...buildSupabasePublicHeaders({ apiKey: anonKey, accessToken }),
                           "Content-Type": "application/json",
                           Prefer: "return=minimal",
                         },

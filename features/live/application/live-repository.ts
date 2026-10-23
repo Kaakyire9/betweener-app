@@ -1,5 +1,16 @@
 import * as Crypto from 'expo-crypto';
 import type { RealtimeChannel } from '@supabase/supabase-js';
+import {
+  ADAPTIVE_STAGE_MANIFEST_VERSION,
+  LIVE_MUSIC_REPEAT_MODES,
+  parseLiveMusicCatalogue,
+  type ProgramScene,
+  type ProgramSourceAssignments,
+  type ProgramTargetCanvas,
+  type ProgramTransition,
+  type LiveMusicCatalogue,
+  type LiveMusicRepeatMode,
+} from '@betweener/live-program-domain';
 import { supabase } from '@/lib/supabase';
 import { readFunctionErrorCode } from '../media/live-function-error.ts';
 import type {
@@ -42,15 +53,28 @@ import {
   parseLiveDirectorEvent,
   parseOdoDirectorSnapshot,
 } from '../odo/domain/odo-validation.ts';
-import { getLiveSessionStartTarget } from '../domain/live-session-machine.ts';
+import {
+  parseLiveStageAtmosphere,
+  type LiveStageAtmosphere,
+  type LiveStageAtmospherePreset,
+} from '../stage/live-stage-atmosphere.ts';
 import type { LiveParticipantArrivalEvent } from './live-participant-arrivals.ts';
-import type { CircleLiveSnapshot, LiveAudiencePoll, LiveCancellationReason, LiveChemistrySnapshot, LiveComment, LiveEventMediaInput, LiveHostedMatchingSnapshot, LiveJoinNotice, LivePoolCandidatePreview, LivePrivateSpark, LivePrivateSparkExitDecision, LiveQuickConnectConcurrency, LiveQuickConnectDecision, LiveQuickConnectHostAction, LiveQuickConnectHostSnapshot, LiveQuickConnectIntent, LiveQuickConnectPoolSnapshot, LiveQuickConnectRoundSeconds, LiveQuickConnectSafetyExperience, LiveQuickConnectSafetyReason, LiveQuickConnectSnapshot, LiveQuickConnectStageLayout, LiveQuorumPoolingSnapshot, LiveReactionKind, LiveRoomPulseSnapshot, LiveSessionRecap, LiveSessionSnapshot, LiveSessionSummary, ScheduleCircleLiveSessionInput, ScheduleLiveSessionInput, ScheduleLiveStudioSessionInput, UpdateLiveStudioSessionInput } from './live-models.ts';
+import type { CircleLiveSnapshot, LiveAudiencePoll, LiveCancellationReason, LiveChemistrySnapshot, LiveComment, LiveEventMediaInput, LiveHostedMatchingSnapshot, LiveHostingManagementSnapshot, LiveJoinNotice, LivePoolCandidatePreview, LivePrivateActivitySnapshot, LivePrivateSpark, LivePrivateSparkExitDecision, LiveQuickConnectConcurrency, LiveQuickConnectDecision, LiveQuickConnectHostAction, LiveQuickConnectHostSnapshot, LiveQuickConnectIntent, LiveQuickConnectPoolSnapshot, LiveQuickConnectRoundSeconds, LiveQuickConnectSafetyExperience, LiveQuickConnectSafetyReason, LiveQuickConnectSnapshot, LiveQuickConnectStageLayout, LiveQuorumPoolingSnapshot, LiveReactionEvent, LiveReactionKind, LiveReactionSummary, LiveReportReason, LiveRoomPulseSnapshot, LiveSessionRecap, LiveSessionSnapshot, LiveSessionSummary, LiveStudioOperatorManagementSnapshot, LiveStudioSessionOperatorRole, ScheduleCircleLiveSessionInput, ScheduleLiveSessionInput, ScheduleLiveStudioSessionInput, UpdateLiveStudioSessionInput } from './live-models.ts';
+import { parseLiveReactionEvent, parseLiveReactionSummary } from './live-reactions.ts';
+import {
+  parseLivePublicationControl,
+  type LiveBroadcastAuthority,
+  type LivePublicationControl,
+} from './live-publication-control.ts';
 import {
   parseLiveAudiencePoll,
   parseCircleLiveSnapshot,
   parseLiveComment,
   parseLiveChemistrySnapshot,
   parseLiveHostedMatchingSnapshot,
+  parseLiveHostingManagementSnapshot,
+  parseLiveStudioOperatorManagementSnapshot,
+  parseLivePrivateActivitySnapshot,
   parseLivePrivateSpark,
   parseLivePoolCandidatePreview,
   parseLiveQuickConnectSnapshot,
@@ -80,6 +104,32 @@ export type LiveDirectorRead = {
   snapshot: OdoDirectorSnapshot;
 };
 
+export type LiveMobileProgrammeAccess = {
+  canControl: boolean;
+  canConfigureLargePanel: boolean;
+  largePanelEnabled: boolean;
+  maximumPublishers: number;
+};
+
+const parseLiveMobileProgrammeAccess = (value: unknown): LiveMobileProgrammeAccess => {
+  if (!value || typeof value !== 'object') throw new Error('live_mobile_programme_access_invalid');
+  const candidate = value as Record<string, unknown>;
+  if (typeof candidate.canControl !== 'boolean'
+    || typeof candidate.canConfigureLargePanel !== 'boolean'
+    || typeof candidate.largePanelEnabled !== 'boolean'
+    || !Number.isSafeInteger(Number(candidate.maximumPublishers))
+    || Number(candidate.maximumPublishers) < 1
+    || Number(candidate.maximumPublishers) > 6) {
+    throw new Error('live_mobile_programme_access_invalid');
+  }
+  return {
+    canControl: candidate.canControl,
+    canConfigureLargePanel: candidate.canConfigureLargePanel,
+    largePanelEnabled: candidate.largePanelEnabled,
+    maximumPublishers: Number(candidate.maximumPublishers),
+  };
+};
+
 const invoke = async (name: string, args?: Record<string, unknown>): Promise<unknown> => {
   const { data, error } = await rpc(name, args);
   if (error) throw new Error(error.message || error.code || `live_rpc_failed:${name}`);
@@ -87,6 +137,140 @@ const invoke = async (name: string, args?: Record<string, unknown>): Promise<unk
 };
 
 export const liveRepository = {
+  async getPublicationControl(sessionId: string): Promise<LivePublicationControl> {
+    return parseLivePublicationControl(await invoke('rpc_get_live_publication_control_v1', {
+      p_session_id: sessionId,
+    }));
+  },
+
+  async openBackstage(
+    sessionId: string,
+    expectedVersion: number,
+    commandId = Crypto.randomUUID(),
+  ): Promise<LivePublicationControl> {
+    return parseLivePublicationControl(await invoke('rpc_open_live_backstage_v1', {
+      p_session_id: sessionId,
+      p_expected_version: expectedVersion,
+      p_command_id: commandId,
+    }));
+  },
+
+  async startSession(
+    sessionId: string,
+    expectedVersion: number,
+    commandId = Crypto.randomUUID(),
+  ): Promise<LivePublicationControl> {
+    return parseLivePublicationControl(await invoke('rpc_start_live_session_v2', {
+      p_session_id: sessionId,
+      p_expected_version: expectedVersion,
+      p_command_id: commandId,
+    }));
+  },
+
+  async endPublication(
+    sessionId: string,
+    expectedVersion: number,
+    commandId = Crypto.randomUUID(),
+  ): Promise<LivePublicationControl> {
+    return parseLivePublicationControl(await invoke('rpc_end_live_session_v2', {
+      p_session_id: sessionId,
+      p_expected_version: expectedVersion,
+      p_command_id: commandId,
+    }));
+  },
+
+  async setBroadcastAuthority(
+    sessionId: string,
+    expectedVersion: number,
+    authority: LiveBroadcastAuthority,
+    commandId = Crypto.randomUUID(),
+  ): Promise<LivePublicationControl> {
+    return parseLivePublicationControl(await invoke('rpc_set_live_broadcast_authority_v1', {
+      p_session_id: sessionId,
+      p_expected_version: expectedVersion,
+      p_broadcast_authority: authority,
+      p_command_id: commandId,
+    }));
+  },
+
+  async getHostingManagement(sessionId: string): Promise<LiveHostingManagementSnapshot> {
+    return parseLiveHostingManagementSnapshot(await invoke(
+      'rpc_get_live_hosting_management_v1',
+      { p_session_id: sessionId },
+    ));
+  },
+
+  async getStudioOperatorManagement(
+    sessionId: string,
+  ): Promise<LiveStudioOperatorManagementSnapshot> {
+    return parseLiveStudioOperatorManagementSnapshot(await invoke(
+      'rpc_get_live_studio_session_operators_v1',
+      { p_session_id: sessionId },
+    ));
+  },
+
+  async assignStudioOperator(input: {
+    sessionId: string;
+    email: string;
+    operatorRole: LiveStudioSessionOperatorRole;
+    expiresAt?: string | null;
+    note?: string | null;
+  }): Promise<LiveStudioOperatorManagementSnapshot> {
+    return parseLiveStudioOperatorManagementSnapshot(await invoke(
+      'rpc_admin_assign_live_studio_operator_v1',
+      {
+        p_session_id: input.sessionId,
+        p_email: input.email,
+        p_operator_role: input.operatorRole,
+        p_expires_at: input.expiresAt ?? null,
+        p_note: input.note ?? null,
+      },
+    ));
+  },
+
+  async revokeStudioOperator(
+    sessionId: string,
+    userId: string,
+  ): Promise<LiveStudioOperatorManagementSnapshot> {
+    return parseLiveStudioOperatorManagementSnapshot(await invoke(
+      'rpc_admin_revoke_live_studio_operator_v1',
+      { p_session_id: sessionId, p_user_id: userId },
+    ));
+  },
+
+  async delegateHost(sessionId: string, username: string): Promise<LiveHostingManagementSnapshot> {
+    return parseLiveHostingManagementSnapshot(await invoke(
+      'rpc_admin_delegate_live_host_v1',
+      { p_session_id: sessionId, p_username: username },
+    ));
+  },
+
+  async revokeDelegatedHost(sessionId: string): Promise<LiveHostingManagementSnapshot> {
+    return parseLiveHostingManagementSnapshot(await invoke(
+      'rpc_admin_revoke_live_host_v1',
+      { p_session_id: sessionId },
+    ));
+  },
+
+  async extendHostingRuntime(
+    sessionId: string,
+    options: { extensionMinutes?: number; keepOpen?: boolean },
+  ): Promise<LiveHostingManagementSnapshot> {
+    return parseLiveHostingManagementSnapshot(await invoke(
+      'rpc_extend_live_session_v1',
+      {
+        p_session_id: sessionId,
+        p_extension_minutes: options.extensionMinutes ?? null,
+        p_keep_open: options.keepOpen === true,
+      },
+    ));
+  },
+  async getPrivateActivity(sessionId: string): Promise<LivePrivateActivitySnapshot> {
+    return parseLivePrivateActivitySnapshot(await invoke('rpc_get_live_private_activity_v1', {
+      p_session_id: sessionId,
+    }));
+  },
+
   async getAlwaysOnQuickConnect(): Promise<LiveAlwaysOnSnapshot> {
     const parsed = parseLiveAlwaysOnSnapshot(
       await invoke('rpc_get_live_quick_connect_availability_v1'),
@@ -143,6 +327,55 @@ export const liveRepository = {
     return parsed.value;
   },
 
+  async getLiveMusicCatalogue(sessionId: string): Promise<LiveMusicCatalogue> {
+    const parsed = parseLiveMusicCatalogue(await invoke(
+      'rpc_get_live_music_catalogue_v1',
+      { p_session_id: sessionId },
+    ));
+    if (!parsed) throw new Error('live_music_catalogue_invalid');
+    return parsed;
+  },
+
+  async getLiveMusicRepeatMode(sessionId: string): Promise<LiveMusicRepeatMode> {
+    const value = await invoke('rpc_get_live_music_repeat_mode_v1', {
+      p_session_id: sessionId,
+    });
+    const repeatMode = value && typeof value === 'object' && 'repeatMode' in value
+      ? value.repeatMode : null;
+    if (typeof repeatMode !== 'string'
+      || !LIVE_MUSIC_REPEAT_MODES.includes(repeatMode as LiveMusicRepeatMode)) {
+      throw new Error('live_music_repeat_mode_invalid');
+    }
+    return repeatMode as LiveMusicRepeatMode;
+  },
+
+  async getLiveStageAtmosphere(sessionId: string): Promise<LiveStageAtmosphere> {
+    const parsed = parseLiveStageAtmosphere(await invoke(
+      'rpc_get_live_stage_atmosphere_v1',
+      { p_session_id: sessionId },
+    ));
+    if (!parsed) throw new Error('live_stage_atmosphere_invalid');
+    return parsed;
+  },
+
+  async setLiveStageAtmosphere(input: {
+    sessionId: string;
+    preset: LiveStageAtmospherePreset;
+    expectedVersion: number;
+  }): Promise<LiveStageAtmosphere> {
+    const parsed = parseLiveStageAtmosphere(await invoke(
+      'rpc_host_set_live_stage_atmosphere_v1',
+      {
+        p_session_id: input.sessionId,
+        p_preset: input.preset,
+        p_expected_version: input.expectedVersion,
+        p_request_id: Crypto.randomUUID(),
+      },
+    ));
+    if (!parsed) throw new Error('live_stage_atmosphere_invalid');
+    return parsed;
+  },
+
   async getLiveProgram(sessionId: string): Promise<LiveProgramSnapshotV2> {
     const parsed = parseLiveProgramSnapshotV2(await invoke(
       'rpc_get_live_program_snapshot_v2',
@@ -150,6 +383,73 @@ export const liveRepository = {
     ));
     if (parsed.ok === false) throw new Error(parsed.reasonCode);
     return parsed.value;
+  },
+
+  async getLiveMobileProgrammeAccess(sessionId: string): Promise<LiveMobileProgrammeAccess> {
+    return parseLiveMobileProgrammeAccess(await invoke(
+      'rpc_get_live_mobile_programme_access_v1',
+      { p_session_id: sessionId },
+    ));
+  },
+
+  async setLivePanelCapacity(sessionId: string, maximumPublishers: 4 | 6): Promise<void> {
+    const value = await invoke('rpc_set_live_panel_capacity_v1', {
+      p_session_id: sessionId,
+      p_maximum_publishers: maximumPublishers,
+    });
+    if (!value || typeof value !== 'object'
+      || Number((value as Record<string, unknown>).maximumPublishers) !== maximumPublishers) {
+      throw new Error('live_panel_capacity_update_failed');
+    }
+  },
+
+  async takeMobileLiveProgram(input: {
+    sessionId: string;
+    expectedProgramVersion: number;
+    scene: ProgramScene;
+    targetCanvas: ProgramTargetCanvas;
+    sourceAssignments: ProgramSourceAssignments;
+    transition: ProgramTransition;
+  }): Promise<void> {
+    const graphVersion = Number(await invoke(
+      'rpc_get_live_program_source_graph_version_v1',
+      { p_session_id: input.sessionId },
+    ));
+    if (!Number.isSafeInteger(graphVersion) || graphVersion < 0) {
+      throw new Error('live_program_source_graph_invalid');
+    }
+    const value = await invoke('rpc_mobile_take_live_program_v2', {
+      p_session_id: input.sessionId,
+      p_command_id: Crypto.randomUUID(),
+      p_expected_program_version: input.expectedProgramVersion,
+      p_expected_source_graph_version: graphVersion,
+      p_manifest_version: ADAPTIVE_STAGE_MANIFEST_VERSION,
+      p_scene: input.scene,
+      p_target_canvas: input.targetCanvas,
+      p_source_assignments: input.sourceAssignments,
+      p_transition: input.transition,
+      p_shadow_plan_hash: null,
+    });
+    if (!value || typeof value !== 'object'
+      || (value as Record<string, unknown>).applied !== true) {
+      const reason = value && typeof value === 'object'
+        && typeof (value as Record<string, unknown>).reasonCode === 'string'
+        ? String((value as Record<string, unknown>).reasonCode)
+        : 'live_mobile_programme_take_failed';
+      throw new Error(reason);
+    }
+  },
+
+  async recordAdaptiveStageDiagnostic(
+    sessionId: string,
+    eventName: string,
+    safeDetails: Record<string, string | number | boolean | null>,
+  ): Promise<void> {
+    await invoke('rpc_record_adaptive_stage_v2_diagnostic_v1', {
+      p_session_id: sessionId,
+      p_event_name: eventName,
+      p_safe_details: safeDetails,
+    });
   },
 
   async enableOdoShowDirector(sessionId: string): Promise<void> {
@@ -201,6 +501,24 @@ export const liveRepository = {
     if (!value || typeof value !== 'object' || !('changed' in value) || value.changed !== true) {
       throw new Error(value && typeof value === 'object' && 'reasonCode' in value
         && typeof value.reasonCode === 'string' ? value.reasonCode : 'odo_show_scene_failed');
+    }
+  },
+
+  async setLiveMusicStageVisible(
+    sessionId: string,
+    visible: boolean,
+    expectedVersion: number,
+  ): Promise<void> {
+    const value = await invoke('rpc_host_set_live_music_stage_v1', {
+      p_session_id: sessionId,
+      p_visible: visible,
+      p_expected_version: expectedVersion,
+      p_request_id: Crypto.randomUUID(),
+    });
+    if (!value || typeof value !== 'object' || !('changed' in value) || value.changed !== true) {
+      throw new Error(value && typeof value === 'object' && 'reasonCode' in value
+        && typeof value.reasonCode === 'string'
+        ? value.reasonCode : 'live_music_stage_failed');
     }
   },
 
@@ -529,7 +847,7 @@ export const liveRepository = {
   },
 
   async scheduleStudio(input: ScheduleLiveStudioSessionInput): Promise<string> {
-    const value = await invoke('rpc_schedule_live_studio_session_v1', {
+    const value = await invoke('rpc_schedule_live_studio_session_v2', {
       p_client_request_id: input.clientRequestId,
       p_title: input.title,
       p_description: input.description,
@@ -539,6 +857,15 @@ export const liveRepository = {
       p_chemistry_first_enabled: input.chemistryFirstEnabled,
       p_circle_id: input.circleId ?? null,
       p_minimum_participants: input.minimumParticipants,
+      // Circle Live always inherits the Circle's server-owned Reach. Direct
+      // Live uses the reviewed targeting selected in Studio.
+      p_audience_scopes: input.circleId ? [] : input.audienceScopes,
+      p_country_code: input.circleId ? null : input.audienceCountryCode,
+      p_country_name: input.circleId ? null : input.audienceCountryName,
+      p_region: input.circleId ? null : input.audienceRegion,
+      p_city: input.circleId ? null : input.audienceCity,
+      p_diaspora_origin_country_codes: input.circleId ? [] : input.diasporaOriginCountryCodes,
+      p_diaspora_destination_country_codes: input.circleId ? [] : input.diasporaDestinationCountryCodes,
     });
     if (!value || typeof value !== 'object' || !('id' in value) || typeof value.id !== 'string') {
       throw new Error('live_studio_schedule_result_invalid');
@@ -988,7 +1315,7 @@ export const liveRepository = {
   async reportComment(
     sessionId: string,
     comment: Pick<LiveComment, 'id' | 'userId'>,
-    reason: 'harassment' | 'hate' | 'sexual_content' | 'spam' | 'impersonation' | 'unsafe_behaviour' | 'other' = 'other',
+    reason: LiveReportReason = 'other',
   ): Promise<void> {
     await invoke('rpc_report_live_content', {
       p_session_id: sessionId,
@@ -1000,12 +1327,68 @@ export const liveRepository = {
     });
   },
 
-  async createReaction(sessionId: string, reaction: LiveReactionKind): Promise<void> {
-    await invoke('rpc_create_live_reaction', {
+  async reportLive(
+    sessionId: string,
+    reason: LiveReportReason,
+  ): Promise<void> {
+    await invoke('rpc_report_live_content', {
       p_session_id: sessionId,
-      p_client_event_id: Crypto.randomUUID(),
+      p_client_report_id: Crypto.randomUUID(),
+      p_reason: reason,
+      p_details: 'Room-level Live report',
+      p_target_user_id: null,
+      p_target_comment_id: null,
+    });
+  },
+
+  async reportParticipant(
+    sessionId: string,
+    targetUserId: string,
+    reason: LiveReportReason,
+  ): Promise<void> {
+    await invoke('rpc_report_live_content', {
+      p_session_id: sessionId,
+      p_client_report_id: Crypto.randomUUID(),
+      p_reason: reason,
+      p_details: 'Live participant report',
+      p_target_user_id: targetUserId,
+      p_target_comment_id: null,
+    });
+  },
+
+  async createReaction(
+    sessionId: string,
+    clientEventId: string,
+    reaction: LiveReactionKind,
+  ): Promise<LiveReactionEvent> {
+    const receipt = await invoke('rpc_create_live_reaction', {
+      p_session_id: sessionId,
+      p_client_event_id: clientEventId,
       p_reaction: reaction,
     });
+    const legacyReceipt = receipt && typeof receipt === 'object' && !Array.isArray(receipt)
+      ? receipt as Record<string, unknown>
+      : null;
+    const event = parseLiveReactionEvent(receipt) ?? parseLiveReactionEvent({
+      eventId: legacyReceipt?.client_event_id,
+      sessionId: legacyReceipt?.session_id,
+      reaction: legacyReceipt?.reaction,
+      emittedAt: legacyReceipt?.created_at,
+    });
+    if (!event || event.sessionId !== sessionId || event.eventId !== clientEventId) {
+      throw new Error('live_reaction_receipt_invalid');
+    }
+    return event;
+  },
+
+  async getReactionSummary(sessionId: string): Promise<LiveReactionSummary> {
+    const summary = parseLiveReactionSummary(await invoke('rpc_get_live_reaction_summary', {
+      p_session_id: sessionId,
+    }));
+    if (!summary || summary.sessionId !== sessionId) {
+      throw new Error('live_reaction_summary_invalid');
+    }
+    return summary;
   },
 
   async openAudiencePoll(
@@ -1062,35 +1445,20 @@ export const liveRepository = {
   },
 
   async endSession(sessionId: string): Promise<void> {
-    const result = await invoke('rpc_end_live_session_v1', { p_session_id: sessionId });
-    if (!result || typeof result !== 'object' || !('status' in result) || result.status !== 'ended') {
+    const control = await this.getPublicationControl(sessionId);
+    const result = await this.endPublication(sessionId, control.version);
+    if (result.status !== 'ended') {
       throw new Error('live_session_end_incomplete');
     }
   },
 
   async prepareAndStartSession(sessionId: string): Promise<void> {
-    for (let attempt = 0; attempt < 8; attempt += 1) {
-      const snapshot = parseLiveSessionSnapshot(
-        await invoke('rpc_get_live_session_snapshot', { p_session_id: sessionId }),
-      );
-      if (snapshot.session.status === 'live' || snapshot.session.status === 'ending') return;
-      const targetStatus = getLiveSessionStartTarget(snapshot.session.status);
-      if (!targetStatus) {
-        throw new Error(`live_session_start_unavailable:${snapshot.session.status}`);
-      }
-      try {
-        await invoke('rpc_transition_live_session', {
-          p_session_id: sessionId,
-          p_expected_version: snapshot.session.version,
-          p_target_status: targetStatus,
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : '';
-        if (message.includes('live_session_version_conflict')) continue;
-        throw error;
-      }
+    let control = await this.getPublicationControl(sessionId);
+    if (!['backstage', 'live', 'ending'].includes(control.status)) {
+      control = await this.openBackstage(sessionId, control.version);
     }
-    throw new Error('live_session_version_conflict');
+    if (control.status === 'live' || control.status === 'ending') return;
+    await this.startSession(sessionId, control.version);
   },
 
   subscribe(
@@ -1175,6 +1543,24 @@ export const liveRepository = {
     };
   },
 
+  subscribeReactions(
+    sessionId: string,
+    onReaction: (event: LiveReactionEvent) => void,
+    onStatus?: (status: LiveSessionRealtimeStatus) => void,
+  ): () => void {
+    const channel: RealtimeChannel = supabase.channel(`live-reactions:${sessionId}`, {
+      config: { private: true },
+    });
+    channel.on('broadcast', { event: 'reaction' }, ({ payload }) => {
+      const event = parseLiveReactionEvent(payload);
+      if (event?.sessionId === sessionId) onReaction(event);
+    });
+    channel.subscribe((status) => onStatus?.(status as LiveSessionRealtimeStatus));
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  },
+
   subscribeHostedMatching(sessionId: string, onChange: () => void): () => void {
     const channel: RealtimeChannel = supabase.channel(
       `live-hosted-matching:${sessionId}:${Crypto.randomUUID()}`,
@@ -1202,6 +1588,26 @@ export const liveRepository = {
     return () => {
       void supabase.removeChannel(channel);
     };
+  },
+
+  subscribePrivateActivity(sessionId: string, onChange: () => void): () => void {
+    const channel: RealtimeChannel = supabase.channel(
+      `live-private-activity:${sessionId}:${Crypto.randomUUID()}`,
+    );
+    channel.on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'live_match_round_updates', filter: `session_id=eq.${sessionId}` },
+      onChange,
+    );
+    channel.on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'live_quick_connect_updates', filter: `session_id=eq.${sessionId}` },
+      onChange,
+    );
+    channel.subscribe((status) => {
+      if (status === 'SUBSCRIBED') onChange();
+    });
+    return () => { void supabase.removeChannel(channel); };
   },
 
   subscribeLiveDirector(sessionId: string, onChange: () => void): () => void {
@@ -1288,6 +1694,26 @@ export const liveRepository = {
     return () => { void supabase.removeChannel(channel); };
   },
 
+  subscribeLiveStageAtmosphere(sessionId: string, onChange: () => void): () => void {
+    const channel: RealtimeChannel = supabase.channel(
+      `live-stage-atmosphere:${sessionId}:${Crypto.randomUUID()}`,
+    );
+    channel.on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'live_stage_atmospheres',
+        filter: `session_id=eq.${sessionId}`,
+      },
+      onChange,
+    );
+    channel.subscribe((status) => {
+      if (status === 'SUBSCRIBED') onChange();
+    });
+    return () => { void supabase.removeChannel(channel); };
+  },
+
   subscribeAlwaysOnQuickConnect(userId: string, onChange: () => void): () => void {
     const channel: RealtimeChannel = supabase.channel(
       `live-always-on:${userId}:${Crypto.randomUUID()}`,
@@ -1300,6 +1726,21 @@ export const liveRepository = {
         table: 'live_quick_connect_opportunity_updates',
         filter: `user_id=eq.${userId}`,
       },
+      onChange,
+    );
+    channel.subscribe((status) => {
+      if (status === 'SUBSCRIBED') onChange();
+    });
+    return () => { void supabase.removeChannel(channel); };
+  },
+
+  subscribeLiveDiscovery(onChange: () => void): () => void {
+    const channel: RealtimeChannel = supabase.channel(
+      `live-discovery:${Crypto.randomUUID()}`,
+    );
+    channel.on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'live_discovery_updates' },
       onChange,
     );
     channel.subscribe((status) => {

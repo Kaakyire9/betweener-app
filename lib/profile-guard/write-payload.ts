@@ -7,6 +7,8 @@ const SERVER_MANAGED_PROFILE_FIELDS = new Set([
   'phone_verified',
 ]);
 
+export const PROFILE_GUARD_SAFETY_CONTRACT_V1_2 = '1.2.0';
+
 export const prepareProfileGuardWrite = (updates: Record<string, unknown>) => {
   const completeOnboarding = updates.profile_completed === true
     || updates.identity_status === 'active'
@@ -28,7 +30,11 @@ export const prepareProfileGuardInvocation = (updates: Record<string, unknown>) 
       ? 'profile-onboarding-submit'
       : 'profile-guard-update',
     body: write.completeOnboarding
-      ? { updates: write.updates }
-      : { updates: write.updates, complete_onboarding: false },
+      ? { updates: write.updates, safety_contract_version: PROFILE_GUARD_SAFETY_CONTRACT_V1_2 }
+      : {
+          updates: write.updates,
+          complete_onboarding: false,
+          safety_contract_version: PROFILE_GUARD_SAFETY_CONTRACT_V1_2,
+        },
   } as const;
 };

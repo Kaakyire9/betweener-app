@@ -1,13 +1,15 @@
-import type { ChatMessageRow, ChatPendingOutboxRow, ChatThreadRow } from '@/lib/chat/local/chat-db';
+import type { ChatPendingOutboxRow, ChatThreadRow } from '@/lib/chat/local/chat-db';
 import { ChatRepository } from '@/lib/chat/local/chat-db';
 import {
   buildDeterministicChatAttachmentPath,
   buildDeterministicChatPreviewPath,
   cancelChatAttachmentBatch,
   cancelChatAttachmentItem,
+  ChatAttachmentFunctionError,
   createLegacyChatAttachmentId,
   finalizeChatAttachment,
   finalizeChatAttachmentBatch,
+  preflightChatImageAttachmentBatch,
 } from '@/lib/chat/attachment-lifecycle';
 import {
   normalizeAttachmentDurationMs,
@@ -19,7 +21,27 @@ import {
   removeChatAttachmentPreview,
 } from '@/lib/chat/attachments/chat-attachment-preview';
 import { observeChatAttachmentLifecycle } from '@/lib/chat/attachments/chat-attachment-observability';
+import {
+  isChatMediaModerationRejection,
+  isChatMediaProviderUnavailable,
+  isTerminalChatAttachmentError,
+} from '@/lib/chat/attachments/chat-attachment-error';
+import { publishChatMediaRejectionNotice } from '@/lib/chat/moderation/chat-media-rejection-notice';
+import { getChatGuardFailurePresentation } from '@/lib/chat/moderation/chat-guard-error-presentation';
 import { createChatOutboxFlushGate } from '@/lib/chat/outbox/chat-outbox-flush-gate';
+import {
+  REMOTE_MESSAGE_SELECT,
+  albumFilesToLocalMediaItems,
+  toLocalMessageRow,
+  type ChatOutboxPayload,
+  type FlushResult,
+  type MediaOutboxFile,
+  type MediaOutboxPayload,
+  type RemoteMessageRow,
+  type TextOutboxPayload,
+  type ViewOnceOutboxPayload,
+  type VoiceOutboxPayload,
+} from '@/lib/chat/outbox/chat-outbox-model';
 import { ChatUploadTransport } from '@/lib/chat/transfer/chat-upload-transport';
 import { persistOfflineAttachmentCopy } from '@/lib/offline/attachment-file-store';
 import { removeStagedOfflineChatUpload } from '@/lib/offline/chat-store';
@@ -27,167 +49,54 @@ import { supabase } from '@/lib/supabase';
 import { captureException, captureMessage } from '@/lib/telemetry/sentry';
 import {
   ChatAlbumWorkError,
+  clampChatAlbumUploadProgress,
   mapChatAlbumItemsBounded,
   normalizeDurableChatAlbumItems,
+  prepareChatAlbumItemsForAttempt,
+  removeChatAlbumItemFromComposition,
+  resolveChatAlbumItemMediaType,
+  resolveChatAlbumUploadBucket,
+  unwrapSingleChatAlbumWorkError,
+  updateChatAlbumItemTransfer,
 } from '@/lib/chat/album/chat-media-album';
 import * as FileSystem from 'expo-file-system/legacy';
+import { AppState } from 'react-native';
+import { parseChatProviderMediaReference } from '@/lib/chat/expressions/chat-gif-provider';
 
-type TextOutboxPayload = {
-  kind?: 'chat_text_send';
-  senderId?: string;
-  receiverId?: string;
-  text?: string;
-  messageType?: ChatMessageRow['message_type'];
-  clientMessageId?: string | null;
-  replyToMessageId?: string | null;
-  metadataJson?: string | null;
-  storagePath?: string | null;
-};
 
-type MediaOutboxPayload = {
-  kind?: 'chat_media_send';
-  senderId?: string;
-  receiverId?: string;
-  clientMessageId?: string | null;
-  localUri?: string;
-  fileName?: string;
-  contentType?: string;
-  mediaType?: 'image' | 'video' | 'document';
-  attachmentId?: string | null;
-  byteSize?: number | null;
-  width?: number | null;
-  height?: number | null;
-  durationMs?: number | null;
-  replyToMessageId?: string | null;
-  documentName?: string | null;
-  documentSizeLabel?: string | null;
-  documentTypeLabel?: string | null;
-  albumItems?: MediaOutboxFile[];
-  mediaGroupId?: string | null;
-  albumCaption?: string | null;
-  retryAttachmentIds?: string[];
-};
-
-type MediaOutboxFile = {
-  localUri: string;
-  fileName: string;
-  contentType: string;
-  attachmentId: string;
-  byteSize?: number | null;
-  width?: number | null;
-  height?: number | null;
-  durationMs?: number | null;
-  previewLocalUri?: string | null;
-  previewContentType?: 'image/jpeg' | null;
-  previewByteSize?: number | null;
-  previewWidth?: number | null;
-  previewHeight?: number | null;
-  index?: number;
-  mediaType?: 'image' | 'video';
-  transferState?: 'queued' | 'preparing' | 'uploading' | 'uploaded' | 'retryable_failed' | 'terminal_failed' | 'cancelled';
-  attemptCount?: number;
-  lastError?: string | null;
-};
-
-const albumFilesToLocalMediaItems = (files: readonly MediaOutboxFile[]) => JSON.stringify(
-  files.map((file, index) => ({
-    attachmentId: file.attachmentId,
-    index,
-    type: file.mediaType ?? (file.contentType.startsWith('video/') ? 'video' : 'image'),
-    storagePath: '',
-    mimeType: file.contentType,
-    width: file.width ?? null,
-    height: file.height ?? null,
-    byteSize: file.byteSize ?? null,
-    localUri: file.localUri,
-    localPreviewUri: file.previewLocalUri ?? null,
-    transferState: file.transferState ?? 'queued',
-    uploadProgress: file.transferState === 'uploaded' ? 1 : null,
-    transferError: file.lastError ?? null,
-  })),
-);
-
-type VoiceOutboxPayload = {
-  kind?: 'chat_voice_send';
-  senderId?: string;
-  receiverId?: string;
-  clientMessageId?: string | null;
-  localUri?: string;
-  fileName?: string;
-  contentType?: string;
-  durationSeconds?: number;
-  waveform?: number[];
-  replyToMessageId?: string | null;
-  attachmentId?: string | null;
-};
-
-type ViewOnceOutboxPayload = {
-  kind: 'chat_view_once_send';
-  senderId?: string;
-  receiverId?: string;
-  clientMessageId?: string | null;
-  localUri?: string;
-  fileName?: string;
-  contentType?: string;
-  attachmentId?: string | null;
-  byteSize?: number | null;
-  attachmentType?: 'image' | 'video';
-  encryptedKeySender?: string;
-  encryptedKeyReceiver?: string;
-  encryptedKeyNonce?: string;
-  encryptedMediaNonce?: string;
-  encryptedMediaAlg?: 'nacl-secretbox';
-  senderPublicKey?: string;
-  replyToMessageId?: string | null;
-};
-
-type ChatOutboxPayload = TextOutboxPayload | MediaOutboxPayload | VoiceOutboxPayload | ViewOnceOutboxPayload;
-
-type RemoteMessageRow = {
-  id: string;
-  client_message_id?: string | null;
-  text: string | null;
-  created_at: string;
-  sender_id: string;
-  receiver_id: string;
-  is_read?: boolean | null;
-  delivered_at?: string | null;
-  message_type?: string | null;
-  reply_to_message_id?: string | null;
-  audio_path?: string | null;
-  audio_duration?: number | null;
-  audio_waveform?: unknown;
-  storage_path?: string | null;
-  media_items?: unknown;
-  media_expected_count?: number | null;
-  media_group_id?: string | null;
-  media_caption?: string | null;
-  is_view_once?: boolean | null;
-  encrypted_media?: boolean | null;
-  encrypted_media_path?: string | null;
-  encrypted_key_sender?: string | null;
-  encrypted_key_receiver?: string | null;
-  encrypted_key_nonce?: string | null;
-  encrypted_media_nonce?: string | null;
-  encrypted_media_alg?: string | null;
-  encrypted_media_mime?: string | null;
-  encrypted_media_size?: number | null;
-};
-
-type FlushResult = {
-  attemptedCount: number;
-  sentCount: number;
-  failedCount: number;
-  touchedThreadIds: string[];
-};
-
-const REMOTE_MESSAGE_SELECT =
-  'id,client_message_id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,reply_to_message_id,audio_path,audio_duration,audio_waveform,storage_path,media_items,media_expected_count,media_group_id,media_caption,is_view_once,encrypted_media,encrypted_media_path,encrypted_key_sender,encrypted_key_receiver,encrypted_key_nonce,encrypted_media_nonce,encrypted_media_alg,encrypted_media_mime,encrypted_media_size';
 const CHAT_MEDIA_BUCKET = 'chat-media' as const;
+const CHAT_ATTACHMENT_STAGING_BUCKET = 'chat-attachment-staging-v1-2' as const;
 const VOICE_MESSAGES_BUCKET = 'voice-messages' as const;
+const uploadBucketForMedia = (mediaType: string | null | undefined) =>
+  mediaType === 'image' ? CHAT_ATTACHMENT_STAGING_BUCKET : CHAT_MEDIA_BUCKET;
 const DOCUMENT_TEXT_PREFIX = '\u{1F4CE}';
 const RETRY_DELAYS_MS = [5_000, 15_000, 45_000, 120_000, 300_000, 900_000, 1_800_000, 3_600_000];
 const DURABLE_OUTBOX_MAX_ATTEMPTS = 48;
+const MEDIA_OUTBOX_MAX_AUTOMATIC_ATTEMPTS = 6;
+const ALBUM_PROGRESS_PERSIST_INTERVAL_MS = 750;
+const activeAlbumItemCancellations = new Set<string>();
+
+const albumItemCancellationKey = (
+  ownerUserId: string,
+  localMessageId: string,
+  attachmentId: string,
+) => `${ownerUserId}:${localMessageId}:${attachmentId}`;
+
+const getAlbumCompositionRevision = (payload: MediaOutboxPayload) =>
+  Math.max(0, Math.trunc(Number(payload.compositionRevision) || 0));
+
+const assertAlbumCompositionCurrent = async (
+  ownerUserId: string,
+  localMessageId: string,
+  expectedRevision: number,
+) => {
+  const current = await ChatRepository.getOutboxItem(ownerUserId, localMessageId);
+  if (!current || current.status === 'cancelled') throw new Error('chat_upload_cancelled');
+  const payload = parseOutboxPayload(current);
+  if (payload?.kind !== 'chat_media_send' || getAlbumCompositionRevision(payload) !== expectedRevision) {
+    throw new Error('chat_album_composition_changed');
+  }
+};
 const scheduledOwnerFlushes = new Map<string, {
   timer: ReturnType<typeof setTimeout>;
   dueAt: number;
@@ -275,6 +184,7 @@ const ensureThreadShell = async (args: {
     last_message_preview: existing?.last_message_preview ?? null,
     last_message_sender_id: existing?.last_message_sender_id ?? null,
     last_message_status: existing?.last_message_status ?? null,
+    last_message_media_kind: existing?.last_message_media_kind ?? null,
     last_message_edited_at: existing?.last_message_edited_at ?? null,
     last_message_reaction_emoji: existing?.last_message_reaction_emoji ?? null,
     last_message_reaction_user_id: existing?.last_message_reaction_user_id ?? null,
@@ -303,6 +213,10 @@ const parseTextPayload = (item: ChatPendingOutboxRow): TextOutboxPayload | null 
     const parsed = JSON.parse(item.payload_json) as TextOutboxPayload;
     if (!parsed || parsed.kind !== 'chat_text_send') return null;
     if (!parsed.senderId || !parsed.receiverId || typeof parsed.text !== 'string') return null;
+    if (
+      parsed.messageType === 'provider_expression'
+      && !parseChatProviderMediaReference(parsed.providerMedia)
+    ) return null;
     return parsed;
   } catch {
     return null;
@@ -319,6 +233,123 @@ const parseOutboxPayload = (item: ChatPendingOutboxRow): ChatOutboxPayload | nul
   }
 };
 
+const getModerationRejectionError = (error: unknown): unknown | null => {
+  const candidate = error as { code?: unknown; message?: unknown; failures?: { error?: unknown }[] };
+  if (
+    isChatMediaModerationRejection(candidate?.code) ||
+    isChatMediaModerationRejection(candidate?.message)
+  ) {
+    return error;
+  }
+  for (const failure of candidate?.failures ?? []) {
+    const nested = getModerationRejectionError(failure?.error);
+    if (nested) return nested;
+  }
+  return null;
+};
+
+const discardModerationRejectedOutboxItem = async (
+  item: ChatPendingOutboxRow,
+  payload: MediaOutboxPayload | ViewOnceOutboxPayload,
+  options?: { emitNotice?: boolean },
+) => {
+  const clientMessageId = payload.clientMessageId ?? item.local_message_id;
+  const viewOnce = payload.kind === 'chat_view_once_send';
+  const files: MediaOutboxFile[] = payload.kind === 'chat_media_send'
+    ? payload.albumItems?.length
+      ? payload.albumItems
+      : payload.localUri && payload.fileName && payload.contentType && payload.attachmentId
+        ? [{
+            localUri: payload.localUri,
+            fileName: payload.fileName,
+            contentType: payload.contentType,
+            attachmentId: payload.attachmentId,
+            byteSize: payload.byteSize,
+            mediaType: payload.mediaType === 'video' ? 'video' : 'image',
+            previewLocalUri: payload.previewLocalUri,
+            previewByteSize: payload.previewByteSize,
+          }]
+        : []
+    : payload.localUri && payload.fileName && payload.contentType && payload.attachmentId
+      ? [{
+          localUri: payload.localUri,
+          fileName: payload.fileName,
+          contentType: payload.contentType,
+          attachmentId: payload.attachmentId,
+          byteSize: payload.byteSize,
+          mediaType: payload.attachmentType === 'video' ? 'video' : 'image',
+        }]
+      : [];
+
+  // This transaction is the product boundary: a rejected attachment ceases
+  // to be a message before any best-effort storage cleanup runs.
+  await ChatRepository.discardRejectedOutboxMessage(
+    item.owner_user_id,
+    item.thread_id,
+    item.local_message_id,
+  );
+
+  if (options?.emitNotice !== false) {
+    publishChatMediaRejectionNotice({
+      ownerUserId: item.owner_user_id,
+      threadId: item.thread_id,
+      localMessageId: item.local_message_id,
+      attachmentType: 'image',
+      reasonCategory: 'MEDIA_POLICY_REJECTED',
+      viewOnce,
+    });
+  }
+
+  await Promise.all(files.flatMap((file) => [
+    removeStagedOfflineChatUpload(file.localUri),
+    removeChatAttachmentPreview(file.previewLocalUri),
+  ]));
+
+  if (!payload.receiverId || !payload.senderId || files.length === 0) return;
+  const remoteAttachments = files.map((file) => {
+    const mediaType = file.mediaType ?? (file.contentType.startsWith('video/') ? 'video' : 'image');
+    const bucketId = viewOnce
+      ? CHAT_MEDIA_BUCKET
+      : payload.kind === 'chat_media_send' && payload.albumItems?.length
+        ? resolveChatAlbumUploadBucket(file)
+        : uploadBucketForMedia(mediaType);
+    return {
+      attachmentId: file.attachmentId,
+      bucketId,
+      storagePath: buildDeterministicChatAttachmentPath({
+        senderId: payload.senderId!,
+        receiverId: payload.receiverId!,
+        clientMessageId,
+        attachmentId: file.attachmentId,
+        fileName: file.fileName,
+        mimeType: file.contentType,
+      }),
+      previewStoragePath: !viewOnce && (mediaType === 'image' || mediaType === 'video')
+        ? buildDeterministicChatPreviewPath({
+            senderId: payload.senderId!,
+            receiverId: payload.receiverId!,
+            clientMessageId,
+            attachmentId: file.attachmentId,
+          })
+        : null,
+    };
+  });
+
+  // The server owns quarantine/evidence retention. This only asks the
+  // attachment lifecycle to remove sender staging objects.
+  void cancelChatAttachmentBatch({
+    receiverId: payload.receiverId,
+    clientMessageId,
+    attachments: remoteAttachments,
+  }).catch((cleanupError) => {
+    observeChatAttachmentLifecycle('cleanup_failed', {
+      clientMessageId,
+      attachmentCount: files.length,
+      mediaType: viewOnce ? 'view_once_image' : 'image',
+    }, cleanupError);
+  });
+};
+
 const assertOutboxNotCancelled = async (ownerUserId: string, localMessageId: string) => {
   const current = await ChatRepository.getOutboxItem(ownerUserId, localMessageId);
   if (current?.status === 'cancelled') {
@@ -328,7 +359,8 @@ const assertOutboxNotCancelled = async (ownerUserId: string, localMessageId: str
 
 const uploadQueuedPrivateChatMedia = async (
   payload: MediaOutboxPayload | ViewOnceOutboxPayload,
-  file: Pick<MediaOutboxFile, 'localUri' | 'fileName' | 'contentType' | 'attachmentId' | 'byteSize'>,
+  file: Pick<MediaOutboxFile, 'localUri' | 'fileName' | 'contentType' | 'attachmentId' | 'byteSize' | 'mediaType'>,
+  onProgress?: (fraction: number) => void,
 ) => {
   if (!payload.senderId || !payload.receiverId || !file.localUri || !file.fileName || !file.contentType) {
     throw new Error('invalid_media_payload');
@@ -357,7 +389,11 @@ const uploadQueuedPrivateChatMedia = async (
     mimeType: file.contentType,
   });
   await ChatUploadTransport.upload({
-    bucket: CHAT_MEDIA_BUCKET,
+    bucket: payload.kind === 'chat_media_send'
+      ? payload.albumItems?.length
+        ? resolveChatAlbumUploadBucket(file)
+        : uploadBucketForMedia(payload.mediaType)
+      : CHAT_MEDIA_BUCKET,
     objectPath: filePath,
     localUri: file.localUri,
     fileName: file.fileName,
@@ -366,6 +402,8 @@ const uploadQueuedPrivateChatMedia = async (
     accessToken,
     anonKey: supabaseAnonKey,
     supabaseUrl,
+    ownerUserId: payload.senderId,
+    onProgress: onProgress ? ({ fraction }) => onProgress(fraction) : undefined,
   });
   return filePath;
 };
@@ -489,6 +527,10 @@ const sendViewOnceOutboxItem = async (
       mediaType: `view_once_${payload.attachmentType}`,
       attemptCount: item.attempt_count + 1,
     }, error);
+    if (getModerationRejectionError(error)) {
+      await discardModerationRejectedOutboxItem(item, payload);
+      return { sent: false, threadId: item.thread_id };
+    }
     const existing = await fetchExistingClientMessage(payload.senderId, clientMessageId).catch(() => null);
     if (!existing) {
       await scheduleOutboxRetry(item, error, 'send_failed', 'Unable to send encrypted media');
@@ -528,7 +570,7 @@ const uploadQueuedPrivateChatPreview = async (
     attachmentId: file.attachmentId,
   });
   await ChatUploadTransport.upload({
-    bucket: CHAT_MEDIA_BUCKET,
+    bucket: uploadBucketForMedia(file.contentType.startsWith('image/') ? 'image' : 'video'),
     objectPath: path,
     localUri: file.previewLocalUri,
     fileName: `${file.attachmentId}-preview.jpg`,
@@ -577,226 +619,6 @@ const uploadQueuedVoice = async (payload: VoiceOutboxPayload) => {
   return filePath;
 };
 
-const normalizeWaveform = (value: unknown): number[] => {
-  if (Array.isArray(value)) return value.filter((entry): entry is number => typeof entry === 'number');
-  if (typeof value === 'string') {
-    try {
-      const parsed = JSON.parse(value);
-      if (Array.isArray(parsed)) return parsed.filter((entry): entry is number => typeof entry === 'number');
-    } catch {
-      return [];
-    }
-  }
-  return [];
-};
-
-const normalizeRemoteMediaItems = (value: unknown) => {
-  if (!Array.isArray(value)) return [];
-  return value
-    .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
-    .map((item) => ({
-      attachmentId: String(item.attachmentId ?? ''),
-      index: Number(item.index ?? 0),
-      type: item.type === 'video' ? 'video' as const : 'image' as const,
-      storagePath: String(item.storagePath ?? ''),
-      mimeType: typeof item.mimeType === 'string' ? item.mimeType : null,
-      width: typeof item.width === 'number' ? item.width : null,
-      height: typeof item.height === 'number' ? item.height : null,
-      byteSize: typeof item.byteSize === 'number' ? item.byteSize : null,
-      durationMs: typeof item.durationMs === 'number' ? item.durationMs : null,
-      previewStoragePath:
-        typeof item.previewStoragePath === 'string' ? item.previewStoragePath : null,
-    }))
-    .filter((item) => item.attachmentId && item.storagePath)
-    .sort((a, b) => a.index - b.index);
-};
-
-const withRemoteMessageIdentity = (
-  metadataJson: string | null | undefined,
-  row: RemoteMessageRow,
-  status: ChatMessageRow['status'],
-  fallbackType: string,
-) => {
-  if (!metadataJson) return null;
-  try {
-    const parsed = JSON.parse(metadataJson) as Record<string, unknown>;
-    if (!parsed || typeof parsed !== 'object') return null;
-    const resolvedType = String(parsed.type ?? fallbackType);
-    const nextText =
-      resolvedType === 'image' || resolvedType === 'video' || resolvedType === 'document'
-        ? ''
-        : row.text ?? parsed.text ?? '';
-    return JSON.stringify({
-      ...parsed,
-      id: row.id,
-      clientMessageId: row.client_message_id ?? parsed.clientMessageId ?? null,
-      text: nextText,
-      senderId: row.sender_id,
-      timestamp: row.created_at,
-      status,
-      type: resolvedType,
-      replyToId: row.reply_to_message_id ?? parsed.replyToId ?? null,
-      imageUrl:
-        resolvedType === 'image'
-          ? (typeof parsed.imageUrl === 'string' && parsed.imageUrl) || row.text || undefined
-          : parsed.imageUrl,
-      videoUrl:
-        resolvedType === 'video'
-          ? (typeof parsed.videoUrl === 'string' && parsed.videoUrl) || row.text || undefined
-          : parsed.videoUrl,
-      document:
-        resolvedType === 'document'
-          ? parsed.document
-          : parsed.document,
-    });
-  } catch {
-    return null;
-  }
-};
-
-const buildMessageMetadataJson = (
-  row: RemoteMessageRow,
-  payload?: ChatOutboxPayload | null,
-  status?: ChatMessageRow['status'],
-) => {
-  const timestamp = row.created_at;
-  const messageType = payload?.kind === 'chat_media_send'
-    ? payload.albumItems && payload.albumItems.length > 1
-      ? 'image'
-      : payload.mediaType
-    : payload?.kind === 'chat_view_once_send'
-    ? payload.attachmentType
-    : row.message_type === 'audio'
-    ? 'voice'
-    : row.message_type ?? 'text';
-  const base = {
-    id: row.id,
-    clientMessageId: row.client_message_id ?? null,
-    text: row.text ?? '',
-    senderId: row.sender_id,
-    timestamp,
-    type: messageType === 'document' ? 'document' : messageType,
-    reactions: [],
-    status,
-    replyToId: row.reply_to_message_id ?? null,
-    storagePath: row.storage_path ?? null,
-    mediaItems: normalizeRemoteMediaItems(row.media_items),
-    mediaExpectedCount: row.media_expected_count ?? null,
-    mediaGroupId: row.media_group_id ?? (payload?.kind === 'chat_media_send' ? payload.mediaGroupId ?? null : null),
-    mediaCaption: row.media_caption ?? (payload?.kind === 'chat_media_send' ? payload.albumCaption ?? null : null),
-    previewStoragePath:
-      normalizeRemoteMediaItems(row.media_items)[0]?.previewStoragePath ?? null,
-    isViewOnce: Boolean(row.is_view_once),
-    encryptedMedia: Boolean(row.encrypted_media),
-    encryptedMediaPath: row.encrypted_media_path ?? null,
-    encryptedKeySender: row.encrypted_key_sender ?? null,
-    encryptedKeyReceiver: row.encrypted_key_receiver ?? null,
-    encryptedKeyNonce: row.encrypted_key_nonce ?? null,
-    encryptedMediaNonce: row.encrypted_media_nonce ?? null,
-    encryptedMediaAlg: row.encrypted_media_alg ?? null,
-    encryptedMediaMime: row.encrypted_media_mime ?? null,
-    encryptedMediaSize: row.encrypted_media_size ?? null,
-  };
-
-  if (payload?.kind === 'chat_view_once_send') {
-    return JSON.stringify({
-      ...base,
-      type: payload.attachmentType ?? row.message_type ?? 'image',
-      text: '',
-      isViewOnce: true,
-      encryptedMedia: true,
-    });
-  }
-
-  if (
-    payload?.kind === 'chat_media_send' &&
-    (payload.mediaType === 'image' || (payload.albumItems?.length ?? 0) > 1)
-  ) {
-    return JSON.stringify({ ...base, type: 'image', imageUrl: row.text ?? undefined });
-  }
-  if (payload?.kind === 'chat_media_send' && payload.mediaType === 'video') {
-    return JSON.stringify({ ...base, type: 'video', videoUrl: row.text ?? undefined });
-  }
-  if (payload?.kind === 'chat_media_send' && payload.mediaType === 'document') {
-    const [, url] = String(row.text ?? '').split('\n');
-    return JSON.stringify({
-      ...base,
-      type: 'document',
-      document: {
-        name: payload.documentName || payload.fileName || 'Document',
-        url: url || '',
-        sizeLabel: payload.documentSizeLabel ?? null,
-        typeLabel: payload.documentTypeLabel ?? null,
-      },
-    });
-  }
-  if (payload?.kind === 'chat_voice_send' || row.message_type === 'voice') {
-    const voicePayload = payload?.kind === 'chat_voice_send' ? payload : null;
-    return JSON.stringify({
-      ...base,
-      type: 'voice',
-      text: '',
-      voiceMessage: {
-        duration: Number(row.audio_duration ?? voicePayload?.durationSeconds ?? 0),
-        waveform: normalizeWaveform(row.audio_waveform ?? voicePayload?.waveform),
-        isPlaying: false,
-        audioPath: row.audio_path ?? undefined,
-      },
-    });
-  }
-  if (payload?.kind === 'chat_text_send') {
-    const enriched = withRemoteMessageIdentity(
-      payload.metadataJson,
-      row,
-      status ?? 'sent',
-      payload.messageType ?? row.message_type ?? 'text',
-    );
-    if (enriched) return enriched;
-  }
-  return JSON.stringify(base);
-};
-
-const toLocalMessageRow = (
-  ownerUserId: string,
-  threadId: string,
-  row: RemoteMessageRow,
-  payload?: ChatOutboxPayload | null,
-): ChatMessageRow => {
-  const isMine = row.sender_id === ownerUserId;
-  const status: ChatMessageRow['status'] = isMine
-    ? row.is_read
-      ? 'read'
-      : row.delivered_at
-      ? 'delivered'
-      : 'sent'
-    : row.is_read
-    ? 'read'
-    : 'delivered';
-
-  return {
-    id: row.id,
-    local_id: row.client_message_id ?? null,
-    thread_id: threadId,
-    owner_user_id: ownerUserId,
-    sender_user_id: row.sender_id,
-    receiver_user_id: row.receiver_id,
-    body: row.text ?? '',
-    message_type: row.message_type === 'audio' ? 'voice' : ((row.message_type ?? 'text') as ChatMessageRow['message_type']),
-    status,
-    direction: isMine ? 'outgoing' : 'incoming',
-    created_at: row.created_at,
-    server_created_at: row.created_at,
-    edited_at: null,
-    deleted_at: null,
-    reply_to_message_id: row.reply_to_message_id ?? null,
-    is_view_once: row.is_view_once ? 1 : 0,
-    local_only: 0,
-    error_code: null,
-    metadata_json: buildMessageMetadataJson(row, payload, status),
-    remote_updated_at: row.created_at,
-    local_updated_at: new Date().toISOString(),
-  };
-};
 
 const fetchExistingClientMessage = async (senderId: string, clientMessageId: string) => {
   const { data, error } = await supabase
@@ -828,6 +650,9 @@ const scheduleOwnerOutboxFlush = (ownerUserId: string, delayMs: number) => {
 
   const timer = setTimeout(() => {
     scheduledOwnerFlushes.delete(ownerUserId);
+    // Foreground coordinators flush the durable queue again on resume. Avoid
+    // starting a request that iOS is about to suspend immediately.
+    if (AppState.currentState !== 'active') return;
     void ChatOutboxService.flushPending(ownerUserId).catch((error) => {
       captureException(error, { where: 'ChatOutboxService.scheduledFlush' });
     });
@@ -840,14 +665,21 @@ const scheduleOutboxRetry = async (
   error: unknown,
   fallbackCode: string,
   fallbackMessage: string,
+  options?: { maxAutomaticAttempts?: number },
 ) => {
-  const errorInfo = getErrorInfo(error, fallbackCode, fallbackMessage);
-  const attemptCount = item.attempt_count + 1;
   const payload = parseOutboxPayload(item);
+  const rawErrorInfo = getErrorInfo(error, fallbackCode, fallbackMessage);
+  const errorInfo = payload?.kind === 'chat_media_send' &&
+    String(rawErrorInfo.message ?? '').toLowerCase().includes('row-level security')
+    ? { ...rawErrorInfo, code: 'attachment_upload_not_authorized' }
+    : rawErrorInfo;
+  const attemptCount = item.attempt_count + 1;
 
   const errorCode = String(errorInfo.code || '').toLowerCase();
   const errorMessage = String(errorInfo.message || '').toLowerCase();
   const isPermanentFailure =
+    isTerminalChatAttachmentError(errorCode) ||
+    isTerminalChatAttachmentError(errorMessage) ||
     errorCode === '42501' ||
     errorCode === '23514' ||
     errorCode === 'invalid_payload' ||
@@ -855,20 +687,22 @@ const scheduleOutboxRetry = async (
     errorCode.includes('attachment_content_mismatch') ||
     errorCode.includes('image_content_not_allowed') ||
     errorCode.includes('image_review_required') ||
-    errorCode.includes('encrypted_image_moderation_unavailable') ||
     errorCode.includes('attachment_metadata_invalid') ||
     errorCode.includes('unsupported_attachment') ||
     errorMessage.includes('attachment_size_invalid') ||
     errorMessage.includes('attachment_content_mismatch') ||
     errorMessage.includes('image_content_not_allowed') ||
     errorMessage.includes('image_review_required') ||
-    errorMessage.includes('encrypted_image_moderation_unavailable') ||
     errorMessage.includes('violates check constraint') ||
     errorMessage.includes('row-level security') ||
     errorMessage.includes('messaging unavailable') ||
     errorMessage.includes('not allowed');
 
-  if (isPermanentFailure || attemptCount >= item.max_attempts) {
+  const maxAutomaticAttempts = Math.min(
+    item.max_attempts,
+    options?.maxAutomaticAttempts ?? item.max_attempts,
+  );
+  if (isPermanentFailure || attemptCount >= maxAutomaticAttempts) {
     await ChatRepository.markOutboxItemStatus(item.owner_user_id, item.local_message_id, 'failed', errorInfo);
     if (
       payload?.kind === 'chat_media_send' ||
@@ -899,6 +733,17 @@ const scheduleOutboxRetry = async (
   }
 
   const retryDelayMs = getRetryDelayMs(attemptCount);
+  if (
+    (payload?.kind === 'chat_media_send' || payload?.kind === 'chat_view_once_send') &&
+    (isChatMediaProviderUnavailable(errorInfo.code) || isChatMediaProviderUnavailable(errorInfo.message))
+  ) {
+    captureMessage('chat_media_provider_retry_shown', {
+      surface: 'chat',
+      attachment_type: payload.kind === 'chat_view_once_send' ? payload.attachmentType : payload.mediaType,
+      reason_code_category: 'PROVIDER_UNAVAILABLE',
+      view_once: payload.kind === 'chat_view_once_send',
+    });
+  }
   await ChatRepository.markOutboxItemStatus(item.owner_user_id, item.local_message_id, 'queued', errorInfo, {
     nextRetryAt: new Date(Date.now() + retryDelayMs).toISOString(),
   });
@@ -942,6 +787,24 @@ const sendTextOutboxItem = async (item: ChatPendingOutboxRow) => {
   }
 
   const clientMessageId = payload.clientMessageId ?? item.local_message_id;
+  // A retry may follow a lost HTTP response even though the server committed
+  // the message. Recover that canonical row before changing the local bubble
+  // back to "sending" or invoking the guard again.
+  if (item.attempt_count > 0 || item.status === 'sending') {
+    const canonicalBeforeRetry = await fetchExistingClientMessage(
+      payload.senderId,
+      clientMessageId,
+    ).catch(() => null);
+    if (canonicalBeforeRetry) {
+      await ChatRepository.settleOutboxMessage(
+        item.owner_user_id,
+        item.thread_id,
+        item.local_message_id,
+        toLocalMessageRow(item.owner_user_id, item.thread_id, canonicalBeforeRetry, payload),
+      );
+      return { sent: true, threadId: item.thread_id };
+    }
+  }
   await ChatRepository.markOutboxItemAttempting(item.owner_user_id, item.local_message_id);
 
   const { data: guardData, error } = await supabase.functions.invoke('private-message-guard-send', {
@@ -952,6 +815,9 @@ const sendTextOutboxItem = async (item: ChatPendingOutboxRow) => {
       messageType: payload.messageType ?? 'text',
       replyToMessageId: payload.replyToMessageId ?? null,
       storagePath: payload.storagePath ?? null,
+      providerMedia: payload.messageType === 'provider_expression'
+        ? parseChatProviderMediaReference(payload.providerMedia)
+        : null,
     },
   });
 
@@ -964,27 +830,42 @@ const sendTextOutboxItem = async (item: ChatPendingOutboxRow) => {
     ok?: boolean;
     code?: string;
     message?: RemoteMessageRow | null;
+    restricted_until?: string | null;
   };
   if (guardResult.ok === false) {
+    const failure = getChatGuardFailurePresentation({
+      action: 'send',
+      code: guardResult.code,
+      restrictedUntil: guardResult.restricted_until,
+    });
     await ChatRepository.markOutboxItemStatus(item.owner_user_id, item.local_message_id, 'failed', {
       code: guardResult.code ?? 'MESSAGE_CONTENT_NOT_ALLOWED',
-      message: guardResult.code === 'MESSAGE_REVIEW_REQUIRED'
-        ? 'Message held for safety review'
-        : guardResult.code === 'MESSAGING_TEMPORARILY_RESTRICTED'
-          ? 'Messaging is temporarily restricted'
-          : 'Message violates Betweener safety rules',
+      message: failure.outboxMessage,
     });
     return { sent: false, threadId: item.thread_id };
   }
 
   const remoteRow = guardResult.message
     ?? (await fetchExistingClientMessage(payload.senderId, clientMessageId));
-  if (remoteRow) {
-    await ChatRepository.upsertMessages(item.owner_user_id, item.thread_id, [
-      toLocalMessageRow(item.owner_user_id, item.thread_id, remoteRow, payload),
-    ]);
+  if (!remoteRow) {
+    await scheduleOutboxRetry(
+      item,
+      new Error('canonical_message_missing_after_send'),
+      'canonical_message_missing',
+      'The server did not confirm the queued message',
+    );
+    return { sent: false, threadId: item.thread_id };
   }
-  await ChatRepository.markOutboxItemStatus(item.owner_user_id, item.local_message_id, 'sent');
+
+  // Replace the optimistic row and settle its outbox record atomically. This
+  // prevents a delivered provider expression from surviving locally as a
+  // second "Sending..." bubble.
+  await ChatRepository.settleOutboxMessage(
+    item.owner_user_id,
+    item.thread_id,
+    item.local_message_id,
+    toLocalMessageRow(item.owner_user_id, item.thread_id, remoteRow, payload),
+  );
   return { sent: true, threadId: item.thread_id };
 };
 
@@ -998,11 +879,20 @@ const sendMediaOutboxItem = async (item: ChatPendingOutboxRow, payload: MediaOut
   }
 
   const clientMessageId = payload.clientMessageId ?? item.local_message_id;
+  const attemptStartedAt = Date.now();
+  const queuedAtMs = Date.parse(item.created_at);
+  let uploadedOriginalBytes = 0;
+  let uploadedPreviewBytes = 0;
   await ChatRepository.markOutboxItemAttempting(item.owner_user_id, item.local_message_id);
-  const albumItems = payload.albumItems && payload.albumItems.length > 1
+  const normalizedAlbumItems = payload.albumItems && payload.albumItems.length > 0
     ? normalizeDurableChatAlbumItems(payload.albumItems)
     : null;
-  const files: MediaOutboxFile[] = albumItems ?? [{
+  const compositionRevision = getAlbumCompositionRevision(payload);
+  const isSelectiveAlbumRetry = Boolean(payload.retryAttachmentIds?.length);
+  let workingAlbumItems: MediaOutboxFile[] | null = normalizedAlbumItems
+    ? prepareChatAlbumItemsForAttempt(normalizedAlbumItems, payload.retryAttachmentIds)
+    : null;
+  const files: MediaOutboxFile[] = workingAlbumItems ?? [{
     localUri: payload.localUri,
     fileName: payload.fileName,
     contentType: payload.contentType,
@@ -1013,21 +903,75 @@ const sendMediaOutboxItem = async (item: ChatPendingOutboxRow, payload: MediaOut
     width: payload.width,
     height: payload.height,
     durationMs: payload.durationMs,
+    previewLocalUri: payload.previewLocalUri,
+    previewContentType: payload.previewContentType,
+    previewByteSize: payload.previewByteSize,
+    previewWidth: payload.previewWidth,
+    previewHeight: payload.previewHeight,
+    uploadCompleted: payload.uploadCompleted,
+    transferState: payload.uploadCompleted ? 'uploaded' : 'queued',
     index: 0,
     mediaType: payload.mediaType === 'video' ? 'video' : 'image',
   }];
-  if (albumItems) {
-    payload.albumItems = albumItems.map((file) => ({
-      ...file,
-      transferState: 'uploading',
-      attemptCount: (file.attemptCount ?? 0) + 1,
-      lastError: null,
-    }));
-    await ChatRepository.updateOutboxPayload(
+  let progressPersistTimer: ReturnType<typeof setTimeout> | null = null;
+  let progressPersistChain: Promise<unknown> = Promise.resolve();
+  let lastProgressPersistedAt = 0;
+  const persistAlbumTransferSnapshot = (force = false) => {
+    if (!workingAlbumItems) return progressPersistChain;
+    const persist = () => {
+      if (!workingAlbumItems) return;
+      lastProgressPersistedAt = Date.now();
+      payload.albumItems = workingAlbumItems.map((file) => ({ ...file }));
+      const payloadJson = JSON.stringify(payload);
+      const mediaItemsJson = albumFilesToLocalMediaItems(workingAlbumItems);
+      progressPersistChain = progressPersistChain
+        .catch(() => undefined)
+        .then(() => ChatRepository.updateAlbumTransferSnapshot(
+          item.owner_user_id,
+          item.thread_id,
+          item.local_message_id,
+          payloadJson,
+          mediaItemsJson,
+          compositionRevision,
+        ));
+    };
+    if (force) {
+      if (progressPersistTimer) clearTimeout(progressPersistTimer);
+      progressPersistTimer = null;
+      persist();
+      return progressPersistChain;
+    }
+    const remaining = ALBUM_PROGRESS_PERSIST_INTERVAL_MS - (Date.now() - lastProgressPersistedAt);
+    if (remaining <= 0) {
+      persist();
+    } else if (!progressPersistTimer) {
+      progressPersistTimer = setTimeout(() => {
+        progressPersistTimer = null;
+        persist();
+      }, remaining);
+    }
+    return progressPersistChain;
+  };
+  const updateAlbumItemTransfer = (
+    attachmentId: string,
+    patch: Partial<MediaOutboxFile>,
+    force = false,
+  ) => {
+    if (!workingAlbumItems) return;
+    workingAlbumItems = updateChatAlbumItemTransfer(workingAlbumItems, attachmentId, patch);
+    void persistAlbumTransferSnapshot(force);
+  };
+  if (workingAlbumItems) {
+    payload.albumItems = workingAlbumItems;
+    const snapshotUpdated = await ChatRepository.updateAlbumTransferSnapshot(
       item.owner_user_id,
+      item.thread_id,
       item.local_message_id,
       JSON.stringify(payload),
+      albumFilesToLocalMediaItems(workingAlbumItems),
+      compositionRevision,
     );
+    if (!snapshotUpdated) return { sent: false, threadId: item.thread_id };
   }
   const canonicalBeforeUpload = await fetchExistingClientMessage(
     payload.senderId,
@@ -1049,8 +993,15 @@ const sendMediaOutboxItem = async (item: ChatPendingOutboxRow, payload: MediaOut
   let remoteRow: RemoteMessageRow | null = null;
   try {
     const finalizedAttachments = await mapChatAlbumItemsBounded(files, async (file, index) => {
-      const itemMediaType = file.mediaType ?? (file.contentType.startsWith('video/') ? 'video' : payload.mediaType);
+      const itemMediaType = workingAlbumItems
+        ? resolveChatAlbumItemMediaType(file)
+        : file.mediaType ?? (file.contentType.startsWith('video/') ? 'video' : payload.mediaType);
       const isVisualMedia = itemMediaType === 'image' || itemMediaType === 'video';
+      const cancellationKey = albumItemCancellationKey(
+        item.owner_user_id,
+        item.local_message_id,
+        file.attachmentId,
+      );
       const previewDimensions = normalizeChatPreviewDimensions({
         width: file.previewWidth,
         height: file.previewHeight,
@@ -1065,13 +1016,19 @@ const sendMediaOutboxItem = async (item: ChatPendingOutboxRow, payload: MediaOut
       ) {
         throw new Error(file.lastError || 'chat_album_item_retry_deferred');
       }
-      if (file.transferState === 'uploaded' && payload.senderId && payload.receiverId) {
+      if (activeAlbumItemCancellations.has(cancellationKey) || file.transferState === 'cancelling') {
+        throw new Error('chat_album_item_cancelled');
+      }
+      if (
+        (file.transferState === 'uploaded' || file.uploadCompleted === true) &&
+        payload.senderId && payload.receiverId
+      ) {
         return {
           receiverId: payload.receiverId,
           clientMessageId,
           attachmentId: file.attachmentId,
           attachmentType: itemMediaType,
-          bucketId: CHAT_MEDIA_BUCKET,
+          bucketId: uploadBucketForMedia(itemMediaType),
           storagePath: buildDeterministicChatAttachmentPath({
             senderId: payload.senderId,
             receiverId: payload.receiverId,
@@ -1118,20 +1075,45 @@ const sendMediaOutboxItem = async (item: ChatPendingOutboxRow, payload: MediaOut
       });
       if (__DEV__) {
         console.log('[chat][outbox] media-upload-started', {
+          clientMessageId,
+          attachmentId: file.attachmentId,
           mediaType: itemMediaType,
           attachmentIndex: index,
           attachmentCount: files.length,
           attemptCount: item.attempt_count + 1,
         });
       }
-      const storagePath = await uploadQueuedPrivateChatMedia(payload, file);
+      const originalUploadStartedAt = Date.now();
+      const storagePath = await uploadQueuedPrivateChatMedia(payload, file, (fraction) => {
+        updateAlbumItemTransfer(file.attachmentId, {
+          transferState: 'uploading',
+          uploadProgress: clampChatAlbumUploadProgress(fraction),
+        });
+      });
       await assertOutboxNotCancelled(item.owner_user_id, item.local_message_id);
+      await assertAlbumCompositionCurrent(
+        item.owner_user_id,
+        item.local_message_id,
+        compositionRevision,
+      );
+      if (activeAlbumItemCancellations.has(cancellationKey)) {
+        throw new Error('chat_album_item_cancelled');
+      }
       observeChatAttachmentLifecycle('upload_completed', {
         clientMessageId,
         attachmentId: file.attachmentId,
         attachmentIndex: index,
         attachmentCount: files.length,
         mediaType: itemMediaType,
+      });
+      if (__DEV__) console.log('[chat][outbox] media-upload-completed', {
+        clientMessageId,
+        attachmentId: file.attachmentId,
+        mediaType: itemMediaType,
+        attachmentIndex: index,
+        attachmentCount: files.length,
+        durationMs: Date.now() - originalUploadStartedAt,
+        byteSize: file.byteSize ?? null,
       });
       let preview = file.previewLocalUri
         ? {
@@ -1158,10 +1140,19 @@ const sendMediaOutboxItem = async (item: ChatPendingOutboxRow, payload: MediaOut
           file.previewHeight = preview.height;
         }
       }
+      const previewUploadStartedAt = Date.now();
       const previewStoragePath = preview
         ? await uploadQueuedPrivateChatPreview(payload, file)
         : null;
       await assertOutboxNotCancelled(item.owner_user_id, item.local_message_id);
+      await assertAlbumCompositionCurrent(
+        item.owner_user_id,
+        item.local_message_id,
+        compositionRevision,
+      );
+      if (activeAlbumItemCancellations.has(cancellationKey)) {
+        throw new Error('chat_album_item_cancelled');
+      }
       if (previewStoragePath) {
         observeChatAttachmentLifecycle('preview_completed', {
           clientMessageId,
@@ -1176,6 +1167,8 @@ const sendMediaOutboxItem = async (item: ChatPendingOutboxRow, payload: MediaOut
         localFileInfo: fileInfo,
         declaredByteSize: file.byteSize,
       });
+      uploadedOriginalBytes += byteSize ?? 0;
+      uploadedPreviewBytes += preview?.byteSize ?? 0;
       const finalizedPreviewDimensions = preview
         ? normalizeChatPreviewDimensions({ width: preview.width, height: preview.height })
         : null;
@@ -1184,7 +1177,7 @@ const sendMediaOutboxItem = async (item: ChatPendingOutboxRow, payload: MediaOut
         clientMessageId,
         attachmentId: file.attachmentId,
         attachmentType: itemMediaType,
-        bucketId: CHAT_MEDIA_BUCKET,
+        bucketId: uploadBucketForMedia(itemMediaType),
         storagePath,
         originalName: payload.documentName || file.fileName,
         mimeType: file.contentType,
@@ -1217,84 +1210,319 @@ const sendMediaOutboxItem = async (item: ChatPendingOutboxRow, payload: MediaOut
         }).catch(() => null);
       }
       if (__DEV__) {
-        console.log('[chat][outbox] media-finalized', {
+        console.log('[chat][outbox] media-prepared', {
+          clientMessageId,
+          attachmentId: file.attachmentId,
           mediaType: itemMediaType,
           attachmentIndex: index,
           attachmentCount: files.length,
           byteSize,
+          previewByteSize: preview?.byteSize ?? null,
+          previewUploadDurationMs: preview
+            ? Date.now() - previewUploadStartedAt
+            : 0,
         });
+      }
+      updateAlbumItemTransfer(file.attachmentId, {
+        transferState: 'uploaded',
+        uploadProgress: 1,
+        lastError: null,
+        previewLocalUri: file.previewLocalUri ?? null,
+        previewContentType: file.previewContentType ?? null,
+        previewByteSize: file.previewByteSize ?? null,
+        previewWidth: file.previewWidth ?? null,
+        previewHeight: file.previewHeight ?? null,
+        uploadCompleted: true,
+      });
+      if (!workingAlbumItems) {
+        file.transferState = 'uploaded';
+        file.uploadProgress = 1;
+        file.uploadCompleted = true;
+        payload.uploadCompleted = true;
+        payload.previewLocalUri = file.previewLocalUri ?? null;
+        payload.previewContentType = file.previewContentType ?? null;
+        payload.previewByteSize = file.previewByteSize ?? null;
+        payload.previewWidth = file.previewWidth ?? null;
+        payload.previewHeight = file.previewHeight ?? null;
+        const persisted = await ChatRepository.updateOutboxPayload(
+          item.owner_user_id,
+          item.local_message_id,
+          JSON.stringify(payload),
+        );
+        if (!persisted) throw new Error('chat_upload_cancelled');
       }
       return finalizedAttachment;
     });
-    if (albumItems) {
+    if (workingAlbumItems) {
       payload.retryAttachmentIds = undefined;
-      payload.albumItems = albumItems.map((file) => ({
+      workingAlbumItems = workingAlbumItems.map((file) => ({
         ...file,
         transferState: 'uploaded',
-        attemptCount: (file.attemptCount ?? 0) + 1,
+        uploadProgress: 1,
         lastError: null,
+        uploadCompleted: true,
       }));
-      await ChatRepository.updateOutboxPayload(
-        item.owner_user_id,
-        item.local_message_id,
-        JSON.stringify(payload),
-      );
+      await persistAlbumTransferSnapshot(true);
     }
+    const moderationPreflightStartedAt = Date.now();
+    const imageModerationAttachments = finalizedAttachments
+      .filter((attachment) => attachment.attachmentType === 'image')
+      .map((attachment) => {
+      if (!attachment.previewStoragePath || attachment.previewMimeType !== 'image/jpeg') {
+        throw new ChatAttachmentFunctionError({
+          code: 'attachment_preview_required',
+          attachmentId: attachment.attachmentId,
+          attachmentIndex: attachment.attachmentIndex,
+          stage: 'preview_validation',
+          retryable: false,
+        });
+      }
+      return {
+        receiverId: payload.receiverId!,
+        clientMessageId,
+        attachmentId: attachment.attachmentId,
+        bucketId: attachment.bucketId === CHAT_ATTACHMENT_STAGING_BUCKET
+          ? CHAT_ATTACHMENT_STAGING_BUCKET
+          : CHAT_MEDIA_BUCKET,
+        storagePath: attachment.storagePath,
+        mimeType: attachment.mimeType,
+        previewStoragePath: attachment.previewStoragePath,
+        previewMimeType: 'image/jpeg' as const,
+      };
+    });
+    await preflightChatImageAttachmentBatch({
+      receiverId: payload.receiverId!,
+      clientMessageId,
+      attachments: imageModerationAttachments,
+    });
+    if (__DEV__) console.log('[chat][outbox] media-moderation-preflight-completed', {
+      clientMessageId,
+      attachmentCount: files.length,
+      durationMs: Date.now() - moderationPreflightStartedAt,
+    });
     observeChatAttachmentLifecycle('finalize_started', {
       clientMessageId,
       attachmentCount: files.length,
       mediaType: files.length > 1 ? 'album' : payload.mediaType,
     });
     await assertOutboxNotCancelled(item.owner_user_id, item.local_message_id);
+    if (workingAlbumItems) {
+      await assertAlbumCompositionCurrent(
+        item.owner_user_id,
+        item.local_message_id,
+        compositionRevision,
+      );
+    }
+    const serverFinalizationStartedAt = Date.now();
     remoteRow = await finalizeChatAttachmentBatch({
       receiverId: payload.receiverId,
       clientMessageId,
       attachmentType: files.length > 1 ? finalizedAttachments[0].attachmentType : payload.mediaType,
       mediaGroupId: payload.mediaGroupId ?? (files.length > 1 ? clientMessageId.replace(/^temp-(?:image|video|album)-/, '') : null),
-      caption: files.length > 1
-        ? payload.albumCaption ?? ''
-        : payload.mediaType === 'document'
+      ...(payload.mediaKind ? { mediaKind: payload.mediaKind } : {}),
+      caption: payload.mediaType === 'document'
         ? `${DOCUMENT_TEXT_PREFIX} ${[
             payload.documentName || payload.fileName,
             payload.documentSizeLabel,
             payload.documentTypeLabel,
           ].filter(Boolean).join(' | ')}`
-        : '',
+        : payload.albumCaption ?? '',
       replyToMessageId: payload.replyToMessageId ?? null,
       attachments: finalizedAttachments,
     }) as RemoteMessageRow;
+    if (__DEV__) console.log('[chat][outbox] media-send-ready', {
+      attachmentCount: files.length,
+      mediaType: files.length > 1 ? 'album' : payload.mediaType,
+      originalBytes: uploadedOriginalBytes,
+      previewBytes: uploadedPreviewBytes,
+      serverFinalizationDurationMs: Date.now() - serverFinalizationStartedAt,
+      attemptDurationMs: Date.now() - attemptStartedAt,
+      queueAgeMs: Number.isFinite(queuedAtMs) ? Date.now() - queuedAtMs : null,
+    });
     observeChatAttachmentLifecycle('ready', {
       clientMessageId,
       attachmentCount: files.length,
       mediaType: payload.mediaType,
     });
   } catch (error) {
-    if (albumItems && error instanceof ChatAlbumWorkError) {
+    if (progressPersistTimer) clearTimeout(progressPersistTimer);
+    progressPersistTimer = null;
+    // A transport timeout does not prove that finalisation failed. Reconcile
+    // the stable client identity before showing failure or scheduling retries.
+    const canonicalAfterFailure = await fetchExistingClientMessage(
+      payload.senderId,
+      clientMessageId,
+    ).catch(() => null);
+    if (canonicalAfterFailure) {
+      await ChatRepository.settleOutboxMessage(
+        item.owner_user_id,
+        item.thread_id,
+        item.local_message_id,
+        toLocalMessageRow(item.owner_user_id, item.thread_id, canonicalAfterFailure, payload),
+      );
+      await Promise.all(files.flatMap((file) => [
+        removeStagedOfflineChatUpload(file.localUri),
+        removeChatAttachmentPreview(file.previewLocalUri),
+      ]));
+      if (__DEV__) console.log('[chat][outbox] media-send-reconciled', {
+        clientMessageId,
+        attachmentCount: files.length,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+      return { sent: true, threadId: item.thread_id };
+    }
+    if (getModerationRejectionError(error)) {
+      await discardModerationRejectedOutboxItem(item, payload);
+      return { sent: false, threadId: item.thread_id };
+    }
+    const serverItemFailure = error instanceof ChatAttachmentFunctionError && error.attachmentId
+      ? error
+      : null;
+    if (workingAlbumItems && files.length > 1 && serverItemFailure) {
+      const targetExists = workingAlbumItems.some(
+        (file) => file.attachmentId === serverItemFailure.attachmentId,
+      );
+      if (targetExists) {
+        const presentationCode = serverItemFailure.code || 'attachment_not_allowed';
+        const terminal = serverItemFailure.retryable === false ||
+          isTerminalChatAttachmentError(presentationCode);
+        workingAlbumItems = workingAlbumItems.map((file) =>
+          file.attachmentId === serverItemFailure.attachmentId
+            ? {
+                ...file,
+                transferState: terminal ? 'terminal_failed' : 'retryable_failed',
+                uploadProgress: 1,
+                lastError: presentationCode,
+                uploadCompleted: true,
+              }
+            : {
+                ...file,
+                transferState: 'uploaded',
+                uploadProgress: 1,
+                lastError: null,
+                uploadCompleted: true,
+              });
+        payload.albumItems = workingAlbumItems;
+        payload.retryAttachmentIds = undefined;
+        await persistAlbumTransferSnapshot(true).catch(() => false);
+        await ChatRepository.markOutboxItemStatus(
+          item.owner_user_id,
+          item.local_message_id,
+          'failed',
+          {
+            code: terminal ? 'album_items_incomplete' : presentationCode,
+            message: terminal
+              ? 'One album item was not approved. Remove or replace it to continue.'
+              : 'One album item could not be checked. Retry that item to continue.',
+          },
+        );
+        observeChatAttachmentLifecycle('failed', {
+          clientMessageId,
+          attachmentId: serverItemFailure.attachmentId,
+          attachmentIndex: serverItemFailure.attachmentIndex,
+          attachmentCount: files.length,
+          mediaType: payload.mediaType,
+          moderationStage: serverItemFailure.stage,
+          attemptCount: item.attempt_count + 1,
+        }, error);
+        return { sent: false, threadId: item.thread_id };
+      }
+    }
+    const itemFailures = error instanceof ChatAlbumWorkError ? error.failures : [];
+    const effectiveError = unwrapSingleChatAlbumWorkError(error);
+    const terminalItemFailure = itemFailures.find((failure) => {
+      const info = getErrorInfo(failure.error, 'send_failed', 'Unable to send queued media');
+      return isTerminalChatAttachmentError(info.code) || isTerminalChatAttachmentError(info.message);
+    });
+    if (workingAlbumItems && error instanceof ChatAlbumWorkError) {
       const failedByIndex = new Map(error.failures.map((failure) => [
         failure.index,
         failure.error instanceof Error ? failure.error.message : String(failure.error),
       ]));
       payload.retryAttachmentIds = undefined;
-      payload.albumItems = albumItems.map((file, index) => ({
-        ...file,
-        transferState: failedByIndex.has(index) ? 'retryable_failed' : 'uploaded',
-        attemptCount: (file.attemptCount ?? 0) + 1,
-        lastError: failedByIndex.get(index) ?? null,
-      }));
-      await ChatRepository.updateAlbumTransferSnapshot(
-        item.owner_user_id,
-        item.local_message_id,
-        JSON.stringify(payload),
-        albumFilesToLocalMediaItems(payload.albumItems),
-      ).catch(() => false);
+      workingAlbumItems = workingAlbumItems.map((file, index) => {
+        const failureEntry = error.failures.find((entry) => entry.index === index);
+        const failure = failedByIndex.get(index);
+        if (!failure) {
+          return {
+            ...file,
+            transferState: 'uploaded',
+            uploadProgress: 1,
+            lastError: null,
+            uploadCompleted: true,
+          };
+        }
+        if (failure.includes('chat_album_item_retry_deferred')) return file;
+        if (
+          failure.includes('chat_album_item_cancelled') ||
+          activeAlbumItemCancellations.has(albumItemCancellationKey(
+            item.owner_user_id,
+            item.local_message_id,
+            file.attachmentId,
+          ))
+        ) {
+          return { ...file, transferState: 'cancelling', lastError: null };
+        }
+        const failureInfo = getErrorInfo(
+          failureEntry?.error,
+          'send_failed',
+          failure,
+        );
+        const uploadCompleted = file.uploadCompleted === true ||
+          failureEntry?.error instanceof ChatAttachmentFunctionError;
+        return {
+          ...file,
+          transferState:
+            isTerminalChatAttachmentError(failureInfo.code) ||
+            isTerminalChatAttachmentError(failureInfo.message)
+              ? 'terminal_failed'
+              : 'retryable_failed',
+          uploadProgress: uploadCompleted ? 1 : null,
+          lastError: failure,
+          uploadCompleted,
+        };
+      });
+      await persistAlbumTransferSnapshot(true).catch(() => false);
     }
     observeChatAttachmentLifecycle('failed', {
       clientMessageId,
       attachmentCount: files.length,
       mediaType: payload.mediaType,
       attemptCount: item.attempt_count + 1,
-    }, error);
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    }, effectiveError);
+    const errorMessage = effectiveError instanceof Error ? effectiveError.message : String(effectiveError);
+    const hasActiveItemCancellation = files.some((file) =>
+      activeAlbumItemCancellations.has(albumItemCancellationKey(
+        item.owner_user_id,
+        item.local_message_id,
+        file.attachmentId,
+      )),
+    );
+    if (hasActiveItemCancellation) {
+      return { sent: false, threadId: item.thread_id };
+    }
+    const currentOutbox = await ChatRepository.getOutboxItem(
+      item.owner_user_id,
+      item.local_message_id,
+    ).catch(() => null);
+    if (currentOutbox?.status === 'cancelled') {
+      observeChatAttachmentLifecycle('cancelled', {
+        clientMessageId,
+        attachmentCount: files.length,
+        mediaType: payload.mediaType,
+      });
+      return { sent: false, threadId: item.thread_id };
+    }
+    const currentPayload = currentOutbox ? parseOutboxPayload(currentOutbox) : null;
+    if (
+      workingAlbumItems && currentPayload?.kind === 'chat_media_send' &&
+      getAlbumCompositionRevision(currentPayload) !== compositionRevision
+    ) {
+      return { sent: false, threadId: item.thread_id };
+    }
+    if (errorMessage.includes('chat_album_composition_changed') || errorMessage.includes('chat_album_item_cancelled')) {
+      return { sent: false, threadId: item.thread_id };
+    }
     if (errorMessage.includes('chat_upload_cancelled') || errorMessage.includes('attachment_batch_cancelled')) {
       observeChatAttachmentLifecycle('cancelled', {
         clientMessageId,
@@ -1314,7 +1542,9 @@ const sendMediaOutboxItem = async (item: ChatPendingOutboxRow, payload: MediaOut
       });
       const remoteAttachments = files.map((file) => ({
         attachmentId: file.attachmentId,
-        bucketId: CHAT_MEDIA_BUCKET,
+        bucketId: workingAlbumItems
+          ? resolveChatAlbumUploadBucket(file)
+          : uploadBucketForMedia(file.mediaType ?? payload.mediaType),
         storagePath: buildDeterministicChatAttachmentPath({
           senderId: payload.senderId!,
           receiverId: payload.receiverId!,
@@ -1341,15 +1571,48 @@ const sendMediaOutboxItem = async (item: ChatPendingOutboxRow, payload: MediaOut
       await Promise.all(files.map((file) => removeChatAttachmentPreview(file.previewLocalUri)));
       return { sent: false, threadId: item.thread_id };
     }
+    if (workingAlbumItems && terminalItemFailure) {
+      const terminalInfo = getErrorInfo(
+        terminalItemFailure.error,
+        'attachment_not_allowed',
+        'One or more attachments could not be sent.',
+      );
+      await ChatRepository.markOutboxItemStatus(
+        item.owner_user_id,
+        item.local_message_id,
+        'failed',
+        terminalInfo,
+      );
+      return { sent: false, threadId: item.thread_id };
+    }
+    if (files.length > 1 && isSelectiveAlbumRetry) {
+      await ChatRepository.markOutboxItemStatus(item.owner_user_id, item.local_message_id, 'failed', {
+        code: 'album_items_incomplete',
+        message: 'Some album items still need attention.',
+      });
+      return { sent: false, threadId: item.thread_id };
+    }
     if (files.length > 1) {
       // A partially uploaded album is not delivered. Retrying is safe because
       // every object path and attachment index is deterministic/idempotent.
-      await scheduleOutboxRetry(item, error, 'album_send_incomplete', 'Unable to finish the photo album');
+      await scheduleOutboxRetry(
+        item,
+        effectiveError,
+        'album_send_incomplete',
+        'Unable to finish the photo album',
+        { maxAutomaticAttempts: MEDIA_OUTBOX_MAX_AUTOMATIC_ATTEMPTS },
+      );
       return { sent: false, threadId: item.thread_id };
     }
     const existing = await fetchExistingClientMessage(payload.senderId, clientMessageId).catch(() => null);
     if (!existing) {
-      await scheduleOutboxRetry(item, error, 'send_failed', 'Unable to finalize queued media');
+      await scheduleOutboxRetry(
+        item,
+        effectiveError,
+        'send_failed',
+        'Unable to finalize queued media',
+        { maxAutomaticAttempts: MEDIA_OUTBOX_MAX_AUTOMATIC_ATTEMPTS },
+      );
       return { sent: false, threadId: item.thread_id };
     }
     remoteRow = existing;
@@ -1511,7 +1774,49 @@ const sendOutboxItem = async (item: ChatPendingOutboxRow) => {
   return sendTextOutboxItem(item);
 };
 
+const purgeLegacyModerationRejectedItems = async (ownerUserId: string) => {
+  const failedItems = await ChatRepository.getFailedOutboxItems(ownerUserId);
+  for (const item of failedItems) {
+    if (
+      !isChatMediaModerationRejection(item.error_code) &&
+      !isChatMediaModerationRejection(item.error_message)
+    ) continue;
+    const payload = parseOutboxPayload(item);
+    if (payload?.kind !== 'chat_media_send' && payload?.kind !== 'chat_view_once_send') continue;
+    await discardModerationRejectedOutboxItem(item, payload, { emitNotice: false });
+  }
+};
+
 export const ChatOutboxService = {
+  async updateAlbumCaption(ownerUserId: string, localMessageId: string, caption: string) {
+    const item = await ChatRepository.getOutboxItem(ownerUserId, localMessageId);
+    const payload = item ? parseOutboxPayload(item) : null;
+    if (
+      !item || item.status === 'sent' || item.status === 'cancelled' ||
+      payload?.kind !== 'chat_media_send' || (!payload.albumItems?.length && !payload.mediaGroupId)
+    ) return false;
+
+    const normalizedCaption = caption.trim();
+    if (normalizedCaption.length > 2000) return false;
+    payload.albumCaption = normalizedCaption || null;
+    payload.retryAttachmentIds = undefined;
+    const updated = await ChatRepository.updateQueuedAlbumCaption(
+      ownerUserId,
+      item.thread_id,
+      localMessageId,
+      JSON.stringify(payload),
+      payload.albumCaption,
+    );
+    if (!updated) return false;
+    const requeued = await ChatRepository.requeueOutboxItem(
+      ownerUserId,
+      localMessageId,
+      DURABLE_OUTBOX_MAX_ATTEMPTS,
+    );
+    if (requeued) void ChatOutboxService.flushPending(ownerUserId);
+    return requeued;
+  },
+
   async retryAlbumItem(ownerUserId: string, localMessageId: string, attachmentId: string) {
     const item = await ChatRepository.getOutboxItem(ownerUserId, localMessageId);
     const payload = item ? parseOutboxPayload(item) : null;
@@ -1524,27 +1829,50 @@ export const ChatOutboxService = {
     }
     payload.retryAttachmentIds = [attachmentId];
     payload.albumItems = files.map((file) => file.attachmentId === attachmentId
-      ? { ...file, transferState: 'queued', lastError: null }
+      ? { ...file, transferState: 'queued', uploadProgress: 0, lastError: null }
       : file);
-    await ChatRepository.updateOutboxPayload(ownerUserId, localMessageId, JSON.stringify(payload));
+    const snapshotUpdated = await ChatRepository.updateAlbumTransferSnapshot(
+      ownerUserId,
+      item.thread_id,
+      localMessageId,
+      JSON.stringify(payload),
+      albumFilesToLocalMediaItems(payload.albumItems),
+      getAlbumCompositionRevision(payload),
+    );
+    if (!snapshotUpdated) return false;
     const requeued = await ChatRepository.requeueOutboxItem(ownerUserId, localMessageId, DURABLE_OUTBOX_MAX_ATTEMPTS);
     if (requeued) void ChatOutboxService.flushPending(ownerUserId);
     return requeued;
   },
 
-  async removeAlbumItem(ownerUserId: string, localMessageId: string, attachmentId: string) {
+  async removeAlbumItem(
+    ownerUserId: string,
+    localMessageId: string,
+    attachmentId: string,
+    options?: { flush?: boolean },
+  ) {
     const item = await ChatRepository.getOutboxItem(ownerUserId, localMessageId);
     const payload = item ? parseOutboxPayload(item) : null;
-    if (!item || payload?.kind !== 'chat_media_send' || !payload.receiverId || !payload.albumItems?.length) {
+    if (
+      !item || item.status === 'sent' || item.status === 'cancelled' ||
+      payload?.kind !== 'chat_media_send' || !payload.receiverId || !payload.albumItems?.length
+    ) {
       return { changed: false, remainingCount: 0 };
     }
     const removed = payload.albumItems.find((file) => file.attachmentId === attachmentId);
-    const remaining = payload.albumItems.filter((file) => file.attachmentId !== attachmentId);
-    if (!removed || remaining.length < 1) return { changed: false, remainingCount: remaining.length };
-    const normalized = remaining.map((file, index) => ({ ...file, index }));
+    if (!removed) return { changed: false, remainingCount: payload.albumItems.length };
+    let normalized: (MediaOutboxFile & { index: number })[];
+    try {
+      normalized = removeChatAlbumItemFromComposition(payload.albumItems, attachmentId);
+    } catch {
+      return { changed: false, remainingCount: payload.albumItems.length };
+    }
     const first = normalized[0];
+    const currentRevision = getAlbumCompositionRevision(payload);
     const nextPayload: MediaOutboxPayload = {
       ...payload,
+      compositionRevision: currentRevision + 1,
+      retryAttachmentIds: payload.retryAttachmentIds?.filter((id) => id !== attachmentId),
       localUri: first.localUri,
       fileName: first.fileName,
       contentType: first.contentType,
@@ -1564,6 +1892,7 @@ export const ChatOutboxService = {
       localUri: file.localUri,
       localPreviewUri: file.previewLocalUri ?? null,
       transferState: file.transferState ?? 'queued',
+      uploadProgress: file.transferState === 'uploaded' ? 1 : file.uploadProgress ?? 0,
       transferError: file.lastError ?? null,
     }));
     const storagePath = buildDeterministicChatAttachmentPath({
@@ -1580,38 +1909,68 @@ export const ChatOutboxService = {
       clientMessageId: payload.clientMessageId ?? localMessageId,
       attachmentId: removed.attachmentId,
     });
+    const uploadBucket = resolveChatAlbumUploadBucket(removed);
+    const cancellationKey = albumItemCancellationKey(ownerUserId, localMessageId, attachmentId);
+    activeAlbumItemCancellations.add(cancellationKey);
     try {
       await cancelChatAttachmentItem({
         receiverId: payload.receiverId,
         clientMessageId: payload.clientMessageId ?? localMessageId,
         attachment: {
           attachmentId: removed.attachmentId,
-          bucketId: CHAT_MEDIA_BUCKET,
+          bucketId: uploadBucket,
           storagePath,
           previewStoragePath,
         },
       });
+      await Promise.all([
+        ChatUploadTransport.cancel({
+          bucket: uploadBucket,
+          objectPath: storagePath,
+          byteSize: removed.byteSize ?? 0,
+          contentType: removed.contentType,
+        }).catch(() => false),
+        ChatUploadTransport.cancel({
+          bucket: uploadBucket,
+          objectPath: previewStoragePath,
+          byteSize: removed.previewByteSize ?? 0,
+          contentType: 'image/jpeg',
+        }).catch(() => false),
+      ]);
     } catch (error) {
       observeChatAttachmentLifecycle('cleanup_failed', {
         clientMessageId: payload.clientMessageId ?? localMessageId,
         attachmentId: removed.attachmentId,
         mediaType: removed.mediaType ?? payload.mediaType,
       }, error);
+      activeAlbumItemCancellations.delete(cancellationKey);
       return { changed: false, remainingCount: payload.albumItems.length };
     }
     const changed = await ChatRepository.updateQueuedAlbumComposition(
       ownerUserId,
+      item.thread_id,
       localMessageId,
       JSON.stringify(nextPayload),
       JSON.stringify(mediaItems),
       normalized.length,
+      currentRevision,
     );
-    if (!changed) return { changed: false, remainingCount: payload.albumItems.length };
+    if (!changed) {
+      activeAlbumItemCancellations.delete(cancellationKey);
+      return { changed: false, remainingCount: payload.albumItems.length };
+    }
 
     await Promise.all([
       removeStagedOfflineChatUpload(removed.localUri),
       removeChatAttachmentPreview(removed.previewLocalUri),
     ]);
+    if (options?.flush !== false) {
+      void ChatOutboxService.flushPending(ownerUserId).finally(() => {
+        activeAlbumItemCancellations.delete(cancellationKey);
+      });
+    } else {
+      activeAlbumItemCancellations.delete(cancellationKey);
+    }
     return { changed: true, remainingCount: normalized.length };
   },
 
@@ -1623,7 +1982,12 @@ export const ChatOutboxService = {
       .filter((file) => file.transferState === 'retryable_failed' || file.transferState === 'terminal_failed')
       .map((file) => file.attachmentId);
     for (const attachmentId of failedIds) {
-      const result = await ChatOutboxService.removeAlbumItem(ownerUserId, localMessageId, attachmentId);
+      const result = await ChatOutboxService.removeAlbumItem(
+        ownerUserId,
+        localMessageId,
+        attachmentId,
+        { flush: false },
+      );
       if (!result.changed) return false;
     }
     const requeued = await ChatRepository.requeueOutboxItem(ownerUserId, localMessageId, DURABLE_OUTBOX_MAX_ATTEMPTS);
@@ -1635,7 +1999,12 @@ export const ChatOutboxService = {
     const item = await ChatRepository.getOutboxItem(ownerUserId, localMessageId);
     if (!item || item.status === 'sent' || item.status === 'cancelled') return false;
     const payload = parseOutboxPayload(item);
-    await ChatRepository.markOutboxItemStatus(ownerUserId, localMessageId, 'cancelled');
+    const terminalFailureCanDismissLocally = item.status === 'failed' && (
+      isTerminalChatAttachmentError(item.error_code) ||
+      isTerminalChatAttachmentError(item.error_message) ||
+      String(item.error_message ?? '').toLowerCase().includes('row-level security') ||
+      String(item.error_message ?? '').toLowerCase().includes('not allowed')
+    );
 
     if (payload?.kind === 'chat_media_send' && payload.receiverId) {
       const clientMessageId = payload.clientMessageId ?? localMessageId;
@@ -1651,47 +2020,80 @@ export const ChatOutboxService = {
               previewLocalUri: null,
             }]
           : [];
-      const remoteAttachments = files.map((file) => ({
-        attachmentId: file.attachmentId,
-        bucketId: CHAT_MEDIA_BUCKET,
-        storagePath: buildDeterministicChatAttachmentPath({
-          senderId: ownerUserId,
-          receiverId: payload.receiverId!,
-          clientMessageId,
+      const isAlbum = Boolean(payload.albumItems?.length);
+      const remoteAttachments = files.map((file) => {
+        const mediaType = isAlbum
+          ? resolveChatAlbumItemMediaType(file)
+          : file.mediaType ?? payload.mediaType;
+        return {
           attachmentId: file.attachmentId,
-          fileName: file.fileName,
-          mimeType: file.contentType,
-        }),
-        previewStoragePath:
-          payload.mediaType === 'image' || payload.mediaType === 'video'
-            ? buildDeterministicChatPreviewPath({
-                senderId: ownerUserId,
-                receiverId: payload.receiverId!,
-                clientMessageId,
-                attachmentId: file.attachmentId,
-              })
-            : null,
-      }));
-      await Promise.all(remoteAttachments.map((attachment) =>
-        ChatUploadTransport.cancel({
-          bucket: attachment.bucketId,
-          objectPath: attachment.storagePath,
-          byteSize: 0,
-          contentType: 'application/octet-stream',
-        }).catch(() => false),
-      ));
-      await cancelChatAttachmentBatch({
-        receiverId: payload.receiverId,
+          bucketId: isAlbum
+            ? resolveChatAlbumUploadBucket(file)
+            : uploadBucketForMedia(mediaType),
+          storagePath: buildDeterministicChatAttachmentPath({
+            senderId: ownerUserId,
+            receiverId: payload.receiverId!,
+            clientMessageId,
+            attachmentId: file.attachmentId,
+            fileName: file.fileName,
+            mimeType: file.contentType,
+          }),
+          previewStoragePath:
+            mediaType === 'image' || mediaType === 'video'
+              ? buildDeterministicChatPreviewPath({
+                  senderId: ownerUserId,
+                  receiverId: payload.receiverId!,
+                  clientMessageId,
+                  attachmentId: file.attachmentId,
+                })
+              : null,
+        };
+      });
+      const cancelRemoteBatch = () => cancelChatAttachmentBatch({
+        receiverId: payload.receiverId!,
         clientMessageId,
         attachments: remoteAttachments,
-      }).catch((error) => {
+      });
+      const observeCleanupFailure = (error: unknown) => {
         observeChatAttachmentLifecycle('cleanup_failed', {
           clientMessageId,
           attachmentCount: remoteAttachments.length,
           mediaType: payload.mediaType,
         }, error);
         captureException(error, { tags: { area: 'chat_attachment_cancel_cleanup' } });
-      });
+      };
+      if (terminalFailureCanDismissLocally) {
+        // A terminal rejection can never become a canonical chat message. Make
+        // dismissal immediate and leave remote remnants to best-effort cleanup
+        // plus the server retention worker.
+        await ChatRepository.markOutboxItemStatus(ownerUserId, localMessageId, 'cancelled');
+        void cancelRemoteBatch().catch(observeCleanupFailure);
+      } else {
+        try {
+          await cancelRemoteBatch();
+        } catch (error) {
+          observeCleanupFailure(error);
+          return false;
+        }
+        await ChatRepository.markOutboxItemStatus(ownerUserId, localMessageId, 'cancelled');
+      }
+      await Promise.all(files.flatMap((file, index) => {
+        const attachment = remoteAttachments[index];
+        return [
+          ChatUploadTransport.cancel({
+            bucket: attachment.bucketId,
+            objectPath: attachment.storagePath,
+            byteSize: file.byteSize ?? 0,
+            contentType: file.contentType,
+          }).catch(() => false),
+          ...(attachment.previewStoragePath ? [ChatUploadTransport.cancel({
+            bucket: attachment.bucketId,
+            objectPath: attachment.previewStoragePath,
+            byteSize: file.previewByteSize ?? 0,
+            contentType: 'image/jpeg',
+          }).catch(() => false)] : []),
+        ];
+      }));
       await Promise.all(files.flatMap((file) => [
         removeStagedOfflineChatUpload(file.localUri),
         removeChatAttachmentPreview(file.previewLocalUri),
@@ -1709,6 +2111,7 @@ export const ChatOutboxService = {
       payload.contentType &&
       payload.attachmentId
     ) {
+      await ChatRepository.markOutboxItemStatus(ownerUserId, localMessageId, 'cancelled');
       const clientMessageId = payload.clientMessageId ?? localMessageId;
       const storagePath = buildDeterministicChatAttachmentPath({
         senderId: ownerUserId,
@@ -1755,6 +2158,7 @@ export const ChatOutboxService = {
       payload.fileName &&
       payload.contentType
     ) {
+      await ChatRepository.markOutboxItemStatus(ownerUserId, localMessageId, 'cancelled');
       const clientMessageId = payload.clientMessageId ?? localMessageId;
       const attachmentId = payload.attachmentId?.trim() || await createLegacyChatAttachmentId(
         `${ownerUserId}:${payload.receiverId}:${clientMessageId}:audio`,
@@ -1797,6 +2201,8 @@ export const ChatOutboxService = {
         attachmentCount: 1,
         mediaType: 'audio',
       });
+    } else {
+      await ChatRepository.markOutboxItemStatus(ownerUserId, localMessageId, 'cancelled');
     }
     return true;
   },
@@ -1892,6 +2298,9 @@ export const ChatOutboxService = {
 
   async flushPending(ownerUserId: string, options?: { limit?: number }): Promise<FlushResult> {
     return outboxFlushGate.run(ownerUserId, async () => {
+      await purgeLegacyModerationRejectedItems(ownerUserId).catch((error) => {
+        captureException(error, { where: 'ChatOutboxService.purgeLegacyModerationRejectedItems' });
+      });
       const items = await ChatRepository.getPendingOutboxItems(ownerUserId, { limit: options?.limit ?? 25 });
       if (items.length > 0) {
         captureMessage('chat_outbox_flush_started', { attemptedCount: items.length });

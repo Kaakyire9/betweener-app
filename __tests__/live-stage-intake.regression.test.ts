@@ -141,7 +141,7 @@ test('host chooses zero to three guest seats and the stage renders each availabl
 test('seat request has one touchable entry point and failure is visible rather than silent', () => {
   assert.match(liveScreen, /const saved = await \(hasRequestedSeat \? controller\.withdrawSeat\(\) : controller\.requestSeat\(\)\)/);
   assert.match(liveScreen, /Seat request unavailable/);
-  assert.match(liveScreen, /styles\.overlaySpacer/);
+  assert.match(liveScreen, /styles\.adaptiveStage/);
   assert.match(
     liveScreen,
     /isQuickConnectLive && !keyboardVisible[\s\S]*?<LiveQuickConnectStage/,

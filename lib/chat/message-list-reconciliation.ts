@@ -13,6 +13,12 @@ const getMediaItemsRevision = (message: MessageType) =>
         item.byteSize ?? '',
         item.localUri ?? '',
         item.signedUrl ?? '',
+        item.previewStoragePath ?? '',
+        item.localPreviewUri ?? '',
+        item.previewSignedUrl ?? '',
+        item.transferState ?? '',
+        item.uploadProgress ?? '',
+        item.transferError ?? '',
       ].join(':'),
     )
     .join(',');
@@ -35,6 +41,7 @@ export const getChatMessageRevisionKey = (message: MessageType) =>
     message.timestamp.getTime(),
     message.type,
     message.status ?? '',
+    message.sendErrorCode ?? '',
     message.deletedForAll ? 'deleted' : 'active',
     message.deletedAt?.getTime() ?? 0,
     message.deletedBy ?? '',
@@ -52,6 +59,8 @@ export const getChatMessageRevisionKey = (message: MessageType) =>
     message.encryptedMediaSize ?? '',
     message.storagePath ?? '',
     message.mediaExpectedCount ?? '',
+    message.mediaGroupId ?? '',
+    message.mediaCaption ?? '',
     getMediaItemsRevision(message),
     message.imageUrl ?? '',
     message.videoUrl ?? '',
@@ -126,4 +135,29 @@ export const preserveUnchangedMessageReferences = (
   });
 
   return listChanged ? reconciled : currentMessages;
+};
+
+/**
+ * Drops an optimistic row once a canonical server row with the same client
+ * identity is present. This also repairs older local caches that retained
+ * both rows after a lost acknowledgement.
+ */
+export const removeSupersededOptimisticMessages = (messages: MessageType[]) => {
+  const canonicalClientIds = new Set(
+    messages
+      .filter((message) => !String(message.id).startsWith('temp-'))
+      .map((message) => message.clientMessageId)
+      .filter((id): id is string => Boolean(id)),
+  );
+  if (canonicalClientIds.size === 0) return messages;
+
+  let removed = false;
+  const filtered = messages.filter((message) => {
+    if (!String(message.id).startsWith('temp-')) return true;
+    const clientMessageId = message.clientMessageId ?? message.id;
+    const superseded = canonicalClientIds.has(clientMessageId);
+    removed ||= superseded;
+    return !superseded;
+  });
+  return removed ? filtered : messages;
 };

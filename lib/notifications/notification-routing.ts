@@ -258,6 +258,48 @@ export function buildNotificationRoute(
     };
   }
 
+  if (
+    (pushType === "circle_live_starting_soon" || pushType === "circle_live_now") &&
+    data?.circle_id &&
+    data?.session_id
+  ) {
+    return {
+      pathname: "/circles/[id]",
+      params: {
+        id: String(data.circle_id),
+        openLiveSessionId: String(data.session_id),
+      },
+    };
+  }
+
+  if (pushType === "circle_gathering_reminder" && data?.circle_id) {
+    return {
+      pathname: "/circles/[id]",
+      params: {
+        id: String(data.circle_id),
+        tab: "gatherings",
+      },
+    };
+  }
+
+  if (
+    (
+      pushType === "live_host_assigned" ||
+      pushType === "live_starting_soon" ||
+      pushType === "live_now"
+    ) && data?.session_id
+  ) {
+    const sessionId = String(data.session_id);
+    return {
+      pathname: pushType === "live_now" ? "/live/[sessionId]" : "/live/event/[sessionId]",
+      params: { sessionId },
+    };
+  }
+
+  if (pushType === "live_host_revoked") {
+    return { pathname: "/live" };
+  }
+
   if (pushType === "live_quick_connect_opportunity" && data?.opportunity_id) {
     return {
       pathname: "/live/opportunity/[opportunityId]",

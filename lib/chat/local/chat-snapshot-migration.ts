@@ -12,6 +12,7 @@ import {
   readOfflineSnapshot,
 } from '@/lib/offline/chat-store';
 import { getChatMessagePreviewText } from '@/lib/message-preview';
+import { parseChatExpressionMediaKind } from '@/lib/chat/expressions/chat-expression-presentation';
 import { captureException, captureMessage } from '@/lib/telemetry/sentry';
 
 const toIso = (value: unknown, fallback = new Date().toISOString()) => {
@@ -73,6 +74,7 @@ const getMessagePreview = (message: any) => {
     getChatMessagePreviewText({
       text: typeof message.text === 'string' ? message.text : null,
       messageType: typeof message.type === 'string' ? message.type : 'text',
+      mediaKind: typeof message.mediaKind === 'string' ? message.mediaKind : null,
       isViewOnce: Boolean(message.isViewOnce),
       status: typeof message.status === 'string' ? message.status : null,
     }) || ''
@@ -100,6 +102,7 @@ const cachedConversationToThread = (ownerUserId: string, cached: any): ChatThrea
     last_message_preview: getMessagePreview(lastMessage),
     last_message_sender_id: lastMessage.senderId ? String(lastMessage.senderId) : null,
     last_message_status: lastMessage.id ? normalizeMessageStatus(lastMessage.status) : null,
+    last_message_media_kind: parseChatExpressionMediaKind(lastMessage.mediaKind),
     last_message_edited_at: lastMessage.editedAt ? toIso(lastMessage.editedAt) : null,
     last_message_reaction_emoji:
       typeof lastMessage.reactionPreview?.emoji === 'string' ? lastMessage.reactionPreview.emoji : null,

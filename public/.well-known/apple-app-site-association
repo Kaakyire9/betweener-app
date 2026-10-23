@@ -9,7 +9,9 @@
           "/auth/callback",
           "/callback/*",
           "/callback",
-          "/circles/*"
+          "/circles/*",
+          "/gists/*",
+          "/live/*"
         ]
       }
     ]

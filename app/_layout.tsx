@@ -21,8 +21,6 @@ import RecoveryMergeSuggestionNotice from "@/components/RecoveryMergeSuggestionN
 import InAppToasts from "@/components/InAppToasts";
 import IntentResponseReminder from "@/components/IntentResponseReminder";
 import NetworkStatusBanner from "@/components/NetworkStatusBanner";
-import OfflineSyncHistoryHydrator from "@/components/OfflineSyncHistoryHydrator";
-import OfflineSyncStatusPill from "@/components/OfflineSyncStatusPill";
 import AppVersionGateHost from "@/components/updates/AppVersionGateHost";
 import BetweenerAlertHost from "@/components/ui/BetweenerAlertHost";
 import ScreenAwakeSafetyGuard from "@/components/system/ScreenAwakeSafetyGuard";
@@ -40,6 +38,7 @@ import { captureException, initSentry, wrapWithSentry } from "@/lib/telemetry/se
 import { logger } from "@/lib/telemetry/logger";
 import { recoverSupabaseConnectivity, SUPABASE_IS_CONFIGURED } from "@/lib/supabase";
 import { initPushNotificationUX } from "@/lib/notifications/push";
+import { SparkWalletProvider } from "@/lib/economy/wallet/use-spark-wallet";
 import {
   buildNotificationRoute,
   clearPendingNotificationRoute,
@@ -784,11 +783,11 @@ function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <AuthProvider>
-        <View style={{ flex: 1, backgroundColor: Colors[colorScheme].background }}>
+        <SparkWalletProvider>
+          <View style={{ flex: 1, backgroundColor: Colors[colorScheme].background }}>
           <OfflineMutationQueueHydrator />
           <VibesTelemetryQueueHydrator />
           <ChatOutboxHydrator />
-          <OfflineSyncHistoryHydrator />
           <NetworkRecoveryHydrator />
           <ScreenAwakeSafetyGuard />
           <ChatRealtimeHydrator />
@@ -798,7 +797,6 @@ function RootLayout() {
           <InAppToasts />
           <IntentResponseReminder />
           <NetworkStatusBanner />
-          <OfflineSyncStatusPill />
           <AccountRecoveryNotice />
           <RecoveryMergeSuggestionNotice />
           <AppVersionGateHost />
@@ -978,7 +976,8 @@ function RootLayout() {
               </Animated.View>
             </View>
           )}
-        </View>
+          </View>
+        </SparkWalletProvider>
       </AuthProvider>
     </GestureHandlerRootView>
   );

@@ -14,6 +14,7 @@ module.exports = {
     "^react-native($|/.*)": `${path.dirname(require.resolve("react-native"))}/$1`,
     "^react-native-vector-icons$": "@expo/vector-icons",
     "^react-native-vector-icons/(.*)": "@expo/vector-icons/$1",
+    "^@giphy/react-native-sdk$": "<rootDir>/test/jest/giphy-react-native-sdk-mock.cjs",
   },
   setupFiles: [require.resolve("@react-native/jest-preset/jest/setup.js")],
   setupFilesAfterEnv: ["<rootDir>/jest.setup.ts"],

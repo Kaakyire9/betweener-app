@@ -23,16 +23,13 @@ import type {
   LiveJoinNotice,
   LiveMemberPreview,
   LiveReactionKind,
+  LiveReactionSummary,
 } from '../application/index.ts';
+import type { LiveRoomPulseMode } from '../stage/live-broadcast-viewport.ts';
 import { LiveAudiencePulseCard } from './LiveAudiencePulseCard.tsx';
+import { LiveReactionPicker } from './LiveReactionPicker.tsx';
+import { LiveReactionSummaryChip } from './LiveReactionSummaryChip.tsx';
 import { type LiveVisualTheme, useLiveVisualTheme } from './live-visual-tokens.ts';
-
-const REACTIONS: readonly { kind: LiveReactionKind; symbol: string; label: string }[] = [
-  { kind: 'heart', symbol: '\u2661', label: 'Heart' },
-  { kind: 'spark', symbol: '\u2726', label: 'Spark' },
-  { kind: 'applause', symbol: '\u{1F44F}', label: 'Applause' },
-  { kind: 'support', symbol: '\u{1FAF6}', label: 'Support' },
-];
 
 type PendingComment = {
   body: string;
@@ -41,6 +38,8 @@ type PendingComment = {
 };
 
 type Props = {
+  accentColor?: string;
+  accentBorderColor?: string;
   comments: readonly LiveComment[];
   commentCount: number;
   currentUserId: string | null;
@@ -53,20 +52,23 @@ type Props = {
   onComment: (body: string, clientCommentId: string) => Promise<boolean>;
   onModerate: (commentId: string) => Promise<unknown>;
   onReport: (comment: LiveComment) => Promise<unknown>;
-  onReaction: (reaction: LiveReactionKind) => Promise<unknown>;
+  onReaction: (reaction: LiveReactionKind) => Promise<boolean>;
+  reactionSummary: LiveReactionSummary;
+  reactionFeedback?: string | null;
   onOpenPoll: (templateKey: string) => Promise<unknown>;
   onVotePoll: (pollId: string, optionId: string) => Promise<unknown>;
   onClosePoll: (pollId: string) => Promise<unknown>;
   joinNotice?: LiveJoinNotice | null;
   onOpenMember?: (member: LiveMemberPreview) => void;
-  expanded?: boolean;
-  onExpandedChange?: (expanded: boolean) => void;
+  displayMode?: LiveRoomPulseMode;
+  onDisplayModeChange?: (mode: LiveRoomPulseMode) => void;
   variant?: 'solid' | 'glass';
   audiencePulseOpenRequest?: number;
 };
 
 const CommentRow = memo(function CommentRow({
   comment,
+  compact,
   canModerate,
   currentUserId,
   onModerate,
@@ -74,6 +76,7 @@ const CommentRow = memo(function CommentRow({
   onOpenMember,
 }: {
   comment: LiveComment;
+  compact: boolean;
   canModerate: boolean;
   currentUserId: string | null;
   onModerate: (commentId: string) => Promise<unknown>;
@@ -115,7 +118,7 @@ const CommentRow = memo(function CommentRow({
   };
 
   return (
-    <View style={styles.commentRow}>
+    <View style={[styles.commentRow, compact && styles.commentRowCompact]}>
       <Pressable
         accessibilityLabel={`View ${comment.fullName || 'member'}`}
         accessibilityRole="button"
@@ -127,12 +130,12 @@ const CommentRow = memo(function CommentRow({
           avatarUrl: comment.avatarUrl,
           role: comment.role,
         })}
-        style={styles.commentAvatarShell}
+        style={[styles.commentAvatarShell, compact && styles.commentAvatarShellCompact]}
       >
         {comment.avatarUrl ? (
-          <Image contentFit="cover" source={{ uri: comment.avatarUrl }} style={styles.commentAvatar} transition={100} />
+          <Image contentFit="cover" source={{ uri: comment.avatarUrl }} style={[styles.commentAvatar, compact && styles.commentAvatarCompact]} transition={100} />
         ) : (
-          <Text style={styles.commentInitial}>{(comment.fullName?.trim()[0] || 'B').toUpperCase()}</Text>
+          <Text style={[styles.commentInitial, compact && styles.commentInitialCompact]}>{(comment.fullName?.trim()[0] || 'B').toUpperCase()}</Text>
         )}
       </Pressable>
       <Pressable
@@ -141,7 +144,7 @@ const CommentRow = memo(function CommentRow({
         onLongPress={canModerate || comment.userId !== currentUserId ? openActions : undefined}
         style={styles.commentCopy}
       >
-        <Text style={styles.comment}>
+        <Text numberOfLines={compact ? 2 : undefined} style={[styles.comment, compact && styles.commentCompact]}>
           <Text style={styles.name}>{comment.fullName || 'Member'}  </Text>
           {roleLabel ? <Text style={styles.roleBadge}>{roleLabel}  </Text> : null}
           {comment.body}
@@ -152,6 +155,8 @@ const CommentRow = memo(function CommentRow({
 });
 
 export const LiveConversationPanel = memo(function LiveConversationPanel({
+  accentColor,
+  accentBorderColor,
   comments,
   commentCount,
   currentUserId,
@@ -165,35 +170,49 @@ export const LiveConversationPanel = memo(function LiveConversationPanel({
   onModerate,
   onReport,
   onReaction,
+  reactionSummary,
+  reactionFeedback,
   onOpenPoll,
   onVotePoll,
   onClosePoll,
   joinNotice = null,
   onOpenMember,
-  expanded = false,
-  onExpandedChange,
+  displayMode = 'standard',
+  onDisplayModeChange,
   variant = 'solid',
   audiencePulseOpenRequest = 0,
 }: Props) {
   const visual = useLiveVisualTheme();
   const styles = useMemo(() => createStyles(visual), [visual]);
+  const resolvedAccent = accentColor ?? visual.color.teal;
+  const resolvedBorder = accentBorderColor ?? visual.color.borderStrong;
   const listRef = useRef<FlatList<LiveComment>>(null);
   const inputRef = useRef<TextInput>(null);
   const shouldFollowRef = useRef(true);
   const [draft, setDraft] = useState('');
   const [inputFocused, setInputFocused] = useState(false);
   const [pending, setPending] = useState<PendingComment | null>(null);
+  const expanded = displayMode === 'expanded';
   const hasEarlier = expanded && comments.length < commentCount;
   const data = useMemo(
-    () => expanded ? [...comments] : comments.slice(-3),
+    () => expanded ? [...comments] : comments.slice(-2),
     [comments, expanded],
   );
+  const latestComment = comments.at(-1);
+  const peekSummary = joinNotice
+    ? `${joinNotice.fullName || 'A member'} joined`
+    : latestComment
+      ? `${latestComment.fullName || 'Member'}: ${latestComment.body}`
+      : 'Reactions, thoughtful notes and room questions';
 
-  const toggleExpanded = useCallback(() => {
-    if (!onExpandedChange) return;
+  const changeDisplayMode = useCallback((mode: LiveRoomPulseMode) => {
+    if (!onDisplayModeChange) return;
     void Haptics.selectionAsync().catch(() => undefined);
-    onExpandedChange(!expanded);
-  }, [expanded, onExpandedChange]);
+    onDisplayModeChange(mode);
+  }, [onDisplayModeChange]);
+  const nextDisplayMode: LiveRoomPulseMode = displayMode === 'peek'
+    ? 'standard'
+    : displayMode === 'standard' ? 'expanded' : 'peek';
 
   const send = useCallback(async (submission: PendingComment) => {
     shouldFollowRef.current = true;
@@ -235,29 +254,46 @@ export const LiveConversationPanel = memo(function LiveConversationPanel({
   }, []);
 
   return (
-    <View style={[styles.panel, variant === 'glass' && styles.panelGlass]}>
+    <View style={[
+      styles.panel,
+      variant === 'glass' && styles.panelGlass,
+      displayMode === 'peek' && styles.panelPeek,
+    ]}>
       <View style={styles.headingRow}>
         <View style={styles.headingCopy}>
-          <Sparkles size={14} color={visual.color.teal} />
-          <Text style={styles.heading}>ROOM PULSE</Text>
+          <Sparkles size={14} color={resolvedAccent} />
+          <Text style={[styles.heading, { color: resolvedAccent }]}>ROOM PULSE</Text>
         </View>
         <View style={styles.headingActions}>
-          {commentCount > 0 ? <Text style={styles.commentCount}>{commentCount}</Text> : null}
-          {onExpandedChange ? (
+          <LiveReactionSummaryChip accentColor={resolvedAccent} summary={reactionSummary} />
+          {commentCount > 0 ? <Text style={styles.commentCount}>{commentCount} notes</Text> : null}
+          {onDisplayModeChange ? (
             <Pressable
-              accessibilityLabel={expanded ? 'Collapse Room Pulse' : 'Expand Room Pulse'}
+              accessibilityLabel={displayMode === 'peek'
+                ? 'Open Room Pulse'
+                : displayMode === 'standard' ? 'Expand Room Pulse' : 'Minimize Room Pulse'}
               accessibilityRole="button"
               hitSlop={8}
-              onPress={toggleExpanded}
-              style={styles.expandButton}
+              onPress={() => changeDisplayMode(nextDisplayMode)}
+              style={[styles.expandButton, { borderColor: resolvedBorder }]}
             >
               {expanded
-                ? <ChevronDown color={visual.color.textMuted} size={16} />
-                : <ChevronUp color={visual.color.textMuted} size={16} />}
+                ? <ChevronDown color={resolvedAccent} size={16} />
+                : <ChevronUp color={resolvedAccent} size={16} />}
             </Pressable>
           ) : null}
         </View>
       </View>
+      {displayMode === 'peek' ? (
+        <Pressable
+          accessibilityLabel="Open Room Pulse"
+          accessibilityRole="button"
+          onPress={() => changeDisplayMode('standard')}
+          style={styles.peekRow}
+        >
+          <Text numberOfLines={1} style={styles.peekText}>{peekSummary}</Text>
+        </Pressable>
+      ) : <>
       {joinNotice ? (
         <Pressable
           accessibilityLabel={`${joinNotice.fullName || 'A member'} joined. View member`}
@@ -298,6 +334,7 @@ export const LiveConversationPanel = memo(function LiveConversationPanel({
         renderItem={({ item }) => (
           <CommentRow
             comment={item}
+            compact={!expanded}
             canModerate={canModerate}
             currentUserId={currentUserId}
             onModerate={onModerate}
@@ -328,30 +365,25 @@ export const LiveConversationPanel = memo(function LiveConversationPanel({
           )}
         </View>
       ) : null}
-      {!inputFocused ? <View style={styles.reactions}>
-        {REACTIONS.map((reaction) => (
-          <Pressable
-            key={reaction.kind}
-            accessibilityRole="button"
-            accessibilityLabel={`Send ${reaction.label}`}
-            disabled={disabled}
-            onPress={() => void onReaction(reaction.kind)}
-            style={styles.reaction}
-          >
-            <Text style={styles.reactionText}>{reaction.symbol}</Text>
-          </Pressable>
-        ))}
-        <LiveAudiencePulseCard
-          presentation="trigger"
-          openRequest={audiencePulseOpenRequest}
-          pulse={audiencePulse}
-          busy={pollBusy}
+      {!inputFocused ? (
+        <LiveReactionPicker
           disabled={disabled}
-          onOpen={onOpenPoll}
-          onVote={onVotePoll}
-          onClose={onClosePoll}
+          feedback={reactionFeedback}
+          onReaction={onReaction}
+          trailing={(
+            <LiveAudiencePulseCard
+              presentation="trigger"
+              openRequest={audiencePulseOpenRequest}
+              pulse={audiencePulse}
+              busy={pollBusy}
+              disabled={disabled}
+              onOpen={onOpenPoll}
+              onVote={onVotePoll}
+              onClose={onClosePoll}
+            />
+          )}
         />
-      </View> : null}
+      ) : null}
       {inputFocused ? (
         <View style={styles.keyboardToolbar}>
           <Text style={styles.keyboardToolbarLabel}>COMMENTING</Text>
@@ -392,27 +424,36 @@ export const LiveConversationPanel = memo(function LiveConversationPanel({
           <Send size={17} color={visual.color.accentContrast} />
         </Pressable>
       </View>
+      </>}
     </View>
   );
 });
 
 const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
-  panel: { flex: 1, minHeight: 0, backgroundColor: visual.color.surface, paddingHorizontal: 16, paddingTop: 14 },
+  panel: { flex: 1, minHeight: 0, backgroundColor: visual.color.surface, paddingHorizontal: 14, paddingTop: 12 },
   panelGlass: { backgroundColor: 'transparent' },
+  panelPeek: { paddingHorizontal: 14, paddingTop: 7 },
   headingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   headingCopy: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   heading: { color: visual.color.teal, fontSize: 10, letterSpacing: 1.8, fontFamily: 'Manrope_700Bold' },
   headingActions: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   commentCount: { color: visual.color.textMuted, fontSize: 10, fontFamily: 'Manrope_700Bold' },
-  expandButton: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.color.surfaceRaised },
+  expandButton: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.isDark ? '#203431A8' : '#FFFFFFB8', borderWidth: 1 },
+  peekRow: { flex: 1, minHeight: 25, justifyContent: 'center', paddingBottom: 3 },
+  peekText: { color: visual.color.textMuted, fontSize: 11, fontFamily: 'Manrope_500Medium' },
   list: { flex: 1, minHeight: 40 },
-  listContent: { paddingVertical: 10, gap: 2, flexGrow: 1 },
+  listContent: { paddingVertical: 7, gap: 2, flexGrow: 1 },
   commentRow: { paddingVertical: 4, minHeight: 31, flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+  commentRowCompact: { paddingVertical: 2, minHeight: 27, gap: 7 },
   commentCopy: { flex: 1, minHeight: 27, justifyContent: 'center' },
   commentAvatarShell: { width: 27, height: 27, borderRadius: 14, alignItems: 'center', justifyContent: 'center', overflow: 'hidden', backgroundColor: visual.color.tealSoft, borderWidth: 1, borderColor: visual.color.borderStrong },
   commentAvatar: { width: 27, height: 27, borderRadius: 14 },
+  commentAvatarShellCompact: { width: 24, height: 24, borderRadius: 12 },
+  commentAvatarCompact: { width: 24, height: 24, borderRadius: 12 },
   commentInitial: { color: visual.color.text, fontSize: 9, fontFamily: 'Manrope_800ExtraBold' },
+  commentInitialCompact: { fontSize: 8 },
   comment: { color: visual.color.text, fontSize: 13, lineHeight: 19, fontFamily: 'Manrope_400Regular' },
+  commentCompact: { fontSize: 12, lineHeight: 17 },
   name: { color: visual.color.text, fontFamily: 'Manrope_700Bold' },
   roleBadge: { color: visual.color.teal, fontSize: 9, letterSpacing: 0.7, fontFamily: 'Manrope_800ExtraBold' },
   empty: { color: visual.color.textMuted, fontSize: 12, marginTop: 12, fontFamily: 'Manrope_500Medium' },
@@ -430,15 +471,12 @@ const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
   pendingBody: { flex: 1, color: visual.color.text, fontSize: 11, fontFamily: 'Manrope_500Medium' },
   pendingStatus: { color: visual.color.textMuted, fontSize: 10, fontFamily: 'Manrope_600SemiBold' },
   retryText: { color: visual.color.teal, fontSize: 10, fontFamily: 'Manrope_800ExtraBold' },
-  reactions: { flexDirection: 'row', gap: 8, paddingBottom: 10 },
-  reaction: { width: 37, height: 37, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.color.surfaceRaised, borderWidth: 1, borderColor: visual.color.border },
-  reactionText: { color: visual.color.text, fontSize: 18 },
   keyboardToolbar: { height: 28, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 5 },
   keyboardToolbarLabel: { color: visual.color.textMuted, fontSize: 8, letterSpacing: 1.2, fontFamily: 'Manrope_800ExtraBold' },
   keyboardDone: { color: visual.color.teal, fontSize: 12, fontFamily: 'Manrope_800ExtraBold' },
-  composer: { flexDirection: 'row', alignItems: 'center', gap: 9, paddingBottom: 10 },
-  input: { flex: 1, height: 46, borderRadius: 23, paddingHorizontal: 17, paddingRight: 44, color: visual.color.text, backgroundColor: visual.color.surfaceRaised, borderWidth: 1, borderColor: visual.color.border, fontFamily: 'Manrope_500Medium' },
+  composer: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingBottom: 8 },
+  input: { flex: 1, height: 42, borderRadius: 21, paddingHorizontal: 15, paddingRight: 42, color: visual.color.text, backgroundColor: visual.color.surfaceRaised, borderWidth: 1, borderColor: visual.color.border, fontSize: 12, fontFamily: 'Manrope_500Medium' },
   characterCount: { position: 'absolute', right: 58, color: visual.color.textMuted, fontSize: 9, fontFamily: 'Manrope_600SemiBold' },
-  send: { width: 43, height: 43, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.color.teal },
+  send: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.color.teal },
   sendDisabled: { opacity: 0.45 },
 });

@@ -39,7 +39,9 @@ TWILIO_ACCOUNT_SID=your_twilio_account_sid_here
 TWILIO_AUTH_TOKEN=your_twilio_auth_token_here
 TWILIO_VERIFY_SERVICE_SID=your_twilio_verify_service_sid_here
 SUPABASE_URL=https://jbyblhithbqwojhwlenv.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=your_service_role_key_here
+# SUPABASE_SECRET_KEYS is injected automatically by Supabase Edge Functions.
+# Optional explicit server-only override:
+BETWEENER_SUPABASE_SECRET_KEY=your_sb_secret_key_here
 ```
 
 **Important**: Replace the placeholder values above with your actual Twilio credentials from your [Twilio Console](https://console.twilio.com/):

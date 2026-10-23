@@ -64,7 +64,7 @@ export default function ChatReactionSummarySheet({
           <View>
             <Text style={styles.reactionSheetTitle}>Reactions</Text>
             <Text style={styles.reactionSheetCount}>
-              {reactionSheetMessage?.reactions.length ?? 0} total
+              {reactionSheetMessage?.reactions?.length ?? 0} total
             </Text>
           </View>
           <TouchableOpacity

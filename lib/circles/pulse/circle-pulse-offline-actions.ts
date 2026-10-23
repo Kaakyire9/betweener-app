@@ -1,4 +1,5 @@
 import { fetch as fetchNetInfo } from '@react-native-community/netinfo';
+import * as ExpoCrypto from 'expo-crypto';
 
 import { isLikelyNetworkError } from '@/lib/network';
 import {
@@ -80,8 +81,10 @@ export async function createCirclePulseCommentOfflineSafe(params: {
   body: string;
   parentCommentId?: string | null;
 }) {
+  const clientOperationId = ExpoCrypto.randomUUID();
   const payload = {
     tempId: buildOfflineCirclePulseCommentId(),
+    clientOperationId,
     itemId: params.itemId,
     actorProfileId: params.actorProfileId,
     body: params.body,
@@ -107,6 +110,7 @@ export async function createCirclePulseCommentOfflineSafe(params: {
       params.actorProfileId,
       params.body,
       params.parentCommentId ?? null,
+      clientOperationId,
     );
     return { status: 'synced' as const, comment };
   } catch (error) {

@@ -1,5 +1,5 @@
-import { memo, useMemo } from "react";
-import { Animated, Pressable, StyleSheet, Text, View } from "react-native";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Animated, Pressable, StyleSheet, Text, View, type GestureResponderEvent } from "react-native";
 import { Image as ExpoImage } from "expo-image";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors } from "@/constants/theme";
@@ -10,6 +10,23 @@ import VideoPreview from "@/components/chat/message-variants/VideoPreview";
 import { resolveChatImageUri, resolveChatVideoUri } from "@/lib/chat/media-uri";
 import { getMessageImageItems } from "@/lib/chat/media-album";
 import type { ChatMediaAccessFailure } from "@/lib/chat/media/chat-media-access";
+import {
+  getChatAttachmentFailurePresentation,
+  getChatAttachmentRetryLabel,
+  isChatMediaProviderUnavailable,
+} from "@/lib/chat/attachments/chat-attachment-error";
+import { getChatAlbumSendStage } from '@/lib/chat/album/chat-media-album';
+import {
+  isChatExpression,
+  isTransparentChatExpression,
+} from '@/lib/chat/expressions/chat-expression-presentation';
+import { useReduceMotion } from '@/hooks/useReduceMotion';
+import ProviderExpressionMediaView from '@/components/chat/ProviderExpressionMediaView';
+import {
+  getChatBubbleFramePolicy,
+  type ChatBubbleFramePolicy,
+} from '@/lib/chat/ui/bubble-frame-policy';
+import { getChatBubbleFrameStyle } from '@/lib/chat/ui/bubble-frame-style';
 
 type MediaMessageContentProps = {
   item: MessageType;
@@ -24,6 +41,7 @@ type MediaMessageContentProps = {
   theme: typeof Colors.light;
   isDark: boolean;
   receiptPulseStyle: any;
+  framePolicy?: ChatBubbleFramePolicy;
   onMediaLoadError?: (message: MessageType) => void;
   onMediaLoadSuccess?: (
     message: MessageType,
@@ -35,6 +53,7 @@ type MediaMessageContentProps = {
   onViewImage?: (message: MessageType, renderedUrl: string, albumIndex?: number) => void;
   onViewVideo?: (message: MessageType, renderedUrl: string, albumIndex?: number) => void;
   onManageAlbumItem?: (message: MessageType, albumIndex: number) => void;
+  onLongPress?: () => void;
 };
 
 const MediaMessageContent = memo(
@@ -51,6 +70,7 @@ const MediaMessageContent = memo(
     theme: _theme,
     isDark,
     receiptPulseStyle,
+    framePolicy: suppliedFramePolicy,
     onMediaLoadError,
     onMediaLoadSuccess,
     onRetryMedia,
@@ -58,7 +78,84 @@ const MediaMessageContent = memo(
     onViewImage,
     onViewVideo,
     onManageAlbumItem,
+    onLongPress,
   }: MediaMessageContentProps) => {
+    const reduceMotion = useReduceMotion();
+    const framePolicy = useMemo(
+      () => suppliedFramePolicy ?? getChatBubbleFramePolicy({ message: item }),
+      [item, suppliedFramePolicy],
+    );
+    const mediaFrameStyle = useMemo(
+      () => getChatBubbleFrameStyle(framePolicy, isDark),
+      [framePolicy, isDark],
+    );
+    const expressionImageRef = useRef<InstanceType<typeof ExpoImage> | null>(null);
+    const expressionPlaybackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const [expressionPlaybackActive, setExpressionPlaybackActive] = useState(!reduceMotion);
+    const [failedVisualUris, setFailedVisualUris] = useState<ReadonlySet<string>>(() => new Set());
+    const handledLongPressRef = useRef(false);
+
+    const beginMediaPress = useCallback(() => {
+      handledLongPressRef.current = false;
+    }, []);
+    const handleMediaLongPress = useCallback((
+      event?: GestureResponderEvent,
+      action?: () => void,
+    ) => {
+      handledLongPressRef.current = true;
+      event?.stopPropagation();
+      (action ?? onLongPress)?.();
+    }, [onLongPress]);
+    const consumeHandledLongPress = useCallback(() => {
+      if (!handledLongPressRef.current) return false;
+      handledLongPressRef.current = false;
+      return true;
+    }, []);
+    const markVisualFailed = useCallback((uri: string) => {
+      setFailedVisualUris((current) => {
+        if (current.has(uri)) return current;
+        const next = new Set(current);
+        next.add(uri);
+        return next;
+      });
+    }, []);
+    const markVisualLoaded = useCallback((uri: string) => {
+      setFailedVisualUris((current) => {
+        if (!current.has(uri)) return current;
+        const next = new Set(current);
+        next.delete(uri);
+        return next;
+      });
+    }, []);
+
+    useEffect(() => {
+      setExpressionPlaybackActive(!reduceMotion);
+      setFailedVisualUris(new Set());
+      return () => {
+        if (expressionPlaybackTimerRef.current) clearTimeout(expressionPlaybackTimerRef.current);
+      };
+    }, [item.id, reduceMotion]);
+
+    const playReducedMotionExpression = useCallback(() => {
+      if (!reduceMotion) return;
+      if (expressionPlaybackTimerRef.current) clearTimeout(expressionPlaybackTimerRef.current);
+      setExpressionPlaybackActive(true);
+      void expressionImageRef.current?.startAnimating();
+      expressionPlaybackTimerRef.current = setTimeout(() => {
+        void expressionImageRef.current?.stopAnimating();
+        setExpressionPlaybackActive(false);
+      }, 3000);
+    }, [reduceMotion]);
+
+    const attachmentFailure = isMyMessage && item.status === 'failed'
+      ? getChatAttachmentFailurePresentation(item.sendErrorCode)
+      : null;
+    const attachmentRetryLabel =
+      isMyMessage && item.status === 'queued' && item.sendErrorCode
+        ? getChatAttachmentRetryLabel(item.sendErrorCode)
+        : null;
+    const providerUnavailable = isMyMessage && item.status === 'failed' &&
+      isChatMediaProviderUnavailable(item.sendErrorCode);
     const reportLoadedImage = (
       message: MessageType,
       renderedUri: string,
@@ -90,15 +187,28 @@ const MediaMessageContent = memo(
       item.type === 'video'
         ? resolveChatVideoUri(item, cachedVideoUrl)
         : null;
+    const albumSendStage = getChatAlbumSendStage(item.mediaItems ?? []);
+    const activeSendLabel = albumSendStage?.kind === 'preparing'
+      ? 'Preparing...'
+      : albumSendStage?.kind === 'checking_safety'
+        ? 'Checking safety...'
+        : albumSendStage?.kind === 'uploading'
+          ? `Uploading ${Math.round(albumSendStage.progress * 100)}%`
+          : 'Sending...';
     const deliveryLabel =
       isMyMessage && item.status === 'queued'
-        ? 'Waiting to send'
+        ? attachmentRetryLabel ?? 'Waiting to send'
         : isMyMessage && item.status === 'sending'
-          ? 'Sending…'
-        : isMyMessage && item.status === 'failed'
-          ? 'Couldn’t send · Tap to retry'
+          ? activeSendLabel
+        : attachmentFailure
+          ? attachmentFailure.retryable
+            ? 'Couldn’t send · Tap to retry'
+            : 'Not sent · Choose another'
           : null;
-    const deliveryBadge = deliveryLabel ? (
+    const resolvedDeliveryLabel = providerUnavailable
+      ? 'Couldn’t check this photo · Try again'
+      : deliveryLabel;
+    const deliveryBadge = resolvedDeliveryLabel ? (
       <View
         style={[
           deliveryStyles.badge,
@@ -111,13 +221,17 @@ const MediaMessageContent = memo(
             item.status === 'failed'
               ? 'alert-circle-outline'
               : item.status === 'sending'
-                ? 'cloud-upload-outline'
+                ? albumSendStage?.kind === 'preparing'
+                  ? 'clock-outline'
+                  : albumSendStage?.kind === 'checking_safety'
+                    ? 'shield-check-outline'
+                    : 'cloud-upload-outline'
                 : 'clock-outline'
           }
           size={13}
           color="#FFFFFF"
         />
-        <Text style={deliveryStyles.label}>{deliveryLabel}</Text>
+        <Text style={deliveryStyles.label}>{resolvedDeliveryLabel}</Text>
       </View>
     ) : null;
     const mediaReceiptToneStyle = useMemo(() => {
@@ -153,6 +267,8 @@ const MediaMessageContent = memo(
           : undefined);
       const visibleItems = mediaItems.slice(0, 4);
       const isAlbum = mediaItems.length > 1;
+      const transparentExpression = isTransparentChatExpression(item.mediaKind);
+      const expressionMessage = isChatExpression(item.mediaKind);
       const frameWidth = imageSize?.width ?? 340;
       const frameHeight = isAlbum ? Math.round(frameWidth * 0.86) : (imageSize?.height ?? 340);
       const resolveTileUri = (mediaItem: (typeof mediaItems)[number], tileIndex: number) => {
@@ -193,6 +309,7 @@ const MediaMessageContent = memo(
         // failed bubble must retry the durable command rather than opening the
         // viewer and making the visible retry affordance ineffective.
         if (isMyMessage && item.status === 'failed') {
+          if (attachmentFailure?.retryable === false) return;
           onRetryFailedMessage?.(item.id);
           return;
         }
@@ -230,17 +347,31 @@ const MediaMessageContent = memo(
             key={mediaItem.attachmentId || `${item.id}-${tileIndex}`}
             style={({ pressed }) => [albumStyles.tile, pressed && albumStyles.tilePressed]}
             onPress={(event) => {
+              if (consumeHandledLongPress()) return;
               if (isMyMessage && item.status === 'failed') event.stopPropagation();
               openTile(openItem, openUri, openIndex);
             }}
+            onPressIn={beginMediaPress}
+            onLongPress={(event) => handleMediaLongPress(
+              event,
+              isMyMessage && isAlbum && ['queued', 'sending', 'failed'].includes(item.status ?? '')
+                ? () => onManageAlbumItem?.(item, openIndex)
+                : undefined,
+            )}
+            delayLongPress={450}
             accessibilityRole="button"
             accessibilityLabel={
               remaining > 0
                 ? `Open ${remaining} more ${remaining === 1 ? 'photo' : 'photos'}`
                 : `Open photo ${tileIndex + 1} of ${mediaItems.length}`
             }
+            accessibilityHint={
+              isMyMessage && isAlbum && ['queued', 'sending', 'failed'].includes(item.status ?? '')
+                ? 'Press and hold to cancel this item or the whole album.'
+                : undefined
+            }
           >
-            {uri ? (
+            {uri && !failedVisualUris.has(uri) ? (
               <ExpoImage
                 source={{
                   uri,
@@ -249,22 +380,29 @@ const MediaMessageContent = memo(
                     : mediaItem.storagePath || undefined,
                 }}
                 style={StyleSheet.absoluteFill}
+                recyclingKey={`${item.id}:${mediaItem.attachmentId || tileIndex}:${uri}`}
                 cachePolicy="memory-disk"
                 contentFit="cover"
                 transition={100}
-                onLoad={() => reportLoadedImage(
-                  {
-                    ...item,
-                    storagePath: previewUri
-                      ? mediaItem.previewStoragePath || null
+                onLoad={() => {
+                  markVisualLoaded(uri);
+                  reportLoadedImage(
+                    {
+                      ...item,
+                      storagePath: previewUri
+                        ? mediaItem.previewStoragePath || null
+                        : mediaItem.storagePath || item.storagePath,
+                    },
+                    uri,
+                    previewUri
+                      ? mediaItem.previewStoragePath
                       : mediaItem.storagePath || item.storagePath,
-                  },
-                  uri,
-                  previewUri
-                    ? mediaItem.previewStoragePath
-                    : mediaItem.storagePath || item.storagePath,
-                )}
-                onError={() => onMediaLoadError?.({ ...item, storagePath: mediaItem.storagePath || item.storagePath })}
+                  );
+                }}
+                onError={() => {
+                  markVisualFailed(uri);
+                  onMediaLoadError?.({ ...item, storagePath: mediaItem.storagePath || item.storagePath });
+                }}
               />
             ) : (
               <View style={albumStyles.placeholder}>
@@ -286,7 +424,14 @@ const MediaMessageContent = memo(
             {mediaItem.transferState === 'retryable_failed' || mediaItem.transferState === 'terminal_failed' ? (
               <View pointerEvents="none" style={albumStyles.itemStateBadge}>
                 <MaterialCommunityIcons name="alert-circle-outline" size={15} color="#FFFFFF" />
-                <Text style={albumStyles.itemStateText}>Tap to retry</Text>
+                <Text style={albumStyles.itemStateText}>
+                  {mediaItem.transferState === 'terminal_failed' ? 'Choose another' : 'Tap to retry'}
+                </Text>
+              </View>
+            ) : mediaItem.transferState === 'cancelling' ? (
+              <View pointerEvents="none" style={albumStyles.itemStateBadge}>
+                <MaterialCommunityIcons name="close-circle-outline" size={15} color="#FFFFFF" />
+                <Text style={albumStyles.itemStateText}>Cancelling</Text>
               </View>
             ) : mediaItem.transferState === 'uploading' ? (
               <View pointerEvents="none" style={albumStyles.itemStateBadge}>
@@ -301,8 +446,141 @@ const MediaMessageContent = memo(
           </Pressable>
         );
       };
+      if (expressionMessage && !isAlbum) {
+        const expressionLabel = item.mediaKind === 'giphy_emoji'
+          ? 'Animated emoji'
+          : item.mediaKind === 'giphy_sticker'
+            ? 'Animated sticker'
+            : item.mediaKind === 'giphy_text'
+              ? 'Animated text'
+              : 'GIF';
+        return (
+          <View
+            accessible={!reduceMotion}
+            accessibilityRole="image"
+            accessibilityLabel={expressionLabel}
+            style={[
+              expressionStyles.container,
+              { width: frameWidth },
+            ]}
+          >
+            <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={reduceMotion ? `Play ${expressionLabel.toLowerCase()}` : undefined}
+                accessibilityHint={reduceMotion ? 'Plays this animation briefly' : undefined}
+                onPressIn={beginMediaPress}
+                onLongPress={handleMediaLongPress}
+                delayLongPress={450}
+                onPress={() => {
+                  if (consumeHandledLongPress()) return;
+                  playReducedMotionExpression();
+                }}
+                style={[
+                  { width: frameWidth, height: frameHeight },
+                  !transparentExpression && expressionStyles.gifSurface,
+                  !transparentExpression && mediaFrameStyle,
+                ]}
+              >
+                {item.providerMedia ? (
+                  <ProviderExpressionMediaView
+                    key={`${item.id}:${item.providerMedia.providerMediaId}`}
+                    reference={item.providerMedia}
+                    autoPlay={!reduceMotion && expressionPlaybackActive}
+                    transparent={transparentExpression}
+                    style={StyleSheet.absoluteFill}
+                    fallback={(
+                      <View style={[albumStyles.placeholder, expressionStyles.placeholder]}>
+                        <MaterialCommunityIcons name="sticker-emoji" size={28} color="rgba(255,255,255,0.72)" />
+                      </View>
+                    )}
+                  />
+                ) : primaryImageUri && !failedVisualUris.has(primaryImageUri) ? (
+                  <ExpoImage
+                    ref={expressionImageRef}
+                    source={{
+                      uri: primaryImageUri,
+                      cacheKey: primaryPreviewUri
+                        ? mediaItems[0]?.previewStoragePath || undefined
+                        : mediaItems[0]?.storagePath || item.storagePath || undefined,
+                    }}
+                    style={StyleSheet.absoluteFill}
+                    recyclingKey={`${item.id}:expression:${primaryImageUri}`}
+                    cachePolicy="memory-disk"
+                    contentFit={transparentExpression ? 'contain' : 'cover'}
+                    transition={100}
+                    autoplay={!reduceMotion && expressionPlaybackActive}
+                    onLoad={() => {
+                      markVisualLoaded(primaryImageUri);
+                      reportLoadedImage(
+                        item,
+                        primaryImageUri,
+                        primaryPreviewUri
+                          ? mediaItems[0]?.previewStoragePath
+                          : mediaItems[0]?.storagePath || item.storagePath,
+                      );
+                    }}
+                    onError={() => {
+                      markVisualFailed(primaryImageUri);
+                      onMediaLoadError?.(item);
+                    }}
+                  />
+                ) : (
+                  <View style={[albumStyles.placeholder, expressionStyles.placeholder]}>
+                    <MaterialCommunityIcons name="sticker-emoji" size={28} color="rgba(255,255,255,0.72)" />
+                  </View>
+                )}
+                {item.providerMedia ? (
+                  <View pointerEvents="none" style={expressionStyles.attributionBadge}>
+                    <Text style={expressionStyles.attributionText}>GIPHY</Text>
+                  </View>
+                ) : null}
+                {reduceMotion && !expressionPlaybackActive && (primaryImageUri || item.providerMedia) ? (
+                  <View pointerEvents="none" style={expressionStyles.playBadge}>
+                    <MaterialCommunityIcons name="play" size={20} color="#FFFFFF" />
+                  </View>
+                ) : null}
+                {deliveryBadge}
+            </Pressable>
+            <Animated.View
+              pointerEvents="none"
+              style={[
+                expressionStyles.metaRow,
+                isMyMessage ? receiptPulseStyle : null,
+              ]}
+            >
+              <Text style={[expressionStyles.metaText, { color: _theme.textMuted }]}>{timeLabel}</Text>
+              {isMyMessage ? (
+                <MaterialCommunityIcons
+                  name={receiptIcon?.name || 'clock-outline'}
+                  size={receiptIcon?.size || 13}
+                  color={receiptIcon?.color || _theme.textMuted}
+                />
+              ) : null}
+            </Animated.View>
+            {isMyMessage && item.status === 'failed' && attachmentFailure?.retryable !== false ? (
+              <Pressable
+                style={deliveryStyles.retryHitTarget}
+                onPress={(event) => {
+                  event.stopPropagation();
+                  onRetryFailedMessage?.(item.id);
+                }}
+                accessibilityRole="button"
+                accessibilityLabel={`Retry sending ${expressionLabel.toLowerCase()}`}
+              />
+            ) : null}
+          </View>
+        );
+      }
       return (
-        <View style={[styles.imageMessageContainer, styles.mediaSurface, { width: frameWidth }]}>
+        <View
+          style={[
+            styles.imageMessageContainer,
+            styles.mediaSurface,
+            transparentExpression && expressionStyles.transparentSurface,
+            { width: frameWidth },
+            mediaFrameStyle,
+          ]}
+        >
           {isAlbum ? (
             <View style={[albumStyles.album, { height: frameHeight }]}>
               {visibleItems.length === 2 ? (
@@ -322,14 +600,18 @@ const MediaMessageContent = memo(
           ) : mediaItems[0] ? (
             <Pressable
               onPress={(event) => {
+                if (consumeHandledLongPress()) return;
                 if (isMyMessage && item.status === 'failed') event.stopPropagation();
                 openTile(mediaItems[0], primaryImageUri, 0);
               }}
-              style={{ width: frameWidth, height: frameHeight }}
+              onPressIn={beginMediaPress}
+              onLongPress={handleMediaLongPress}
+              delayLongPress={450}
+              style={[albumStyles.singleMediaTile, { width: '100%', height: frameHeight }]}
               accessibilityRole="button"
               accessibilityLabel="Open photo"
             >
-              {primaryImageUri ? (
+              {primaryImageUri && !failedVisualUris.has(primaryImageUri) ? (
                 <ExpoImage
                   source={{
                     uri: primaryImageUri,
@@ -338,22 +620,29 @@ const MediaMessageContent = memo(
                       : mediaItems[0].storagePath || item.storagePath || undefined,
                   }}
                   style={StyleSheet.absoluteFill}
+                  recyclingKey={`${item.id}:${mediaItems[0].attachmentId || 'primary'}:${primaryImageUri}`}
                   cachePolicy="memory-disk"
-                  contentFit="cover"
+                  contentFit={transparentExpression ? 'contain' : 'cover'}
                   transition={100}
-                  onLoad={() => reportLoadedImage(
-                    {
-                      ...item,
-                      storagePath: primaryPreviewUri
-                        ? mediaItems[0].previewStoragePath || null
+                  onLoad={() => {
+                    markVisualLoaded(primaryImageUri);
+                    reportLoadedImage(
+                      {
+                        ...item,
+                        storagePath: primaryPreviewUri
+                          ? mediaItems[0].previewStoragePath || null
+                          : mediaItems[0].storagePath || item.storagePath,
+                      },
+                      primaryImageUri,
+                      primaryPreviewUri
+                        ? mediaItems[0].previewStoragePath
                         : mediaItems[0].storagePath || item.storagePath,
-                    },
-                    primaryImageUri,
-                    primaryPreviewUri
-                      ? mediaItems[0].previewStoragePath
-                      : mediaItems[0].storagePath || item.storagePath,
-                  )}
-                  onError={() => onMediaLoadError?.(item)}
+                    );
+                  }}
+                  onError={() => {
+                    markVisualFailed(primaryImageUri);
+                    onMediaLoadError?.(item);
+                  }}
                 />
               ) : (
                 <View style={albumStyles.placeholder}>
@@ -364,7 +653,7 @@ const MediaMessageContent = memo(
               )}
             </Pressable>
           ) : (
-            <View style={[albumStyles.placeholder, { width: frameWidth, height: frameHeight }]}>
+            <View style={[albumStyles.placeholder, { width: '100%', height: frameHeight }]}>
               <MaterialCommunityIcons name="image-outline" size={32} color="rgba(255,255,255,0.72)" />
               {unavailableTitle ? <Text style={albumStyles.placeholderText}>{unavailableTitle}</Text> : null}
               {unavailableCopy ? <Text style={albumStyles.placeholderCopy}>{unavailableCopy}</Text> : null}
@@ -414,6 +703,12 @@ const MediaMessageContent = memo(
               </Text>
             </View>
           ) : null}
+            {attachmentFailure ? (
+            <View style={deliveryStyles.failureCard}>
+              <MaterialCommunityIcons name="alert-circle-outline" size={16} color="#FF9C9C" />
+              <Text style={deliveryStyles.failureCopy}>{attachmentFailure.message}</Text>
+            </View>
+            ) : null}
         </View>
       );
     }
@@ -428,19 +723,26 @@ const MediaMessageContent = memo(
           ? mediaUrisByPath?.[item.mediaItems[0].previewStoragePath]
           : item.mediaItems?.[0]?.previewSignedUrl);
       return (
-        <View style={[styles.videoMessageContainer, styles.mediaSurface]}>
+        <View style={[styles.videoMessageContainer, styles.mediaSurface, mediaFrameStyle]}>
           {resolvedVideoUri || posterUri ? (
             <VideoPreview
               styles={styles}
               url={resolvedVideoUri ?? ''}
               resolvedUrl={resolvedVideoUri ?? undefined}
               posterUri={posterUri}
+              recyclingKey={`${item.id}:${posterUri || resolvedVideoUri || item.storagePath || 'video'}`}
               onError={() => onMediaLoadError?.(item)}
             />
           ) : (
             <Pressable
               style={[styles.messageVideo, styles.videoPreviewPlaceholder]}
-              onPress={() => onRetryMedia?.(item)}
+              onPressIn={beginMediaPress}
+              onLongPress={handleMediaLongPress}
+              delayLongPress={450}
+              onPress={() => {
+                if (consumeHandledLongPress()) return;
+                onRetryMedia?.(item);
+              }}
               disabled={!item.storagePath}
               accessibilityRole="button"
               accessibilityLabel={mediaFailure ? 'Retry video' : 'Video is loading'}
@@ -457,7 +759,7 @@ const MediaMessageContent = memo(
             </Pressable>
           )}
           {deliveryBadge}
-          {isMyMessage && item.status === 'failed' ? (
+          {isMyMessage && item.status === 'failed' && attachmentFailure?.retryable !== false ? (
             <Pressable
               style={deliveryStyles.retryHitTarget}
               onPress={(event) => {
@@ -511,6 +813,12 @@ const MediaMessageContent = memo(
               </Text>
             </View>
           ) : null}
+            {attachmentFailure ? (
+            <View style={deliveryStyles.failureCard}>
+              <MaterialCommunityIcons name="alert-circle-outline" size={16} color="#FF9C9C" />
+              <Text style={deliveryStyles.failureCopy}>{attachmentFailure.message}</Text>
+            </View>
+            ) : null}
         </View>
       );
     }
@@ -522,6 +830,73 @@ const MediaMessageContent = memo(
 MediaMessageContent.displayName = "MediaMessageContent";
 
 export default MediaMessageContent;
+
+const expressionStyles = StyleSheet.create({
+  container: {
+    position: 'relative',
+    alignItems: 'stretch',
+  },
+  gifSurface: {
+    borderRadius: 15,
+    overflow: 'hidden',
+  },
+  transparentSurface: {
+    backgroundColor: 'transparent',
+    borderWidth: 0,
+    shadowOpacity: 0,
+    elevation: 0,
+    overflow: 'visible',
+  },
+  placeholder: {
+    backgroundColor: 'rgba(16, 44, 46, 0.5)',
+    borderRadius: 14,
+  },
+  metaRow: {
+    minHeight: 18,
+    marginTop: 2,
+    alignSelf: 'flex-end',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 3,
+  },
+  metaText: {
+    fontFamily: 'Manrope_600SemiBold',
+    fontSize: 10,
+    lineHeight: 14,
+  },
+  playBadge: {
+    position: 'absolute',
+    left: '50%',
+    top: '50%',
+    width: 42,
+    height: 42,
+    marginLeft: -21,
+    marginTop: -21,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(5, 22, 24, 0.72)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.5)',
+  },
+  attributionBadge: {
+    position: 'absolute',
+    right: 7,
+    top: 7,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 7,
+    backgroundColor: 'rgba(5, 22, 24, 0.68)',
+  },
+  attributionText: {
+    color: '#FFFFFF',
+    fontFamily: 'Archivo_700Bold',
+    fontSize: 8,
+    lineHeight: 10,
+    letterSpacing: 0.6,
+  },
+});
 
 const deliveryStyles = StyleSheet.create({
   badge: {
@@ -553,6 +928,21 @@ const deliveryStyles = StyleSheet.create({
     fontSize: 11,
     fontFamily: 'Manrope_700Bold',
   },
+  failureCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 7,
+    paddingHorizontal: 11,
+    paddingVertical: 10,
+    backgroundColor: 'rgba(92, 25, 32, 0.92)',
+  },
+  failureCopy: {
+    flex: 1,
+    color: '#FFE8E8',
+    fontSize: 11,
+    lineHeight: 16,
+    fontFamily: 'Manrope_600SemiBold',
+  },
 });
 
 const albumStyles = StyleSheet.create({
@@ -561,6 +951,7 @@ const albumStyles = StyleSheet.create({
   column: { flex: 1, gap: 2 },
   largeTile: { flex: 1.25 },
   tile: { flex: 1, overflow: 'hidden', backgroundColor: '#143235' },
+  singleMediaTile: { overflow: 'hidden', backgroundColor: '#143235' },
   tilePressed: { opacity: 0.88 },
   placeholder: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#143235' },
   placeholderText: { color: 'rgba(255,255,255,0.72)', fontSize: 12, fontFamily: 'Manrope_700Bold' },

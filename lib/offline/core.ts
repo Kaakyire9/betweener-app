@@ -131,6 +131,32 @@ export async function writeOfflineEnvelope<T>(
   }
 }
 
+/**
+ * Durable queues must be able to distinguish a persisted write from a best-effort
+ * cache write. Unlike writeOfflineEnvelope, this variant intentionally surfaces
+ * storage failures to the caller so UI cannot report an action as queued when it
+ * was never committed locally.
+ */
+export async function writeOfflineEnvelopeStrict<T>(
+  key: string,
+  data: T,
+  options?: OfflineWriteOptions,
+): Promise<void> {
+  const savedAt = Date.now();
+  const staleAfterMs = options?.staleAfterMs;
+  const payload: OfflineEnvelope<T> = {
+    v: 2,
+    savedAt,
+    staleAt:
+      typeof staleAfterMs === 'number' && staleAfterMs > 0
+        ? savedAt + staleAfterMs
+        : null,
+    kind: options?.kind,
+    data,
+  };
+  await AsyncStorage.setItem(key, JSON.stringify(payload));
+}
+
 export async function updateOfflineEnvelope<T>(
   key: string,
   updater: (current: T | null) => T | null | Promise<T | null>,

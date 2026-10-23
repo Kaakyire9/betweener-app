@@ -25,7 +25,6 @@ import {
   syncMomentCommentReactionOfflineSafe,
   updateMomentCommentOfflineSafe,
 } from '@/lib/moment-interactions-offline-actions';
-import { collectMomentSyncIssues } from '@/lib/offline/moment-sync-issues';
 import {
   readMomentCommentsSnapshot,
   removeMomentCommentSnapshot,
@@ -34,7 +33,6 @@ import {
 } from '@/lib/offline/moments-store';
 import {
   getMomentOfflineMutationSnapshot,
-  retryFailedOfflineMutations,
   subscribeToOfflineMutationEvents,
 } from '@/lib/offline/mutation-queue';
 import { normalizeProfilePhotoUri } from '@/lib/profile/media';
@@ -235,14 +233,8 @@ export default function MomentCommentsModal({
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [replyingToCommentId, setReplyingToCommentId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [commentSyncStateById, setCommentSyncStateById] = useState<
-    Record<string, { state: 'pending' | 'failed'; label: string; mutationIds: string[] }>
-  >({});
   const [commentReactionStateById, setCommentReactionStateById] = useState<
     Record<string, CommentReactionState>
-  >({});
-  const [commentReactionSyncStateById, setCommentReactionSyncStateById] = useState<
-    Record<string, { state: 'pending' | 'failed'; label: string; mutationIds: string[] }>
   >({});
   const [commentsUnavailableOffline, setCommentsUnavailableOffline] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
@@ -399,7 +391,7 @@ export default function MomentCommentsModal({
         }
       }
       const offlineSnapshot = await getMomentOfflineMutationSnapshot();
-      const localMutations = [...offlineSnapshot.failed, ...offlineSnapshot.pending];
+      const localMutations = offlineSnapshot.pending;
       const localComments = localMutations
         .filter(isQueuedMomentCommentMutation)
         .filter((mutation) => mutation.payload.momentId === momentId)
@@ -438,30 +430,6 @@ export default function MomentCommentsModal({
         .filter((comment) => !deletedCommentIds.has(comment.id))
         .sort(sortCommentsNewestFirst);
 
-      const nextCommentSyncStateById: Record<
-        string,
-        { state: 'pending' | 'failed'; label: string; mutationIds: string[] }
-      > = {};
-
-      nextComments.forEach((comment) => {
-        const issues = localMutations
-          .filter(
-            (mutation) =>
-              (mutation.kind === 'moment_comment_create' && mutation.payload.tempId === comment.id) ||
-              (mutation.kind === 'moment_comment_update' && mutation.payload.commentId === comment.id),
-          )
-          .map((mutation) => ({
-            id: mutation.id,
-            state: 'failed' in mutation ? ('failed' as const) : ('pending' as const),
-          }));
-        if (issues.length === 0) return;
-        nextCommentSyncStateById[comment.id] = {
-          state: issues.some((issue) => issue.state === 'failed') ? 'failed' : 'pending',
-          label: issues.some((issue) => issue.state === 'failed') ? 'Needs review' : 'Syncing...',
-          mutationIds: issues.map((issue) => issue.id),
-        };
-      });
-
       const nextCommentReactionStateById: Record<string, CommentReactionState> = {};
       nextComments.forEach((comment) => {
         ensureCommentReactionState(nextCommentReactionStateById, comment.id);
@@ -487,11 +455,6 @@ export default function MomentCommentsModal({
         });
       }
 
-      const nextCommentReactionSyncStateById: Record<
-        string,
-        { state: 'pending' | 'failed'; label: string; mutationIds: string[] }
-      > = {};
-
       nextComments.forEach((comment) => {
         const issues = localMutations
           .filter(isQueuedMomentCommentReactionMutation)
@@ -511,14 +474,6 @@ export default function MomentCommentsModal({
             issue.payload.reaction ?? null,
           );
         });
-
-        nextCommentReactionSyncStateById[comment.id] = {
-          state: issues.some((issue) => issue.state === 'failed') ? 'failed' : 'pending',
-          label: issues.some((issue) => issue.state === 'failed')
-            ? 'Reaction needs review'
-            : 'Reaction syncing...',
-          mutationIds: issues.map((issue) => issue.id),
-        };
       });
 
       if (user?.id && !nextProfiles[user.id]) {
@@ -528,9 +483,7 @@ export default function MomentCommentsModal({
       setComments(nextComments);
       setProfiles(nextProfiles);
       profilesRef.current = nextProfiles;
-      setCommentSyncStateById(nextCommentSyncStateById);
       setCommentReactionStateById(nextCommentReactionStateById);
-      setCommentReactionSyncStateById(nextCommentReactionSyncStateById);
       if (user?.id) {
         await writeMomentCommentsSnapshot(user.id, momentId, {
           comments: nextComments,
@@ -551,9 +504,7 @@ export default function MomentCommentsModal({
       setReplyingToCommentId(null);
       setError(null);
       setActiveHighlightCommentId(null);
-      setCommentSyncStateById({});
       setCommentReactionStateById({});
-      setCommentReactionSyncStateById({});
     }
   }, [fetchComments, visible]);
 
@@ -745,46 +696,7 @@ export default function MomentCommentsModal({
     (comment: CommentRow) => {
       const isOwnComment = comment.user_id === user?.id;
       if (!isOwnComment || !momentId || !user?.id) return;
-      const syncState = commentSyncStateById[comment.id] ?? null;
-      const syncIssueMutationIds = syncState?.mutationIds ?? [];
       Alert.alert('Comment options', undefined, [
-        ...(syncState
-          ? [
-              {
-                text: 'Review sync issue',
-                onPress: async () => {
-                  const snapshot = await getMomentOfflineMutationSnapshot();
-                  const issues = collectMomentSyncIssues(
-                    [...snapshot.failed, ...snapshot.pending],
-                    momentId,
-                  ).filter(
-                    (issue) =>
-                      issue.kind === 'moment_comment_create' || issue.kind === 'moment_comment_update',
-                  );
-                  Alert.alert(
-                    'Comment sync status',
-                    issues
-                      .filter((issue) => syncIssueMutationIds.includes(issue.id))
-                      .map((issue, index) => `${index + 1}. ${issue.title}\n${issue.detail}`)
-                      .join('\n\n'),
-                  );
-                },
-              },
-            ]
-          : []),
-        ...(syncState?.state === 'failed'
-          ? [
-              {
-                text: 'Retry sync',
-                onPress: async () => {
-                  await retryFailedOfflineMutations((mutation) =>
-                    syncIssueMutationIds.includes(mutation.id),
-                  );
-                  void fetchComments();
-                },
-              },
-            ]
-          : []),
         {
           text: 'Edit',
           onPress: () => {
@@ -837,7 +749,7 @@ export default function MomentCommentsModal({
         { text: 'Cancel', style: 'cancel' },
       ]);
     },
-    [commentSyncStateById, comments, fetchComments, momentId, user?.id],
+    [comments, fetchComments, momentId, user?.id],
   );
 
   const handleStartReply = useCallback((comment: CommentRow) => {
@@ -894,14 +806,6 @@ export default function MomentCommentsModal({
           [commentId]: nextEntry,
         };
       });
-      setCommentReactionSyncStateById((current) => ({
-        ...current,
-        [commentId]: {
-          state: 'pending',
-          label: 'Reaction syncing...',
-          mutationIds: current[commentId]?.mutationIds ?? [],
-        },
-      }));
       setError(null);
 
       try {
@@ -913,11 +817,6 @@ export default function MomentCommentsModal({
           previousReaction: currentReaction,
         });
         if (result.status === 'synced') {
-          setCommentReactionSyncStateById((current) => {
-            const next = { ...current };
-            delete next[commentId];
-            return next;
-          });
           void fetchComments();
         }
       } catch {
@@ -948,7 +847,6 @@ export default function MomentCommentsModal({
         myReaction: null,
         counts: {},
       };
-      const reactionSyncState = commentReactionSyncStateById[comment.id] ?? null;
 
       return (
         <View
@@ -983,27 +881,6 @@ export default function MomentCommentsModal({
             <View style={styles.commentMeta}>
               <View style={styles.commentMetaLeft}>
                 <Text style={styles.commentName}>{displayName}</Text>
-                {commentSyncStateById[comment.id] ? (
-                  <View
-                    style={[
-                      styles.commentSyncPill,
-                      commentSyncStateById[comment.id]?.state === 'failed'
-                        ? styles.commentSyncPillFailed
-                        : styles.commentSyncPillPending,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.commentSyncText,
-                        commentSyncStateById[comment.id]?.state === 'failed'
-                          ? styles.commentSyncTextFailed
-                          : styles.commentSyncTextPending,
-                      ]}
-                    >
-                      {commentSyncStateById[comment.id]?.label}
-                    </Text>
-                  </View>
-                ) : null}
               </View>
               <View style={styles.commentMetaRight}>
                 <Text style={styles.commentTime}>{formatTime(comment.created_at)}</Text>
@@ -1072,27 +949,6 @@ export default function MomentCommentsModal({
                   </Pressable>
                 );
               })}
-              {reactionSyncState ? (
-                <View
-                  style={[
-                    styles.commentReactionStatusPill,
-                    reactionSyncState.state === 'failed'
-                      ? styles.commentReactionStatusPillFailed
-                      : styles.commentReactionStatusPillPending,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.commentReactionStatusText,
-                      reactionSyncState.state === 'failed'
-                        ? styles.commentReactionStatusTextFailed
-                        : styles.commentReactionStatusTextPending,
-                    ]}
-                  >
-                    {reactionSyncState.label}
-                  </Text>
-                </View>
-              ) : null}
             </View>
           </View>
         </View>
@@ -1101,8 +957,6 @@ export default function MomentCommentsModal({
     [
       activeHighlightCommentId,
       commentReactionStateById,
-      commentReactionSyncStateById,
-      commentSyncStateById,
       handleStartReply,
       handleToggleReaction,
       openCommentActions,
@@ -1566,30 +1420,6 @@ const createStyles = (theme: typeof Colors.dark, isDark: boolean) => StyleSheet.
   commentMetaRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   commentName: { color: theme.text, fontFamily: 'Manrope_700Bold', fontSize: 14 },
   commentTime: { color: theme.textMuted, fontSize: 11, fontFamily: 'Manrope_600SemiBold' },
-  commentSyncPill: {
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: 999,
-    borderWidth: 1,
-  },
-  commentSyncPillPending: {
-    backgroundColor: 'rgba(91,193,187,0.08)',
-    borderColor: 'rgba(91,193,187,0.18)',
-  },
-  commentSyncPillFailed: {
-    backgroundColor: 'rgba(215,104,104,0.08)',
-    borderColor: 'rgba(215,104,104,0.18)',
-  },
-  commentSyncText: {
-    fontSize: 10,
-    fontFamily: 'Manrope_700Bold',
-  },
-  commentSyncTextPending: {
-    color: theme.secondary,
-  },
-  commentSyncTextFailed: {
-    color: theme.danger,
-  },
   commentMoreButton: {
     width: 22,
     height: 22,
@@ -1672,32 +1502,6 @@ const createStyles = (theme: typeof Colors.dark, isDark: boolean) => StyleSheet.
   },
   commentReactionCountActive: {
     color: theme.secondary,
-  },
-  commentReactionStatusPill: {
-    minHeight: 22,
-    paddingHorizontal: 7,
-    borderRadius: 999,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  commentReactionStatusPillPending: {
-    backgroundColor: withAlpha(theme.tint, isDark ? 0.12 : 0.08),
-    borderColor: withAlpha(theme.tint, isDark ? 0.22 : 0.16),
-  },
-  commentReactionStatusPillFailed: {
-    backgroundColor: withAlpha(theme.danger, isDark ? 0.12 : 0.08),
-    borderColor: withAlpha(theme.danger, isDark ? 0.22 : 0.16),
-  },
-  commentReactionStatusText: {
-    fontSize: 9,
-    fontFamily: 'Manrope_700Bold',
-  },
-  commentReactionStatusTextPending: {
-    color: theme.secondary,
-  },
-  commentReactionStatusTextFailed: {
-    color: theme.danger,
   },
   inputRow: {
     flexDirection: 'row',

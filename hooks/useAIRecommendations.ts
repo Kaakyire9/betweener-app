@@ -352,7 +352,7 @@ export default function useAIRecommendations(
   );
 
   useEffect(() => {
-    if (!presenceIdsKey) return;
+    if (!liveFetchEnabled || !presenceIdsKey) return;
     const ids = presenceIdsKey.split(',').filter(Boolean);
     void refreshPresence(ids);
     const channel = supabase.channel(`profiles-presence:vibes:${presenceIdsKey}`);
@@ -394,7 +394,7 @@ export default function useAIRecommendations(
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [presenceIdsKey, refreshPresence]);
+  }, [liveFetchEnabled, presenceIdsKey, refreshPresence]);
 
   useEffect(() => {
     let mounted = true;
@@ -605,7 +605,7 @@ export default function useAIRecommendations(
   const lastMatchToastRef = useRef<{ id: string | null; ts: number }>({ id: null, ts: 0 });
 
   useEffect(() => {
-    if (!userId) return;
+    if (!liveFetchEnabled || !userId) return;
 
     const handleMatchChange = async (payload: any) => {
       try {
@@ -752,7 +752,7 @@ export default function useAIRecommendations(
     return () => {
       try { supabase.removeChannel(channel); } catch {}
     };
-  }, [userId, mode]);
+  }, [liveFetchEnabled, userId, mode]);
 
   // Deep-link support: listen for URLs containing `mutualMatch=<id>` (comma-separated allowed)
   useEffect(() => {
@@ -925,6 +925,12 @@ export default function useAIRecommendations(
             });
             throw e;
           }
+        };
+
+        const canFallbackFromRpc = (error: any) => {
+          const code = String(error?.code ?? '');
+          const message = String(error?.message ?? '').toLowerCase();
+          return code === 'PGRST202' || code === '42883' || message.includes('could not find the function');
         };
 
         const toNum = (v: unknown): number | undefined => {
@@ -1315,6 +1321,10 @@ export default function useAIRecommendations(
               errorCode: v53.error.code ?? null,
               message: String(v53.error.message || 'v5_3_error'),
             });
+            if (!canFallbackFromRpc(v53.error)) {
+              noteRpcFailure(v53.error, 'get_vibes_recommendations_v5_3');
+              return;
+            }
           }
         } catch (e) {
           addBreadcrumb('[recs] v5_3_throw_fallback', {
@@ -1322,6 +1332,8 @@ export default function useAIRecommendations(
             mode,
             message: String((e as any)?.message || e || 'v5_3_throw'),
           });
+          noteRpcFailure(e, 'get_vibes_recommendations_v5_3');
+          return;
         }
 
         try {
@@ -1351,6 +1363,10 @@ export default function useAIRecommendations(
               errorCode: v5.error.code ?? null,
               message: String(v5.error.message || 'v5_error'),
             });
+            if (!canFallbackFromRpc(v5.error)) {
+              noteRpcFailure(v5.error, 'get_vibes_recommendations_v5');
+              return;
+            }
           }
         } catch (e) {
           addBreadcrumb('[recs] v5_throw_fallback', {
@@ -1358,6 +1374,8 @@ export default function useAIRecommendations(
             mode,
             message: String((e as any)?.message || e || 'v5_throw'),
           });
+          noteRpcFailure(e, 'get_vibes_recommendations_v5');
+          return;
         }
 
         try {

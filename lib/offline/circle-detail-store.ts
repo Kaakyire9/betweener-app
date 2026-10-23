@@ -20,6 +20,13 @@ export type OfflineCircleDetailCircle = {
   circle_type?: string | null;
   status?: string | null;
   visibility_scope?: string | null;
+  reach_scope?: string | null;
+  reach_scopes?: string[] | null;
+  access_policy?: string | null;
+  diaspora_origin_country_codes?: string[] | null;
+  diaspora_destination_country_codes?: string[] | null;
+  membership_eligibility_policy?: string | null;
+  live_discovery_policy?: string | null;
   country_code?: string | null;
   country_name?: string | null;
   region?: string | null;
@@ -167,6 +174,9 @@ export async function readCircleDetailSnapshotState(
   circleId: string,
   viewerProfileId?: string | null,
 ): Promise<OfflineReadState<OfflineCircleDetailSnapshot>> {
+  if (!viewerProfileId) {
+    return { data: null, savedAt: null, staleAt: null, isStale: false };
+  }
   return readOfflineState<OfflineCircleDetailSnapshot>(
     buildCircleDetailSnapshotStoreKey(circleId, viewerProfileId),
   );
@@ -178,6 +188,7 @@ export async function writeCircleDetailSnapshot(
   snapshot: OfflineCircleDetailSnapshot,
   options?: { staleAfterMs?: number },
 ): Promise<void> {
+  if (!viewerProfileId) return;
   await writeOfflineEnvelope(
     buildCircleDetailSnapshotStoreKey(circleId, viewerProfileId),
     snapshot,

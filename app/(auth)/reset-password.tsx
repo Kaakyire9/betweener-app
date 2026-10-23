@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabase";
+import { signOutSupabaseSession } from "@/lib/auth/sign-out-session";
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
@@ -29,7 +30,7 @@ export default function ResetPasswordScreen() {
       setError(error.message);
       return;
     }
-    await supabase.auth.signOut();
+    await signOutSupabaseSession({ reason: 'password_recovery_complete' });
     setLoading(false);
     setMessage("Password reset successful! You can now log in.");
     setTimeout(() => router.replace("/(auth)/login"), 1500);

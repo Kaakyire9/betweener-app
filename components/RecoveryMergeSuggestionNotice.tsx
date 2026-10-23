@@ -1,6 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as AppleAuthentication from "expo-apple-authentication";
 import { makeRedirectUri } from "expo-auth-session";
+import { APP_SCHEME } from "@/config/app-identity";
 import { LinearGradient } from "expo-linear-gradient";
 import React, { useCallback, useEffect, useState } from "react";
 import * as Linking from "expo-linking";
@@ -131,7 +132,7 @@ export default function RecoveryMergeSuggestionNotice() {
   const getOAuthRedirectUrl = useCallback(
     () =>
       makeRedirectUri({
-        scheme: "betweenerapp",
+        scheme: APP_SCHEME,
         path: "auth/callback",
       }),
     [],

@@ -1,4 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { APP_SCHEME, APP_WEB_ORIGIN } from "@/config/app-identity";
+import { getSignInMethodScope } from "@/lib/auth/last-sign-in-method";
 
 export const LAST_DEEP_LINK_URL_KEY = "last_deep_link_url";
 export const LEGACY_AUTH_PENDING_TOKENS_KEY = "auth_pending_tokens_v1";
@@ -9,19 +11,25 @@ const AUTH_PENDING_FLOW_KEY = "auth_pending_flow_v1";
 type PendingAuthFlow = {
   createdAt: number;
   purpose: "oauth" | "email_link" | "email_signup" | "password_reset";
+  attemptId?: string;
+  scope: string;
 };
 
 type PendingAuthProvider = {
   createdAt: number;
   provider: "google" | "apple";
+  attemptId?: string;
+  scope: string;
 };
 
 type PendingIdentityLink = {
   createdAt: number;
   provider: "google" | "apple";
+  scope: string;
 };
 
 const DEV_CALLBACK_HOSTS = new Set(["localhost", "127.0.0.1"]);
+const APP_WEB_HOST = new URL(APP_WEB_ORIGIN).hostname.toLowerCase();
 const AUTH_PENDING_FLOW_TTLS: Record<PendingAuthFlow["purpose"], number> = {
   oauth: 15 * 60 * 1000,
   email_link: 4 * 60 * 60 * 1000,
@@ -43,13 +51,22 @@ const parseFreshPendingAuthProvider = async (): Promise<PendingAuthProvider | nu
         ? parsed.provider
         : null;
 
-    const isFresh = createdAt > 0 && provider && Date.now() - createdAt <= AUTH_PENDING_PROVIDER_TTL_MS;
+    const isFresh =
+      createdAt > 0 &&
+      provider &&
+      parsed.scope === getSignInMethodScope() &&
+      Date.now() - createdAt <= AUTH_PENDING_PROVIDER_TTL_MS;
     if (!isFresh || !provider) {
       await AsyncStorage.removeItem(AUTH_PENDING_PROVIDER_KEY);
       return null;
     }
 
-    return { createdAt, provider };
+    return {
+      createdAt,
+      provider,
+      scope: parsed.scope,
+      ...(typeof parsed.attemptId === "string" ? { attemptId: parsed.attemptId } : {}),
+    };
   } catch {
     return null;
   }
@@ -70,13 +87,14 @@ const parseFreshPendingIdentityLink = async (): Promise<PendingIdentityLink | nu
     const isFresh =
       createdAt > 0 &&
       provider &&
+      parsed.scope === getSignInMethodScope() &&
       Date.now() - createdAt <= AUTH_PENDING_IDENTITY_LINK_TTL_MS;
     if (!isFresh || !provider) {
       await AsyncStorage.removeItem(AUTH_PENDING_IDENTITY_LINK_KEY);
       return null;
     }
 
-    return { createdAt, provider };
+    return { createdAt, provider, scope: parsed.scope };
   } catch {
     return null;
   }
@@ -98,14 +116,23 @@ const parseFreshPendingAuthFlow = async (): Promise<PendingAuthFlow | null> => {
         ? parsed.purpose
         : null;
     const ttlMs = purpose ? AUTH_PENDING_FLOW_TTLS[purpose] : 0;
-    const isFresh = createdAt > 0 && ttlMs > 0 && Date.now() - createdAt <= ttlMs;
+    const isFresh =
+      createdAt > 0 &&
+      ttlMs > 0 &&
+      parsed.scope === getSignInMethodScope() &&
+      Date.now() - createdAt <= ttlMs;
 
     if (!isFresh || !purpose) {
       await AsyncStorage.removeItem(AUTH_PENDING_FLOW_KEY);
       return null;
     }
 
-    return { createdAt, purpose };
+    return {
+      createdAt,
+      purpose,
+      scope: parsed.scope,
+      ...(typeof parsed.attemptId === "string" ? { attemptId: parsed.attemptId } : {}),
+    };
   } catch {
     return null;
   }
@@ -126,11 +153,11 @@ export const isTrustedAuthCallbackUrl = (url: string) => {
     const host = parsed.hostname.toLowerCase();
     const path = parsed.pathname.replace(/^\/+|\/+$/g, "").toLowerCase();
 
-    if (scheme === "https" && host === "getbetweener.com" && path === "auth/callback") {
+    if (scheme === "https" && host === APP_WEB_HOST && path === "auth/callback") {
       return true;
     }
 
-    if (scheme === "betweenerapp" && host === "auth" && path === "callback") {
+    if (scheme === APP_SCHEME && host === "auth" && path === "callback") {
       return true;
     }
 
@@ -153,11 +180,17 @@ export const isTrustedAuthCallbackUrl = (url: string) => {
 };
 
 export const markPendingAuthFlow = async (
-  purpose: PendingAuthFlow["purpose"]
+  purpose: PendingAuthFlow["purpose"],
+  attemptId?: string,
 ) => {
   await AsyncStorage.setItem(
     AUTH_PENDING_FLOW_KEY,
-    JSON.stringify({ createdAt: Date.now(), purpose } satisfies PendingAuthFlow)
+    JSON.stringify({
+      createdAt: Date.now(),
+      purpose,
+      scope: getSignInMethodScope(),
+      ...(attemptId ? { attemptId } : {}),
+    } satisfies PendingAuthFlow)
   );
 };
 
@@ -174,11 +207,17 @@ export const clearPendingAuthFlow = async () => {
 };
 
 export const markPendingAuthProvider = async (
-  provider: PendingAuthProvider["provider"]
+  provider: PendingAuthProvider["provider"],
+  attemptId?: string,
 ) => {
   await AsyncStorage.setItem(
     AUTH_PENDING_PROVIDER_KEY,
-    JSON.stringify({ createdAt: Date.now(), provider } satisfies PendingAuthProvider)
+    JSON.stringify({
+      createdAt: Date.now(),
+      provider,
+      scope: getSignInMethodScope(),
+      ...(attemptId ? { attemptId } : {}),
+    } satisfies PendingAuthProvider)
   );
 };
 
@@ -195,7 +234,11 @@ export const markPendingIdentityLink = async (
 ) => {
   await AsyncStorage.setItem(
     AUTH_PENDING_IDENTITY_LINK_KEY,
-    JSON.stringify({ createdAt: Date.now(), provider } satisfies PendingIdentityLink)
+    JSON.stringify({
+      createdAt: Date.now(),
+      provider,
+      scope: getSignInMethodScope(),
+    } satisfies PendingIdentityLink)
   );
 };
 

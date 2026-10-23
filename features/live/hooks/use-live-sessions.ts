@@ -81,6 +81,13 @@ export const useLiveSessions = () => {
     void refresh({ attemptRecovery: false });
   }, [authUnavailable, refresh]);
 
+  useEffect(() => {
+    if (authUnavailable) return;
+    return liveRepository.subscribeLiveDiscovery(() => {
+      void refresh({ attemptRecovery: false });
+    });
+  }, [authUnavailable, refresh]);
+
   return {
     sessions,
     loading,

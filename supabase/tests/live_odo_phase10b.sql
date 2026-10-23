@@ -1,6 +1,8 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
+set local role postgres;
+set search_path = public, extensions, pg_catalog;
 select plan(65);
 
 select has_table('public', 'live_odo_copilot_suggestions', 'Copilot suggestions are installed');
@@ -10,7 +12,10 @@ select has_column('public', 'live_odo_configuration', 'transition_copy_enabled',
 select ok((select relrowsecurity from pg_class where oid = 'public.live_odo_copilot_suggestions'::regclass), 'suggestions have RLS');
 select ok(not has_table_privilege('authenticated', 'public.live_odo_copilot_suggestions', 'INSERT,UPDATE,DELETE'), 'authenticated cannot directly mutate suggestions');
 select ok(not has_table_privilege('service_role', 'public.live_odo_copilot_suggestions', 'INSERT,UPDATE,DELETE'), 'service role cannot directly mutate suggestions');
-select ok((select convalidated from pg_constraint where conname = 'live_odo_phase10b_human_loop_invariant'), 'human-loop configuration invariant is validated');
+select ok(coalesce((select convalidated from pg_constraint
+  where conrelid = 'public.live_odo_configuration'::regclass
+    and conname = 'live_odo_phase10e_authority_invariant'), false),
+  'current human-loop configuration authority invariant is validated');
 select ok((select task_call_limits_per_minute ?& array[
   'conversation_spark','audience_pulse','pair_narration','scene_suggestion',
   'transition_copy','session_welcome','session_closing'
@@ -43,6 +48,7 @@ insert into auth.users(id, email) values
   ('8a000000-0000-4000-8000-000000000001', 'copilot-host@example.test'),
   ('8a000000-0000-4000-8000-000000000002', 'copilot-guest@example.test'),
   ('8a000000-0000-4000-8000-000000000003', 'copilot-guest-two@example.test');
+select set_config('request.jwt.claim.role', 'service_role', true);
 select set_config('app.profile_guard_write', 'on', true);
 insert into public.profiles(
   id, user_id, full_name, age, gender, profile_completed, verification_level,

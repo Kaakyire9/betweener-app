@@ -5,6 +5,7 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, TouchableOpa
 import { LinearGradient } from "expo-linear-gradient";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { clearPendingAuthFlow, markPendingAuthFlow } from "@/lib/auth-callback";
+import { APP_WEB_AUTH_CALLBACK_URL } from "@/config/app-identity";
 
 export default function ForgotPasswordScreen() {
   const [email, setEmail] = useState("");
@@ -25,7 +26,7 @@ export default function ForgotPasswordScreen() {
     }
     await markPendingAuthFlow("password_reset");
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: "https://getbetweener.com/auth/callback",
+      redirectTo: APP_WEB_AUTH_CALLBACK_URL,
     });
     setLoading(false);
     if (error) {

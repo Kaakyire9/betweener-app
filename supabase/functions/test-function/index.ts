@@ -3,6 +3,7 @@
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { corsHeaders } from '../_shared/cors.ts'
+import { getSupabaseAdminKey } from '../_shared/supabase-admin-key.ts'
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -21,7 +22,7 @@ serve(async (req) => {
           hasTwilioSid: !!Deno.env.get('TWILIO_ACCOUNT_SID'),
           hasTwilioToken: !!Deno.env.get('TWILIO_AUTH_TOKEN'),
           hasSupabaseUrl: !!Deno.env.get('SUPABASE_URL'),
-          hasServiceKey: !!Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+          hasAdminCredential: !!getSupabaseAdminKey()
         }
       }),
       { 

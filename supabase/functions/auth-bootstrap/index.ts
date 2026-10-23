@@ -7,6 +7,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
+import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
 
 type BootstrapRequest = {
   signupSessionId?: string | null;
@@ -30,7 +31,7 @@ serve(async (req) => {
   try {
     console.log("[auth-bootstrap] start", { method: req.method, url: req.url });
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
-    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const serviceRoleKey = getSupabaseAdminKey();
     if (!supabaseUrl || !serviceRoleKey) {
       console.log("[auth-bootstrap] missing env", {
         hasUrl: !!supabaseUrl,

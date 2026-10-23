@@ -27,6 +27,7 @@ type Props = {
   hasCoverImage: boolean;
   kindLabel: string;
   scopeLabel: string;
+  accessLabel?: string | null;
   locationInsight?: string | null;
   memberCount: number;
   members: readonly CircleDetailHeroMember[];
@@ -48,6 +49,7 @@ export default function CircleDetailHero({
   hasCoverImage,
   kindLabel,
   scopeLabel,
+  accessLabel,
   locationInsight,
   memberCount,
   members,
@@ -116,6 +118,12 @@ export default function CircleDetailHero({
             <MaterialCommunityIcons name="earth" size={13} color="#A7DDD2" />
             <Text style={styles.badgeText}>{scopeLabel}</Text>
           </View>
+          {accessLabel ? (
+            <View style={styles.badge}>
+              <MaterialCommunityIcons name={accessLabel === 'Invite only' ? 'lock-outline' : 'account-check-outline'} size={13} color="#A7DDD2" />
+              <Text style={styles.badgeText}>{accessLabel}</Text>
+            </View>
+          ) : null}
         </View>
 
         <View style={styles.identityCopy}>

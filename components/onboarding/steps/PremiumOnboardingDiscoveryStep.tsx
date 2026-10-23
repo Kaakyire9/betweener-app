@@ -208,6 +208,7 @@ export function PremiumOnboardingDiscoveryStep({
           <TextInput
             value={form.rootsNote}
             onChangeText={(text) => updateForm("rootsNote", text)}
+            maxLength={160}
             placeholder="Tell us more, if you'd like"
             placeholderTextColor={styles.tokens.muted.color}
             style={[styles.input, styles.inlineInput, errors.rootsNote && styles.inputError]}
@@ -281,13 +282,49 @@ export function PremiumOnboardingDiscoveryStep({
           {form.tribe === "Other" ? (
             <TextInput
               value={customTribe}
-              onChangeText={setCustomTribe}
+              onChangeText={(value) => setCustomTribe(value.slice(0, 80))}
+              maxLength={80}
               placeholder="Add your cultural background"
               placeholderTextColor={styles.tokens.muted.color}
               style={[styles.input, styles.inlineInput, errors.tribe && styles.inputError]}
             />
           ) : null}
           {renderError("tribe")}
+          <Text style={[styles.fieldLabel, styles.spacedLabel]}>Who can see this?</Text>
+          <View style={styles.stackChoices}>
+            {rootsVisibility.map((option) => (
+              <Pressable
+                key={option.value}
+                style={[styles.storyOption, form.rootsVisibility === option.value && styles.storyOptionSelected]}
+                onPress={() => setOption("rootsVisibility", option.value)}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: form.rootsVisibility === option.value }}
+              >
+                <View style={styles.storyOptionLead}>
+                  <View style={[styles.storyOptionIconWrap, form.rootsVisibility === option.value && styles.storyOptionIconWrapSelected]}>
+                    <MaterialCommunityIcons
+                      name={option.icon as any}
+                      size={17}
+                      color={form.rootsVisibility === option.value ? styles.tokens.accent.color : styles.tokens.muted.color}
+                    />
+                  </View>
+                  <View style={styles.storyOptionBody}>
+                    <Text style={[styles.storyOptionText, form.rootsVisibility === option.value && styles.storyOptionTextSelected]}>
+                      {option.label}
+                    </Text>
+                    <Text style={[styles.storyOptionSubtext, form.rootsVisibility === option.value && styles.storyOptionSubtextSelected]}>
+                      {option.subtitle}
+                    </Text>
+                  </View>
+                </View>
+                <MaterialCommunityIcons
+                  name={form.rootsVisibility === option.value ? "radiobox-marked" : "radiobox-blank"}
+                  size={20}
+                  color={form.rootsVisibility === option.value ? styles.tokens.accent.color : styles.tokens.muted.color}
+                />
+              </Pressable>
+            ))}
+          </View>
         </View>
       );
     case "values":

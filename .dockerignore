@@ -1,0 +1,16 @@
+.git
+.expo
+.agents
+.codex
+.aws
+node_modules
+**/node_modules
+**/dist
+**/.cache
+coverage
+tmp
+android/.gradle
+android/app/build
+ios/Pods
+ios/build
+*.log

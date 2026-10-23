@@ -8,11 +8,14 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
+import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
+import { getSupabasePublicApiKey } from "../_shared/supabase-public-key.ts";
 import {
   isUuid,
   normalizeString,
   syncUserSubscription,
 } from "../_shared/revenuecat-subscription-sync.ts";
+import { resolveRevenueCatEventEnvironment } from "../_shared/revenuecat-event.ts";
 
 type BackfillPayload = {
   targetUserId?: string | null;
@@ -33,9 +36,13 @@ serve(async (req) => {
 
   try {
     const supabaseUrl = (Deno.env.get("SUPABASE_URL") || "").trim();
-    const anonKey = (Deno.env.get("SUPABASE_ANON_KEY") || "").trim();
-    const serviceRoleKey = (Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "").trim();
-    const revenueCatApiKey = (Deno.env.get("REVENUECAT_SECRET_API_KEY") || "").trim();
+    const anonKey = getSupabasePublicApiKey();
+    const serviceRoleKey = getSupabaseAdminKey();
+    const revenueCatApiKey = (
+      Deno.env.get("REVENUECAT_V1_SECRET_API_KEY") ||
+      Deno.env.get("REVENUECAT_SECRET_API_KEY") ||
+      ""
+    ).trim();
     const authHeader = req.headers.get("Authorization") || "";
 
     if (!supabaseUrl || !anonKey || !serviceRoleKey || !revenueCatApiKey) {
@@ -76,6 +83,7 @@ serve(async (req) => {
     const targetUserId = normalizeString(payload.targetUserId);
     const revenueCatAppUserId = normalizeString(payload.revenueCatAppUserId) || targetUserId;
     const environment = normalizeString(payload.environment);
+    const environmentResolution = resolveRevenueCatEventEnvironment({ environment });
     const reason = normalizeString(payload.reason) || "manual_backfill";
 
     if (!targetUserId || !isUuid(targetUserId)) {
@@ -90,7 +98,7 @@ serve(async (req) => {
       service,
       revenueCatApiKey,
       targetUserId,
-      environment,
+      environmentResolution,
       { revenueCatAppUserId },
     );
 
@@ -106,7 +114,7 @@ serve(async (req) => {
       aliases: [revenueCatAppUserId],
       transferred_from: [],
       transferred_to: [],
-      environment,
+      environment: environmentResolution.environment,
       event_timestamp_ms: Date.now(),
       processing_status: "processed",
       synced_user_ids: syncedUserIds,

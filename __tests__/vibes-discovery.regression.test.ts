@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { getAgeRangeForPreset, resolveAgePresetMode } from '../lib/vibes/age-range-presets.ts';
-import { applyInboundInterestLift, buildLocationSearchText, rerankVibesSegment } from '../lib/vibes/discovery-logic.ts';
+import { applyInboundInterestLift, buildLocationSearchText, isActiveWithinWindow, isAgeWithinRange, rerankVibesSegment } from '../lib/vibes/discovery-logic.ts';
 import { derivePreviewTone, deriveRoomSummary, hasAnyDraftFilters } from '../lib/vibes/vibes-filter-preview.ts';
 import { getLocationConnectionInsight } from '../lib/location/location-intelligence.ts';
 import { buildDistanceDisplay, buildNearbyLocalityLabel } from '../lib/location/distance-display.ts';
@@ -378,4 +378,17 @@ test('saved baseline resolves to open mode and manual tightening resolves to cus
     }),
     'custom',
   );
+});
+
+test('age filtering excludes missing and out-of-range ages', () => {
+  assert.equal(isAgeWithinRange(31, 28, 34), true);
+  assert.equal(isAgeWithinRange(40, 28, 34), false);
+  assert.equal(isAgeWithinRange(null, 28, 34), false);
+});
+
+test('Active Now removes stale cached profiles using the selected activity window', () => {
+  const fresh = new Date(Date.now() - 5 * 60_000).toISOString();
+  const stale = new Date(Date.now() - 40 * 60_000).toISOString();
+  assert.equal(isActiveWithinWindow(fresh, 15), true);
+  assert.equal(isActiveWithinWindow(stale, 15), false);
 });

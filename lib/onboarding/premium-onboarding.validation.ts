@@ -1,5 +1,6 @@
 import { isValidGhanaCityTownValue } from "../location/ghana-locality-shared.ts";
 import { resolveOtherValue } from "../profile/other-option.ts";
+import { moderatePublicProfileText } from "../profile-guard/index.ts";
 
 import type {
   PremiumOnboardingFormState,
@@ -15,6 +16,12 @@ type ValidatePremiumOnboardingStepArgs = {
   customTribe: string;
   hasImage: boolean;
 };
+
+const PUBLIC_PROFILE_TEXT_ERROR =
+  "Remove contact details, external links, payment requests, or promotional content to continue.";
+
+const isAllowedPublicProfileText = (value: string) =>
+  moderatePublicProfileText(value).allowed;
 
 export function validatePremiumOnboardingStep({
   step,
@@ -34,19 +41,34 @@ export function validatePremiumOnboardingStep({
 
   if (step === "name" && !form.fullName.trim()) {
     nextErrors.fullName = "Add the name you'd like people to know you by.";
+  } else if (step === "name" && form.fullName.trim().length > 80) {
+    nextErrors.fullName = "Keep your name to 80 characters or fewer.";
+  } else if (step === "name" && !isAllowedPublicProfileText(form.fullName)) {
+    nextErrors.fullName = PUBLIC_PROFILE_TEXT_ERROR;
   }
 
   if (step === "about") {
-    if (!form.age || Number(form.age) < 18) nextErrors.age = "You must be at least 18.";
+    const age = Number(form.age);
+    if (!Number.isInteger(age) || age < 18 || age > 99) {
+      nextErrors.age = "Enter an age from 18 to 99.";
+    }
     if (!form.gender) nextErrors.gender = "Choose an option to continue.";
   }
 
   if (step === "occupation" && !occupation) {
     nextErrors.occupation = "Choose what fits best, or add your own.";
+  } else if (step === "occupation" && occupation.length > 80) {
+    nextErrors.occupation = "Keep your occupation to 80 characters or fewer.";
+  } else if (step === "occupation" && !isAllowedPublicProfileText(occupation)) {
+    nextErrors.occupation = PUBLIC_PROFILE_TEXT_ERROR;
   }
 
   if (step === "bio" && !form.bio.trim()) {
     nextErrors.bio = "Add a few words that feel like you.";
+  } else if (step === "bio" && form.bio.trim().length > 300) {
+    nextErrors.bio = "Keep your introduction to 300 characters or fewer.";
+  } else if (step === "bio" && !isAllowedPublicProfileText(form.bio)) {
+    nextErrors.bio = PUBLIC_PROFILE_TEXT_ERROR;
   }
 
   if (step === "photo" && !hasImage) {
@@ -90,14 +112,16 @@ export function validatePremiumOnboardingStep({
       }
       if (form.roots.includes("Other") && !form.rootsNote.trim()) {
         nextErrors.rootsNote = "Tell us how you identify if you choose Other.";
+      } else if (form.rootsNote.trim().length > 160) {
+        nextErrors.rootsNote = "Keep your roots note to 160 characters or fewer.";
+      } else if (form.rootsNote.trim() && !isAllowedPublicProfileText(form.rootsNote)) {
+        nextErrors.rootsNote = PUBLIC_PROFILE_TEXT_ERROR;
       }
-    } else if (variant === "global" && !tribe) {
-      nextErrors.tribe = "Choose a cultural identity, or add your own.";
+    } else if (variant === "global" && tribe.length > 80) {
+      nextErrors.tribe = "Keep your cultural identity to 80 characters or fewer.";
+    } else if (variant === "global" && tribe && !isAllowedPublicProfileText(tribe)) {
+      nextErrors.tribe = PUBLIC_PROFILE_TEXT_ERROR;
     }
-  }
-
-  if (step === "values" && !form.religion) {
-    nextErrors.religion = "Choose what feels accurate for you.";
   }
 
   if (step === "interests" && form.interests.length < 3) {

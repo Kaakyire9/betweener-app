@@ -1,7 +1,6 @@
 import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
-import { useAuth } from "@/lib/auth-context";
-import { canAccessAdminTools } from "@/lib/internal-tools";
+import { useAdminAccess } from "@/lib/admin/admin-access";
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Redirect, router, useLocalSearchParams } from "expo-router";
@@ -90,8 +89,8 @@ const formatDateTime = (value?: string | null) => {
 
 export default function AdminRecoveryRequestScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
-  const { user } = useAuth();
-  const isAllowed = canAccessAdminTools(user?.email ?? null);
+  const adminAccess = useAdminAccess();
+  const isAllowed = adminAccess.isAdmin && adminAccess.can('accounts');
   const colorScheme = useColorScheme();
   const resolvedScheme = (colorScheme ?? "light") === "dark" ? "dark" : "light";
   const theme = Colors[resolvedScheme];
@@ -117,6 +116,7 @@ export default function AdminRecoveryRequestScreen() {
   const [mergeDraftError, setMergeDraftError] = useState<string | null>(null);
 
   const loadRequest = useCallback(async () => {
+    if (adminAccess.loading) return;
     if (!requestId || !isAllowed) {
       setLoading(false);
       return;
@@ -152,7 +152,7 @@ export default function AdminRecoveryRequestScreen() {
     setReviewNotesDraft(row?.review_notes || "");
     setLoading(false);
     setRefreshing(false);
-  }, [isAllowed, requestId]);
+  }, [adminAccess.loading, isAllowed, requestId]);
 
   useEffect(() => {
     void loadRequest();
@@ -275,6 +275,10 @@ export default function AdminRecoveryRequestScreen() {
     mergeDraftTargetUserId,
     requestRow,
   ]);
+
+  if (adminAccess.loading) {
+    return <SafeAreaView style={styles.container}><View style={styles.centerState}><ActivityIndicator color={theme.tint} /></View></SafeAreaView>;
+  }
 
   if (!isAllowed) {
     return <Redirect href="/(tabs)/profile" />;

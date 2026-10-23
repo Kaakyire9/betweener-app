@@ -1,8 +1,11 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
+set local role postgres;
+set search_path = public, extensions, pg_catalog;
 select plan(55);
 
+select set_config('request.jwt.claim.role', 'service_role', true);
 select set_config('app.profile_guard_write', 'on', true);
 insert into auth.users(id, email) values
   ('91000000-0000-4000-8000-000000000001', 'guard-owner@example.test'),
@@ -122,7 +125,7 @@ select results_eq(
   $$ values (0::bigint) $$,
   'anon direct update affects no rows'
 );
-reset role;
+set local role postgres;
 
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '91000000-0000-4000-8000-000000000001', true);
@@ -163,7 +166,7 @@ select throws_ok(
   $$ select public.rpc_resolve_profile_guard_review('92000000-0000-4000-8000-000000000003', 'CLEAR', 'not-admin') $$,
   '42501', 'ADMIN_REQUIRED', 'non-admin cannot resolve review'
 );
-reset role;
+set local role postgres;
 
 set local role service_role;
 select set_config('request.jwt.claim.role', 'service_role', true);
@@ -279,21 +282,24 @@ select is(
   'PROFILE_CONTENT_NOT_ALLOWED',
   'unsafe guarded update receives a moderation decision'
 );
-reset role;
+set local role postgres;
 
 select ok(not public.can_profile_surface_publicly('92000000-0000-4000-8000-000000000001'), 'ACTION_REQUIRED or RESTRICTED profile is absent publicly');
 select ok(not public.can_profile_surface_publicly('92000000-0000-4000-8000-000000000003'), 'REVIEW_REQUIRED profile is absent publicly');
 
+select set_config('request.jwt.claim.role', 'service_role', true);
 select set_config('app.profile_guard_write', 'on', true);
 update public.profiles set profile_moderation_state = 'ACTION_REQUIRED', discoverable_in_vibes = false
 where id = '92000000-0000-4000-8000-000000000003';
 select set_config('app.profile_guard_write', 'off', true);
 select ok(not public.can_profile_surface_publicly('92000000-0000-4000-8000-000000000003'), 'ACTION_REQUIRED profile is absent publicly');
+select set_config('request.jwt.claim.role', 'service_role', true);
 select set_config('app.profile_guard_write', 'on', true);
 update public.profiles set profile_moderation_state = 'REVIEW_REQUIRED', discoverable_in_vibes = false
 where id = '92000000-0000-4000-8000-000000000003';
 select set_config('app.profile_guard_write', 'off', true);
 
+select set_config('request.jwt.claim.role', 'service_role', true);
 select set_config('app.profile_guard_write', 'on', true);
 update public.profiles set profile_moderation_state = 'SUSPENDED', discoverable_in_vibes = false
 where id = '92000000-0000-4000-8000-000000000002';
@@ -309,7 +315,7 @@ select is(
   true,
   'safe correction is accepted'
 );
-reset role;
+set local role postgres;
 select is((select profile_moderation_state from public.profiles where id = '92000000-0000-4000-8000-000000000001'), 'CLEAR', 'safe correction clears deterministic action state');
 
 set local role service_role;
@@ -321,7 +327,7 @@ select is(
   true,
   'safe correction can be stored while review is pending'
 );
-reset role;
+set local role postgres;
 select is((select profile_moderation_state from public.profiles where id = '92000000-0000-4000-8000-000000000003'), 'REVIEW_REQUIRED', 'safe correction does not clear REVIEW_REQUIRED');
 
 set local role service_role;
@@ -333,7 +339,7 @@ select lives_ok(
   ) $$,
   'service role can record an authorized semantic management action'
 );
-reset role;
+set local role postgres;
 
 set local role service_role;
 select set_config('request.jwt.claim.role', 'service_role', true);
@@ -351,7 +357,7 @@ select is(
   'RESTRICT_PROFILE',
   'repeat enforcement preserves the original remediation lifecycle'
 );
-reset role;
+set local role postgres;
 select is(
   (select profile_moderation_state from public.profiles
    where id = '92000000-0000-4000-8000-000000000004'),
@@ -385,7 +391,7 @@ select is(
   true,
   'legacy profile can submit a safe correction'
 );
-reset role;
+set local role postgres;
 select is(
   (select profile_moderation_state from public.profiles
    where id = '92000000-0000-4000-8000-000000000004'),
