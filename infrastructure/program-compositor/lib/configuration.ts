@@ -3,11 +3,11 @@ export const STAGING_REGION = 'eu-north-1';
 export const STAGING_ENVIRONMENT = 'staging';
 
 export const RELEASE = Object.freeze({
-  sourceRevision: '5b346ea8e9fb43d6f7cc4403b73016e7fd1011d4',
-  buildIdentifier: 'adaptive-stage-m1-secure-5b346ea',
+  sourceRevision: '98c3013781113ff4b95a580b090f3358eb9deb70',
+  buildIdentifier: 'adaptive-stage-m1-secure-98c3013',
   manifestVersion: 'adaptive-stage-v2.0.0-m1',
   resolverVersion: 'layout-plan-v2.0.0-m1',
-  localImageDigest: 'sha256:f8864e66b34b69fd3e2903bd21400c7fe206c0eb64a0340a4c135cd39a9511d9',
+  localImageDigest: 'sha256:d358cec4887f030b6735fab9f9c90e48146b46d2716e84ec8dbf81aa88aa4736',
 });
 
 export const RESOURCE_NAMES = Object.freeze({

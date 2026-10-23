@@ -23,9 +23,10 @@ The old image remains immutable and is the rollback artifact.
 | Node | 24.22.1 | 24.22.1 |
 | Browser | Debian Chromium 155.0.8059.79 | Pinned Chrome for Testing 156.0.8078.47 |
 | FFmpeg | Debian 5.1.9, full feature set | Pinned FFmpeg 9.0.2, allowlisted feature set |
-| Image digest | `sha256:373029b26a8d851c761c8aaa725fb2db9bcbd713621630b9f8033eb7b76e180d` | `sha256:f8864e66b34b69fd3e2903bd21400c7fe206c0eb64a0340a4c135cd39a9511d9` |
-| Runtime manifest | `sha256:35f68b89f1d3f03e82fd15c91630984d2dccdda0ff2a3ac92bae7c65c4edb443` | `sha256:9ef8d4b61a96428786074e48853c77703931936e3b4db039aa7c82abfcfa419d` |
-| Source revision | `5812bc9e6b93733e9f543c5e2003e1660f17a0d8` | `5b346ea8e9fb43d6f7cc4403b73016e7fd1011d4` |
+| Image digest | `sha256:373029b26a8d851c761c8aaa725fb2db9bcbd713621630b9f8033eb7b76e180d` | `sha256:d358cec4887f030b6735fab9f9c90e48146b46d2716e84ec8dbf81aa88aa4736` |
+| Runtime manifest | `sha256:35f68b89f1d3f03e82fd15c91630984d2dccdda0ff2a3ac92bae7c65c4edb443` | `sha256:fde55b45dcf20ecd1b3e6db9edc1a692f167f95d162cc883577db12edc76c0c1` |
+| Compressed runtime size | `450,217,320` bytes | `403,749,029` bytes |
+| Source revision | `5812bc9e6b93733e9f543c5e2003e1660f17a0d8` | `98c3013781113ff4b95a580b090f3358eb9deb70` |
 
 The old runtime installed Debian `chromium`, `ffmpeg` and full `pulseaudio`.
 That pulled broad decoder, demuxer and codec graphs including librist/cJSON,
@@ -129,7 +130,7 @@ result blocks deployment.
 ## Hardened-image ECR disposition
 
 ECR Basic scanning completed on 23 October 2026 for runtime manifest
-`sha256:9ef8d4b61a96428786074e48853c77703931936e3b4db039aa7c82abfcfa419d`:
+`sha256:fde55b45dcf20ecd1b3e6db9edc1a692f167f95d162cc883577db12edc76c0c1`:
 
 - Critical: `0`
 - High: `9`
