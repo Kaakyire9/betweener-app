@@ -48,7 +48,25 @@ void test('runtime defaults to zero, uses one immutable AMD64 task, and permits 
       CpuArchitecture: 'X86_64',
       OperatingSystemFamily: 'LINUX',
     },
-    ContainerDefinitions: [
+    ContainerDefinitions: Match.arrayWith([
+      Match.objectLike({
+        Name: 'runtime-volume-initializer',
+        Essential: false,
+        User: '0:0',
+        ReadonlyRootFilesystem: true,
+        LinuxParameters: {
+          Capabilities: { Drop: ['ALL'] },
+          InitProcessEnabled: true,
+        },
+        Command: ['sh', '-c', 'chmod 1777 /tmp'],
+        MountPoints: [
+          {
+            ContainerPath: '/tmp',
+            ReadOnly: false,
+            SourceVolume: 'runtime-tmp',
+          },
+        ],
+      }),
       Match.objectLike({
         Name: 'program-compositor',
         Essential: true,
@@ -66,6 +84,12 @@ void test('runtime defaults to zero, uses one immutable AMD64 task, and permits 
           },
         ],
         StopTimeout: 60,
+        DependsOn: [
+          {
+            Condition: 'SUCCESS',
+            ContainerName: 'runtime-volume-initializer',
+          },
+        ],
         HealthCheck: Match.objectLike({
           Interval: 15,
           Timeout: 3,
@@ -82,7 +106,7 @@ void test('runtime defaults to zero, uses one immutable AMD64 task, and permits 
         ]),
         Secrets: Match.arrayWith([Match.objectLike({ Name: 'BROADCAST_COMPOSITOR_WORKER_TOKEN' })]),
       }),
-    ],
+    ]),
   });
   template.hasResourceProperties('AWS::ECS::Service', {
     ServiceName: RESOURCE_NAMES.service,

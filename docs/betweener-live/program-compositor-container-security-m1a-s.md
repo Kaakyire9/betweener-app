@@ -105,6 +105,9 @@ runtime dependency. All findings existed in the old final runtime image.
   decoding are absent
 - non-root `1000:1000`, read-only root filesystem, all Linux capabilities
   dropped, init process enabled, only `/tmp` writable
+- a non-essential, capability-free root initializer changes only the empty
+  Fargate `/tmp` volume mode to `1777`, exits successfully, and receives no
+  application secret; the long-running compositor remains UID/GID `1000:1000`
 - no inbound security-group rules and ECS Exec disabled
 - source SHA, build identifier, manifest version, resolver version and native
   component versions embedded in image metadata/runtime environment

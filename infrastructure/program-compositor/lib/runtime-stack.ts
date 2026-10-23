@@ -142,11 +142,33 @@ export class ProgramCompositorRuntimeStack extends Stack {
     });
     linuxParameters.dropCapabilities(ecs.Capability.ALL);
 
+    const compositorImage = ecs.ContainerImage.fromRegistry(
+      `${repository.repositoryUri}@${imageDigest.valueAsString}`,
+    );
+    const runtimeVolumeInitializer = taskDefinition.addContainer('RuntimeVolumeInitializer', {
+      containerName: 'runtime-volume-initializer',
+      image: compositorImage,
+      essential: false,
+      user: '0:0',
+      readonlyRootFilesystem: true,
+      linuxParameters,
+      command: ['sh', '-c', 'chmod 1777 /tmp'],
+      logging: ecs.LogDrivers.awsLogs({
+        logGroup: applicationLogs,
+        streamPrefix: 'runtime-volume-initializer',
+        mode: ecs.AwsLogDriverMode.NON_BLOCKING,
+        maxBufferSize: Size.mebibytes(1),
+      }),
+    });
+    runtimeVolumeInitializer.addMountPoints({
+      sourceVolume: 'runtime-tmp',
+      containerPath: '/tmp',
+      readOnly: false,
+    });
+
     const container = taskDefinition.addContainer('ProgramCompositor', {
       containerName: 'program-compositor',
-      image: ecs.ContainerImage.fromRegistry(
-        `${repository.repositoryUri}@${imageDigest.valueAsString}`,
-      ),
+      image: compositorImage,
       essential: true,
       user: '1000:1000',
       readonlyRootFilesystem: true,
@@ -188,6 +210,10 @@ export class ProgramCompositorRuntimeStack extends Stack {
       sourceVolume: 'runtime-tmp',
       containerPath: '/tmp',
       readOnly: false,
+    });
+    container.addContainerDependencies({
+      container: runtimeVolumeInitializer,
+      condition: ecs.ContainerDependencyCondition.SUCCESS,
     });
 
     const securityGroup = new ec2.SecurityGroup(this, 'TaskSecurityGroup', {
