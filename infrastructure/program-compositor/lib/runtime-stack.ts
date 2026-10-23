@@ -56,13 +56,6 @@ export class ProgramCompositorRuntimeStack extends Stack {
       maxValue: 1,
       description: 'Zero when idle; one only during an approved Milestone 1A canary.',
     });
-    const imageDigest = new CfnParameter(this, 'CompositorImageDigest', {
-      type: 'String',
-      default: RELEASE.localImageDigest,
-      allowedPattern: '^sha256:[0-9a-f]{64}$',
-      description: 'Immutable ECR manifest digest for the verified compositor release.',
-    });
-
     const vpc =
       props.vpc ??
       ec2.Vpc.fromLookup(this, 'DefaultVpc', {
@@ -143,7 +136,7 @@ export class ProgramCompositorRuntimeStack extends Stack {
     linuxParameters.dropCapabilities(ecs.Capability.ALL);
 
     const compositorImage = ecs.ContainerImage.fromRegistry(
-      `${repository.repositoryUri}@${imageDigest.valueAsString}`,
+      `${repository.repositoryUri}@${RELEASE.localImageDigest}`,
     );
     const runtimeVolumeInitializer = taskDefinition.addContainer('RuntimeVolumeInitializer', {
       containerName: 'runtime-volume-initializer',
@@ -296,6 +289,7 @@ export class ProgramCompositorRuntimeStack extends Stack {
     new CfnOutput(this, 'ClusterName', { value: cluster.clusterName });
     new CfnOutput(this, 'ServiceName', { value: service.serviceName });
     new CfnOutput(this, 'TaskDefinitionArn', { value: taskDefinition.taskDefinitionArn });
+    new CfnOutput(this, 'CompositorImageDigest', { value: RELEASE.localImageDigest });
     new CfnOutput(this, 'ApplicationLogGroup', { value: applicationLogs.logGroupName });
     new CfnOutput(this, 'OperationsLogGroup', { value: operationsLogs.logGroupName });
     new CfnOutput(this, 'WorkerTokenSecretName', { value: workerToken.secretName });

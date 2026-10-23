@@ -129,7 +129,12 @@ void test('runtime defaults to zero, uses one immutable AMD64 task, and permits 
     Name: RESOURCE_NAMES.workerTokenSecret,
   });
 
-  const rendered = JSON.stringify(template.toJSON());
+  const synthesized = template.toJSON() as {
+    readonly Parameters?: Readonly<Record<string, unknown>>;
+  };
+  assert.equal(synthesized.Parameters?.CompositorImageDigest, undefined);
+  const rendered = JSON.stringify(synthesized);
+  assert.match(rendered, new RegExp(RELEASE.localImageDigest));
   assert.doesNotMatch(rendered, /STREAM_VIDEO_API_(?:KEY|SECRET)/);
   assert.doesNotMatch(
     rendered,

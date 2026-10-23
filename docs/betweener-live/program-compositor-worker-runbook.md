@@ -156,10 +156,13 @@ Set-Location infrastructure/program-compositor
 npx.cmd cdk deploy BetweenerStagingProgramCompositorRuntime `
   --exclusively `
   --profile betweener-staging `
-  --parameters DesiredCount=0 `
-  --parameters CompositorImageDigest=<remote-sha256-digest>
+  --parameters DesiredCount=0
 Set-Location ../..
 ```
+
+The task image digest is sourced directly from the committed `RELEASE` record.
+It is intentionally not a CloudFormation parameter: retained parameter values
+must never allow deployment provenance to diverge from the runtime image.
 
 The service has an ECS deployment circuit breaker with rollback. Its container health check
 uses loopback `GET /healthz`, with a 90-second start period, 15-second interval, three-second
@@ -189,8 +192,7 @@ Set-Location infrastructure/program-compositor
 npx.cmd cdk deploy BetweenerStagingProgramCompositorRuntime `
   --exclusively `
   --profile betweener-staging `
-  --parameters DesiredCount=1 `
-  --parameters CompositorImageDigest=<remote-sha256-digest>
+  --parameters DesiredCount=1
 
 aws logs tail /aws/ecs/betweener-staging/program-compositor `
   --profile betweener-staging --region eu-north-1 --since 15m
