@@ -161,3 +161,61 @@ zero and safely fixable High findings are zero. The nine scanner Highs remain
 visible rather than being hidden by deleting package metadata. Reassess them
 when Debian publishes ABI-compatible stable updates or when the runtime
 dependency graph changes.
+
+## Staging release closure
+
+The final immutable candidate is tagged
+`adaptive-stage-m1-secure-98c3013`. Its OCI index is
+`sha256:d358cec4887f030b6735fab9f9c90e48146b46d2716e84ec8dbf81aa88aa4736`
+and its runtime manifest is
+`sha256:fde55b45dcf20ecd1b3e6db9edc1a692f167f95d162cc883577db12edc76c0c1`.
+ECR confirmed that the pushed artifact is equivalent to the locally validated
+image.
+
+Task-definition revision `betweener-staging-program-compositor:5` pins the OCI
+index directly in the committed CDK configuration. A preflight inspection of
+revision 4 found that CloudFormation had retained the previous image parameter
+while accepting new provenance environment values. The service was kept at
+desired count zero, so that revision never started or pulled an image. The
+parameter was removed before revision 5, closing the provenance/image mismatch
+class by construction.
+
+The revision 5 staging canary proved:
+
+- both containers pulled the exact `d358cec4...4736` OCI index
+- the one-shot runtime-volume initializer exited `0`
+- the long-running worker ran as `1000:1000`, reached ECS `HEALTHY`, and
+  authenticated its first orchestrator discovery request
+- `worker_started` reported source revision `98c3013781113ff4b95a580b090f3358eb9deb70`,
+  build identifier `adaptive-stage-m1-secure-98c3013`, manifest
+  `adaptive-stage-v2.0.0-m1`, and resolver `layout-plan-v2.0.0-m1`
+- scale-down delivered `SIGTERM`; `worker_stopping` recorded `sigterm`, and the
+  worker exited `0`
+- final ECS desired, running and pending counts are all `0`
+
+Staging release flags were read back after the canary. Shadow and diagnostics
+are `true`; Studio, native and compositor render authority are `false`.
+`broadcast_compositor_enabled` and every downstream broadcast output flag are
+also `false`. Production was not modified.
+
+## Regression and media-canary status
+
+The final source and infrastructure revisions passed:
+
+- Adaptive Stage M1 regression: `11/11`
+- Studio Program and six-person regression: `44/44`
+- Studio operator regression: `19/19`
+- Phase C2 compositor regression: `11/11`
+- compositor worker build/check and local container runtime smoke tests
+- infrastructure build, lint, format, CDK synthesis and tests: `2/2`
+- root and Studio TypeScript checks
+
+Automated coverage passed for four/six-person layouts, portrait/landscape
+geometry, screen-share contracts, deterministic RTC ordering, source loss,
+stale contracts, malformed state, Room Pulse isolation and three-renderer
+telemetry wiring. On-device media canaries remain pending: staging had zero
+active Live sessions and no Adaptive Stage diagnostic events in the preceding
+24 hours at closure time. They require a supervised disposable staging Live,
+real publishers and device actions; they are not a condition for retaining the
+security-hardened artifact at desired count zero, but they remain a condition
+for enabling any render flag.
