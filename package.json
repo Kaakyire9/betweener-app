@@ -64,6 +64,7 @@
     "test:live-phase-c2": "npm run program-compositor:test && node --no-warnings=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test __tests__/live-phase-c2-compositor.regression.test.ts",
     "test:adaptive-stage-m1": "node --no-warnings=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test __tests__/adaptive-stage-engine-milestone-1.regression.test.ts",
     "test:adaptive-stage-m2": "node --no-warnings=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test __tests__/adaptive-stage-engine-milestone-2.regression.test.ts",
+    "test:adaptive-stage-m2-1": "node --no-warnings=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test __tests__/adaptive-stage-engine-milestone-2.regression.test.ts __tests__/adaptive-stage-engine-milestone-2-1.regression.test.ts",
     "test:metro-hardening": "node --no-warnings=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test __tests__/metro-windows-hardening.regression.test.ts",
     "test:live-creation": "node --no-warnings=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test __tests__/live-creation-draft.regression.test.ts",
     "test:live-audience": "node --no-warnings=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test __tests__/live-audience-policy.regression.test.ts",

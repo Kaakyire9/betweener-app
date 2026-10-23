@@ -9,6 +9,7 @@ import {
 
 export const ADAPTIVE_STAGE_M2_FLAG_NAMES = {
   enabled: 'adaptive_stage_m2_enabled',
+  studioPreview: 'adaptive_stage_m2_studio_preview_enabled',
   stageIntelligence: 'adaptive_stage_m2_stage_intelligence_enabled',
   focusEngine: 'adaptive_stage_m2_focus_engine_enabled',
   morph: 'adaptive_stage_m2_morph_enabled',
@@ -18,6 +19,7 @@ export const ADAPTIVE_STAGE_M2_FLAG_NAMES = {
 
 export type AdaptiveStageM2Flags = {
   enabled: boolean;
+  studioPreview: boolean;
   stageIntelligence: boolean;
   focusEngine: boolean;
   morph: boolean;
@@ -27,6 +29,7 @@ export type AdaptiveStageM2Flags = {
 
 export const ADAPTIVE_STAGE_M2_SAFE_DEFAULTS: AdaptiveStageM2Flags = Object.freeze({
   enabled: false,
+  studioPreview: false,
   stageIntelligence: false,
   focusEngine: false,
   morph: false,
@@ -107,6 +110,22 @@ export type EditorialPeopleCanvasV2 = Extract<
   'portrait_9_16' | 'landscape_16_9'
 >;
 
+export const EDITORIAL_SCREEN_LAYOUT_STRATEGIES_V2 = [
+  'screen_full',
+  'screen_plus_host',
+  'screen_plus_pair',
+  'screen_plus_panel',
+  'screen_discussion',
+] as const;
+export type EditorialScreenLayoutStrategyV2 =
+  (typeof EDITORIAL_SCREEN_LAYOUT_STRATEGIES_V2)[number];
+
+export type EditorialScreenLayoutV2 = {
+  strategy: EditorialScreenLayoutStrategyV2;
+  canvas: EditorialPeopleCanvasV2;
+  regions: readonly ProgramRegion[];
+};
+
 type GeometryFamily = 'balanced' | 'hero';
 type AuthoredRect = readonly [x: number, y: number, width: number, height: number];
 
@@ -116,6 +135,34 @@ export type EditorialLayoutBookEntryV2 = {
   geometryFamily: GeometryFamily;
   primaryRole: 'none' | 'host' | 'speaker' | 'pair' | 'presenter';
 };
+
+export const EDITORIAL_INTENT_BY_PEOPLE_STRATEGY_V2: Readonly<
+  Record<EditorialPeopleLayoutStrategyV2, ResolveEditorialPeopleLayoutV2Input['intent']>
+> = Object.freeze({
+  solo_cinematic: 'solo_focus',
+  solo_host: 'host_led_discussion',
+  solo_presentation_support: 'solo_focus',
+  balanced_duo: 'balanced_conversation',
+  host_guest_interview: 'host_led_discussion',
+  speaker_focus_duo: 'speaker_focus',
+  match_pair: 'match_introduction',
+  balanced_trio: 'balanced_conversation',
+  host_hero_plus_2: 'host_led_discussion',
+  speaker_focus_trio: 'speaker_focus',
+  pair_plus_host: 'pair_focus',
+  classic_2x2: 'panel_discussion',
+  host_hero_plus_3: 'host_led_discussion',
+  speaker_hero_plus_3: 'speaker_focus',
+  balanced_panel_4: 'balanced_conversation',
+  host_hero_plus_4: 'host_led_discussion',
+  balanced_five: 'balanced_conversation',
+  speaker_plus_4: 'speaker_focus',
+  editorial_five: 'panel_discussion',
+  balanced_six: 'balanced_conversation',
+  host_led_six: 'host_led_discussion',
+  speaker_focus_six: 'speaker_focus',
+  event_panel_six: 'panel_discussion',
+});
 
 const authored = (
   strategy: EditorialPeopleLayoutStrategyV2,
@@ -203,6 +250,13 @@ export type ResolveEditorialPeopleLayoutV2Input = {
   largePanelEnabled: boolean;
 };
 
+export type ResolveEditorialPeopleStrategyLayoutV2Input = Omit<
+  ResolveEditorialPeopleLayoutV2Input,
+  'intent'
+> & {
+  strategy: EditorialPeopleLayoutStrategyV2;
+};
+
 export type EditorialPeopleLayoutV2 = {
   intent: ResolveEditorialPeopleLayoutV2Input['intent'];
   strategy: EditorialPeopleLayoutStrategyV2;
@@ -226,6 +280,30 @@ export class AdaptiveStageM2LayoutError extends Error {
     this.name = 'AdaptiveStageM2LayoutError';
   }
 }
+
+const assignedHumanSlots = (assignments: ProgramSourceAssignments) =>
+  HUMAN_SLOTS.filter((slot) => Boolean(assignments[slot]));
+
+const assertEditorialCapacity = (
+  flags: AdaptiveStageM2Flags,
+  assignments: ProgramSourceAssignments,
+  maximumPublishers: 4 | 6,
+  largePanelEnabled: boolean,
+) => {
+  if (!flags.enabled) throw new AdaptiveStageM2LayoutError('ADAPTIVE_STAGE_M2_DISABLED');
+  const slots = assignedHumanSlots(assignments);
+  if (slots.length < 1 || slots.length > LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT) {
+    throw new AdaptiveStageM2LayoutError('EDITORIAL_OCCUPANCY_INVALID');
+  }
+  if (slots.length > maximumPublishers) {
+    throw new AdaptiveStageM2LayoutError('EDITORIAL_CAPACITY_EXCEEDED');
+  }
+  if (slots.length > LIVE_STANDARD_STAGE_PUBLISHER_LIMIT
+    && (maximumPublishers !== LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT || !largePanelEnabled)) {
+    throw new AdaptiveStageM2LayoutError('EDITORIAL_LARGE_PANEL_REQUIRED');
+  }
+  return slots;
+};
 
 const strategyEntry = (strategy: EditorialPeopleLayoutStrategyV2): EditorialLayoutBookEntryV2 => {
   const entry = EDITORIAL_PEOPLE_LAYOUT_BOOK_V2.find((candidate) => candidate.strategy === strategy);
@@ -309,18 +387,12 @@ const geometryFor = (
 export const resolveEditorialPeopleLayoutV2 = (
   input: ResolveEditorialPeopleLayoutV2Input,
 ): EditorialPeopleLayoutV2 => {
-  if (!input.flags.enabled) throw new AdaptiveStageM2LayoutError('ADAPTIVE_STAGE_M2_DISABLED');
-  const assignedSlots = HUMAN_SLOTS.filter((slot) => Boolean(input.assignments[slot]));
-  if (assignedSlots.length < 1 || assignedSlots.length > LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT) {
-    throw new AdaptiveStageM2LayoutError('EDITORIAL_OCCUPANCY_INVALID');
-  }
-  if (assignedSlots.length > input.maximumPublishers) {
-    throw new AdaptiveStageM2LayoutError('EDITORIAL_CAPACITY_EXCEEDED');
-  }
-  if (assignedSlots.length > LIVE_STANDARD_STAGE_PUBLISHER_LIMIT
-    && (input.maximumPublishers !== LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT || !input.largePanelEnabled)) {
-    throw new AdaptiveStageM2LayoutError('EDITORIAL_LARGE_PANEL_REQUIRED');
-  }
+  const assignedSlots = assertEditorialCapacity(
+    input.flags,
+    input.assignments,
+    input.maximumPublishers,
+    input.largePanelEnabled,
+  );
   const occupancy = assignedSlots.length as EditorialPeopleLayoutV2['occupancy'];
   const roles = input.programmeRoles ?? {};
   const strategy = strategyFor(input.intent, occupancy, assignedSlots, roles);
@@ -349,5 +421,125 @@ export const resolveEditorialPeopleLayoutV2 = (
       zIndex: index === 0 && entry.geometryFamily === 'hero' ? 2 : 1,
       treatment: index === 0 && entry.geometryFamily === 'hero' ? 'full' : 'panel',
     })),
+  };
+};
+
+export const resolveEditorialPeopleStrategyLayoutV2 = (
+  input: ResolveEditorialPeopleStrategyLayoutV2Input,
+): EditorialPeopleLayoutV2 => {
+  const assignedSlots = assertEditorialCapacity(
+    input.flags,
+    input.assignments,
+    input.maximumPublishers,
+    input.largePanelEnabled,
+  );
+  const entry = strategyEntry(input.strategy);
+  if (entry.occupancy !== assignedSlots.length) {
+    throw new AdaptiveStageM2LayoutError('EDITORIAL_OCCUPANCY_INVALID');
+  }
+  const roles = input.programmeRoles ?? {};
+  const primarySlot = primarySlotFor(entry, assignedSlots, roles, input.focusSlot);
+  const orderedSlots = primarySlot
+    ? [primarySlot, ...assignedSlots.filter((slot) => slot !== primarySlot)]
+    : assignedSlots;
+  const geometry = geometryFor(entry, input.canvas);
+  return {
+    intent: EDITORIAL_INTENT_BY_PEOPLE_STRATEGY_V2[input.strategy],
+    strategy: input.strategy,
+    canvas: input.canvas,
+    occupancy: entry.occupancy,
+    regions: geometry.map(([x, y, width, height], index): ProgramRegion => ({
+      slot: orderedSlots[index],
+      x,
+      y,
+      width,
+      height,
+      zIndex: index === 0 && entry.geometryFamily === 'hero' ? 2 : 1,
+      treatment: index === 0 && entry.geometryFamily === 'hero' ? 'full' : 'panel',
+    })),
+  };
+};
+
+const screenRegion = (
+  slot: ProgramSourceSlot,
+  rect: AuthoredRect,
+  zIndex: number,
+  treatment: ProgramRegion['treatment'],
+): ProgramRegion => ({
+  slot,
+  x: rect[0],
+  y: rect[1],
+  width: rect[2],
+  height: rect[3],
+  zIndex,
+  treatment,
+});
+
+const supportingScreenSlots = (
+  strategy: EditorialScreenLayoutStrategyV2,
+  peopleCount: number,
+): readonly ProgramSourceSlot[] => {
+  if (strategy === 'screen_full') return [];
+  if (strategy === 'screen_plus_host') return ['host'];
+  if (strategy === 'screen_plus_pair') return ['host', 'guest_1'];
+  const count = Math.max(1, Math.min(peopleCount, LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT));
+  return HUMAN_SLOTS.slice(0, count);
+};
+
+export const resolveEditorialScreenLayoutV2 = (input: {
+  flags: AdaptiveStageM2Flags;
+  strategy: EditorialScreenLayoutStrategyV2;
+  canvas: EditorialPeopleCanvasV2;
+  peopleCount: number;
+}): EditorialScreenLayoutV2 => {
+  if (!input.flags.enabled) throw new AdaptiveStageM2LayoutError('ADAPTIVE_STAGE_M2_DISABLED');
+  const supporting = supportingScreenSlots(input.strategy, input.peopleCount);
+  const portrait = input.canvas === 'portrait_9_16';
+  if (input.strategy === 'screen_full') {
+    return {
+      strategy: input.strategy,
+      canvas: input.canvas,
+      regions: [screenRegion('primary', [0, 0, 1, 1], 1, 'full')],
+    };
+  }
+  if (input.strategy === 'screen_plus_host') {
+    return {
+      strategy: input.strategy,
+      canvas: input.canvas,
+      regions: portrait
+        ? [screenRegion('primary', [0, 0, 1, 0.78], 1, 'full'), screenRegion('host', [0.59, 0.7, 0.36, 0.26], 2, 'pip')]
+        : [screenRegion('primary', [0, 0, 0.76, 1], 1, 'full'), screenRegion('host', [0.76, 0, 0.24, 1], 2, 'panel')],
+    };
+  }
+  const screenShare = screenRegion(
+    'primary',
+    portrait
+      ? [0, 0, 1, input.strategy === 'screen_discussion' ? 0.48 : 0.66]
+      : [0, 0, input.strategy === 'screen_discussion' ? 0.62 : 0.7, 1],
+    1,
+    'full',
+  );
+  const supportingStart = portrait ? screenShare.height : screenShare.width;
+  const columns = portrait
+    ? Math.min(2, supporting.length)
+    : supporting.length > 3 ? 2 : 1;
+  const rows = Math.max(1, Math.ceil(supporting.length / columns));
+  const regions = supporting.map((slot, index) => portrait
+    ? screenRegion(slot, [
+      (index % columns) / columns,
+      supportingStart + Math.floor(index / columns) * ((1 - supportingStart) / rows),
+      1 / columns,
+      (1 - supportingStart) / rows,
+    ], 2, 'panel')
+    : screenRegion(slot, [
+      supportingStart + (index % columns) * ((1 - supportingStart) / columns),
+      Math.floor(index / columns) / rows,
+      (1 - supportingStart) / columns,
+      1 / rows,
+    ], 2, 'panel'));
+  return {
+    strategy: input.strategy,
+    canvas: input.canvas,
+    regions: [screenShare, ...regions],
   };
 };

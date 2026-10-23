@@ -12,6 +12,7 @@ import {
   ON_AIR_PROGRAMME_ROLES_V2,
   isNormalizedRect,
   resolveEditorialPeopleLayoutV2,
+  resolveEditorialPeopleStrategyLayoutV2,
   type AdaptiveStageM2Flags,
   type ProgramSourceAssignments,
   type ProgramSourceSlot,
@@ -110,6 +111,26 @@ test('every authored strategy resolves independently on portrait and landscape c
   assert.deepEqual(resolved, new Set(EDITORIAL_PEOPLE_LAYOUT_STRATEGIES_V2));
 });
 
+test('every authored strategy can be selected directly for internal visual review', () => {
+  for (const entry of EDITORIAL_PEOPLE_LAYOUT_BOOK_V2) {
+    for (const canvas of ['portrait_9_16', 'landscape_16_9'] as const) {
+      const layout = resolveEditorialPeopleStrategyLayoutV2({
+        flags: ENABLED_FLAGS,
+        strategy: entry.strategy,
+        canvas,
+        assignments: assignmentsFor(entry.occupancy),
+        programmeRoles: { host: 'primary_host', guest_1: 'active_speaker' },
+        focusSlot: 'guest_1',
+        maximumPublishers: entry.occupancy > 4 ? 6 : 4,
+        largePanelEnabled: entry.occupancy > 4,
+      });
+      assert.equal(layout.strategy, entry.strategy);
+      assert.equal(layout.regions.length, entry.occupancy);
+      layout.regions.forEach((region) => assert.equal(isNormalizedRect(region), true));
+    }
+  }
+});
+
 test('portrait and landscape are authored separately rather than stretched from one grid', () => {
   for (const occupancy of [2, 3, 4, 5, 6] as const) {
     const common = {
@@ -206,6 +227,7 @@ test('six-person layouts remain explicitly gated per Live', () => {
 test('M2 layout execution and every expansion capability fail closed by default', () => {
   assert.deepEqual(ADAPTIVE_STAGE_M2_SAFE_DEFAULTS, {
     enabled: false,
+    studioPreview: false,
     stageIntelligence: false,
     focusEngine: false,
     morph: false,
@@ -226,6 +248,7 @@ test('M2 layout execution and every expansion capability fail closed by default'
   );
   assert.deepEqual(Object.values(ADAPTIVE_STAGE_M2_FLAG_NAMES), [
     'adaptive_stage_m2_enabled',
+    'adaptive_stage_m2_studio_preview_enabled',
     'adaptive_stage_m2_stage_intelligence_enabled',
     'adaptive_stage_m2_focus_engine_enabled',
     'adaptive_stage_m2_morph_enabled',
@@ -235,7 +258,10 @@ test('M2 layout execution and every expansion capability fail closed by default'
 });
 
 test('database gates are private, default-off and do not enable any renderer', () => {
-  const migration = read('supabase/migrations/20261023164001_adaptive_stage_engine_2_milestone_2_flags.sql');
+  const migration = [
+    read('supabase/migrations/20261023164001_adaptive_stage_engine_2_milestone_2_flags.sql'),
+    read('supabase/migrations/20261023170552_adaptive_stage_m2_studio_preview_gate.sql'),
+  ].join('\n');
   Object.values(ADAPTIVE_STAGE_M2_FLAG_NAMES).forEach((flag) => {
     assert.match(migration, new RegExp(`${flag} boolean not null default false`));
   });

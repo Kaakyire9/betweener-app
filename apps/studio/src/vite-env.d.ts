@@ -9,6 +9,8 @@ interface ImportMetaEnv {
   readonly VITE_ADAPTIVE_STAGE_V2_SHADOW_ENABLED?: 'true' | 'false';
   readonly VITE_ADAPTIVE_STAGE_V2_DIAGNOSTICS_ENABLED?: 'true' | 'false';
   readonly VITE_ADAPTIVE_STAGE_V2_STUDIO_RENDER_ENABLED?: 'true' | 'false';
+  readonly VITE_ADAPTIVE_STAGE_M2_ENABLED?: 'true' | 'false';
+  readonly VITE_ADAPTIVE_STAGE_M2_STUDIO_PREVIEW_ENABLED?: 'true' | 'false';
   readonly VITE_SOURCE_REVISION: string;
   readonly VITE_BUILD_IDENTIFIER: string;
 }

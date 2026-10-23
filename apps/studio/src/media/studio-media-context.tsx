@@ -135,3 +135,6 @@ export const useStudioMedia = (): StudioMediaContextValue => {
   if (!value) throw new Error('StudioMediaProvider is missing.');
   return value;
 };
+
+export const useOptionalStudioMedia = (): StudioMediaContextValue | null =>
+  useContext(StudioMediaContext);

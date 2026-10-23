@@ -11,6 +11,7 @@
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b --pretty false",
     "test:e2e": "playwright test",
+    "test:e2e:m2": "playwright test m2-preview.spec.ts --project=mocked-media",
     "test:canary": "playwright test --project=staging-canary"
   },
   "dependencies": {

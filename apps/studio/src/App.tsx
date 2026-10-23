@@ -15,6 +15,11 @@ const StudioPreflightHarness = import.meta.env.DEV
     default: module.StudioPreflightHarness,
   })))
   : null;
+const AdaptiveStageM2PreviewHarness = import.meta.env.DEV
+  ? lazy(async () => import('./e2e/AdaptiveStageM2PreviewHarness.tsx').then((module) => ({
+    default: module.AdaptiveStageM2PreviewHarness,
+  })))
+  : null;
 
 const sessionFromLocation = () => new URL(window.location.href).searchParams.get('session');
 
@@ -64,8 +69,12 @@ function StudioRuntime() {
 
 export default function App() {
   const e2eHarness = import.meta.env.DEV
-    && new URL(window.location.href).searchParams.get('e2eHarness') === 'preflight';
-  return e2eHarness && StudioPreflightHarness
+    ? new URL(window.location.href).searchParams.get('e2eHarness')
+    : null;
+  if (e2eHarness === 'm2-preview' && AdaptiveStageM2PreviewHarness) {
+    return <Suspense fallback={null}><AdaptiveStageM2PreviewHarness /></Suspense>;
+  }
+  return e2eHarness === 'preflight' && StudioPreflightHarness
     ? <Suspense fallback={null}><StudioPreflightHarness /></Suspense>
     : <StudioRuntime />;
 }

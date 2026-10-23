@@ -25,6 +25,8 @@ export default defineConfig({
       VITE_SUPABASE_ANON_KEY: process.env.STUDIO_STAGING_ANON_KEY ?? 'e2e-public-key',
       VITE_PUBLIC_APP_ORIGIN: 'https://staging.getbetweener.com',
       VITE_STUDIO_ORIGIN: 'https://studio.staging.getbetweener.com',
+      VITE_ADAPTIVE_STAGE_M2_ENABLED: 'true',
+      VITE_ADAPTIVE_STAGE_M2_STUDIO_PREVIEW_ENABLED: 'true',
     },
   },
 });

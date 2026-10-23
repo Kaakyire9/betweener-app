@@ -29,6 +29,12 @@ import { PrivateOperationsChannel } from '../operations/PrivateOperationsChannel
 import { RunOfShowPanel } from '../operations/RunOfShowPanel.tsx';
 import { StudioPreflightPanel } from '../operations/StudioPreflightPanel.tsx';
 import { ProgramRenderer } from '../program/ProgramRenderer.tsx';
+import {
+  AdaptiveStageM2PreviewCanvas,
+  AdaptiveStageM2PreviewControls,
+  useAdaptiveStageM2Review,
+} from '../program/AdaptiveStageM2Preview.tsx';
+import { isAdaptiveStageM2StudioPreviewEnabled } from '../program/adaptive-stage-m2-preview-flags.ts';
 import { assignmentsForScene, SceneLibrary } from '../program/SceneLibrary.tsx';
 import { assignmentsContainTerminalSource } from '../program/source-assignments.ts';
 import {
@@ -53,8 +59,13 @@ export function StudioWorkspace({
   const [busy, setBusy] = useState<string | null>(null);
   const [preflightReady, setPreflightReady] = useState(false);
   const [publicationControl, setPublicationControl] = useState<StudioPublicationControl | null>(null);
+  const [m2ReviewActive, setM2ReviewActive] = useState(false);
   const lastShadowKey = useRef<string | null>(null);
   const stepUp = useOperatorStepUp();
+  const m2Review = useAdaptiveStageM2Review(
+    snapshot?.sources ?? [],
+    preview?.sourceAssignments ?? {},
+  );
 
   useEffect(() => {
     if (!snapshot) return;
@@ -208,13 +219,13 @@ export function StudioWorkspace({
 
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
-      if (!lease.ownsControl || event.key !== 'Enter' || !event.ctrlKey) return;
+      if (m2ReviewActive || !lease.ownsControl || event.key !== 'Enter' || !event.ctrlKey) return;
       event.preventDefault();
       void secureTakeProgram(event.shiftKey);
     };
     window.addEventListener('keydown', keydown);
     return () => window.removeEventListener('keydown', keydown);
-  });
+  }, [lease.ownsControl, m2ReviewActive, secureTakeProgram]);
 
   const controllerLabel = useMemo(() => snapshot
     ? friendlyReason(snapshot.program.controller.source) : 'Loading', [snapshot]);
@@ -310,29 +321,51 @@ export function StudioWorkspace({
 
           <section className="production-desk stack-md">
             <div className="monitor-grid">
-              <section className="monitor-card preview-monitor"><div className="monitor-header">
-                <div><span className="eyebrow">PREVIEW</span><strong>Local to this tab</strong></div>
-                <span className={`status-pill ${preview.dirty ? 'changed' : ''}`}>{preview.dirty ? 'Changed' : 'Synced'}</span>
-              </div><ProgramRenderer state={preview} sources={snapshot.sources} label="Studio Preview" /></section>
+              <section className={`monitor-card preview-monitor ${m2ReviewActive ? 'm2-preview-monitor' : ''}`}>
+                <div className="monitor-header">
+                  <div><span className="eyebrow">{m2ReviewActive ? 'PREVIEW · M2 INTERNAL' : 'PREVIEW'}</span>
+                    <strong>{m2ReviewActive ? 'Design review only' : 'Local to this tab'}</strong></div>
+                  <div className="monitor-actions">
+                    {isAdaptiveStageM2StudioPreviewEnabled ? <button className="text-button m2-mode-toggle"
+                      onClick={() => setM2ReviewActive((current) => !current)}>
+                      {m2ReviewActive ? 'Return to current Preview' : 'Open M2 Preview'}
+                    </button> : null}
+                    <span className={`status-pill ${m2ReviewActive || preview.dirty ? 'changed' : ''}`}>
+                      {m2ReviewActive ? 'Internal only' : preview.dirty ? 'Changed' : 'Synced'}
+                    </span>
+                  </div>
+                </div>
+                {m2ReviewActive
+                  ? <AdaptiveStageM2PreviewCanvas review={m2Review} />
+                  : <ProgramRenderer state={preview} sources={snapshot.sources} label="Studio Preview" />}
+              </section>
               <section className={`monitor-card program-monitor ${isOnAir ? 'is-on-air' : ''}`}><div className="monitor-header">
-                <div><span className="eyebrow">PROGRAM</span><strong>Audience output</strong></div>
+                <div><span className="eyebrow">PROGRAM · CURRENT AUDIENCE OUTPUT</span><strong>Authoritative viewer output</strong></div>
                 <span className={`status-pill program-badge ${isOnAir ? 'on-air' : ''}`}>
                   {isOnAir ? 'ON AIR' : 'PROGRAM'} · v{snapshot.program.programVersion}
                 </span>
               </div><ProgramRenderer state={snapshot.program} sources={snapshot.sources} label="Audience Program" /></section>
             </div>
-            <div className="take-bar">
-              <div><strong>Preview → Program</strong><small>Preview never changes the audience until TAKE or CUT.</small></div>
+            <div className={`take-bar ${m2ReviewActive ? 'is-guarded' : ''}`}>
+              <div><strong>{m2ReviewActive ? 'M2 Preview is isolated' : 'Preview → Program'}</strong>
+                <small>{m2ReviewActive
+                  ? 'TAKE and CUT are unavailable. M2 Program authority is not enabled.'
+                  : 'Preview never changes the audience until TAKE or CUT.'}</small></div>
               <div className="button-row"><button className="button button-secondary"
-                disabled={!lease.ownsControl || busy !== null || stalePreview}
+                disabled={m2ReviewActive || !lease.ownsControl || busy !== null || stalePreview}
                 onClick={() => void secureTakeProgram(true)}>CUT</button>
                 <button className="button take-button"
-                  disabled={!lease.ownsControl || busy !== null || !preview.dirty || stalePreview}
+                  disabled={m2ReviewActive || !lease.ownsControl || busy !== null || !preview.dirty || stalePreview}
                   onClick={() => void secureTakeProgram(false)}>TAKE</button></div>
             </div>
-            <section className="panel"><div className="section-heading"><div><span className="eyebrow">SCENE LIBRARY</span>
-              <h2>Shape the programme</h2></div><span className="muted compact">Ctrl+Enter TAKE · Ctrl+Shift+Enter CUT</span></div>
-              <SceneLibrary preview={preview} sources={snapshot.sources}
+            <section className={`panel ${m2ReviewActive ? 'm2-review-panel' : ''}`}>
+              <div className="section-heading"><div><span className="eyebrow">
+                {m2ReviewActive ? 'ADAPTIVE STAGE · INTERNAL REVIEW' : 'SCENE LIBRARY'}</span>
+                <h2>{m2ReviewActive ? 'Inspect the canonical layout book' : 'Shape the programme'}</h2></div>
+                <span className="muted compact">{m2ReviewActive
+                  ? 'Preview only · no Program mutation'
+                  : 'Ctrl+Enter TAKE · Ctrl+Shift+Enter CUT'}</span></div>
+              {m2ReviewActive ? <AdaptiveStageM2PreviewControls review={m2Review} /> : <SceneLibrary preview={preview} sources={snapshot.sources}
                 onScene={(scene: ProgramScene) => {
                   setPreview({ ...preview, scene,
                     sourceAssignments: assignmentsForScene(scene, snapshot.sources, preview.sourceAssignments),
@@ -340,7 +373,7 @@ export function StudioWorkspace({
                 }}
                 onAssignment={(slot: ProgramSourceSlot, key: string | null) => mutatePreview({ type: 'assign_source', slot, sourceKey: key })}
                 onCanvas={(canvas: ProgramTargetCanvas) => mutatePreview({ type: 'set_canvas', canvas })}
-                onTransition={(transition: ProgramTransition) => mutatePreview({ type: 'set_transition', transition })} />
+                onTransition={(transition: ProgramTransition) => mutatePreview({ type: 'set_transition', transition })} />}
             </section>
           </section>
 
