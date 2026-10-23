@@ -52,6 +52,19 @@ void test('runtime defaults to zero, uses one immutable AMD64 task, and permits 
       Match.objectLike({
         Name: 'program-compositor',
         Essential: true,
+        User: '1000:1000',
+        ReadonlyRootFilesystem: true,
+        LinuxParameters: {
+          Capabilities: { Drop: ['ALL'] },
+          InitProcessEnabled: true,
+        },
+        MountPoints: [
+          {
+            ContainerPath: '/tmp',
+            ReadOnly: false,
+            SourceVolume: 'runtime-tmp',
+          },
+        ],
         StopTimeout: 60,
         HealthCheck: Match.objectLike({
           Interval: 15,
@@ -60,6 +73,9 @@ void test('runtime defaults to zero, uses one immutable AMD64 task, and permits 
           StartPeriod: 90,
         }),
         Environment: Match.arrayWith([
+          { Name: 'HOME', Value: '/tmp/home' },
+          { Name: 'XDG_CACHE_HOME', Value: '/tmp/cache' },
+          { Name: 'XDG_CONFIG_HOME', Value: '/tmp/config' },
           { Name: 'SUPABASE_URL', Value: 'https://xsgzxadwuxuziubglvps.supabase.co' },
           { Name: 'BROADCAST_COMPOSITOR_MAX_SESSIONS', Value: '1' },
           { Name: 'BETWEENER_SOURCE_REVISION', Value: RELEASE.sourceRevision },
@@ -80,6 +96,9 @@ void test('runtime defaults to zero, uses one immutable AMD64 task, and permits 
     NetworkConfiguration: {
       AwsvpcConfiguration: Match.objectLike({ AssignPublicIp: 'ENABLED' }),
     },
+  });
+  template.hasResourceProperties('AWS::ECS::TaskDefinition', {
+    Volumes: [{ Name: 'runtime-tmp' }],
   });
   template.resourceCountIs('AWS::EC2::SecurityGroupIngress', 0);
   template.hasResourceProperties('AWS::SecretsManager::Secret', {

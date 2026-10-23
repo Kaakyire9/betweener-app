@@ -24,11 +24,30 @@ in this container.
 
 ## Build
 
-Run from the repository root:
+Security releases must be built from a clean committed worktree. Never reuse an
+existing tag or deploy `latest`. Run from the repository root:
 
-```bash
-docker build -f apps/program-compositor-worker/Dockerfile -t betweener-program-compositor:c2 .
+```powershell
+git status --short
+$securitySha = git rev-parse HEAD
+$shortSha = git rev-parse --short=7 HEAD
+docker buildx build --platform linux/amd64 --target validation --load `
+  --build-arg SOURCE_REVISION=$securitySha `
+  --build-arg BUILD_IDENTIFIER="adaptive-stage-m1-secure-$shortSha" `
+  -f apps/program-compositor-worker/Dockerfile `
+  -t "betweener-program-compositor:adaptive-stage-m1-secure-$shortSha" .
 ```
+
+The validation stage must complete. It verifies the pinned native component
+versions and features, three 30-fps H.264/AAC output shapes, X11 and PulseAudio
+capture, a Chrome render, `/healthz`, and graceful SIGTERM shutdown.
+
+The runtime intentionally uses a checksum-pinned Chrome for Testing build and a
+minimal checksum-pinned FFmpeg build instead of Debian's broad Chromium/FFmpeg
+dependency graphs. Chrome runs without its setuid sandbox because the ECS task
+runs as UID/GID `1000:1000`, drops every Linux capability, has a read-only root
+filesystem, exposes no inbound port, and receives only one writable `/tmp`
+volume. Do not weaken those compensating controls.
 
 ## Staged activation
 
@@ -60,6 +79,8 @@ package at `infrastructure/program-compositor`.
 - ECS cluster: `betweener-staging`
 - ECS service: `program-compositor`
 - Task: Fargate Linux/AMD64, 4 vCPU, 8 GB RAM, 40 GiB ephemeral storage
+- Privilege boundary: UID/GID `1000:1000`, read-only root, all capabilities
+  dropped, init process enabled, writable ephemeral `/tmp` only
 - Scale: maximum one compositor session; desired count defaults to `0`
 - Application logs: `/aws/ecs/betweener-staging/program-compositor`, retained for 14 days
 - Operations logs: `/aws/events/ecs/betweener-staging/program-compositor`, retained for 14 days
@@ -84,20 +105,23 @@ Do not delete the `CDKToolkit` stack. Enable termination protection on it after 
 
 ### Push the approved release artifact
 
-The push script refuses the wrong account, region, source SHA, local OCI index digest, or platform.
-It does not rebuild source and proves remote-index equivalence plus one valid Linux/AMD64 runtime
-manifest and configuration.
+The push script refuses the wrong account, region, source SHA, reused immutable tag,
+non-root configuration, or platform. It does not rebuild source and proves that the
+remote OCI index contains exactly one valid Linux/AMD64 runtime manifest and configuration.
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File `
-  infrastructure/program-compositor/scripts/Push-VerifiedRelease.ps1
+  infrastructure/program-compositor/scripts/Push-VerifiedRelease.ps1 `
+  -SourceRevision $securitySha `
+  -Tag "adaptive-stage-m1-secure-$shortSha" `
+  -LocalImage "betweener-program-compositor:adaptive-stage-m1-secure-$shortSha"
 ```
 
 Record the returned `RemoteIndexDigest` and pass it to the runtime deployment.
 
-Before enabling any media or renderer flag, inspect the returned `RuntimeManifestDigest` with
-ECR basic scanning. A completed scan with unresolved critical findings blocks the media canary;
-build and approve a new immutable release instead of overwriting the tag or suppressing findings.
+Before enabling any media or renderer flag, wait for ECR Basic scanning on the
+returned `RuntimeManifestDigest`. Record every Critical and High finding in
+`program-compositor-container-security-m1a-s.md`.
 
 ```powershell
 aws ecr describe-image-scan-findings `
@@ -105,6 +129,14 @@ aws ecr describe-image-scan-findings `
   --image-id imageDigest=<runtime-manifest-digest> `
   --profile betweener-staging --region eu-north-1
 ```
+
+The gate passes only when unresolved Critical findings are zero and High
+findings with a safe available fix are zero. A remaining High requires an
+upstream/fix-status check, runtime reachability analysis, mitigation and an
+explicit residual-risk statement. Scanner-package presence alone is not an
+acceptance or rejection decision. If the gate fails, leave ECS on the previous
+digest with desired count `0`; do not deploy the candidate and do not enable
+shadow, diagnostics or renderer flags.
 
 ### Deploy the idle runtime
 
@@ -165,6 +197,9 @@ After the canary, or immediately on failure:
 2. Deploy the runtime stack with `DesiredCount=0` and the current digest.
 3. If required, redeploy the previous task-definition digest while keeping desired count `0`.
 4. Review ECS service events plus the application and operations log groups.
+
+The immutable Milestone 1A rollback index is
+`sha256:373029b26a8d851c761c8aaa725fb2db9bcbd713621630b9f8033eb7b76e180d`.
 
 Do not enable HLS, recording, captions, translation, clips, highlights, or any V2 renderer as
 part of Milestone 1A.

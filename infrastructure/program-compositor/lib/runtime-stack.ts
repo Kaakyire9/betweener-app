@@ -135,6 +135,12 @@ export class ProgramCompositorRuntimeStack extends Stack {
         operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
       },
     });
+    taskDefinition.addVolume({ name: 'runtime-tmp' });
+
+    const linuxParameters = new ecs.LinuxParameters(this, 'LinuxParameters', {
+      initProcessEnabled: true,
+    });
+    linuxParameters.dropCapabilities(ecs.Capability.ALL);
 
     const container = taskDefinition.addContainer('ProgramCompositor', {
       containerName: 'program-compositor',
@@ -142,7 +148,13 @@ export class ProgramCompositorRuntimeStack extends Stack {
         `${repository.repositoryUri}@${imageDigest.valueAsString}`,
       ),
       essential: true,
+      user: '1000:1000',
+      readonlyRootFilesystem: true,
+      linuxParameters,
       environment: {
+        HOME: '/tmp/home',
+        XDG_CACHE_HOME: '/tmp/cache',
+        XDG_CONFIG_HOME: '/tmp/config',
         SUPABASE_URL: 'https://xsgzxadwuxuziubglvps.supabase.co',
         BROADCAST_COMPOSITOR_MAX_SESSIONS: '1',
         BETWEENER_SOURCE_REVISION: RELEASE.sourceRevision,
@@ -172,6 +184,11 @@ export class ProgramCompositorRuntimeStack extends Stack {
       stopTimeout: Duration.seconds(60),
     });
     container.addPortMappings({ containerPort: 8080, protocol: ecs.Protocol.TCP });
+    container.addMountPoints({
+      sourceVolume: 'runtime-tmp',
+      containerPath: '/tmp',
+      readOnly: false,
+    });
 
     const securityGroup = new ec2.SecurityGroup(this, 'TaskSecurityGroup', {
       vpc,

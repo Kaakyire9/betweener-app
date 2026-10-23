@@ -1,11 +1,11 @@
-import awscdk from 'eslint-plugin-awscdk';
-import tseslint from 'typescript-eslint';
+import awscdk, { configs as awscdkConfigs } from 'eslint-plugin-awscdk';
+import { config, configs as tseslintConfigs } from 'typescript-eslint';
 
-export default tseslint.config(
+export default config(
   {
     ignores: ['cdk.out/**', 'node_modules/**'],
   },
-  ...tseslint.configs.recommendedTypeChecked,
+  ...tseslintConfigs.recommendedTypeChecked,
   {
     files: ['**/*.ts'],
     languageOptions: {
@@ -18,7 +18,7 @@ export default tseslint.config(
       awscdk,
     },
     rules: {
-      ...awscdk.configs.recommended.rules,
+      ...awscdkConfigs.recommended.rules,
       '@typescript-eslint/consistent-type-imports': 'error',
       '@typescript-eslint/no-explicit-any': 'error',
     },

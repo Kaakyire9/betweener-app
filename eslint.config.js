@@ -17,6 +17,7 @@ module.exports = defineConfig([
       '**/.expo/**',
       '**/.vercel/**',
       '**/.turbo/**',
+      '**/cdk.out/**',
       // Release-candidate snapshots are immutable verification artifacts, not source inputs.
       'tmp/**',
       '**/android/**',
