@@ -34,13 +34,15 @@ if ($image.Config.User -ne '1000:1000') { throw 'Local compositor image is not c
 
 $registry = "$expectedAccount.dkr.ecr.$Region.amazonaws.com"
 $remoteTag = "$registry/${repository}:$tag"
-aws ecr describe-images `
+$existingTag = aws ecr list-images `
   --repository-name $repository `
-  --image-ids "imageTag=$tag" `
+  --filter tagStatus=TAGGED `
+  --query "imageIds[?imageTag=='$Tag'].imageTag | [0]" `
   --profile $AwsProfile `
   --region $Region `
-  --output json *> $null
-if ($LASTEXITCODE -eq 0) {
+  --output text
+if ($LASTEXITCODE -ne 0) { throw 'Could not verify whether the immutable release tag already exists.' }
+if ($existingTag -and $existingTag -ne 'None') {
   throw 'The immutable release tag already exists. Choose a new source-derived tag.'
 }
 
