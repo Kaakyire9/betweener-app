@@ -50,3 +50,121 @@ docker build -f apps/program-compositor-worker/Dockerfile -t betweener-program-c
 - The RTMP address and stream key are never logged.
 - The renderer profile and audio sink are destroyed on release.
 - An unhealthy renderer or media process releases the lease and fails closed.
+
+## AWS staging runtime
+
+Milestone 1A runs only in AWS account `425805163493`, region `eu-north-1`, through the CDK
+package at `infrastructure/program-compositor`.
+
+- ECR repository: `betweener/program-compositor`
+- ECS cluster: `betweener-staging`
+- ECS service: `program-compositor`
+- Task: Fargate Linux/AMD64, 4 vCPU, 8 GB RAM, 40 GiB ephemeral storage
+- Scale: maximum one compositor session; desired count defaults to `0`
+- Application logs: `/aws/ecs/betweener-staging/program-compositor`, retained for 14 days
+- Operations logs: `/aws/events/ecs/betweener-staging/program-compositor`, retained for 14 days
+- Secret: `betweener/staging/program-compositor/worker-token`
+- Network: default-VPC public subnets, public task IP, no inbound security-group rules
+
+The public-IP design is deliberate for this one intermittent staging worker. It supports
+Supabase, Stream WebRTC, RTMP/RTMPS, ECR, Secrets Manager, CloudWatch, and DNS egress without
+the persistent cost of a NAT Gateway. No load balancer or public health endpoint exists.
+
+### Bootstrap and registry
+
+```powershell
+Set-Location infrastructure/program-compositor
+npm.cmd ci
+npx.cmd cdk bootstrap aws://425805163493/eu-north-1 --profile betweener-staging
+npx.cmd cdk deploy BetweenerStagingProgramCompositorRegistry --profile betweener-staging
+Set-Location ../..
+```
+
+Do not delete the `CDKToolkit` stack. Enable termination protection on it after bootstrap.
+
+### Push the approved release artifact
+
+The push script refuses the wrong account, region, source SHA, local OCI index digest, or platform.
+It does not rebuild source and proves remote-index equivalence plus one valid Linux/AMD64 runtime
+manifest and configuration.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File `
+  infrastructure/program-compositor/scripts/Push-VerifiedRelease.ps1
+```
+
+Record the returned `RemoteIndexDigest` and pass it to the runtime deployment.
+
+Before enabling any media or renderer flag, inspect the returned `RuntimeManifestDigest` with
+ECR basic scanning. A completed scan with unresolved critical findings blocks the media canary;
+build and approve a new immutable release instead of overwriting the tag or suppressing findings.
+
+```powershell
+aws ecr describe-image-scan-findings `
+  --repository-name betweener/program-compositor `
+  --image-id imageDigest=<runtime-manifest-digest> `
+  --profile betweener-staging --region eu-north-1
+```
+
+### Deploy the idle runtime
+
+```powershell
+Set-Location infrastructure/program-compositor
+npx.cmd cdk deploy BetweenerStagingProgramCompositorRuntime `
+  --exclusively `
+  --profile betweener-staging `
+  --parameters DesiredCount=0 `
+  --parameters CompositorImageDigest=<remote-sha256-digest>
+Set-Location ../..
+```
+
+The service has an ECS deployment circuit breaker with rollback. Its container health check
+uses loopback `GET /healthz`, with a 90-second start period, 15-second interval, three-second
+timeout, and three retries. ECS sends `SIGTERM` and waits 60 seconds before forcing shutdown.
+
+### Synchronize the staging token
+
+The original hosted secret cannot be read back. Rotate it only after the AWS secret exists.
+This script generates one 48-byte random value, writes it to both staging systems without
+printing it, verifies the AWS value and Supabase digest match, then removes its temporary files.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File `
+  infrastructure/program-compositor/scripts/Sync-StagingWorkerToken.ps1
+```
+
+Supabase makes Edge Function secret updates available without redeploying the function.
+Production secrets are never touched.
+
+### Canary start and private health verification
+
+Keep `broadcast_compositor_enabled` and every Adaptive Stage V2 rendering flag off while the
+worker first proves empty polling and authentication.
+
+```powershell
+Set-Location infrastructure/program-compositor
+npx.cmd cdk deploy BetweenerStagingProgramCompositorRuntime `
+  --exclusively `
+  --profile betweener-staging `
+  --parameters DesiredCount=1 `
+  --parameters CompositorImageDigest=<remote-sha256-digest>
+
+aws logs tail /aws/ecs/betweener-staging/program-compositor `
+  --profile betweener-staging --region eu-north-1 --since 15m
+```
+
+ECS Exec is intentionally disabled so the worker task role does not receive broad SSM permissions.
+Use ECS task health plus CloudWatch logs to verify the approved source SHA, build identifier,
+manifest and resolver, and a successful orchestration poll. Never expose port `8080` publicly.
+
+### Scale to zero and rollback
+
+After the canary, or immediately on failure:
+
+1. Disable `broadcast_compositor_enabled`, shadow and diagnostics in staging.
+2. Deploy the runtime stack with `DesiredCount=0` and the current digest.
+3. If required, redeploy the previous task-definition digest while keeping desired count `0`.
+4. Review ECS service events plus the application and operations log groups.
+
+Do not enable HLS, recording, captions, translation, clips, highlights, or any V2 renderer as
+part of Milestone 1A.

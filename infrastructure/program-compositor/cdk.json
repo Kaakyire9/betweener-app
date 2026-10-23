@@ -1,0 +1,10 @@
+{
+  "app": "npx tsx bin/program-compositor.ts",
+  "context": {
+    "@aws-cdk/aws-iam:minimizePolicies": true,
+    "@aws-cdk/customresources:installLatestAwsSdkDefault": false,
+    "@aws-cdk/core:checkSecretUsage": true,
+    "@aws-cdk/core:validateAgainstDefaultRules": true,
+    "@aws-cdk/core:target-partitions": ["aws"]
+  }
+}
