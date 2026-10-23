@@ -1,4 +1,5 @@
 export * from './broadcast.ts';
+export * from './adaptive-stage-m2.ts';
 export * from './adaptive-stage-v2.ts';
 export * from './contracts.ts';
 export * from './layout.ts';
