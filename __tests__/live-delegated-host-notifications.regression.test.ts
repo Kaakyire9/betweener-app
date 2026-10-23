@@ -23,6 +23,10 @@ const repository = readFileSync('features/live/application/live-repository.ts', 
 const studio = readFileSync('features/live/components/LiveStudioModal.tsx', 'utf8');
 const circles = readFileSync('app/(tabs)/explore.tsx', 'utf8');
 const eventRoute = readFileSync('app/live/event/[sessionId].tsx', 'utf8');
+const hostStateRepair = readFileSync(
+  'supabase/migrations/20261023153723_repair_delegated_host_backstage_state.sql',
+  'utf8',
+);
 
 const functionBody = (source: string, name: string) => source.match(
   new RegExp(`create or replace function public\\.${name}[\\s\\S]*?\\n\\$\\$;`, 'i'),
@@ -48,6 +52,25 @@ test('delegated Host receives Studio access only while assignment is active', ()
   assert.match(expire, /new\.status in \('ended','cancelled'\)/i);
   assert.match(expire, /set status = 'expired'/i);
   assert.match(expire, /created_by_user_id = new\.produced_by_user_id/i);
+});
+
+test('delegation and revocation reconcile the primary Host through valid participant states', () => {
+  assert.match(
+    hostStateRepair,
+    /create or replace function public\.live_reconcile_primary_host_participant_v1/i,
+  );
+  assert.match(hostStateRepair, /state = 'confirmed'[\s\S]*state = 'left'/i);
+  assert.match(hostStateRepair, /state = 'stage_requested'[\s\S]*state = 'audience'/i);
+  assert.match(
+    hostStateRepair,
+    /state in \([\s\S]*'invited',[\s\S]*'confirmed',[\s\S]*'waitlisted',[\s\S]*'stage_requested'[\s\S]*\)/i,
+  );
+  assert.match(hostStateRepair, /after update of role on public\.live_participants/i);
+  assert.match(hostStateRepair, /session\.status in \('backstage', 'live', 'ending'\)/i);
+  assert.match(
+    hostStateRepair,
+    /revoke all on function public\.live_reconcile_primary_host_participant_v1\(uuid\)[\s\S]*from public, anon, authenticated, service_role/i,
+  );
 });
 
 test('active Host can extend safely or opt into a manual end', () => {
