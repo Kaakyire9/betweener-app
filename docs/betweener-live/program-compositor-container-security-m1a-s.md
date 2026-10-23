@@ -205,7 +205,7 @@ The final source and infrastructure revisions passed:
 - Adaptive Stage M1 regression: `11/11`
 - Studio Program and six-person regression: `44/44`
 - Studio operator regression: `19/19`
-- Phase C2 compositor regression: `11/11`
+- Phase C2 compositor regression: `12/12`
 - compositor worker build/check and local container runtime smoke tests
 - infrastructure build, lint, format, CDK synthesis and tests: `2/2`
 - root and Studio TypeScript checks
@@ -213,9 +213,24 @@ The final source and infrastructure revisions passed:
 Automated coverage passed for four/six-person layouts, portrait/landscape
 geometry, screen-share contracts, deterministic RTC ordering, source loss,
 stale contracts, malformed state, Room Pulse isolation and three-renderer
-telemetry wiring. On-device media canaries remain pending: staging had zero
-active Live sessions and no Adaptive Stage diagnostic events in the preceding
-24 hours at closure time. They require a supervised disposable staging Live,
-real publishers and device actions; they are not a condition for retaining the
-security-hardened artifact at desired count zero, but they remain a condition
-for enabling any render flag.
+telemetry wiring.
+
+The supervised server-media canary ran on 23 October 2026 against disposable
+staging Live `6fc55d60-efd5-4938-87f6-52d3ea6c6a47`. Its first claim exposed
+that a fresh Stream call was read before it existed. The orchestrator now
+idempotently creates that call with a restricted system creator and Program
+publisher before admission; recording remains explicitly disabled. The
+deployed correction then proved:
+
+- one RTMP Program publication reached `live` without enabling HLS, recording,
+  captions, translation, clips or highlights
+- Program advanced from branded landscape v2 to Audience Pulse portrait v3
+- compositor observation advanced to v3, with semantic V1/V2 shadow matches
+  and no divergence
+- forced task replacement shut down generation 1 cleanly and generation 2
+  reclaimed the same Program without a stale-worker write or failure state
+- both worker containers exited `0`; the lease ended, the disposable Live was
+  cancelled, the compositor gate was disabled, and ECS returned to `0/0/0`
+
+Physical iPhone and Android publisher/media validation remains pending. It is
+still required before enabling any renderer flag.

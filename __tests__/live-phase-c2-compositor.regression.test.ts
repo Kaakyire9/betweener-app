@@ -33,6 +33,17 @@ test('credential refresh first proves the active compositor lease', () => {
   assert.match(orchestrator, /generateCallToken/i);
 });
 
+test('fresh compositor calls are created idempotently before RTMP admission', () => {
+  assert.match(orchestrator, /STREAM_SYSTEM_USER_ID = 'betweener-live-system'/i);
+  assert.match(orchestrator, /created_by_id: STREAM_SYSTEM_USER_ID/i);
+  assert.match(orchestrator, /betweener_program_compositor: true/i);
+  assert.match(orchestrator, /recording_allowed: false/i);
+  assert.ok(
+    orchestrator.indexOf('await call.getOrCreate') < orchestrator.indexOf('await call.get();'),
+  );
+  assert.match(orchestrator, /step = 'stream_call_get_or_create'/i);
+});
+
 test('worker publishes one fenced RTMP programme and never logs credentials', () => {
   assert.match(worker, /buildFfmpegArguments/i);
   assert.match(worker, /buildRtmpTarget/i);

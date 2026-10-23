@@ -25,6 +25,7 @@ const ADAPTIVE_STAGE_DIAGNOSTIC_EVENTS = new Set([
 ]);
 const MAX_BODY_BYTES = 4_096;
 const STREAM_TOKEN_SECONDS = 60 * 60;
+const STREAM_SYSTEM_USER_ID = 'betweener-live-system';
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status,
@@ -177,15 +178,32 @@ Deno.serve(async (request) => {
       const streamApiKey = requiredEnv('STREAM_VIDEO_API_KEY');
       const stream = new StreamClient(streamApiKey, requiredEnv('STREAM_VIDEO_API_SECRET'));
       const call = stream.video.call(callType, callId);
-      await stream.upsertUsers([{
-        id: providerUserId,
-        name: 'Betweener Program',
-        role: 'user',
-      }]);
+      step = 'stream_user_upsert';
+      await stream.upsertUsers([
+        { id: STREAM_SYSTEM_USER_ID, name: 'Betweener Live', role: 'admin' },
+        { id: providerUserId, name: 'Betweener Program', role: 'user' },
+      ]);
+      step = 'stream_call_get_or_create';
+      await call.getOrCreate({
+        notify: false,
+        ring: false,
+        data: {
+          created_by_id: STREAM_SYSTEM_USER_ID,
+          members: [{ user_id: providerUserId, role: 'call_member' }],
+          custom: {
+            betweener_session_id: body.sessionId,
+            betweener_program_compositor: true,
+            recording_allowed: false,
+          },
+        },
+      });
+      step = 'stream_call_get';
       const response = await call.get();
+      step = 'stream_member_update';
       await call.updateCallMembers({
         update_members: [{ user_id: providerUserId, role: 'call_member' }],
       });
+      step = 'stream_permission_update';
       await call.updateUserPermissions({
         user_id: providerUserId,
         grant_permissions: ['send-audio', 'send-video'],
