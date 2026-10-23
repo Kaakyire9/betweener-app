@@ -34,6 +34,9 @@ $shortSha = git rev-parse --short=7 HEAD
 docker buildx build --platform linux/amd64 --target validation --load `
   --build-arg SOURCE_REVISION=$securitySha `
   --build-arg BUILD_IDENTIFIER="adaptive-stage-m1-secure-$shortSha" `
+  --build-arg ADAPTIVE_STAGE_V2_SHADOW_ENABLED=false `
+  --build-arg ADAPTIVE_STAGE_V2_DIAGNOSTICS_ENABLED=false `
+  --build-arg ADAPTIVE_STAGE_V2_COMPOSITOR_RENDER_ENABLED=false `
   -f apps/program-compositor-worker/Dockerfile `
   -t "betweener-program-compositor:adaptive-stage-m1-secure-$shortSha" .
 ```
@@ -48,6 +51,14 @@ dependency graphs. Chrome runs without its setuid sandbox because the ECS task
 runs as UID/GID `1000:1000`, drops every Linux capability, has a read-only root
 filesystem, exposes no inbound port, and receives only one writable `/tmp`
 volume. Do not weaken those compensating controls.
+
+After that security/runtime canary passes, build a new source-derived immutable
+image with only `ADAPTIVE_STAGE_V2_SHADOW_ENABLED=true` and
+`ADAPTIVE_STAGE_V2_DIAGNOSTICS_ENABLED=true`. Keep
+`ADAPTIVE_STAGE_V2_COMPOSITOR_RENDER_ENABLED=false`. The image labels record
+all three compiled values; runtime environment overrides do not change the
+already-built renderer bundle. Rescan and redeploy the new digest before the
+three-renderer shadow canary.
 
 ## Staged activation
 

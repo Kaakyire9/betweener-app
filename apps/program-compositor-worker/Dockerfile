@@ -60,6 +60,9 @@ ARG TIFF_VERSION=4.7.2
 ARG ZLIB_COMMIT=df84af25dc1942490e1d1c899a07619152a46148
 ARG CHROME_VERSION=156.0.8078.47
 ARG PULSEAUDIO_VERSION=17.0+dfsg1-2+b1
+ARG ADAPTIVE_STAGE_V2_SHADOW_ENABLED=false
+ARG ADAPTIVE_STAGE_V2_DIAGNOSTICS_ENABLED=false
+ARG ADAPTIVE_STAGE_V2_COMPOSITOR_RENDER_ENABLED=false
 LABEL org.opencontainers.image.revision=$SOURCE_REVISION \
   org.opencontainers.image.base.name=$NODE_BASE \
   com.getbetweener.com.ffmpeg.version=$FFMPEG_VERSION \
@@ -67,7 +70,10 @@ LABEL org.opencontainers.image.revision=$SOURCE_REVISION \
   com.getbetweener.com.tiff.version=$TIFF_VERSION \
   com.getbetweener.com.zlib.commit=$ZLIB_COMMIT \
   com.getbetweener.com.chrome.version=$CHROME_VERSION \
-  com.getbetweener.com.pulseaudio.version=$PULSEAUDIO_VERSION
+  com.getbetweener.com.pulseaudio.version=$PULSEAUDIO_VERSION \
+  com.getbetweener.com.adaptive-stage-v2.shadow-enabled=$ADAPTIVE_STAGE_V2_SHADOW_ENABLED \
+  com.getbetweener.com.adaptive-stage-v2.diagnostics-enabled=$ADAPTIVE_STAGE_V2_DIAGNOSTICS_ENABLED \
+  com.getbetweener.com.adaptive-stage-v2.compositor-render-enabled=$ADAPTIVE_STAGE_V2_COMPOSITOR_RENDER_ENABLED
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
