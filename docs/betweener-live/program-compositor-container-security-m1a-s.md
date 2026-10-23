@@ -23,7 +23,9 @@ The old image remains immutable and is the rollback artifact.
 | Node | 24.22.1 | 24.22.1 |
 | Browser | Debian Chromium 155.0.8059.79 | Pinned Chrome for Testing 156.0.8078.47 |
 | FFmpeg | Debian 5.1.9, full feature set | Pinned FFmpeg 9.0.2, allowlisted feature set |
-| Image digest | `sha256:373029b26a8d851c761c8aaa725fb2db9bcbd713621630b9f8033eb7b76e180d` | Recorded after the ECR gate |
+| Image digest | `sha256:373029b26a8d851c761c8aaa725fb2db9bcbd713621630b9f8033eb7b76e180d` | `sha256:f8864e66b34b69fd3e2903bd21400c7fe206c0eb64a0340a4c135cd39a9511d9` |
+| Runtime manifest | `sha256:35f68b89f1d3f03e82fd15c91630984d2dccdda0ff2a3ac92bae7c65c4edb443` | `sha256:9ef8d4b61a96428786074e48853c77703931936e3b4db039aa7c82abfcfa419d` |
+| Source revision | `5812bc9e6b93733e9f543c5e2003e1660f17a0d8` | `5b346ea8e9fb43d6f7cc4403b73016e7fd1011d4` |
 
 The old runtime installed Debian `chromium`, `ffmpeg` and full `pulseaudio`.
 That pulled broad decoder, demuxer and codec graphs including librist/cJSON,
@@ -120,3 +122,38 @@ be accepted only if no safe stable update exists and the post-push evidence
 still confirms non-root execution, read-only root, capability drop and removal
 of the affected privileged utilities. Any Critical result or safely fixable High
 result blocks deployment.
+
+## Hardened-image ECR disposition
+
+ECR Basic scanning completed on 23 October 2026 for runtime manifest
+`sha256:9ef8d4b61a96428786074e48853c77703931936e3b4db039aa7c82abfcfa419d`:
+
+- Critical: `0`
+- High: `9`
+- Medium: `30`
+- Low: `8`
+
+No remaining High has a safe, ABI-compatible fix in Debian 13. The fixed
+libxml2 release changes its ELF soname from `libxml2.so.2` to `libxml2.so.16`;
+installing it over the stable package would break the Mesa/LLVM and GTK
+dependency graph. Replacing glibc from Debian testing/unstable would be an
+uncontrolled core-runtime upgrade. Both changes are therefore rejected in
+favour of the following explicit residual-risk controls.
+
+| CVE | CVSS | Package / source | Requirement | Classification, reachability, mitigation and residual risk |
+| --- | --- | --- | --- | --- |
+| CVE-2026-74860 | 8.5 | libxml2 `2.12.7+dfsg+really2.9.14-2.1+deb13u3` / Debian trixie | Indirect through `libllvm19` and `shared-mime-info` | `NOT_RUNTIME_REACHABLE`: requires libxml2 Python bindings; Python and those bindings are absent. No residual compositor input path exists. |
+| CVE-2026-86138 | 7.8 | libxml2, same source | Indirect | `NO_FIX_AVAILABLE`: the worker does not parse attacker XML or call `xmlDictAddQString`; fixed ABI 16 is incompatible with stable consumers. Mitigated by trusted bundled HTML/CSS, non-root execution, read-only root and dropped capabilities. Residual risk is limited to a future indirect consumer exposing untrusted XML; dependency scans must continue on every rebuild. |
+| CVE-2026-86139 | 7.8 | libxml2, same source | Indirect | `FALSE_POSITIVE_OR_SCANNER_LIMITATION`: Debian records the affected code as introduced in 2.13.0, while the package's real upstream source is 2.9.14 despite its epoch/version prefix. |
+| CVE-2026-86140 | 7.8 | libxml2, same source | Indirect | `NO_FIX_AVAILABLE`: `xmlSnprintfElements` is not called by the compositor and no untrusted XML/DTD enters its indirect consumers. ABI 16 is not a safe in-place update. Residual risk is denial/corruption only if a future component adds this XML validation path. |
+| CVE-2026-86142 | 7.8 | libxml2, same source | Indirect | `NO_FIX_AVAILABLE`: XPointer evaluation is not used by Node, Chrome launch, Xvfb, PulseAudio or FFmpeg. ABI 16 is incompatible. Residual risk is limited to future use of attacker-controlled XPointer documents. |
+| CVE-2026-86143 | 7.3 | libxml2, same source | Indirect | `NO_FIX_AVAILABLE`: the compositor has no libxml output callback or XML serialization path. ABI 16 is incompatible. Non-root/read-only execution limits impact if a future indirect path is introduced. |
+| CVE-2026-86144 | 7.8 | libxml2, same source | Indirect | `NO_FIX_AVAILABLE`: the worker never calls XInclude or supplies a custom XML resource loader, so the NONET/SSRF path is absent. Network destinations remain application-defined Supabase and RTMP endpoints. Residual risk requires a future untrusted XInclude consumer. |
+| CVE-2026-5435 | 7.3 | glibc `2.41-12+deb13u4` / Debian trixie | Base runtime | `NO_FIX_AVAILABLE`: Debian marks the stable issue minor; affected deprecated TSIG-printing resolver functions are not used. All setuid/setgid bits are removed, the task runs as UID 1000 and drops all capabilities. Residual risk requires adding a caller of the deprecated APIs. |
+| CVE-2026-19499 | 7.7 | glibc, same source | Base runtime | `NO_FIX_AVAILABLE`: `strfmon`/`strfmon_l` monetary formatting is absent from compositor code and no network-facing application impact is known upstream. Replacing glibc across releases is unsafe. Residual risk requires a future attacker-controlled monetary format path. |
+
+The gate passes with documented residuals: unresolved Critical findings are
+zero and safely fixable High findings are zero. The nine scanner Highs remain
+visible rather than being hidden by deleting package metadata. Reassess them
+when Debian publishes ABI-compatible stable updates or when the runtime
+dependency graph changes.
