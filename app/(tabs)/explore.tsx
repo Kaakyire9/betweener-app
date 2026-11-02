@@ -13,6 +13,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/lib/auth-context';
 import { useAdminAccess } from '@/lib/admin/admin-access';
 import { CirclesLiveGateway } from '@/features/live/components/index.ts';
+import { LIVE_PRODUCT_ENABLED } from '@/features/live/config/live-product-release';
 import { useLiveSessions } from '@/features/live/hooks/index.ts';
 import { getLiveSessionPhase } from '@/features/live/application/index.ts';
 import { getCirclePulsePalette } from '@/lib/circles/pulse/circle-pulse-theme';
@@ -1624,7 +1625,7 @@ export default function CirclesScreen() {
           })}
         </View>
 
-        {homeMode === 'mine' && (canHostLive || gatheringLiveSessions.length > 0) ? (
+        {LIVE_PRODUCT_ENABLED && homeMode === 'mine' && (canHostLive || gatheringLiveSessions.length > 0) ? (
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
               <View style={styles.sectionTitleRow}>

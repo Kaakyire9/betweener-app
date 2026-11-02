@@ -1,4 +1,5 @@
 import { Colors } from '@/constants/theme';
+import { showBetweenerAlert } from '@/components/ui/BetweenerAlertHost';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useIntentRequests, type IntentRequest, type IntentRequestType } from '@/hooks/useIntentRequests';
 import { useReduceMotion } from '@/hooks/useReduceMotion';
@@ -28,6 +29,8 @@ import { buildLocationDisplay } from '@/lib/location/location-display';
 import { getSafeRemoteImageUri, getUserFacingDisplayName, hasLeftBetweener } from '@/lib/profile/display-name';
 import { getProfileInitials, getProfilePlaceholderPalette } from '@/lib/profile-placeholders';
 import { supabase } from '@/lib/supabase';
+import { acceptProfileSignal } from '@/lib/relationships/relationship-service';
+import { RelationshipCommandError } from '@/lib/relationships/relationship-commands';
 import { getViewedProfileTrustChips } from '@/lib/viewed-profile-premium';
 import MatchModal from '@/components/MatchModal';
 import BlurViewSafe from '@/components/NativeWrappers/BlurViewSafe';
@@ -55,6 +58,8 @@ import Animated, {
 } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import IntentRequestSheet from '@/components/IntentRequestSheet';
+import { IntentCallingConsent } from '@/features/connect/components/IntentCallingConsent';
+import { ConnectCallingPreferences } from '@/features/connect/components/ConnectCallingPreferences';
 import SignalReceivedCard, { type ReceivedSignal } from '@/components/signal/SignalReceivedCard';
 
 type Direction = 'incoming' | 'sent';
@@ -1617,35 +1622,6 @@ export default function IntentScreen() {
     [interestsByProfile, myInterests, profiles],
   );
 
-  const ensureMatch = useCallback(async (actorId: string, recipientId: string) => {
-    const { data, error: matchLookupError } = await supabase
-      .from('matches')
-      .select('id,status')
-      .or(
-        `and(user1_id.eq.${actorId},user2_id.eq.${recipientId}),and(user1_id.eq.${recipientId},user2_id.eq.${actorId})`,
-      )
-      .limit(1);
-    if (matchLookupError) throw matchLookupError;
-
-    if (data && data.length > 0) {
-      const match = data[0];
-      if (match.status !== 'ACCEPTED') {
-        const { error: matchUpdateError } = await supabase.from('matches').update({ status: 'ACCEPTED' }).eq('id', match.id);
-        if (matchUpdateError) throw matchUpdateError;
-      }
-      return match.id;
-    }
-
-    const [user1, user2] = [actorId, recipientId].sort();
-    const { data: inserted, error: matchInsertError } = await supabase
-      .from('matches')
-      .insert({ user1_id: user1, user2_id: user2, status: 'ACCEPTED' })
-      .select('id')
-      .single();
-    if (matchInsertError) throw matchInsertError;
-    return inserted?.id;
-  }, []);
-
   const acceptRequest = useCallback(
     async (item: IntentRequest) => {
       if (!user?.id) return;
@@ -1679,11 +1655,10 @@ export default function IntentScreen() {
         return;
       }
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      await ensureMatch(item.actor_id, item.recipient_id);
       setCelebrationMatch(buildIntentCelebrationMatch(item));
       await refresh();
     },
-    [buildIntentCelebrationMatch, ensureMatch, refresh, updateLocalIntent, user],
+    [buildIntentCelebrationMatch, refresh, updateLocalIntent, user],
   );
 
   const passRequest = useCallback(async (item: IntentRequest) => {
@@ -1866,19 +1841,6 @@ export default function IntentScreen() {
     }
   }, []);
 
-  const markSignalResponded = useCallback(async (signalId: string) => {
-    const respondedAt = new Date().toISOString();
-    setReceivedSignals((prev) => prev.filter((signal) => signal.id !== signalId));
-    const { error } = await (supabase as any)
-      .from('profile_signal_gestures')
-      .update({ status: 'responded', responded_at: respondedAt })
-      .eq('id', signalId);
-    if (error) {
-      console.log('[intent] respond signal error', error);
-      setSignalsRefreshKey((key) => key + 1);
-    }
-  }, []);
-
   const acceptSignal = useCallback(
     (signal: ReceivedSignal) => {
       void (async () => {
@@ -1888,18 +1850,21 @@ export default function IntentScreen() {
           return;
         }
         try {
-          await ensureMatch(signal.sender_profile_id, signal.receiver_profile_id);
-          await markSignalResponded(signal.id);
+          await acceptProfileSignal(signal.id);
+          setReceivedSignals((prev) => prev.filter((item) => item.id !== signal.id));
           void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           setCelebrationMatch(buildSignalCelebrationMatch(signal));
           await refresh();
         } catch (error) {
           console.log('[intent] accept signal error', error);
+          if (error instanceof RelationshipCommandError) {
+            showBetweenerAlert({ title: 'Connection needs confirmation', message: error.message, tone: 'info' });
+          }
           setSignalsRefreshKey((key) => key + 1);
         }
       })();
     },
-    [buildSignalCelebrationMatch, ensureMatch, markSignalResponded, refresh],
+    [buildSignalCelebrationMatch, refresh],
   );
 
   const cancelSentSignal = useCallback(async (signalId: string) => {
@@ -2369,6 +2334,7 @@ export default function IntentScreen() {
                 </Text>
               ) : null}
 
+              {!hasQueuedAction && !peerHasLeft && <IntentCallingConsent intentId={item.id} />}
               {highlightIncoming ? (
                 <View style={styles.replyHintRow}>
                   <MaterialCommunityIcons name="star-four-points" size={14} color={theme.tint} />
@@ -3259,6 +3225,7 @@ export default function IntentScreen() {
       </Animated.View>
 
       <Animated.View entering={enterToggle}>
+        <ConnectCallingPreferences />
         <SegmentedToggle
           value={direction}
           reduceMotion={reduceMotion}

@@ -1,5 +1,6 @@
 import { AdminScreenShell } from '@/components/admin/AdminScreenShell';
 import { Colors } from '@/constants/theme';
+import { LIVE_PRODUCT_ENABLED } from '@/features/live/config/live-product-release';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { type AdminCapability, useAdminAccess } from '@/lib/admin/admin-access';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -55,7 +56,11 @@ export default function AdminScreen() {
           <View style={styles.cardCopy}>
             <Text style={styles.studioEyebrow}>CREATE & MANAGE</Text>
             <Text style={styles.studioTitle}>Betweener Studio</Text>
-            <Text style={styles.cardDetail}>Live, Circles, Gatherings, Relationship Gists, and AI Editorial Studio.</Text>
+            <Text style={styles.cardDetail}>
+              {LIVE_PRODUCT_ENABLED
+                ? 'Live, Circles, Gatherings, Relationship Gists, and AI Editorial Studio.'
+                : 'Circles, Gatherings, Relationship Gists, and AI Editorial Studio.'}
+            </Text>
           </View>
           <MaterialCommunityIcons name="chevron-right" size={21} color={theme.textMuted} />
         </Pressable>
@@ -67,7 +72,10 @@ export default function AdminScreen() {
       </View>
 
       <View style={styles.grid}>
-        {MODULES.filter((module) => access.can(module.capability)).map((module) => (
+        {MODULES.filter((module) => (
+          access.can(module.capability)
+          && (module.capability !== 'live' || LIVE_PRODUCT_ENABLED)
+        )).map((module) => (
           <Pressable
             key={module.capability}
             accessibilityRole="button"

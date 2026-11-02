@@ -6,12 +6,14 @@ import { upsertChatPref } from '@/lib/chat/chat-list-actions-service';
 import { ChatOutboxService } from '@/lib/chat/outbox/chat-outbox-service';
 import { getStickerReactionTarget, parseStickerPreview } from '@/lib/chat-sticker-preview';
 import { getChatMessagePreviewText, getDatePlanPreviewText, parseDatePlanPreviewMeta } from '@/lib/message-preview';
+import { getLoveSeatNotificationDestination } from '@/lib/notifications/notification-routing';
 import { getSafeRemoteImageUri, getUserFacingDisplayName } from '@/lib/profile/display-name';
 import { subscribeUserChatBroadcast } from '@/lib/realtime/user-chat-broadcast';
 import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Image as ExpoImage } from 'expo-image';
 import * as Notifications from 'expo-notifications';
+import { LIVE_PRODUCT_ENABLED } from '@/features/live/config/live-product-release';
 import { LinearGradient } from 'expo-linear-gradient';
 import { createVideoPlayer } from 'expo-video';
 import { usePathname, useRouter } from 'expo-router';
@@ -1654,7 +1656,7 @@ export default function InAppToasts() {
   }, [queueIncomingMessageToast, user?.id]);
 
   useEffect(() => {
-    if (!user?.id) return;
+    if (!LIVE_PRODUCT_ENABLED || !user?.id) return;
     const channel = supabase
       .channel(`inapp_live_announcements:${user.id}`)
       .on(
@@ -2054,6 +2056,7 @@ export default function InAppToasts() {
       const pushType = typeof data?.type === 'string' ? data.type : '';
       if (pushType === 'live_host_assigned' || pushType === 'live_host_revoked'
         || pushType === 'live_starting_soon' || pushType === 'live_now') {
+        if (!LIVE_PRODUCT_ENABLED) return;
         const preference = pushType === 'live_starting_soon' ? 'live_reminders' : 'live_started';
         if (!canInAppNotify(preference)) return;
         const sessionId = data?.session_id ? String(data.session_id) : '';
@@ -2398,13 +2401,19 @@ export default function InAppToasts() {
       if (pushType === 'circle_love_seat' && data?.circle_id) {
         if ((prefs && !prefs.inapp_enabled) || isQuietHours) return;
         pushToast({
-          id: `circle-love-seat-${data?.love_seat_id ? String(data.love_seat_id) : notification.request.identifier}-${data?.event_type || 'update'}`,
+          id: data?.event_id
+            ? `circle-love-seat-${String(data.event_id)}`
+            : `circle-love-seat-${data?.love_seat_id ? String(data.love_seat_id) : notification.request.identifier}-${data?.event_type || 'update'}`,
           title: notification.request.content.title || 'Circle Love Seat',
           body: notification.request.content.body || 'There is a new Love Seat update in your Circle.',
           kind: 'generic',
           route: '/circles/[id]',
           routeParams: {
             id: String(data.circle_id),
+            ...(data?.love_seat_id ? { openLoveSeatId: String(data.love_seat_id) } : {}),
+            openLoveSeatEvent: typeof data?.event_type === 'string' ? data.event_type : 'status',
+            openLoveSeatDestination: getLoveSeatNotificationDestination(data?.event_type),
+            openLoveSeatRouteNonce: notification.request.identifier,
           },
         });
         return;

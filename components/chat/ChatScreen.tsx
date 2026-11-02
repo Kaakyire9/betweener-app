@@ -1,4 +1,5 @@
 import MomentViewer from "@/components/MomentViewer";
+import { ConnectCallEntry } from '@/features/connect/components/ConnectCallEntry';
 import { ChatBackground } from '@/components/chat/ChatBackground';
 import ChatComposer from "@/components/chat/ChatComposer";
 import ChatExpressionTray from '@/components/chat/ChatExpressionTray';
@@ -1208,26 +1209,6 @@ export default function ConversationScreen() {
     };
   }, [peerProfile?.id, profile?.id]);
 
-  const ensureMatch = useCallback(async () => {
-    if (!profile?.id || !peerProfile?.id) return;
-    const { data } = await supabase
-      .from('matches')
-      .select('id,status')
-      .or(
-        `and(user1_id.eq.${profile.id},user2_id.eq.${peerProfile.id}),and(user1_id.eq.${peerProfile.id},user2_id.eq.${profile.id})`,
-      )
-      .limit(1);
-    if (data && data.length > 0) {
-      const match = data[0];
-      if (match.status !== 'ACCEPTED') {
-        await supabase.from('matches').update({ status: 'ACCEPTED' }).eq('id', match.id);
-      }
-      return;
-    }
-    const [user1, user2] = [profile.id, peerProfile.id].sort();
-    await supabase.from('matches').insert({ user1_id: user1, user2_id: user2, status: 'ACCEPTED' });
-  }, [peerProfile?.id, profile?.id]);
-
   const refreshPendingIntent = useCallback(async () => {
     if (!profile?.id || !peerProfile?.id) {
       setPendingIntentRequest(null);
@@ -1328,10 +1309,9 @@ export default function ConversationScreen() {
       snapshotOwnerIds: [profile?.id ?? null, user?.id ?? null],
     });
     if (result.status === 'queued') return;
-    await ensureMatch();
     setPendingIntentRequest(null);
     setMatchAccepted(true);
-  }, [ensureMatch, pendingIntentRequest, profile?.id]);
+  }, [pendingIntentRequest, profile?.id, user?.id]);
 
   const passPendingIntent = useCallback(async () => {
     if (!pendingIntentRequest) return;
@@ -9288,6 +9268,7 @@ const resolveQueuedVideoUri = async (
           </View>
         </TouchableOpacity>
 
+        <ConnectCallEntry peerId={peerProfileId} blocked={isChatBlocked || peerHasLeftBetweener} />
         <TouchableOpacity
           style={[
             styles.headerOptionsButton,

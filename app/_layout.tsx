@@ -19,6 +19,7 @@ import { scheduleIdleTask } from "@/lib/scheduling/idle-task";
 import AccountRecoveryNotice from "@/components/AccountRecoveryNotice";
 import RecoveryMergeSuggestionNotice from "@/components/RecoveryMergeSuggestionNotice";
 import InAppToasts from "@/components/InAppToasts";
+import { ConnectProductProvider } from '@/features/connect/components/ConnectProductProvider';
 import IntentResponseReminder from "@/components/IntentResponseReminder";
 import NetworkStatusBanner from "@/components/NetworkStatusBanner";
 import AppVersionGateHost from "@/components/updates/AppVersionGateHost";
@@ -64,6 +65,7 @@ initSentry();
 
 function PendingNotificationRouteHydrator() {
   const { isLoading, canAccessApp } = useAuthGuard();
+  const { nativeSessionOwner } = useAuth();
   const pathname = usePathname();
   const segments = useSegments();
   const router = useRouter();
@@ -110,6 +112,15 @@ function PendingNotificationRouteHydrator() {
     try {
       const target = await peekPendingNotificationRoute();
       if (!target) return;
+      if (target.pathname === '/connect/voice') {
+        const { connectNotificationAccountAllowed } = await import('@/features/connect/domain/notification-binding');
+        if (!connectNotificationAccountAllowed(target.pathname, target.params, nativeSessionOwner.snapshot()?.userId ?? null)) {
+          await clearPendingNotificationRoute(); return;
+        }
+        // Each notification selects a specific call even when /connect/voice is open.
+        await clearPendingNotificationRoute();
+        router.replace(target as any); return;
+      }
 
       debugNotificationHydrator("target", {
         reason,
@@ -149,7 +160,7 @@ function PendingNotificationRouteHydrator() {
     } finally {
       inFlightRef.current = false;
     }
-  }, [canAccessApp, debugNotificationHydrator, isLoading, router]);
+  }, [canAccessApp, debugNotificationHydrator, isLoading, nativeSessionOwner, router]);
 
   useEffect(() => {
     void hydratePendingRoute("pending_route_changed");
@@ -477,6 +488,11 @@ function RootLayout() {
           if (!target) {
             return;
           }
+          if (target.pathname === '/connect/voice') {
+            lastHandledNotificationKeyRef.current = responseKey;
+            await persistPendingNotificationRoute(target);
+            return;
+          }
 
           if (
             typeof target.params?.openPulseItemId === "string" ||
@@ -783,6 +799,7 @@ function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <AuthProvider>
+        <ConnectProductProvider>
         <SparkWalletProvider>
           <View style={{ flex: 1, backgroundColor: Colors[colorScheme].background }}>
           <OfflineMutationQueueHydrator />
@@ -978,6 +995,7 @@ function RootLayout() {
           )}
           </View>
         </SparkWalletProvider>
+        </ConnectProductProvider>
       </AuthProvider>
     </GestureHandlerRootView>
   );

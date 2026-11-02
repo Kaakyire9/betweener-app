@@ -24,6 +24,7 @@ import {
   evaluatePushTokenProvenance,
   type PushEnvironmentConfig,
 } from '../_shared/push-environment-provenance.ts'
+import { connectPushDeliveryOptions } from '../_shared/connect-push-contract.ts'
 
 type PushNotificationEventClaim = {
   claimStatus: 'claimed' | 'duplicate' | 'expired' | 'rate_limited' | 'not_authorized'
@@ -665,6 +666,14 @@ serve(async (request) => {
 
     const data = { ...(claim.data || {}) }
     const type = claim.eventType || asString(data.type) || 'system_message'
+    const connectOptions = type.startsWith('connect_') ? connectPushDeliveryOptions(data, {
+      enabled: Deno.env.get('CONNECT_NOTIFICATIONS_ENABLED') === 'true',
+      environment: pushEnvironment.appEnvironment, applicationId: pushEnvironment.applicationId,
+    }) : null
+    if (type.startsWith('connect_') && (!connectOptions || connectOptions.data.recipient_user_id !== claim.recipientUserId)) {
+      await completeEvent(true, 0, 0, 'connect_delivery_disabled_or_invalid')
+      return jsonResponse(200, { ok: true, skipped: true })
+    }
     const tokenResult = await service
       .from('push_tokens')
       .select('id,token,last_seen_at,app_version,app_environment,application_id,expo_project_id,installation_id,provenance_status,quarantined_at')
@@ -725,6 +734,7 @@ serve(async (request) => {
           channelId: type === 'message' || type === 'message_reaction' ? 'messages' : 'default',
           categoryId: `bt_${type}`,
           data,
+          ...(connectOptions ? { ttl: connectOptions.ttl, priority: connectOptions.priority } : {}),
         }
         if (typeof badge === 'number') message.badge = badge
         if (richImageUrl) {

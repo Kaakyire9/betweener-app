@@ -8,6 +8,7 @@ import { useResolvedProfileId } from '@/hooks/useResolvedProfileId';
 import { useAdminAccess } from '@/lib/admin/admin-access';
 import { useAuth } from '@/lib/auth-context';
 import { canCreateCircle, canCreateGathering, type CircleAccessEntitlements } from '@/lib/circles/circle-access';
+import { LIVE_PRODUCT_ENABLED } from '@/features/live/config/live-product-release';
 import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -52,7 +53,7 @@ export default function BetweenerStudioScreen() {
 
   const visibleModules = useMemo(() => {
     const visibility: Record<StudioModuleId, boolean> = {
-      live: canSchedule,
+      live: LIVE_PRODUCT_ENABLED && canSchedule,
       circles: canCreateCircle(premiumState, circleProfile),
       gatherings: canCreateGathering(premiumState, circleProfile),
       'relationship-gists': access.can('editorial'),

@@ -13,6 +13,8 @@ import PremiumUpsellModal from '@/components/premium/PremiumUpsellModal';
 import { VerificationBadge } from '@/components/VerificationBadge';
 import { PremiumPlanBadge } from '@/components/PremiumPlanBadge';
 import { showBetweenerAlert } from '@/components/ui/BetweenerAlertHost';
+import { acceptProfileSignal } from '@/lib/relationships/relationship-service';
+import { RelationshipCommandError } from '@/lib/relationships/relationship-commands';
 import {
   createProfileBoostV2,
   formatBoostAudienceLabel,
@@ -1751,47 +1753,12 @@ export default function ProfileViewPremiumV2Screen() {
     };
   }, [currentProfile?.id, isOwnProfile, resolvedProfile.id]);
 
-  const ensureProfileMatch = useCallback(async (actorProfileId: string, recipientProfileId: string) => {
-    const { data, error: lookupError } = await supabase
-      .from('matches')
-      .select('id,status')
-      .or(
-        `and(user1_id.eq.${actorProfileId},user2_id.eq.${recipientProfileId}),and(user1_id.eq.${recipientProfileId},user2_id.eq.${actorProfileId})`,
-      )
-      .limit(1);
-    if (lookupError) throw lookupError;
-
-    if (data && data.length > 0) {
-      const match = data[0];
-      if (match.status !== 'ACCEPTED') {
-        const { error: updateError } = await supabase.from('matches').update({ status: 'ACCEPTED' }).eq('id', match.id);
-        if (updateError) throw updateError;
-      }
-      return match.id;
-    }
-
-    const [user1, user2] = [actorProfileId, recipientProfileId].sort();
-    const { data: inserted, error: insertError } = await supabase
-      .from('matches')
-      .insert({ user1_id: user1, user2_id: user2, status: 'ACCEPTED' })
-      .select('id')
-      .single();
-    if (insertError) throw insertError;
-    return inserted?.id;
-  }, []);
-
   const acceptProfileReminder = useCallback(async () => {
     if (!profileReminder || !currentProfile?.id || !resolvedProfile.id || profileReminderBusy) return;
     setProfileReminderBusy('accept');
     try {
       if (profileReminder.kind === 'signal') {
-        const respondedAt = new Date().toISOString();
-        const { error } = await (supabase as any)
-          .from('profile_signal_gestures')
-          .update({ status: 'responded', responded_at: respondedAt })
-          .eq('id', profileReminder.id);
-        if (error) throw error;
-        await ensureProfileMatch(resolvedProfile.id, currentProfile.id);
+        await acceptProfileSignal(profileReminder.id);
       } else {
         const result = await decideIntentRequestOfflineSafe({
           requestId: profileReminder.id,
@@ -1813,13 +1780,13 @@ export default function ProfileViewPremiumV2Screen() {
       logger.error('[profile-view] accept_profile_reminder_failed', error);
       showBetweenerAlert({
         title: 'Unable to accept',
-        message: (typeof __DEV__ !== 'undefined' && __DEV__) ? String((error as any)?.message || error) : 'Please try again.',
+        message: error instanceof RelationshipCommandError ? error.message : 'Please try again.',
         tone: 'error',
       });
     } finally {
       setProfileReminderBusy(null);
     }
-  }, [currentProfile?.id, ensureProfileMatch, profileReminder, profileReminderBusy, resolvedProfile.id]);
+  }, [currentProfile?.id, currentUserId, profileReminder, profileReminderBusy, resolvedProfile.id]);
 
   const passProfileReminder = useCallback(async () => {
     if (!profileReminder || profileReminderBusy) return;

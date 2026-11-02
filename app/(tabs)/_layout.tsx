@@ -10,6 +10,7 @@ import { useAuth } from '@/lib/auth-context';
 import { ChatRepository } from '@/lib/chat/local/chat-db';
 import { useCircleInvitationCount } from '@/lib/circles/use-circle-invitation-count';
 import { useLiveSessions } from '@/features/live/hooks/use-live-sessions';
+import { LIVE_PRODUCT_ENABLED } from '@/features/live/config/live-product-release';
 import {
   getInsightsInboxActivityItems,
   getMeInboxActivityItems,
@@ -131,7 +132,7 @@ export default function TabLayout() {
               chat: unreadChats,
               profile: trustedMeBadgeCount,
             }}
-            liveIndicators={{ circles: activeLiveCount > 0 }}
+            liveIndicators={{ circles: LIVE_PRODUCT_ENABLED && activeLiveCount > 0 }}
             isDark={isDark}
             responsive={responsive}
             theme={theme}

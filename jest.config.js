@@ -21,7 +21,7 @@ module.exports = {
   testPathIgnorePatterns: ["/node_modules/"],
   transform: {
     "^.+\\.[jt]sx?$": ["babel-jest", { presets: ["babel-preset-expo"] }],
-    "^.+\\.(bmp|gif|heic|jpg|jpeg|m4v|mov|mp3|mp4|otf|pdf|png|svg|ttf|webp)$":
+    "^.+\\.(bmp|gif|heic|jpg|jpeg|m4v|mov|mp3|mp4|otf|pdf|png|svg|ttf|wav|webp)$":
       "<rootDir>/test/jest/asset-transformer.cjs",
   },
   transformIgnorePatterns: [

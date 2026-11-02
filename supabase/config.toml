@@ -7,6 +7,20 @@ project_id = "betweener-app"
 [functions.push-notifications]
 verify_jwt = false
 
+# Connect user endpoints retain both gateway JWT validation and handler auth.
+[functions.connect-credentials]
+verify_jwt = true
+
+[functions.connect-revoke-consent]
+verify_jwt = true
+
+# These service handlers verify their dedicated worker secret / Stream HMAC.
+[functions.connect-provider-worker]
+verify_jwt = false
+
+[functions.connect-webhook]
+verify_jwt = false
+
 [functions.revenuecat-webhook]
 # RevenueCat authenticates with the function-owned shared webhook secret.
 verify_jwt = false
