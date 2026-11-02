@@ -1,0 +1,2234 @@
+{
+  "schemaVersion": 1,
+  "experimentId": "connect-m2a-media-truth-b3-28",
+  "stage": "B3_OFFLINE_ONLY",
+  "preparedAt": "2026-10-30T07:59:54.741Z",
+  "providerTestPrepared": "PASS",
+  "providerTestExecuted": false,
+  "manifestSha256": "1c4a176710972ff9db0baf9473be63ca3662cf7bbaec68cf3ddbfda39f8f3f0f",
+  "runtime": {
+    "node": "v24.18.0",
+    "chrome": "155.0.8059.86",
+    "playwright": "1.64.1",
+    "deno": "2.5.4",
+    "serverSdk": "0.7.63",
+    "videoClient": "1.62.0"
+  },
+  "requestContract": {
+    "sdkVersion": "0.7.63",
+    "passed": true,
+    "errors": [],
+    "schemaVersion": 3,
+    "numericConstraints": "PASS",
+    "requestSha256": "35bbb2129e085e63d03aaf21ecd561469acc680661f83c81f0b2acc345097183",
+    "request": {
+      "ring": false,
+      "notify": false,
+      "data": {
+        "created_by_id": "mtb3_28_00000000-0000-4000-8000-000000000002_a",
+        "members": [
+          {
+            "user_id": "mtb3_28_00000000-0000-4000-8000-000000000002_a",
+            "role": "connect_voice"
+          },
+          {
+            "user_id": "mtb3_28_00000000-0000-4000-8000-000000000002_b",
+            "role": "connect_voice"
+          }
+        ],
+        "custom": {
+          "connect_media_truth_b3_28": "00000000-0000-4000-8000-000000000002",
+          "media": "voice"
+        },
+        "settings_override": {
+          "limits": {
+            "max_participants": 2,
+            "max_duration_seconds": 60
+          },
+          "audio": {
+            "mic_default_on": false,
+            "default_device": "earpiece",
+            "speaker_default_on": false,
+            "access_request_enabled": false
+          },
+          "video": {
+            "enabled": false,
+            "camera_default_on": false,
+            "target_resolution": {
+              "width": 640,
+              "height": 480,
+              "bitrate": 600000
+            }
+          },
+          "screensharing": {
+            "enabled": false
+          },
+          "recording": {
+            "mode": "disabled"
+          },
+          "transcription": {
+            "mode": "disabled",
+            "closed_caption_mode": "disabled"
+          },
+          "broadcasting": {
+            "enabled": false
+          },
+          "ingress": {
+            "enabled": false
+          },
+          "individual_recording": {
+            "mode": "disabled"
+          },
+          "raw_recording": {
+            "mode": "disabled"
+          },
+          "frame_recording": {
+            "mode": "disabled",
+            "capture_interval_in_seconds": 2
+          },
+          "thumbnails": {
+            "enabled": false
+          }
+        }
+      }
+    }
+  },
+  "requestComparison": {
+    "path": "docs/betweener-connect/stream-staging-connect-media-truth-b3-request-comparison.json",
+    "sha256": "7c6276348442848c578bd9d7eff62c1731b13f94cc9ebf73aeb3179b7f5210e7"
+  },
+  "offlineValidation": {
+    "status": "PASS",
+    "existingTests": 255,
+    "newB3Tests": 35,
+    "combinedTests": 290,
+    "details": {
+      "path": "tmp/connect-media-truth-b3-preparation/validation-results.json",
+      "sha256": "bafa0bc1fab3d6841cc31625f8888d2060c6cc2fc4d0ef6d63a2249abe8dafc6"
+    }
+  },
+  "localOpusControls": {
+    "status": "PASS",
+    "path": "tmp/connect-media-truth-b3-preparation/local-control-1/local-browser-results.json",
+    "attempts": 1,
+    "checks": [
+      "bidirectional_blind_opus_calibration",
+      "fresh_post_trigger_nonce_decoded_both_directions",
+      "wrong_nonce_rejected",
+      "previous_audio_during_delivery_delay_rejected",
+      "delayed_fresh_nonce_decoded_both_directions"
+    ],
+    "delayedDetectionMs": 9546.7623,
+    "windowLimitMs": 10000
+  },
+  "safetyGuards": {
+    "status": "PASS",
+    "singleUseExperiment": true,
+    "independentWatchdog": true,
+    "boundedCleanupAttempts": true,
+    "allB2MeasurementAndTimingValuesPreserved": true,
+    "ownerExecutionApprovalCreated": false,
+    "executionStateCreated": false
+  },
+  "diagnostics": {
+    "version": 2,
+    "origin": [
+      "message",
+      "exception_key"
+    ],
+    "match": [
+      "qualified_path",
+      "qualified_alias",
+      "bare_alias"
+    ],
+    "rawTextRetained": false,
+    "maxBytes": 32768,
+    "timeoutMs": 250,
+    "ruleHintsAreNotPerFieldPredicates": true
+  },
+  "sources": [
+    {
+      "path": "C:/Users/HP/AppData/Local/deno/npm/registry.npmjs.org/@stream-io/node-sdk/0.7.63/dist/index.d.ts",
+      "sha256": "742d721c90cb7f0a9cbb9cf45873a72ef2648538e53371aeb07197fd95cee5fc"
+    },
+    {
+      "path": "C:/Users/HP/AppData/Local/deno/npm/registry.npmjs.org/@stream-io/node-sdk/0.7.63/dist/index.es.mjs",
+      "sha256": "2acf8963f85743533079c79cb8e6cd3d1844efb9262c1feea055236e73868235"
+    },
+    {
+      "path": "C:/Users/HP/AppData/Local/deno/npm/registry.npmjs.org/@stream-io/node-sdk/0.7.63/package.json",
+      "sha256": "66b60a508712735c4aa97cace512b72b857b6ac2682b9746ca3c71df4a5bb257"
+    },
+    {
+      "path": "C:/Users/HP/AppData/Local/deno/npm/registry.npmjs.org/@stream-io/node-sdk/0.7.63/src/ApiClient.ts",
+      "sha256": "b1fb3c2696fab5cc6fb3b5741c31ae3725bc03cc4c2a5e90386a6788f83aa53b"
+    },
+    {
+      "path": "C:/Users/HP/AppData/Local/deno/npm/registry.npmjs.org/@stream-io/node-sdk/0.7.63/src/StreamClient.ts",
+      "sha256": "e94327186537435fd784a41559042bb83afafd0e2e21c7249d284eb3c859799e"
+    },
+    {
+      "path": "C:/Users/HP/AppData/Local/deno/npm/registry.npmjs.org/@stream-io/node-sdk/0.7.63/src/gen/models/index.ts",
+      "sha256": "6ffd91463f679fce137f6091752610d32b6c9d9013b558a492071896e5362b66"
+    },
+    {
+      "path": "C:/Users/HP/AppData/Local/deno/npm/registry.npmjs.org/@stream-io/node-sdk/0.7.63/src/gen/video/CallApi.ts",
+      "sha256": "0c39d82bc25f77e4b33a9b022a8915d432a37b5fa6d77e9879694a4f89c3b62b"
+    },
+    {
+      "path": "C:/Users/HP/AppData/Local/deno/npm/registry.npmjs.org/@stream-io/node-sdk/0.7.63/src/gen/video/VideoApi.ts",
+      "sha256": "7bd0f5c0177ef0d859c5a677da0b1c5f54e8f9be2c458bc26ccd3060ce0966a6"
+    },
+    {
+      "path": "C:/Users/HP/AppData/Local/deno/npm/registry.npmjs.org/@stream-io/node-sdk/0.7.63/src/types.ts",
+      "sha256": "e437453a3a25d779a6e2e76c084ab466a73c84072a46a473e239b05de56fdec5"
+    },
+    {
+      "path": "C:\\Projects\\betweener-app\\docs\\betweener-connect\\stream-staging-connect-media-truth-b2-proposal.json",
+      "sha256": "96f72e25ccff1e5aa9d630ec3cf597103479aceb5ec7d4e91a7afbb30a9da0f1"
+    },
+    {
+      "path": "C:\\Projects\\betweener-app\\docs\\betweener-connect\\stream-staging-connect-media-truth-b3-proposal.json",
+      "sha256": "1c4a176710972ff9db0baf9473be63ca3662cf7bbaec68cf3ddbfda39f8f3f0f"
+    },
+    {
+      "path": "C:\\Projects\\betweener-app\\docs\\betweener-connect\\stream-staging-connect-media-truth-proposal.json",
+      "sha256": "7ba4fb47c2a6008c30a19cd19e5edac35729e7165ba3b406b6d71ff86086f957"
+    },
+    {
+      "path": "__tests__/connect-call-creation-400.regression.test.cjs",
+      "sha256": "ab5c8653d149c7083bd088e38d79c9dbf83f0b060e32c7544fd62f8637fdbf07"
+    },
+    {
+      "path": "__tests__/connect-consent-revocation.regression.test.ts",
+      "sha256": "1d4488d1b61fe14c49b6789179f1660b77bc5f4ebff8f125982bc7a5035b25e0"
+    },
+    {
+      "path": "__tests__/connect-credential-issuance.regression.test.ts",
+      "sha256": "87c75c41310b9db4843a3955ca733a2d91d9f5c0cc62452a2667f6436b269869"
+    },
+    {
+      "path": "__tests__/connect-foundation.regression.test.ts",
+      "sha256": "6c2e84bb984b316b41da0e0a75823d72d647ffc897c5ccb3906c3c4b1d39360b"
+    },
+    {
+      "path": "__tests__/connect-live-architecture.regression.test.cjs",
+      "sha256": "e05a42c1bb06ad031162237ec8c9af2e382febcbe3959b6b543799718152154c"
+    },
+    {
+      "path": "__tests__/connect-media-truth-b2.regression.test.cjs",
+      "sha256": "99c9a1c24f1f6c4da780cbf2192d6049fc627df9b933b00a17e71e0a7f867ed5"
+    },
+    {
+      "path": "__tests__/connect-media-truth-b3.regression.test.cjs",
+      "sha256": "e90923b07a783223a729c2a1a51089b281f276bf3a73463eac251c2c2f2ece7a"
+    },
+    {
+      "path": "__tests__/connect-media-truth-runner.regression.test.cjs",
+      "sha256": "cc4199f84f39d24647f8d82f1d9695e522f19908a6da422b2f13b390f7e96696"
+    },
+    {
+      "path": "__tests__/connect-media-truth.regression.test.cjs",
+      "sha256": "476993f5c9f9e8f5d55e5828da261b0e438fc4d4816b7ef28725ded4f31dc780"
+    },
+    {
+      "path": "__tests__/connect-provider-diagnostics.regression.test.cjs",
+      "sha256": "003f51b99bd1d9f73140cc93fc33ad3d162bd25066ed452ad07dbf53eed6192e"
+    },
+    {
+      "path": "__tests__/connect-provider-observation.regression.test.ts",
+      "sha256": "e294e573a8720a2074eab0927b28fd84437f32eef0ab7043844ceaf96240cfde"
+    },
+    {
+      "path": "__tests__/connect-revocation-boundary.regression.test.cjs",
+      "sha256": "8f6d65552670c673d91e4530f6840b14d97bc0a1f3d0f5f334f74a8762dbde93"
+    },
+    {
+      "path": "__tests__/connect-security-closure.regression.test.ts",
+      "sha256": "ccdf5e32483128aa04e27b0e64632a35e2e745561a0266c094e8dce5c2cae953"
+    },
+    {
+      "path": "__tests__/connect-stream-evidence.regression.test.ts",
+      "sha256": "eba13502720a166b7e28c47e1c398ddb3263db9233ab731bfad8a9ba4852afbd"
+    },
+    {
+      "path": "__tests__/connect-video-resolution.regression.test.cjs",
+      "sha256": "6c1448a26941507db77fccc7723b9e6d29872675c55fd3b15855a4dae366ea57"
+    },
+    {
+      "path": "__tests__/connect-voice.regression.test.ts",
+      "sha256": "e09cbaec83ad6753e30fcb939c0a21a64fcf66866cd7517b4b346148903b5854"
+    },
+    {
+      "path": "__tests__/fixtures/connect-b3-sdk-offline.mts",
+      "sha256": "21603a20a12a64176c1d8cf2140f5a9ee1dc0c1a61040c493a1f1b2d42bd698f"
+    },
+    {
+      "path": "__tests__/fixtures/connect-call-creation-sdk-offline.mts",
+      "sha256": "03c89ab6bcd2fa8f6d4b7b0273f127588bccb5b65dcf5836dfc183a1b4ac83bb"
+    },
+    {
+      "path": "__tests__/fixtures/connect-live-contract-sdk-offline.mts",
+      "sha256": "d58bd9d41f4fc10983b4a1d17b24d1d575a2ecf0a1ff8c861187d1ed6a537bc2"
+    },
+    {
+      "path": "__tests__/fixtures/connect-video-resolution-sdk-offline.mts",
+      "sha256": "71027d205c19669d0cddf628e59d99d9d140f3d3de6ccd1c758a280bacfdc814"
+    },
+    {
+      "path": "__tests__/relationship-commands.regression.test.ts",
+      "sha256": "bc2c5d0a6f41df3aaffd62713fef93dbb9928fdc8aab5e11688cb86050e95887"
+    },
+    {
+      "path": "node_modules/@stream-io/video-client/package.json",
+      "sha256": "c781f67013c8d8158a90e0b639d7052704b03cf20c757548e1442ab212db09f7"
+    },
+    {
+      "path": "node_modules/@stream-io/video-client/src/gen/video/sfu/event/events.ts",
+      "sha256": "897bb7f42b5cd7d5f882ae3042c85fb24ee8e81ddeca13328c0e9402c9ae08f3"
+    },
+    {
+      "path": "node_modules/@stream-io/video-client/src/gen/video/sfu/models/models.ts",
+      "sha256": "a571cb88f11bbfe1454a0acbc5ef95f3971200b68d2842f0c2e6062dc0b297bb"
+    },
+    {
+      "path": "node_modules/@stream-io/video-client/src/gen/video/sfu/signal_rpc/signal.client.ts",
+      "sha256": "3525274034570d7268f932d6b9ca76c46e1cc72f41295c6ea5383abf664faa97"
+    },
+    {
+      "path": "node_modules/@stream-io/video-client/src/gen/video/sfu/signal_rpc/signal.ts",
+      "sha256": "59d60eaaeb80bd12e3c322a17af0faecd6ac2c1ab32f72b9ed925fac6ec8a8c9"
+    },
+    {
+      "path": "node_modules/playwright-core/package.json",
+      "sha256": "8aa1c9863fa8dea324e674254158cdc79440f4124ef2d84d38053013541cb7d6"
+    },
+    {
+      "path": "node_modules/playwright/package.json",
+      "sha256": "313d23ce667d93962d3a1ab4be80908cefe840e4d9e48f1cd5863b91f65e8e39"
+    },
+    {
+      "path": "node_modules/typescript/package.json",
+      "sha256": "9332e97c30d3e53ed54910b89207ed657fb444066484df6e5b6965bf130865e9"
+    },
+    {
+      "path": "package-lock.json",
+      "sha256": "41b835c07f1fe42fd29c9c5e7482b637228c651d4dd6f6245ca8660625a53680"
+    },
+    {
+      "path": "package.json",
+      "sha256": "17a8635a595d10980a00c837a2163002d69da3467c324449c9189fcdbfabe195"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/approval.cjs",
+      "sha256": "ab26b5c7ef79bc328fac578a968dacf6c29c3f1f993accfe21422fbd7f933726"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/browser.cjs",
+      "sha256": "ce8bada270f10d8f6578edc01081a41812c4745361af110c09d95a592cd90899"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/codec.cjs",
+      "sha256": "448e15a0c72f975f160d99ab7dc697d875dca628fc6171fc809bb1453901c801"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/deno.json",
+      "sha256": "a997731a653edfcae69852c8eb51c3f2fddfc54e0150134b5ebf2b3a045f22d3"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/evidence.cjs",
+      "sha256": "b6e84dd93d16df4e1ecf12d7cb71a41005ec33a90d3c78d98c7d79f83cb1d742"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/experiment.cjs",
+      "sha256": "a33f2fdc42110944296b2507d5b2f4edcabf069163252ee6c409b273e2462f9a"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/process.cjs",
+      "sha256": "732bce2ab0100f7441a9571f0a3128f5620d5ce0ab76c4a90a7ddd05a7611ebe"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/profiles.cjs",
+      "sha256": "38f9ae6f8cb950fe0e8cd9cc9269c95efbc7afeb3cb440b03604a6738a706a92"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/provenance.cjs",
+      "sha256": "137405266545758d3c0275ea10c4cdd8cad5b5fa6622ee7df90ce7c917305982"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/provider-diagnostics.cjs",
+      "sha256": "e74f4b88efe920432e2460ce3a54de771e5eeb68985aa17f283e5f75c1009dcf"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/provider-process.cjs",
+      "sha256": "a653da75e27b5b43bf7f73d2f1b00bcb969260218bfb94127393f74485675888"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/provider.mts",
+      "sha256": "345418bd1ff293b7b69e11d29a2970a7aab192d9662ab81cd2366950d1db07c9"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/request-comparison.cjs",
+      "sha256": "ee66ba563be6b46d95ac114b17ecdbbd93c16d45542ac1ec92551a012cc51680"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/request.cjs",
+      "sha256": "62e1aca3fef0abc86de110e7c14123ae77ba69a04f08de30bc8f713979a04308"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/scope.cjs",
+      "sha256": "01d02c4d12745c56cfca987cab50d46cd0a987b49a9c2558956d845cdeaee986"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/sdk-contract.cjs",
+      "sha256": "4a889938c94092a9e9b5fd9d643310cbefab840f06dc913484902bfc917e3c99"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/verdict.cjs",
+      "sha256": "da310d7ef131d7df75cf058f152f3cbcd7b1c5d50554ece8094ba96aa09eba2a"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/watchdog.cjs",
+      "sha256": "0d376989dff420d748c24ce90c9f88a52d72191d34107ea377e126179eeb253b"
+    },
+    {
+      "path": "scripts/lib/connect-stream-audit.ts",
+      "sha256": "28bc784139f60f82bbc1759039634a83c561b9e9b849bb1ebad713bfda5ccf2b"
+    },
+    {
+      "path": "scripts/lib/connect-stream-closure-worker.ts",
+      "sha256": "d3aa496fc43469fc9d120d26d85ba6857964c4da1eb9f91f91a3b3fcdfdebc67"
+    },
+    {
+      "path": "scripts/lib/connect-stream-sfu-probe.cjs",
+      "sha256": "d879de243a041b513c067677264c81da219be0bfd617469331ab47e96e6f62e2"
+    },
+    {
+      "path": "scripts/lib/connect-stream-sfu-protocol.cjs",
+      "sha256": "7eb5fd1c2fbf5239dc3e9bb271a61112fa00edf2e2ad72a194bb383809db63dc"
+    },
+    {
+      "path": "scripts/lib/connect-stream-sfu-session.cjs",
+      "sha256": "69d100aca35fb4e23b856b62b15b3a11324761ed995caf2a183210be7a527752"
+    },
+    {
+      "path": "scripts/test-connect-media-truth-b2.cjs",
+      "sha256": "837d0ef407e5e3060ec455de52555c0de942490dd77cc23adea8f217aecea2f7"
+    },
+    {
+      "path": "scripts/test-connect-media-truth-b3.cjs",
+      "sha256": "a297d975f129849362bf134f7abe14ef898b3219889c1ab5d61d28c4abb5ac81"
+    },
+    {
+      "path": "scripts/test-connect-media-truth-local.cjs",
+      "sha256": "1d821d405442b72498bab9b28ac3780750a43f88777e55230b049fc1318eb6f6"
+    },
+    {
+      "path": "scripts/test-connect-media-truth.cjs",
+      "sha256": "0c36e1fd9c63fdc059c249128016ffaa09a4cc8527d47b5147678bf7ccda7ed4"
+    },
+    {
+      "path": "scripts/validate-connect-media-truth-b2.cjs",
+      "sha256": "7ee89f1607362a49fc057a19715e70c58fe98ca3b7a2c2c0d29f3d5574fb6e4b"
+    },
+    {
+      "path": "scripts/validate-connect-media-truth-b3.cjs",
+      "sha256": "e1e09bef0d2e1ea15a0949a985e213317db1079d2b6c29c6c67eeb60b604cff2"
+    },
+    {
+      "path": "supabase/functions/_shared/connect-stream-adapter.ts",
+      "sha256": "b5f2766343efac5606e6012cee64e5e3db8d6f26a31f1a941bc4b03e27e8da8c"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "tmp/connect-media-truth-b3-preparation/offline-before.log",
+      "sha256": "519dcd19dac159b68cc252f000cd9a9fb7a4d71b5ba34adcdc9b6e18f24b856d"
+    },
+    {
+      "path": "tmp/connect-media-truth-b3-preparation/focused-1.log",
+      "sha256": "88a577d15759817e52655ada22ba659df1ebdfba5ab62a04be20be2110ae68c6"
+    },
+    {
+      "path": "tmp/connect-media-truth-b3-preparation/offline-final.log",
+      "sha256": "b9990e675ee5bd0dd732e68af194136f052f2cf4b5c153bc5e6110e3922723a8"
+    },
+    {
+      "path": "tmp/connect-media-truth-b3-preparation/offline-corrected.log",
+      "sha256": "28c042dd904197636b84b5a061feeb95a76c5c191f16ab5e09bbc20a26d78f90"
+    },
+    {
+      "path": "tmp/connect-media-truth-b3-preparation/live-before.log",
+      "sha256": "0e37652d4fbe289a163025dbd13c60cfbf3a1d8e67befe52fe49f5d93ecbb671"
+    },
+    {
+      "path": "tmp/connect-media-truth-b3-preparation/live-before-summary.json",
+      "sha256": "70a84f1bf5fa67aee3718e77c3f4960007109bb0ad5df664fff6d2bfbf742194"
+    },
+    {
+      "path": "tmp/connect-media-truth-b3-preparation/live-after.log",
+      "sha256": "24be3c8076464d29c9544f0a2612097e8d13bd64a2bb30d3dbae7c0a94d3c88d"
+    },
+    {
+      "path": "tmp/connect-media-truth-b3-preparation/live-after-summary.json",
+      "sha256": "70a84f1bf5fa67aee3718e77c3f4960007109bb0ad5df664fff6d2bfbf742194"
+    },
+    {
+      "path": "tmp/connect-media-truth-b3-preparation/typescript-1.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tmp/connect-media-truth-b3-preparation/typescript-direct.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tmp/connect-media-truth-b3-preparation/deno-1.log",
+      "sha256": "941acc8910e4854aefa8ac2cc87993c44c883d036c3c4b66c244bda0a7efa8ec"
+    },
+    {
+      "path": "tmp/connect-media-truth-b3-preparation/deno-direct.log",
+      "sha256": "a6a01118b7685f2944bb0f972481e7ae3530e2fcaeb6a1146a4890d2d5b007b5"
+    },
+    {
+      "path": "tmp/connect-media-truth-b3-preparation/lint-1.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tmp/connect-media-truth-b3-preparation/lint-corrected.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tmp/connect-media-truth-b3-preparation/live-isolation.log",
+      "sha256": "c591aeb9527d711e73db02404a395f2337ff76a8e9b5c7a9070ed1095da50d59"
+    },
+    {
+      "path": "tmp/connect-media-truth-b3-preparation/eas-isolation.log",
+      "sha256": "51c388bc706ad4212becf21dffb83f8855139b558391aca427225d7896934959"
+    },
+    {
+      "path": "tmp/connect-media-truth-b3-preparation/local-control-1.log",
+      "sha256": "84c68509c34c0a3eee7ce9580f637d2953882985459426f364c69a9f098b9c3d"
+    },
+    {
+      "path": "tmp/connect-media-truth-b3-preparation/source-freeze-final.json",
+      "sha256": "e9526a444bc70fa0290ebc485f91b42377b0c4eb61316d6e1dbc080f779b9149"
+    },
+    {
+      "path": "tmp/connect-media-truth-b3-preparation/validation-results.json",
+      "sha256": "bafa0bc1fab3d6841cc31625f8888d2060c6cc2fc4d0ef6d63a2249abe8dafc6"
+    },
+    {
+      "path": "tmp/connect-media-truth-b3-preparation/workspace-before.json",
+      "sha256": "bfef0c2b2866b61578e9af07cec005b22d7fd9b3cdef1df006de86475b0516c1"
+    },
+    {
+      "path": "tmp/connect-media-truth-b3-preparation/protected-before.json",
+      "sha256": "a534b484175658315a36f36d6e06c90370e3630c9f456ad3c177ca3edf1b22a8"
+    },
+    {
+      "path": "tmp/connect-media-truth-b3-preparation/local-control-1/local-browser-results.json",
+      "sha256": "4502c2ded2ab7a01f08ade3185c31e87a66e7440cca838a1e832ae997bf613d8"
+    },
+    {
+      "path": "tmp/connect-media-truth-b3-preparation/regression-4VoxMF/test-receipt.json",
+      "sha256": "c0726ec17c427010c5356e975fa8c22025c88e572c998bcf21fa1e6710cd9636"
+    },
+    {
+      "path": "C:/Projects/betweener-app/tmp/connect-media-truth-b3-preparation/regression-4VoxMF/request-comparison.json",
+      "sha256": "7c6276348442848c578bd9d7eff62c1731b13f94cc9ebf73aeb3179b7f5210e7"
+    },
+    {
+      "path": "C:/Projects/betweener-app/tmp/connect-media-truth-b3-preparation/regression-4VoxMF/request-contract.json",
+      "sha256": "7915bab5cd3cae07bbaef071a64c3b89f1fd2b00b4d714fd0b296833ba198d12"
+    },
+    {
+      "path": "C:/Projects/betweener-app/tmp/connect-media-truth-b3-preparation/regression-4VoxMF/retained-policy-model.json",
+      "sha256": "400502917ea4c66db15cd4118929e616a34781b77c7951c6876902355a03f320"
+    },
+    {
+      "path": "C:/Projects/betweener-app/tmp/connect-media-truth-b3-preparation/regression-4VoxMF/sdk-input.json",
+      "sha256": "5de32d9abb6ff539a1d9b08af29f128fab1576922d7da20e3e2e12bb83cd6d0c"
+    },
+    {
+      "path": "C:/Projects/betweener-app/tmp/connect-media-truth-b3-preparation/regression-4VoxMF/sdk-serialization.json",
+      "sha256": "aeb3892d1804f373df09d72b632a18115e3d1191f798522495f5c7c0a774f1db"
+    },
+    {
+      "path": "C:/Projects/betweener-app/tmp/connect-media-truth-b3-preparation/regression-4VoxMF/unit-incomplete-control.json",
+      "sha256": "1d76ea63f2fd65057f09dd900f2570eda58ee01c4f876343a3eaac3bade99ad7"
+    },
+    {
+      "path": "C:/Projects/betweener-app/tmp/connect-media-truth-b3-preparation/regression-4VoxMF/unit-readiness-control.json",
+      "sha256": "6a66e3dd8a2d0f5a82079aab5a46d4aea60f4642e417448a1e8ad5045910a02e"
+    },
+    {
+      "path": "docs/betweener-connect/stream-staging-connect-media-truth-b3-request-comparison.json",
+      "sha256": "7c6276348442848c578bd9d7eff62c1731b13f94cc9ebf73aeb3179b7f5210e7"
+    },
+    {
+      "path": "docs/betweener-connect/00-relationship-security-remediation.md",
+      "sha256": "8b4367c307cafb7c1e2b00f85b787cce23f2c84c84942a046f5246a1a495ba02"
+    },
+    {
+      "path": "docs/betweener-connect/01-connect-v1-architecture-audit.md",
+      "sha256": "744952cc1dcbf92dde6b7f83e34ef76afc8b2551b6f7b4fe4b660a7d24ffe7b9"
+    },
+    {
+      "path": "docs/betweener-connect/02-connect-v1-implementation-plan.md",
+      "sha256": "c0cd809a260dac9e02457eceab24284eaa5a894ac09220525bedd836b44e1c43"
+    },
+    {
+      "path": "docs/betweener-connect/03-connect-v1-security-model.md",
+      "sha256": "361c9be55731ebeeed558ad7f9e1a437a1e5658a71390a28b4e7a08406923ec1"
+    },
+    {
+      "path": "docs/betweener-connect/04-connect-v1-call-state-machine.md",
+      "sha256": "8fcb4d92ae884d7c7678e81149afe13d64ed82305b12395bab35bce58fb63a7c"
+    },
+    {
+      "path": "docs/betweener-connect/05-connect-v1-native-calling-setup.md",
+      "sha256": "30781ff58cae3612ef9515cd61fff1c06e1c2bbf71cde18b55ed3d38540ee99b"
+    },
+    {
+      "path": "docs/betweener-connect/06-connect-v1-ui-design-system.md",
+      "sha256": "bf05842cb19712b97da20ccf4ae79184d06168b2b4fa4396ae1a00781b078e30"
+    },
+    {
+      "path": "docs/betweener-connect/07-connect-v1-test-matrix.md",
+      "sha256": "d5597e89254caf67ec7590d036c97f1f6828642a4ba31df05a89feaf508be3cf"
+    },
+    {
+      "path": "docs/betweener-connect/08-connect-v1-rollout-and-rollback.md",
+      "sha256": "2c1d123b22c322d978680b304750b0655fed5fa14f10589f1f5cee1fc92c04f3"
+    },
+    {
+      "path": "docs/betweener-connect/09-connect-v1-known-limitations.md",
+      "sha256": "d2a6372df8bff1d6b26b8194459f99bde8470fbe2e655d27b314152bc74becec"
+    },
+    {
+      "path": "docs/betweener-connect/10-connect-v1-final-validation.md",
+      "sha256": "4267b037b511f799a41a1c6926794cb909115f85d9e5aea15b480f5669fdcf71"
+    },
+    {
+      "path": "docs/betweener-connect/11-connect-v1-m1-implementation.md",
+      "sha256": "bb738a2f4884c1e505b44a5e18fa153911ac7adda08afc76c69e5d36c9eb45dc"
+    },
+    {
+      "path": "docs/betweener-connect/12-connect-v1-stream-configuration-checklist.md",
+      "sha256": "f9b15e93c97a7d0fc8333d337c2fa3fb9b68abb9ac46bf39754ca792096b4387"
+    },
+    {
+      "path": "docs/betweener-connect/13-connect-v1-m2-security-validation.md",
+      "sha256": "2f63b20212fb03d3c341ac9f86312af33009a5b5fbcd7890ef2a866e1d33431b"
+    },
+    {
+      "path": "docs/betweener-connect/14-connect-v1-m2-voice-implementation.md",
+      "sha256": "65ec02cad52009879723cce9696d29a6cacbe7e136184b089c0c181dbfed6596"
+    },
+    {
+      "path": "docs/betweener-connect/15-connect-v1-m2-device-test-plan.md",
+      "sha256": "0db21c14e2404244eff5bb2aa2d93c338d2c920868dccb9a4bb4a261ea7d4ce0"
+    },
+    {
+      "path": "docs/betweener-connect/16-connect-v1-m2a-security-closure.md",
+      "sha256": "8259b9b08edcc6781d446d1100bab84117c2e8d67918bc9c9632e671e7adcdf0"
+    },
+    {
+      "path": "docs/betweener-connect/18-connect-v1-revocation-boundary-decision.md",
+      "sha256": "a78fa00f8f8431bb71dbfd56cad19df276d197b12f149c785924d3b259b01f7d"
+    },
+    {
+      "path": "docs/betweener-connect/19-connect-v1-independent-forensic-audit.md",
+      "sha256": "9cc5e35d58cbad743cd03852ac398b7c5427a804ea5f07df91610811466f7bf2"
+    },
+    {
+      "path": "docs/betweener-connect/20-connect-v1-forensic-defect-remediation.md",
+      "sha256": "ce27f85afd82f0f5833886be7b707b62964d9126e4bd452e8598e0c117b9b127"
+    },
+    {
+      "path": "docs/betweener-connect/21-connect-v1-media-truth-preparation.md",
+      "sha256": "075d3731072792e9db44617f0011e757e0bf39104f324a8ac94a50a47341189a"
+    },
+    {
+      "path": "docs/betweener-connect/22-connect-v1-media-truth-stage-b-results.md",
+      "sha256": "33d878ca3e8c372f8ca0bd544397c1d889b45d5245c87b6a8bcd6fd473faee80"
+    },
+    {
+      "path": "docs/betweener-connect/23-connect-v1-call-creation-400-audit.md",
+      "sha256": "df04fe2369ed377e60800e2cb4c993dd5c476ae708d25080207f00be9e246d5a"
+    },
+    {
+      "path": "docs/betweener-connect/24-connect-v1-media-truth-b2-preparation.md",
+      "sha256": "3e913dd6dc419e21c0b45fefb470b87f3c82039bae0ae5a0c72cb2fcfcecdced"
+    },
+    {
+      "path": "docs/betweener-connect/25-connect-v1-media-truth-b2-results.md",
+      "sha256": "20fc8836aae7048b6b9a82cb69379edaeb31c8731d1dce8c8f904cdc96e0d1f8"
+    },
+    {
+      "path": "docs/betweener-connect/26-connect-v1-video-resolution-validation-audit.md",
+      "sha256": "42d9708edf30fcbff9e997291aa14076c28a9588b290f8b5f73852df657da0ea"
+    },
+    {
+      "path": "docs/betweener-connect/27-live-vs-connect-architecture-comparison.md",
+      "sha256": "1bf4fe8f9fa9b05f76bad95c49c170ed5163ac093b6ec9d2df09f2691dfc69c8"
+    },
+    {
+      "path": "docs/betweener-connect/connect-v1-architecture-audit.md",
+      "sha256": "1e2238c25598cb59ac22a14142d2eedbacb763f55f665516b6168ddb2d63a018"
+    },
+    {
+      "path": "docs/betweener-connect/local-m2-revalidation.json",
+      "sha256": "ea2784871b0a966136bb463868b2eef28e10c65ebe2655bdcc6088952020b21a"
+    },
+    {
+      "path": "docs/betweener-connect/stream-staging-connect-boundary-proposal.json",
+      "sha256": "738b7cabb5adc5d61a223fb4fa76737b901956c8c6b039e31b2a575a1156e4b6"
+    },
+    {
+      "path": "docs/betweener-connect/stream-staging-connect-call-creation-400-audit.json",
+      "sha256": "738150ad541898852d023abfc995623bee890c5b7e0ec6d39391a4b571180ae2"
+    },
+    {
+      "path": "docs/betweener-connect/stream-staging-connect-m2a-closure-evidence.json",
+      "sha256": "0c3be095b19746bb673694cc69d0baa79339544a4c6eae56c296ff5acabe5f77"
+    },
+    {
+      "path": "docs/betweener-connect/stream-staging-connect-media-truth-b2-evidence.json",
+      "sha256": "ff77e3cb8c6bb741e666925405919b027fe9f99e65458a81e942b45ed941b8ab"
+    },
+    {
+      "path": "docs/betweener-connect/stream-staging-connect-media-truth-b2-preparation.json",
+      "sha256": "a2ab6347219d76f3c49fd6d69fdd0385887593c0f5cb64264da40bcc658e5e11"
+    },
+    {
+      "path": "docs/betweener-connect/stream-staging-connect-media-truth-b2-proposal.json",
+      "sha256": "96f72e25ccff1e5aa9d630ec3cf597103479aceb5ec7d4e91a7afbb30a9da0f1"
+    },
+    {
+      "path": "docs/betweener-connect/stream-staging-connect-media-truth-preparation.json",
+      "sha256": "e9a6dd42b3f8aad8f2f128ca7fc9925633f7b1eaa1a5bba94f055354ae25ff79"
+    },
+    {
+      "path": "docs/betweener-connect/stream-staging-connect-media-truth-proposal.json",
+      "sha256": "7ba4fb47c2a6008c30a19cd19e5edac35729e7165ba3b406b6d71ff86086f957"
+    },
+    {
+      "path": "docs/betweener-connect/stream-staging-connect-media-truth-stage-b-evidence.json",
+      "sha256": "0a56f8e0b2958eeb0983861026d26a7d5db08c0b8586101d15deea8dae517ac0"
+    },
+    {
+      "path": "docs/betweener-connect/stream-staging-connect-proposal.json",
+      "sha256": "706deb688135d35b4af12478dd01e92fd9e037bada085ed92c8d9df49cdf4e17"
+    },
+    {
+      "path": "docs/betweener-connect/stream-staging-connect-revocation-boundary-evidence.json",
+      "sha256": "b7ee15e52d422351fe397835759a8ba2ce8cfddb537f09c910682a58682ec3ed"
+    },
+    {
+      "path": "docs/betweener-connect/stream-staging-connect-validation.json",
+      "sha256": "cd0a14ba00a2c20d8e98913ecb0f9bb2c741a7e309e7629d2def56715902c467"
+    },
+    {
+      "path": "docs/betweener-connect/stream-staging-connect-video-resolution-audit.json",
+      "sha256": "4c5682a9477f5cc5aea4204082d1d3d6dec4833fce47c1703125287ed5c05302"
+    },
+    {
+      "path": "docs/betweener-connect/stream-staging-connect-video-security-evidence.json",
+      "sha256": "4229a2fde985e373369247c09d8737a6e7c8066c0d7c81ba5ba881075e9159fe"
+    },
+    {
+      "path": "docs/betweener-connect/stream-staging-connect-video-security-proposal.json",
+      "sha256": "19b384e484ee307a9015d4dda5595ad5ea3627c2f19c35d12f610c72570664f3"
+    },
+    {
+      "path": "docs/betweener-connect/stream-staging-connect-video-security-retry-proposal.json",
+      "sha256": "368978dc79dc75e087f8d7d131f82f2e6d1f592470de3411d824ff54a9e74df9"
+    },
+    {
+      "path": "docs/betweener-connect/stream-staging-connect-video-security-verification-proposal.json",
+      "sha256": "0bd7e70ca5ec1925f23ddbcdb03dea6f471f62debf9e807e77bdfa0a56fee98d"
+    },
+    {
+      "path": "docs/betweener-connect/stream-staging-live-connect-architecture-comparison.json",
+      "sha256": "199ed8b810105df8bc3d8666a44b0c397490ab7fe7770f62531d914a17926237"
+    },
+    {
+      "path": "tmp/connect-boundary/approved-connect-status.json",
+      "sha256": "b4c4633d14af220d4e3f556678cd45f2d539c72fe4603494bdb0f02edd8c23e5"
+    },
+    {
+      "path": "tmp/connect-boundary/approved-connect.log",
+      "sha256": "77523d25220afae8c61b21a01c4f670b267b70e5efc5cc2e6d830d04eca8556e"
+    },
+    {
+      "path": "tmp/connect-boundary/approved-lint-status.json",
+      "sha256": "21d1863c46df8e1971aa22615e357126ae55d0945d16d1fb4184c861104ef2a2"
+    },
+    {
+      "path": "tmp/connect-boundary/approved-lint.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tmp/connect-boundary/approved-review-status.json",
+      "sha256": "e6e20354181022041220b9cb17369d87878471423e2e546c0c81b486e36d2486"
+    },
+    {
+      "path": "tmp/connect-boundary/approved-review.log",
+      "sha256": "3f185428839b8b03f8d2b46580fb79606ac51d3bd57c4299e1b51c867869915a"
+    },
+    {
+      "path": "tmp/connect-boundary/approved-run-status.json",
+      "sha256": "64a075e42764fa1ba01cba3f521c4fbd33ee5f07aa8cb1e43d134bfa9aa36626"
+    },
+    {
+      "path": "tmp/connect-boundary/approved-run.log",
+      "sha256": "14c92fa79ecba4345999525e6938ad97dd1da22a068792079833ffd33e9ee326"
+    },
+    {
+      "path": "tmp/connect-boundary/boundary-fixtures.json",
+      "sha256": "fef99c72b83ff7ae03281d46f2abd75a025f000885349a44a30304d74f89048d"
+    },
+    {
+      "path": "tmp/connect-boundary/checks/android-isolation-status.json",
+      "sha256": "1edc39e58882ccf29d791381d7e18235b2b7047fe52a841e8a2925e65072b53c"
+    },
+    {
+      "path": "tmp/connect-boundary/checks/android-isolation.log",
+      "sha256": "9e0dcf6041940f605d4d3b29dd643498e267ee197abd4bb69d04368eb4ba36bd"
+    },
+    {
+      "path": "tmp/connect-boundary/checks/connect-status.json",
+      "sha256": "b4c4633d14af220d4e3f556678cd45f2d539c72fe4603494bdb0f02edd8c23e5"
+    },
+    {
+      "path": "tmp/connect-boundary/checks/connect.log",
+      "sha256": "4cda0e5724cfa47b56d714dad983d4b6a6e1ac695a23ae4acc2e553817c9b46e"
+    },
+    {
+      "path": "tmp/connect-boundary/checks/deno-status.json",
+      "sha256": "7577fa028802f1ba3be6253e323725fb774d805aefba1819cf660021dcb49b56"
+    },
+    {
+      "path": "tmp/connect-boundary/checks/deno.log",
+      "sha256": "612996eec89c786cb63912f2c7870a69aa52b2011f48733091fe38e775c5f975"
+    },
+    {
+      "path": "tmp/connect-boundary/checks/eas-isolation-status.json",
+      "sha256": "a2ccc69c175ab6a8ff6dd0531614bceba9512e6d1e311c0360c3ded3fbe570eb"
+    },
+    {
+      "path": "tmp/connect-boundary/checks/eas-isolation.log",
+      "sha256": "51c388bc706ad4212becf21dffb83f8855139b558391aca427225d7896934959"
+    },
+    {
+      "path": "tmp/connect-boundary/checks/final-lint-status.json",
+      "sha256": "8e2731bdc25f9fa4fbfb86f5161c4f52ab886e059a1f6788934348cba77013ce"
+    },
+    {
+      "path": "tmp/connect-boundary/checks/final-lint.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tmp/connect-boundary/checks/lint-status.json",
+      "sha256": "21d1863c46df8e1971aa22615e357126ae55d0945d16d1fb4184c861104ef2a2"
+    },
+    {
+      "path": "tmp/connect-boundary/checks/lint.log",
+      "sha256": "153e378158f1747bc5dfa090bf11699a9f636ce9d6950a4cc4050b82b3854d38"
+    },
+    {
+      "path": "tmp/connect-boundary/checks/live-isolation-status.json",
+      "sha256": "27b533a03bd7e5bc0724640a1cee561d6ee0d10aacb86143bf84377cc9f1689c"
+    },
+    {
+      "path": "tmp/connect-boundary/checks/live-isolation.log",
+      "sha256": "c591aeb9527d711e73db02404a395f2337ff76a8e9b5c7a9070ed1095da50d59"
+    },
+    {
+      "path": "tmp/connect-boundary/checks/live-status.json",
+      "sha256": "e2842b37c325b17ec3d4a17913600f8fa7f5a7d5c3e07855cc6d3c5d86ecfff9"
+    },
+    {
+      "path": "tmp/connect-boundary/checks/live.log",
+      "sha256": "cbad50bc2c725d7913d4b1fc797bd7a71ba7780b365c540ac1f695ceb9d4498a"
+    },
+    {
+      "path": "tmp/connect-boundary/checks/revocation-status.json",
+      "sha256": "5227ffe5b886cf9738dcb7f485702640a6a4c7ca2b6205e4e0916f1e19ac60db"
+    },
+    {
+      "path": "tmp/connect-boundary/checks/revocation.log",
+      "sha256": "8b2f62da6c5f54a4b69391ec953ecf7ee77a41b77a0bdd031effb79da7766aa7"
+    },
+    {
+      "path": "tmp/connect-boundary/checks/sdk-timer-shape-status.json",
+      "sha256": "c825fdee8f89adb75f6e39df6f9ab9e678977d73d1408aaa2fc0aae2f8b35b1c"
+    },
+    {
+      "path": "tmp/connect-boundary/checks/sdk-timer-shape.log",
+      "sha256": "42b414f5d78bf7fcb3698ee78f094c7c587ed9325823dfff9db3ffd91ca4c609"
+    },
+    {
+      "path": "tmp/connect-boundary/checks/typescript-status.json",
+      "sha256": "f5bd4facb925c3fc6a623f65ef5bd16c3a8b58cd8fecef89b2886fa11a056876"
+    },
+    {
+      "path": "tmp/connect-boundary/checks/typescript.log",
+      "sha256": "18b7b650fb7f1420b2a552c1268df4eb674aec442179eb89500e05e5961058a3"
+    },
+    {
+      "path": "tmp/connect-boundary/checks/ui-status.json",
+      "sha256": "94e8acbc3a9a19bb131259a82011895db601b93c8fb89774800dd1fc6f43e41f"
+    },
+    {
+      "path": "tmp/connect-boundary/checks/ui.log",
+      "sha256": "2f49e648d89fc7869a062e580617bd7601a3ca3e55291124010d275a3a8b82c2"
+    },
+    {
+      "path": "tmp/connect-boundary/cleanup-verification.json",
+      "sha256": "7089028e1023a4bb551a7e2abff6f7d1e6c41716d756dce3e896afd2067f9f3d"
+    },
+    {
+      "path": "tmp/connect-boundary/finalize-approved.cjs",
+      "sha256": "1b34db9d8b1f07976672ea942a9b303340c0d5cf4e8d35533376e80ceafa8df6"
+    },
+    {
+      "path": "tmp/connect-boundary/finalize.cjs",
+      "sha256": "b1847386951ffa631898d45916ad777916294289a320ab853a3d0aace4638b4e"
+    },
+    {
+      "path": "tmp/connect-boundary/provider-audit.json",
+      "sha256": "b31477a11c7560e025075f9dd4eea05f76a722ae2cfd9d3cdba5f0d357eca3cd"
+    },
+    {
+      "path": "tmp/connect-boundary/provider-results.json",
+      "sha256": "8c1d82141a5c5140c94ac2b65e2b09dca42ebbe1f0f8c87b852d6dacdffa501d"
+    },
+    {
+      "path": "tmp/connect-boundary/sdk-timer-typecheck.ts",
+      "sha256": "1cb5371f181f338db1976a4750eda355090fcce17cc48de4033ccc9a1369bb70"
+    },
+    {
+      "path": "tmp/connect-boundary/startup-failure-results.json",
+      "sha256": "5aea12f8a9178314653c554dd2418822650591204b7052b96698c5740ea755de"
+    },
+    {
+      "path": "tmp/connect-boundary/startup-failure.log",
+      "sha256": "f557d5bda1a9ddae70b0723ae84b8e0549df00ef78593f4e17752519957ccaf7"
+    },
+    {
+      "path": "tmp/connect-boundary/verify-cleanup.cjs",
+      "sha256": "a025ec41003fcaf9a99cea1185cd95ee382a559ee4baf8873ab0be558e1f075e"
+    },
+    {
+      "path": "tmp/connect-live-comparison-27/contracts-9uAh7X/inheritance-model.json",
+      "sha256": "33769a415970afee1d89ab2e226976ae780951692a3216079e1e314723ce7632"
+    },
+    {
+      "path": "tmp/connect-live-comparison-27/contracts-9uAh7X/request-matrix.json",
+      "sha256": "4e8579e5b9f8ddecb07c909a9842e3ba3e15dcb190f6ec5c5b950d233fb12c2a"
+    },
+    {
+      "path": "tmp/connect-live-comparison-27/contracts-9uAh7X/sdk-contracts.json",
+      "sha256": "16ad5a627fbdd998f3f7728bd198733ee889785445cf755b278e24b4ff938cbf"
+    },
+    {
+      "path": "tmp/connect-live-comparison-27/contracts-9uAh7X/sdk-input.json",
+      "sha256": "8be115f84ae61cf7fa21d2e364cc8b542cd8bb23762397d5edca9e011dd2d5d7"
+    },
+    {
+      "path": "tmp/connect-live-comparison-27/contracts-9uAh7X/sdk-serialization.json",
+      "sha256": "a3d396abc70b1dfff985abeba7ce77b47ded5ecd91ebb9ec82408dca35d10d9c"
+    },
+    {
+      "path": "tmp/connect-live-comparison-27/contracts-9uAh7X/test-receipt.json",
+      "sha256": "fac4936e848b529a505ae5d9f1f2d28a6368f068bb4da0a1496d64567714b700"
+    },
+    {
+      "path": "tmp/connect-live-comparison-27/contracts-G3fAgc/inheritance-model.json",
+      "sha256": "33769a415970afee1d89ab2e226976ae780951692a3216079e1e314723ce7632"
+    },
+    {
+      "path": "tmp/connect-live-comparison-27/contracts-G3fAgc/request-matrix.json",
+      "sha256": "4e8579e5b9f8ddecb07c909a9842e3ba3e15dcb190f6ec5c5b950d233fb12c2a"
+    },
+    {
+      "path": "tmp/connect-live-comparison-27/contracts-G3fAgc/sdk-contracts.json",
+      "sha256": "16ad5a627fbdd998f3f7728bd198733ee889785445cf755b278e24b4ff938cbf"
+    },
+    {
+      "path": "tmp/connect-live-comparison-27/contracts-G3fAgc/sdk-input.json",
+      "sha256": "8be115f84ae61cf7fa21d2e364cc8b542cd8bb23762397d5edca9e011dd2d5d7"
+    },
+    {
+      "path": "tmp/connect-live-comparison-27/contracts-G3fAgc/sdk-serialization.json",
+      "sha256": "a3d396abc70b1dfff985abeba7ce77b47ded5ecd91ebb9ec82408dca35d10d9c"
+    },
+    {
+      "path": "tmp/connect-live-comparison-27/contracts-G3fAgc/test-receipt.json",
+      "sha256": "3697f6f453ae569e2d48684e88f3d734387276f79642713cedaa92bc26f1f25c"
+    },
+    {
+      "path": "tmp/connect-live-comparison-27/deno-check.log",
+      "sha256": "541409ec8d0590338c373b130fa403474415e4206e992e4666c4cad653740b6b"
+    },
+    {
+      "path": "tmp/connect-live-comparison-27/eslint-mts.config.cjs",
+      "sha256": "db3ff8bf9b077f0ea584fd2ac40f3072f0dc94b1fe0742c4456412b264086c2e"
+    },
+    {
+      "path": "tmp/connect-live-comparison-27/focused.log",
+      "sha256": "1cae74658c5d855b8231808f237290201b54a827ad6a3a272a00d6b1082dfefc"
+    },
+    {
+      "path": "tmp/connect-live-comparison-27/lint.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tmp/connect-live-comparison-27/live-after-summary.json",
+      "sha256": "76d5df716830163352a0abacdf166d58ee4161cae7d6e2c562a6b1dc60f77855"
+    },
+    {
+      "path": "tmp/connect-live-comparison-27/live-after.log",
+      "sha256": "1a08aa0c7521119789f563113f7df49ec841d6e08deb0f8ba79f8b0df37096fb"
+    },
+    {
+      "path": "tmp/connect-live-comparison-27/live-before-summary.json",
+      "sha256": "76d5df716830163352a0abacdf166d58ee4161cae7d6e2c562a6b1dc60f77855"
+    },
+    {
+      "path": "tmp/connect-live-comparison-27/live-before.log",
+      "sha256": "6854dbfe5a12518c9f0978a047542becf8abc10bcc89b46b02e42787608d078e"
+    },
+    {
+      "path": "tmp/connect-live-comparison-27/offline-final.log",
+      "sha256": "436a12fe10e2f8359d29d89b09f0fb191e6811bf1cdc306ef476b757415f3f06"
+    },
+    {
+      "path": "tmp/connect-live-comparison-27/preservation-final.json",
+      "sha256": "87438fa884a795972cf6d37010edcf82bb9d59d8d3714b6da1598e44087c6206"
+    },
+    {
+      "path": "tmp/connect-live-comparison-27/protected-before.json",
+      "sha256": "33543bb25fe3f28594c4b19738225c04fc5721140307b8157f5a60b9ee0d9264"
+    },
+    {
+      "path": "tmp/connect-live-comparison-27/workspace-before.json",
+      "sha256": "9dd7834163def108fbb1bacdae3f850f0483dc1d7e6fbd4c2bca5e0db2158302"
+    },
+    {
+      "path": "tmp/connect-media-truth-22a/actual-request-diagnostics.json",
+      "sha256": "ceb343278c4bf342af229ba6e2983d10dfe7dd3b8cd3713bd24aed2c1bf00db9"
+    },
+    {
+      "path": "tmp/connect-media-truth-22a/actual-request.ts",
+      "sha256": "213f54bd69e93e91e185f57e64ad728913280bbd350a0f7fd15f6d6b7a759f97"
+    },
+    {
+      "path": "tmp/connect-media-truth-22a/deno-check-final.log",
+      "sha256": "befdc5f540a1c81b02e959f567e9421dbb8cde30a0f79bdf24a73fa848fce393"
+    },
+    {
+      "path": "tmp/connect-media-truth-22a/deno-check.log",
+      "sha256": "57c1bd580eaf231e8707f1410c829905f3b334386928edc4573ff14ba2ca2d50"
+    },
+    {
+      "path": "tmp/connect-media-truth-22a/diagnostics-after.log",
+      "sha256": "d10dfffa8436f9eff1f70de2518c723cf2c7d37cadd432acd0ccf2cbcad3651a"
+    },
+    {
+      "path": "tmp/connect-media-truth-22a/diagnostics-before.log",
+      "sha256": "6bb757864be8ec4b4a26084656c60337a4f7b5cc43bc420feeba08427008d714"
+    },
+    {
+      "path": "tmp/connect-media-truth-22a/diagnostics-final.log",
+      "sha256": "1a7a7492677d9be1239455d9eb099c293d4cd2a7f0a7d7ba84ccfbc5883ec139"
+    },
+    {
+      "path": "tmp/connect-media-truth-22a/earlier-timer-request-diagnostics.json",
+      "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+    },
+    {
+      "path": "tmp/connect-media-truth-22a/earlier-timer-request-reconstructed.json",
+      "sha256": "8d2487fb039b7b53e61716109071216ed2a1713008c6790e66fd9f9aecd63f99"
+    },
+    {
+      "path": "tmp/connect-media-truth-22a/earlier-timer-request.ts",
+      "sha256": "c6888a79af1074f75db763e02a9dea611a3a613f478cd5c504160a3a169e5000"
+    },
+    {
+      "path": "tmp/connect-media-truth-22a/final-verification.json",
+      "sha256": "f3b1367357094cd233b071a596675e3d13238cbfb702e8eafedbbbf82c3c020e"
+    },
+    {
+      "path": "tmp/connect-media-truth-22a/hypothetical-one-field-diagnostics.json",
+      "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+    },
+    {
+      "path": "tmp/connect-media-truth-22a/hypothetical-one-field.ts",
+      "sha256": "a50ec3b8085d7823808a582667dd9c242efb5607a1a16a87e54dbb64c1dc63df"
+    },
+    {
+      "path": "tmp/connect-media-truth-22a/lint.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tmp/connect-media-truth-22a/offline-final.log",
+      "sha256": "c9c3bc21e6f6a9b64bc4ff6c337ac038154bdac6b07d8fb98b0fe456c5c64b9f"
+    },
+    {
+      "path": "tmp/connect-media-truth-22a/protected-before.json",
+      "sha256": "3f49c293662980b7c00ca64cd04d3fb9910b601fe6696c7bb0d4d8e788ccc4d3"
+    },
+    {
+      "path": "tmp/connect-media-truth-22a/reconstructed-request.json",
+      "sha256": "b8940f83ca53de7172333aac5ad8419ff99fc512bc255db407569d00c71d88f5"
+    },
+    {
+      "path": "tmp/connect-media-truth-22a/request-audit-public-types.log",
+      "sha256": "16ec1b11a5e4dca479904a9bead851f5334a5f81e736dba34978dffb1169e51d"
+    },
+    {
+      "path": "tmp/connect-media-truth-22a/request-audit.log",
+      "sha256": "01e05b2f290ac27dec3a69e58fd1fb54d44ee17fbaa7d4af460630ca91419ef6"
+    },
+    {
+      "path": "tmp/connect-media-truth-22a/sdk-offline-result.json",
+      "sha256": "e54c32cf465d945ff0d910f37f40669be5d581418e6584f408b5cf9a8808bc45"
+    },
+    {
+      "path": "tmp/connect-media-truth-22a/sdk-offline-stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tmp/connect-media-truth-22a/sdk-provenance.json",
+      "sha256": "9c5a69a5cf90dc86bf102e51d4c27a7ceea4af54aa54f66cf247cfe7f5f1c187"
+    },
+    {
+      "path": "tmp/connect-media-truth-22a/typescript.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tmp/connect-media-truth-22a/workspace-before.json",
+      "sha256": "8aab974265f7eab3e6f611cd525c92e521dc5caa3cce214d7e62139e34d25337"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/deno-check-final.log",
+      "sha256": "187ed1575e41524390ece14f31711dc58b64c2698cc07f9e5efd78123a5776f6"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/deno-check-serialization.log",
+      "sha256": "187ed1575e41524390ece14f31711dc58b64c2698cc07f9e5efd78123a5776f6"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/deno-check.log",
+      "sha256": "187ed1575e41524390ece14f31711dc58b64c2698cc07f9e5efd78123a5776f6"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/eslint-mts.config.cjs",
+      "sha256": "db3ff8bf9b077f0ea584fd2ac40f3072f0dc94b1fe0742c4456412b264086c2e"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/final-verification.json",
+      "sha256": "b1491c131c91c05e9d008ef96be3d5760b5a0d06dc91c69541198d31e2ea7c0e"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/focused-tests-final.log",
+      "sha256": "1e968649731886140c3d4012ade3efffbcd39745be1b4b5dc6f455c5df7992c2"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/focused-tests.log",
+      "sha256": "67ea99b5605f2c437e7a59f90365c1ed1b5b3b396f1ef19e2d01af6f7a33790c"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/lint-final.log",
+      "sha256": "3967df5aa60c5a078f9a13de88979fd992b3e43efac14966810a2cdb927a6363"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/lint-mts-final.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/lint-serialization.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/lint.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/offline-final-serialization.log",
+      "sha256": "fede9175f013051728c6b313316e9c722b00f3934a6ad33c8b3aba92beda617a"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/offline-final.log",
+      "sha256": "ce40376ad32b92e69372ee8b9fc3a335d4210d5043297eefa59568b38bc1c080"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/protected-before.json",
+      "sha256": "84768242738b542db75974c02c474e3c21a5c2e648e39474cce48d981d798595"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-JMpl0Z/audit-test-receipt.json",
+      "sha256": "3cdc545db6f8ac1221e7cef9081ca8db325132e9af357621793342585d87fd79"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-JMpl0Z/b2-contract.json",
+      "sha256": "f92211b266e1d25cf8261b5f5bb52ed64221e30a6efdf108aeed89e36ffcbcc0"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-JMpl0Z/b2-request-reconstructed.json",
+      "sha256": "768244021a9477da50b1fbfe44c6a6e5cfc134b8b854cba590314efc18b2d8fe"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-JMpl0Z/candidate-contract.json",
+      "sha256": "f92211b266e1d25cf8261b5f5bb52ed64221e30a6efdf108aeed89e36ffcbcc0"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-JMpl0Z/candidate-request-offline-only.json",
+      "sha256": "fba02a43b9d1a775d113f097d965b5858cac867e4fb5ea2ba5cb207c3210f4c3"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-JMpl0Z/documented-range-controls.json",
+      "sha256": "cc854bdc4ba1c8126fc96d919e9bef0e15a58b6f76a9f58e4f551e6cbdb4f9ef"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-JMpl0Z/earlier-fixture-contract.json",
+      "sha256": "f92211b266e1d25cf8261b5f5bb52ed64221e30a6efdf108aeed89e36ffcbcc0"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-JMpl0Z/earlier-fixture-reconstructed.json",
+      "sha256": "3af6272ee5ad84012dc6871e5c731a92d07be418647513f4906bf505bad9c97c"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-JMpl0Z/empty-contract.json",
+      "sha256": "ce29d47da0ff1d6ac68a8d047f715ec23f5863257f4f2c3aef0d043769f0ecbf"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-JMpl0Z/merge-hypothesis-controls.json",
+      "sha256": "1451b30c3299548e898d1c875fa1f6a361f908f2895d3b64b74f5208d244aed2"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-JMpl0Z/missing-height-contract.json",
+      "sha256": "a9c7a516e13ac55a2cb5fe316ecebfbe654488bd88e820983e43cbd76d1007a9"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-JMpl0Z/missing-width-contract.json",
+      "sha256": "6b23bb6b2da7e79d18d641a41ac7e2cc6c27f3aa48b68ec74f128692549016f5"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-JMpl0Z/null-contract.json",
+      "sha256": "2ef8d2b992e198497f3cd77529930a8d7e8e90beb1b31da7688528db16df9b5c"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-JMpl0Z/projection-ambiguity.json",
+      "sha256": "0c3639a685a57b078a1ed3f2da8fb08ad3584aef44e2f3bf159b3b530cc5dbae"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-JMpl0Z/sdk-does-not-check-minimum-contract.json",
+      "sha256": "f92211b266e1d25cf8261b5f5bb52ed64221e30a6efdf108aeed89e36ffcbcc0"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-JMpl0Z/sdk-input.json",
+      "sha256": "2bb1c47cf14fdeffcbd962fd54b46984bb086cea8d595b67a2f0fb7adaa67e12"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-JMpl0Z/sdk-stderr.log",
+      "sha256": "1fa0b08837e82aaa0dd23e70c7178a1b36c80e11f80357607125acf91ea2d9cf"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-JMpl0Z/string-width-contract.json",
+      "sha256": "2885ab781331312941b9e429b2393216b1237b3b5d7f2e2813b0cd88d928a199"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-K6DoPl/audit-test-receipt.json",
+      "sha256": "d8a65722ba07b800536ca12e6f63d8fc0c21c7692b41b76935dbfab90e3a3201"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-K6DoPl/b2-contract.json",
+      "sha256": "f92211b266e1d25cf8261b5f5bb52ed64221e30a6efdf108aeed89e36ffcbcc0"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-K6DoPl/b2-request-reconstructed.json",
+      "sha256": "768244021a9477da50b1fbfe44c6a6e5cfc134b8b854cba590314efc18b2d8fe"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-K6DoPl/candidate-contract.json",
+      "sha256": "f92211b266e1d25cf8261b5f5bb52ed64221e30a6efdf108aeed89e36ffcbcc0"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-K6DoPl/candidate-request-offline-only.json",
+      "sha256": "fba02a43b9d1a775d113f097d965b5858cac867e4fb5ea2ba5cb207c3210f4c3"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-K6DoPl/candidate-request.ts",
+      "sha256": "13735144b4c71b9ad1ac5976aecb14cece1d70f77d8cb97f1784bd17df4da256"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-K6DoPl/documented-range-controls.json",
+      "sha256": "cc854bdc4ba1c8126fc96d919e9bef0e15a58b6f76a9f58e4f551e6cbdb4f9ef"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-K6DoPl/earlier-fixture-contract.json",
+      "sha256": "f92211b266e1d25cf8261b5f5bb52ed64221e30a6efdf108aeed89e36ffcbcc0"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-K6DoPl/earlier-fixture-reconstructed.json",
+      "sha256": "3af6272ee5ad84012dc6871e5c731a92d07be418647513f4906bf505bad9c97c"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-K6DoPl/empty-contract.json",
+      "sha256": "ce29d47da0ff1d6ac68a8d047f715ec23f5863257f4f2c3aef0d043769f0ecbf"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-K6DoPl/merge-hypothesis-controls.json",
+      "sha256": "1451b30c3299548e898d1c875fa1f6a361f908f2895d3b64b74f5208d244aed2"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-K6DoPl/missing-height-contract.json",
+      "sha256": "a9c7a516e13ac55a2cb5fe316ecebfbe654488bd88e820983e43cbd76d1007a9"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-K6DoPl/missing-width-contract.json",
+      "sha256": "6b23bb6b2da7e79d18d641a41ac7e2cc6c27f3aa48b68ec74f128692549016f5"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-K6DoPl/null-contract.json",
+      "sha256": "2ef8d2b992e198497f3cd77529930a8d7e8e90beb1b31da7688528db16df9b5c"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-K6DoPl/projection-ambiguity.json",
+      "sha256": "0c3639a685a57b078a1ed3f2da8fb08ad3584aef44e2f3bf159b3b530cc5dbae"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-K6DoPl/sdk-does-not-check-minimum-contract.json",
+      "sha256": "f92211b266e1d25cf8261b5f5bb52ed64221e30a6efdf108aeed89e36ffcbcc0"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-K6DoPl/sdk-input.json",
+      "sha256": "2bb1c47cf14fdeffcbd962fd54b46984bb086cea8d595b67a2f0fb7adaa67e12"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-K6DoPl/sdk-serialization-results.json",
+      "sha256": "002072d9589556d4f12298d8b6df2b17207b5714126acc1bdb820e5644121eb6"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-K6DoPl/sdk-stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-K6DoPl/string-width-contract.json",
+      "sha256": "2885ab781331312941b9e429b2393216b1237b3b5d7f2e2813b0cd88d928a199"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-jd78r6/audit-test-receipt.json",
+      "sha256": "7f98053d70402a7404e33584e862638ae60db9e3fb3b3aa6df92adf0461f7d5e"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-jd78r6/b2-contract.json",
+      "sha256": "f92211b266e1d25cf8261b5f5bb52ed64221e30a6efdf108aeed89e36ffcbcc0"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-jd78r6/b2-request-reconstructed.json",
+      "sha256": "768244021a9477da50b1fbfe44c6a6e5cfc134b8b854cba590314efc18b2d8fe"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-jd78r6/candidate-contract.json",
+      "sha256": "f92211b266e1d25cf8261b5f5bb52ed64221e30a6efdf108aeed89e36ffcbcc0"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-jd78r6/candidate-request-offline-only.json",
+      "sha256": "fba02a43b9d1a775d113f097d965b5858cac867e4fb5ea2ba5cb207c3210f4c3"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-jd78r6/candidate-request.ts",
+      "sha256": "13735144b4c71b9ad1ac5976aecb14cece1d70f77d8cb97f1784bd17df4da256"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-jd78r6/documented-range-controls.json",
+      "sha256": "cc854bdc4ba1c8126fc96d919e9bef0e15a58b6f76a9f58e4f551e6cbdb4f9ef"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-jd78r6/earlier-fixture-contract.json",
+      "sha256": "f92211b266e1d25cf8261b5f5bb52ed64221e30a6efdf108aeed89e36ffcbcc0"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-jd78r6/earlier-fixture-reconstructed.json",
+      "sha256": "3af6272ee5ad84012dc6871e5c731a92d07be418647513f4906bf505bad9c97c"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-jd78r6/empty-contract.json",
+      "sha256": "ce29d47da0ff1d6ac68a8d047f715ec23f5863257f4f2c3aef0d043769f0ecbf"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-jd78r6/merge-hypothesis-controls.json",
+      "sha256": "1451b30c3299548e898d1c875fa1f6a361f908f2895d3b64b74f5208d244aed2"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-jd78r6/missing-height-contract.json",
+      "sha256": "a9c7a516e13ac55a2cb5fe316ecebfbe654488bd88e820983e43cbd76d1007a9"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-jd78r6/missing-width-contract.json",
+      "sha256": "6b23bb6b2da7e79d18d641a41ac7e2cc6c27f3aa48b68ec74f128692549016f5"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-jd78r6/null-contract.json",
+      "sha256": "2ef8d2b992e198497f3cd77529930a8d7e8e90beb1b31da7688528db16df9b5c"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-jd78r6/projection-ambiguity.json",
+      "sha256": "0c3639a685a57b078a1ed3f2da8fb08ad3584aef44e2f3bf159b3b530cc5dbae"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-jd78r6/sdk-does-not-check-minimum-contract.json",
+      "sha256": "f92211b266e1d25cf8261b5f5bb52ed64221e30a6efdf108aeed89e36ffcbcc0"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-jd78r6/sdk-input.json",
+      "sha256": "2bb1c47cf14fdeffcbd962fd54b46984bb086cea8d595b67a2f0fb7adaa67e12"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-jd78r6/sdk-serialization-results.json",
+      "sha256": "002072d9589556d4f12298d8b6df2b17207b5714126acc1bdb820e5644121eb6"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-jd78r6/sdk-stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-jd78r6/string-width-contract.json",
+      "sha256": "2885ab781331312941b9e429b2393216b1237b3b5d7f2e2813b0cd88d928a199"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-o49tYt/audit-test-receipt.json",
+      "sha256": "16d63d9c6bb4753251078c0aaa97b4435585583a0c5e2de50f95ab7c1bbd4e14"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-o49tYt/b2-contract.json",
+      "sha256": "f92211b266e1d25cf8261b5f5bb52ed64221e30a6efdf108aeed89e36ffcbcc0"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-o49tYt/b2-request-reconstructed.json",
+      "sha256": "768244021a9477da50b1fbfe44c6a6e5cfc134b8b854cba590314efc18b2d8fe"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-o49tYt/candidate-contract.json",
+      "sha256": "f92211b266e1d25cf8261b5f5bb52ed64221e30a6efdf108aeed89e36ffcbcc0"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-o49tYt/candidate-request-offline-only.json",
+      "sha256": "fba02a43b9d1a775d113f097d965b5858cac867e4fb5ea2ba5cb207c3210f4c3"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-o49tYt/candidate-request.ts",
+      "sha256": "13735144b4c71b9ad1ac5976aecb14cece1d70f77d8cb97f1784bd17df4da256"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-o49tYt/documented-range-controls.json",
+      "sha256": "cc854bdc4ba1c8126fc96d919e9bef0e15a58b6f76a9f58e4f551e6cbdb4f9ef"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-o49tYt/earlier-fixture-contract.json",
+      "sha256": "f92211b266e1d25cf8261b5f5bb52ed64221e30a6efdf108aeed89e36ffcbcc0"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-o49tYt/earlier-fixture-reconstructed.json",
+      "sha256": "3af6272ee5ad84012dc6871e5c731a92d07be418647513f4906bf505bad9c97c"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-o49tYt/empty-contract.json",
+      "sha256": "ce29d47da0ff1d6ac68a8d047f715ec23f5863257f4f2c3aef0d043769f0ecbf"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-o49tYt/merge-hypothesis-controls.json",
+      "sha256": "1451b30c3299548e898d1c875fa1f6a361f908f2895d3b64b74f5208d244aed2"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-o49tYt/missing-height-contract.json",
+      "sha256": "a9c7a516e13ac55a2cb5fe316ecebfbe654488bd88e820983e43cbd76d1007a9"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-o49tYt/missing-width-contract.json",
+      "sha256": "6b23bb6b2da7e79d18d641a41ac7e2cc6c27f3aa48b68ec74f128692549016f5"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-o49tYt/null-contract.json",
+      "sha256": "2ef8d2b992e198497f3cd77529930a8d7e8e90beb1b31da7688528db16df9b5c"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-o49tYt/projection-ambiguity.json",
+      "sha256": "0c3639a685a57b078a1ed3f2da8fb08ad3584aef44e2f3bf159b3b530cc5dbae"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-o49tYt/sdk-does-not-check-minimum-contract.json",
+      "sha256": "f92211b266e1d25cf8261b5f5bb52ed64221e30a6efdf108aeed89e36ffcbcc0"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-o49tYt/sdk-input.json",
+      "sha256": "2bb1c47cf14fdeffcbd962fd54b46984bb086cea8d595b67a2f0fb7adaa67e12"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-o49tYt/sdk-serialization-results.json",
+      "sha256": "bc3303d5be41c7409df74b9c4c6badb4562c42c57a2d9cdc32008e9e9041cbac"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-o49tYt/sdk-stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-o49tYt/string-width-contract.json",
+      "sha256": "2885ab781331312941b9e429b2393216b1237b3b5d7f2e2813b0cd88d928a199"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-rkM2OQ/audit-test-receipt.json",
+      "sha256": "81a5c16fb8405111f72d8fa9f9e4b501c074be6196c97b4713bce020894016cd"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-rkM2OQ/b2-contract.json",
+      "sha256": "f92211b266e1d25cf8261b5f5bb52ed64221e30a6efdf108aeed89e36ffcbcc0"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-rkM2OQ/b2-request-reconstructed.json",
+      "sha256": "768244021a9477da50b1fbfe44c6a6e5cfc134b8b854cba590314efc18b2d8fe"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-rkM2OQ/candidate-contract.json",
+      "sha256": "f92211b266e1d25cf8261b5f5bb52ed64221e30a6efdf108aeed89e36ffcbcc0"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-rkM2OQ/candidate-request-offline-only.json",
+      "sha256": "fba02a43b9d1a775d113f097d965b5858cac867e4fb5ea2ba5cb207c3210f4c3"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-rkM2OQ/candidate-request.ts",
+      "sha256": "13735144b4c71b9ad1ac5976aecb14cece1d70f77d8cb97f1784bd17df4da256"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-rkM2OQ/documented-range-controls.json",
+      "sha256": "cc854bdc4ba1c8126fc96d919e9bef0e15a58b6f76a9f58e4f551e6cbdb4f9ef"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-rkM2OQ/earlier-fixture-contract.json",
+      "sha256": "f92211b266e1d25cf8261b5f5bb52ed64221e30a6efdf108aeed89e36ffcbcc0"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-rkM2OQ/earlier-fixture-reconstructed.json",
+      "sha256": "3af6272ee5ad84012dc6871e5c731a92d07be418647513f4906bf505bad9c97c"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-rkM2OQ/empty-contract.json",
+      "sha256": "ce29d47da0ff1d6ac68a8d047f715ec23f5863257f4f2c3aef0d043769f0ecbf"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-rkM2OQ/merge-hypothesis-controls.json",
+      "sha256": "1451b30c3299548e898d1c875fa1f6a361f908f2895d3b64b74f5208d244aed2"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-rkM2OQ/missing-height-contract.json",
+      "sha256": "a9c7a516e13ac55a2cb5fe316ecebfbe654488bd88e820983e43cbd76d1007a9"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-rkM2OQ/missing-width-contract.json",
+      "sha256": "6b23bb6b2da7e79d18d641a41ac7e2cc6c27f3aa48b68ec74f128692549016f5"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-rkM2OQ/null-contract.json",
+      "sha256": "2ef8d2b992e198497f3cd77529930a8d7e8e90beb1b31da7688528db16df9b5c"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-rkM2OQ/projection-ambiguity.json",
+      "sha256": "0c3639a685a57b078a1ed3f2da8fb08ad3584aef44e2f3bf159b3b530cc5dbae"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-rkM2OQ/sdk-does-not-check-minimum-contract.json",
+      "sha256": "f92211b266e1d25cf8261b5f5bb52ed64221e30a6efdf108aeed89e36ffcbcc0"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-rkM2OQ/sdk-input.json",
+      "sha256": "2bb1c47cf14fdeffcbd962fd54b46984bb086cea8d595b67a2f0fb7adaa67e12"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-rkM2OQ/sdk-serialization-results.json",
+      "sha256": "bc3303d5be41c7409df74b9c4c6badb4562c42c57a2d9cdc32008e9e9041cbac"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-rkM2OQ/sdk-stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/regression-rkM2OQ/string-width-contract.json",
+      "sha256": "2885ab781331312941b9e429b2393216b1237b3b5d7f2e2813b0cd88d928a199"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/typed-candidate-diagnostics.json",
+      "sha256": "d4cc3cf07fa6d1d7da6e00012e95f9aede5a068752c701d20fba9c8e997a1d61"
+    },
+    {
+      "path": "tmp/connect-media-truth-25a/workspace-before.json",
+      "sha256": "d98f290775a80d0f10ded9585b9754f18a21a26035468595673e359e82c0e00f"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-execution/approval-media-truth-b2-24-02e80d31-a307-4d8d-9019-0cd18ac4b0c1.json",
+      "sha256": "4a91610b4362126cdb46822f91ff36c41a83838963d0e7c3f8db6cbba524ba74"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-execution/approval-media-truth-b2-24-02e80d31-a307-4d8d-9019-0cd18ac4b0c1.json.cleanup-attempt-1",
+      "sha256": "519e701f1e754a3ca7686562f05cf48d6a87bfe72609c3830079984e9da8f879"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-execution/approval-media-truth-b2-24-02e80d31-a307-4d8d-9019-0cd18ac4b0c1.json.cleanup.json",
+      "sha256": "b9213f2992ffbb38289bbd4a79a4da7852463d07bd8ff66680248455907b9c77"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-execution/approval-media-truth-b2-24-02e80d31-a307-4d8d-9019-0cd18ac4b0c1.json.evidence.json",
+      "sha256": "7d4d381434229ea807d50b8acf38282864f172c83ea227842345ceec86b06ff5"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-execution/experiment-once.json",
+      "sha256": "d7dab21508f79b717edd0800e329e8ef612c00ead2407173c69c2bbd3120625c"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/b2-final-tests.log",
+      "sha256": "8bc189ffec9d7c9a6824ae66452c85ceb8e3c901d80777179cad73210ed1a360"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/b2-tests-initial.log",
+      "sha256": "e2fd052dae24ba8be8bdc30eb2526b6b7cee1c060024e43dbabc7738e1e09605"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/deno-check.log",
+      "sha256": "1db3f0a28f9684d7fb2fb81b1a2fe992176fc81e1fc85b83c988c04b7bf86b3a"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/deno-final.log",
+      "sha256": "bc07f8f71d78ba2cc9b1e81a1f5ae9f369b971f7d4fb96415e2447c0e8e7153e"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/eas-isolation.log",
+      "sha256": "51c388bc706ad4212becf21dffb83f8855139b558391aca427225d7896934959"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/final-verification.json",
+      "sha256": "1bce7560cc2611d8b803cfcc44f2630ba37bda648ae546bb70b30a61f6d728a2"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/focused-tests.log",
+      "sha256": "12faaaef20d18f98766651ccb790abf4804926de3f1731937408f032600fe17e"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-6WiglC/actual-request-diagnostics.json",
+      "sha256": "ceb343278c4bf342af229ba6e2983d10dfe7dd3b8cd3713bd24aed2c1bf00db9"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-6WiglC/actual-request.ts",
+      "sha256": "213f54bd69e93e91e185f57e64ad728913280bbd350a0f7fd15f6d6b7a759f97"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-6WiglC/earlier-timer-request-diagnostics.json",
+      "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-6WiglC/earlier-timer-request-reconstructed.json",
+      "sha256": "8d2487fb039b7b53e61716109071216ed2a1713008c6790e66fd9f9aecd63f99"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-6WiglC/earlier-timer-request.ts",
+      "sha256": "c6888a79af1074f75db763e02a9dea611a3a613f478cd5c504160a3a169e5000"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-6WiglC/hypothetical-one-field-diagnostics.json",
+      "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-6WiglC/hypothetical-one-field.ts",
+      "sha256": "a50ec3b8085d7823808a582667dd9c242efb5607a1a16a87e54dbb64c1dc63df"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-6WiglC/reconstructed-request.json",
+      "sha256": "b8940f83ca53de7172333aac5ad8419ff99fc512bc255db407569d00c71d88f5"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-6WiglC/sdk-offline-result.json",
+      "sha256": "753ad72b79709f3a8e747cccd9ad79880d3cae8c59382f9164bd0970a1f523d9"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-6WiglC/sdk-offline-stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-KrTrfg/actual-request-diagnostics.json",
+      "sha256": "ceb343278c4bf342af229ba6e2983d10dfe7dd3b8cd3713bd24aed2c1bf00db9"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-KrTrfg/actual-request.ts",
+      "sha256": "213f54bd69e93e91e185f57e64ad728913280bbd350a0f7fd15f6d6b7a759f97"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-KrTrfg/earlier-timer-request-diagnostics.json",
+      "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-KrTrfg/earlier-timer-request-reconstructed.json",
+      "sha256": "8d2487fb039b7b53e61716109071216ed2a1713008c6790e66fd9f9aecd63f99"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-KrTrfg/earlier-timer-request.ts",
+      "sha256": "c6888a79af1074f75db763e02a9dea611a3a613f478cd5c504160a3a169e5000"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-KrTrfg/hypothetical-one-field-diagnostics.json",
+      "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-KrTrfg/hypothetical-one-field.ts",
+      "sha256": "a50ec3b8085d7823808a582667dd9c242efb5607a1a16a87e54dbb64c1dc63df"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-KrTrfg/reconstructed-request.json",
+      "sha256": "b8940f83ca53de7172333aac5ad8419ff99fc512bc255db407569d00c71d88f5"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-KrTrfg/sdk-offline-result.json",
+      "sha256": "753ad72b79709f3a8e747cccd9ad79880d3cae8c59382f9164bd0970a1f523d9"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-KrTrfg/sdk-offline-stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-regression/actual-request-diagnostics.json",
+      "sha256": "ceb343278c4bf342af229ba6e2983d10dfe7dd3b8cd3713bd24aed2c1bf00db9"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-regression/actual-request.ts",
+      "sha256": "213f54bd69e93e91e185f57e64ad728913280bbd350a0f7fd15f6d6b7a759f97"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-regression/earlier-timer-request-diagnostics.json",
+      "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-regression/earlier-timer-request-reconstructed.json",
+      "sha256": "8d2487fb039b7b53e61716109071216ed2a1713008c6790e66fd9f9aecd63f99"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-regression/earlier-timer-request.ts",
+      "sha256": "c6888a79af1074f75db763e02a9dea611a3a613f478cd5c504160a3a169e5000"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-regression/hypothetical-one-field-diagnostics.json",
+      "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-regression/hypothetical-one-field.ts",
+      "sha256": "a50ec3b8085d7823808a582667dd9c242efb5607a1a16a87e54dbb64c1dc63df"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-regression/reconstructed-request.json",
+      "sha256": "b8940f83ca53de7172333aac5ad8419ff99fc512bc255db407569d00c71d88f5"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-regression/sdk-offline-result.json",
+      "sha256": "753ad72b79709f3a8e747cccd9ad79880d3cae8c59382f9164bd0970a1f523d9"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-regression/sdk-offline-stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-sQA6BE/actual-request-diagnostics.json",
+      "sha256": "ceb343278c4bf342af229ba6e2983d10dfe7dd3b8cd3713bd24aed2c1bf00db9"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-sQA6BE/actual-request.ts",
+      "sha256": "213f54bd69e93e91e185f57e64ad728913280bbd350a0f7fd15f6d6b7a759f97"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-sQA6BE/earlier-timer-request-diagnostics.json",
+      "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-sQA6BE/earlier-timer-request-reconstructed.json",
+      "sha256": "8d2487fb039b7b53e61716109071216ed2a1713008c6790e66fd9f9aecd63f99"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-sQA6BE/earlier-timer-request.ts",
+      "sha256": "c6888a79af1074f75db763e02a9dea611a3a613f478cd5c504160a3a169e5000"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-sQA6BE/hypothetical-one-field-diagnostics.json",
+      "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-sQA6BE/hypothetical-one-field.ts",
+      "sha256": "a50ec3b8085d7823808a582667dd9c242efb5607a1a16a87e54dbb64c1dc63df"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-sQA6BE/reconstructed-request.json",
+      "sha256": "b8940f83ca53de7172333aac5ad8419ff99fc512bc255db407569d00c71d88f5"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-sQA6BE/sdk-offline-result.json",
+      "sha256": "753ad72b79709f3a8e747cccd9ad79880d3cae8c59382f9164bd0970a1f523d9"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-sQA6BE/sdk-offline-stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-zUbvZd/actual-request-diagnostics.json",
+      "sha256": "ceb343278c4bf342af229ba6e2983d10dfe7dd3b8cd3713bd24aed2c1bf00db9"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-zUbvZd/actual-request.ts",
+      "sha256": "213f54bd69e93e91e185f57e64ad728913280bbd350a0f7fd15f6d6b7a759f97"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-zUbvZd/earlier-timer-request-diagnostics.json",
+      "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-zUbvZd/earlier-timer-request-reconstructed.json",
+      "sha256": "8d2487fb039b7b53e61716109071216ed2a1713008c6790e66fd9f9aecd63f99"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-zUbvZd/earlier-timer-request.ts",
+      "sha256": "c6888a79af1074f75db763e02a9dea611a3a613f478cd5c504160a3a169e5000"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-zUbvZd/hypothetical-one-field-diagnostics.json",
+      "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-zUbvZd/hypothetical-one-field.ts",
+      "sha256": "a50ec3b8085d7823808a582667dd9c242efb5607a1a16a87e54dbb64c1dc63df"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-zUbvZd/reconstructed-request.json",
+      "sha256": "b8940f83ca53de7172333aac5ad8419ff99fc512bc255db407569d00c71d88f5"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-zUbvZd/sdk-offline-result.json",
+      "sha256": "753ad72b79709f3a8e747cccd9ad79880d3cae8c59382f9164bd0970a1f523d9"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/historical-contract-zUbvZd/sdk-offline-stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/lint-final.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/lint-frozen.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/lint-initial.log",
+      "sha256": "51a5259576a6e59c8b1562da262cb6724a1a59dfb87af412a69193bbb29c8d9e"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/lint-preservation-final.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/live-comparison.json",
+      "sha256": "b921b220fd747400a3510dff0207cadc87c761af6d56b97e622efa0ba30f0e6d"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/live-isolation.log",
+      "sha256": "c591aeb9527d711e73db02404a395f2337ff76a8e9b5c7a9070ed1095da50d59"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/live-regressions.log",
+      "sha256": "d7d844fec80586ce0b5d570ab0bb94acc01e2fdc64b805874d1b11bfa213e52f"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/local-control-1.log",
+      "sha256": "df2b474a7be814f8c580e8113f5c278727df006e6646b08c32a1cc5977e6944a"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/local-control-1/local-browser-2026-10-29T15-01-47-177Z.json",
+      "sha256": "88247da8c6bf8b705fe1016d58a16eb7e16928ff58f8a761a154cd48a966bacf"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/local-control-1/local-browser-results.json",
+      "sha256": "88247da8c6bf8b705fe1016d58a16eb7e16928ff58f8a761a154cd48a966bacf"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/local-control-2.log",
+      "sha256": "a04fd725274ef883413df25e327eae32f3f2ddfe275669824bdf3b552265dde1"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/local-control-2/local-browser-2026-10-29T15-08-05-057Z.json",
+      "sha256": "4ec23e3e5ffa24ff353219ccd39aeab20f87d9f155c1cbc4ec808c0453b29ca4"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/local-control-2/local-browser-results.json",
+      "sha256": "4ec23e3e5ffa24ff353219ccd39aeab20f87d9f155c1cbc4ec808c0453b29ca4"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/offline-final-frozen.log",
+      "sha256": "7f838dff53013440561b90de86e4e9015f491fde1b735f7af48cca81758e307e"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/offline-final.log",
+      "sha256": "8d5a44cf60e862e70e1e52d5c9c6562f4e80e84039973b071e2b84bbf3ba19f8"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/offline-preservation-final.log",
+      "sha256": "12902de34106d6eea9abdabba2d3aa9270f962f1ca9cd9727049d7ed410633ec"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/proposal-preview.json",
+      "sha256": "4ec3b26ace478d0edc6da4c41c8ec3ac23af1ad0673b6917dc96c5df73da8e5d"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/protected-before.json",
+      "sha256": "aef3798093610683a2059bd18cec6fe2db65c8eaa59c58b4c0498d387ab8be3d"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/readiness.json",
+      "sha256": "a2ab6347219d76f3c49fd6d69fdd0385887593c0f5cb64264da40bcc658e5e11"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/regression-OggjGp/sdk-control/builder-input.json",
+      "sha256": "754687502358688d5024ef5c039aca547bc98ea5041226eae5a9691d5a8d571d"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/regression-OggjGp/sdk-control/result.json",
+      "sha256": "f8b84d431aeb25e3b07ecfede1cda09877d997894545bdc59518b2d2085e6ca7"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/regression-U3MjOA/sdk-control/builder-input.json",
+      "sha256": "754687502358688d5024ef5c039aca547bc98ea5041226eae5a9691d5a8d571d"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/regression-U3MjOA/sdk-control/result.json",
+      "sha256": "f8b84d431aeb25e3b07ecfede1cda09877d997894545bdc59518b2d2085e6ca7"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/regression-hOdL8d/sdk-control/builder-input.json",
+      "sha256": "754687502358688d5024ef5c039aca547bc98ea5041226eae5a9691d5a8d571d"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/regression-hOdL8d/sdk-control/result.json",
+      "sha256": "f8b84d431aeb25e3b07ecfede1cda09877d997894545bdc59518b2d2085e6ca7"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/regression-sATF2q/sdk-control/builder-input.json",
+      "sha256": "754687502358688d5024ef5c039aca547bc98ea5041226eae5a9691d5a8d571d"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/regression-sATF2q/sdk-control/result.json",
+      "sha256": "f8b84d431aeb25e3b07ecfede1cda09877d997894545bdc59518b2d2085e6ca7"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/request-contract-final.json",
+      "sha256": "0d7a9dcbf8158b14518c8fb0332945dd44dc176ab9d65b1644e37b33564c48d1"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/request-contract-initial.json",
+      "sha256": "7aae8a9082e46934a5158b0a875fd3ef83335d70c8fff6aeff9e7fe6e1f7d9f0"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/sdk-control/builder-input.json",
+      "sha256": "754687502358688d5024ef5c039aca547bc98ea5041226eae5a9691d5a8d571d"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/sdk-control/request.json",
+      "sha256": "4cc3c5e123b5bbdddfbcc65a804d62d3963b3d3377effaa138ef3abff0bc2a20"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/sdk-control/result.json",
+      "sha256": "f8b84d431aeb25e3b07ecfede1cda09877d997894545bdc59518b2d2085e6ca7"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/sdk-parity-final.log",
+      "sha256": "e236a02b018a806d9517381eb4e7a0f302517e19576eecb4938f8719cb7814b0"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/sources-before-local-2.json",
+      "sha256": "c62e9316167f41dc089ad58c760e0abac4afd70f57697e140be651d0cac38ce0"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/sources-before-local.json",
+      "sha256": "f20f428eb939a2574e9ab7f9e34f967612bfe018a71400c8e0e808b749526dcf"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/typescript.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/workspace-before.json",
+      "sha256": "faaf730a5efec08821193cd6c8e4037dbbf31acdfc59269ead48bb7db89a9d3d"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-stage-b/execution.log",
+      "sha256": "1771448956472103acdcdab8eb757f882a6c82d27d684456f3521cfb1cf9011f"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-stage-b/final-verification.json",
+      "sha256": "50ceb6184ea2761802e29f2993d7c123a7ab2b79e2b04458fff82acc9c740481"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-stage-b/owner-approval.json",
+      "sha256": "c77e869707e03e39b9dedd03b9ef68a93e289cd7854798186e9adc7f3f1ca202"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-stage-b/preflight-local.json",
+      "sha256": "aa4eecd00f2d228f61c0027abdecdb474c1bd9bb4b279bf43cad3fd1127b14be"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-stage-b/protected-before.json",
+      "sha256": "e344467078df264ed488938554a14c19f35481cf7c8826a99ff7685893a60e57"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-stage-b/workspace-before.json",
+      "sha256": "b5d3898bef2b2d5e7f98747473e92679d921ce186c634a18ad32f55ae7ae910d"
+    },
+    {
+      "path": "tmp/connect-media-truth-execution/approval-media-truth-stage-b-db499dbe-0c50-4458-b8a3-19f2ac5fa379.json",
+      "sha256": "9b335d7f2436393c6d6799fbcc4e879d6000852ded6cb9f4e53c320ed934bf1d"
+    },
+    {
+      "path": "tmp/connect-media-truth-execution/approval-media-truth-stage-b-db499dbe-0c50-4458-b8a3-19f2ac5fa379.json.cleanup-attempt-1",
+      "sha256": "ed755aab604e0e4a923150fe8bebeac851d34b3411a61d83ad2b576e80f57756"
+    },
+    {
+      "path": "tmp/connect-media-truth-execution/approval-media-truth-stage-b-db499dbe-0c50-4458-b8a3-19f2ac5fa379.json.cleanup.json",
+      "sha256": "3c29d7b24c14ab192754d9ba72ef3367d8c2c496944b0630d0d700717a4bce74"
+    },
+    {
+      "path": "tmp/connect-media-truth-execution/approval-media-truth-stage-b-db499dbe-0c50-4458-b8a3-19f2ac5fa379.json.evidence.json",
+      "sha256": "7789072d1891683c8324248f7a71634aada750fddcbfd0c4bdcb9168360b9b62"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/connect-regressions.log",
+      "sha256": "fc55f7fd77342f29a356cd2fa410c53fec5dd7be72c9c46362e16b81664ac5c7"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/eslint.config.cjs",
+      "sha256": "d50ea45cd79edd6c17c820c72b664d9dd8b8c9486a8bff86facdba348ec913b6"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/legacy-browser-control.log",
+      "sha256": "aa3df75487aaa66b6ff95b667f2dc856ef50a0244f4f155c05c6833df0f96b2c"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/lint-final.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/lint.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/live-regressions.log",
+      "sha256": "0ff6a57e2d2da68dc984db4f2fe80db220a4867ca769633d7686933fdde127ac"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/local-browser-2026-10-29T11-45-06-442Z.json",
+      "sha256": "d4ad984a103c580af3ae94718c285d22da2f9a220d8c58fcb096a743702a2a26"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/local-browser-2026-10-29T11-45-51-284Z.json",
+      "sha256": "d3121148893dd033908e2a4bbffac8b551fae724c8a9881129daa35fd8d9e875"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/local-browser-2026-10-29T11-47-06-469Z.json",
+      "sha256": "8d9e60dc83ba9735faac81826699f8916768b834b1a247ad1052543c28ff8568"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/local-browser-2026-10-29T11-58-26-631Z.json",
+      "sha256": "a59701619391268870982b160ff1636b6bff9dfadaae5aeeecdc13060fbfe203"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/local-browser-2026-10-29T11-59-33-372Z.json",
+      "sha256": "e501800046f17b1f12873e32d402c3c64712fff878e706320d8dc341ab9436f1"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/local-browser-2026-10-29T12-01-32-855Z.json",
+      "sha256": "b698bd7feaed3a3237453bb3774e65ef0744cddaff4930ea45c8180485c8b77e"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/local-browser-2026-10-29T12-04-37-197Z.json",
+      "sha256": "f642988728b2394c2aa782ee7b60a7ca5ebfdd9c0cb528ad2a2122a6ebbe3418"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/local-browser-2026-10-29T12-06-53-817Z.json",
+      "sha256": "244c9230b4156a30367b2e86478b649c9177aff20d1f9cd696fff0a51553f621"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/local-browser-2026-10-29T12-08-41-968Z.json",
+      "sha256": "1b384e846f644cd26a3f337fde02bc591571a8831e6d1abc77d407bd82d9e33d"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/local-browser-2026-10-29T12-10-26-548Z.json",
+      "sha256": "03a1b7813889ca50418a126eedf8317a6dbdf2124b817a3f4c5c47a25b94805b"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/local-browser-2026-10-29T12-12-06-452Z.json",
+      "sha256": "dd3d887d80cad9d2a13eca63e4eae98e986880a347e795e5074c05fde3c7d2a0"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/local-browser-2026-10-29T12-15-10-919Z.json",
+      "sha256": "077f2ca5c93a2cec71efdf276575531f8c3e58771ba67e2735ad5790f2ff0399"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/local-browser-2026-10-29T12-17-12-885Z.json",
+      "sha256": "00227c5435984971996930b32dbf1706fb211c351c40f20d8b0d0e5e05a35e41"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/local-browser-2026-10-29T12-19-43-471Z.json",
+      "sha256": "5d4bdf9465a5e0e471aa55ed912f4b98d75484584b71c3b61eae2a1667148de0"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/local-browser-2026-10-29T12-24-15-474Z.json",
+      "sha256": "c2fdaab43aab7a0e09511f46085d174ead9cf9c97ae3f149cc0eacf54ec12ec5"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/local-browser-2026-10-29T12-27-45-942Z.json",
+      "sha256": "a18fc50d03a4bae7f57eaffa96ed5c57f02d9bfff67d77331be2f0f43b64836e"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/local-browser-2026-10-29T12-32-06-133Z.json",
+      "sha256": "eaf0fae2d6174aadd67856c225f5feabda617b7500991d7e19b9f6f173be13fe"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/local-browser-2026-10-29T12-35-06-362Z.json",
+      "sha256": "0063dbb67c152ac1de2f4b479f7f1d326028ab9bc1328007926d4ceb1ca9fb65"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/local-browser-results.json",
+      "sha256": "0063dbb67c152ac1de2f4b479f7f1d326028ab9bc1328007926d4ceb1ca9fb65"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/offline-final.log",
+      "sha256": "a3d87cc7504fb977a1d6c93a08da78ff7febeb2afbe1a958cc90358f27911e91"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/preservation.json",
+      "sha256": "496a18130e739b128d726d38f7cc418ae235212b38034ed9ad2aefa97a2dd237"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/proposal-plan.json",
+      "sha256": "9834e18cbc04bd82540dfdf45a74d11a1cf5a9d243182e9a2b4d34def890d12c"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/provider-typecheck.log",
+      "sha256": "e4877b66fa9e8325faa4a3ee1d2bd7d54ab7a9f813fa8d442e349989d4f94ff8"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/readiness.json",
+      "sha256": "e9a6dd42b3f8aad8f2f128ca7fc9925633f7b1eaa1a5bba94f055354ae25ff79"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/typescript-final.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/typescript.log",
+      "sha256": "745da496c8c5f9644c523b758539218d427522fa82002ab975b1a1ff3c50f200"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/unit-results.log",
+      "sha256": "0db78dbf0cfb961f1c4eb3e8b4f3062582a64377bf4b38f5fd430b450e6f7ee8"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/workspace-before.json",
+      "sha256": "6b6795efa9ee7d3912884db2157582654506533a7eb6fdc71c03cd2d907f86ef"
+    },
+    {
+      "path": "tmp/connect-media-truth-stage-b/blocked-execution.json",
+      "sha256": "3413630d92885688aae917406c6a5843197476c31b81acd84d86bcc632f4f729"
+    },
+    {
+      "path": "tmp/connect-media-truth-stage-b/chat-reapproval-preflight.json",
+      "sha256": "1f472ab1ba5ab138ff1b2c4aa3f5ba4a0d8b58dd741bffd1b13f3b3a9893d936"
+    },
+    {
+      "path": "tmp/connect-media-truth-stage-b/execution.log",
+      "sha256": "4ae4cdeb24b6780ec7628dee9f19ce0953e400645db11ecb71542627c92458a3"
+    },
+    {
+      "path": "tmp/connect-media-truth-stage-b/final-verification.json",
+      "sha256": "5a831b83d271c6e843a9021bc0e036b85db5b7c9bc3b6c3d06d9c99c91c3690c"
+    },
+    {
+      "path": "tmp/connect-media-truth-stage-b/owner-approval-before-chat-reapproval.json",
+      "sha256": "38065479c5a4b4753e99fb13a844b25c2bb16fbcce5759ec292b2177f8dbcc92"
+    },
+    {
+      "path": "tmp/connect-media-truth-stage-b/owner-approval.json",
+      "sha256": "ad68eaa226456ff5ae12b4771db295545d60a8e110a3f69060710f360fba27d3"
+    },
+    {
+      "path": "tmp/connect-media-truth-stage-b/preflight-local.json",
+      "sha256": "4994887defcded8f50265cfbb3fd2d63f176fbc0fce0a28ed52df93c360cfd51"
+    },
+    {
+      "path": "tmp/connect-media-truth-stage-b/report-before-execution.md",
+      "sha256": "810e835c3b22a551629f0b618fe0e3503dece07fd639eccf64f70cedac2c6497"
+    },
+    {
+      "path": "tmp/connect-media-truth-stage-b/workspace-before.json",
+      "sha256": "5261dd6e62d4bae555494c85128b2fe43b45e3a90821b17788f383839135b413"
+    }
+  ],
+  "preservation": {
+    "workspaceBaseline": 281,
+    "unchanged": 271,
+    "intentionallyChanged": [
+      "__tests__/connect-video-resolution.regression.test.cjs",
+      "scripts/lib/connect-media-truth/approval.cjs",
+      "scripts/lib/connect-media-truth/profiles.cjs",
+      "scripts/lib/connect-media-truth/provenance.cjs",
+      "scripts/lib/connect-media-truth/provider-diagnostics.cjs",
+      "scripts/lib/connect-media-truth/provider.mts",
+      "scripts/lib/connect-media-truth/request.cjs",
+      "scripts/lib/connect-media-truth/scope.cjs",
+      "scripts/lib/connect-media-truth/sdk-contract.cjs",
+      "scripts/test-connect-media-truth.cjs"
+    ],
+    "protectedHistoricalEntries": 403,
+    "protectedUnchanged": 403
+  },
+  "officialDocumentation": {
+    "url": "https://getstream.io/video/docs/api/call-types/settings/",
+    "checkedAt": "2026-10-30",
+    "usedFor": "Target dimension/bitrate and frame interval constraints; not server validation order"
+  },
+  "requiredFuturePreflight": [
+    "Separate explicit owner authorization bound to this exact experiment and manifest hash",
+    "All preparation source and validation artifact hashes still match before reservation",
+    "Staging app 1731011 auth/permission checks enabled; existing hardened betweener_connect roles/type; notifications disabled",
+    "Shared call-type baseline read/hash and exact reserved identities/call absent before any mutation",
+    "At most one user upsert and one call creation; no retry/replacement even after ambiguous response",
+    "Exact ownership, pair/roles, binding, and full effective per-call settings verified before token issuance/join",
+    "Positive remote decoder controls and live stats for each measured phase; incomplete evidence remains inconclusive",
+    "Owned-only watchdog cleanup and final absence/shared-hash verification"
+  ],
+  "limitations": [
+    "No authenticated provider call or settings readback",
+    "No server acceptance demonstrated",
+    "Historical B1/B2 400 cause remains unconfirmed",
+    "Local Opus delayed detection was close to ten-second limit; no guarantee of later provider decoding",
+    "No complete transitive Deno lock or native/device attestation",
+    "No media-cutoff, absolute lease or product revocation-latency guarantee"
+  ],
+  "declarations": {
+    "CONNECT_B3_REQUEST_CONTRACT": "PASS",
+    "CONNECT_B3_OFFLINE_VALIDATION": "PASS",
+    "CONNECT_B3_OPUS_CONTROLS": "PASS",
+    "CONNECT_B3_SAFETY_GUARDS": "PASS",
+    "CONNECT_B3_PROVIDER_PREPARED": "PASS",
+    "CONNECT_B3_PROVIDER_EXECUTED": "NO",
+    "CONNECT_M2A_SECURITY_GATE": "BLOCKED",
+    "CONNECT_M2B_READY": "BLOCKED",
+    "PROVIDER_WRITES": "NONE",
+    "PRODUCTION_MODIFICATIONS": "NONE"
+  }
+}

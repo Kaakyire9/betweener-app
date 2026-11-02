@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "scope": "PROPOSED_PINNED_PUSH_ADDENDUM_NOT_EXECUTION_APPROVAL",
+  "executionAuthorized": false,
+  "target": {
+    "project": "betweener-staging",
+    "reference": "xsgzxadwuxuziubglvps",
+    "region": "eu-north-1",
+    "productionDenied": true
+  },
+  "basePackage": {
+    "path": "docs/betweener-connect/connect-v1-m3-3-staging-deployment-package.json",
+    "sha256": "4769fc763db17990a3d37018e69a4150458b0ef89e87aa5ba14fb2cd13582ed3"
+  },
+  "historicalPackageModified": false,
+  "migrationDelta": "NONE; retain the exact original six; no downgrade",
+  "purpose": "Keep original forward/v26 handler sources unchanged; add explicit vendored dependency/config recovery resolution for separate review",
+  "variants": {
+    "forward": {
+      "manifest": {
+        "path": "tmp/connect-push-rollback-48/forward-artifact.json",
+        "sha256": "13dd3fa01bab03f95c36854c741afcdd0fba9141cc46a26e755092b092c895b4"
+      },
+      "archive": {
+        "variant": "forward",
+        "path": "tmp/connect-push-rollback-48/forward-pinned-recovery.zip",
+        "sha256": "ce1a78b0a4dc798e8eb1d6ecb9fb94e2aefe8ad894ef98cfb65402ae93f3f600",
+        "membersVerified": 23
+      },
+      "bundle": {
+        "variant": "forward",
+        "sha256": "b0231fab13b2f3c74d5ce225f38f6061468b1374895867044cade2f7bf063584"
+      }
+    },
+    "v26": {
+      "manifest": {
+        "path": "tmp/connect-push-rollback-48/v26-artifact.json",
+        "sha256": "0284f246454bf69148b7d76ff46ead080fdf0d0a630e8c14033ccf0280048772"
+      },
+      "archive": {
+        "variant": "v26",
+        "path": "tmp/connect-push-rollback-48/v26-pinned-recovery.zip",
+        "sha256": "3327c4df40049897e62b8a630eeb6547c00d37b297413c94cdfc4cb0aace5f4d",
+        "membersVerified": 22
+      },
+      "bundle": {
+        "variant": "v26",
+        "sha256": "06f343c9a5f022971ce418bfa0a54cfc1169abd4eef0af59b80e3407a8b43a2e"
+      }
+    }
+  },
+  "dependencies": {
+    "path": "tmp/connect-push-rollback-48/dependencies.json",
+    "sha256": "8dfacf5caa3de71ca0b0c1fed04d9e3cbcbb649542271f8e2d2dd58799b3dd31"
+  },
+  "runtime": {
+    "sdk": "2.110.7 bundled UMD with ESM export appended only in derivative",
+    "std": "0.168.0",
+    "handlerSqlTests": "Deno 2.5.4 Windows",
+    "artifactTests": "edge-runtime 0.1.0\ndeno 2.1.4 (release, x86_64-unknown-linux-gnu)",
+    "imageId": "sha256:ad45164b7548bf5820ed7be714789c17ac2865edce79a09cfb4c3756c3d365a8",
+    "hostedRuntime": "UNVERIFIED",
+    "originalV26ResolvedBundle": "UNAVAILABLE"
+  },
+  "rollbackPreconditions": [
+    "fresh exact staging identity and current deployment attestation",
+    "all seven authoritative Connect gates false; scope empty",
+    "CONNECT_NOTIFICATIONS_ENABLED absent/false; no Connect in-flight deliveries or owned cleanup obligations",
+    "preserve shared PUSH_DELIVERY_MODE and existing HMAC/provenance configuration",
+    "verify sources and all dependency/config archive member hashes before restore",
+    "restore single named push function only; no prune, broad SQL push or schema downgrade"
+  ],
+  "localValidation": {
+    "forwardAndRollback": 50,
+    "failed": 0,
+    "edgeArtifactChecks": 6,
+    "regressions": 143,
+    "endBlockSql": 22,
+    "uniqueRelationshipAssertions": 88,
+    "typescript": "PASS",
+    "lint": "PASS 8 files with explicit MTS parser",
+    "strictDeno25Check": "FAIL 11 inherited std HTTP legacy type/API errors; execution passed, no suppression"
+  },
+  "remaining": [
+    "review this new pinned resolution separately; it is not the original hosted v26 bundle",
+    "fresh names-only hosted metadata checks require separate approval",
+    "actual hosted deployment/recovery and full staging schema/data equivalence not verified",
+    "no account binding, calling activation, provider test or native test authority"
+  ],
+  "security": {
+    "remoteRevocation": "UNVERIFIED",
+    "M2A": "BLOCKED",
+    "M2B": "BLOCKED",
+    "calling": "DISABLED"
+  }
+}

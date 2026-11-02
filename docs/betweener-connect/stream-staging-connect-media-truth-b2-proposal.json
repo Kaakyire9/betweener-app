@@ -1,0 +1,171 @@
+{
+  "schemaVersion": 2,
+  "experimentId": "connect-m2a-media-truth-b2-24",
+  "status": "PROPOSAL_REQUIRES_SEPARATE_EXPLICIT_APPROVAL",
+  "application": {
+    "id": 1731011,
+    "name": "Betweener Staging",
+    "callType": "betweener_connect"
+  },
+  "resources": {
+    "newOwnedUsersMaximum": 2,
+    "newCallsMaximum": 1,
+    "participantsMaximum": 2,
+    "replacementCalls": 0,
+    "creationRetries": 0
+  },
+  "media": {
+    "kind": "VOICE",
+    "source": "synthetic FSK only",
+    "microphone": false,
+    "camera": false,
+    "screenShare": false,
+    "personalContent": false
+  },
+  "perCall": {
+    "ring": false,
+    "notify": false,
+    "settings_override": {
+      "limits": {
+        "max_participants": 2,
+        "max_duration_seconds": 60
+      },
+      "audio": {
+        "mic_default_on": false,
+        "default_device": "earpiece",
+        "speaker_default_on": false,
+        "access_request_enabled": false
+      },
+      "video": {
+        "enabled": false,
+        "camera_default_on": false
+      },
+      "screensharing": {
+        "enabled": false
+      },
+      "recording": {
+        "mode": "disabled"
+      },
+      "transcription": {
+        "mode": "disabled",
+        "closed_caption_mode": "disabled"
+      },
+      "broadcasting": {
+        "enabled": false
+      },
+      "ingress": {
+        "enabled": false
+      },
+      "individual_recording": {
+        "mode": "disabled"
+      },
+      "raw_recording": {
+        "mode": "disabled"
+      },
+      "frame_recording": {
+        "mode": "disabled",
+        "capture_interval_in_seconds": 2
+      },
+      "thumbnails": {
+        "enabled": false
+      }
+    }
+  },
+  "roles": {
+    "memberRole": "connect_voice",
+    "definitionChanges": false,
+    "globalUserRoleChanges": false
+  },
+  "windowsMs": {
+    "timerAfterFirstEndedRead": 60000,
+    "backendAfterEndAcknowledgement": 10000,
+    "totalBeforeCleanup": 180000,
+    "cleanupBudget": 60000
+  },
+  "observation": {
+    "samplePeriodMs": 250,
+    "minimumTimerWindowMs": 59000,
+    "minimumBackendWindowMs": 9000,
+    "maximumSampleBracketMs": 500,
+    "minimumStableTailMs": 3500,
+    "nonceBits": 128,
+    "minimumMeanSymbolConfidence": 0.97,
+    "minimumSymbolConfidence": 0.75,
+    "codec": {
+      "modulation": "16-FSK",
+      "frequenciesHz": [
+        600,
+        700,
+        800,
+        900,
+        1000,
+        1100,
+        1200,
+        1300,
+        1400,
+        1500,
+        1600,
+        1700,
+        1800,
+        1900,
+        2000,
+        2100
+      ],
+      "symbolMs": 80,
+      "frameMs": 4000,
+      "guardMs": 160,
+      "crc": "CRC32",
+      "decoder": "blind; expected nonce never supplied to receiver"
+    },
+    "minimumCompleteCrcValidFrames": 1
+  },
+  "approval": {
+    "required": true,
+    "bindManifestSha256": true,
+    "explicitExecuteFlag": true,
+    "maximumValidityMs": 86400000,
+    "singleUseLedger": true,
+    "stageAApprovalIncluded": false,
+    "idPrefix": "media-truth-b2-24-"
+  },
+  "ownership": {
+    "reserveBeforeMutation": true,
+    "verifyAbsentBeforeCreation": true,
+    "callCustomMarker": "connect_media_truth_b2_24",
+    "userPrefix": "mtb2_24_",
+    "creator": "first of the two fixture members"
+  },
+  "providerOperations": [
+    "Verify staging identity, existing call type/roles and shared baseline hash; verify reserved users/call absent",
+    "One upsert of exactly two new owned fixture users; one getOrCreate of one owned call with the existing voice roles and listed per-call overrides",
+    "Issue ordinary JWTs only for those fixture users; join/subscribe/publish synthetic audio; GET owned call metadata",
+    "After timer window, one explicit mark_ended on the same call while both raw peers remain open",
+    "Cleanup: close owned peers, end/delete the owned call, hard-delete only the two owned fixture identities; verify absence and unchanged shared call-type hash"
+  ],
+  "cleanup": {
+    "independentWatchdog": true,
+    "parentExitTriggersCleanup": true,
+    "requireOwnershipReadback": true,
+    "cleanupOnlyRetryMaximum": 1,
+    "failuresVisible": true,
+    "closureIsNotMediaEvidence": true
+  },
+  "excluded": [
+    "shared call-type or role writes",
+    "Live changes",
+    "global settings changes",
+    "real users",
+    "Supabase access",
+    "database changes",
+    "deployment",
+    "build",
+    "OTA",
+    "calling enablement",
+    "retry or replacement fixture"
+  ],
+  "securityDecision": {
+    "universalPassAllowed": false,
+    "M2A": "BLOCKED",
+    "M2B": "BLOCKED"
+  }
+}

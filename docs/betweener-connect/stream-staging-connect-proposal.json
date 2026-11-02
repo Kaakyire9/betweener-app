@@ -1,0 +1,42 @@
+{
+  "status": "PROPOSED_NOT_APPLIED",
+  "target": { "app_id": 1731011, "app_name": "Betweener Staging", "credential_group": "STREAM_STAGING" },
+  "create_roles": [{ "name": "connect_invited" }, { "name": "connect_voice" }, { "name": "connect_video" }],
+  "create_call_type": {
+    "name": "betweener_connect",
+    "grants": {
+      "admin": [], "anonymous": [], "call_member": [], "channel_member": [], "channel_moderator": [],
+      "feed_follower": [], "feed_member": [], "feed_member_viewer": [], "feed_moderator": [],
+      "global_admin": [], "global_moderator": [], "global_read_only": [], "guest": [], "host": [],
+      "moderator": [], "speaker": [], "user": [],
+      "connect_invited": ["read-call"],
+      "connect_voice": ["read-call", "join-call", "send-audio"],
+      "connect_video": ["read-call", "join-call", "send-audio", "send-video"]
+    },
+    "settings": {
+      "audio": { "default_device": "earpiece", "mic_default_on": false, "speaker_default_on": false, "access_request_enabled": false },
+      "video": { "enabled": false, "camera_default_on": false, "access_request_enabled": false },
+      "limits": { "max_participants": 2 },
+      "ring": { "auto_cancel_timeout_ms": 45000, "incoming_call_timeout_ms": 45000, "missed_call_timeout_ms": 45000 },
+      "session": { "inactivity_timeout_seconds": 30 },
+      "recording": { "mode": "disabled", "audio_only": true },
+      "transcription": { "mode": "disabled", "closed_caption_mode": "disabled" },
+      "individual_recording": { "mode": "disabled" }, "raw_recording": { "mode": "disabled" },
+      "frame_recording": { "mode": "disabled" }, "screensharing": { "enabled": false, "access_request_enabled": false },
+      "thumbnails": { "enabled": false }, "ingress": { "enabled": false },
+      "broadcasting": { "enabled": false, "hls": { "enabled": false }, "rtmp": { "enabled": false } }
+    },
+    "notification_settings": { "enabled": false }
+  },
+  "isolation": {
+    "assign_application_roles_to_existing_users": false,
+    "modify_existing_call_types_or_global_settings": false,
+    "enable_video_or_native_push": false,
+    "test_user_prefix": "betweener-connect-m2-test-",
+    "test_call_prefix": "server_generated_uuid_v4",
+    "maximum_isolated_test_users": 4,
+    "real_user_queries_or_calls": false,
+    "test_resources_must_be_cleaned_up": true,
+    "shared_database_changes": false
+  }
+}

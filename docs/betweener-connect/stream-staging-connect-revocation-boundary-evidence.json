@@ -1,0 +1,3075 @@
+{
+  "recordedAt": "2026-10-29T06:55:07.880Z",
+  "scope": "APPROVED_M2A_THREE_CALL_BOUNDARY_EXPERIMENT",
+  "readOnlyProvider": {
+    "recordedAt": "2026-10-28T17:00:36.453Z",
+    "mode": "READ_ONLY",
+    "providerWrites": 0,
+    "app": {
+      "id": 1731011,
+      "name": "Betweener Staging",
+      "disable_auth_checks": false,
+      "disable_permissions_checks": false
+    },
+    "serverSdk": "0.7.63",
+    "clientSdk": "1.62.0",
+    "sdkTimerRequestShape": {
+      "max_duration_seconds": 60,
+      "max_participants": 2
+    },
+    "callType": {
+      "name": "betweener_connect",
+      "grants": {
+        "admin": [],
+        "global_admin": [],
+        "global_read_only": [],
+        "connect_invited": [
+          "read-call"
+        ],
+        "user": [],
+        "connect_video": [
+          "join-call",
+          "read-call",
+          "send-audio",
+          "send-video"
+        ],
+        "guest": [],
+        "call_member": [],
+        "connect_voice": [
+          "join-call",
+          "read-call",
+          "send-audio"
+        ]
+      },
+      "limits": {
+        "max_participants": 2,
+        "max_participants_exclude_roles": [],
+        "max_duration_seconds": null
+      },
+      "session": {
+        "inactivity_timeout_seconds": 30
+      }
+    },
+    "joinEndedCallRoles": [],
+    "callTypesDigest": "12e74f5fca79a1dea2b48a8c950bbc3a2189a3ffdf9e04ccb43d28c4e4533a7e",
+    "durationLimitEnabled": false,
+    "timerEnforcementExecuted": false
+  },
+  "canonicalEvidence": {
+    "file": "stream-staging-connect-m2a-closure-evidence.json",
+    "path": "integrated",
+    "fault": "LOCAL_END_PORT_THROW_BEFORE_SDK_HTTP",
+    "realNetworkFaultInjected": false,
+    "realStreamControlOutage": false,
+    "observedAfterRevoke": {
+      "coordinatorJoinStatus": 201,
+      "sfuJoinAcknowledged": true,
+      "audioBytesSent": 630,
+      "audioPacketsSent": 9,
+      "receiverDeliveryCaptured": false
+    },
+    "recovery": {
+      "providerEndAcknowledged": true,
+      "heldJoinStatus": 403,
+      "heldJoinCode": 17,
+      "occupancyReleased": true
+    },
+    "failureClass": "D_CONFIRMED_WITH_NARROW_A_MODEL",
+    "lostObligation": false
+  },
+  "implementationChanges": "Test-only pinned Deno startup; numeric SFU error decoding; failed reconnect remains inconclusive; offline received-media evidence review. Application security, migrations and policies unchanged.",
+  "freshLocalChecks": {
+    "recordedAt": "2026-10-29T06:55:07.850Z",
+    "connect": {
+      "tests": 87,
+      "pass": 87,
+      "fail": 0
+    },
+    "relationshipAssertionsInApprovedFixture": 88,
+    "targetedLint": "PASS",
+    "newBoundaryEvidenceCases": 5
+  },
+  "experiment": {
+    "status": "EXECUTED_PARTIAL_SFU_RECONNECT_FAILED",
+    "approvedOn": "2026-10-29",
+    "approvalScope": "Three isolated VOICE calls, three owned users, two per-call 60-second limits and cleanup; no release-policy approval",
+    "proposal": "stream-staging-connect-boundary-proposal.json",
+    "startupFailure": {
+      "recordedAt": "2026-10-29T06:32:50.922Z",
+      "appId": 1731011,
+      "calls": [],
+      "scope": "APPROVED_THREE_CALL_BOUNDARY_EXPERIMENT",
+      "fault": "LOCAL_END_PORT_THROW_BEFORE_HTTP",
+      "callTypeOrRoleWrites": 0,
+      "sharedDatabaseModified": false,
+      "result": "INCOMPLETE",
+      "error": "provider_fixture_start_timeout"
+    },
+    "results": {
+      "recordedAt": "2026-10-29T06:36:48.085Z",
+      "appId": 1731011,
+      "calls": [
+        {
+          "name": "normal_end",
+          "id": "5e305dc4-eba6-4719-b24d-261cc08a4d1c",
+          "grant": "e1261197-b791-4046-84b8-aea08ee1b212",
+          "devices": [
+            "1d8126f7-68f6-4574-8d8b-299d7a6588a7",
+            "91e4ff77-9075-4775-8e67-35c690d67bff"
+          ],
+          "createdAt": "2026-10-29T06:38:01.040Z",
+          "timed": false,
+          "beforeJoin": {
+            "ended": false,
+            "sessionEnded": false,
+            "users": [],
+            "endedAt": null,
+            "session": null,
+            "limits": {
+              "max_participants": 2,
+              "max_participants_exclude_roles": [],
+              "max_duration_seconds": null
+            }
+          },
+          "acceptedState": "ACCEPTED",
+          "firstCoordinatorJoinAt": "2026-10-29T06:38:05.881Z",
+          "joins": [
+            {
+              "status": 201,
+              "code": null,
+              "capabilities": [
+                "join-call",
+                "read-call",
+                "send-audio"
+              ]
+            },
+            {
+              "status": 201,
+              "code": null,
+              "capabilities": [
+                "join-call",
+                "read-call",
+                "send-audio"
+              ]
+            }
+          ],
+          "afterCoordinatorJoin": {
+            "ended": false,
+            "sessionEnded": false,
+            "users": [],
+            "endedAt": null,
+            "session": {
+              "id": "bd5a86f1-e7dc-40db-96dc-0373f6e1d314",
+              "startedAt": null,
+              "timerEndsAt": null,
+              "endedAt": null
+            },
+            "limits": {
+              "max_participants": 2,
+              "max_participants_exclude_roles": [],
+              "max_duration_seconds": null
+            }
+          },
+          "publishers": [
+            {
+              "kind": "SFU_PUBLISH_BOUNDARY",
+              "results": [
+                {
+                  "track": "audio",
+                  "status": 200,
+                  "code": null,
+                  "message": null,
+                  "answerReceived": true,
+                  "optionMatched": true
+                }
+              ],
+              "callEndedObserved": false,
+              "sessionId": "5867fb6a-8ef4-4ffa-8dea-a4721c4efd4c",
+              "joinAcknowledged": true,
+              "publishOptions": [
+                {
+                  "id": 0,
+                  "trackType": 1,
+                  "codec": "Opus",
+                  "videoDimension": {
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                {
+                  "id": 0,
+                  "trackType": 2,
+                  "codec": "VP9",
+                  "videoDimension": {
+                    "width": 640,
+                    "height": 480
+                  }
+                },
+                {
+                  "id": 0,
+                  "trackType": 3,
+                  "codec": "VP8",
+                  "videoDimension": {
+                    "width": 2560,
+                    "height": 1440
+                  }
+                },
+                {
+                  "id": 0,
+                  "trackType": 4,
+                  "codec": "Opus",
+                  "videoDimension": {
+                    "width": 0,
+                    "height": 0
+                  }
+                }
+              ],
+              "audioStats": {
+                "connectionState": "connected",
+                "bytesSent": 619,
+                "packetsSent": 9
+              }
+            },
+            {
+              "kind": "SFU_PUBLISH_BOUNDARY",
+              "results": [
+                {
+                  "track": "audio",
+                  "status": 200,
+                  "code": null,
+                  "message": null,
+                  "answerReceived": true,
+                  "optionMatched": true
+                }
+              ],
+              "callEndedObserved": false,
+              "sessionId": "12d6ad9b-f8be-4ffa-8b96-6692bcb1d0aa",
+              "joinAcknowledged": true,
+              "publishOptions": [
+                {
+                  "id": 0,
+                  "trackType": 1,
+                  "codec": "Opus",
+                  "videoDimension": {
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                {
+                  "id": 0,
+                  "trackType": 2,
+                  "codec": "VP9",
+                  "videoDimension": {
+                    "width": 640,
+                    "height": 480
+                  }
+                },
+                {
+                  "id": 0,
+                  "trackType": 3,
+                  "codec": "VP8",
+                  "videoDimension": {
+                    "width": 2560,
+                    "height": 1440
+                  }
+                },
+                {
+                  "id": 0,
+                  "trackType": 4,
+                  "codec": "Opus",
+                  "videoDimension": {
+                    "width": 0,
+                    "height": 0
+                  }
+                }
+              ],
+              "audioStats": {
+                "connectionState": "connected",
+                "bytesSent": 706,
+                "packetsSent": 10
+              }
+            }
+          ],
+          "subscriptions": [
+            {
+              "id": 13,
+              "status": 200,
+              "code": null
+            },
+            {
+              "id": 14,
+              "status": 200,
+              "code": null
+            }
+          ],
+          "receiveControl": [
+            {
+              "id": 15,
+              "connectionState": "connected",
+              "bytesSent": 15571,
+              "packetsSent": 194,
+              "receivedAudio": {
+                "connectionState": "connected",
+                "bytesReceived": 44445,
+                "packetsReceived": 176
+              },
+              "callEndedObserved": false
+            },
+            {
+              "id": 16,
+              "connectionState": "connected",
+              "bytesSent": 15738,
+              "packetsSent": 196,
+              "receivedAudio": {
+                "connectionState": "connected",
+                "bytesReceived": 44185,
+                "packetsReceived": 175
+              },
+              "callEndedObserved": false
+            }
+          ],
+          "afterMedia": {
+            "ended": false,
+            "sessionEnded": false,
+            "users": [
+              "f0110000-0000-4000-8000-000000000008",
+              "f0110000-0000-4000-8000-000000000007"
+            ],
+            "endedAt": null,
+            "session": {
+              "id": "bd5a86f1-e7dc-40db-96dc-0373f6e1d314",
+              "startedAt": "2026-10-29T06:38:16.452Z",
+              "timerEndsAt": null,
+              "endedAt": null
+            },
+            "limits": {
+              "max_participants": 2,
+              "max_participants_exclude_roles": [],
+              "max_duration_seconds": null
+            }
+          },
+          "activeExtensionAttempts": [
+            {
+              "status": 403,
+              "code": 17,
+              "ended": false
+            },
+            {
+              "status": 403,
+              "code": 17,
+              "ended": false
+            }
+          ],
+          "afterExtensionAttempts": {
+            "ended": false,
+            "sessionEnded": false,
+            "users": [
+              "f0110000-0000-4000-8000-000000000008",
+              "f0110000-0000-4000-8000-000000000007"
+            ],
+            "endedAt": null,
+            "session": {
+              "id": "bd5a86f1-e7dc-40db-96dc-0373f6e1d314",
+              "startedAt": "2026-10-29T06:38:16.452Z",
+              "timerEndsAt": null,
+              "endedAt": null
+            },
+            "limits": {
+              "max_participants": 2,
+              "max_participants_exclude_roles": [],
+              "max_duration_seconds": null
+            }
+          },
+          "cleanupJobAcknowledged": true,
+          "normalEndAckAt": "2026-10-29T06:38:26.064Z",
+          "receiveAfterEnd": [
+            {
+              "sampledAt": "2026-10-29T06:38:26.064Z",
+              "stats": [
+                {
+                  "id": 18,
+                  "connectionState": "connected",
+                  "bytesSent": 32905,
+                  "packetsSent": 408,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 76197,
+                    "packetsReceived": 302
+                  },
+                  "callEndedObserved": true,
+                  "callEndedAt": 1793255904336
+                },
+                {
+                  "id": 19,
+                  "connectionState": "connected",
+                  "bytesSent": 32991,
+                  "packetsSent": 409,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 76828,
+                    "packetsReceived": 312
+                  },
+                  "callEndedObserved": true,
+                  "callEndedAt": 1793255904336
+                }
+              ]
+            },
+            {
+              "sampledAt": "2026-10-29T06:38:27.091Z",
+              "stats": [
+                {
+                  "id": 20,
+                  "connectionState": "connected",
+                  "bytesSent": 37036,
+                  "packetsSent": 459,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 76197,
+                    "packetsReceived": 302
+                  },
+                  "callEndedObserved": true,
+                  "callEndedAt": 1793255904336
+                },
+                {
+                  "id": 21,
+                  "connectionState": "connected",
+                  "bytesSent": 37122,
+                  "packetsSent": 460,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 76828,
+                    "packetsReceived": 312
+                  },
+                  "callEndedObserved": true,
+                  "callEndedAt": 1793255904336
+                }
+              ]
+            },
+            {
+              "sampledAt": "2026-10-29T06:38:28.105Z",
+              "stats": [
+                {
+                  "id": 22,
+                  "connectionState": "connected",
+                  "bytesSent": 41167,
+                  "packetsSent": 510,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 76197,
+                    "packetsReceived": 302
+                  },
+                  "callEndedObserved": true,
+                  "callEndedAt": 1793255904336
+                },
+                {
+                  "id": 23,
+                  "connectionState": "connected",
+                  "bytesSent": 41253,
+                  "packetsSent": 511,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 76828,
+                    "packetsReceived": 312
+                  },
+                  "callEndedObserved": true,
+                  "callEndedAt": 1793255904336
+                }
+              ]
+            },
+            {
+              "sampledAt": "2026-10-29T06:38:29.116Z",
+              "stats": [
+                {
+                  "id": 24,
+                  "connectionState": "connected",
+                  "bytesSent": 45217,
+                  "packetsSent": 560,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 76197,
+                    "packetsReceived": 302
+                  },
+                  "callEndedObserved": true,
+                  "callEndedAt": 1793255904336
+                },
+                {
+                  "id": 25,
+                  "connectionState": "connected",
+                  "bytesSent": 45384,
+                  "packetsSent": 562,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 76828,
+                    "packetsReceived": 312
+                  },
+                  "callEndedObserved": true,
+                  "callEndedAt": 1793255904336
+                }
+              ]
+            },
+            {
+              "sampledAt": "2026-10-29T06:38:30.136Z",
+              "stats": [
+                {
+                  "id": 26,
+                  "connectionState": "connected",
+                  "bytesSent": 49348,
+                  "packetsSent": 611,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 76197,
+                    "packetsReceived": 302
+                  },
+                  "callEndedObserved": true,
+                  "callEndedAt": 1793255904336
+                },
+                {
+                  "id": 27,
+                  "connectionState": "connected",
+                  "bytesSent": 49434,
+                  "packetsSent": 612,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 76828,
+                    "packetsReceived": 312
+                  },
+                  "callEndedObserved": true,
+                  "callEndedAt": 1793255904336
+                }
+              ]
+            }
+          ],
+          "heldTokenValidity": [
+            {
+              "status": 200,
+              "code": null,
+              "capabilities": [
+                "join-call",
+                "read-call",
+                "send-audio"
+              ],
+              "ended": true,
+              "limits": {
+                "max_participants": 2,
+                "max_participants_exclude_roles": [],
+                "max_duration_seconds": null
+              }
+            },
+            {
+              "status": 200,
+              "code": null,
+              "capabilities": [
+                "join-call",
+                "read-call",
+                "send-audio"
+              ],
+              "ended": true,
+              "limits": {
+                "max_participants": 2,
+                "max_participants_exclude_roles": [],
+                "max_duration_seconds": null
+              }
+            }
+          ],
+          "heldRejoins": [
+            {
+              "status": 403,
+              "code": 17
+            },
+            {
+              "status": 403,
+              "code": 17
+            }
+          ],
+          "newTokenValidity": [
+            {
+              "status": 200,
+              "code": null,
+              "capabilities": [
+                "join-call",
+                "read-call",
+                "send-audio"
+              ],
+              "ended": true,
+              "limits": {
+                "max_participants": 2,
+                "max_participants_exclude_roles": [],
+                "max_duration_seconds": null
+              }
+            },
+            {
+              "status": 200,
+              "code": null,
+              "capabilities": [
+                "join-call",
+                "read-call",
+                "send-audio"
+              ],
+              "ended": true,
+              "limits": {
+                "max_participants": 2,
+                "max_participants_exclude_roles": [],
+                "max_duration_seconds": null
+              }
+            }
+          ],
+          "newTokenRejoins": [
+            {
+              "status": 403,
+              "code": 17
+            },
+            {
+              "status": 403,
+              "code": 17
+            }
+          ],
+          "extensionAttempts": [
+            {
+              "status": 403,
+              "code": 17,
+              "ended": false
+            },
+            {
+              "status": 403,
+              "code": 17,
+              "ended": false
+            }
+          ],
+          "recreateAttempt": {
+            "status": 201,
+            "code": null,
+            "capabilities": [
+              "join-call",
+              "read-call",
+              "send-audio"
+            ],
+            "ended": true,
+            "limits": {
+              "max_participants": 2,
+              "max_participants_exclude_roles": [],
+              "max_duration_seconds": null
+            }
+          },
+          "providerAfterAttempts": {
+            "ended": true,
+            "sessionEnded": false,
+            "users": [],
+            "endedAt": "2026-10-29T06:38:23.224Z",
+            "session": null,
+            "limits": {
+              "max_participants": 2,
+              "max_participants_exclude_roles": [],
+              "max_duration_seconds": null
+            }
+          }
+        },
+        {
+          "name": "active_timer_with_end_failure",
+          "id": "33c9db30-6a12-454f-8f7e-1770024e161c",
+          "grant": "6eca7714-37a1-47c0-a67f-7d2e0d00fd06",
+          "devices": [
+            "fb777c82-3813-46b8-8ef5-1f04e61b13cd",
+            "b9fb56fc-30b0-485b-9cb7-2d652ccbb13d"
+          ],
+          "createdAt": "2026-10-29T06:38:34.430Z",
+          "timed": true,
+          "beforeJoin": {
+            "ended": false,
+            "sessionEnded": false,
+            "users": [],
+            "endedAt": null,
+            "session": null,
+            "limits": {
+              "max_participants": 2,
+              "max_participants_exclude_roles": [],
+              "max_duration_seconds": 60
+            }
+          },
+          "acceptedState": "ACCEPTED",
+          "firstCoordinatorJoinAt": "2026-10-29T06:38:39.866Z",
+          "joins": [
+            {
+              "status": 201,
+              "code": null,
+              "capabilities": [
+                "join-call",
+                "read-call",
+                "send-audio"
+              ]
+            },
+            {
+              "status": 201,
+              "code": null,
+              "capabilities": [
+                "join-call",
+                "read-call",
+                "send-audio"
+              ]
+            }
+          ],
+          "afterCoordinatorJoin": {
+            "ended": false,
+            "sessionEnded": false,
+            "users": [],
+            "endedAt": null,
+            "session": {
+              "id": "8dde1aa7-4b0a-449a-b85c-c3ff90fe0933",
+              "startedAt": null,
+              "timerEndsAt": "2026-10-29T06:39:38.892Z",
+              "endedAt": null
+            },
+            "limits": {
+              "max_participants": 2,
+              "max_participants_exclude_roles": [],
+              "max_duration_seconds": 60
+            }
+          },
+          "publishers": [
+            {
+              "kind": "SFU_PUBLISH_BOUNDARY",
+              "results": [
+                {
+                  "track": "audio",
+                  "status": 200,
+                  "code": null,
+                  "message": null,
+                  "answerReceived": true,
+                  "optionMatched": true
+                }
+              ],
+              "callEndedObserved": false,
+              "sessionId": "e2f8671e-4e5c-4ef9-84ee-5f14dca3ab35",
+              "joinAcknowledged": true,
+              "publishOptions": [
+                {
+                  "id": 0,
+                  "trackType": 1,
+                  "codec": "Opus",
+                  "videoDimension": {
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                {
+                  "id": 0,
+                  "trackType": 2,
+                  "codec": "VP9",
+                  "videoDimension": {
+                    "width": 640,
+                    "height": 480
+                  }
+                },
+                {
+                  "id": 0,
+                  "trackType": 3,
+                  "codec": "VP8",
+                  "videoDimension": {
+                    "width": 2560,
+                    "height": 1440
+                  }
+                },
+                {
+                  "id": 0,
+                  "trackType": 4,
+                  "codec": "Opus",
+                  "videoDimension": {
+                    "width": 0,
+                    "height": 0
+                  }
+                }
+              ],
+              "audioStats": {
+                "connectionState": "connected",
+                "bytesSent": 619,
+                "packetsSent": 9
+              }
+            },
+            {
+              "kind": "SFU_PUBLISH_BOUNDARY",
+              "results": [
+                {
+                  "track": "audio",
+                  "status": 200,
+                  "code": null,
+                  "message": null,
+                  "answerReceived": true,
+                  "optionMatched": true
+                }
+              ],
+              "callEndedObserved": false,
+              "sessionId": "cacb5adc-d50a-4d3e-8863-4169c9039b21",
+              "joinAcknowledged": true,
+              "publishOptions": [
+                {
+                  "id": 0,
+                  "trackType": 1,
+                  "codec": "Opus",
+                  "videoDimension": {
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                {
+                  "id": 0,
+                  "trackType": 2,
+                  "codec": "VP9",
+                  "videoDimension": {
+                    "width": 640,
+                    "height": 480
+                  }
+                },
+                {
+                  "id": 0,
+                  "trackType": 3,
+                  "codec": "VP8",
+                  "videoDimension": {
+                    "width": 2560,
+                    "height": 1440
+                  }
+                },
+                {
+                  "id": 0,
+                  "trackType": 4,
+                  "codec": "Opus",
+                  "videoDimension": {
+                    "width": 0,
+                    "height": 0
+                  }
+                }
+              ],
+              "audioStats": {
+                "connectionState": "connected",
+                "bytesSent": 674,
+                "packetsSent": 10
+              }
+            }
+          ],
+          "subscriptions": [
+            {
+              "id": 40,
+              "status": 200,
+              "code": null
+            },
+            {
+              "id": 41,
+              "status": 200,
+              "code": null
+            }
+          ],
+          "receiveControl": [
+            {
+              "id": 42,
+              "connectionState": "connected",
+              "bytesSent": 18973,
+              "packetsSent": 236,
+              "receivedAudio": {
+                "connectionState": "connected",
+                "bytesReceived": 55374,
+                "packetsReceived": 219
+              },
+              "callEndedObserved": false
+            },
+            {
+              "id": 43,
+              "connectionState": "connected",
+              "bytesSent": 19131,
+              "packetsSent": 238,
+              "receivedAudio": {
+                "connectionState": "connected",
+                "bytesReceived": 55123,
+                "packetsReceived": 218
+              },
+              "callEndedObserved": false
+            }
+          ],
+          "afterMedia": {
+            "ended": false,
+            "sessionEnded": false,
+            "users": [
+              "f0110000-0000-4000-8000-000000000008",
+              "f0110000-0000-4000-8000-000000000007"
+            ],
+            "endedAt": null,
+            "session": {
+              "id": "8dde1aa7-4b0a-449a-b85c-c3ff90fe0933",
+              "startedAt": "2026-10-29T06:38:45.198Z",
+              "timerEndsAt": "2026-10-29T06:39:45.198Z",
+              "endedAt": null
+            },
+            "limits": {
+              "max_participants": 2,
+              "max_participants_exclude_roles": [],
+              "max_duration_seconds": 60
+            }
+          },
+          "activeExtensionAttempts": [
+            {
+              "status": 403,
+              "code": 17,
+              "ended": false
+            },
+            {
+              "status": 403,
+              "code": 17,
+              "ended": false
+            }
+          ],
+          "afterExtensionAttempts": {
+            "ended": false,
+            "sessionEnded": false,
+            "users": [
+              "f0110000-0000-4000-8000-000000000008",
+              "f0110000-0000-4000-8000-000000000007"
+            ],
+            "endedAt": null,
+            "session": {
+              "id": "8dde1aa7-4b0a-449a-b85c-c3ff90fe0933",
+              "startedAt": "2026-10-29T06:38:45.198Z",
+              "timerEndsAt": "2026-10-29T06:39:45.198Z",
+              "endedAt": null
+            },
+            "limits": {
+              "max_participants": 2,
+              "max_participants_exclude_roles": [],
+              "max_duration_seconds": 60
+            }
+          },
+          "revokeStartedAt": "2026-10-29T06:38:51.657Z",
+          "revoke": {
+            "revoked": true,
+            "providerCleanup": "pending"
+          },
+          "revocationObservedAt": "2026-10-29T06:38:52.956Z",
+          "freshBackendCredentialsDenied": true,
+          "pendingJob": {
+            "status": "pending",
+            "attempts": 1
+          },
+          "heldJoinAfterRevoke": {
+            "status": 201,
+            "code": null,
+            "capabilities": [
+              "join-call",
+              "read-call",
+              "send-audio"
+            ]
+          },
+          "providerAfterRevoke": {
+            "ended": false,
+            "sessionEnded": false,
+            "users": [
+              "f0110000-0000-4000-8000-000000000008",
+              "f0110000-0000-4000-8000-000000000007"
+            ],
+            "endedAt": null,
+            "session": {
+              "id": "8dde1aa7-4b0a-449a-b85c-c3ff90fe0933",
+              "startedAt": "2026-10-29T06:38:45.198Z",
+              "timerEndsAt": "2026-10-29T06:39:45.198Z",
+              "endedAt": null
+            },
+            "limits": {
+              "max_participants": 2,
+              "max_participants_exclude_roles": [],
+              "max_duration_seconds": 60
+            }
+          },
+          "timerSamples": [
+            {
+              "sampledAt": "2026-10-29T06:38:54.977Z",
+              "provider": {
+                "ended": false,
+                "sessionEnded": false,
+                "users": [
+                  "f0110000-0000-4000-8000-000000000008",
+                  "f0110000-0000-4000-8000-000000000007"
+                ],
+                "endedAt": null,
+                "session": {
+                  "id": "8dde1aa7-4b0a-449a-b85c-c3ff90fe0933",
+                  "startedAt": "2026-10-29T06:38:45.198Z",
+                  "timerEndsAt": "2026-10-29T06:39:45.198Z",
+                  "endedAt": null
+                },
+                "limits": {
+                  "max_participants": 2,
+                  "max_participants_exclude_roles": [],
+                  "max_duration_seconds": 60
+                }
+              },
+              "stats": [
+                {
+                  "id": 49,
+                  "connectionState": "connected",
+                  "bytesSent": 33148,
+                  "packetsSent": 411,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 99474,
+                    "packetsReceived": 394
+                  },
+                  "callEndedObserved": false
+                },
+                {
+                  "id": 50,
+                  "connectionState": "connected",
+                  "bytesSent": 33225,
+                  "packetsSent": 412,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 98971,
+                    "packetsReceived": 392
+                  },
+                  "callEndedObserved": false
+                }
+              ]
+            },
+            {
+              "sampledAt": "2026-10-29T06:38:57.187Z",
+              "provider": {
+                "ended": false,
+                "sessionEnded": false,
+                "users": [
+                  "f0110000-0000-4000-8000-000000000008",
+                  "f0110000-0000-4000-8000-000000000007"
+                ],
+                "endedAt": null,
+                "session": {
+                  "id": "8dde1aa7-4b0a-449a-b85c-c3ff90fe0933",
+                  "startedAt": "2026-10-29T06:38:45.198Z",
+                  "timerEndsAt": "2026-10-29T06:39:45.198Z",
+                  "endedAt": null
+                },
+                "limits": {
+                  "max_participants": 2,
+                  "max_participants_exclude_roles": [],
+                  "max_duration_seconds": 60
+                }
+              },
+              "stats": [
+                {
+                  "id": 51,
+                  "connectionState": "connected",
+                  "bytesSent": 41977,
+                  "packetsSent": 520,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 126690,
+                    "packetsReceived": 502
+                  },
+                  "callEndedObserved": false
+                },
+                {
+                  "id": 52,
+                  "connectionState": "connected",
+                  "bytesSent": 42135,
+                  "packetsSent": 522,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 126187,
+                    "packetsReceived": 500
+                  },
+                  "callEndedObserved": false
+                }
+              ]
+            },
+            {
+              "sampledAt": "2026-10-29T06:38:59.341Z",
+              "provider": {
+                "ended": false,
+                "sessionEnded": false,
+                "users": [
+                  "f0110000-0000-4000-8000-000000000008",
+                  "f0110000-0000-4000-8000-000000000007"
+                ],
+                "endedAt": null,
+                "session": {
+                  "id": "8dde1aa7-4b0a-449a-b85c-c3ff90fe0933",
+                  "startedAt": "2026-10-29T06:38:45.198Z",
+                  "timerEndsAt": "2026-10-29T06:39:45.198Z",
+                  "endedAt": null
+                },
+                "limits": {
+                  "max_participants": 2,
+                  "max_participants_exclude_roles": [],
+                  "max_duration_seconds": 60
+                }
+              },
+              "stats": [
+                {
+                  "id": 53,
+                  "connectionState": "connected",
+                  "bytesSent": 50806,
+                  "packetsSent": 629,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 153906,
+                    "packetsReceived": 610
+                  },
+                  "callEndedObserved": false
+                },
+                {
+                  "id": 54,
+                  "connectionState": "connected",
+                  "bytesSent": 50883,
+                  "packetsSent": 630,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 153655,
+                    "packetsReceived": 609
+                  },
+                  "callEndedObserved": false
+                }
+              ]
+            },
+            {
+              "sampledAt": "2026-10-29T06:39:01.681Z",
+              "provider": {
+                "ended": false,
+                "sessionEnded": false,
+                "users": [
+                  "f0110000-0000-4000-8000-000000000008",
+                  "f0110000-0000-4000-8000-000000000007"
+                ],
+                "endedAt": null,
+                "session": {
+                  "id": "8dde1aa7-4b0a-449a-b85c-c3ff90fe0933",
+                  "startedAt": "2026-10-29T06:38:45.198Z",
+                  "timerEndsAt": "2026-10-29T06:39:45.198Z",
+                  "endedAt": null
+                },
+                "limits": {
+                  "max_participants": 2,
+                  "max_participants_exclude_roles": [],
+                  "max_duration_seconds": 60
+                }
+              },
+              "stats": [
+                {
+                  "id": 55,
+                  "connectionState": "connected",
+                  "bytesSent": 60202,
+                  "packetsSent": 745,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 183390,
+                    "packetsReceived": 727
+                  },
+                  "callEndedObserved": false
+                },
+                {
+                  "id": 56,
+                  "connectionState": "connected",
+                  "bytesSent": 60360,
+                  "packetsSent": 747,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 182887,
+                    "packetsReceived": 725
+                  },
+                  "callEndedObserved": false
+                }
+              ]
+            },
+            {
+              "sampledAt": "2026-10-29T06:39:03.757Z",
+              "provider": {
+                "ended": false,
+                "sessionEnded": false,
+                "users": [
+                  "f0110000-0000-4000-8000-000000000008",
+                  "f0110000-0000-4000-8000-000000000007"
+                ],
+                "endedAt": null,
+                "session": {
+                  "id": "8dde1aa7-4b0a-449a-b85c-c3ff90fe0933",
+                  "startedAt": "2026-10-29T06:38:45.198Z",
+                  "timerEndsAt": "2026-10-29T06:39:45.198Z",
+                  "endedAt": null
+                },
+                "limits": {
+                  "max_participants": 2,
+                  "max_participants_exclude_roles": [],
+                  "max_duration_seconds": 60
+                }
+              },
+              "stats": [
+                {
+                  "id": 57,
+                  "connectionState": "connected",
+                  "bytesSent": 68626,
+                  "packetsSent": 849,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 209598,
+                    "packetsReceived": 831
+                  },
+                  "callEndedObserved": false
+                },
+                {
+                  "id": 58,
+                  "connectionState": "connected",
+                  "bytesSent": 68703,
+                  "packetsSent": 850,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 209347,
+                    "packetsReceived": 830
+                  },
+                  "callEndedObserved": false
+                }
+              ]
+            },
+            {
+              "sampledAt": "2026-10-29T06:39:05.880Z",
+              "provider": {
+                "ended": false,
+                "sessionEnded": false,
+                "users": [
+                  "f0110000-0000-4000-8000-000000000008",
+                  "f0110000-0000-4000-8000-000000000007"
+                ],
+                "endedAt": null,
+                "session": {
+                  "id": "8dde1aa7-4b0a-449a-b85c-c3ff90fe0933",
+                  "startedAt": "2026-10-29T06:38:45.198Z",
+                  "timerEndsAt": "2026-10-29T06:39:45.198Z",
+                  "endedAt": null
+                },
+                "limits": {
+                  "max_participants": 2,
+                  "max_participants_exclude_roles": [],
+                  "max_duration_seconds": 60
+                }
+              },
+              "stats": [
+                {
+                  "id": 59,
+                  "connectionState": "connected",
+                  "bytesSent": 77212,
+                  "packetsSent": 955,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 236310,
+                    "packetsReceived": 937
+                  },
+                  "callEndedObserved": false
+                },
+                {
+                  "id": 60,
+                  "connectionState": "connected",
+                  "bytesSent": 77370,
+                  "packetsSent": 957,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 235807,
+                    "packetsReceived": 935
+                  },
+                  "callEndedObserved": false
+                }
+              ]
+            },
+            {
+              "sampledAt": "2026-10-29T06:39:07.966Z",
+              "provider": {
+                "ended": false,
+                "sessionEnded": false,
+                "users": [
+                  "f0110000-0000-4000-8000-000000000008",
+                  "f0110000-0000-4000-8000-000000000007"
+                ],
+                "endedAt": null,
+                "session": {
+                  "id": "8dde1aa7-4b0a-449a-b85c-c3ff90fe0933",
+                  "startedAt": "2026-10-29T06:38:45.198Z",
+                  "timerEndsAt": "2026-10-29T06:39:45.198Z",
+                  "endedAt": null
+                },
+                "limits": {
+                  "max_participants": 2,
+                  "max_participants_exclude_roles": [],
+                  "max_duration_seconds": 60
+                }
+              },
+              "stats": [
+                {
+                  "id": 61,
+                  "connectionState": "connected",
+                  "bytesSent": 85636,
+                  "packetsSent": 1059,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 262770,
+                    "packetsReceived": 1042
+                  },
+                  "callEndedObserved": false
+                },
+                {
+                  "id": 62,
+                  "connectionState": "connected",
+                  "bytesSent": 85794,
+                  "packetsSent": 1061,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 262519,
+                    "packetsReceived": 1041
+                  },
+                  "callEndedObserved": false
+                }
+              ]
+            },
+            {
+              "sampledAt": "2026-10-29T06:39:10.041Z",
+              "provider": {
+                "ended": false,
+                "sessionEnded": false,
+                "users": [
+                  "f0110000-0000-4000-8000-000000000008",
+                  "f0110000-0000-4000-8000-000000000007"
+                ],
+                "endedAt": null,
+                "session": {
+                  "id": "8dde1aa7-4b0a-449a-b85c-c3ff90fe0933",
+                  "startedAt": "2026-10-29T06:38:45.198Z",
+                  "timerEndsAt": "2026-10-29T06:39:45.198Z",
+                  "endedAt": null
+                },
+                "limits": {
+                  "max_participants": 2,
+                  "max_participants_exclude_roles": [],
+                  "max_duration_seconds": 60
+                }
+              },
+              "stats": [
+                {
+                  "id": 63,
+                  "connectionState": "connected",
+                  "bytesSent": 94060,
+                  "packetsSent": 1163,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 288726,
+                    "packetsReceived": 1145
+                  },
+                  "callEndedObserved": false
+                },
+                {
+                  "id": 64,
+                  "connectionState": "connected",
+                  "bytesSent": 94218,
+                  "packetsSent": 1165,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 288475,
+                    "packetsReceived": 1144
+                  },
+                  "callEndedObserved": false
+                }
+              ]
+            },
+            {
+              "sampledAt": "2026-10-29T06:39:12.117Z",
+              "provider": {
+                "ended": false,
+                "sessionEnded": false,
+                "users": [
+                  "f0110000-0000-4000-8000-000000000008",
+                  "f0110000-0000-4000-8000-000000000007"
+                ],
+                "endedAt": null,
+                "session": {
+                  "id": "8dde1aa7-4b0a-449a-b85c-c3ff90fe0933",
+                  "startedAt": "2026-10-29T06:38:45.198Z",
+                  "timerEndsAt": "2026-10-29T06:39:45.198Z",
+                  "endedAt": null
+                },
+                "limits": {
+                  "max_participants": 2,
+                  "max_participants_exclude_roles": [],
+                  "max_duration_seconds": 60
+                }
+              },
+              "stats": [
+                {
+                  "id": 65,
+                  "connectionState": "connected",
+                  "bytesSent": 102484,
+                  "packetsSent": 1267,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 314934,
+                    "packetsReceived": 1249
+                  },
+                  "callEndedObserved": false
+                },
+                {
+                  "id": 66,
+                  "connectionState": "connected",
+                  "bytesSent": 102561,
+                  "packetsSent": 1268,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 314431,
+                    "packetsReceived": 1247
+                  },
+                  "callEndedObserved": false
+                }
+              ]
+            },
+            {
+              "sampledAt": "2026-10-29T06:39:14.229Z",
+              "provider": {
+                "ended": false,
+                "sessionEnded": false,
+                "users": [
+                  "f0110000-0000-4000-8000-000000000008",
+                  "f0110000-0000-4000-8000-000000000007"
+                ],
+                "endedAt": null,
+                "session": {
+                  "id": "8dde1aa7-4b0a-449a-b85c-c3ff90fe0933",
+                  "startedAt": "2026-10-29T06:38:45.198Z",
+                  "timerEndsAt": "2026-10-29T06:39:45.198Z",
+                  "endedAt": null
+                },
+                "limits": {
+                  "max_participants": 2,
+                  "max_participants_exclude_roles": [],
+                  "max_duration_seconds": 60
+                }
+              },
+              "stats": [
+                {
+                  "id": 67,
+                  "connectionState": "connected",
+                  "bytesSent": 110989,
+                  "packetsSent": 1372,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 341394,
+                    "packetsReceived": 1354
+                  },
+                  "callEndedObserved": false
+                },
+                {
+                  "id": 68,
+                  "connectionState": "connected",
+                  "bytesSent": 111147,
+                  "packetsSent": 1374,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 341143,
+                    "packetsReceived": 1353
+                  },
+                  "callEndedObserved": false
+                }
+              ]
+            },
+            {
+              "sampledAt": "2026-10-29T06:39:16.357Z",
+              "provider": {
+                "ended": false,
+                "sessionEnded": false,
+                "users": [
+                  "f0110000-0000-4000-8000-000000000008",
+                  "f0110000-0000-4000-8000-000000000007"
+                ],
+                "endedAt": null,
+                "session": {
+                  "id": "8dde1aa7-4b0a-449a-b85c-c3ff90fe0933",
+                  "startedAt": "2026-10-29T06:38:45.198Z",
+                  "timerEndsAt": "2026-10-29T06:39:45.198Z",
+                  "endedAt": null
+                },
+                "limits": {
+                  "max_participants": 2,
+                  "max_participants_exclude_roles": [],
+                  "max_duration_seconds": 60
+                }
+              },
+              "stats": [
+                {
+                  "id": 69,
+                  "connectionState": "connected",
+                  "bytesSent": 119656,
+                  "packetsSent": 1479,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 368358,
+                    "packetsReceived": 1461
+                  },
+                  "callEndedObserved": false
+                },
+                {
+                  "id": 70,
+                  "connectionState": "connected",
+                  "bytesSent": 119733,
+                  "packetsSent": 1480,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 367855,
+                    "packetsReceived": 1459
+                  },
+                  "callEndedObserved": false
+                }
+              ]
+            },
+            {
+              "sampledAt": "2026-10-29T06:39:18.469Z",
+              "provider": {
+                "ended": false,
+                "sessionEnded": false,
+                "users": [
+                  "f0110000-0000-4000-8000-000000000008",
+                  "f0110000-0000-4000-8000-000000000007"
+                ],
+                "endedAt": null,
+                "session": {
+                  "id": "8dde1aa7-4b0a-449a-b85c-c3ff90fe0933",
+                  "startedAt": "2026-10-29T06:38:45.198Z",
+                  "timerEndsAt": "2026-10-29T06:39:45.198Z",
+                  "endedAt": null
+                },
+                "limits": {
+                  "max_participants": 2,
+                  "max_participants_exclude_roles": [],
+                  "max_duration_seconds": 60
+                }
+              },
+              "stats": [
+                {
+                  "id": 71,
+                  "connectionState": "connected",
+                  "bytesSent": 128242,
+                  "packetsSent": 1585,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 395070,
+                    "packetsReceived": 1567
+                  },
+                  "callEndedObserved": false
+                },
+                {
+                  "id": 72,
+                  "connectionState": "connected",
+                  "bytesSent": 128319,
+                  "packetsSent": 1586,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 394567,
+                    "packetsReceived": 1565
+                  },
+                  "callEndedObserved": false
+                }
+              ]
+            },
+            {
+              "sampledAt": "2026-10-29T06:39:20.528Z",
+              "provider": {
+                "ended": false,
+                "sessionEnded": false,
+                "users": [
+                  "f0110000-0000-4000-8000-000000000008",
+                  "f0110000-0000-4000-8000-000000000007"
+                ],
+                "endedAt": null,
+                "session": {
+                  "id": "8dde1aa7-4b0a-449a-b85c-c3ff90fe0933",
+                  "startedAt": "2026-10-29T06:38:45.198Z",
+                  "timerEndsAt": "2026-10-29T06:39:45.198Z",
+                  "endedAt": null
+                },
+                "limits": {
+                  "max_participants": 2,
+                  "max_participants_exclude_roles": [],
+                  "max_duration_seconds": 60
+                }
+              },
+              "stats": [
+                {
+                  "id": 73,
+                  "connectionState": "connected",
+                  "bytesSent": 136504,
+                  "packetsSent": 1687,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 421026,
+                    "packetsReceived": 1670
+                  },
+                  "callEndedObserved": false
+                },
+                {
+                  "id": 74,
+                  "connectionState": "connected",
+                  "bytesSent": 136662,
+                  "packetsSent": 1689,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 420523,
+                    "packetsReceived": 1668
+                  },
+                  "callEndedObserved": false
+                }
+              ]
+            },
+            {
+              "sampledAt": "2026-10-29T06:39:22.607Z",
+              "provider": {
+                "ended": false,
+                "sessionEnded": false,
+                "users": [
+                  "f0110000-0000-4000-8000-000000000008",
+                  "f0110000-0000-4000-8000-000000000007"
+                ],
+                "endedAt": null,
+                "session": {
+                  "id": "8dde1aa7-4b0a-449a-b85c-c3ff90fe0933",
+                  "startedAt": "2026-10-29T06:38:45.198Z",
+                  "timerEndsAt": "2026-10-29T06:39:45.198Z",
+                  "endedAt": null
+                },
+                "limits": {
+                  "max_participants": 2,
+                  "max_participants_exclude_roles": [],
+                  "max_duration_seconds": 60
+                }
+              },
+              "stats": [
+                {
+                  "id": 75,
+                  "connectionState": "connected",
+                  "bytesSent": 144928,
+                  "packetsSent": 1791,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 447234,
+                    "packetsReceived": 1774
+                  },
+                  "callEndedObserved": false
+                },
+                {
+                  "id": 76,
+                  "connectionState": "connected",
+                  "bytesSent": 145086,
+                  "packetsSent": 1793,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 446731,
+                    "packetsReceived": 1772
+                  },
+                  "callEndedObserved": false
+                }
+              ]
+            },
+            {
+              "sampledAt": "2026-10-29T06:39:24.662Z",
+              "provider": {
+                "ended": false,
+                "sessionEnded": false,
+                "users": [
+                  "f0110000-0000-4000-8000-000000000008",
+                  "f0110000-0000-4000-8000-000000000007"
+                ],
+                "endedAt": null,
+                "session": {
+                  "id": "8dde1aa7-4b0a-449a-b85c-c3ff90fe0933",
+                  "startedAt": "2026-10-29T06:38:45.198Z",
+                  "timerEndsAt": "2026-10-29T06:39:45.198Z",
+                  "endedAt": null
+                },
+                "limits": {
+                  "max_participants": 2,
+                  "max_participants_exclude_roles": [],
+                  "max_duration_seconds": 60
+                }
+              },
+              "stats": [
+                {
+                  "id": 77,
+                  "connectionState": "connected",
+                  "bytesSent": 153271,
+                  "packetsSent": 1894,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 472938,
+                    "packetsReceived": 1876
+                  },
+                  "callEndedObserved": false
+                },
+                {
+                  "id": 78,
+                  "connectionState": "connected",
+                  "bytesSent": 153429,
+                  "packetsSent": 1896,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 472687,
+                    "packetsReceived": 1875
+                  },
+                  "callEndedObserved": false
+                }
+              ]
+            },
+            {
+              "sampledAt": "2026-10-29T06:39:26.719Z",
+              "provider": {
+                "ended": false,
+                "sessionEnded": false,
+                "users": [
+                  "f0110000-0000-4000-8000-000000000008",
+                  "f0110000-0000-4000-8000-000000000007"
+                ],
+                "endedAt": null,
+                "session": {
+                  "id": "8dde1aa7-4b0a-449a-b85c-c3ff90fe0933",
+                  "startedAt": "2026-10-29T06:38:45.198Z",
+                  "timerEndsAt": "2026-10-29T06:39:45.198Z",
+                  "endedAt": null
+                },
+                "limits": {
+                  "max_participants": 2,
+                  "max_participants_exclude_roles": [],
+                  "max_duration_seconds": 60
+                }
+              },
+              "stats": [
+                {
+                  "id": 79,
+                  "connectionState": "connected",
+                  "bytesSent": 161614,
+                  "packetsSent": 1997,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 498894,
+                    "packetsReceived": 1979
+                  },
+                  "callEndedObserved": false
+                },
+                {
+                  "id": 80,
+                  "connectionState": "connected",
+                  "bytesSent": 161772,
+                  "packetsSent": 1999,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 498643,
+                    "packetsReceived": 1978
+                  },
+                  "callEndedObserved": false
+                }
+              ]
+            },
+            {
+              "sampledAt": "2026-10-29T06:39:28.776Z",
+              "provider": {
+                "ended": false,
+                "sessionEnded": false,
+                "users": [
+                  "f0110000-0000-4000-8000-000000000008",
+                  "f0110000-0000-4000-8000-000000000007"
+                ],
+                "endedAt": null,
+                "session": {
+                  "id": "8dde1aa7-4b0a-449a-b85c-c3ff90fe0933",
+                  "startedAt": "2026-10-29T06:38:45.198Z",
+                  "timerEndsAt": "2026-10-29T06:39:45.198Z",
+                  "endedAt": null
+                },
+                "limits": {
+                  "max_participants": 2,
+                  "max_participants_exclude_roles": [],
+                  "max_duration_seconds": 60
+                }
+              },
+              "stats": [
+                {
+                  "id": 81,
+                  "connectionState": "connected",
+                  "bytesSent": 169957,
+                  "packetsSent": 2100,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 524850,
+                    "packetsReceived": 2082
+                  },
+                  "callEndedObserved": false
+                },
+                {
+                  "id": 82,
+                  "connectionState": "connected",
+                  "bytesSent": 170034,
+                  "packetsSent": 2101,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 524599,
+                    "packetsReceived": 2081
+                  },
+                  "callEndedObserved": false
+                }
+              ]
+            },
+            {
+              "sampledAt": "2026-10-29T06:39:30.835Z",
+              "provider": {
+                "ended": false,
+                "sessionEnded": false,
+                "users": [
+                  "f0110000-0000-4000-8000-000000000008",
+                  "f0110000-0000-4000-8000-000000000007"
+                ],
+                "endedAt": null,
+                "session": {
+                  "id": "8dde1aa7-4b0a-449a-b85c-c3ff90fe0933",
+                  "startedAt": "2026-10-29T06:38:45.198Z",
+                  "timerEndsAt": "2026-10-29T06:39:45.198Z",
+                  "endedAt": null
+                },
+                "limits": {
+                  "max_participants": 2,
+                  "max_participants_exclude_roles": [],
+                  "max_duration_seconds": 60
+                }
+              },
+              "stats": [
+                {
+                  "id": 83,
+                  "connectionState": "connected",
+                  "bytesSent": 178300,
+                  "packetsSent": 2203,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 550806,
+                    "packetsReceived": 2185
+                  },
+                  "callEndedObserved": false
+                },
+                {
+                  "id": 84,
+                  "connectionState": "connected",
+                  "bytesSent": 178377,
+                  "packetsSent": 2204,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 550555,
+                    "packetsReceived": 2184
+                  },
+                  "callEndedObserved": false
+                }
+              ]
+            },
+            {
+              "sampledAt": "2026-10-29T06:39:32.889Z",
+              "provider": {
+                "ended": false,
+                "sessionEnded": false,
+                "users": [
+                  "f0110000-0000-4000-8000-000000000008",
+                  "f0110000-0000-4000-8000-000000000007"
+                ],
+                "endedAt": null,
+                "session": {
+                  "id": "8dde1aa7-4b0a-449a-b85c-c3ff90fe0933",
+                  "startedAt": "2026-10-29T06:38:45.198Z",
+                  "timerEndsAt": "2026-10-29T06:39:45.198Z",
+                  "endedAt": null
+                },
+                "limits": {
+                  "max_participants": 2,
+                  "max_participants_exclude_roles": [],
+                  "max_duration_seconds": 60
+                }
+              },
+              "stats": [
+                {
+                  "id": 85,
+                  "connectionState": "connected",
+                  "bytesSent": 186562,
+                  "packetsSent": 2305,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 576762,
+                    "packetsReceived": 2288
+                  },
+                  "callEndedObserved": false
+                },
+                {
+                  "id": 86,
+                  "connectionState": "connected",
+                  "bytesSent": 186720,
+                  "packetsSent": 2307,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 576259,
+                    "packetsReceived": 2286
+                  },
+                  "callEndedObserved": false
+                }
+              ]
+            },
+            {
+              "sampledAt": "2026-10-29T06:39:34.943Z",
+              "provider": {
+                "ended": false,
+                "sessionEnded": false,
+                "users": [
+                  "f0110000-0000-4000-8000-000000000008",
+                  "f0110000-0000-4000-8000-000000000007"
+                ],
+                "endedAt": null,
+                "session": {
+                  "id": "8dde1aa7-4b0a-449a-b85c-c3ff90fe0933",
+                  "startedAt": "2026-10-29T06:38:45.198Z",
+                  "timerEndsAt": "2026-10-29T06:39:45.198Z",
+                  "endedAt": null
+                },
+                "limits": {
+                  "max_participants": 2,
+                  "max_participants_exclude_roles": [],
+                  "max_duration_seconds": 60
+                }
+              },
+              "stats": [
+                {
+                  "id": 87,
+                  "connectionState": "connected",
+                  "bytesSent": 194905,
+                  "packetsSent": 2408,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 602466,
+                    "packetsReceived": 2390
+                  },
+                  "callEndedObserved": false
+                },
+                {
+                  "id": 88,
+                  "connectionState": "connected",
+                  "bytesSent": 195063,
+                  "packetsSent": 2410,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 602215,
+                    "packetsReceived": 2389
+                  },
+                  "callEndedObserved": false
+                }
+              ]
+            },
+            {
+              "sampledAt": "2026-10-29T06:39:36.998Z",
+              "provider": {
+                "ended": false,
+                "sessionEnded": false,
+                "users": [
+                  "f0110000-0000-4000-8000-000000000008",
+                  "f0110000-0000-4000-8000-000000000007"
+                ],
+                "endedAt": null,
+                "session": {
+                  "id": "8dde1aa7-4b0a-449a-b85c-c3ff90fe0933",
+                  "startedAt": "2026-10-29T06:38:45.198Z",
+                  "timerEndsAt": "2026-10-29T06:39:45.198Z",
+                  "endedAt": null
+                },
+                "limits": {
+                  "max_participants": 2,
+                  "max_participants_exclude_roles": [],
+                  "max_duration_seconds": 60
+                }
+              },
+              "stats": [
+                {
+                  "id": 89,
+                  "connectionState": "connected",
+                  "bytesSent": 203248,
+                  "packetsSent": 2511,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 628422,
+                    "packetsReceived": 2493
+                  },
+                  "callEndedObserved": false
+                },
+                {
+                  "id": 90,
+                  "connectionState": "connected",
+                  "bytesSent": 203325,
+                  "packetsSent": 2512,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 628171,
+                    "packetsReceived": 2492
+                  },
+                  "callEndedObserved": false
+                }
+              ]
+            },
+            {
+              "sampledAt": "2026-10-29T06:39:39.059Z",
+              "provider": {
+                "ended": false,
+                "sessionEnded": false,
+                "users": [
+                  "f0110000-0000-4000-8000-000000000008",
+                  "f0110000-0000-4000-8000-000000000007"
+                ],
+                "endedAt": null,
+                "session": {
+                  "id": "8dde1aa7-4b0a-449a-b85c-c3ff90fe0933",
+                  "startedAt": "2026-10-29T06:38:45.198Z",
+                  "timerEndsAt": "2026-10-29T06:39:45.198Z",
+                  "endedAt": null
+                },
+                "limits": {
+                  "max_participants": 2,
+                  "max_participants_exclude_roles": [],
+                  "max_duration_seconds": 60
+                }
+              },
+              "stats": [
+                {
+                  "id": 91,
+                  "connectionState": "connected",
+                  "bytesSent": 211591,
+                  "packetsSent": 2614,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 654378,
+                    "packetsReceived": 2596
+                  },
+                  "callEndedObserved": false
+                },
+                {
+                  "id": 92,
+                  "connectionState": "connected",
+                  "bytesSent": 211749,
+                  "packetsSent": 2616,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 654127,
+                    "packetsReceived": 2595
+                  },
+                  "callEndedObserved": false
+                }
+              ]
+            },
+            {
+              "sampledAt": "2026-10-29T06:39:41.118Z",
+              "provider": {
+                "ended": false,
+                "sessionEnded": false,
+                "users": [
+                  "f0110000-0000-4000-8000-000000000008",
+                  "f0110000-0000-4000-8000-000000000007"
+                ],
+                "endedAt": null,
+                "session": {
+                  "id": "8dde1aa7-4b0a-449a-b85c-c3ff90fe0933",
+                  "startedAt": "2026-10-29T06:38:45.198Z",
+                  "timerEndsAt": "2026-10-29T06:39:45.198Z",
+                  "endedAt": null
+                },
+                "limits": {
+                  "max_participants": 2,
+                  "max_participants_exclude_roles": [],
+                  "max_duration_seconds": 60
+                }
+              },
+              "stats": [
+                {
+                  "id": 93,
+                  "connectionState": "connected",
+                  "bytesSent": 219934,
+                  "packetsSent": 2717,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 680334,
+                    "packetsReceived": 2699
+                  },
+                  "callEndedObserved": false
+                },
+                {
+                  "id": 94,
+                  "connectionState": "connected",
+                  "bytesSent": 220011,
+                  "packetsSent": 2718,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 680083,
+                    "packetsReceived": 2698
+                  },
+                  "callEndedObserved": false
+                }
+              ]
+            },
+            {
+              "sampledAt": "2026-10-29T06:39:43.180Z",
+              "provider": {
+                "ended": false,
+                "sessionEnded": false,
+                "users": [
+                  "f0110000-0000-4000-8000-000000000008",
+                  "f0110000-0000-4000-8000-000000000007"
+                ],
+                "endedAt": null,
+                "session": {
+                  "id": "8dde1aa7-4b0a-449a-b85c-c3ff90fe0933",
+                  "startedAt": "2026-10-29T06:38:45.198Z",
+                  "timerEndsAt": "2026-10-29T06:39:45.198Z",
+                  "endedAt": null
+                },
+                "limits": {
+                  "max_participants": 2,
+                  "max_participants_exclude_roles": [],
+                  "max_duration_seconds": 60
+                }
+              },
+              "stats": [
+                {
+                  "id": 95,
+                  "connectionState": "connected",
+                  "bytesSent": 228277,
+                  "packetsSent": 2820,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 706290,
+                    "packetsReceived": 2802
+                  },
+                  "callEndedObserved": false
+                },
+                {
+                  "id": 96,
+                  "connectionState": "connected",
+                  "bytesSent": 228354,
+                  "packetsSent": 2821,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 706039,
+                    "packetsReceived": 2801
+                  },
+                  "callEndedObserved": false
+                }
+              ]
+            },
+            {
+              "sampledAt": "2026-10-29T06:39:45.246Z",
+              "provider": {
+                "ended": false,
+                "sessionEnded": false,
+                "users": [
+                  "f0110000-0000-4000-8000-000000000008",
+                  "f0110000-0000-4000-8000-000000000007"
+                ],
+                "endedAt": null,
+                "session": {
+                  "id": "8dde1aa7-4b0a-449a-b85c-c3ff90fe0933",
+                  "startedAt": "2026-10-29T06:38:45.198Z",
+                  "timerEndsAt": "2026-10-29T06:39:45.198Z",
+                  "endedAt": null
+                },
+                "limits": {
+                  "max_participants": 2,
+                  "max_participants_exclude_roles": [],
+                  "max_duration_seconds": 60
+                }
+              },
+              "stats": [
+                {
+                  "id": 97,
+                  "connectionState": "connected",
+                  "bytesSent": 236620,
+                  "packetsSent": 2923,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 732498,
+                    "packetsReceived": 2906
+                  },
+                  "callEndedObserved": false
+                },
+                {
+                  "id": 98,
+                  "connectionState": "connected",
+                  "bytesSent": 236778,
+                  "packetsSent": 2925,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 732247,
+                    "packetsReceived": 2905
+                  },
+                  "callEndedObserved": false
+                }
+              ]
+            },
+            {
+              "sampledAt": "2026-10-29T06:39:47.311Z",
+              "provider": {
+                "ended": false,
+                "sessionEnded": false,
+                "users": [
+                  "f0110000-0000-4000-8000-000000000008",
+                  "f0110000-0000-4000-8000-000000000007"
+                ],
+                "endedAt": null,
+                "session": {
+                  "id": "8dde1aa7-4b0a-449a-b85c-c3ff90fe0933",
+                  "startedAt": "2026-10-29T06:38:45.198Z",
+                  "timerEndsAt": "2026-10-29T06:39:45.198Z",
+                  "endedAt": null
+                },
+                "limits": {
+                  "max_participants": 2,
+                  "max_participants_exclude_roles": [],
+                  "max_duration_seconds": 60
+                }
+              },
+              "stats": [
+                {
+                  "id": 99,
+                  "connectionState": "connected",
+                  "bytesSent": 245044,
+                  "packetsSent": 3027,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 758454,
+                    "packetsReceived": 3009
+                  },
+                  "callEndedObserved": false
+                },
+                {
+                  "id": 100,
+                  "connectionState": "connected",
+                  "bytesSent": 245121,
+                  "packetsSent": 3028,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 757951,
+                    "packetsReceived": 3007
+                  },
+                  "callEndedObserved": false
+                }
+              ]
+            },
+            {
+              "sampledAt": "2026-10-29T06:39:49.371Z",
+              "provider": {
+                "ended": true,
+                "sessionEnded": false,
+                "users": [],
+                "endedAt": "2026-10-29T06:39:46.823Z",
+                "session": null,
+                "limits": {
+                  "max_participants": 2,
+                  "max_participants_exclude_roles": [],
+                  "max_duration_seconds": 60
+                }
+              },
+              "stats": [
+                {
+                  "id": 101,
+                  "connectionState": "connected",
+                  "bytesSent": 253387,
+                  "packetsSent": 3130,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 784410,
+                    "packetsReceived": 3112
+                  },
+                  "callEndedObserved": false
+                },
+                {
+                  "id": 102,
+                  "connectionState": "connected",
+                  "bytesSent": 253464,
+                  "packetsSent": 3131,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 783907,
+                    "packetsReceived": 3110
+                  },
+                  "callEndedObserved": false
+                }
+              ]
+            },
+            {
+              "sampledAt": "2026-10-29T06:39:51.428Z",
+              "provider": {
+                "ended": true,
+                "sessionEnded": false,
+                "users": [],
+                "endedAt": "2026-10-29T06:39:46.823Z",
+                "session": null,
+                "limits": {
+                  "max_participants": 2,
+                  "max_participants_exclude_roles": [],
+                  "max_duration_seconds": 60
+                }
+              },
+              "stats": [
+                {
+                  "id": 103,
+                  "connectionState": "connected",
+                  "bytesSent": 261730,
+                  "packetsSent": 3233,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 810366,
+                    "packetsReceived": 3215
+                  },
+                  "callEndedObserved": false
+                },
+                {
+                  "id": 104,
+                  "connectionState": "connected",
+                  "bytesSent": 261807,
+                  "packetsSent": 3234,
+                  "receivedAudio": {
+                    "connectionState": "connected",
+                    "bytesReceived": 810115,
+                    "packetsReceived": 3214
+                  },
+                  "callEndedObserved": false
+                }
+              ]
+            }
+          ],
+          "timerEndedBeforeRecovery": true,
+          "cleanupJobAcknowledged": true,
+          "heldTokenValidity": [
+            {
+              "status": 200,
+              "code": null,
+              "capabilities": [
+                "join-call",
+                "read-call",
+                "send-audio"
+              ],
+              "ended": true,
+              "limits": {
+                "max_participants": 2,
+                "max_participants_exclude_roles": [],
+                "max_duration_seconds": 60
+              }
+            },
+            {
+              "status": 200,
+              "code": null,
+              "capabilities": [
+                "join-call",
+                "read-call",
+                "send-audio"
+              ],
+              "ended": true,
+              "limits": {
+                "max_participants": 2,
+                "max_participants_exclude_roles": [],
+                "max_duration_seconds": 60
+              }
+            }
+          ],
+          "heldRejoins": [
+            {
+              "status": 403,
+              "code": 17
+            },
+            {
+              "status": 403,
+              "code": 17
+            }
+          ],
+          "newTokenValidity": [
+            {
+              "status": 200,
+              "code": null,
+              "capabilities": [
+                "join-call",
+                "read-call",
+                "send-audio"
+              ],
+              "ended": true,
+              "limits": {
+                "max_participants": 2,
+                "max_participants_exclude_roles": [],
+                "max_duration_seconds": 60
+              }
+            },
+            {
+              "status": 200,
+              "code": null,
+              "capabilities": [
+                "join-call",
+                "read-call",
+                "send-audio"
+              ],
+              "ended": true,
+              "limits": {
+                "max_participants": 2,
+                "max_participants_exclude_roles": [],
+                "max_duration_seconds": 60
+              }
+            }
+          ],
+          "newTokenRejoins": [
+            {
+              "status": 403,
+              "code": 17
+            },
+            {
+              "status": 403,
+              "code": 17
+            }
+          ],
+          "extensionAttempts": [
+            {
+              "status": 403,
+              "code": 17,
+              "ended": false
+            },
+            {
+              "status": 403,
+              "code": 17,
+              "ended": false
+            }
+          ],
+          "recreateAttempt": {
+            "status": 201,
+            "code": null,
+            "capabilities": [
+              "join-call",
+              "read-call",
+              "send-audio"
+            ],
+            "ended": true,
+            "limits": {
+              "max_participants": 2,
+              "max_participants_exclude_roles": [],
+              "max_duration_seconds": 60
+            }
+          },
+          "providerAfterAttempts": {
+            "ended": true,
+            "sessionEnded": false,
+            "users": [],
+            "endedAt": "2026-10-29T06:39:51.379Z",
+            "session": null,
+            "limits": {
+              "max_participants": 2,
+              "max_participants_exclude_roles": [],
+              "max_duration_seconds": 60
+            }
+          }
+        },
+        {
+          "name": "delayed_join_empty_session_restart",
+          "id": "c01ad954-4271-4212-807b-0a38f59b16e8",
+          "grant": "aaea6644-6f98-4c16-93ba-7536d5a8a360",
+          "devices": [
+            "06b4ff96-d04d-42bf-b06f-2373c687e1d0",
+            "7f183f77-805b-4baa-8189-d2de9b1435e7"
+          ],
+          "createdAt": "2026-10-29T06:39:59.641Z",
+          "timed": true,
+          "beforeJoin": {
+            "ended": false,
+            "sessionEnded": false,
+            "users": [],
+            "endedAt": null,
+            "session": null,
+            "limits": {
+              "max_participants": 2,
+              "max_participants_exclude_roles": [],
+              "max_duration_seconds": 60
+            }
+          },
+          "acceptedState": "ACCEPTED",
+          "firstCoordinatorJoinAt": "2026-10-29T06:40:17.218Z",
+          "joins": [
+            {
+              "status": 201,
+              "code": null,
+              "capabilities": [
+                "join-call",
+                "read-call",
+                "send-audio"
+              ]
+            },
+            {
+              "status": 201,
+              "code": null,
+              "capabilities": [
+                "join-call",
+                "read-call",
+                "send-audio"
+              ]
+            }
+          ],
+          "afterCoordinatorJoin": {
+            "ended": false,
+            "sessionEnded": false,
+            "users": [],
+            "endedAt": null,
+            "session": {
+              "id": "f8dd7891-7270-4102-b875-cf0570ef62d9",
+              "startedAt": null,
+              "timerEndsAt": "2026-10-29T06:41:16.238Z",
+              "endedAt": null
+            },
+            "limits": {
+              "max_participants": 2,
+              "max_participants_exclude_roles": [],
+              "max_duration_seconds": 60
+            }
+          },
+          "publishers": [
+            {
+              "kind": "SFU_PUBLISH_BOUNDARY",
+              "results": [
+                {
+                  "track": "audio",
+                  "status": 200,
+                  "code": null,
+                  "message": null,
+                  "answerReceived": true,
+                  "optionMatched": true
+                }
+              ],
+              "callEndedObserved": false,
+              "sessionId": "35f4bf73-9a42-4a3c-b1fc-89ad776a305a",
+              "joinAcknowledged": true,
+              "publishOptions": [
+                {
+                  "id": 0,
+                  "trackType": 1,
+                  "codec": "Opus",
+                  "videoDimension": {
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                {
+                  "id": 0,
+                  "trackType": 2,
+                  "codec": "VP9",
+                  "videoDimension": {
+                    "width": 640,
+                    "height": 480
+                  }
+                },
+                {
+                  "id": 0,
+                  "trackType": 3,
+                  "codec": "VP8",
+                  "videoDimension": {
+                    "width": 2560,
+                    "height": 1440
+                  }
+                },
+                {
+                  "id": 0,
+                  "trackType": 4,
+                  "codec": "Opus",
+                  "videoDimension": {
+                    "width": 0,
+                    "height": 0
+                  }
+                }
+              ],
+              "audioStats": {
+                "connectionState": "connected",
+                "bytesSent": 613,
+                "packetsSent": 9
+              }
+            },
+            {
+              "kind": "SFU_PUBLISH_BOUNDARY",
+              "results": [
+                {
+                  "track": "audio",
+                  "status": 200,
+                  "code": null,
+                  "message": null,
+                  "answerReceived": true,
+                  "optionMatched": true
+                }
+              ],
+              "callEndedObserved": false,
+              "sessionId": "949f362d-ce31-42e1-a5d4-0321b5ba0122",
+              "joinAcknowledged": true,
+              "publishOptions": [
+                {
+                  "id": 0,
+                  "trackType": 1,
+                  "codec": "Opus",
+                  "videoDimension": {
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                {
+                  "id": 0,
+                  "trackType": 2,
+                  "codec": "VP9",
+                  "videoDimension": {
+                    "width": 640,
+                    "height": 480
+                  }
+                },
+                {
+                  "id": 0,
+                  "trackType": 3,
+                  "codec": "VP8",
+                  "videoDimension": {
+                    "width": 2560,
+                    "height": 1440
+                  }
+                },
+                {
+                  "id": 0,
+                  "trackType": 4,
+                  "codec": "Opus",
+                  "videoDimension": {
+                    "width": 0,
+                    "height": 0
+                  }
+                }
+              ],
+              "audioStats": {
+                "connectionState": "connected",
+                "bytesSent": 611,
+                "packetsSent": 9
+              }
+            }
+          ],
+          "subscriptions": [
+            {
+              "id": 118,
+              "status": 200,
+              "code": null
+            },
+            {
+              "id": 119,
+              "status": 200,
+              "code": null
+            }
+          ],
+          "receiveControl": [
+            {
+              "id": 120,
+              "connectionState": "connected",
+              "bytesSent": 14998,
+              "packetsSent": 187,
+              "receivedAudio": {
+                "connectionState": "connected",
+                "bytesReceived": 42591,
+                "packetsReceived": 168
+              },
+              "callEndedObserved": false
+            },
+            {
+              "id": 121,
+              "connectionState": "connected",
+              "bytesSent": 14894,
+              "packetsSent": 186,
+              "receivedAudio": {
+                "connectionState": "connected",
+                "bytesReceived": 42191,
+                "packetsReceived": 167
+              },
+              "callEndedObserved": false
+            }
+          ],
+          "afterMedia": {
+            "ended": false,
+            "sessionEnded": false,
+            "users": [
+              "f0110000-0000-4000-8000-000000000008",
+              "f0110000-0000-4000-8000-000000000007"
+            ],
+            "endedAt": null,
+            "session": {
+              "id": "f8dd7891-7270-4102-b875-cf0570ef62d9",
+              "startedAt": "2026-10-29T06:40:22.348Z",
+              "timerEndsAt": "2026-10-29T06:41:22.348Z",
+              "endedAt": null
+            },
+            "limits": {
+              "max_participants": 2,
+              "max_participants_exclude_roles": [],
+              "max_duration_seconds": 60
+            }
+          },
+          "activeExtensionAttempts": [
+            {
+              "status": 403,
+              "code": 17,
+              "ended": false
+            },
+            {
+              "status": 403,
+              "code": 17,
+              "ended": false
+            }
+          ],
+          "afterExtensionAttempts": {
+            "ended": false,
+            "sessionEnded": false,
+            "users": [
+              "f0110000-0000-4000-8000-000000000008",
+              "f0110000-0000-4000-8000-000000000007"
+            ],
+            "endedAt": null,
+            "session": {
+              "id": "f8dd7891-7270-4102-b875-cf0570ef62d9",
+              "startedAt": "2026-10-29T06:40:22.348Z",
+              "timerEndsAt": "2026-10-29T06:41:22.348Z",
+              "endedAt": null
+            },
+            "limits": {
+              "max_participants": 2,
+              "max_participants_exclude_roles": [],
+              "max_duration_seconds": 60
+            }
+          },
+          "revokeStartedAt": "2026-10-29T06:40:27.687Z",
+          "revoke": {
+            "revoked": true,
+            "providerCleanup": "pending"
+          },
+          "revocationObservedAt": "2026-10-29T06:40:29.272Z",
+          "freshBackendCredentialsDenied": true,
+          "pendingJob": {
+            "status": "pending",
+            "attempts": 1
+          },
+          "heldJoinAfterRevoke": {
+            "status": 201,
+            "code": null,
+            "capabilities": [
+              "join-call",
+              "read-call",
+              "send-audio"
+            ]
+          },
+          "providerAfterRevoke": {
+            "ended": false,
+            "sessionEnded": false,
+            "users": [
+              "f0110000-0000-4000-8000-000000000008",
+              "f0110000-0000-4000-8000-000000000007"
+            ],
+            "endedAt": null,
+            "session": {
+              "id": "f8dd7891-7270-4102-b875-cf0570ef62d9",
+              "startedAt": "2026-10-29T06:40:22.348Z",
+              "timerEndsAt": "2026-10-29T06:41:22.348Z",
+              "endedAt": null
+            },
+            "limits": {
+              "max_participants": 2,
+              "max_participants_exclude_roles": [],
+              "max_duration_seconds": 60
+            }
+          },
+          "closedMediaAt": "2026-10-29T06:40:32.722Z",
+          "emptySession": {
+            "ended": false,
+            "sessionEnded": false,
+            "users": [],
+            "endedAt": null,
+            "session": {
+              "id": "f8dd7891-7270-4102-b875-cf0570ef62d9",
+              "startedAt": "2026-10-29T06:40:22.348Z",
+              "timerEndsAt": "2026-10-29T06:41:22.348Z",
+              "endedAt": null
+            },
+            "limits": {
+              "max_participants": 2,
+              "max_participants_exclude_roles": [],
+              "max_duration_seconds": 60
+            }
+          },
+          "restartJoin": [
+            {
+              "status": 201,
+              "code": null,
+              "capabilities": [
+                "join-call",
+                "read-call",
+                "send-audio"
+              ]
+            },
+            {
+              "status": 201,
+              "code": null,
+              "capabilities": [
+                "join-call",
+                "read-call",
+                "send-audio"
+              ]
+            }
+          ],
+          "afterRestartJoin": {
+            "ended": false,
+            "sessionEnded": false,
+            "users": [],
+            "endedAt": null,
+            "session": {
+              "id": "f8dd7891-7270-4102-b875-cf0570ef62d9",
+              "startedAt": "2026-10-29T06:40:22.348Z",
+              "timerEndsAt": "2026-10-29T06:41:22.348Z",
+              "endedAt": null
+            },
+            "limits": {
+              "max_participants": 2,
+              "max_participants_exclude_roles": [],
+              "max_duration_seconds": 60
+            }
+          },
+          "restartMedia": [
+            {
+              "kind": "SFU_PUBLISH_BOUNDARY",
+              "results": [],
+              "callEndedObserved": false,
+              "sessionId": "2a5efc91-a33c-47c6-a370-65c37291177a",
+              "failure": "sfu_join_error_undefined",
+              "failedStage": "sfu_join",
+              "errorType": "Error",
+              "localSourceLine": 111,
+              "answerRejected": false,
+              "encodingRejected": false
+            },
+            {
+              "kind": "SFU_PUBLISH_BOUNDARY",
+              "results": [],
+              "callEndedObserved": false,
+              "sessionId": "af383a31-3569-4822-b304-c0d593b00679",
+              "failure": "sfu_join_error_undefined",
+              "failedStage": "sfu_join",
+              "errorType": "Error",
+              "localSourceLine": 111,
+              "answerRejected": false,
+              "encodingRejected": false
+            }
+          ],
+          "afterRestartMedia": {
+            "ended": false,
+            "sessionEnded": false,
+            "users": [],
+            "endedAt": null,
+            "session": null,
+            "limits": {
+              "max_participants": 2,
+              "max_participants_exclude_roles": [],
+              "max_duration_seconds": 60
+            }
+          },
+          "timerResetObserved": false
+        }
+      ],
+      "scope": "APPROVED_THREE_CALL_BOUNDARY_EXPERIMENT",
+      "fault": "LOCAL_END_PORT_THROW_BEFORE_HTTP",
+      "callTypeOrRoleWrites": 0,
+      "sharedDatabaseModified": false,
+      "result": "INCOMPLETE",
+      "identity": {
+        "app": {
+          "id": 1731011,
+          "name": "Betweener Staging",
+          "disable_auth_checks": false,
+          "disable_permissions_checks": false
+        },
+        "users": 3
+      },
+      "error": "{\"status\":null,\"code\":null,\"reason\":\"sfu_process_closed\"}",
+      "cleanup": {
+        "usersRemaining": 0,
+        "calls": [
+          {
+            "status": 404,
+            "code": 16
+          },
+          {
+            "status": 404,
+            "code": 16
+          },
+          {
+            "status": 404,
+            "code": 16
+          }
+        ],
+        "unchangedCallTypes": true,
+        "callTypesBefore": "12e74f5fca79a1dea2b48a8c950bbc3a2189a3ffdf9e04ccb43d28c4e4533a7e",
+        "callTypesAfter": "12e74f5fca79a1dea2b48a8c950bbc3a2189a3ffdf9e04ccb43d28c4e4533a7e",
+        "app": {
+          "id": 1731011,
+          "name": "Betweener Staging",
+          "disable_auth_checks": false,
+          "disable_permissions_checks": false
+        },
+        "cleaned": true
+      }
+    },
+    "review": {
+      "controlTimerMarkedEndedBeforeBackendRecovery": true,
+      "forwardingAfterProviderEnded": {
+        "firstSampleAt": "2026-10-29T06:39:49.371Z",
+        "laterSampleAt": "2026-10-29T06:39:51.428Z",
+        "providerEndedAt": "2026-10-29T06:39:46.823Z",
+        "deadline": "2026-10-29T06:39:45.198Z",
+        "firstBytesReceived": [
+          784410,
+          783907
+        ],
+        "laterBytesReceived": [
+          810366,
+          810115
+        ],
+        "deltaBytesReceived": [
+          25956,
+          26208
+        ]
+      },
+      "normalEndReceivedAudioStoppedInObservedWindow": true,
+      "endedCallRejoinMatrix": "PASS",
+      "emptySessionRestart": "INCONCLUSIVE",
+      "experimentCompleted": false,
+      "declarations": {
+        "CONNECT_CONTROL_PLANE_FAILURE_CLASSIFIED": "PASS",
+        "CONNECT_SERVER_SESSION_TIMER": "FAIL",
+        "CONNECT_ENDED_CALL_REJOIN_DENIAL": "PASS",
+        "CONNECT_REVOKED_MEDIA_TERMINATION": "FAIL",
+        "CONNECT_POST_REVOCATION_EXPOSURE_BOUND": "UNBOUNDED",
+        "CONNECT_M2A_SECURITY_GATE": "BLOCKED",
+        "CONNECT_M2B_READY": "BLOCKED"
+      }
+    }
+  },
+  "providerWritesThisInvestigation": {
+    "usersCreated": 3,
+    "callsCreated": 3,
+    "perCallDurationOverrides": 2,
+    "callTypeOrRoleDefinitions": 0,
+    "sharedPolicyDefinitions": 0,
+    "serverAuthorizedExtensions": 0,
+    "fixtureCleanup": true
+  },
+  "sharedDatabaseModified": false,
+  "deployed": false,
+  "realCallingEnabled": false,
+  "m2bStarted": false,
+  "m3Started": false,
+  "declarations": {
+    "CONNECT_CONTROL_PLANE_FAILURE_CLASSIFIED": "PASS",
+    "CONNECT_SERVER_SESSION_TIMER": "FAIL",
+    "CONNECT_ENDED_CALL_REJOIN_DENIAL": "PASS",
+    "CONNECT_REVOKED_MEDIA_TERMINATION": "FAIL",
+    "CONNECT_POST_REVOCATION_EXPOSURE_BOUND": "UNBOUNDED",
+    "CONNECT_M2A_SECURITY_GATE": "BLOCKED",
+    "CONNECT_M2B_READY": "BLOCKED"
+  },
+  "limitations": [
+    "The approved experiment is partial, not a passed provider-security suite",
+    "Backend end-port exception is not a transport fault or real Stream service outage",
+    "Timer metadata ended while received audio counters kept increasing; no timer-only forwarding stop or upper bound captured",
+    "The empty-session SFU reconnects failed; the historical false reset flag cannot establish non-reset behavior",
+    "Ended-call held/new-token matrix ran after actual backend end ACK, not independently after timer-only end",
+    "Current shared call type still has no duration limit; experimental overrides were deleted with the calls",
+    "No additional calls are authorized by this consumed approval; no release duration or policy accepted"
+  ],
+  "logs": "tmp/connect-boundary/approved-run.log",
+  "initialInvestigationLocalChecks": {
+    "recordedAt": "2026-10-28T17:21:12.062Z",
+    "connect": {
+      "tests": 82,
+      "pass": 82,
+      "fail": 0
+    },
+    "ui": {
+      "passed": 7,
+      "total": 7
+    },
+    "revocation": {
+      "revocationDatabaseCases": 20,
+      "separateConnectionRaces": 4,
+      "realProviderCalls": 0
+    },
+    "live": {
+      "counts": {
+        "tests": 508,
+        "pass": 504,
+        "fail": 4
+      },
+      "failures": [
+        {
+          "file": "__tests__/live-auth-recovery.regression.test.ts",
+          "line": 121
+        },
+        {
+          "file": "__tests__/live-fullscreen-stage.regression.test.ts",
+          "line": 229
+        },
+        {
+          "file": "__tests__/live-phase10g-studio-database.regression.test.ts",
+          "line": 271
+        },
+        {
+          "file": "__tests__/live-room-safety.regression.test.ts",
+          "line": 96
+        }
+      ],
+      "unchanged": true
+    },
+    "typeScript": "PASS",
+    "strictDenoEdgeEntrypoints": 4,
+    "sdkTimerShape": "PASS",
+    "targetedLint": "PASS",
+    "environmentIsolation": "PASS",
+    "localSyntheticSubscriber": "PASS_RECEIVED_AUDIO_LOCAL_PEERS_ONLY",
+    "statuses": {
+      "androidIsolation": 0,
+      "connect": 0,
+      "deno": 0,
+      "easIsolation": 0,
+      "finalLint": 0,
+      "lint": 0,
+      "liveIsolation": 0,
+      "live": 1,
+      "revocation": 0,
+      "sdkTimerShape": 0,
+      "typescript": 0,
+      "ui": 0
+    }
+  },
+  "cleanup": {
+    "usersRemaining": 0,
+    "calls": [
+      {
+        "status": 404,
+        "code": 16
+      },
+      {
+        "status": 404,
+        "code": 16
+      },
+      {
+        "status": 404,
+        "code": 16
+      }
+    ],
+    "unchangedCallTypes": true,
+    "callTypesBefore": "12e74f5fca79a1dea2b48a8c950bbc3a2189a3ffdf9e04ccb43d28c4e4533a7e",
+    "callTypesAfter": "12e74f5fca79a1dea2b48a8c950bbc3a2189a3ffdf9e04ccb43d28c4e4533a7e",
+    "app": {
+      "id": 1731011,
+      "name": "Betweener Staging",
+      "disable_auth_checks": false,
+      "disable_permissions_checks": false
+    },
+    "cleaned": true,
+    "sharedConnectAbsent": true,
+    "sharedProofAbsent": true,
+    "sharedRevocationRpcAbsent": true,
+    "disposableDatabases": 0,
+    "sharedSecurityMigrationRows": 0,
+    "disposableRestContainers": 0
+  }
+}

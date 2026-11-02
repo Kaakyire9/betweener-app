@@ -1,0 +1,813 @@
+{
+  "schemaVersion": 2,
+  "preparedAt": "2026-10-30T19:50:13.360Z",
+  "scope": "OFFLINE_SUPPLEMENTAL_CLASSIFIER_ONLY",
+  "profile": {
+    "version": 2,
+    "maximumSamples": 4096,
+    "maximumEvents": 2048,
+    "maximumIpcMs": 500,
+    "maximumTransmissionMs": 2000,
+    "minimumConfidence": 0.97,
+    "minimumSymbolConfidence": 0.75,
+    "minimumFrameSeconds": 3.99,
+    "maximumFrameSeconds": 4.01,
+    "stableTailMs": 5000,
+    "minimumStableSpanMs": 3500,
+    "minimumSourceSpanMs": 3000,
+    "minimumSourcePeak": 0.01,
+    "timerMinimumMs": 59000,
+    "timerMaximumMs": 60000,
+    "endMinimumMs": 9000,
+    "endMaximumMs": 10000,
+    "maximumStartDelayMs": 2000,
+    "maximumSampleGapMs": 1000,
+    "maximumPriorAgeMs": 1000,
+    "maximumBrowserStatsAgeMs": 500,
+    "pcmBatchFrames": 2048
+  },
+  "inputHashes": [
+    {
+      "path": "scripts/lib/connect-media-truth/evidence.cjs",
+      "sha256": "b6e84dd93d16df4e1ecf12d7cb71a41005ec33a90d3c78d98c7d79f83cb1d742"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/experiment.cjs",
+      "sha256": "a33f2fdc42110944296b2507d5b2f4edcabf069163252ee6c409b273e2462f9a"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/verdict.cjs",
+      "sha256": "da310d7ef131d7df75cf058f152f3cbcd7b1c5d50554ece8094ba96aa09eba2a"
+    },
+    {
+      "path": "scripts/lib/connect-stream-sfu-session.cjs",
+      "sha256": "69d100aca35fb4e23b856b62b15b3a11324761ed995caf2a183210be7a527752"
+    },
+    {
+      "path": "docs/betweener-connect/18-connect-v1-revocation-boundary-decision.md",
+      "sha256": "a78fa00f8f8431bb71dbfd56cad19df276d197b12f149c785924d3b259b01f7d"
+    },
+    {
+      "path": "docs/betweener-connect/19-connect-v1-independent-forensic-audit.md",
+      "sha256": "9cc5e35d58cbad743cd03852ac398b7c5427a804ea5f07df91610811466f7bf2"
+    },
+    {
+      "path": "docs/betweener-connect/stream-staging-connect-revocation-boundary-evidence.json",
+      "sha256": "b7ee15e52d422351fe397835759a8ba2ce8cfddb537f09c910682a58682ec3ed"
+    },
+    {
+      "path": "tmp/connect-boundary/provider-results.json",
+      "sha256": "8c1d82141a5c5140c94ac2b65e2b09dca42ebbe1f0f8c87b852d6dacdffa501d"
+    },
+    {
+      "path": "docs/betweener-connect/18-connect-v1-revocation-boundary-decision.md",
+      "sha256": "a78fa00f8f8431bb71dbfd56cad19df276d197b12f149c785924d3b259b01f7d"
+    },
+    {
+      "path": "docs/betweener-connect/19-connect-v1-independent-forensic-audit.md",
+      "sha256": "9cc5e35d58cbad743cd03852ac398b7c5427a804ea5f07df91610811466f7bf2"
+    },
+    {
+      "path": "docs/betweener-connect/28-connect-v1-media-truth-b3-preparation.md",
+      "sha256": "46e4f8f90665c58119a06a8e38eea117cb4da3957431a096fba4acaad2359d8a"
+    },
+    {
+      "path": "docs/betweener-connect/29-connect-v1-media-truth-b3-execution-results.md",
+      "sha256": "bfa7f220b22d8ee63887a4d90189a8978ef9a51a197b7272e7388ebc317c7513"
+    },
+    {
+      "path": "docs/betweener-connect/30-connect-v1-b3-termination-classifier-audit.md",
+      "sha256": "f65c3ed1273930a7d6b7e0a04cffafb32e7d37313742eb26cca8287cc3f843e1"
+    },
+    {
+      "path": "docs/betweener-connect/offline-30/termination-analysis-proposal.cjs",
+      "sha256": "cac1eaff48317464ca519013596ef2cbad9bb6cf28aeb69ae4b590ed0b6fabc3"
+    },
+    {
+      "path": "docs/betweener-connect/offline-30/termination-analysis.test.cjs",
+      "sha256": "fe426d98e312d62f3e865c219c8e35398cc39c52d781ad9e1e763bdb73288b16"
+    },
+    {
+      "path": "docs/betweener-connect/stream-staging-connect-b3-termination-classifier-audit.json",
+      "sha256": "6a10e4ff3fc68ce0ba1117df824fa5cca1ccbbde76d0c5404e1c5006022dcc66"
+    },
+    {
+      "path": "tmp/connect-media-truth-b3-execution/approval-media-truth-b3-28-9057a98a-af85-4f30-bf3a-c0ac8671017c.json.evidence.json",
+      "sha256": "0dcb9e021be24ae8cebf105938c11155a859013f619892f1663209149d077b55"
+    },
+    {
+      "path": "tmp/connect-boundary/provider-results.json",
+      "sha256": "8c1d82141a5c5140c94ac2b65e2b09dca42ebbe1f0f8c87b852d6dacdffa501d"
+    },
+    {
+      "path": "docs/betweener-connect/stream-staging-connect-media-truth-b3-evidence.json",
+      "sha256": "ef7dd20af2b379003132d4ab4d3a2743cbd914a6525db6ef3f13a64425ce11f9"
+    },
+    {
+      "path": "docs/betweener-connect/stream-staging-connect-revocation-boundary-evidence.json",
+      "sha256": "b7ee15e52d422351fe397835759a8ba2ce8cfddb537f09c910682a58682ec3ed"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/verdict.cjs",
+      "sha256": "da310d7ef131d7df75cf058f152f3cbcd7b1c5d50554ece8094ba96aa09eba2a"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/evidence.cjs",
+      "sha256": "b6e84dd93d16df4e1ecf12d7cb71a41005ec33a90d3c78d98c7d79f83cb1d742"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/experiment.cjs",
+      "sha256": "a33f2fdc42110944296b2507d5b2f4edcabf069163252ee6c409b273e2462f9a"
+    },
+    {
+      "path": "scripts/lib/connect-stream-sfu-session.cjs",
+      "sha256": "69d100aca35fb4e23b856b62b15b3a11324761ed995caf2a183210be7a527752"
+    },
+    {
+      "path": "docs/betweener-connect/offline-31/analytical-classifier-review.test.cjs",
+      "sha256": "18a3178787dda3a40178dfa4e0bcadc3b815fb3db3e71b34a1d41d1335a73954"
+    }
+  ],
+  "sources": [
+    {
+      "path": "docs/betweener-connect/offline-32/analysis.ts",
+      "sha256": "ee4ffbb6965183c90b968fd74075421bf70f00680b354b4352a4bdcff31ba462"
+    },
+    {
+      "path": "docs/betweener-connect/offline-32/comparison.ts",
+      "sha256": "debd1850f143e958ef3744a55053e69c54d4d31a412331ef8be096c63d152ebb"
+    },
+    {
+      "path": "docs/betweener-connect/offline-32/contract.ts",
+      "sha256": "68c50e0288149d115aee276efcefa9234bb7de8c45c2804bd061a5a411a895e7"
+    },
+    {
+      "path": "docs/betweener-connect/offline-32/hardening.test.cjs",
+      "sha256": "bfcc2a4bf2e89d0e24333cbbab472541caf4f2ceec70e15f898154e9b536011c"
+    },
+    {
+      "path": "docs/betweener-connect/offline-32/media.ts",
+      "sha256": "1de845f817ea8331d2b9ba24a88ed86dbf478cf0f6aabd7e2b767586b696bda0"
+    },
+    {
+      "path": "docs/betweener-connect/offline-32/ported-review.test.cjs",
+      "sha256": "d778705d5f24c1942702acf24b9aa2b6b4ef5f122d3005bb58aa749648c01e99"
+    },
+    {
+      "path": "docs/betweener-connect/offline-32/receipts.ts",
+      "sha256": "4939eb219ddb4772531bdc306a83b45fc8dbb193027481d8601a5cab73720190"
+    },
+    {
+      "path": "docs/betweener-connect/offline-32/signaling.ts",
+      "sha256": "ce6cc3b59bce8c3c8c967a24f64db136661296b51d804d58e2b4cb63c65c7ff7"
+    },
+    {
+      "path": "docs/betweener-connect/offline-32/test-fixtures.cjs",
+      "sha256": "5c937c2cf5f603331076c1ec8f7875c22ce25ca8df4d04fa9e2351c73bfae5ab"
+    },
+    {
+      "path": "docs/betweener-connect/offline-32/validation.ts",
+      "sha256": "4eebb047d57cdb73b6d24bbdee9f1c22dc5a168ff934fbb01d79f00f8fdc8457"
+    }
+  ],
+  "preservation": {
+    "baselineUnchanged": 312,
+    "protectedRecordsUnchanged": 524,
+    "preparedSourcesUnchanged": 73,
+    "preparedArtifactsUnchanged": 434,
+    "readinessGuard": "PASS_READ_ONLY_NO_RESERVATION",
+    "originalProposalAndVerdictsUnchanged": true
+  },
+  "counterexamples": [
+    {
+      "name": "AR-1",
+      "expected": "INCONCLUSIVE",
+      "before": "OBSERVED_RECEIVER_RTP_QUIESCENCE",
+      "after": "INCONCLUSIVE"
+    },
+    {
+      "name": "AR-2",
+      "expected": "INCONCLUSIVE",
+      "before": "OBSERVED_RECEIVER_RTP_QUIESCENCE",
+      "after": "INCONCLUSIVE"
+    },
+    {
+      "name": "AR-3",
+      "expected": false,
+      "before": true,
+      "after": false
+    },
+    {
+      "name": "AR-4",
+      "expected": {
+        "throws": false,
+        "media": "INCONCLUSIVE"
+      },
+      "before": {
+        "throws": true,
+        "errorType": "TypeError"
+      },
+      "after": {
+        "throws": false,
+        "media": "INCONCLUSIVE"
+      }
+    },
+    {
+      "name": "AR-5a",
+      "expected": "UNAVAILABLE",
+      "before": "ELIGIBLE_FOR_REVIEW",
+      "after": "UNAVAILABLE"
+    },
+    {
+      "name": "AR-5b",
+      "expected": "UNAVAILABLE",
+      "before": "ELIGIBLE_FOR_REVIEW",
+      "after": "UNAVAILABLE"
+    },
+    {
+      "name": "AR-6",
+      "expected": false,
+      "before": true,
+      "after": false
+    },
+    {
+      "name": "AR-7",
+      "expected": false,
+      "before": true,
+      "after": false
+    }
+  ],
+  "historical": {
+    "b3": {
+      "sha256": "0dcb9e021be24ae8cebf105938c11155a859013f619892f1663209149d077b55",
+      "phases": [
+        {
+          "historical": {
+            "verdict": "INCONCLUSIVE",
+            "reasons": [
+              "transport_closed_or_unavailable",
+              "transport_closed_or_unavailable"
+            ],
+            "clockModel": {
+              "intervals": "Parent monotonic milliseconds; UTC is correlation only.",
+              "browserMapping": "Each IPC operation is bracketed by parent monotonic stamps. Browser performance/timeOrigin and AudioContext sample clocks are retained separately.",
+              "uncertainty": "IPC brackets bound observation time; AudioContext scheduling is not an RTP wire timestamp. Provider clock offset is UNKNOWN. No cross-host latency bound is inferred."
+            }
+          },
+          "analytical": {
+            "media": "OBSERVED_RECEIVER_RTP_QUIESCENCE",
+            "signaling": "OBSERVED_SFU_TERMINATION",
+            "transport": "SFU_SIGNALED_TERMINATION_WITH_TRANSPORT_LOSS",
+            "facts": {
+              "identity": {
+                "status": "VALID",
+                "codes": []
+              },
+              "chronology": {
+                "status": "VALID",
+                "codes": []
+              },
+              "controls": {
+                "status": "VALID",
+                "codes": []
+              },
+              "coverage": {
+                "status": "VALID",
+                "codes": []
+              },
+              "receiver": {
+                "status": "VALID",
+                "codes": []
+              },
+              "source": {
+                "status": "VALID",
+                "codes": []
+              },
+              "freshContent": {
+                "status": "VALID",
+                "codes": []
+              },
+              "sfuEvent": {
+                "status": "VALID",
+                "codes": []
+              },
+              "transport": {
+                "status": "VALID",
+                "codes": []
+              },
+              "comparison": {
+                "status": "VALID",
+                "codes": []
+              }
+            },
+            "coverage": {
+              "profileVersion": 2,
+              "runnerClaim": true,
+              "measuredValid": true,
+              "firstBracket": {
+                "before": {
+                  "mono": 79055.7652,
+                  "utc": "2026-10-30T14:31:35.973Z"
+                },
+                "completed": {
+                  "mono": 79082.7935,
+                  "utc": "2026-10-30T14:31:36.000Z"
+                }
+              },
+              "lastBracket": {
+                "before": {
+                  "mono": 137938.7727,
+                  "utc": "2026-10-30T14:32:34.856Z"
+                },
+                "completed": {
+                  "mono": 137960.4149,
+                  "utc": "2026-10-30T14:32:34.877Z"
+                }
+              },
+              "startDelayMs": 125.22989999999118,
+              "elapsedMs": 59029.8796,
+              "sampleSpanMs": 58904.64970000001,
+              "maximumGapMs": 268.9369000000006,
+              "tailSpanMs": 4864.582800000004,
+              "sampleCount": 217,
+              "receiverTailFlat": true
+            },
+            "receiverSummary": [
+              {
+                "receiver": 1,
+                "id": "IT01A2254939872",
+                "ssrc": 2254939872,
+                "firstBytes": 744192,
+                "lastBytes": 744192,
+                "firstPackets": 3008,
+                "lastPackets": 3008,
+                "lastPacketTimestamp": 1793370695812.625
+              },
+              {
+                "receiver": 2,
+                "id": "IT01A1150319763",
+                "ssrc": 1150319763,
+                "firstBytes": 745579,
+                "lastBytes": 745660,
+                "firstPackets": 3020,
+                "lastPackets": 3021,
+                "lastPacketTimestamp": 1793370695994.378
+              }
+            ],
+            "freshProof": [],
+            "comparison": {
+              "eligible": false,
+              "status": "NOT_APPLICABLE",
+              "windowCompleted": false,
+              "causalEvidence": "NOT_ESTABLISHED",
+              "causalProof": false
+            },
+            "sfu": {
+              "peers": [
+                {
+                  "receiver": 1,
+                  "rawSessionId": "efcf0c7c-f988-42af-8e5e-738f5058d3f0",
+                  "join": {
+                    "type": "joinResponse",
+                    "at": {
+                      "mono": 7744.4238,
+                      "utc": "2026-10-30T14:30:34.913Z"
+                    }
+                  },
+                  "end": {
+                    "type": "callEnded",
+                    "at": {
+                      "mono": 68645.2489,
+                      "utc": "2026-10-30T14:31:35.813Z"
+                    }
+                  },
+                  "close": {
+                    "type": "websocket-close",
+                    "at": {
+                      "mono": 69649.5227,
+                      "utc": "2026-10-30T14:31:36.817Z"
+                    },
+                    "code": 1000,
+                    "clean": true
+                  },
+                  "preExistingAtBaseline": false,
+                  "firstParentCapture": {
+                    "mono": 79082.7935,
+                    "utc": "2026-10-30T14:31:36.000Z"
+                  },
+                  "cleanClose": true
+                },
+                {
+                  "receiver": 2,
+                  "rawSessionId": "eef698c0-0595-4235-87c3-0a89d23324df",
+                  "join": {
+                    "type": "joinResponse",
+                    "at": {
+                      "mono": 7725.6505,
+                      "utc": "2026-10-30T14:30:34.910Z"
+                    }
+                  },
+                  "end": {
+                    "type": "callEnded",
+                    "at": {
+                      "mono": 68628.7368,
+                      "utc": "2026-10-30T14:31:35.814Z"
+                    }
+                  },
+                  "close": {
+                    "type": "websocket-close",
+                    "at": {
+                      "mono": 69632.4842,
+                      "utc": "2026-10-30T14:31:36.817Z"
+                    },
+                    "code": 1000,
+                    "clean": true
+                  },
+                  "preExistingAtBaseline": false,
+                  "firstParentCapture": {
+                    "mono": 79082.7935,
+                    "utc": "2026-10-30T14:31:36.000Z"
+                  },
+                  "cleanClose": true
+                }
+              ],
+              "corroborated": true,
+              "cleanClosures": true,
+              "association": "FIRST_OBSERVED_AFTER_BASELINE"
+            },
+            "universalSecurityPass": false
+          }
+        },
+        {
+          "historical": {
+            "verdict": "INCONCLUSIVE",
+            "reasons": [
+              "transport_closed_or_unavailable",
+              "transport_closed_or_unavailable"
+            ],
+            "clockModel": {
+              "intervals": "Parent monotonic milliseconds; UTC is correlation only.",
+              "browserMapping": "Each IPC operation is bracketed by parent monotonic stamps. Browser performance/timeOrigin and AudioContext sample clocks are retained separately.",
+              "uncertainty": "IPC brackets bound observation time; AudioContext scheduling is not an RTP wire timestamp. Provider clock offset is UNKNOWN. No cross-host latency bound is inferred."
+            }
+          },
+          "analytical": {
+            "media": "INCONCLUSIVE",
+            "signaling": "OBSERVED_SFU_TERMINATION",
+            "transport": "TRANSPORT_UNAVAILABLE_BEFORE_TRIGGER",
+            "facts": {
+              "identity": {
+                "status": "VALID",
+                "codes": []
+              },
+              "chronology": {
+                "status": "VALID",
+                "codes": []
+              },
+              "controls": {
+                "status": "VALID",
+                "codes": []
+              },
+              "coverage": {
+                "status": "VALID",
+                "codes": []
+              },
+              "receiver": {
+                "status": "VALID",
+                "codes": []
+              },
+              "source": {
+                "status": "VALID",
+                "codes": []
+              },
+              "freshContent": {
+                "status": "VALID",
+                "codes": []
+              },
+              "sfuEvent": {
+                "status": "VALID",
+                "codes": []
+              },
+              "transport": {
+                "status": "VALID",
+                "codes": []
+              },
+              "comparison": {
+                "status": "MISSING",
+                "codes": [
+                  "PRE_INTERVENTION_TRANSPORT_UNAVAILABLE",
+                  "PRE_INTERVENTION_REMOTE_PROGRESS_UNPROVEN",
+                  "PRE_INTERVENTION_TRANSPORT_UNAVAILABLE",
+                  "PRE_INTERVENTION_REMOTE_PROGRESS_UNPROVEN",
+                  "EARLIER_TRANSPORT_FAILURE",
+                  "EARLIER_SFU_TERMINATION"
+                ]
+              }
+            },
+            "coverage": {
+              "profileVersion": 2,
+              "runnerClaim": true,
+              "measuredValid": true,
+              "firstBracket": {
+                "before": {
+                  "mono": 138366.5917,
+                  "utc": "2026-10-30T14:32:35.283Z"
+                },
+                "completed": {
+                  "mono": 138392.1573,
+                  "utc": "2026-10-30T14:32:35.309Z"
+                }
+              },
+              "lastBracket": {
+                "before": {
+                  "mono": 147353.1149,
+                  "utc": "2026-10-30T14:32:44.270Z"
+                },
+                "completed": {
+                  "mono": 147375.078,
+                  "utc": "2026-10-30T14:32:44.292Z"
+                }
+              },
+              "startDelayMs": 134.40339999998105,
+              "elapsedMs": 9142.8897,
+              "sampleSpanMs": 9008.486300000019,
+              "maximumGapMs": 252.87899999998626,
+              "tailSpanMs": 4882.839499999973,
+              "sampleCount": 34,
+              "receiverTailFlat": true
+            },
+            "receiverSummary": [
+              {
+                "receiver": 1,
+                "id": "IT01A2254939872",
+                "ssrc": 2254939872,
+                "firstBytes": 744192,
+                "lastBytes": 744192,
+                "firstPackets": 3008,
+                "lastPackets": 3008,
+                "lastPacketTimestamp": 1793370695812.625
+              },
+              {
+                "receiver": 2,
+                "id": "IT01A1150319763",
+                "ssrc": 1150319763,
+                "firstBytes": 745660,
+                "lastBytes": 745660,
+                "firstPackets": 3021,
+                "lastPackets": 3021,
+                "lastPacketTimestamp": 1793370695994.378
+              }
+            ],
+            "freshProof": [],
+            "comparison": {
+              "eligible": false,
+              "status": "UNAVAILABLE",
+              "windowCompleted": false,
+              "causalEvidence": "NOT_ESTABLISHED",
+              "causalProof": false
+            },
+            "sfu": {
+              "peers": [
+                {
+                  "receiver": 1,
+                  "rawSessionId": "efcf0c7c-f988-42af-8e5e-738f5058d3f0",
+                  "join": {
+                    "type": "joinResponse",
+                    "at": {
+                      "mono": 7744.4238,
+                      "utc": "2026-10-30T14:30:34.913Z"
+                    }
+                  },
+                  "end": {
+                    "type": "callEnded",
+                    "at": {
+                      "mono": 68645.2489,
+                      "utc": "2026-10-30T14:31:35.813Z"
+                    }
+                  },
+                  "close": {
+                    "type": "websocket-close",
+                    "at": {
+                      "mono": 69649.5227,
+                      "utc": "2026-10-30T14:31:36.817Z"
+                    },
+                    "code": 1000,
+                    "clean": true
+                  },
+                  "preExistingAtBaseline": true,
+                  "firstParentCapture": {
+                    "mono": 137960.4149,
+                    "utc": "2026-10-30T14:32:34.877Z"
+                  },
+                  "cleanClose": true
+                },
+                {
+                  "receiver": 2,
+                  "rawSessionId": "eef698c0-0595-4235-87c3-0a89d23324df",
+                  "join": {
+                    "type": "joinResponse",
+                    "at": {
+                      "mono": 7725.6505,
+                      "utc": "2026-10-30T14:30:34.910Z"
+                    }
+                  },
+                  "end": {
+                    "type": "callEnded",
+                    "at": {
+                      "mono": 68628.7368,
+                      "utc": "2026-10-30T14:31:35.814Z"
+                    }
+                  },
+                  "close": {
+                    "type": "websocket-close",
+                    "at": {
+                      "mono": 69632.4842,
+                      "utc": "2026-10-30T14:31:36.817Z"
+                    },
+                    "code": 1000,
+                    "clean": true
+                  },
+                  "preExistingAtBaseline": true,
+                  "firstParentCapture": {
+                    "mono": 137960.4149,
+                    "utc": "2026-10-30T14:32:34.877Z"
+                  },
+                  "cleanClose": true
+                }
+              ],
+              "corroborated": true,
+              "cleanClosures": true,
+              "association": "PRE_EXISTING_AT_BASELINE"
+            },
+            "universalSecurityPass": false
+          }
+        }
+      ]
+    },
+    "boundary": {
+      "status": "VALID",
+      "sha256": "8c1d82141a5c5140c94ac2b65e2b09dca42ebbe1f0f8c87b852d6dacdffa501d",
+      "historicalTimerVerdict": "FAIL",
+      "analytical": {
+        "media": "POST_END_RTP_GROWTH_CONTENT_AGE_UNKNOWN",
+        "status": "VALID",
+        "codes": [],
+        "receivingGrowth": [
+          {
+            "receiver": 1,
+            "bytes": 25956,
+            "packets": 103
+          },
+          {
+            "receiver": 2,
+            "bytes": 26208,
+            "packets": 104
+          }
+        ],
+        "identityScope": "ARRAY_ORDER_ONLY_NOT_INDEPENDENTLY_ATTESTED",
+        "signaling": "NOT_OBSERVED_IN_RETAINED_SAMPLES",
+        "freshNonceEvidence": "NOT_INSTRUMENTED",
+        "timerOnlyCutoffBound": "UNPROVEN",
+        "historicalVerdict": "NOT_ATTESTED_BY_GENERIC_PROJECTION",
+        "universalSecurityPass": false
+      },
+      "universalSecurityPass": false
+    }
+  },
+  "validation": {
+    "tests": {
+      "original30": {
+        "tests": 30,
+        "pass": 30,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "path": "tmp/connect-analytical-hardening-32/original-30.log",
+        "sha256": "e8d631804bc1c8807cf42f094480e4a61d328efdd5d85edf798f3b1c1c4dc840"
+      },
+      "original22Historical": {
+        "tests": 22,
+        "pass": 14,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 8,
+        "path": "tmp/connect-analytical-hardening-32/original-22.log",
+        "sha256": "df9a97c30f638c02211c76c56df4f968eb75a1c5943a2ddefec0322de6e40615"
+      },
+      "hardened": {
+        "tests": 84,
+        "pass": 84,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "path": "tmp/connect-analytical-hardening-32/hardened-final.log",
+        "sha256": "e38454622926bcfea32b2d48dc61519132d01894abc0fbf3bd9e4cfb4bdc9d2e"
+      },
+      "originalMediaTruth": {
+        "tests": 290,
+        "pass": 290,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "path": "tmp/connect-analytical-hardening-32/media-truth-offline.log",
+        "sha256": "eca7f83ea461d9a1ebfae4cebd8124eab387220a90564f8879d2ec6269557e86"
+      },
+      "liveBefore": {
+        "tests": 508,
+        "pass": 504,
+        "fail": 4,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "path": "tmp/connect-analytical-hardening-32/live-before.log",
+        "sha256": "b905f9705946bcd3519f23e97a14955e760245efcb69aae81ff2e1bd52a4749d"
+      },
+      "liveAfter": {
+        "tests": 508,
+        "pass": 504,
+        "fail": 4,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "path": "tmp/connect-analytical-hardening-32/live-after.log",
+        "sha256": "0ddbfd51693f4bf77f7dcfdbb50911491ab7784703c5827be393b9970c1c0ba7"
+      }
+    },
+    "hardenedBreakdown": {
+      "portedReview": 22,
+      "additionalHardening": 62
+    },
+    "acceptedOrdinaryPasses": 404,
+    "oldTodoFailuresExcludedFromAcceptance": true,
+    "liveFailures": [
+      "✖ Live catalogue waits for real auth and reloads after auth recovery",
+      "✖ screen-only Program output follows the selected canvas and offers a focused view",
+      "✖ audience Program output exposes no Studio access or private matching data",
+      "✖ standard Room Pulse keeps a curated, readable note preview"
+    ],
+    "liveSummariesEqual": true,
+    "checks": [
+      {
+        "path": "tmp/connect-analytical-hardening-32/typescript-final.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "status": "PASS"
+      },
+      {
+        "path": "tmp/connect-analytical-hardening-32/app-typescript.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "status": "PASS"
+      },
+      {
+        "path": "tmp/connect-analytical-hardening-32/deno-final.log",
+        "sha256": "0bd2391affedd748e87bf291e2194892b6c90b1c8536584e0d6136f70d175806",
+        "status": "PASS"
+      },
+      {
+        "path": "tmp/connect-analytical-hardening-32/lint-final.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "status": "PASS"
+      },
+      {
+        "path": "tmp/connect-analytical-hardening-32/live-isolation.log",
+        "sha256": "de67624fa309edbdf76c1a072fa73b292717df0e448cb8d7e8586738795bf92c",
+        "status": "PASS"
+      },
+      {
+        "path": "tmp/connect-analytical-hardening-32/eas-isolation.log",
+        "sha256": "777319e05ecd0fb97409e9a60b6d895a601a6dce86ea6d6c9f90a5aa39132dd3",
+        "status": "PASS"
+      }
+    ],
+    "probes": {
+      "path": "tmp/connect-analytical-hardening-32/ported-2ZnCYs/independent-probes.json",
+      "sha256": "3aa2bfaf06d2b4d496ffed5465fc3551d8a159abbc8c112556d19eeb6177decb"
+    }
+  },
+  "limitations": [
+    "Recorder authenticity requires separately reviewed provenance; coherent forged logs are not authenticated by internal-consistency checks.",
+    "CRC/confidence are retained decoder assertions; PCM is not retained for independent re-decoding.",
+    "The post-transmission PCM anchor is deliberately conservative and can leave an early physical delivery unprovable.",
+    "New 1000ms gap/prior-age, 2000ms start and 500ms stats-age limits are an offline v2 profile, not changes to any historical experiment.",
+    "Flat receiving counters plus local liveness establish bounded receiver quiescence, not wire-level generation age, exact SFU enforcement time or universal revocation.",
+    "No runtime integration, provider run, database access, approval reuse, source repair outside offline-32 or calling enablement."
+  ],
+  "declarations": {
+    "CONNECT_ANALYTICAL_IDENTITY": "PASS",
+    "CONNECT_ANALYTICAL_CHRONOLOGY": "PASS",
+    "CONNECT_FRESH_FRAME_PROVENANCE": "PASS",
+    "CONNECT_ANALYTICAL_EVENT_HANDLING": "PASS",
+    "CONNECT_COMPARISON_VALIDATION": "PASS",
+    "CONNECT_OBSERVATION_COVERAGE": "PASS",
+    "CONNECT_HISTORICAL_REPLAY": "PASS",
+    "CONNECT_OFFLINE_HARDENING": "PASS",
+    "CONNECT_RUNTIME_INTEGRATION": "NOT_AUTHORISED",
+    "CONNECT_M2A_SECURITY_GATE": "BLOCKED",
+    "CONNECT_M2B_READY": "BLOCKED",
+    "PROVIDER_WRITES": "NONE",
+    "PRODUCTION_MODIFICATIONS": "NONE"
+  }
+}

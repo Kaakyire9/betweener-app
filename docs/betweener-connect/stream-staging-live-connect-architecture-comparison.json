@@ -1,0 +1,1644 @@
+{
+  "schemaVersion": 1,
+  "auditId": "connect-live-architecture-27",
+  "completedAt": "2026-10-30T07:05:54.526Z",
+  "mode": "SOURCE_AUDIT_AND_OFFLINE_TESTS_ONLY",
+  "application": {
+    "id": 1731011,
+    "name": "Betweener Staging",
+    "evidence": "RETAINED_CONFIG_AND_PREVIOUS_SUCCESSFUL_CONNECT_FIXTURES",
+    "freshAuthenticatedAttestation": false,
+    "deployedSecretBindingVerified": false
+  },
+  "declarations": {
+    "STREAM_APP_COMPATIBILITY": "CONDITIONAL_PASS",
+    "LIVE_CONNECT_ARCHITECTURE_COMPARISON": "PASS",
+    "CONNECT_CREATE_REQUEST_RECOMMENDATION": "READY",
+    "CONNECT_PROVIDER_WRITES": "NONE",
+    "CONNECT_M2A_SECURITY_GATE": "BLOCKED",
+    "CONNECT_M2B_READY": "BLOCKED"
+  },
+  "scope": {
+    "authenticatedStreamRequests": 0,
+    "providerWrites": 0,
+    "providerFixtures": 0,
+    "databaseAccess": false,
+    "runtimeSourceModified": false,
+    "liveSourceModified": false,
+    "providerConfigurationModified": false,
+    "ownerApprovalCreated": false,
+    "consumedLedgersModified": false,
+    "runnableB3ManifestCreated": false,
+    "callingEnabled": false,
+    "build": false,
+    "deployment": false,
+    "nativeDeviceExecution": false
+  },
+  "requestComparison": {
+    "callId": "00000000-0000-4000-8000-000000000001",
+    "production": {
+      "ring": true,
+      "notify": false,
+      "data": {
+        "created_by_id": "betweener-connect-system",
+        "members": [
+          {
+            "user_id": "mtb2_24_00000000-0000-4000-8000-000000000002_a",
+            "role": "connect_invited"
+          },
+          {
+            "user_id": "mtb2_24_00000000-0000-4000-8000-000000000002_b",
+            "role": "connect_invited"
+          }
+        ],
+        "custom": {
+          "betweener_connect_id": "00000000-0000-4000-8000-000000000001",
+          "media": "voice"
+        },
+        "settings_override": {
+          "limits": {
+            "max_participants": 2
+          },
+          "video": {
+            "enabled": false,
+            "camera_default_on": false,
+            "target_resolution": {
+              "width": 640,
+              "height": 480,
+              "bitrate": 600000
+            }
+          }
+        }
+      }
+    },
+    "cases": [
+      {
+        "name": "A_live_app",
+        "type": "betweener_live",
+        "evidence": "CURRENT_SOURCE_RECONSTRUCTION",
+        "request": {
+          "notify": false,
+          "ring": false,
+          "data": {
+            "created_by_id": "betweener-live-system",
+            "members": [
+              {
+                "user_id": "mtb2_24_00000000-0000-4000-8000-000000000002_a",
+                "role": "call_member"
+              }
+            ],
+            "settings_override": {
+              "limits": {
+                "max_participants": 4
+              }
+            },
+            "custom": {
+              "betweener_session_id": "00000000-0000-4000-8000-000000000001",
+              "recording_allowed": false
+            }
+          }
+        }
+      },
+      {
+        "name": "A_web_studio",
+        "type": "betweener_live",
+        "evidence": "CURRENT_SOURCE_RECONSTRUCTION",
+        "request": {
+          "notify": false,
+          "ring": false,
+          "data": {
+            "created_by_id": "betweener-live-system",
+            "members": [
+              {
+                "user_id": "studio-offline-source",
+                "role": "call_member"
+              }
+            ],
+            "settings_override": {
+              "limits": {
+                "max_participants": 4
+              }
+            },
+            "custom": {
+              "betweener_session_id": "00000000-0000-4000-8000-000000000001",
+              "betweener_studio_source": true,
+              "recording_allowed": false
+            }
+          }
+        }
+      },
+      {
+        "name": "B_earlier_connect",
+        "type": "betweener_connect",
+        "evidence": "SOURCE_RECONSTRUCTION_WITH_RETAINED_SETUP_SUCCESS_NO_WIRE_BODY",
+        "request": {
+          "ring": false,
+          "notify": false,
+          "data": {
+            "created_by_id": "offline_fixture_creator",
+            "members": [
+              {
+                "user_id": "mtb2_24_00000000-0000-4000-8000-000000000002_a",
+                "role": "connect_invited"
+              },
+              {
+                "user_id": "mtb2_24_00000000-0000-4000-8000-000000000002_b",
+                "role": "connect_invited"
+              }
+            ],
+            "custom": {
+              "betweener_connect_id": "00000000-0000-4000-8000-000000000001",
+              "media": "voice",
+              "isolated_security_fixture": true
+            },
+            "settings_override": {
+              "limits": {
+                "max_participants": 2,
+                "max_duration_seconds": 60
+              },
+              "video": {
+                "enabled": false,
+                "camera_default_on": false,
+                "target_resolution": {
+                  "width": 640,
+                  "height": 480,
+                  "bitrate": 600000
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "name": "C_media_truth_B1",
+        "type": "betweener_connect",
+        "evidence": "IMMUTABLE_MANIFEST_AND_SOURCE_RECONSTRUCTION_NO_WIRE_BODY",
+        "request": {
+          "ring": false,
+          "notify": false,
+          "data": {
+            "created_by_id": "mtb2_24_00000000-0000-4000-8000-000000000002_a",
+            "members": [
+              {
+                "user_id": "mtb2_24_00000000-0000-4000-8000-000000000002_a",
+                "role": "connect_voice"
+              },
+              {
+                "user_id": "mtb2_24_00000000-0000-4000-8000-000000000002_b",
+                "role": "connect_voice"
+              }
+            ],
+            "custom": {
+              "connect_media_truth_21": "00000000-0000-4000-8000-000000000002",
+              "media": "voice"
+            },
+            "settings_override": {
+              "limits": {
+                "max_participants": 2,
+                "max_duration_seconds": 60
+              },
+              "audio": {
+                "mic_default_on": false,
+                "default_device": "earpiece",
+                "speaker_default_on": false,
+                "access_request_enabled": false
+              },
+              "video": {
+                "enabled": false,
+                "camera_default_on": false
+              },
+              "screensharing": {
+                "enabled": false
+              },
+              "recording": {
+                "mode": "disabled"
+              },
+              "transcription": {
+                "mode": "disabled",
+                "closed_caption_mode": "disabled"
+              },
+              "broadcasting": {
+                "enabled": false
+              },
+              "ingress": {
+                "enabled": false
+              },
+              "individual_recording": {
+                "mode": "disabled"
+              },
+              "raw_recording": {
+                "mode": "disabled"
+              },
+              "frame_recording": {
+                "mode": "disabled"
+              },
+              "thumbnails": {
+                "enabled": false
+              }
+            }
+          }
+        }
+      },
+      {
+        "name": "D_media_truth_B2",
+        "type": "betweener_connect",
+        "evidence": "IMMUTABLE_MANIFEST_AND_SOURCE_RECONSTRUCTION_NO_WIRE_BODY",
+        "request": {
+          "ring": false,
+          "notify": false,
+          "data": {
+            "created_by_id": "mtb2_24_00000000-0000-4000-8000-000000000002_a",
+            "members": [
+              {
+                "user_id": "mtb2_24_00000000-0000-4000-8000-000000000002_a",
+                "role": "connect_voice"
+              },
+              {
+                "user_id": "mtb2_24_00000000-0000-4000-8000-000000000002_b",
+                "role": "connect_voice"
+              }
+            ],
+            "custom": {
+              "connect_media_truth_b2_24": "00000000-0000-4000-8000-000000000002",
+              "media": "voice"
+            },
+            "settings_override": {
+              "limits": {
+                "max_participants": 2,
+                "max_duration_seconds": 60
+              },
+              "audio": {
+                "mic_default_on": false,
+                "default_device": "earpiece",
+                "speaker_default_on": false,
+                "access_request_enabled": false
+              },
+              "video": {
+                "enabled": false,
+                "camera_default_on": false
+              },
+              "screensharing": {
+                "enabled": false
+              },
+              "recording": {
+                "mode": "disabled"
+              },
+              "transcription": {
+                "mode": "disabled",
+                "closed_caption_mode": "disabled"
+              },
+              "broadcasting": {
+                "enabled": false
+              },
+              "ingress": {
+                "enabled": false
+              },
+              "individual_recording": {
+                "mode": "disabled"
+              },
+              "raw_recording": {
+                "mode": "disabled"
+              },
+              "frame_recording": {
+                "mode": "disabled",
+                "capture_interval_in_seconds": 2
+              },
+              "thumbnails": {
+                "enabled": false
+              }
+            }
+          }
+        }
+      },
+      {
+        "name": "E_complete_resolution",
+        "type": "betweener_connect",
+        "evidence": "OFFLINE_CANDIDATE_ONLY",
+        "request": {
+          "ring": false,
+          "notify": false,
+          "data": {
+            "created_by_id": "mtb2_24_00000000-0000-4000-8000-000000000002_a",
+            "members": [
+              {
+                "user_id": "mtb2_24_00000000-0000-4000-8000-000000000002_a",
+                "role": "connect_voice"
+              },
+              {
+                "user_id": "mtb2_24_00000000-0000-4000-8000-000000000002_b",
+                "role": "connect_voice"
+              }
+            ],
+            "custom": {
+              "connect_media_truth_b2_24": "00000000-0000-4000-8000-000000000002",
+              "media": "voice"
+            },
+            "settings_override": {
+              "limits": {
+                "max_participants": 2,
+                "max_duration_seconds": 60
+              },
+              "audio": {
+                "mic_default_on": false,
+                "default_device": "earpiece",
+                "speaker_default_on": false,
+                "access_request_enabled": false
+              },
+              "video": {
+                "enabled": false,
+                "camera_default_on": false,
+                "target_resolution": {
+                  "width": 640,
+                  "height": 480,
+                  "bitrate": 600000
+                }
+              },
+              "screensharing": {
+                "enabled": false
+              },
+              "recording": {
+                "mode": "disabled"
+              },
+              "transcription": {
+                "mode": "disabled",
+                "closed_caption_mode": "disabled"
+              },
+              "broadcasting": {
+                "enabled": false
+              },
+              "ingress": {
+                "enabled": false
+              },
+              "individual_recording": {
+                "mode": "disabled"
+              },
+              "raw_recording": {
+                "mode": "disabled"
+              },
+              "frame_recording": {
+                "mode": "disabled",
+                "capture_interval_in_seconds": 2
+              },
+              "thumbnails": {
+                "enabled": false
+              }
+            }
+          }
+        }
+      },
+      {
+        "name": "F_limits_only",
+        "type": "betweener_connect",
+        "evidence": "GATED_INHERITANCE_MODEL_NOT_APPROVED_OR_PROVIDER_VERIFIED",
+        "request": {
+          "ring": false,
+          "notify": false,
+          "data": {
+            "created_by_id": "mtb2_24_00000000-0000-4000-8000-000000000002_a",
+            "members": [
+              {
+                "user_id": "mtb2_24_00000000-0000-4000-8000-000000000002_a",
+                "role": "connect_voice"
+              },
+              {
+                "user_id": "mtb2_24_00000000-0000-4000-8000-000000000002_b",
+                "role": "connect_voice"
+              }
+            ],
+            "custom": {
+              "connect_media_truth_b2_24": "00000000-0000-4000-8000-000000000002",
+              "media": "voice"
+            },
+            "settings_override": {
+              "limits": {
+                "max_participants": 2,
+                "max_duration_seconds": 60
+              }
+            }
+          }
+        }
+      }
+    ]
+  },
+  "publicSdkContract": [
+    {
+      "name": "A_live_app",
+      "sdkVersion": "0.7.63",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "name": "A_web_studio",
+      "sdkVersion": "0.7.63",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "name": "B_earlier_connect",
+      "sdkVersion": "0.7.63",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "name": "C_media_truth_B1",
+      "sdkVersion": "0.7.63",
+      "passed": false,
+      "errors": [
+        {
+          "code": 2741,
+          "message": "Property 'capture_interval_in_seconds' is missing in type '{ mode: \"disabled\"; }' but required in type 'FrameRecordingSettingsRequest'."
+        }
+      ]
+    },
+    {
+      "name": "D_media_truth_B2",
+      "sdkVersion": "0.7.63",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "name": "E_complete_resolution",
+      "sdkVersion": "0.7.63",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "name": "F_limits_only",
+      "sdkVersion": "0.7.63",
+      "passed": true,
+      "errors": []
+    }
+  ],
+  "actualPinnedSdkOfflineSerialization": {
+    "mode": "OFFLINE_SERIALIZATION_NOT_PROVIDER_VALIDATION",
+    "deno": "2.5.4",
+    "serverSdk": "0.7.63",
+    "networkPermission": "denied",
+    "credentialReadPermission": "denied",
+    "actualNetworkCalls": 0,
+    "results": [
+      {
+        "name": "A_live_app",
+        "captured": {
+          "method": "POST",
+          "path": "/api/v2/video/call/betweener_live/00000000-0000-4000-8000-000000000001",
+          "serializedBody": "{\"notify\":false,\"ring\":false,\"data\":{\"created_by_id\":\"betweener-live-system\",\"members\":[{\"user_id\":\"mtb2_24_00000000-0000-4000-8000-000000000002_a\",\"role\":\"call_member\"}],\"settings_override\":{\"limits\":{\"max_participants\":4}},\"custom\":{\"betweener_session_id\":\"00000000-0000-4000-8000-000000000001\",\"recording_allowed\":false}}}",
+          "body": {
+            "notify": false,
+            "ring": false,
+            "data": {
+              "created_by_id": "betweener-live-system",
+              "members": [
+                {
+                  "user_id": "mtb2_24_00000000-0000-4000-8000-000000000002_a",
+                  "role": "call_member"
+                }
+              ],
+              "settings_override": {
+                "limits": {
+                  "max_participants": 4
+                }
+              },
+              "custom": {
+                "betweener_session_id": "00000000-0000-4000-8000-000000000001",
+                "recording_allowed": false
+              }
+            }
+          }
+        },
+        "projected": {
+          "version": 1,
+          "status": 400,
+          "code": 4,
+          "category": "input_error",
+          "capture": "parsed",
+          "fields": [
+            "data.settings_override.video.target_resolution.width",
+            "data.settings_override.video.target_resolution.height"
+          ],
+          "ruleHints": [],
+          "textOmitted": true
+        },
+        "sdkDiagnostic": {
+          "version": 1,
+          "status": 400,
+          "code": 4,
+          "category": "input_error",
+          "capture": "parsed",
+          "fields": [
+            "data.settings_override.video.target_resolution.width"
+          ],
+          "ruleHints": [],
+          "textOmitted": true
+        }
+      },
+      {
+        "name": "A_web_studio",
+        "captured": {
+          "method": "POST",
+          "path": "/api/v2/video/call/betweener_live/00000000-0000-4000-8000-000000000001",
+          "serializedBody": "{\"notify\":false,\"ring\":false,\"data\":{\"created_by_id\":\"betweener-live-system\",\"members\":[{\"user_id\":\"studio-offline-source\",\"role\":\"call_member\"}],\"settings_override\":{\"limits\":{\"max_participants\":4}},\"custom\":{\"betweener_session_id\":\"00000000-0000-4000-8000-000000000001\",\"betweener_studio_source\":true,\"recording_allowed\":false}}}",
+          "body": {
+            "notify": false,
+            "ring": false,
+            "data": {
+              "created_by_id": "betweener-live-system",
+              "members": [
+                {
+                  "user_id": "studio-offline-source",
+                  "role": "call_member"
+                }
+              ],
+              "settings_override": {
+                "limits": {
+                  "max_participants": 4
+                }
+              },
+              "custom": {
+                "betweener_session_id": "00000000-0000-4000-8000-000000000001",
+                "betweener_studio_source": true,
+                "recording_allowed": false
+              }
+            }
+          }
+        },
+        "projected": {
+          "version": 1,
+          "status": 400,
+          "code": 4,
+          "category": "input_error",
+          "capture": "parsed",
+          "fields": [
+            "data.settings_override.video.target_resolution.width",
+            "data.settings_override.video.target_resolution.height"
+          ],
+          "ruleHints": [],
+          "textOmitted": true
+        },
+        "sdkDiagnostic": {
+          "version": 1,
+          "status": 400,
+          "code": 4,
+          "category": "input_error",
+          "capture": "parsed",
+          "fields": [
+            "data.settings_override.video.target_resolution.width"
+          ],
+          "ruleHints": [],
+          "textOmitted": true
+        }
+      },
+      {
+        "name": "B_earlier_connect",
+        "captured": {
+          "method": "POST",
+          "path": "/api/v2/video/call/betweener_connect/00000000-0000-4000-8000-000000000001",
+          "serializedBody": "{\"notify\":false,\"ring\":false,\"data\":{\"created_by_id\":\"offline_fixture_creator\",\"members\":[{\"user_id\":\"mtb2_24_00000000-0000-4000-8000-000000000002_a\",\"role\":\"connect_invited\"},{\"user_id\":\"mtb2_24_00000000-0000-4000-8000-000000000002_b\",\"role\":\"connect_invited\"}],\"custom\":{\"betweener_connect_id\":\"00000000-0000-4000-8000-000000000001\",\"media\":\"voice\",\"isolated_security_fixture\":true},\"settings_override\":{\"limits\":{\"max_participants\":2,\"max_duration_seconds\":60},\"video\":{\"enabled\":false,\"camera_default_on\":false,\"target_resolution\":{\"width\":640,\"height\":480,\"bitrate\":600000}}}}}",
+          "body": {
+            "notify": false,
+            "ring": false,
+            "data": {
+              "created_by_id": "offline_fixture_creator",
+              "members": [
+                {
+                  "user_id": "mtb2_24_00000000-0000-4000-8000-000000000002_a",
+                  "role": "connect_invited"
+                },
+                {
+                  "user_id": "mtb2_24_00000000-0000-4000-8000-000000000002_b",
+                  "role": "connect_invited"
+                }
+              ],
+              "custom": {
+                "betweener_connect_id": "00000000-0000-4000-8000-000000000001",
+                "media": "voice",
+                "isolated_security_fixture": true
+              },
+              "settings_override": {
+                "limits": {
+                  "max_participants": 2,
+                  "max_duration_seconds": 60
+                },
+                "video": {
+                  "enabled": false,
+                  "camera_default_on": false,
+                  "target_resolution": {
+                    "width": 640,
+                    "height": 480,
+                    "bitrate": 600000
+                  }
+                }
+              }
+            }
+          }
+        },
+        "projected": {
+          "version": 1,
+          "status": 400,
+          "code": 4,
+          "category": "input_error",
+          "capture": "parsed",
+          "fields": [
+            "data.settings_override.video.target_resolution.width",
+            "data.settings_override.video.target_resolution.height"
+          ],
+          "ruleHints": [],
+          "textOmitted": true
+        },
+        "sdkDiagnostic": {
+          "version": 1,
+          "status": 400,
+          "code": 4,
+          "category": "input_error",
+          "capture": "parsed",
+          "fields": [
+            "data.settings_override.video.target_resolution.width"
+          ],
+          "ruleHints": [],
+          "textOmitted": true
+        }
+      },
+      {
+        "name": "C_media_truth_B1",
+        "captured": {
+          "method": "POST",
+          "path": "/api/v2/video/call/betweener_connect/00000000-0000-4000-8000-000000000001",
+          "serializedBody": "{\"notify\":false,\"ring\":false,\"data\":{\"created_by_id\":\"mtb2_24_00000000-0000-4000-8000-000000000002_a\",\"members\":[{\"user_id\":\"mtb2_24_00000000-0000-4000-8000-000000000002_a\",\"role\":\"connect_voice\"},{\"user_id\":\"mtb2_24_00000000-0000-4000-8000-000000000002_b\",\"role\":\"connect_voice\"}],\"custom\":{\"connect_media_truth_21\":\"00000000-0000-4000-8000-000000000002\",\"media\":\"voice\"},\"settings_override\":{\"limits\":{\"max_participants\":2,\"max_duration_seconds\":60},\"audio\":{\"mic_default_on\":false,\"default_device\":\"earpiece\",\"speaker_default_on\":false,\"access_request_enabled\":false},\"video\":{\"enabled\":false,\"camera_default_on\":false},\"screensharing\":{\"enabled\":false},\"recording\":{\"mode\":\"disabled\"},\"transcription\":{\"mode\":\"disabled\",\"closed_caption_mode\":\"disabled\"},\"broadcasting\":{\"enabled\":false},\"ingress\":{\"enabled\":false},\"individual_recording\":{\"mode\":\"disabled\"},\"raw_recording\":{\"mode\":\"disabled\"},\"frame_recording\":{\"mode\":\"disabled\"},\"thumbnails\":{\"enabled\":false}}}}",
+          "body": {
+            "notify": false,
+            "ring": false,
+            "data": {
+              "created_by_id": "mtb2_24_00000000-0000-4000-8000-000000000002_a",
+              "members": [
+                {
+                  "user_id": "mtb2_24_00000000-0000-4000-8000-000000000002_a",
+                  "role": "connect_voice"
+                },
+                {
+                  "user_id": "mtb2_24_00000000-0000-4000-8000-000000000002_b",
+                  "role": "connect_voice"
+                }
+              ],
+              "custom": {
+                "connect_media_truth_21": "00000000-0000-4000-8000-000000000002",
+                "media": "voice"
+              },
+              "settings_override": {
+                "limits": {
+                  "max_participants": 2,
+                  "max_duration_seconds": 60
+                },
+                "audio": {
+                  "mic_default_on": false,
+                  "default_device": "earpiece",
+                  "speaker_default_on": false,
+                  "access_request_enabled": false
+                },
+                "video": {
+                  "enabled": false,
+                  "camera_default_on": false
+                },
+                "screensharing": {
+                  "enabled": false
+                },
+                "recording": {
+                  "mode": "disabled"
+                },
+                "transcription": {
+                  "mode": "disabled",
+                  "closed_caption_mode": "disabled"
+                },
+                "broadcasting": {
+                  "enabled": false
+                },
+                "ingress": {
+                  "enabled": false
+                },
+                "individual_recording": {
+                  "mode": "disabled"
+                },
+                "raw_recording": {
+                  "mode": "disabled"
+                },
+                "frame_recording": {
+                  "mode": "disabled"
+                },
+                "thumbnails": {
+                  "enabled": false
+                }
+              }
+            }
+          }
+        },
+        "projected": {
+          "version": 1,
+          "status": 400,
+          "code": 4,
+          "category": "input_error",
+          "capture": "parsed",
+          "fields": [
+            "data.settings_override.video.target_resolution.width",
+            "data.settings_override.video.target_resolution.height"
+          ],
+          "ruleHints": [],
+          "textOmitted": true
+        },
+        "sdkDiagnostic": {
+          "version": 1,
+          "status": 400,
+          "code": 4,
+          "category": "input_error",
+          "capture": "parsed",
+          "fields": [
+            "data.settings_override.video.target_resolution.width"
+          ],
+          "ruleHints": [],
+          "textOmitted": true
+        }
+      },
+      {
+        "name": "D_media_truth_B2",
+        "captured": {
+          "method": "POST",
+          "path": "/api/v2/video/call/betweener_connect/00000000-0000-4000-8000-000000000001",
+          "serializedBody": "{\"notify\":false,\"ring\":false,\"data\":{\"created_by_id\":\"mtb2_24_00000000-0000-4000-8000-000000000002_a\",\"members\":[{\"user_id\":\"mtb2_24_00000000-0000-4000-8000-000000000002_a\",\"role\":\"connect_voice\"},{\"user_id\":\"mtb2_24_00000000-0000-4000-8000-000000000002_b\",\"role\":\"connect_voice\"}],\"custom\":{\"connect_media_truth_b2_24\":\"00000000-0000-4000-8000-000000000002\",\"media\":\"voice\"},\"settings_override\":{\"limits\":{\"max_participants\":2,\"max_duration_seconds\":60},\"audio\":{\"mic_default_on\":false,\"default_device\":\"earpiece\",\"speaker_default_on\":false,\"access_request_enabled\":false},\"video\":{\"enabled\":false,\"camera_default_on\":false},\"screensharing\":{\"enabled\":false},\"recording\":{\"mode\":\"disabled\"},\"transcription\":{\"mode\":\"disabled\",\"closed_caption_mode\":\"disabled\"},\"broadcasting\":{\"enabled\":false},\"ingress\":{\"enabled\":false},\"individual_recording\":{\"mode\":\"disabled\"},\"raw_recording\":{\"mode\":\"disabled\"},\"frame_recording\":{\"mode\":\"disabled\",\"capture_interval_in_seconds\":2},\"thumbnails\":{\"enabled\":false}}}}",
+          "body": {
+            "notify": false,
+            "ring": false,
+            "data": {
+              "created_by_id": "mtb2_24_00000000-0000-4000-8000-000000000002_a",
+              "members": [
+                {
+                  "user_id": "mtb2_24_00000000-0000-4000-8000-000000000002_a",
+                  "role": "connect_voice"
+                },
+                {
+                  "user_id": "mtb2_24_00000000-0000-4000-8000-000000000002_b",
+                  "role": "connect_voice"
+                }
+              ],
+              "custom": {
+                "connect_media_truth_b2_24": "00000000-0000-4000-8000-000000000002",
+                "media": "voice"
+              },
+              "settings_override": {
+                "limits": {
+                  "max_participants": 2,
+                  "max_duration_seconds": 60
+                },
+                "audio": {
+                  "mic_default_on": false,
+                  "default_device": "earpiece",
+                  "speaker_default_on": false,
+                  "access_request_enabled": false
+                },
+                "video": {
+                  "enabled": false,
+                  "camera_default_on": false
+                },
+                "screensharing": {
+                  "enabled": false
+                },
+                "recording": {
+                  "mode": "disabled"
+                },
+                "transcription": {
+                  "mode": "disabled",
+                  "closed_caption_mode": "disabled"
+                },
+                "broadcasting": {
+                  "enabled": false
+                },
+                "ingress": {
+                  "enabled": false
+                },
+                "individual_recording": {
+                  "mode": "disabled"
+                },
+                "raw_recording": {
+                  "mode": "disabled"
+                },
+                "frame_recording": {
+                  "mode": "disabled",
+                  "capture_interval_in_seconds": 2
+                },
+                "thumbnails": {
+                  "enabled": false
+                }
+              }
+            }
+          }
+        },
+        "projected": {
+          "version": 1,
+          "status": 400,
+          "code": 4,
+          "category": "input_error",
+          "capture": "parsed",
+          "fields": [
+            "data.settings_override.video.target_resolution.width",
+            "data.settings_override.video.target_resolution.height"
+          ],
+          "ruleHints": [],
+          "textOmitted": true
+        },
+        "sdkDiagnostic": {
+          "version": 1,
+          "status": 400,
+          "code": 4,
+          "category": "input_error",
+          "capture": "parsed",
+          "fields": [
+            "data.settings_override.video.target_resolution.width"
+          ],
+          "ruleHints": [],
+          "textOmitted": true
+        }
+      },
+      {
+        "name": "E_complete_resolution",
+        "captured": {
+          "method": "POST",
+          "path": "/api/v2/video/call/betweener_connect/00000000-0000-4000-8000-000000000001",
+          "serializedBody": "{\"notify\":false,\"ring\":false,\"data\":{\"created_by_id\":\"mtb2_24_00000000-0000-4000-8000-000000000002_a\",\"members\":[{\"user_id\":\"mtb2_24_00000000-0000-4000-8000-000000000002_a\",\"role\":\"connect_voice\"},{\"user_id\":\"mtb2_24_00000000-0000-4000-8000-000000000002_b\",\"role\":\"connect_voice\"}],\"custom\":{\"connect_media_truth_b2_24\":\"00000000-0000-4000-8000-000000000002\",\"media\":\"voice\"},\"settings_override\":{\"limits\":{\"max_participants\":2,\"max_duration_seconds\":60},\"audio\":{\"mic_default_on\":false,\"default_device\":\"earpiece\",\"speaker_default_on\":false,\"access_request_enabled\":false},\"video\":{\"enabled\":false,\"camera_default_on\":false,\"target_resolution\":{\"width\":640,\"height\":480,\"bitrate\":600000}},\"screensharing\":{\"enabled\":false},\"recording\":{\"mode\":\"disabled\"},\"transcription\":{\"mode\":\"disabled\",\"closed_caption_mode\":\"disabled\"},\"broadcasting\":{\"enabled\":false},\"ingress\":{\"enabled\":false},\"individual_recording\":{\"mode\":\"disabled\"},\"raw_recording\":{\"mode\":\"disabled\"},\"frame_recording\":{\"mode\":\"disabled\",\"capture_interval_in_seconds\":2},\"thumbnails\":{\"enabled\":false}}}}",
+          "body": {
+            "notify": false,
+            "ring": false,
+            "data": {
+              "created_by_id": "mtb2_24_00000000-0000-4000-8000-000000000002_a",
+              "members": [
+                {
+                  "user_id": "mtb2_24_00000000-0000-4000-8000-000000000002_a",
+                  "role": "connect_voice"
+                },
+                {
+                  "user_id": "mtb2_24_00000000-0000-4000-8000-000000000002_b",
+                  "role": "connect_voice"
+                }
+              ],
+              "custom": {
+                "connect_media_truth_b2_24": "00000000-0000-4000-8000-000000000002",
+                "media": "voice"
+              },
+              "settings_override": {
+                "limits": {
+                  "max_participants": 2,
+                  "max_duration_seconds": 60
+                },
+                "audio": {
+                  "mic_default_on": false,
+                  "default_device": "earpiece",
+                  "speaker_default_on": false,
+                  "access_request_enabled": false
+                },
+                "video": {
+                  "enabled": false,
+                  "camera_default_on": false,
+                  "target_resolution": {
+                    "width": 640,
+                    "height": 480,
+                    "bitrate": 600000
+                  }
+                },
+                "screensharing": {
+                  "enabled": false
+                },
+                "recording": {
+                  "mode": "disabled"
+                },
+                "transcription": {
+                  "mode": "disabled",
+                  "closed_caption_mode": "disabled"
+                },
+                "broadcasting": {
+                  "enabled": false
+                },
+                "ingress": {
+                  "enabled": false
+                },
+                "individual_recording": {
+                  "mode": "disabled"
+                },
+                "raw_recording": {
+                  "mode": "disabled"
+                },
+                "frame_recording": {
+                  "mode": "disabled",
+                  "capture_interval_in_seconds": 2
+                },
+                "thumbnails": {
+                  "enabled": false
+                }
+              }
+            }
+          }
+        },
+        "projected": {
+          "version": 1,
+          "status": 400,
+          "code": 4,
+          "category": "input_error",
+          "capture": "parsed",
+          "fields": [
+            "data.settings_override.video.target_resolution.width",
+            "data.settings_override.video.target_resolution.height"
+          ],
+          "ruleHints": [],
+          "textOmitted": true
+        },
+        "sdkDiagnostic": {
+          "version": 1,
+          "status": 400,
+          "code": 4,
+          "category": "input_error",
+          "capture": "parsed",
+          "fields": [
+            "data.settings_override.video.target_resolution.width"
+          ],
+          "ruleHints": [],
+          "textOmitted": true
+        }
+      },
+      {
+        "name": "F_limits_only",
+        "captured": {
+          "method": "POST",
+          "path": "/api/v2/video/call/betweener_connect/00000000-0000-4000-8000-000000000001",
+          "serializedBody": "{\"notify\":false,\"ring\":false,\"data\":{\"created_by_id\":\"mtb2_24_00000000-0000-4000-8000-000000000002_a\",\"members\":[{\"user_id\":\"mtb2_24_00000000-0000-4000-8000-000000000002_a\",\"role\":\"connect_voice\"},{\"user_id\":\"mtb2_24_00000000-0000-4000-8000-000000000002_b\",\"role\":\"connect_voice\"}],\"custom\":{\"connect_media_truth_b2_24\":\"00000000-0000-4000-8000-000000000002\",\"media\":\"voice\"},\"settings_override\":{\"limits\":{\"max_participants\":2,\"max_duration_seconds\":60}}}}",
+          "body": {
+            "notify": false,
+            "ring": false,
+            "data": {
+              "created_by_id": "mtb2_24_00000000-0000-4000-8000-000000000002_a",
+              "members": [
+                {
+                  "user_id": "mtb2_24_00000000-0000-4000-8000-000000000002_a",
+                  "role": "connect_voice"
+                },
+                {
+                  "user_id": "mtb2_24_00000000-0000-4000-8000-000000000002_b",
+                  "role": "connect_voice"
+                }
+              ],
+              "custom": {
+                "connect_media_truth_b2_24": "00000000-0000-4000-8000-000000000002",
+                "media": "voice"
+              },
+              "settings_override": {
+                "limits": {
+                  "max_participants": 2,
+                  "max_duration_seconds": 60
+                }
+              }
+            }
+          }
+        },
+        "projected": {
+          "version": 1,
+          "status": 400,
+          "code": 4,
+          "category": "input_error",
+          "capture": "parsed",
+          "fields": [
+            "data.settings_override.video.target_resolution.width",
+            "data.settings_override.video.target_resolution.height"
+          ],
+          "ruleHints": [],
+          "textOmitted": true
+        },
+        "sdkDiagnostic": {
+          "version": 1,
+          "status": 400,
+          "code": 4,
+          "category": "input_error",
+          "capture": "parsed",
+          "fields": [
+            "data.settings_override.video.target_resolution.width"
+          ],
+          "ruleHints": [],
+          "textOmitted": true
+        }
+      }
+    ]
+  },
+  "conditionalInheritanceModel": {
+    "providerVerified": false,
+    "settings": {
+      "audio": {
+        "access_request_enabled": false,
+        "opus_dtx_enabled": false,
+        "redundant_coding_enabled": false,
+        "mic_default_on": false,
+        "speaker_default_on": false,
+        "default_device": "earpiece",
+        "noise_cancellation": {
+          "mode": "auto-on"
+        },
+        "hifi_audio_enabled": false
+      },
+      "video": {
+        "enabled": false,
+        "access_request_enabled": false,
+        "target_resolution": {
+          "width": 640,
+          "height": 480,
+          "bitrate": 600000
+        },
+        "camera_default_on": false,
+        "camera_facing": ""
+      },
+      "limits": {
+        "max_participants": 2,
+        "max_participants_exclude_roles": [],
+        "max_duration_seconds": 60
+      },
+      "ring": {
+        "incoming_call_timeout_ms": 45000,
+        "auto_cancel_timeout_ms": 45000,
+        "missed_call_timeout_ms": 45000
+      },
+      "session": {
+        "inactivity_timeout_seconds": 30
+      },
+      "recording": {
+        "mode": "disabled",
+        "audio_only": true
+      },
+      "transcription": {
+        "mode": "disabled",
+        "closed_caption_mode": "disabled"
+      },
+      "individual_recording": {
+        "mode": "disabled"
+      },
+      "raw_recording": {
+        "mode": "disabled"
+      },
+      "frame_recording": {
+        "mode": "disabled",
+        "quality": "720p",
+        "capture_interval_in_seconds": 3
+      },
+      "screensharing": {
+        "enabled": false,
+        "access_request_enabled": false
+      },
+      "thumbnails": {
+        "enabled": false
+      },
+      "ingress": {
+        "enabled": false
+      },
+      "broadcasting": {
+        "enabled": false,
+        "hls": {
+          "enabled": false
+        },
+        "rtmp": {
+          "enabled": false
+        }
+      }
+    },
+    "grants": {
+      "global_read_only": [],
+      "call_member": [],
+      "guest": [],
+      "connect_video": [
+        "join-call",
+        "read-call",
+        "send-audio",
+        "send-video"
+      ],
+      "admin": [],
+      "connect_voice": [
+        "join-call",
+        "read-call",
+        "send-audio"
+      ],
+      "global_admin": [],
+      "user": [],
+      "connect_invited": [
+        "read-call"
+      ]
+    }
+  },
+  "recommendation": {
+    "immediate": "E_complete_resolution",
+    "settingsDelta": {
+      "path": "data.settings_override.video.target_resolution",
+      "value": {
+        "width": 640,
+        "height": 480,
+        "bitrate": 600000
+      }
+    },
+    "conditionalFuture": "F_limits_only",
+    "conditions": [
+      "current full hardened type independently read and verified",
+      "actual effective owned-call settings independently verified before token or join",
+      "all existing roles, consent boundaries, disabled capabilities, ownership, budgets, no-retry and cleanup preserved",
+      "new closed manifest and fresh provenance",
+      "separate explicit authorization for any provider execution"
+    ],
+    "historical400RootCause": "HYPOTHESIS",
+    "candidateProviderAccepted": false
+  },
+  "liveSourceFinding": {
+    "status": "CONFIRMED_SOURCE_CONTRACT_MISMATCH_NOT_EXECUTED",
+    "caller": "supabase/functions/live-broadcast-orchestrator/index.ts:119",
+    "rpc": "rpc_service_get_live_broadcast_snapshot_v2",
+    "suppliedArgument": "p_lease_generation",
+    "definition": "supabase/migrations/20261025190010_screen_presentation_fit_v1.sql:93",
+    "definedArgument": "p_expected_lease_generation",
+    "deployedDefinitionVerified": false,
+    "notInMediaTruthRequestPath": true,
+    "staticRegressionSeparatelyExpectsOldV1Name": true
+  },
+  "validation": {
+    "newOfflineTests": {
+      "tests": 13,
+      "pass": 13,
+      "fail": 0
+    },
+    "combinedOffline": {
+      "tests": 255,
+      "pass": 255,
+      "fail": 0
+    },
+    "strictDeno": "PASS",
+    "targetedEslint": {
+      "status": "PASS",
+      "warnings": 0
+    },
+    "live": {
+      "before": {
+        "tests": 514,
+        "pass": 509,
+        "fail": 5,
+        "failures": [
+          "Live catalogue waits for real auth and reloads after auth recovery",
+          "audience Program output exposes no Studio access or private matching data",
+          "credential refresh first proves the active compositor lease",
+          "screen-only Program output follows the selected canvas and offers a focused view",
+          "standard Room Pulse keeps a curated, readable note preview"
+        ]
+      },
+      "after": {
+        "tests": 514,
+        "pass": 509,
+        "fail": 5,
+        "failures": [
+          "Live catalogue waits for real auth and reloads after auth recovery",
+          "audience Program output exposes no Studio access or private matching data",
+          "credential refresh first proves the active compositor lease",
+          "screen-only Program output follows the selected canvas and offers a focused view",
+          "standard Room Pulse keeps a curated, readable note preview"
+        ]
+      },
+      "identical": true
+    },
+    "externalNetworkCallsFromFixtures": 0,
+    "bodyCaptureCount": 7,
+    "syntheticErrorDoesNotValidateRequest": true
+  },
+  "sourceHashes": [
+    {
+      "path": "package.json",
+      "sha256": "17a8635a595d10980a00c837a2163002d69da3467c324449c9189fcdbfabe195"
+    },
+    {
+      "path": "package-lock.json",
+      "sha256": "41b835c07f1fe42fd29c9c5e7482b637228c651d4dd6f6245ca8660625a53680"
+    },
+    {
+      "path": "apps/studio/package.json",
+      "sha256": "b7a155be1e3517c3081c34be04cfa3eee149f8ac566a22e8f83b00682f0dbb65"
+    },
+    {
+      "path": "apps/program-compositor-worker/package.json",
+      "sha256": "26a3e2640e0ad8d8a7dd03182830a9f763b8b9750be31344fc760acf352378aa"
+    },
+    {
+      "path": "features/live/media/load-stream-video-sdk.ts",
+      "sha256": "3766a3127899739f681c8529a9c5111a66de823c7b12d0fa362f536180a48118"
+    },
+    {
+      "path": "features/live/media/request-live-media-admission.ts",
+      "sha256": "31bfb6d829f773021ee62369f2e111e6c5fad84cfb951ae72a4035299b025ed8"
+    },
+    {
+      "path": "features/live/media/stream-live-media-provider.ts",
+      "sha256": "13a6aca971daf104ff5da3ad5474dcdeeb3b9de35e4ee0876bf4ddf3690bf53a"
+    },
+    {
+      "path": "features/live/media/stream-video-client-leases.ts",
+      "sha256": "59ac7bc9431d5469436a1584410ead83f5c43b31d18344a79f6da278bfdb9e65"
+    },
+    {
+      "path": "features/live/media/stream-video-background-client.ts",
+      "sha256": "efda1ced4c5e6ef1ba4e4c26e2e4c42944ece1bdf9ce91780a95fb1d0524c878"
+    },
+    {
+      "path": "features/live/components/StreamLiveStage.tsx",
+      "sha256": "6970aeceda7851ba6ab60ea31ceca387fe9befba182cf70b675122f544a666e6"
+    },
+    {
+      "path": "features/live/components/LiveAuthoritativeProgramStage.tsx",
+      "sha256": "4a4939f5fed597de613de9e55e5b1edf1da989c806f88fee07a576b3d85f0f16"
+    },
+    {
+      "path": "features/live/components/LiveMusicProgramStage.tsx",
+      "sha256": "4bb0c9188133927795cc693a8f9eda223ae621c0d644dac114b72def494c0d94"
+    },
+    {
+      "path": "features/live/odo/show/expo-live-music-engine.ts",
+      "sha256": "f9a2a8a36abece1a506a30730e0296763a2c5d315229a40e49e4c7f80d1f1934"
+    },
+    {
+      "path": "features/live/application/live-repository.ts",
+      "sha256": "eb77de94ef93422ef042f5a38157944e92fe02def564a28453e3f110ee2b93c0"
+    },
+    {
+      "path": "apps/studio/src/api/studio-api.ts",
+      "sha256": "8329a60a81a93151f7f58c27304ce17ec37c0937750b543269ef5e9d3845ca4e"
+    },
+    {
+      "path": "apps/studio/src/media/studio-media-context.tsx",
+      "sha256": "724eec491e6e2292c526840244149bc48e64deff92c69f2f8bb084862b1b9a61"
+    },
+    {
+      "path": "apps/studio/src/media/StudioMediaControls.tsx",
+      "sha256": "6a6f9d1d83c1bb4ff6e4b71649946aa3ef3275d6b0b6fc54fbba061207b96780"
+    },
+    {
+      "path": "apps/studio/src/media/StudioDjSource.tsx",
+      "sha256": "9ecb7536bebe31779a104fac1be4676e782a378dd9b82ea38e90f828dd2e448d"
+    },
+    {
+      "path": "apps/studio/src/program/ProgramRenderer.tsx",
+      "sha256": "0120485707a9e724962795d6010a786a14aa79a23ed28d6edc924a0ef2dd3067"
+    },
+    {
+      "path": "apps/program-compositor-worker/renderer/CompositorApp.tsx",
+      "sha256": "8bf8df5058b7857b3057e3c5a2d1521e79be47a771f02e7200482ab06c54317d"
+    },
+    {
+      "path": "apps/program-compositor-worker/renderer/ProgramCanvas.tsx",
+      "sha256": "a620af28dea067f5aac205258e11490c56c91252085d1948fd6e340ada1a15ac"
+    },
+    {
+      "path": "apps/program-compositor-worker/src/compositor-runtime.mjs",
+      "sha256": "6c4f707dfd9e41cf16135450384158e5384941ebb0539c86c79c0a4e57430457"
+    },
+    {
+      "path": "apps/program-compositor-worker/src/worker.mjs",
+      "sha256": "41451da21fc81ac573c32f76791204f7f76fd222037e8e8dffdd48d37839fbd8"
+    },
+    {
+      "path": "supabase/functions/live-rtc-token/index.ts",
+      "sha256": "c66128b705486425051d234fe3bd1497a191ccb9cb7c2ef3b980f815dbbabcad"
+    },
+    {
+      "path": "supabase/functions/live-rtc-token/deno.json",
+      "sha256": "7306a6f3d1c2112e2d7fd2530d6b24458700c7f5581f2667feba1fae2f41692a"
+    },
+    {
+      "path": "supabase/functions/live-studio-media-token/index.ts",
+      "sha256": "c05f30515284cdf57d59159f6cbc7899600584e401cb2ae9a80cac11aa0439ce"
+    },
+    {
+      "path": "supabase/functions/live-studio-media-token/deno.json",
+      "sha256": "7306a6f3d1c2112e2d7fd2530d6b24458700c7f5581f2667feba1fae2f41692a"
+    },
+    {
+      "path": "supabase/functions/live-broadcast-orchestrator/index.ts",
+      "sha256": "d375a4f7741458a67fa5597abbb30faadb96aeae6848bd04b5aa3daccf8b3e66"
+    },
+    {
+      "path": "supabase/functions/live-broadcast-orchestrator/deno.json",
+      "sha256": "7306a6f3d1c2112e2d7fd2530d6b24458700c7f5581f2667feba1fae2f41692a"
+    },
+    {
+      "path": "supabase/functions/live-private-spark-token/index.ts",
+      "sha256": "5b1e1a0851fa85357b6cfef0c7c29e829a03a07d507d2ca3e569303b6e6dfd1c"
+    },
+    {
+      "path": "supabase/functions/live-private-spark-control/index.ts",
+      "sha256": "e0fb0c03b6f69c59a8d5befa416bb7b0e374422fd010b25750453523632e9ad9"
+    },
+    {
+      "path": "supabase/functions/live-studio-disconnect/index.ts",
+      "sha256": "97980d7557e4adbc6a220d1c0159a38c8de72434d6d5a8f03fa711b0222dd472"
+    },
+    {
+      "path": "supabase/functions/_shared/connect-edge.ts",
+      "sha256": "708101e75f9c3bfe5afe30edb9978c232fd1cbbb2ddeab7617382b290c354ff5"
+    },
+    {
+      "path": "supabase/functions/_shared/connect-stream-adapter.ts",
+      "sha256": "b5f2766343efac5606e6012cee64e5e3db8d6f26a31f1a941bc4b03e27e8da8c"
+    },
+    {
+      "path": "supabase/functions/_shared/connect-provider-worker.ts",
+      "sha256": "0d7f9d15bff6a8f72683b5dba6a50a8e9b10625ed2625bf7cadd243f611346ad"
+    },
+    {
+      "path": "supabase/functions/_shared/connect-credential-issuance.ts",
+      "sha256": "3cbec7082ae6c9c27911d63033e08106aa99221e8a25d08f9672e63d3b94ef92"
+    },
+    {
+      "path": "supabase/functions/_shared/connect-consent-revocation.ts",
+      "sha256": "7feb9b2f3b0868cca978100320a7d828a289cc783818edf016b5c578022ca82e"
+    },
+    {
+      "path": "supabase/functions/connect-credentials/index.ts",
+      "sha256": "78853fa464bf65d221a88aaa7044149ec3641c76c1038ae6d65f42b4b4a8e2fc"
+    },
+    {
+      "path": "features/connect/data/connect-repository.ts",
+      "sha256": "7984949e6657b05433fb2a393f44206b2c5d64db083a01670309a2349a3d8edd"
+    },
+    {
+      "path": "features/connect/media/stream-voice-transport.ts",
+      "sha256": "40d6f6e1b10654d01c275d53faa6d06dc8d09fc850a2857c536145be0cc1062e"
+    },
+    {
+      "path": "features/connect/voice/voice-controller.ts",
+      "sha256": "e2784a3f79b25bd6fef41939513b761540159209f3d258ffc8246e1843a0437e"
+    },
+    {
+      "path": "app/connect/voice-preview.tsx",
+      "sha256": "0ccefc6d5d35785aa2aa6b358913a9be6f572e26f8c441740afb0b0fcac81d67"
+    },
+    {
+      "path": "supabase/migrations/20260812103000_betweener_live_phase1_foundation.sql",
+      "sha256": "3de1cb6ca40d885976733432daa19cd6b2d75a4d7e8390e633d7f06a5e43644b"
+    },
+    {
+      "path": "supabase/migrations/20260909110000_live_lifecycle_completion_and_recap.sql",
+      "sha256": "b387e4e361b9baba1ecfe9b342693c79afc73695d99b690b2854ef3207bd1c19"
+    },
+    {
+      "path": "supabase/migrations/20261016165616_live_broadcast_authority_and_step_up.sql",
+      "sha256": "effa3b6d4e69dc555305fe38a13cee2247088ab8575ffcd34167f9dfcea6c7cc"
+    },
+    {
+      "path": "supabase/migrations/20261025190010_screen_presentation_fit_v1.sql",
+      "sha256": "4a142ad91b4a3444f58c5d415f8ed0b9e3ba83932b8277ae0c98a98edc4b86c8"
+    },
+    {
+      "path": "supabase/migrations/20261028074908_connect_v1_foundation.sql",
+      "sha256": "ad04646a36ff2061e48a775a43051d435744adb71315c8d67139212f52d237d7"
+    },
+    {
+      "path": "supabase/migrations/20261029081013_connect_forensic_repair_1.sql",
+      "sha256": "8fbeb7282a80d9515e2ce457413979a3279bbff69267e57c07564939bcd9a8b3"
+    },
+    {
+      "path": "scripts/lib/connect-stream-closure-worker.ts",
+      "sha256": "d3aa496fc43469fc9d120d26d85ba6857964c4da1eb9f91f91a3b3fcdfdebc67"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/request.cjs",
+      "sha256": "d3ba6734e7a0a77b804a45cc00074f068e05c1139c67839ee7e51a106ec7d554"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/provider.mts",
+      "sha256": "bcc6acd96fadfa114c8198eb063af0287bcd69448df7f40e84bc12595f276291"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/provider-diagnostics.cjs",
+      "sha256": "986c28de928034571ae0f0fd5007f0fd1bc353bd24c15db7ada4863e76c54741"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/process.cjs",
+      "sha256": "732bce2ab0100f7441a9571f0a3128f5620d5ce0ab76c4a90a7ddd05a7611ebe"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/sdk-contract.cjs",
+      "sha256": "b7e26fd4e7f4e774567227539f8aee60c180b40683677688042a7267c4501628"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/provider-process.cjs",
+      "sha256": "a653da75e27b5b43bf7f73d2f1b00bcb969260218bfb94127393f74485675888"
+    },
+    {
+      "path": "__tests__/live-phase-c2-compositor.regression.test.ts",
+      "sha256": "bf8e1059bbfa00c0f020c1add6269c95ca67c32bae7fc79dd48e6d99da2616c2"
+    },
+    {
+      "path": "__tests__/connect-live-architecture.regression.test.cjs",
+      "sha256": "e05a42c1bb06ad031162237ec8c9af2e382febcbe3959b6b543799718152154c"
+    },
+    {
+      "path": "__tests__/fixtures/connect-live-contract-sdk-offline.mts",
+      "sha256": "d58bd9d41f4fc10983b4a1d17b24d1d575a2ecf0a1ff8c861187d1ed6a537bc2"
+    }
+  ],
+  "serverSdkHashes": [
+    {
+      "path": "C:/Users/HP/AppData/Local/deno/npm/registry.npmjs.org/@stream-io/node-sdk/0.7.63/package.json",
+      "sha256": "66b60a508712735c4aa97cace512b72b857b6ac2682b9746ca3c71df4a5bb257"
+    },
+    {
+      "path": "C:/Users/HP/AppData/Local/deno/npm/registry.npmjs.org/@stream-io/node-sdk/0.7.63/src/StreamClient.ts",
+      "sha256": "e94327186537435fd784a41559042bb83afafd0e2e21c7249d284eb3c859799e"
+    },
+    {
+      "path": "C:/Users/HP/AppData/Local/deno/npm/registry.npmjs.org/@stream-io/node-sdk/0.7.63/src/ApiClient.ts",
+      "sha256": "b1fb3c2696fab5cc6fb3b5741c31ae3725bc03cc4c2a5e90386a6788f83aa53b"
+    },
+    {
+      "path": "C:/Users/HP/AppData/Local/deno/npm/registry.npmjs.org/@stream-io/node-sdk/0.7.63/src/types.ts",
+      "sha256": "e437453a3a25d779a6e2e76c084ab466a73c84072a46a473e239b05de56fdec5"
+    },
+    {
+      "path": "C:/Users/HP/AppData/Local/deno/npm/registry.npmjs.org/@stream-io/node-sdk/0.7.63/src/gen/video/CallApi.ts",
+      "sha256": "0c39d82bc25f77e4b33a9b022a8915d432a37b5fa6d77e9879694a4f89c3b62b"
+    },
+    {
+      "path": "C:/Users/HP/AppData/Local/deno/npm/registry.npmjs.org/@stream-io/node-sdk/0.7.63/src/gen/video/VideoApi.ts",
+      "sha256": "7bd0f5c0177ef0d859c5a677da0b1c5f54e8f9be2c458bc26ccd3060ce0966a6"
+    },
+    {
+      "path": "C:/Users/HP/AppData/Local/deno/npm/registry.npmjs.org/@stream-io/node-sdk/0.7.63/src/gen/models/index.ts",
+      "sha256": "6ffd91463f679fce137f6091752610d32b6c9d9013b558a492071896e5362b66"
+    },
+    {
+      "path": "C:/Users/HP/AppData/Local/deno/npm/registry.npmjs.org/@stream-io/node-sdk/0.7.63/dist/index.d.ts",
+      "sha256": "742d721c90cb7f0a9cbb9cf45873a72ef2648538e53371aeb07197fd95cee5fc"
+    }
+  ],
+  "installedClients": [
+    {
+      "name": "@stream-io/video-react-native-sdk",
+      "version": "1.46.3",
+      "path": "node_modules/@stream-io/video-react-native-sdk/package.json",
+      "sha256": "b9cf0c5d1e3f52bb3ffdb3146659501bd78b07f08ee3956754c9a545474a2e59"
+    },
+    {
+      "name": "@stream-io/video-react-sdk",
+      "version": "1.44.0",
+      "path": "node_modules/@stream-io/video-react-sdk/package.json",
+      "sha256": "deeaf1ee284644a631a88ab030eb7f09a5d0dcfc5f7ffb1bfb8c6a1f203b918c"
+    },
+    {
+      "name": "@stream-io/video-client",
+      "version": "1.62.0",
+      "path": "node_modules/@stream-io/video-client/package.json",
+      "sha256": "c781f67013c8d8158a90e0b639d7052704b03cf20c757548e1442ab212db09f7"
+    },
+    {
+      "name": "@stream-io/react-native-webrtc",
+      "version": "145.4.1",
+      "path": "node_modules/@stream-io/react-native-webrtc/package.json",
+      "sha256": "1e988986082607c56a8c00f4aa20ccb4e440b17d1615fe85cc233168ff76432e"
+    },
+    {
+      "name": "@stream-io/react-native-callingx",
+      "version": "0.11.5",
+      "path": "node_modules/@stream-io/react-native-callingx/package.json",
+      "sha256": "8a89c9ec6e8cdba81948f38e151eed41338bffde0dcea2bf6f962746a27802e8"
+    }
+  ],
+  "runtime": {
+    "node": "v24.18.0",
+    "deno": "2.5.4",
+    "serverSdk": "0.7.63"
+  },
+  "officialDocumentation": [
+    {
+      "url": "https://getstream.io/video/docs/api/calls/",
+      "usedFor": "API identity, custom types, inheritance"
+    },
+    {
+      "url": "https://getstream.io/video/docs/api/call-types/settings/",
+      "usedFor": "override nesting and documented settings constraints"
+    },
+    {
+      "url": "https://getstream.io/docs/platform/authentication/",
+      "usedFor": "identity versus authority and additive call tokens"
+    },
+    {
+      "url": "https://getstream.io/video/docs/api/call-lifecycle/",
+      "usedFor": "single-use ended ID semantics; search extraction after direct fetch timeout"
+    },
+    {
+      "url": "https://getstream.io/video/docs/react/guides/configuring-call-types/",
+      "usedFor": "current documented built-in semantics; retained app payload used for actual historical configuration"
+    }
+  ],
+  "originalSelectedOfflineReceipt": {
+    "path": "tmp/connect-live-comparison-27/contracts-G3fAgc/test-receipt.json",
+    "sha256": "3697f6f453ae569e2d48684e88f3d734387276f79642713cedaa92bc26f1f25c"
+  },
+  "offlineArtifacts": {
+    "request-matrix.json": {
+      "path": "C:/Projects/betweener-app/tmp/connect-live-comparison-27/contracts-G3fAgc/request-matrix.json",
+      "sha256": "4e8579e5b9f8ddecb07c909a9842e3ba3e15dcb190f6ec5c5b950d233fb12c2a"
+    },
+    "sdk-contracts.json": {
+      "path": "C:/Projects/betweener-app/tmp/connect-live-comparison-27/contracts-G3fAgc/sdk-contracts.json",
+      "sha256": "16ad5a627fbdd998f3f7728bd198733ee889785445cf755b278e24b4ff938cbf"
+    },
+    "inheritance-model.json": {
+      "path": "C:/Projects/betweener-app/tmp/connect-live-comparison-27/contracts-G3fAgc/inheritance-model.json",
+      "sha256": "33769a415970afee1d89ab2e226976ae780951692a3216079e1e314723ce7632"
+    },
+    "sdk-input.json": {
+      "path": "C:/Projects/betweener-app/tmp/connect-live-comparison-27/contracts-G3fAgc/sdk-input.json",
+      "sha256": "8be115f84ae61cf7fa21d2e364cc8b542cd8bb23762397d5edca9e011dd2d5d7"
+    },
+    "sdk-serialization.json": {
+      "path": "C:/Projects/betweener-app/tmp/connect-live-comparison-27/contracts-G3fAgc/sdk-serialization.json",
+      "sha256": "a3d396abc70b1dfff985abeba7ce77b47ded5ecd91ebb9ec82408dca35d10d9c"
+    }
+  },
+  "validationLogs": [
+    {
+      "path": "tmp/connect-live-comparison-27/focused.log",
+      "sha256": "1cae74658c5d855b8231808f237290201b54a827ad6a3a272a00d6b1082dfefc"
+    },
+    {
+      "path": "tmp/connect-live-comparison-27/offline-final.log",
+      "sha256": "436a12fe10e2f8359d29d89b09f0fb191e6811bf1cdc306ef476b757415f3f06"
+    },
+    {
+      "path": "tmp/connect-live-comparison-27/deno-check.log",
+      "sha256": "541409ec8d0590338c373b130fa403474415e4206e992e4666c4cad653740b6b"
+    },
+    {
+      "path": "tmp/connect-live-comparison-27/lint.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tmp/connect-live-comparison-27/live-before.log",
+      "sha256": "6854dbfe5a12518c9f0978a047542becf8abc10bcc89b46b02e42787608d078e"
+    },
+    {
+      "path": "tmp/connect-live-comparison-27/live-before-summary.json",
+      "sha256": "76d5df716830163352a0abacdf166d58ee4161cae7d6e2c562a6b1dc60f77855"
+    },
+    {
+      "path": "tmp/connect-live-comparison-27/live-after.log",
+      "sha256": "1a08aa0c7521119789f563113f7df49ec841d6e08deb0f8ba79f8b0df37096fb"
+    },
+    {
+      "path": "tmp/connect-live-comparison-27/live-after-summary.json",
+      "sha256": "76d5df716830163352a0abacdf166d58ee4161cae7d6e2c562a6b1dc60f77855"
+    }
+  ],
+  "preservation": {
+    "workspace": {
+      "baseline": {
+        "path": "tmp/connect-live-comparison-27/workspace-before.json",
+        "sha256": "9dd7834163def108fbb1bacdae3f850f0483dc1d7e6fbd4c2bca5e0db2158302"
+      },
+      "entries": 277,
+      "unchanged": 277,
+      "differences": []
+    },
+    "protected": {
+      "baseline": {
+        "path": "tmp/connect-live-comparison-27/protected-before.json",
+        "sha256": "33543bb25fe3f28594c4b19738225c04fc5721140307b8157f5a60b9ee0d9264"
+      },
+      "entries": 202,
+      "unchanged": 202,
+      "differences": []
+    }
+  },
+  "protectedEvidence": [
+    {
+      "path": "tmp/connect-boundary/provider-results.json",
+      "sha256": "8c1d82141a5c5140c94ac2b65e2b09dca42ebbe1f0f8c87b852d6dacdffa501d"
+    },
+    {
+      "path": "docs/betweener-connect/stream-staging-connect-media-truth-b2-evidence.json",
+      "sha256": "ff77e3cb8c6bb741e666925405919b027fe9f99e65458a81e942b45ed941b8ab"
+    },
+    {
+      "path": "docs/betweener-connect/stream-staging-connect-video-resolution-audit.json",
+      "sha256": "4c5682a9477f5cc5aea4204082d1d3d6dec4833fce47c1703125287ed5c05302"
+    },
+    {
+      "path": "docs/betweener-connect/stream-staging-connect-media-truth-proposal.json",
+      "sha256": "7ba4fb47c2a6008c30a19cd19e5edac35729e7165ba3b406b6d71ff86086f957"
+    },
+    {
+      "path": "docs/betweener-connect/stream-staging-connect-media-truth-b2-proposal.json",
+      "sha256": "96f72e25ccff1e5aa9d630ec3cf597103479aceb5ec7d4e91a7afbb30a9da0f1"
+    }
+  ],
+  "limitations": [
+    "No historical request bytes recovered",
+    "Earlier fixture source reconstruction has no immutable run-start hash",
+    "Fake transport and SDK types do not establish server acceptance",
+    "Model does not identify provider merge order",
+    "No current global settings or secret values read",
+    "No received-media cutoff or arbitrary revocation latency proved",
+    "No actual native Connect owner or device test",
+    "Live full suite retains five failures",
+    "Existing preparation and consumed ledgers are not renewed authorization"
+  ]
+}

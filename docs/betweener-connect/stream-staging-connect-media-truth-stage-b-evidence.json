@@ -1,0 +1,640 @@
+{
+  "schemaVersion": 1,
+  "experimentId": "connect-m2a-media-truth-21",
+  "diagnosticVerdict": "INCONCLUSIVE",
+  "executionStatus": "INCOMPLETE",
+  "approval": {
+    "explicitExecutionApproval": true,
+    "experimentId": "connect-m2a-media-truth-21",
+    "manifestSha256": "7ba4fb47c2a6008c30a19cd19e5edac35729e7165ba3b406b6d71ff86086f957",
+    "approvalId": "media-truth-stage-b-db499dbe-0c50-4458-b8a3-19f2ac5fa379",
+    "approvedBy": "project owner",
+    "approvalSource": "direct user chat re-approval after automatic review rejection",
+    "approvalQuestionItemId": "call_f1d1a61d26db40bf8ac842d6ad843911:0",
+    "approvalAnswer": "Re-approve the exact Stage B experiment",
+    "approvedAt": "2026-10-29T13:56:00.604Z",
+    "expiresAt": "2026-10-29T14:56:00.604Z",
+    "executionCount": 1,
+    "replacementExperiments": 0
+  },
+  "ownership": {
+    "version": 1,
+    "experimentId": "connect-m2a-media-truth-21",
+    "manifestSha256": "7ba4fb47c2a6008c30a19cd19e5edac35729e7165ba3b406b6d71ff86086f957",
+    "approvalId": "media-truth-stage-b-db499dbe-0c50-4458-b8a3-19f2ac5fa379",
+    "reservedAt": "2026-10-29T13:56:14.201Z",
+    "hardDeadlineUtc": "2026-10-29T13:59:14.204Z",
+    "callId": "17b3303d-3a49-4de4-b619-524e56e5610d",
+    "users": [
+      "mt21_d20e023d-bad0-4bde-82cd-26dfa7f41400_a",
+      "mt21_d20e023d-bad0-4bde-82cd-26dfa7f41400_b"
+    ],
+    "marker": "d20e023d-bad0-4bde-82cd-26dfa7f41400",
+    "preflightAbsent": true,
+    "usersAttempted": true,
+    "callAttempted": true,
+    "cleanup": {
+      "errors": []
+    },
+    "baselineHash": "12e74f5fca79a1dea2b48a8c950bbc3a2189a3ffdf9e04ccb43d28c4e4533a7e"
+  },
+  "experiment": {
+    "schemaVersion": 1,
+    "kind": "MEDIA_TRUTH",
+    "clockModel": {
+      "intervals": "Parent monotonic milliseconds; UTC is correlation only.",
+      "browserMapping": "Each IPC operation is bracketed by parent monotonic stamps. Browser performance/timeOrigin and AudioContext sample clocks are retained separately.",
+      "uncertainty": "IPC brackets bound observation time; AudioContext scheduling is not an RTP wire timestamp. Provider clock offset is UNKNOWN. No cross-host latency bound is inferred."
+    },
+    "operations": [
+      {
+        "op": "preflight",
+        "started": {
+          "mono": 3181.9916,
+          "utc": "2026-10-29T13:56:17.266Z"
+        },
+        "completed": {
+          "mono": 3405.7949,
+          "utc": "2026-10-29T13:56:17.490Z"
+        },
+        "success": true,
+        "providerTiming": {
+          "started": {
+            "mono": 2739.8739,
+            "utc": "2026-10-29T13:56:17.270Z",
+            "timeOrigin": 1793282174531.9644
+          },
+          "decodedResponseCompleted": {
+            "mono": 2958.3547,
+            "utc": "2026-10-29T13:56:17.489Z",
+            "timeOrigin": 1793282174531.9644
+          },
+          "requests": [
+            {
+              "service": "video.stream-io-api.com",
+              "route": "app_or_policy_read",
+              "method": "GET",
+              "started": {
+                "mono": 2741.6887,
+                "utc": "2026-10-29T13:56:17.272Z",
+                "timeOrigin": 1793282174531.9644
+              },
+              "responseHeaders": {
+                "mono": 2830.843,
+                "utc": "2026-10-29T13:56:17.361Z",
+                "timeOrigin": 1793282174531.9644
+              },
+              "status": 200
+            },
+            {
+              "service": "chat.stream-io-api.com",
+              "route": "fixture_users",
+              "method": "GET",
+              "started": {
+                "mono": 2832.5190000000002,
+                "utc": "2026-10-29T13:56:17.363Z",
+                "timeOrigin": 1793282174531.9644
+              },
+              "responseHeaders": {
+                "mono": 2854.665,
+                "utc": "2026-10-29T13:56:17.385Z",
+                "timeOrigin": 1793282174531.9644
+              },
+              "status": 200
+            },
+            {
+              "service": "video.stream-io-api.com",
+              "route": "owned_call",
+              "method": "GET",
+              "started": {
+                "mono": 2855.6975,
+                "utc": "2026-10-29T13:56:17.386Z",
+                "timeOrigin": 1793282174531.9644
+              },
+              "responseHeaders": {
+                "mono": 2871.274,
+                "utc": "2026-10-29T13:56:17.402Z",
+                "timeOrigin": 1793282174531.9644
+              },
+              "status": 404
+            },
+            {
+              "service": "video.stream-io-api.com",
+              "route": "app_or_policy_read",
+              "method": "GET",
+              "started": {
+                "mono": 2873.1558,
+                "utc": "2026-10-29T13:56:17.404Z",
+                "timeOrigin": 1793282174531.9644
+              },
+              "responseHeaders": {
+                "mono": 2890.8018,
+                "utc": "2026-10-29T13:56:17.421Z",
+                "timeOrigin": 1793282174531.9644
+              },
+              "status": 200
+            },
+            {
+              "service": "chat.stream-io-api.com",
+              "route": "app_or_policy_read",
+              "method": "GET",
+              "started": {
+                "mono": 2936.1611000000003,
+                "utc": "2026-10-29T13:56:17.467Z",
+                "timeOrigin": 1793282174531.9644
+              },
+              "responseHeaders": {
+                "mono": 2952.3565,
+                "utc": "2026-10-29T13:56:17.483Z",
+                "timeOrigin": 1793282174531.9644
+              },
+              "status": 200
+            }
+          ],
+          "truncated": false
+        }
+      },
+      {
+        "op": "createUsers",
+        "started": {
+          "mono": 3412.008,
+          "utc": "2026-10-29T13:56:17.496Z"
+        },
+        "completed": {
+          "mono": 3489.3937,
+          "utc": "2026-10-29T13:56:17.574Z"
+        },
+        "success": true,
+        "providerTiming": {
+          "started": {
+            "mono": 2965.9172,
+            "utc": "2026-10-29T13:56:17.496Z",
+            "timeOrigin": 1793282174531.9644
+          },
+          "decodedResponseCompleted": {
+            "mono": 3042.2457,
+            "utc": "2026-10-29T13:56:17.573Z",
+            "timeOrigin": 1793282174531.9644
+          },
+          "requests": [
+            {
+              "service": "chat.stream-io-api.com",
+              "route": "fixture_users",
+              "method": "POST",
+              "started": {
+                "mono": 2974.9927,
+                "utc": "2026-10-29T13:56:17.506Z",
+                "timeOrigin": 1793282174531.9644
+              },
+              "responseHeaders": {
+                "mono": 3017.6605,
+                "utc": "2026-10-29T13:56:17.548Z",
+                "timeOrigin": 1793282174531.9644
+              },
+              "status": 201
+            },
+            {
+              "service": "chat.stream-io-api.com",
+              "route": "fixture_users",
+              "method": "GET",
+              "started": {
+                "mono": 3018.6143,
+                "utc": "2026-10-29T13:56:17.549Z",
+                "timeOrigin": 1793282174531.9644
+              },
+              "responseHeaders": {
+                "mono": 3041.7621,
+                "utc": "2026-10-29T13:56:17.572Z",
+                "timeOrigin": 1793282174531.9644
+              },
+              "status": 200
+            }
+          ],
+          "truncated": false
+        }
+      },
+      {
+        "op": "createCall",
+        "started": {
+          "mono": 3492.2672,
+          "utc": "2026-10-29T13:56:17.577Z"
+        },
+        "completed": {
+          "mono": 3515.8291,
+          "utc": "2026-10-29T13:56:17.600Z"
+        },
+        "success": false
+      }
+    ],
+    "phases": [],
+    "errors": [
+      {
+        "reason": "child_operation_failed",
+        "detail": {
+          "status": 400,
+          "code": 4,
+          "reason": "provider_operation_failed",
+          "stage": null,
+          "providerTiming": {
+            "started": {
+              "mono": 3046.2361,
+              "utc": "2026-10-29T13:56:17.577Z",
+              "timeOrigin": 1793282174531.9644
+            },
+            "decodedResponseCompleted": {
+              "mono": 3068.0904,
+              "utc": "2026-10-29T13:56:17.599Z",
+              "timeOrigin": 1793282174531.9644
+            },
+            "requests": [
+              {
+                "service": "video.stream-io-api.com",
+                "route": "owned_call",
+                "method": "POST",
+                "started": {
+                  "mono": 3055.5634,
+                  "utc": "2026-10-29T13:56:17.586Z",
+                  "timeOrigin": 1793282174531.9644
+                },
+                "responseHeaders": {
+                  "mono": 3067.7115,
+                  "utc": "2026-10-29T13:56:17.598Z",
+                  "timeOrigin": 1793282174531.9644
+                },
+                "status": 400
+              }
+            ],
+            "truncated": false
+          }
+        }
+      }
+    ],
+    "started": {
+      "mono": 3181.6944,
+      "utc": "2026-10-29T13:56:17.266Z"
+    },
+    "peers": [],
+    "status": "INCOMPLETE",
+    "localCleanupStarted": {
+      "mono": 3516.0058,
+      "utc": "2026-10-29T13:56:17.600Z"
+    },
+    "completed": {
+      "mono": 3516.0359,
+      "utc": "2026-10-29T13:56:17.600Z"
+    },
+    "provenance": {
+      "sources": [
+        {
+          "path": "node_modules/@stream-io/video-client/package.json",
+          "sha256": "c781f67013c8d8158a90e0b639d7052704b03cf20c757548e1442ab212db09f7"
+        },
+        {
+          "path": "node_modules/@stream-io/video-client/src/gen/video/sfu/event/events.ts",
+          "sha256": "897bb7f42b5cd7d5f882ae3042c85fb24ee8e81ddeca13328c0e9402c9ae08f3"
+        },
+        {
+          "path": "node_modules/@stream-io/video-client/src/gen/video/sfu/models/models.ts",
+          "sha256": "a571cb88f11bbfe1454a0acbc5ef95f3971200b68d2842f0c2e6062dc0b297bb"
+        },
+        {
+          "path": "node_modules/@stream-io/video-client/src/gen/video/sfu/signal_rpc/signal.client.ts",
+          "sha256": "3525274034570d7268f932d6b9ca76c46e1cc72f41295c6ea5383abf664faa97"
+        },
+        {
+          "path": "node_modules/@stream-io/video-client/src/gen/video/sfu/signal_rpc/signal.ts",
+          "sha256": "59d60eaaeb80bd12e3c322a17af0faecd6ac2c1ab32f72b9ed925fac6ec8a8c9"
+        },
+        {
+          "path": "node_modules/playwright-core/package.json",
+          "sha256": "8aa1c9863fa8dea324e674254158cdc79440f4124ef2d84d38053013541cb7d6"
+        },
+        {
+          "path": "node_modules/playwright/package.json",
+          "sha256": "313d23ce667d93962d3a1ab4be80908cefe840e4d9e48f1cd5863b91f65e8e39"
+        },
+        {
+          "path": "node_modules/typescript/package.json",
+          "sha256": "9332e97c30d3e53ed54910b89207ed657fb444066484df6e5b6965bf130865e9"
+        },
+        {
+          "path": "package-lock.json",
+          "sha256": "41b835c07f1fe42fd29c9c5e7482b637228c651d4dd6f6245ca8660625a53680"
+        },
+        {
+          "path": "package.json",
+          "sha256": "17a8635a595d10980a00c837a2163002d69da3467c324449c9189fcdbfabe195"
+        },
+        {
+          "path": "scripts/lib/connect-media-truth/approval.cjs",
+          "sha256": "d4ab4531bc423aa6e7e4e13933cfb6420cd946cfdc036ffccc5dd7c706c71272"
+        },
+        {
+          "path": "scripts/lib/connect-media-truth/browser.cjs",
+          "sha256": "ce8bada270f10d8f6578edc01081a41812c4745361af110c09d95a592cd90899"
+        },
+        {
+          "path": "scripts/lib/connect-media-truth/codec.cjs",
+          "sha256": "448e15a0c72f975f160d99ab7dc697d875dca628fc6171fc809bb1453901c801"
+        },
+        {
+          "path": "scripts/lib/connect-media-truth/deno.json",
+          "sha256": "a997731a653edfcae69852c8eb51c3f2fddfc54e0150134b5ebf2b3a045f22d3"
+        },
+        {
+          "path": "scripts/lib/connect-media-truth/evidence.cjs",
+          "sha256": "b6e84dd93d16df4e1ecf12d7cb71a41005ec33a90d3c78d98c7d79f83cb1d742"
+        },
+        {
+          "path": "scripts/lib/connect-media-truth/experiment.cjs",
+          "sha256": "a33f2fdc42110944296b2507d5b2f4edcabf069163252ee6c409b273e2462f9a"
+        },
+        {
+          "path": "scripts/lib/connect-media-truth/process.cjs",
+          "sha256": "4c6877dc95a99afd57496f4c2117a35d0245bd7da9f8f200c68cca9c5d109753"
+        },
+        {
+          "path": "scripts/lib/connect-media-truth/provenance.cjs",
+          "sha256": "31e0053baefb93947220f60f9eb345a8ae79228fc625c467836438bebeb15ed9"
+        },
+        {
+          "path": "scripts/lib/connect-media-truth/provider-process.cjs",
+          "sha256": "ef0f802c7e662f1b05be8facf6ec31dca4e56cb423d211a597def308eed238a6"
+        },
+        {
+          "path": "scripts/lib/connect-media-truth/provider.mts",
+          "sha256": "3c26a00aa48d97f614f11cc2a4fc5449a3e53a460079a8624497171553d035d3"
+        },
+        {
+          "path": "scripts/lib/connect-media-truth/scope.cjs",
+          "sha256": "1209f9e52cab61966f90bf766d340dc86b7dc5403c185982ae273ce337f16fca"
+        },
+        {
+          "path": "scripts/lib/connect-media-truth/verdict.cjs",
+          "sha256": "da310d7ef131d7df75cf058f152f3cbcd7b1c5d50554ece8094ba96aa09eba2a"
+        },
+        {
+          "path": "scripts/lib/connect-media-truth/watchdog.cjs",
+          "sha256": "d0877edca1272d7cc3591257e75b96764d5f33a56c02ec41e3662bc357f5027f"
+        },
+        {
+          "path": "scripts/lib/connect-stream-audit.ts",
+          "sha256": "28bc784139f60f82bbc1759039634a83c561b9e9b849bb1ebad713bfda5ccf2b"
+        },
+        {
+          "path": "scripts/lib/connect-stream-sfu-probe.cjs",
+          "sha256": "d879de243a041b513c067677264c81da219be0bfd617469331ab47e96e6f62e2"
+        },
+        {
+          "path": "scripts/lib/connect-stream-sfu-protocol.cjs",
+          "sha256": "7eb5fd1c2fbf5239dc3e9bb271a61112fa00edf2e2ad72a194bb383809db63dc"
+        },
+        {
+          "path": "scripts/lib/connect-stream-sfu-session.cjs",
+          "sha256": "69d100aca35fb4e23b856b62b15b3a11324761ed995caf2a183210be7a527752"
+        },
+        {
+          "path": "scripts/test-connect-media-truth-local.cjs",
+          "sha256": "d1934ec86e7123e28312c5efef4e00271f5421f802ee3375f7e0a8305a8f543e"
+        },
+        {
+          "path": "scripts/test-connect-media-truth.cjs",
+          "sha256": "b334b75d898376880ccfcb15a6c10c022e64fb00ebff4d850fef7ba228bbbac4"
+        },
+        {
+          "path": "supabase/functions/_shared/connect-stream-adapter.ts",
+          "sha256": "b5f2766343efac5606e6012cee64e5e3db8d6f26a31f1a941bc4b03e27e8da8c"
+        }
+      ],
+      "sourcesUnchanged": true,
+      "manifestSha256": "7ba4fb47c2a6008c30a19cd19e5edac35729e7165ba3b406b6d71ff86086f957",
+      "node": "v24.18.0",
+      "localValidationRuntime": {
+        "node": "v24.18.0",
+        "chrome": "155.0.8059.86",
+        "playwright": "1.64.1"
+      },
+      "providerRuntime": {
+        "deno": "2.5.4",
+        "serverSdk": "0.7.63",
+        "startupRequests": [
+          {
+            "service": "chat.stream-io-api.com",
+            "route": "app_or_policy_read",
+            "method": "GET",
+            "started": {
+              "mono": 2556.4237000000003,
+              "utc": "2026-10-29T13:56:17.087Z",
+              "timeOrigin": 1793282174531.9644
+            },
+            "responseHeaders": {
+              "mono": 2722.4332,
+              "utc": "2026-10-29T13:56:17.253Z",
+              "timeOrigin": 1793282174531.9644
+            },
+            "status": 200
+          }
+        ]
+      }
+    },
+    "cleanup": {
+      "reason": "experiment-finally",
+      "started": {
+        "mono": 3373.519,
+        "utc": "2026-10-29T13:56:17.669Z"
+      },
+      "errors": [],
+      "attempts": [
+        {
+          "errors": [],
+          "callAbsent": true,
+          "usersAbsent": true,
+          "sharedUnchanged": true,
+          "afterHash": "12e74f5fca79a1dea2b48a8c950bbc3a2189a3ffdf9e04ccb43d28c4e4533a7e",
+          "diagnosticTiming": {
+            "started": {
+              "mono": 390.5633,
+              "utc": "2026-10-29T13:56:18.175Z",
+              "timeOrigin": 1793282177790.8455
+            },
+            "decodedResponseCompleted": {
+              "mono": 1249.0926,
+              "utc": "2026-10-29T13:56:19.034Z",
+              "timeOrigin": 1793282177790.8455
+            },
+            "requests": [
+              {
+                "service": "video.stream-io-api.com",
+                "route": "owned_call",
+                "method": "GET",
+                "started": {
+                  "mono": 396.1419,
+                  "utc": "2026-10-29T13:56:18.181Z",
+                  "timeOrigin": 1793282177790.8455
+                },
+                "responseHeaders": {
+                  "mono": 470.4069,
+                  "utc": "2026-10-29T13:56:18.255Z",
+                  "timeOrigin": 1793282177790.8455
+                },
+                "status": 404
+              },
+              {
+                "service": "chat.stream-io-api.com",
+                "route": "fixture_users",
+                "method": "GET",
+                "started": {
+                  "mono": 471.8869,
+                  "utc": "2026-10-29T13:56:18.256Z",
+                  "timeOrigin": 1793282177790.8455
+                },
+                "responseHeaders": {
+                  "mono": 498.2223,
+                  "utc": "2026-10-29T13:56:18.283Z",
+                  "timeOrigin": 1793282177790.8455
+                },
+                "status": 200
+              },
+              {
+                "service": "chat.stream-io-api.com",
+                "route": "fixture_users",
+                "method": "POST",
+                "started": {
+                  "mono": 499.3875,
+                  "utc": "2026-10-29T13:56:18.284Z",
+                  "timeOrigin": 1793282177790.8455
+                },
+                "responseHeaders": {
+                  "mono": 524.7099,
+                  "utc": "2026-10-29T13:56:18.309Z",
+                  "timeOrigin": 1793282177790.8455
+                },
+                "status": 201
+              },
+              {
+                "service": "chat.stream-io-api.com",
+                "route": "owned_cleanup_task",
+                "method": "GET",
+                "started": {
+                  "mono": 525.6837,
+                  "utc": "2026-10-29T13:56:18.310Z",
+                  "timeOrigin": 1793282177790.8455
+                },
+                "responseHeaders": {
+                  "mono": 557.8901,
+                  "utc": "2026-10-29T13:56:18.342Z",
+                  "timeOrigin": 1793282177790.8455
+                },
+                "status": 200
+              },
+              {
+                "service": "chat.stream-io-api.com",
+                "route": "owned_cleanup_task",
+                "method": "GET",
+                "started": {
+                  "mono": 820.5553,
+                  "utc": "2026-10-29T13:56:18.605Z",
+                  "timeOrigin": 1793282177790.8455
+                },
+                "responseHeaders": {
+                  "mono": 862.3974,
+                  "utc": "2026-10-29T13:56:18.647Z",
+                  "timeOrigin": 1793282177790.8455
+                },
+                "status": 200
+              },
+              {
+                "service": "chat.stream-io-api.com",
+                "route": "owned_cleanup_task",
+                "method": "GET",
+                "started": {
+                  "mono": 1125.7732,
+                  "utc": "2026-10-29T13:56:18.910Z",
+                  "timeOrigin": 1793282177790.8455
+                },
+                "responseHeaders": {
+                  "mono": 1157.6341,
+                  "utc": "2026-10-29T13:56:18.942Z",
+                  "timeOrigin": 1793282177790.8455
+                },
+                "status": 200
+              },
+              {
+                "service": "video.stream-io-api.com",
+                "route": "owned_call",
+                "method": "GET",
+                "started": {
+                  "mono": 1158.1195,
+                  "utc": "2026-10-29T13:56:18.943Z",
+                  "timeOrigin": 1793282177790.8455
+                },
+                "responseHeaders": {
+                  "mono": 1175.0234,
+                  "utc": "2026-10-29T13:56:18.960Z",
+                  "timeOrigin": 1793282177790.8455
+                },
+                "status": 404
+              },
+              {
+                "service": "chat.stream-io-api.com",
+                "route": "fixture_users",
+                "method": "GET",
+                "started": {
+                  "mono": 1175.5497,
+                  "utc": "2026-10-29T13:56:18.960Z",
+                  "timeOrigin": 1793282177790.8455
+                },
+                "responseHeaders": {
+                  "mono": 1191.4222,
+                  "utc": "2026-10-29T13:56:18.976Z",
+                  "timeOrigin": 1793282177790.8455
+                },
+                "status": 200
+              },
+              {
+                "service": "video.stream-io-api.com",
+                "route": "app_or_policy_read",
+                "method": "GET",
+                "started": {
+                  "mono": 1192.1674,
+                  "utc": "2026-10-29T13:56:18.977Z",
+                  "timeOrigin": 1793282177790.8455
+                },
+                "responseHeaders": {
+                  "mono": 1209.4727,
+                  "utc": "2026-10-29T13:56:18.994Z",
+                  "timeOrigin": 1793282177790.8455
+                },
+                "status": 200
+              }
+            ],
+            "truncated": false
+          }
+        }
+      ],
+      "completed": {
+        "mono": 4779.2033,
+        "utc": "2026-10-29T13:56:19.075Z"
+      }
+    }
+  },
+  "preservation": {
+    "baselineEntries": 254,
+    "baselineMismatches": [],
+    "sourceHashesUnchanged": true
+  },
+  "artifacts": [
+    {
+      "path": "tmp/connect-media-truth-execution/approval-media-truth-stage-b-db499dbe-0c50-4458-b8a3-19f2ac5fa379.json",
+      "sha256": "9b335d7f2436393c6d6799fbcc4e879d6000852ded6cb9f4e53c320ed934bf1d"
+    },
+    {
+      "path": "tmp/connect-media-truth-execution/approval-media-truth-stage-b-db499dbe-0c50-4458-b8a3-19f2ac5fa379.json.evidence.json",
+      "sha256": "7789072d1891683c8324248f7a71634aada750fddcbfd0c4bdcb9168360b9b62"
+    },
+    {
+      "path": "tmp/connect-media-truth-execution/approval-media-truth-stage-b-db499dbe-0c50-4458-b8a3-19f2ac5fa379.json.cleanup.json",
+      "sha256": "3c29d7b24c14ab192754d9ba72ef3367d8c2c496944b0630d0d700717a4bce74"
+    }
+  ]
+}

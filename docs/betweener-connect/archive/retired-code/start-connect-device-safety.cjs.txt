@@ -1,0 +1,84 @@
+#!/usr/bin/env node
+/* global __dirname */
+const fs = require('node:fs');
+const path = require('node:path');
+const net = require('node:net');
+const readline = require('node:readline');
+const { spawn, spawnSync } = require('node:child_process');
+const { PORT, inspectUsbSafety, selectUsbDevice, ensureReverse, inspectMetro, openLab, metroEnvironment, stopOwnedMetro } = require('./lib/connect-device-safety-launcher.cjs');
+const root = path.resolve(__dirname, '..');
+const run = args => spawnSync('adb', args, { encoding: 'utf8', timeout: 10000, windowsHide: true, maxBuffer: 2 * 1024 * 1024 });
+const safe = result => { const { serial: _serial, ...rest } = result; return rest; };
+
+async function main() {
+  const args = process.argv.slice(2);
+  if (args.includes('--help')) {
+    console.log('Run in your own terminal: node scripts/start-connect-device-safety.cjs\nO = inspect and open lab; R = inspect readiness; Q = stop this server.\n--check performs read-only checks only; no server, mapping or app launch. Android USB only.'); return;
+  }
+  if (args.some(x => x !== '--check')) throw Error('Unknown option. Use --help.');
+  if (args.includes('--check')) { console.log(JSON.stringify({ usb: safe(inspectUsbSafety(run)), metro: await inspectMetro() }, null, 2)); return; }
+  if (!process.stdin.isTTY) throw Error('Start this launcher in your own PowerShell window, or double-click scripts/start-connect-device-safety.cmd.');
+  const occupied = await new Promise(resolve => {
+    const server = net.createServer(); server.once('error', () => resolve(true));
+    server.listen({ host: '127.0.0.1', port: PORT, exclusive: true }, () => server.close(() => resolve(false)));
+  });
+  if (occupied) throw Error('Port 8094 is already in use. Stop the earlier lab server in its terminal, then retry. No other process was stopped.');
+  const logs = path.join(root, 'tmp', 'connect-device-launcher', new Date().toISOString().replace(/[:.]/g, '-'));
+  fs.mkdirSync(logs, { recursive: true });
+  const log = fs.createWriteStream(path.join(logs, 'metro.log'), { flags: 'wx' });
+  let busy = false, stopping = false, last = '';
+  const child = spawn(process.execPath, ['--dns-result-order=ipv4first', path.join(root, 'node_modules/expo/bin/cli'), 'start', 'harnesses/connect-device-safety', '--dev-client', '--localhost', '--port', String(PORT), '--scheme', 'betweenerstaging'], {
+    cwd: root, env: metroEnvironment(process.env), windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  child.stdout.on('data', data => { if (!stopping) log.write(data); process.stdout.write(data); });
+  child.stderr.on('data', data => { if (!stopping) log.write(data); process.stderr.write(data); });
+  console.log('\nKeep THIS window open. Keep airplane mode ON and Wi-Fi/Bluetooth OFF. USB only; no LAN/tunnel.');
+  console.log('O: check and open the lab yourself | R: check | Q: stop server. Nothing opens automatically.');
+  console.log('Opening the lab requests no sensors. Do not arm/capture until the native-module check passes.');
+  console.log('Do not reload or restart over failed/pending media cleanup; preserve evidence first.');
+  const notice = text => { if (last !== text) { last = text; console.log(`\n${text}`); } };
+  const tick = () => {
+    if (busy || stopping) return;
+    const usb = selectUsbDevice(run);
+    const mapping = usb.ready ? ensureReverse(run, usb) : usb;
+    notice(mapping.ready ? 'USB connected; localhost:8094 mapping verified. Press R for full readiness, O to inspect and open.' : mapping.reason);
+  };
+  const interval = setInterval(tick, 4000);
+  const stop = async () => {
+    if (stopping) return; stopping = true; clearInterval(interval);
+    if (process.stdin.isTTY) process.stdin.setRawMode(false);
+    process.stdin.pause();
+    // Only the child tree spawned by this launcher is stopped. Never kill by name/port.
+    const result = await stopOwnedMetro(child, pid => process.platform === 'win32'
+      ? spawnSync('taskkill.exe', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore', timeout: 10000 })
+      : { status: child.kill('SIGTERM') ? 0 : 1 }, target => new Promise(resolve => {
+        if (target.exitCode !== null) { resolve(true); return; }
+        const ended = () => { clearTimeout(timer); resolve(true); };
+        const timer = setTimeout(() => { target.removeListener('exit', ended); resolve(false); }, 5000);
+        target.once('exit', ended);
+      }));
+    log.end();
+    if (result.stopped) console.log('\nLab server stopped. No phone app was stopped; collect/complete media cleanup yourself.');
+    else {
+      console.error(`\nServer shutdown UNCONFIRMED (${result.reason}); owned Metro PID ${child.pid}. Keep the terminal open and resolve this process before restarting. No shutdown PASS is claimed.`);
+      process.exitCode = 1;
+    }
+  };
+  child.on('error', () => { console.error('Metro could not start. See local log:', logs); stop(); process.exitCode = 1; });
+  child.on('exit', code => { if (!stopping) { console.error(`Metro exited (${code}). Restart this launcher; the app must not be opened without its server.`); stop(); process.exitCode = 1; } });
+  process.once('SIGINT', stop); process.once('SIGTERM', stop);
+  readline.emitKeypressEvents(process.stdin); process.stdin.setRawMode(true); process.stdin.resume();
+  process.stdin.on('keypress', async (key, info) => {
+    key = typeof key === 'string' ? key.toLowerCase() : key;
+    if (key === 'q' || info?.ctrl && info.name === 'c') { stop(); return; }
+    if (busy || stopping || !['r', 'o'].includes(key)) return;
+    busy = true;
+    try {
+      const result = key === 'o' ? await openLab(run, inspectMetro, () => !stopping) : { usb: safe(inspectUsbSafety(run)), metro: await inspectMetro() };
+      if (!stopping) console.log(JSON.stringify(safe(result), null, 2));
+    } catch { console.error('Readiness check failed. Nothing was automatically opened.'); }
+    finally { busy = false; }
+  });
+  tick();
+}
+if (require.main === module) main().catch(error => { console.error(error.message); process.exitCode = 1; });

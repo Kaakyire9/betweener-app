@@ -1,0 +1,313 @@
+{
+  "schemaVersion": 1,
+  "scope": "M3_4_CONSOLIDATED_PROPOSAL_NOT_EXECUTION_APPROVAL",
+  "executionAuthorized": false,
+  "target": {
+    "supabase": {
+      "name": "betweener-staging",
+      "reference": "xsgzxadwuxuziubglvps",
+      "region": "eu-north-1"
+    },
+    "stream": {
+      "appId": "1731011",
+      "callType": "betweener_connect"
+    },
+    "productionAccess": false
+  },
+  "ownerScopeChange": "Other staging testers may participate; the old two-account restriction is superseded only after separate approval of the new delta and activation",
+  "frozenPackage": {
+    "path": "docs/betweener-connect/connect-v1-m3-3-staging-deployment-package.json",
+    "sha256": "4769fc763db17990a3d37018e69a4150458b0ef89e87aa5ba14fb2cd13582ed3",
+    "unchanged": true
+  },
+  "pushRecoveryAddendum": {
+    "path": "docs/betweener-connect/connect-v1-push-recovery-candidate-48.json",
+    "sha256": "49aefd612708286e99f8d85aac007b8137335aeca76a8a8684784fc6a0d12b91",
+    "unchanged": true
+  },
+  "localChanges": [
+    {
+      "path": "features/connect/voice/voice-controller.ts",
+      "sha256": "89ace0f86f34ace764b18dad7970a4b86179a70ff94d75798cf9f4d649f69903"
+    },
+    {
+      "path": "features/connect/components/ConnectIncomingNotice.tsx",
+      "sha256": "4b4bb618048ecc81eb6288b45194ca6a37d0357ae767325672c4c2aeaccac9f4"
+    },
+    {
+      "path": "app/connect/voice.tsx",
+      "sha256": "c4da9819d5abe52c8d1f3ffac96da404aeb63c3664cdb77d1468bc15948a6fdf"
+    },
+    {
+      "path": "features/connect/data/connect-repository.ts",
+      "sha256": "bf98f7caa60bd71f843b3461b8ea8c59b8cced2532190370608b5d4ba95dbe99"
+    },
+    {
+      "path": "features/connect/domain/connect.ts",
+      "sha256": "1348af7bccfd0fdd0c72c6be6b2fb5781c8cc54d895a6441149e4740a65623f0"
+    }
+  ],
+  "installationApproval": {
+    "authorised": false,
+    "providerOperations": 0,
+    "callingActivation": false,
+    "preflight": [
+      "Fresh read-only exact staging identity, migration/catalog and deployed function revision checks; halt on unexpected prefix/source drift",
+      "Names/presence-only configuration attestation; never retrieve secret values or raw secret-bearing responses",
+      "Preserve shared push delivery configuration and verify pinned forward/v26 recovery archive member hashes; review inherited legacy std type-check limitation"
+    ],
+    "orderedMigrations": [
+      {
+        "path": "supabase/migrations/20261028064220_relationship_acceptance_authority.sql",
+        "sha256": "d170a168e1e3c3d91b1d36b62bbc33bb298072586463876456cd7f2f458aff23"
+      },
+      {
+        "path": "supabase/migrations/20261028074908_connect_v1_foundation.sql",
+        "sha256": "ad04646a36ff2061e48a775a43051d435744adb71315c8d67139212f52d237d7"
+      },
+      {
+        "path": "supabase/migrations/20261028143424_connect_m2a_revocation_cleanup.sql",
+        "sha256": "25c6f3e9de7b2f75e65f854a3cbadf222d5e66cd33f41979b861af957b05528e"
+      },
+      {
+        "path": "supabase/migrations/20261029081013_connect_forensic_repair_1.sql",
+        "sha256": "8fbeb7282a80d9515e2ce457413979a3279bbff69267e57c07564939bcd9a8b3"
+      },
+      {
+        "path": "supabase/migrations/20261031035826_connect_end_block_local_foundation.sql",
+        "sha256": "77a518d539d6960ca22a8110e3eb41836ab275931ee5e19d608a97b0fd5b6b2d"
+      },
+      {
+        "path": "supabase/migrations/20261031191352_connect_m3_1_intent_and_notifications.sql",
+        "sha256": "cde57817e48dbaec274413d50cc64af3df03ed5ff11d8042f68826b73ae737e0"
+      },
+      {
+        "path": "supabase/migrations/20261101060133_connect_staging_tester_scope.sql",
+        "sha256": "eb61a4b028c3aa4548a31c776bca77ffc4f36fc0be350b7b60fa306740d64c22",
+        "status": "NEW_UNAPPROVED_FORWARD_ONLY_DELTA"
+      }
+    ],
+    "migrationMethod": "Only these seven files individually, each own transaction, catalog verification then narrow history registration for that just-applied version. No broad push, push-prerequisite replay, schema downgrade or Live history repair.",
+    "edge": [
+      {
+        "name": "connect-credentials",
+        "entrypoint": "supabase/functions/connect-credentials/index.ts",
+        "sha256": "78853fa464bf65d221a88aaa7044149ec3641c76c1038ae6d65f42b4b4a8e2fc",
+        "verifyJwt": true,
+        "requiredAuthentication": "JWT gateway plus current-user and authoritative RPC validation",
+        "deploy": [
+          "functions",
+          "deploy",
+          "connect-credentials",
+          "--project-ref",
+          "xsgzxadwuxuziubglvps",
+          "--use-api"
+        ]
+      },
+      {
+        "name": "connect-provider-worker",
+        "entrypoint": "supabase/functions/connect-provider-worker/index.ts",
+        "sha256": "d9f66367c43884d4d1d3c5ef18fba8240406bf3d899ad54e4de92c75d2d61950",
+        "verifyJwt": false,
+        "requiredAuthentication": "Dedicated x-connect-worker-secret before any backend work",
+        "deploy": [
+          "functions",
+          "deploy",
+          "connect-provider-worker",
+          "--project-ref",
+          "xsgzxadwuxuziubglvps",
+          "--use-api",
+          "--no-verify-jwt"
+        ]
+      },
+      {
+        "name": "connect-webhook",
+        "entrypoint": "supabase/functions/connect-webhook/index.ts",
+        "sha256": "de8ae199206068721a2b10dcc58bb5ac6163c32881396be92f32d4255e6d1369",
+        "verifyJwt": false,
+        "requiredAuthentication": "Bounded raw-body x-signature HMAC",
+        "deploy": [
+          "functions",
+          "deploy",
+          "connect-webhook",
+          "--project-ref",
+          "xsgzxadwuxuziubglvps",
+          "--use-api",
+          "--no-verify-jwt"
+        ]
+      },
+      {
+        "name": "connect-revoke-consent",
+        "entrypoint": "supabase/functions/connect-revoke-consent/index.ts",
+        "sha256": "e4d628882da93292e91a1b5375817f3f9448cbf1ef20c2311fffeb00569bc051",
+        "verifyJwt": true,
+        "requiredAuthentication": "JWT gateway plus current-user and authoritative RPC validation",
+        "deploy": [
+          "functions",
+          "deploy",
+          "connect-revoke-consent",
+          "--project-ref",
+          "xsgzxadwuxuziubglvps",
+          "--use-api"
+        ]
+      },
+      {
+        "name": "push-notifications",
+        "entrypoint": "supabase/functions/push-notifications/index.ts",
+        "sha256": "b5e2f0f15a86450535c32934006ef5c0c19c7fc7a3b4ec800a1cc8e5d7589d16",
+        "verifyJwt": false,
+        "requiredAuthentication": "Existing event-ID HMAC/replay and provenance fences",
+        "deploy": "Single-function deployment from reviewed Report 48 forward recovery root with --workdir; retain v26 pinned recovery root"
+      }
+    ],
+    "offState": {
+      "environment": "unconfigured (or explicitly initialise to staging only with all gates off)",
+      "enabled": false,
+      "voice_enabled": false,
+      "video_enabled": false,
+      "pre_match_enabled": false,
+      "provider_ready": false,
+      "end_block_enabled": false,
+      "notifications_enabled": false,
+      "staging_test_users": [],
+      "staging_open_testing": false,
+      "staging_calls_remaining": 0,
+      "CONNECT_NOTIFICATIONS_ENABLED": "absent/false",
+      "clientSwitches": "all false",
+      "workerSchedule": "not activated",
+      "providerWebhookRouting": "unchanged"
+    },
+    "verifyAfter": [
+      "Exact source/RPC signatures, ACL/RLS, original block guards and private push delegates",
+      "New open flag false, budget zero, empty scope, all original gates false",
+      "No calls/jobs/occupancy or Connect notification rows; no endpoint invocations or test pushes as health checks",
+      "Per-function gateway configuration; shared push source/dependency/config provenance and recovery availability"
+    ],
+    "rollback": [
+      "Stop new Connect admission; leave all calling/notification gates off, open testing false, budget zero, scope empty",
+      "Retain SQL security/terminality/outboxes and migrations; compare partial prefix before continuing; no down migration or job deletion",
+      "If shared push replacement fails, restore the pinned v26 source/dependency/config root as a new revision using the exact staging ref and single function name; preserve unrelated push configuration",
+      "During future activation, disabling flags does not disconnect existing media: explicitly end owned calls and keep cleanup workers available until verified outcomes"
+    ],
+    "stopConditions": [
+      "Wrong/unknown project identity or production target",
+      "Any frozen hash/current push revision drift",
+      "Unreviewed migration/dependency/configuration change",
+      "Accidentally enabled gate/nonempty scope or unowned pending work",
+      "Missing safe secret-name attestation or unusable shared-push recovery target"
+    ]
+  },
+  "futurePilot": {
+    "authorised": false,
+    "accountSelection": "No fixed two-account binding requested. Existing authenticated staging testers only; no account creation/enrolment or production identities",
+    "scope": "Foreground matched voice first; normal mutual-match proof, voice preference, recipient acceptance and safety checks remain mandatory",
+    "proposedCallBudget": {
+      "distinctCallsAcrossAllTesters": 4,
+      "serverEnforcement": "staging_calls_remaining; atomic INSERT budget; retries do not consume twice",
+      "proposedCases": [
+        "Two-way voice and ordinary End",
+        "Declined invitation",
+        "Missed invitation",
+        "Two-way voice and End & Block"
+      ],
+      "operatorTargetSecondsPerAnsweredCall": 60,
+      "independentRemoteCutoffGuarantee": false,
+      "budgetRefill": "new owner-approved configuration write only"
+    },
+    "proposedActivation": {
+      "environment": "staging",
+      "staging_open_testing": true,
+      "staging_calls_remaining": 4,
+      "enabled": true,
+      "voice_enabled": true,
+      "provider_ready": true,
+      "end_block_enabled": true,
+      "video_enabled": false,
+      "pre_match_enabled": false,
+      "notifications_enabled": false,
+      "staging_test_users": [],
+      "CONNECT_NOTIFICATIONS_ENABLED": "absent/false",
+      "client": "Separately reviewed staging-identity-gated ui/nativeRuntime/nativeSafetyOwner/endCallAndBlock switches; video stays false"
+    },
+    "requiredBeforeActivation": [
+      "Fresh safe Stream app 1731011/type policy and auth/permission attestation; no role changes assumed",
+      "Worker authenticated invocation, schedule/drain capacity, retry/ACK monitoring and cleanup ownership proven; no worker schedule is installed by the seven files",
+      "Connect webhook signing/routing metadata verified, or explicitly approved reconciliation fallback; do not change Live routes blindly",
+      "Existing build IDs/native APIs/permissions/signing confirmed; testers personally approve microphone access only when the pilot is authorised",
+      "Separate explicit permission for provider user upserts/call membership, at most four new call IDs, credential issuance, joins/media and scoped end/cleanup"
+    ],
+    "workerSchedulingProposal": "For later review only: one authenticated invocation every five seconds during the supervised window; secret reference must already be safely attested. Stop admission at budget/window end; retain cleanup execution for pending jobs. Cadence is not a revocation guarantee.",
+    "notificationScope": "Foreground discovery/in-app ringing initially. No live push, VoIP push, CallKit, Android Telecom or killed-app ringing is authorised."
+  },
+  "builds": {
+    "evidence": "tmp/connect-m3-4/build-compatibility.json",
+    "androidBuild": "a3d480e9-38f9-4e75-beb6-55038e91bc00",
+    "iosBuild": "43e33173-cd96-41b1-8e9e-9df6834930a8",
+    "newNativeDependencies": false,
+    "rebuildRequired": "NOT_DEMONSTRATED",
+    "integratedRuntimeCompatibility": "UNVERIFIED; prefer existing clients; no device action performed",
+    "delivery": "Existing staging development clients with root Metro and correct staging JS environment after approval; no OTA or rebuild proposed"
+  },
+  "validation": {
+    "commands": [
+      "node --no-warnings=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test __tests__/connect-m3-4-journey.regression.test.cjs __tests__/connect-product-integration.regression.test.cjs __tests__/connect-product-completion.regression.test.cjs __tests__/connect-voice-completion.regression.test.cjs __tests__/connect-voice.regression.test.ts __tests__/connect-native-owner.regression.test.cjs __tests__/connect-end-block.regression.test.cjs __tests__/connect-notification-contract.regression.test.cjs __tests__/connect-staging-preparation.regression.test.cjs",
+      "node --no-deprecation node_modules/jest/bin/jest.js --runInBand --config jest.config.js __tests__/connect-product.interaction.test.tsx __tests__/connect-intent-push.interaction.test.tsx __tests__/connect-voice.interaction.test.tsx __tests__/connect-voice-safety.interaction.test.tsx",
+      "node scripts/test-connect-voice-journey-local.cjs",
+      "node --no-warnings=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test __tests__/notification-routing.regression.test.ts __tests__/stream-live-media-provider.regression.test.ts __tests__/live-native-config.regression.test.ts (positive staging selection uses only the recorded test-process environment)",
+      "node_modules/.bin/tsc.cmd --noEmit",
+      "node_modules/.bin/eslint.cmd features/connect/voice/voice-controller.ts features/connect/domain/connect.ts features/connect/data/connect-repository.ts features/connect/components/ConnectIncomingNotice.tsx app/connect/voice.tsx __tests__/connect-product.interaction.test.tsx __tests__/connect-m3-4-journey.regression.test.cjs __tests__/fixtures/connect-journey-native.cjs scripts/test-connect-voice-journey-local.cjs",
+      "node scripts/verify-live-environment-isolation.cjs",
+      "node scripts/verify-eas-project-isolation.cjs"
+    ],
+    "connectNode": {
+      "passed": 250,
+      "failed": 0
+    },
+    "ui": {
+      "suites": 4,
+      "passed": 48,
+      "failed": 0
+    },
+    "realDisposableJourney": {
+      "passed": 13,
+      "failed": 0,
+      "uniqueRelationshipAssertions": 88
+    },
+    "stagingNotificationAndLive": {
+      "passed": 40,
+      "failed": 0,
+      "testProcessEnvironment": {
+        "EXPO_PUBLIC_ENVIRONMENT": "staging",
+        "EXPO_PUBLIC_LIVE_PRODUCT_ENABLED": "true"
+      }
+    },
+    "defaultEnvironmentRoutingRun": {
+      "passed": 37,
+      "failed": 3,
+      "unchangedSources": true,
+      "reason": "Three Live-positive expectations run outside their required staging routing gate",
+      "names": [
+        "Live campaign taps open the matching Live surface",
+        "Circle Live taps pass through the Circle membership gateway",
+        "expired delegated Host access routes back to the Live lobby"
+      ]
+    },
+    "typeScript": "PASS",
+    "lint": "PASS",
+    "liveAndEasIsolation": "PASS",
+    "realAudio": "NOT_TESTED"
+  },
+  "knownLimits": [
+    "Report 48 strict Deno 2.5.4 check has 11 legacy std HTTP type/API errors; cached Edge runtime execution passed; no dependency change here",
+    "Last hosted parity evidence is Report 45, not a current hosted attestation",
+    "No real two-way voice, hardware shutdown, real push or hostile-peer revocation bound has been verified"
+  ],
+  "gates": {
+    "M2A": "BLOCKED",
+    "M2B": "BLOCKED",
+    "remoteRevocation": "UNVERIFIED",
+    "productionCalling": "DISABLED",
+    "stagingModifications": "NONE",
+    "productionModifications": "NONE"
+  }
+}

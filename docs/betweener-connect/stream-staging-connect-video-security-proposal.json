@@ -1,0 +1,58 @@
+{
+  "status": "PROPOSED_NOT_APPLIED",
+  "target": { "app_id": 1731011, "app_name": "Betweener Staging" },
+  "purpose": "Positive VIDEO policy security control only; does not authorize M2B or resolve the outage revocation failure",
+  "maximum_test_users": 3,
+  "maximum_test_calls": 1,
+  "test_user_ids": [
+    "f0110000-0000-4000-8000-000000000007",
+    "f0110000-0000-4000-8000-000000000008",
+    "f0110000-0000-4000-8000-000000000009"
+  ],
+  "preconditions": [
+    "Verify app identity, checks and exact approved call-type policy",
+    "Abort if any fixture ID exists without ownership evidence from this test run",
+    "In a disposable local database only, obtain independent recipient VIDEO consent and authenticated acceptance",
+    "Keep all shared and production feature flags disabled"
+  ],
+  "server_create_call": {
+    "type": "betweener_connect",
+    "id": "FRESH_SERVER_GENERATED_UUID_V4",
+    "ring": false,
+    "notify": false,
+    "data": {
+      "created_by_id": "f0110000-0000-4000-8000-000000000009",
+      "members": [
+        { "user_id": "f0110000-0000-4000-8000-000000000007", "role": "connect_invited" },
+        { "user_id": "f0110000-0000-4000-8000-000000000008", "role": "connect_invited" }
+      ],
+      "custom": { "media": "video", "isolated_security_fixture": true, "betweener_connect_id": "SAME_SERVER_UUID" },
+      "settings_override": {
+        "video": { "enabled": true, "camera_default_on": false, "access_request_enabled": false, "target_resolution": { "width": 640, "height": 480, "bitrate": 600000 } },
+        "screensharing": { "enabled": false, "access_request_enabled": false },
+        "limits": { "max_participants": 2 }
+      }
+    }
+  },
+  "after_verified_acceptance_only": {
+    "update_members": [
+      { "user_id": "f0110000-0000-4000-8000-000000000007", "role": "connect_video" },
+      { "user_id": "f0110000-0000-4000-8000-000000000008", "role": "connect_video" }
+    ]
+  },
+  "security_checks": [
+    "Synthetic audio/video publishing succeeds with positive SFU and transport evidence",
+    "Screen-share publication remains explicitly denied by the SFU",
+    "No recording, transcription, broadcasting or privileged participant-management capability appears",
+    "Voice-only local grants still deny VIDEO admission"
+  ],
+  "excluded_changes": [
+    "No call-type definition changes", "No role definition or global grant changes", "No Live changes",
+    "No real user or existing call mutations", "No shared database writes or deployments", "No application calling feature enablement"
+  ],
+  "rollback": [
+    "End and hard-delete the exact fixture call",
+    "Hard-delete only the owned fixture identities and verify exact-ID absence",
+    "Drop the disposable local database and confirm unchanged provider call-type digest"
+  ]
+}

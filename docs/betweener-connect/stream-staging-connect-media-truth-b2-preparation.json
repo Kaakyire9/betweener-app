@@ -1,0 +1,559 @@
+{
+  "schemaVersion": 1,
+  "experimentId": "connect-m2a-media-truth-b2-24",
+  "stage": "B2_OFFLINE_ONLY",
+  "preparedAt": "2026-10-29T15:12:15.059Z",
+  "providerTestPrepared": "PASS",
+  "providerTestExecuted": false,
+  "manifestSha256": "96f72e25ccff1e5aa9d630ec3cf597103479aceb5ec7d4e91a7afbb30a9da0f1",
+  "runtime": {
+    "node": "v24.18.0",
+    "chrome": "155.0.8059.86",
+    "playwright": "1.64.1",
+    "deno": "2.5.4",
+    "serverSdk": "0.7.63",
+    "videoClient": "1.62.0"
+  },
+  "requestContract": {
+    "sdkVersion": "0.7.63",
+    "passed": true,
+    "errors": [],
+    "schemaVersion": 2,
+    "requestSha256": "4cc3c5e123b5bbdddfbcc65a804d62d3963b3d3377effaa138ef3abff0bc2a20",
+    "request": {
+      "ring": false,
+      "notify": false,
+      "data": {
+        "created_by_id": "mtb2_24_00000000-0000-4000-8000-000000000002_a",
+        "members": [
+          {
+            "user_id": "mtb2_24_00000000-0000-4000-8000-000000000002_a",
+            "role": "connect_voice"
+          },
+          {
+            "user_id": "mtb2_24_00000000-0000-4000-8000-000000000002_b",
+            "role": "connect_voice"
+          }
+        ],
+        "custom": {
+          "connect_media_truth_b2_24": "00000000-0000-4000-8000-000000000002",
+          "media": "voice"
+        },
+        "settings_override": {
+          "limits": {
+            "max_participants": 2,
+            "max_duration_seconds": 60
+          },
+          "audio": {
+            "mic_default_on": false,
+            "default_device": "earpiece",
+            "speaker_default_on": false,
+            "access_request_enabled": false
+          },
+          "video": {
+            "enabled": false,
+            "camera_default_on": false
+          },
+          "screensharing": {
+            "enabled": false
+          },
+          "recording": {
+            "mode": "disabled"
+          },
+          "transcription": {
+            "mode": "disabled",
+            "closed_caption_mode": "disabled"
+          },
+          "broadcasting": {
+            "enabled": false
+          },
+          "ingress": {
+            "enabled": false
+          },
+          "individual_recording": {
+            "mode": "disabled"
+          },
+          "raw_recording": {
+            "mode": "disabled"
+          },
+          "frame_recording": {
+            "mode": "disabled",
+            "capture_interval_in_seconds": 2
+          },
+          "thumbnails": {
+            "enabled": false
+          }
+        }
+      }
+    }
+  },
+  "sources": [
+    {
+      "path": "C:/Users/HP/AppData/Local/deno/npm/registry.npmjs.org/@stream-io/node-sdk/0.7.63/dist/index.d.ts",
+      "sha256": "742d721c90cb7f0a9cbb9cf45873a72ef2648538e53371aeb07197fd95cee5fc"
+    },
+    {
+      "path": "C:/Users/HP/AppData/Local/deno/npm/registry.npmjs.org/@stream-io/node-sdk/0.7.63/dist/index.es.mjs",
+      "sha256": "2acf8963f85743533079c79cb8e6cd3d1844efb9262c1feea055236e73868235"
+    },
+    {
+      "path": "C:/Users/HP/AppData/Local/deno/npm/registry.npmjs.org/@stream-io/node-sdk/0.7.63/package.json",
+      "sha256": "66b60a508712735c4aa97cace512b72b857b6ac2682b9746ca3c71df4a5bb257"
+    },
+    {
+      "path": "C:/Users/HP/AppData/Local/deno/npm/registry.npmjs.org/@stream-io/node-sdk/0.7.63/src/ApiClient.ts",
+      "sha256": "b1fb3c2696fab5cc6fb3b5741c31ae3725bc03cc4c2a5e90386a6788f83aa53b"
+    },
+    {
+      "path": "C:/Users/HP/AppData/Local/deno/npm/registry.npmjs.org/@stream-io/node-sdk/0.7.63/src/gen/models/index.ts",
+      "sha256": "6ffd91463f679fce137f6091752610d32b6c9d9013b558a492071896e5362b66"
+    },
+    {
+      "path": "C:/Users/HP/AppData/Local/deno/npm/registry.npmjs.org/@stream-io/node-sdk/0.7.63/src/gen/video/CallApi.ts",
+      "sha256": "0c39d82bc25f77e4b33a9b022a8915d432a37b5fa6d77e9879694a4f89c3b62b"
+    },
+    {
+      "path": "C:/Users/HP/AppData/Local/deno/npm/registry.npmjs.org/@stream-io/node-sdk/0.7.63/src/gen/video/VideoApi.ts",
+      "sha256": "7bd0f5c0177ef0d859c5a677da0b1c5f54e8f9be2c458bc26ccd3060ce0966a6"
+    },
+    {
+      "path": "C:/Users/HP/AppData/Local/deno/npm/registry.npmjs.org/@stream-io/node-sdk/0.7.63/src/types.ts",
+      "sha256": "e437453a3a25d779a6e2e76c084ab466a73c84072a46a473e239b05de56fdec5"
+    },
+    {
+      "path": "C:\\Projects\\betweener-app\\docs\\betweener-connect\\stream-staging-connect-media-truth-b2-proposal.json",
+      "sha256": "96f72e25ccff1e5aa9d630ec3cf597103479aceb5ec7d4e91a7afbb30a9da0f1"
+    },
+    {
+      "path": "C:\\Projects\\betweener-app\\docs\\betweener-connect\\stream-staging-connect-media-truth-proposal.json",
+      "sha256": "7ba4fb47c2a6008c30a19cd19e5edac35729e7165ba3b406b6d71ff86086f957"
+    },
+    {
+      "path": "__tests__/connect-call-creation-400.regression.test.cjs",
+      "sha256": "ab5c8653d149c7083bd088e38d79c9dbf83f0b060e32c7544fd62f8637fdbf07"
+    },
+    {
+      "path": "__tests__/connect-consent-revocation.regression.test.ts",
+      "sha256": "1d4488d1b61fe14c49b6789179f1660b77bc5f4ebff8f125982bc7a5035b25e0"
+    },
+    {
+      "path": "__tests__/connect-credential-issuance.regression.test.ts",
+      "sha256": "87c75c41310b9db4843a3955ca733a2d91d9f5c0cc62452a2667f6436b269869"
+    },
+    {
+      "path": "__tests__/connect-foundation.regression.test.ts",
+      "sha256": "6c2e84bb984b316b41da0e0a75823d72d647ffc897c5ccb3906c3c4b1d39360b"
+    },
+    {
+      "path": "__tests__/connect-media-truth-b2.regression.test.cjs",
+      "sha256": "99c9a1c24f1f6c4da780cbf2192d6049fc627df9b933b00a17e71e0a7f867ed5"
+    },
+    {
+      "path": "__tests__/connect-media-truth-runner.regression.test.cjs",
+      "sha256": "cc4199f84f39d24647f8d82f1d9695e522f19908a6da422b2f13b390f7e96696"
+    },
+    {
+      "path": "__tests__/connect-media-truth.regression.test.cjs",
+      "sha256": "476993f5c9f9e8f5d55e5828da261b0e438fc4d4816b7ef28725ded4f31dc780"
+    },
+    {
+      "path": "__tests__/connect-provider-diagnostics.regression.test.cjs",
+      "sha256": "003f51b99bd1d9f73140cc93fc33ad3d162bd25066ed452ad07dbf53eed6192e"
+    },
+    {
+      "path": "__tests__/connect-provider-observation.regression.test.ts",
+      "sha256": "e294e573a8720a2074eab0927b28fd84437f32eef0ab7043844ceaf96240cfde"
+    },
+    {
+      "path": "__tests__/connect-revocation-boundary.regression.test.cjs",
+      "sha256": "8f6d65552670c673d91e4530f6840b14d97bc0a1f3d0f5f334f74a8762dbde93"
+    },
+    {
+      "path": "__tests__/connect-security-closure.regression.test.ts",
+      "sha256": "ccdf5e32483128aa04e27b0e64632a35e2e745561a0266c094e8dce5c2cae953"
+    },
+    {
+      "path": "__tests__/connect-stream-evidence.regression.test.ts",
+      "sha256": "eba13502720a166b7e28c47e1c398ddb3263db9233ab731bfad8a9ba4852afbd"
+    },
+    {
+      "path": "__tests__/connect-voice.regression.test.ts",
+      "sha256": "e09cbaec83ad6753e30fcb939c0a21a64fcf66866cd7517b4b346148903b5854"
+    },
+    {
+      "path": "__tests__/fixtures/connect-call-creation-sdk-offline.mts",
+      "sha256": "03c89ab6bcd2fa8f6d4b7b0273f127588bccb5b65dcf5836dfc183a1b4ac83bb"
+    },
+    {
+      "path": "__tests__/relationship-commands.regression.test.ts",
+      "sha256": "bc2c5d0a6f41df3aaffd62713fef93dbb9928fdc8aab5e11688cb86050e95887"
+    },
+    {
+      "path": "node_modules/@stream-io/video-client/package.json",
+      "sha256": "c781f67013c8d8158a90e0b639d7052704b03cf20c757548e1442ab212db09f7"
+    },
+    {
+      "path": "node_modules/@stream-io/video-client/src/gen/video/sfu/event/events.ts",
+      "sha256": "897bb7f42b5cd7d5f882ae3042c85fb24ee8e81ddeca13328c0e9402c9ae08f3"
+    },
+    {
+      "path": "node_modules/@stream-io/video-client/src/gen/video/sfu/models/models.ts",
+      "sha256": "a571cb88f11bbfe1454a0acbc5ef95f3971200b68d2842f0c2e6062dc0b297bb"
+    },
+    {
+      "path": "node_modules/@stream-io/video-client/src/gen/video/sfu/signal_rpc/signal.client.ts",
+      "sha256": "3525274034570d7268f932d6b9ca76c46e1cc72f41295c6ea5383abf664faa97"
+    },
+    {
+      "path": "node_modules/@stream-io/video-client/src/gen/video/sfu/signal_rpc/signal.ts",
+      "sha256": "59d60eaaeb80bd12e3c322a17af0faecd6ac2c1ab32f72b9ed925fac6ec8a8c9"
+    },
+    {
+      "path": "node_modules/playwright-core/package.json",
+      "sha256": "8aa1c9863fa8dea324e674254158cdc79440f4124ef2d84d38053013541cb7d6"
+    },
+    {
+      "path": "node_modules/playwright/package.json",
+      "sha256": "313d23ce667d93962d3a1ab4be80908cefe840e4d9e48f1cd5863b91f65e8e39"
+    },
+    {
+      "path": "node_modules/typescript/package.json",
+      "sha256": "9332e97c30d3e53ed54910b89207ed657fb444066484df6e5b6965bf130865e9"
+    },
+    {
+      "path": "package-lock.json",
+      "sha256": "41b835c07f1fe42fd29c9c5e7482b637228c651d4dd6f6245ca8660625a53680"
+    },
+    {
+      "path": "package.json",
+      "sha256": "17a8635a595d10980a00c837a2163002d69da3467c324449c9189fcdbfabe195"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/approval.cjs",
+      "sha256": "f5a28d7dd47643a046771bf032bb754fd64822c8d4ca798dfaf26fb61c02df32"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/browser.cjs",
+      "sha256": "ce8bada270f10d8f6578edc01081a41812c4745361af110c09d95a592cd90899"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/codec.cjs",
+      "sha256": "448e15a0c72f975f160d99ab7dc697d875dca628fc6171fc809bb1453901c801"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/deno.json",
+      "sha256": "a997731a653edfcae69852c8eb51c3f2fddfc54e0150134b5ebf2b3a045f22d3"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/evidence.cjs",
+      "sha256": "b6e84dd93d16df4e1ecf12d7cb71a41005ec33a90d3c78d98c7d79f83cb1d742"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/experiment.cjs",
+      "sha256": "a33f2fdc42110944296b2507d5b2f4edcabf069163252ee6c409b273e2462f9a"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/process.cjs",
+      "sha256": "732bce2ab0100f7441a9571f0a3128f5620d5ce0ab76c4a90a7ddd05a7611ebe"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/profiles.cjs",
+      "sha256": "cd36e327e2b708f86bf498b5300298fa74720a1d4d9992cb022be7be0b407216"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/provenance.cjs",
+      "sha256": "93912f1bf5236d40b6c4bca44bb3a909dea24df1cdfbd02f024aee7425be4601"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/provider-diagnostics.cjs",
+      "sha256": "986c28de928034571ae0f0fd5007f0fd1bc353bd24c15db7ada4863e76c54741"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/provider-process.cjs",
+      "sha256": "a653da75e27b5b43bf7f73d2f1b00bcb969260218bfb94127393f74485675888"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/provider.mts",
+      "sha256": "bcc6acd96fadfa114c8198eb063af0287bcd69448df7f40e84bc12595f276291"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/request.cjs",
+      "sha256": "d3ba6734e7a0a77b804a45cc00074f068e05c1139c67839ee7e51a106ec7d554"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/scope.cjs",
+      "sha256": "d9858fd07d22d95c201682ede81ea038859cc251c8a961fcd7b88f65db7166ee"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/sdk-contract.cjs",
+      "sha256": "b7e26fd4e7f4e774567227539f8aee60c180b40683677688042a7267c4501628"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/verdict.cjs",
+      "sha256": "da310d7ef131d7df75cf058f152f3cbcd7b1c5d50554ece8094ba96aa09eba2a"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/watchdog.cjs",
+      "sha256": "0d376989dff420d748c24ce90c9f88a52d72191d34107ea377e126179eeb253b"
+    },
+    {
+      "path": "scripts/lib/connect-stream-audit.ts",
+      "sha256": "28bc784139f60f82bbc1759039634a83c561b9e9b849bb1ebad713bfda5ccf2b"
+    },
+    {
+      "path": "scripts/lib/connect-stream-sfu-probe.cjs",
+      "sha256": "d879de243a041b513c067677264c81da219be0bfd617469331ab47e96e6f62e2"
+    },
+    {
+      "path": "scripts/lib/connect-stream-sfu-protocol.cjs",
+      "sha256": "7eb5fd1c2fbf5239dc3e9bb271a61112fa00edf2e2ad72a194bb383809db63dc"
+    },
+    {
+      "path": "scripts/lib/connect-stream-sfu-session.cjs",
+      "sha256": "69d100aca35fb4e23b856b62b15b3a11324761ed995caf2a183210be7a527752"
+    },
+    {
+      "path": "scripts/test-connect-media-truth-b2.cjs",
+      "sha256": "837d0ef407e5e3060ec455de52555c0de942490dd77cc23adea8f217aecea2f7"
+    },
+    {
+      "path": "scripts/test-connect-media-truth-local.cjs",
+      "sha256": "1d821d405442b72498bab9b28ac3780750a43f88777e55230b049fc1318eb6f6"
+    },
+    {
+      "path": "scripts/test-connect-media-truth.cjs",
+      "sha256": "3c35e8b28192e22da86d416e00cd2367a5b64d2eeb106b12889ca992547d0103"
+    },
+    {
+      "path": "scripts/validate-connect-media-truth-b2.cjs",
+      "sha256": "7ee89f1607362a49fc057a19715e70c58fe98ca3b7a2c2c0d29f3d5574fb6e4b"
+    },
+    {
+      "path": "supabase/functions/_shared/connect-stream-adapter.ts",
+      "sha256": "b5f2766343efac5606e6012cee64e5e3db8d6f26a31f1a941bc4b03e27e8da8c"
+    }
+  ],
+  "validation": {
+    "offlineTests": {
+      "pass": 229,
+      "total": 229
+    },
+    "b2Regressions": 36,
+    "priorDiagnosticAndRequestRegressions": 21,
+    "earlierConnectMediaRelationshipRegressions": 172,
+    "sdkSerialization": {
+      "path": "tmp/connect-media-truth-b2-preparation/regression-U3MjOA/sdk-control/result.json",
+      "networkDenied": true,
+      "syntheticResponse": true,
+      "actualNetworkCalls": 0,
+      "builderRuntime": "Deno and Node shared implementation"
+    },
+    "typescript": "PASS",
+    "deno": {
+      "entrypoints": 2,
+      "status": "PASS",
+      "execution": false
+    },
+    "lint": {
+      "status": "PASS",
+      "warnings": 0
+    },
+    "live": {
+      "comparison": "UNCHANGED",
+      "before": {
+        "tests": 508,
+        "pass": 504,
+        "fail": 4,
+        "failures": [
+          "Live catalogue waits for real auth and reloads after auth recovery",
+          "audience Program output exposes no Studio access or private matching data",
+          "screen-only Program output follows the selected canvas and offers a focused view",
+          "standard Room Pulse keeps a curated, readable note preview"
+        ]
+      },
+      "after": {
+        "tests": 508,
+        "pass": 504,
+        "fail": 4,
+        "failures": [
+          "Live catalogue waits for real auth and reloads after auth recovery",
+          "audience Program output exposes no Studio access or private matching data",
+          "screen-only Program output follows the selected canvas and offers a focused view",
+          "standard Room Pulse keeps a curated, readable note preview"
+        ]
+      }
+    },
+    "liveEnvironmentIsolation": "PASS",
+    "easProjectIsolation": "PASS"
+  },
+  "localControls": {
+    "selectedAttempt": 2,
+    "attempts": [
+      {
+        "path": "tmp/connect-media-truth-b2-preparation/local-control-1/local-browser-results.json",
+        "status": "INCOMPLETE",
+        "error": "local_decode_timeout",
+        "checks": [
+          "bidirectional_blind_opus_calibration",
+          "fresh_post_trigger_nonce_decoded_both_directions",
+          "wrong_nonce_rejected",
+          "previous_audio_during_delivery_delay_rejected"
+        ],
+        "runtime": {
+          "node": "v24.18.0",
+          "chrome": "155.0.8059.86",
+          "playwright": "1.64.1"
+        },
+        "sourcesUnchangedDuringRun": true,
+        "sourceInventoryCurrent": false,
+        "sampleCount": 79,
+        "delayedDetection": null,
+        "meaning": "Local synthetic WebRTC/Opus only; not provider enforcement evidence"
+      },
+      {
+        "path": "tmp/connect-media-truth-b2-preparation/local-control-2/local-browser-results.json",
+        "status": "COMPLETE",
+        "error": null,
+        "checks": [
+          "bidirectional_blind_opus_calibration",
+          "fresh_post_trigger_nonce_decoded_both_directions",
+          "wrong_nonce_rejected",
+          "previous_audio_during_delivery_delay_rejected",
+          "delayed_fresh_nonce_decoded_both_directions"
+        ],
+        "runtime": {
+          "node": "v24.18.0",
+          "chrome": "155.0.8059.86",
+          "playwright": "1.64.1"
+        },
+        "sourcesUnchangedDuringRun": true,
+        "sourceInventoryCurrent": true,
+        "sampleCount": 63,
+        "delayedDetection": {
+          "completed": {
+            "mono": 21198.3879,
+            "utc": "2026-10-29T15:08:25.334Z"
+          },
+          "fromTriggerMs": 5420.518100000001
+        },
+        "meaning": "Local synthetic WebRTC/Opus only; not provider enforcement evidence"
+      }
+    ],
+    "thresholdsAndMediaImplementationUnchanged": true
+  },
+  "approval": {
+    "required": true,
+    "granted": false,
+    "idPrefix": "media-truth-b2-24-",
+    "maximumValidityMs": 86400000,
+    "executionCount": 1,
+    "replacementExperiments": 0
+  },
+  "ownership": {
+    "experimentId": "connect-m2a-media-truth-b2-24",
+    "executionDirectory": "tmp/connect-media-truth-b2-execution",
+    "experimentSingleUseLock": "experiment-once.json",
+    "executionDirectoryExists": false,
+    "callCustomMarker": "connect_media_truth_b2_24",
+    "userPrefix": "mtb2_24_",
+    "resourcesReserved": false,
+    "previousConsumedLedgerUnchanged": true,
+    "namespaceIndependentOfLegacy": true
+  },
+  "artifacts": [
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/request-contract-final.json",
+      "sha256": "0d7a9dcbf8158b14518c8fb0332945dd44dc176ab9d65b1644e37b33564c48d1"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/offline-preservation-final.log",
+      "sha256": "12902de34106d6eea9abdabba2d3aa9270f962f1ca9cd9727049d7ed410633ec"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/deno-final.log",
+      "sha256": "bc07f8f71d78ba2cc9b1e81a1f5ae9f369b971f7d4fb96415e2447c0e8e7153e"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/typescript.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/lint-frozen.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/lint-preservation-final.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/live-regressions.log",
+      "sha256": "d7d844fec80586ce0b5d570ab0bb94acc01e2fdc64b805874d1b11bfa213e52f"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/live-comparison.json",
+      "sha256": "b921b220fd747400a3510dff0207cadc87c761af6d56b97e622efa0ba30f0e6d"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/live-isolation.log",
+      "sha256": "c591aeb9527d711e73db02404a395f2337ff76a8e9b5c7a9070ed1095da50d59"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/eas-isolation.log",
+      "sha256": "51c388bc706ad4212becf21dffb83f8855139b558391aca427225d7896934959"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/local-control-1.log",
+      "sha256": "df2b474a7be814f8c580e8113f5c278727df006e6646b08c32a1cc5977e6944a"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/local-control-2.log",
+      "sha256": "a04fd725274ef883413df25e327eae32f3f2ddfe275669824bdf3b552265dde1"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/local-control-1/local-browser-results.json",
+      "sha256": "88247da8c6bf8b705fe1016d58a16eb7e16928ff58f8a761a154cd48a966bacf"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/local-control-2/local-browser-results.json",
+      "sha256": "4ec23e3e5ffa24ff353219ccd39aeab20f87d9f155c1cbc4ec808c0453b29ca4"
+    },
+    {
+      "path": "tmp/connect-media-truth-b2-preparation/regression-U3MjOA/sdk-control/result.json",
+      "sha256": "f8b84d431aeb25e3b07ecfede1cda09877d997894545bdc59518b2d2085e6ca7"
+    }
+  ],
+  "preservation": {
+    "baselineEntries": 262,
+    "changedExisting": [
+      "__tests__/connect-call-creation-400.regression.test.cjs",
+      "__tests__/fixtures/connect-call-creation-sdk-offline.mts",
+      "scripts/lib/connect-media-truth/approval.cjs",
+      "scripts/lib/connect-media-truth/process.cjs",
+      "scripts/lib/connect-media-truth/provenance.cjs",
+      "scripts/lib/connect-media-truth/provider-diagnostics.cjs",
+      "scripts/lib/connect-media-truth/provider-process.cjs",
+      "scripts/lib/connect-media-truth/provider.mts",
+      "scripts/lib/connect-media-truth/scope.cjs",
+      "scripts/lib/connect-media-truth/watchdog.cjs",
+      "scripts/test-connect-media-truth-local.cjs",
+      "scripts/test-connect-media-truth.cjs"
+    ],
+    "unchangedEntries": 250,
+    "protectedEntries": 77,
+    "protectedMismatches": [],
+    "historicalReceiptsOverwritten": false
+  },
+  "limits": {
+    "providerApiRuntimeVerified": false,
+    "serverSemanticAcceptanceVerified": false,
+    "historicalHttp400RootCause": "HYPOTHESIS",
+    "providerClockOffset": "UNKNOWN",
+    "coordinatorWebSocketObserved": false,
+    "completeDenoTransitiveLockAttested": false,
+    "localDecoderCanBeInconclusive": true,
+    "M2A": "BLOCKED",
+    "M2B": "BLOCKED",
+    "providerWrites": "NONE",
+    "productionModifications": "NONE"
+  }
+}
