@@ -93,7 +93,7 @@ test('Circles home keeps Gatherings as its only priority module and restores pri
   assert.match(liveGateway, /AccessibilityInfo\.isReduceMotionEnabled/);
   assert.match(premiumTabBar, /liveIndicators/);
   assert.match(tabLayout, /circles: circleInvitationCount,/);
-  assert.match(tabLayout, /liveIndicators=\{\{ circles: activeLiveCount > 0 \}\}/);
+  assert.match(tabLayout, /liveIndicators=\{\{ circles: LIVE_PRODUCT_ENABLED && activeLiveCount > 0 \}\}/);
 });
 
 test('discovery telemetry stores no raw score or private preference payload', () => {

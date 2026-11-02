@@ -189,10 +189,13 @@ jest.mock('@/lib/circles/pulse/use-circle-pulse', () => ({
 }));
 
 jest.mock('@/lib/circles/pulse/circle-pulse-service', () => ({
+  cancelCircleLoveSeatRequest: jest.fn(async () => true),
   endCircleLoveSeat: jest.fn(),
   fetchCirclePulseDiscussionReadStates: jest.fn(async () => []),
   fetchCirclePulseWelcomeViewStates: jest.fn(async () => []),
+  fetchMyCircleLoveSeatRequest: jest.fn(async () => null),
   recordCirclePulseWelcomeEvent: jest.fn(async () => 0),
+  requestCircleLoveSeat: jest.fn(async () => ({ id: 'love-seat-request-1' })),
 }));
 
 jest.mock('@/features/live/hooks/use-circle-live', () => ({
@@ -263,7 +266,8 @@ const flushMicrotasks = () => new Promise((resolve) => setTimeout(resolve, 0));
 const renderFocusedScreen = async () => {
   const screen = await render(<CircleDetailScreen />);
   await act(async () => {
-    for (const callback of mockFocusEffectCallbacks) {
+    // A focus refresh can render again and register callbacks; dispatch this focus event once.
+    for (const callback of [...mockFocusEffectCallbacks]) {
       callback();
     }
     await flushMicrotasks();

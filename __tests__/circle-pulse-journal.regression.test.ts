@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const board = readFileSync('components/circles/CirclePulseBoard.tsx', 'utf8');
+const loveSeatCeremony = readFileSync('components/circles/CircleLoveSeatCeremony.tsx', 'utf8');
+const loveSeatArrivalPrompt = readFileSync('components/circles/CircleLoveSeatArrivalPrompt.tsx', 'utf8');
 const constellation = readFileSync('components/circles/CirclePulseWelcomeConstellation.tsx', 'utf8');
 const portraitCard = readFileSync('components/circles/CircleMemberPortraitCard.tsx', 'utf8');
 const portraitDirectory = readFileSync('components/circles/CircleMembersPortraitDirectory.tsx', 'utf8');
@@ -10,11 +12,11 @@ const welcomeStateHook = readFileSync('lib/circles/pulse/use-circle-pulse-welcom
 const migration = readFileSync('supabase/migrations/20260905150000_circle_pulse_welcome_exposure_state.sql', 'utf8');
 
 test('Circle Pulse is a stable vertical journal without nested carousel controls', () => {
-  assert.match(board, /RIGHT NOW/);
+  assert.match(board, /getCirclePulseHeroEyebrow/);
   assert.doesNotMatch(board, /The clearest next step|PRIORITY/);
   assert.match(board, /CirclePulseWelcomeConstellation/);
   assert.match(board, /groups\.map/);
-  assert.doesNotMatch(board, /AUTO_ADVANCE_MS|setInterval|Next Circle spotlight|Previous Circle spotlight/);
+  assert.doesNotMatch(board, /AUTO_ADVANCE_MS|Next Circle spotlight|Previous Circle spotlight/);
   assert.doesNotMatch(constellation, /Next new member|Previous new member/);
 });
 
@@ -23,6 +25,19 @@ test('Love Seat keeps one dominant introduction action and hides management behi
   assert.match(board, /Send Signal/);
   assert.match(board, /dots-horizontal/);
   assert.doesNotMatch(board, />End feature<|>Leave Love Seat</);
+});
+
+test('Love Seat reveals the featured portrait through a restrained one-shot chair ceremony', () => {
+  assert.match(board, /CircleLoveSeatPortrait/);
+  assert.doesNotMatch(board, /CircleLoveSeatCeremony/);
+  assert.match(loveSeatArrivalPrompt, /CircleLoveSeatCeremony/);
+  assert.match(loveSeatCeremony, /chair-front\.png/);
+  assert.match(loveSeatCeremony, /chair-three-quarter\.png/);
+  assert.match(loveSeatCeremony, /chair-dissolve\.png/);
+  assert.match(loveSeatCeremony, /portrait-halo\.png/);
+  assert.match(loveSeatCeremony, /duration: 3700/);
+  assert.match(loveSeatCeremony, /AccessibilityInfo\.isReduceMotionEnabled/);
+  assert.doesNotMatch(loveSeatCeremony, /Animated\.loop|setInterval/);
 });
 
 test('Welcome Constellation exposes all recent members in a non-nested gallery', () => {

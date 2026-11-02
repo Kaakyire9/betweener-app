@@ -7,7 +7,10 @@ import { useCirclePulseRefresh } from './use-circle-pulse-refresh';
 import { readCirclePulseSnapshotState, writeCirclePulseSnapshot } from '@/lib/offline/circle-pulse-store';
 import { isLikelyNetworkError } from '@/lib/network';
 import { isNetworkConnectionAvailable } from '@/lib/network-state';
+import { createEphemeralRealtimeTopic } from '@/lib/realtime/realtime-channel-topic';
 import { fetch as fetchNetInfo } from '@react-native-community/netinfo';
+import { sortCirclePulseItems } from './circle-pulse-presentation';
+import { useCircleLoveSeatInvalidation } from './use-circle-love-seat-invalidation';
 
 export function useCirclePulse({
   circleId,
@@ -24,27 +27,14 @@ export function useCirclePulse({
   const itemsRef = useRef<CirclePulseItem[]>([]);
   const canPersistSnapshotRef = useRef(false);
 
-  const sortItems = useCallback((entries: CirclePulseItem[]) => (
-    [...entries].sort((left, right) => {
-      if (left.priority !== right.priority) return right.priority - left.priority;
-      const leftStartsAt = left.startsAt ? new Date(left.startsAt).getTime() : Number.NEGATIVE_INFINITY;
-      const rightStartsAt = right.startsAt ? new Date(right.startsAt).getTime() : Number.NEGATIVE_INFINITY;
-      if (leftStartsAt !== rightStartsAt) return rightStartsAt - leftStartsAt;
-      const leftExpiresAt = left.expiresAt ? new Date(left.expiresAt).getTime() : Number.POSITIVE_INFINITY;
-      const rightExpiresAt = right.expiresAt ? new Date(right.expiresAt).getTime() : Number.POSITIVE_INFINITY;
-      if (leftExpiresAt !== rightExpiresAt) return leftExpiresAt - rightExpiresAt;
-      return left.id.localeCompare(right.id);
-    })
-  ), []);
-
   const upsertItem = useCallback((nextItem: CirclePulseItem) => {
     setItems((current) => {
       const merged = current.some((item) => item.id === nextItem.id)
         ? current.map((item) => (item.id === nextItem.id ? nextItem : item))
         : [...current, nextItem];
-      return sortItems(merged);
+      return sortCirclePulseItems(merged);
     });
-  }, [sortItems]);
+  }, []);
 
   const buildFallbackItem = useCallback((payload: any): CirclePulseItem => ({
     id: String(payload?.id ?? ''),
@@ -194,12 +184,21 @@ export function useCirclePulse({
     reload,
   });
 
+  useCircleLoveSeatInvalidation({
+    circleId,
+    enabled: enabled && !!viewerProfileId,
+    reload,
+  });
+
   useEffect(() => {
     if (!enabled || !circleId) return;
     if (typeof supabase.channel !== 'function') return;
 
     const channel = supabase
-      .channel(`circle-pulse-items:${circleId}`)
+      // Realtime JS reuses a channel with the same topic. React Strict Mode and
+      // Fast Refresh can remount before async channel cleanup completes, so each
+      // subscription needs a unique topic to avoid mutating a subscribed channel.
+      .channel(createEphemeralRealtimeTopic(`circle-pulse-items:${circleId}`))
       .on(
         'postgres_changes',
         {
@@ -213,7 +212,7 @@ export function useCirclePulse({
           if (!itemId) return;
           setItems((current) => {
             if (!current.some((item) => item.id === itemId)) return current;
-            return sortItems(current.map((item) =>
+            return sortCirclePulseItems(current.map((item) =>
               item.id === itemId
                 ? {
                     ...item,
@@ -280,8 +279,8 @@ export function useCirclePulse({
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      void supabase.removeChannel(channel);
     };
-  }, [buildFallbackItem, circleId, enabled, sortItems, upsertItem]);
+  }, [buildFallbackItem, circleId, enabled, upsertItem]);
   return { items, loading, error, reload };
 }
