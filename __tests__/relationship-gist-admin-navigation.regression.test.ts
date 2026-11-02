@@ -21,7 +21,7 @@ test('editorial navigation is shown only when the server grants read access', ()
 test('admin dashboard uses the shared server-backed capability model for its accessible route entry', () => {
   assert.match(adminAccess, /rpc_get_my_admin_context/);
   assert.match(adminScreen, /router\.push\('\/studio'\)/);
-  assert.match(adminScreen, /MODULES\.filter\(\(module\) => access\.can\(module\.capability\)\)/);
+  assert.match(adminScreen, /MODULES\.filter\(\(module\) => \(\s*access\.can\(module\.capability\)\s*&& \(module\.capability !== 'live' \|\| LIVE_PRODUCT_ENABLED\)/);
   assert.match(studioScreen, /access\.can\('editorial'\)/);
   assert.match(studioModules, /actionHref: '\/admin-editorial'/);
   assert.match(studioModules, /AI Editorial Studio/);

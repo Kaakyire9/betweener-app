@@ -31,7 +31,8 @@ test('public UGC reports snapshot server-owned evidence', () => {
   assert.match(migration, /v_snapshot/);
   assert.ok(migration.indexOf('then p_client_evidence') < migration.indexOf("v_snapshot || jsonb_build_object('source', 'public_ugc_report')"));
   assert.match(moments, /Report this Moment/);
-  assert.match(pulse, /Report \$\{itemLabel\}/);
+  assert.match(pulse, /accessibilityLabel=\{`More options for \$\{itemLabel\}`\}/);
+  assert.match(pulse, /text: 'Report', style: 'destructive', onPress: \(\) => onReportItem\(item\)/);
 });
 
 test('unsupported v1.2 byte types are disabled until real inspection exists', () => {

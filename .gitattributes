@@ -1,0 +1,4 @@
+# Retained Connect evidence and pinned recovery bytes are hashed as files.
+# Preserve their original line endings across Git checkouts.
+docs/betweener-connect/** -text
+supabase/functions/_shared/cors.ts -text

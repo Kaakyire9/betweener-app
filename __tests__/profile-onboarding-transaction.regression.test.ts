@@ -19,7 +19,7 @@ test('completion payloads route only to the dedicated onboarding endpoint', () =
     phone_verified: true,
   });
   assert.equal(invocation.functionName, 'profile-onboarding-submit');
-  assert.deepEqual(invocation.body, { updates: { full_name: 'Safe Member' } });
+  assert.deepEqual(invocation.body, { updates: { full_name: 'Safe Member' }, safety_contract_version: '1.2.0' });
 });
 
 test('ordinary edits remain on the guarded profile-edit endpoint', () => {
@@ -28,6 +28,7 @@ test('ordinary edits remain on the guarded profile-edit endpoint', () => {
   assert.deepEqual(invocation.body, {
     updates: { bio: 'A safe profile.' },
     complete_onboarding: false,
+    safety_contract_version: '1.2.0',
   });
 });
 

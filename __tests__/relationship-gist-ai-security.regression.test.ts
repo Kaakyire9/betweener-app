@@ -96,5 +96,8 @@ test('reader cover uses immutable identity and the account-scoped offline image 
   assert.match(repository, /rpc_get_relationship_gist_cover/);
   assert.match(repository, /createSignedUrl/);
   assert.match(cover, /resolveOfflineImageUri/);
-  assert.match(cover, /cover\.id.*cover\.sha256/);
+  const cache = read('features/relationship-gists/media/relationship-gist-cover-cache.ts');
+  assert.match(cache, /cover\.id.*cover\.sha256/);
+  assert.match(cover, /relationshipGistCoverImageKey\(/);
+  assert.match(cover, /resolveOfflineImageUriForOwner\(/);
 });

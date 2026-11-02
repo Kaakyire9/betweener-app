@@ -48,7 +48,7 @@ staging-guarded shim. It refuses to run if the link is not Betweener Staging:
 
 The command shim intentionally bypasses npm argument parsing. This avoids a
 Windows npm issue where flags intended for the Supabase CLI can be consumed as
-npm flags. The `npm run supabase -- ...` alias remains available when argument
+npm flags. The `npm run supabase:cli -- ...` alias remains available when argument
 forwarding works in the installed npm version.
 
 The wrapper uses the repository-pinned CLI, sets `SUPABASE_NO_KEYRING=1`,
