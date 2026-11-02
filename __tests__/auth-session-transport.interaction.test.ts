@@ -152,13 +152,18 @@ const runRefreshWithTimers = async () => {
 };
 
 beforeAll(async () => {
+  // This suite measures Auth HTTP recovery, not the independent Realtime socket.
+  // Recovery also calls connect(); keep that native transport explicitly offline.
+  jest.spyOn(supabase.realtime, 'connect').mockImplementation(() => undefined);
   await supabase.auth.getSession();
   await settle();
 });
 
-afterAll(() => {
+afterAll(async () => {
   subscription.data.subscription.unsubscribe();
-  supabase.auth.stopAutoRefresh();
+  await supabase.realtime.disconnect();
+  // Stop timers AND the SDK BroadcastChannel; stopAutoRefresh alone leaks a handle.
+  await supabase.auth.dispose();
 });
 
 test.each([
@@ -331,6 +336,6 @@ test('a new client bootstraps from persisted credentials without a false empty s
     expect(result.data.session?.user.id).toBe(USER_ID);
     expect(requests).toHaveLength(0);
   } finally {
-    restartedClient.auth.stopAutoRefresh();
+    await restartedClient.auth.dispose();
   }
 });

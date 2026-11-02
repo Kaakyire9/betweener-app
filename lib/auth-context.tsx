@@ -56,6 +56,7 @@ import {
   invalidatePendingSignInMethodAttempt,
 } from '@/lib/auth/last-sign-in-method';
 import { createAuthRecoveryGeneration } from '@/lib/auth/recovery-generation';
+import { createNativeSessionOwner, type NativeSessionOwner } from '@/lib/auth/native-session-owner';
 
 type Profile = Database['public']['Tables']['profiles']['Row'];
 type FetchProfileOptions = { force?: boolean };
@@ -90,6 +91,7 @@ type ProfileUpdateInput = Omit<
 >;
 
 type AuthContextType = {
+  nativeSessionOwner: NativeSessionOwner;
   // Auth State
   session: Session | null;
   user: User | null;
@@ -416,6 +418,8 @@ const fetchVerifiedPhoneViaRest = async (
 };
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const nativeSessionRef = useRef<ReturnType<typeof createNativeSessionOwner> | null>(null);
+  if (!nativeSessionRef.current) nativeSessionRef.current = createNativeSessionOwner();
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -467,6 +471,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   profileRef.current = profile;
 
   const applySignedOutState = (nextStatus: AuthStatus = 'unauthenticated') => {
+    nativeSessionRef.current?.invalidate();
     blockRevenueCatIdentityAccess();
     accessTokenRef.current = null;
     profileCacheRef.current = null;
@@ -766,6 +771,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     const initAuth = async () => {
+      const nativeAuthSequence = authEventSequenceRef.current;
       try {
         const { data, error } = await supabase.auth.getSession();
 
@@ -775,6 +781,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
         const initialSession = data?.session ?? null;
+        if (!signOutRequestedRef.current && !error && nativeAuthSequence === authEventSequenceRef.current) nativeSessionRef.current?.accept(initialSession);
         accessTokenRef.current = isSupabaseAccessTokenUsable(initialSession?.access_token)
           ? initialSession?.access_token ?? null
           : null;
@@ -1033,6 +1040,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Queue the real work after the auth lock has been released.
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (_event, session) => {
+        // Synchronous local retirement precedes queued Auth/profile/network work.
+        if (signOutRequestedRef.current) nativeSessionRef.current?.invalidate();
+        else nativeSessionRef.current?.accept(session);
         const eventSequence = authEventSequenceRef.current + 1;
         authEventSequenceRef.current = eventSequence;
         recoveryGenerationRef.current?.invalidate(session?.user?.id ?? null);
@@ -1716,6 +1726,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const signOut = async (options?: { clearRevenueCatSdkIdentity?: boolean; reason?: string }) => {
+    nativeSessionRef.current?.invalidate();
     signOutRequestedRef.current = true;
     recoveryGenerationRef.current?.invalidate(null);
     authEventSequenceRef.current += 1;
@@ -1860,6 +1871,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const value: AuthContextType = {
+    nativeSessionOwner: nativeSessionRef.current.owner,
     // State
     session,
     user,

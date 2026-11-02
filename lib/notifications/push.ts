@@ -7,6 +7,8 @@ import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 import { ensureFreshSession, supabase } from '@/lib/supabase';
 import { captureMessage } from '@/lib/telemetry/sentry';
+import { createInstallationIdLookup } from './installation-id';
+import { notifyPushRegistration } from './push-registration-events';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -135,7 +137,7 @@ const getPushAppIdentity = (): AppIdentity | null => {
   return { variant, bundleIdentifier };
 };
 
-const getInstallationId = async (applicationId: string) => {
+const loadPushInstallationId = async (applicationId: string) => {
   const key = `${INSTALLATION_ID_PREFIX}.${applicationId}`;
   const existing = String(await SecureStore.getItemAsync(key) || '').trim();
   if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(existing)) {
@@ -147,6 +149,7 @@ const getInstallationId = async (applicationId: string) => {
   });
   return installationId;
 };
+export const getPushInstallationId = createInstallationIdLookup(loadPushInstallationId);
 
 const ensureAndroidChannel = async () => {
   if (Platform.OS !== 'android') return;
@@ -352,7 +355,7 @@ export const registerPushToken = async (userId: string) => {
 
   let installationId: string;
   try {
-    installationId = await getInstallationId(appIdentity.bundleIdentifier);
+    installationId = await getPushInstallationId(appIdentity.bundleIdentifier);
   } catch (error) {
     logOnce('installation_id_unavailable', {
       message: String((error as any)?.message || error || 'installation_id_unavailable'),
@@ -407,5 +410,6 @@ export const registerPushToken = async (userId: string) => {
     });
   } else {
     logOnce('registered', { platform: Platform.OS });
+    notifyPushRegistration(userId, installationId);
   }
 };

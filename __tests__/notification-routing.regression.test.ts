@@ -105,6 +105,10 @@ test("circle Love Seat tap maps to Circle detail", () => {
     pathname: "/circles/[id]",
     params: {
       id: "circle-123",
+      openLoveSeatId: "seat-123",
+      openLoveSeatEvent: "invitation",
+      openLoveSeatDestination: "consent",
+      openLoveSeatRouteNonce: "love-seat-1:expo.notifications.actions.DEFAULT",
     },
   });
 });

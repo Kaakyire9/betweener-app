@@ -1,4 +1,11 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { connectProductPolicy } from '../../features/connect/config/connect-runtime-policy.ts';
+import { boundConnectNotificationTarget } from '../../features/connect/domain/notification-binding.ts';
+// Keep notification routing fenced without importing the Live feature module;
+// this module is also executed by the standalone Node routing regression suite.
+const LIVE_NOTIFICATION_ROUTES_ENABLED =
+  process.env.EXPO_PUBLIC_ENVIRONMENT === "staging" &&
+  process.env.EXPO_PUBLIC_LIVE_PRODUCT_ENABLED !== "false";
 
 export const PENDING_NOTIFICATION_ROUTE_KEY = "pending_notification_route_v1";
 export const PENDING_NOTIFICATION_ROUTE_MAX_AGE_MS = 10 * 60 * 1000;
@@ -73,12 +80,25 @@ export function shouldDeferNotificationNavigation(
   return now - createdAt <= PENDING_NOTIFICATION_ROUTE_MAX_AGE_MS;
 }
 
+export type LoveSeatNotificationDestination = "manager" | "consent" | "active" | "status";
+
+export function getLoveSeatNotificationDestination(eventType: unknown): LoveSeatNotificationDestination {
+  if (eventType === "request_received") return "manager";
+  if (eventType === "invitation" || eventType === "selected") return "consent";
+  if (eventType === "accepted") return "active";
+  return "status";
+}
+
 export function buildNotificationRoute(
   input: NotificationRouteInput
 ): Omit<DeferredNotificationRoute, "createdAt"> | null {
   const action = input.actionIdentifier;
   const data = input.data ?? undefined;
   const pushType = typeof data?.type === "string" ? data.type : undefined;
+
+  if (!LIVE_NOTIFICATION_ROUTES_ENABLED && (pushType?.startsWith("live_") || pushType?.startsWith("circle_live_"))) {
+    return null;
+  }
 
   const isDefaultTap =
     DEFAULT_NOTIFICATION_ACTION_IDENTIFIERS.has(action) ||
@@ -92,6 +112,10 @@ export function buildNotificationRoute(
   if (!isDefaultTap && !isOpenAction) {
     return null;
   }
+
+  // Account/generation binding is a navigation fence, never media admission.
+  if (pushType?.startsWith('connect_')) return boundConnectNotificationTarget(data ?? {},
+    process.env.EXPO_PUBLIC_ENVIRONMENT === 'staging' && connectProductPolicy.ui);
 
   const buildChatRoute = (fallbackId: unknown, extras?: Record<string, string>) => {
     const profileId =
@@ -236,6 +260,19 @@ export function buildNotificationRoute(
   }
 
   if ((pushType === "circle_love_seat" || pushType === "circle_invitation") && data?.circle_id) {
+    if (pushType === "circle_love_seat") {
+      const eventType = typeof data?.event_type === "string" ? data.event_type : "status";
+      return {
+        pathname: "/circles/[id]",
+        params: {
+          id: String(data.circle_id),
+          ...(data?.love_seat_id ? { openLoveSeatId: String(data.love_seat_id) } : {}),
+          openLoveSeatEvent: eventType,
+          openLoveSeatDestination: getLoveSeatNotificationDestination(eventType),
+          openLoveSeatRouteNonce: getNotificationResponseKey(input) || String(Date.now()),
+        },
+      };
+    }
     return {
       pathname: "/circles/[id]",
       params: {
@@ -315,6 +352,10 @@ export function buildNotificationRoute(
   }
 
   const route = typeof data?.route === "string" ? String(data.route) : "";
+  if (/^\/connect(?:[/?#]|$)/.test(route)) return null;
+  if (!LIVE_NOTIFICATION_ROUTES_ENABLED && (route === "/live" || route.startsWith("/live/"))) {
+    return null;
+  }
   if (route && route.startsWith("/")) {
     return { pathname: route };
   }
