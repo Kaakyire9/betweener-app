@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/lib/auth-context';
 import { liveRepository, type CircleLiveSnapshot } from '../application/index.ts';
 import { readCircleLiveSnapshotState, writeCircleLiveSnapshot } from '@/lib/offline/circle-live-store';
+import { LIVE_PRODUCT_ENABLED } from '../config/live-product-release';
 
 export const useCircleLive = (circleId: string, enabled = true) => {
   const { authStatus, canPerformAuthenticatedWrites, user } = useAuth();
@@ -10,9 +11,10 @@ export const useCircleLive = (circleId: string, enabled = true) => {
   const [error, setError] = useState<string | null>(null);
   const requestRef = useRef(0);
   const accountId = user?.id ?? null;
+  const liveEnabled = LIVE_PRODUCT_ENABLED && enabled;
 
   const refresh = useCallback(async () => {
-    if (!enabled || !circleId || authStatus !== 'authenticated' || !canPerformAuthenticatedWrites) {
+    if (!liveEnabled || !circleId || authStatus !== 'authenticated' || !canPerformAuthenticatedWrites) {
       setSnapshot(null);
       setError(null);
       setLoading(false);
@@ -29,6 +31,7 @@ export const useCircleLive = (circleId: string, enabled = true) => {
     } catch (nextError) {
       if (request === requestRef.current) {
         const cached = await readCircleLiveSnapshotState(circleId, accountId);
+        if (request !== requestRef.current) return;
         if (cached.data) {
           setSnapshot(cached.data);
           setError('Showing saved Circle Live information.');
@@ -40,10 +43,10 @@ export const useCircleLive = (circleId: string, enabled = true) => {
     } finally {
       if (request === requestRef.current) setLoading(false);
     }
-  }, [accountId, authStatus, canPerformAuthenticatedWrites, circleId, enabled]);
+  }, [accountId, authStatus, canPerformAuthenticatedWrites, circleId, liveEnabled]);
 
   useEffect(() => {
-    if (!enabled || !circleId || !accountId) {
+    if (!liveEnabled || !circleId || !accountId) {
       requestRef.current += 1;
       setSnapshot(null);
       setError(null);
@@ -55,8 +58,12 @@ export const useCircleLive = (circleId: string, enabled = true) => {
     setError(null);
     setLoading(true);
     void refresh();
-    return liveRepository.subscribeCircleLive(circleId, () => void refresh());
-  }, [accountId, circleId, enabled, refresh]);
+    const unsubscribe = liveRepository.subscribeCircleLive(circleId, () => void refresh());
+    return () => {
+      requestRef.current += 1;
+      unsubscribe();
+    };
+  }, [accountId, circleId, liveEnabled, refresh]);
 
   return { snapshot, loading, error, refresh };
 };

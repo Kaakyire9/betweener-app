@@ -22,6 +22,7 @@ import type { OdoCopilotScene } from '../odo/copilot/odo-copilot-contracts.ts';
 import type { StreamLiveMediaBindings } from '../media/stream-live-media-provider.ts';
 import type { StreamVideoSdkModule } from '../media/load-stream-video-sdk.ts';
 import type { LiveStageAtmosphere } from '../stage/live-stage-atmosphere.ts';
+import { resolveLiveScreenShareAspectRatio } from '../stage/live-broadcast-viewport.ts';
 import { useStableLiveSpeakerFocus } from '../stage/live-speaker-focus.ts';
 import { LIVE_VISUAL } from './live-visual-tokens.ts';
 import {
@@ -54,6 +55,10 @@ export type StreamLiveStageProps = {
   stageParticipants: readonly LiveParticipant[];
   localPublisherUserId: string | null;
   onConnectedParticipantCountChange?: (count: number) => void;
+  onProgramScreenAspectRatioChange?: (aspectRatio: number | null) => void;
+  screenShareAspectRatio?: number | null;
+  screenPresentationFocused?: boolean;
+  onToggleScreenPresentationFocus?: () => void;
   constrainMultiStage?: boolean;
   presentation?: 'public' | 'private_spark';
   tileFooterInset?: number;
@@ -67,6 +72,25 @@ export type StreamLiveStageProps = {
   allowAtmosphereFraming?: boolean;
   visualsConcealed?: boolean;
 };
+
+const LiveScreenAspectRatioBridge = memo(function LiveScreenAspectRatioBridge({
+  participant,
+  sdk,
+  onAspectRatioChange,
+}: {
+  participant: StreamVideoParticipant;
+  sdk: StreamVideoSdkModule;
+  onAspectRatioChange?: (aspectRatio: number | null) => void;
+}) {
+  const { width, height } = sdk.useTrackDimensions(participant, 'screenShareTrack');
+  const aspectRatio = resolveLiveScreenShareAspectRatio(width, height);
+
+  useEffect(() => {
+    onAspectRatioChange?.(aspectRatio);
+  }, [aspectRatio, onAspectRatioChange]);
+
+  return null;
+});
 
 const LivePictureInPictureBridge = memo(function LivePictureInPictureBridge({
   sdk,
@@ -165,6 +189,10 @@ const StageGrid = memo(function StageGrid({
   stageParticipants,
   localPublisherUserId,
   onConnectedParticipantCountChange,
+  onProgramScreenAspectRatioChange,
+  screenShareAspectRatio,
+  screenPresentationFocused,
+  onToggleScreenPresentationFocus,
   constrainMultiStage,
   presentation,
   tileFooterInset,
@@ -179,7 +207,7 @@ const StageGrid = memo(function StageGrid({
   visualsConcealed,
   stageWidth,
   stageHeight,
-}: Pick<StreamLiveStageProps, 'sdk' | 'stageParticipants' | 'localPublisherUserId' | 'onConnectedParticipantCountChange' | 'constrainMultiStage' | 'presentation' | 'tileFooterInset' | 'requestSeat' | 'scene' | 'program' | 'programSources' | 'maximumPublishers' | 'atmosphere' | 'allowAtmosphereFraming' | 'visualsConcealed'> & {
+}: Pick<StreamLiveStageProps, 'sdk' | 'stageParticipants' | 'localPublisherUserId' | 'onConnectedParticipantCountChange' | 'onProgramScreenAspectRatioChange' | 'screenShareAspectRatio' | 'screenPresentationFocused' | 'onToggleScreenPresentationFocus' | 'constrainMultiStage' | 'presentation' | 'tileFooterInset' | 'requestSeat' | 'scene' | 'program' | 'programSources' | 'maximumPublishers' | 'atmosphere' | 'allowAtmosphereFraming' | 'visualsConcealed'> & {
   isInPictureInPicture: boolean;
   stageWidth: number;
   stageHeight: number;
@@ -193,6 +221,23 @@ const StageGrid = memo(function StageGrid({
     )),
     [rtcParticipants],
   );
+  const programScreenParticipant = useMemo(() => {
+    if (program?.scene !== 'screen_full') return null;
+    const assignedSourceKeys = new Set(Object.values(program.sourceAssignments));
+    const screenSource = programSources?.find((source) => (
+      source.type === 'screen_share'
+      && assignedSourceKeys.has(source.key)
+      && source.providerUserId
+    ));
+    if (!screenSource?.providerUserId) return null;
+    return rtcParticipants.find((participant: StreamVideoParticipant) => (
+      participant.userId === screenSource.providerUserId
+    )) ?? null;
+  }, [program, programSources, rtcParticipants]);
+
+  useEffect(() => {
+    if (!programScreenParticipant) onProgramScreenAspectRatioChange?.(null);
+  }, [onProgramScreenAspectRatioChange, programScreenParticipant]);
   const candidates = useMemo(() => (
     publicRtcParticipants.map((participant: StreamVideoParticipant) => ({
       participant,
@@ -329,14 +374,26 @@ const StageGrid = memo(function StageGrid({
 
   if (hasAuthoritativePresentation) {
     return (
-      <LiveAuthoritativeProgramStage
-        program={program ?? null}
-        sources={programSources ?? []}
-        rtcParticipants={rtcParticipants}
-        stageSeats={participants}
-        sdk={sdk}
-        focusedSpeakerUserId={focusedSpeakerUserId}
-      />
+      <>
+        {programScreenParticipant ? (
+          <LiveScreenAspectRatioBridge
+            participant={programScreenParticipant}
+            sdk={sdk}
+            onAspectRatioChange={onProgramScreenAspectRatioChange}
+          />
+        ) : null}
+        <LiveAuthoritativeProgramStage
+          program={program ?? null}
+          sources={programSources ?? []}
+          rtcParticipants={rtcParticipants}
+          stageSeats={participants}
+          sdk={sdk}
+          focusedSpeakerUserId={focusedSpeakerUserId}
+          screenShareAspectRatio={screenShareAspectRatio}
+          screenPresentationFocused={screenPresentationFocused}
+          onToggleScreenPresentationFocus={onToggleScreenPresentationFocus}
+        />
+      </>
     );
   }
 
@@ -454,6 +511,10 @@ export const StreamLiveStage = memo(function StreamLiveStage({
   stageParticipants,
   localPublisherUserId,
   onConnectedParticipantCountChange,
+  onProgramScreenAspectRatioChange,
+  screenShareAspectRatio,
+  screenPresentationFocused,
+  onToggleScreenPresentationFocus,
   constrainMultiStage,
   presentation = 'public',
   tileFooterInset,
@@ -498,6 +559,10 @@ export const StreamLiveStage = memo(function StreamLiveStage({
             stageParticipants={stageParticipants}
             localPublisherUserId={localPublisherUserId}
             onConnectedParticipantCountChange={onConnectedParticipantCountChange}
+            onProgramScreenAspectRatioChange={onProgramScreenAspectRatioChange}
+            screenShareAspectRatio={screenShareAspectRatio}
+            screenPresentationFocused={screenPresentationFocused}
+            onToggleScreenPresentationFocus={onToggleScreenPresentationFocus}
             constrainMultiStage={constrainMultiStage}
             presentation={presentation}
             tileFooterInset={tileFooterInset}

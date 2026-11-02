@@ -17,6 +17,9 @@ import type { ProgramSource, ProgramState } from '@betweener/live-program-domain
 import {
   initialLiveRoomPulseMode,
   resolveLiveRoomPulseHeight,
+  resolveLiveScreenMediaContainment,
+  resolveLiveScreenOnlyStageSize,
+  resolveLiveScreenShareAspectRatio,
 } from '../features/live/stage/live-broadcast-viewport.ts';
 import {
   LIVE_SPEAKER_ACQUIRE_DELAY_MS,
@@ -271,6 +274,52 @@ test('Room Pulse snap points preserve Stage space on compact and tall phones', (
   assert.ok(Math.abs(resolveLiveRoomPulseHeight(844, 'standard') - 198.34) < 0.0001);
   assert.equal(resolveLiveRoomPulseHeight(844, 'expanded'), 371.36);
   assert.equal(resolveLiveRoomPulseHeight(1200, 'expanded'), 400);
+  assert.equal(resolveLiveRoomPulseHeight(844, 'expanded', 3), 303.84);
+  assert.equal(resolveLiveRoomPulseHeight(1200, 'expanded', 6), 320);
+  assert.equal(resolveLiveRoomPulseHeight(844, 'expanded', 2, 0), 280);
+  assert.equal(resolveLiveRoomPulseHeight(844, 'expanded', 2, 3), 288);
+  assert.equal(resolveLiveRoomPulseHeight(844, 'expanded', 2, 4), 320);
+  assert.equal(resolveLiveRoomPulseHeight(1200, 'expanded', 2, 6), 340);
+  assert.equal(resolveLiveRoomPulseHeight(844, 'expanded', 3, 2), 256);
+});
+
+test('screen-only Program stages honor the selected canvas with a source-ratio fallback', () => {
+  assert.equal(resolveLiveScreenShareAspectRatio(1920, 1080), 16 / 9);
+  assert.equal(resolveLiveScreenShareAspectRatio(1080, 1920), 9 / 16);
+  assert.equal(resolveLiveScreenShareAspectRatio(0, 1080), null);
+  assert.equal(resolveLiveScreenShareAspectRatio(undefined, undefined), null);
+  assert.deepEqual(
+    resolveLiveScreenOnlyStageSize(390, 404, 'landscape_16_9', 9 / 16),
+    { width: 370, height: 208.125 },
+  );
+  assert.deepEqual(
+    resolveLiveScreenOnlyStageSize(390, 404, 'square_1_1', 16 / 9),
+    { width: 370, height: 370 },
+  );
+  assert.deepEqual(
+    resolveLiveScreenOnlyStageSize(390, 404, 'portrait_9_16', 16 / 9),
+    { width: 227.25, height: 404 },
+  );
+  assert.deepEqual(
+    resolveLiveScreenOnlyStageSize(390, 404, null, 1),
+    { width: 370, height: 370 },
+  );
+  assert.deepEqual(
+    resolveLiveScreenOnlyStageSize(390, 404, null, null),
+    { width: 370, height: 208.125 },
+  );
+  assert.deepEqual(
+    resolveLiveScreenMediaContainment('landscape_16_9', 16 / 9),
+    { widthFraction: 1, heightFraction: 1 },
+  );
+  assert.deepEqual(
+    resolveLiveScreenMediaContainment('portrait_9_16', 16 / 9),
+    { widthFraction: 1, heightFraction: 81 / 256 },
+  );
+  assert.deepEqual(
+    resolveLiveScreenMediaContainment('square_1_1', 9 / 16),
+    { widthFraction: 9 / 16, heightFraction: 1 },
+  );
 });
 
 test('Live speaker direction is sticky, delayed, and release-safe', () => {

@@ -1,5 +1,6 @@
 import {
   resolveAssignedProgramLayout,
+  resolveProgramScreenPresentationV1,
   type ProgramSource,
   type ProgramSourceSlot,
 } from '@betweener/live-program-domain';
@@ -57,8 +58,18 @@ export function ProgramCanvas({ snapshot }: { snapshot: CompositorSnapshot }) {
     const source = sourceKey ? sourcesByKey.get(sourceKey) : undefined;
     const selected = participantsForSlot(region.slot, source, participants);
     const [eyebrow, title] = visualCopy(source, snapshot.session.title);
+    const fitV1Enabled = import.meta.env.VITE_SCREEN_FIT_V1_ENABLED === 'true';
+    const screenPresentation = source?.type === 'screen_share' && fitV1Enabled
+      ? resolveProgramScreenPresentationV1(
+        snapshot.program.screenFitMode ?? 'auto', snapshot.program.targetCanvas, source,
+      )
+      : null;
     return (
-      <div className={`program-region treatment-${region.treatment}`} key={region.slot} style={{
+      <div className={`program-region treatment-${region.treatment} ${screenPresentation
+        ? `screen-fit-${screenPresentation.fit} screen-matte-${screenPresentation.matte}` : ''}`}
+        data-screen-fit={screenPresentation?.fit}
+        data-screen-matte={screenPresentation?.matte}
+        key={region.slot} style={{
         left: `${region.x * 100}%`,
         top: `${region.y * 100}%`,
         width: `${region.width * 100}%`,

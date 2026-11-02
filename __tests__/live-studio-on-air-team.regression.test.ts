@@ -56,7 +56,8 @@ test('team changes have a private Realtime invalidation stream', () => {
 });
 
 test('Studio exposes one AAL2-protected Team and Roles surface', () => {
-  assert.match(workspace, /<StudioTeamPanel sessionId=\{sessionId\} authorize=\{stepUp\.runWithStepUp\}/);
+  assert.match(workspace, /const studioTeam = useStudioTeam\(sessionId\)/);
+  assert.match(workspace, /<StudioTeamPanel team=\{studioTeam\} authorize=\{stepUp\.runWithStepUp\}/);
   assert.match(panel, /TEAM &amp; ROLES/);
   assert.match(panel, /Assign operator/);
   assert.match(panel, /Add co-host/);

@@ -1,5 +1,9 @@
 import { StreamCall, StreamVideo, StreamVideoClient, type Call } from '@stream-io/video-react-sdk';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  resolveProgramScreenPresentationV1,
+  screenPresentationTelemetryV1,
+} from '@betweener/live-program-domain';
 
 import {
   parseCompositorBootstrap,
@@ -54,6 +58,7 @@ export function CompositorApp() {
   const [snapshot, setSnapshot] = useState<CompositorSnapshot | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const lastShadowKey = useRef<string | null>(null);
+  const lastScreenFitDiagnosticKey = useRef<string | null>(null);
 
   useEffect(() => {
     if (!sessionId || nonce.length < 32) {
@@ -139,6 +144,25 @@ export function CompositorApp() {
         void reportDiagnostic(event.name, event.details);
       }
     });
+  }, [snapshot]);
+
+  useEffect(() => {
+    if (!snapshot || import.meta.env.VITE_SCREEN_FIT_V1_ENABLED !== 'true') return;
+    const assignedKeys = new Set(Object.values(snapshot.program.sourceAssignments));
+    const source = snapshot.sources.find((candidate) => (
+      candidate.type === 'screen_share' && assignedKeys.has(candidate.key)
+    ));
+    if (!source) return;
+    const key = `${snapshot.program.programVersion}:${source.version}:${snapshot.program.screenFitMode ?? 'auto'}`;
+    if (lastScreenFitDiagnosticKey.current === key) return;
+    lastScreenFitDiagnosticKey.current = key;
+    const policy = resolveProgramScreenPresentationV1(
+      snapshot.program.screenFitMode ?? 'auto', snapshot.program.targetCanvas, source,
+    );
+    void reportDiagnostic(
+      'screen_presentation_fit_resolved',
+      screenPresentationTelemetryV1(policy, 'compositor', source),
+    );
   }, [snapshot]);
 
   const content = useMemo(() => {

@@ -5,4 +5,6 @@ export * from './contracts.ts';
 export * from './layout.ts';
 export * from './preview.ts';
 export * from './scenes.ts';
+export * from './screen-presentation-fit-v1.ts';
+export * from './stage-intelligence-v1.ts';
 export * from './validation.ts';

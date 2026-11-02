@@ -161,6 +161,11 @@ export function LiveMobileProgrammePanel({
           </Pressable>
         ))}
       </View>
+      {scene === 'screen_full' ? (
+        <Text style={styles.helper}>
+          Landscape is recommended for desktop sharing. Portrait and Square preserve the full source without cropping.
+        </Text>
+      ) : null}
 
       <Text style={styles.groupLabel}>QUICK SCENES</Text>
       <View style={styles.sceneGrid}>
@@ -178,7 +183,12 @@ export function LiveMobileProgrammePanel({
               accessibilityRole="button"
               accessibilityState={{ disabled: !availability.available, selected: isSelected }}
               disabled={!availability.available}
-              onPress={() => setScene(item.scene)}
+              onPress={() => {
+                setScene(item.scene);
+                if (item.scene === 'screen_full' && scene !== 'screen_full') {
+                  setCanvas('landscape_16_9');
+                }
+              }}
               style={[styles.scene, isSelected && styles.sceneSelected, !availability.available && styles.disabled]}
             >
               <SceneMiniature canvas={canvas} programme={programme} scene={item.scene} />

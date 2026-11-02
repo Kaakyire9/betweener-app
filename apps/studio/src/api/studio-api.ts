@@ -7,6 +7,7 @@ import {
   type ProgramSourceReadiness,
   type ProgramSourceRole,
   type ProgramSourceType,
+  type ScreenContentMode,
   type StudioOperationalSnapshot,
   type StudioSessionSummary,
   type StudioTakeCommand,
@@ -14,6 +15,7 @@ import {
 import { FunctionsHttpError } from '@supabase/supabase-js';
 
 import { supabase } from '../lib/supabase.ts';
+import { screenPresentationFitFlags } from '../program/screen-presentation-fit-flags.ts';
 
 const edgeFunctionErrorCode = async (error: unknown, fallback: string): Promise<string> => {
   if (error instanceof FunctionsHttpError) {
@@ -33,6 +35,12 @@ type CommandResult = {
 };
 
 export type StudioOperatorRole = 'viewer' | 'producer' | 'moderator' | 'supervisor';
+export type StudioProgrammeAccess = {
+  canControl: boolean;
+  canConfigureLargePanel: boolean;
+  largePanelEnabled: boolean;
+  maximumPublishers: 4 | 6;
+};
 export type StudioRunCue = {
   id: string;
   position: number;
@@ -305,7 +313,7 @@ export const studioApi = {
 
   async getSnapshot(sessionId: string): Promise<StudioOperationalSnapshot> {
     const [value, repeat] = await Promise.all([
-      rpc<unknown>('rpc_get_live_studio_snapshot_v1', { p_session_id: sessionId }),
+      rpc<unknown>('rpc_get_live_studio_snapshot_v2', { p_session_id: sessionId }),
       rpc<{ repeatMode: unknown }>('rpc_get_live_music_repeat_mode_v1', {
         p_session_id: sessionId,
       }),
@@ -323,6 +331,29 @@ export const studioApi = {
     const parsed = parseStudioOperationalSnapshot(hydrated);
     if (!parsed) throw new Error('live_studio_snapshot_contract_invalid');
     return parsed;
+  },
+
+  async getProgrammeAccess(sessionId: string): Promise<StudioProgrammeAccess> {
+    const value = await rpc<unknown>('rpc_get_live_mobile_programme_access_v1', {
+      p_session_id: sessionId,
+    });
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('live_programme_access_contract_invalid');
+    }
+    const candidate = value as Record<string, unknown>;
+    const maximumPublishers = Number(candidate.maximumPublishers);
+    if (typeof candidate.canControl !== 'boolean'
+      || typeof candidate.canConfigureLargePanel !== 'boolean'
+      || typeof candidate.largePanelEnabled !== 'boolean'
+      || ![4, 6].includes(maximumPublishers)) {
+      throw new Error('live_programme_access_contract_invalid');
+    }
+    return {
+      canControl: candidate.canControl,
+      canConfigureLargePanel: candidate.canConfigureLargePanel,
+      largePanelEnabled: candidate.largePanelEnabled,
+      maximumPublishers: maximumPublishers as 4 | 6,
+    };
   },
 
   async takeControl(input: {
@@ -361,7 +392,7 @@ export const studioApi = {
     if (!Number.isSafeInteger(graphVersion) || graphVersion < 0) {
       throw new Error('live_program_source_graph_invalid');
     }
-    return parseCommandResult(await rpc('rpc_studio_take_live_program_v3', {
+    const parameters = {
       p_session_id: command.sessionId,
       p_controller_instance_id: command.controllerInstanceId,
       p_expected_controller_generation: command.expectedControllerGeneration,
@@ -374,7 +405,15 @@ export const studioApi = {
       p_source_assignments: command.sourceAssignments,
       p_transition: command.transition,
       p_shadow_plan_hash: null,
-    }));
+    };
+    return parseCommandResult(await rpc(
+      screenPresentationFitFlags.v1
+        ? 'rpc_studio_take_live_program_v4'
+        : 'rpc_studio_take_live_program_v3',
+      screenPresentationFitFlags.v1
+        ? { ...parameters, p_screen_fit_mode: command.screenFitMode }
+        : parameters,
+    ));
   },
 
   async resumeOdo(input: {
@@ -403,8 +442,11 @@ export const studioApi = {
     health: ProgramSourceHealth;
     muted?: boolean;
     failureReasonCode?: string | null;
+    sourceWidth?: number | null;
+    sourceHeight?: number | null;
+    contentMode?: ScreenContentMode;
   }): Promise<void> {
-    await rpc('rpc_studio_upsert_live_program_source_v1', {
+    const parameters = {
       p_session_id: input.sessionId,
       p_source_key: input.sourceKey,
       p_source_type: input.sourceType,
@@ -416,7 +458,18 @@ export const studioApi = {
       p_health: input.health,
       p_muted: input.muted ?? false,
       p_failure_reason_code: input.failureReasonCode ?? null,
-    });
+    };
+    await rpc(
+      screenPresentationFitFlags.v1
+        ? 'rpc_studio_upsert_live_program_source_v2'
+        : 'rpc_studio_upsert_live_program_source_v1',
+      screenPresentationFitFlags.v1 ? {
+        ...parameters,
+        p_source_width: input.sourceWidth ?? null,
+        p_source_height: input.sourceHeight ?? null,
+        p_content_mode: input.contentMode ?? 'unknown',
+      } : parameters,
+    );
   },
 
   async endSource(sessionId: string, sourceKey: string, reasonCode: string): Promise<void> {
@@ -489,7 +542,7 @@ export const studioApi = {
       p_expected_version: control.version,
       p_command_id: crypto.randomUUID(),
     });
-    const value = await rpc<unknown>('rpc_get_live_studio_snapshot_v1', { p_session_id: sessionId });
+    const value = await rpc<unknown>('rpc_get_live_studio_snapshot_v2', { p_session_id: sessionId });
     const parsed = parseStudioOperationalSnapshot(value);
     if (!parsed) throw new Error('live_studio_snapshot_contract_invalid');
     return parsed;

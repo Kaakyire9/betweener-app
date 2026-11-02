@@ -269,7 +269,7 @@ test('release provenance and central shadow telemetry cover all three renderers'
   const compositor = read('apps/program-compositor-worker/renderer/CompositorApp.tsx');
   const worker = read('apps/program-compositor-worker/src/worker.mjs');
   const orchestrator = read('supabase/functions/live-broadcast-orchestrator/index.ts');
-  const migration = read('supabase/migrations/20261022134658_adaptive_stage_release_telemetry.sql');
+  const migration = read('supabase/migrations/20261022141705_adaptive_stage_release_telemetry.sql');
 
   assert.match(studioMain, /studioReleaseProvenance/);
   assert.match(studioWorkspace, /recordAdaptiveStageDiagnostic/);

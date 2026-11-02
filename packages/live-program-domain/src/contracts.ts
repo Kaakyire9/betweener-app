@@ -80,6 +80,18 @@ export const PROGRAM_SOURCE_HEALTH = [
 ] as const;
 export type ProgramSourceHealth = (typeof PROGRAM_SOURCE_HEALTH)[number];
 
+export const SCREEN_CONTENT_MODES = [
+  'unknown',
+  'document',
+  'presentation',
+  'media',
+  'demo',
+] as const;
+export type ScreenContentMode = (typeof SCREEN_CONTENT_MODES)[number];
+
+export const SCREEN_FIT_MODES = ['auto', 'fit', 'fill'] as const;
+export type ScreenFitMode = (typeof SCREEN_FIT_MODES)[number];
+
 export const PROGRAM_TARGET_CANVASES = [
   'portrait_9_16',
   'landscape_16_9',
@@ -153,6 +165,10 @@ export type ProgramSource = {
   generation: number;
   version: number;
   lastSeenAt: string | null;
+  sourceWidth?: number | null;
+  sourceHeight?: number | null;
+  sourceAspectRatio?: number | null;
+  contentMode?: ScreenContentMode;
 };
 
 export type ProgramController = {
@@ -168,6 +184,7 @@ export type ProgramState = {
   sessionId: string;
   scene: ProgramScene;
   targetCanvas: ProgramTargetCanvas;
+  screenFitMode?: ScreenFitMode;
   sourceAssignments: ProgramSourceAssignments;
   transition: ProgramTransition;
   fallbackScene: ProgramScene;
@@ -180,6 +197,7 @@ export type ProgramState = {
 export type ProgramPreviewState = {
   scene: ProgramScene;
   targetCanvas: ProgramTargetCanvas;
+  screenFitMode: ScreenFitMode;
   sourceAssignments: ProgramSourceAssignments;
   transition: ProgramTransition;
   baseProgramVersion: number;
@@ -196,6 +214,7 @@ export type StudioTakeCommand = {
   expectedProgramVersion: number;
   scene: ProgramScene;
   targetCanvas: ProgramTargetCanvas;
+  screenFitMode: ScreenFitMode;
   sourceAssignments: ProgramSourceAssignments;
   transition: ProgramTransition;
 };

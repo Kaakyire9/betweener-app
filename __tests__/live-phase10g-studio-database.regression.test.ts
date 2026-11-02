@@ -274,7 +274,7 @@ test('audience Program output exposes no Studio access or private matching data'
   assert.match(body, /'ownerUserId', null/i);
   assert.match(body, /'sourceAssignments'/i);
   assert.doesNotMatch(body, /live_studio_access|compatibility_edges|private_spark|decision_graph/i);
-  assert.match(repository, /rpc_get_live_program_snapshot_v2/i);
+  assert.match(repository, /rpc_get_live_program_snapshot_v3/i);
   assert.match(repository, /live_program_source_updates/i);
 });
 

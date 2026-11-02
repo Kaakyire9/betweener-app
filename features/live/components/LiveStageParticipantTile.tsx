@@ -31,6 +31,7 @@ type LiveStageParticipantTileProps = {
   editorialFocus?: boolean;
   compactFallback?: boolean;
   stageOverlay?: ReactNode;
+  showFooter?: boolean;
 };
 
 const initialsFor = (name: string): string => {
@@ -83,6 +84,7 @@ export const LiveStageParticipantTile = memo(function LiveStageParticipantTile({
   editorialFocus,
   compactFallback,
   stageOverlay,
+  showFooter = true,
 }: LiveStageParticipantTileProps) {
   const cameraOn = participant ? hasVideo(participant) : false;
   const microphoneOn = participant ? hasAudio(participant) : false;
@@ -93,9 +95,12 @@ export const LiveStageParticipantTile = memo(function LiveStageParticipantTile({
   const connectionQuality = participant?.connectionQuality ?? SfuModels.ConnectionQuality.UNSPECIFIED;
   const qualityLabel = connectionLabel(connectionQuality);
   const editoriallyFocused = editorialFocus ?? participant?.isSpeaking === true;
+  const isScreenPresentation = trackType === 'screenShareTrack';
   const focusOpacity = useRef(new Animated.Value(editoriallyFocused ? 1 : 0)).current;
   const [reduceMotion, setReduceMotion] = useState(false);
-  const identityLabel = identity?.role === 'host'
+  const identityLabel = isScreenPresentation
+    ? 'SCREEN'
+    : identity?.role === 'host'
     ? 'HOST'
     : editoriallyFocused ? 'SPEAKING' : null;
   const VideoFallback = useCallback((_props: ParticipantVideoFallbackProps) => (
@@ -131,8 +136,10 @@ export const LiveStageParticipantTile = memo(function LiveStageParticipantTile({
 
   return (
     <View
-      accessible
-      accessibilityLabel={`${displayName}. ${cameraOn ? 'Camera on' : 'Camera off'}. ${microphoneOn ? 'Microphone on' : 'Microphone muted'}. ${qualityLabel}.`}
+      accessible={showFooter}
+      accessibilityLabel={isScreenPresentation
+        ? `${displayName}. Screen share. ${qualityLabel}.`
+        : `${displayName}. ${cameraOn ? 'Camera on' : 'Camera off'}. ${microphoneOn ? 'Microphone on' : 'Microphone muted'}. ${qualityLabel}.`}
       style={styles.root}
     >
       {participant ? (
@@ -155,12 +162,12 @@ export const LiveStageParticipantTile = memo(function LiveStageParticipantTile({
       )}
       {stageOverlay}
       <Animated.View pointerEvents="none" style={[styles.focusFrame, { opacity: focusOpacity }]} />
-      <View pointerEvents="none" style={[styles.footer, { bottom: 8 + footerInset }]}>
-        <View style={styles.namePill}>
+      {showFooter ? <View pointerEvents="none" style={[styles.footer, { bottom: 8 + footerInset }]}>
+        <View style={[styles.namePill, isScreenPresentation && styles.screenNamePill]}>
           <View style={styles.namePillSheen} />
           <Text numberOfLines={1} style={styles.name}>{displayName}</Text>
           {identityLabel ? <Text style={styles.identityLabel}>{identityLabel}</Text> : null}
-          {!microphoneOn ? (
+          {!microphoneOn && !isScreenPresentation ? (
             <View style={styles.mutedBadge}>
               <View style={styles.statusDivider} />
               <MicOff size={10} color="#ECA8A2" strokeWidth={2} />
@@ -172,7 +179,7 @@ export const LiveStageParticipantTile = memo(function LiveStageParticipantTile({
             <SignalLow color="#F2B66D" size={16} strokeWidth={2.2} />
           </View>
         ) : null}
-      </View>
+      </View> : null}
     </View>
   );
 });
@@ -278,6 +285,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     elevation: 4,
   },
+  screenNamePill: { minHeight: 24, paddingLeft: 8, paddingRight: 7 },
   namePillSheen: { position: 'absolute', top: 0, right: 9, left: 9, height: 1, backgroundColor: '#FFF4DE42' },
   name: { flexShrink: 1, color: '#FFF9EF', fontSize: 10, fontFamily: 'Manrope_700Bold' },
   identityLabel: { color: LIVE_VISUAL.color.teal, fontSize: 6, letterSpacing: 0.65, fontFamily: 'Manrope_800ExtraBold' },

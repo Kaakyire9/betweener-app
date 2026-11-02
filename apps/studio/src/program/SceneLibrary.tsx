@@ -11,9 +11,14 @@ import {
   type ProgramSourceSlot,
   type ProgramTargetCanvas,
   type ProgramTransition,
+  type ScreenFitMode,
+  type StageIntelligenceResultV1,
+  type StageRecommendationV1,
 } from '@betweener/live-program-domain';
 
 import { isProgramSourceUsable, sourceFitsSlot } from './source-assignments.ts';
+import { StageIntelligenceRecommendations } from './StageIntelligenceRecommendations.tsx';
+import { screenPresentationFitFlags } from './screen-presentation-fit-flags.ts';
 
 export { assignmentsForScene } from './source-assignments.ts';
 
@@ -79,13 +84,49 @@ function SceneGroup({ title, entries, preview, sources, onScene }: {
   );
 }
 
-export function SceneLibrary({ preview, sources, onScene, onAssignment, onCanvas, onTransition }: {
+const STAGE_FAMILIES = [
+  {
+    title: 'People',
+    scenes: ['host_focus', 'panel_focus', 'quick_connect_active'] as const,
+  },
+  {
+    title: 'Present',
+    scenes: ['screen_full', 'screen_plus_host', 'screen_plus_pair', 'screen_plus_panel',
+      'screen_discussion'] as const,
+  },
+  {
+    title: 'Engage',
+    scenes: ['host_plus_pool', 'pool_focus', 'pair_forming', 'audience_pulse',
+      'conversation_topic', 'odo_stage'] as const,
+  },
+  {
+    title: 'Intermission & safety',
+    scenes: ['music_intermission', 'branded_intermission', 'session_closing'] as const,
+  },
+] as const;
+
+export function SceneLibrary({
+  preview,
+  sources,
+  stageIntelligence,
+  onScene,
+  onRecommendation,
+  onManualScene,
+  onAssignment,
+  onCanvas,
+  onTransition,
+  onScreenFit,
+}: {
   preview: ProgramPreviewState;
   sources: readonly ProgramSource[];
-  onScene: (scene: ProgramScene) => void;
+  stageIntelligence?: StageIntelligenceResultV1 | null;
+  onScene: (scene: ProgramScene, assignments?: ProgramPreviewState['sourceAssignments']) => void;
+  onRecommendation?: (recommendation: StageRecommendationV1) => void;
+  onManualScene?: (scene: ProgramScene) => void;
   onAssignment: (slot: ProgramSourceSlot, sourceKey: string | null) => void;
   onCanvas: (canvas: ProgramTargetCanvas) => void;
   onTransition: (transition: ProgramTransition) => void;
+  onScreenFit: (screenFitMode: ScreenFitMode) => void;
 }) {
   const visualSlots = visualSlotsForScene(preview.scene);
   const audioSlots = (['audio_host', 'audio_screen', 'audio_atmosphere'] as const)
@@ -95,19 +136,45 @@ export function SceneLibrary({ preview, sources, onScene, onAssignment, onCanvas
   const recommended = PROGRAM_SCENE_MANIFEST.filter((entry) => entry.core);
   const categoryEntries = (category: ProgramSceneCategory) => PROGRAM_SCENE_MANIFEST
     .filter((entry) => entry.category === category && !entry.core);
+  const allSceneEntries = (scenes: readonly ProgramScene[]) => scenes
+    .map((scene) => PROGRAM_SCENE_MANIFEST.find((entry) => entry.scene === scene))
+    .filter((entry): entry is ProgramSceneManifestEntry => Boolean(entry));
+  const familySceneIds = new Set<ProgramScene>(STAGE_FAMILIES.flatMap((family) => [...family.scenes]));
+  const advancedScenes = PROGRAM_SCENE_MANIFEST.filter((entry) => !familySceneIds.has(entry.scene));
+  const selectManualScene = (scene: ProgramScene) => {
+    onManualScene?.(scene);
+    onScene(scene);
+  };
   return (
     <div className="stack-md">
-      <SceneGroup title={CATEGORY_LABELS.recommended} entries={recommended}
-        preview={preview} sources={sources} onScene={onScene} />
-      {(['conversation', 'presentation', 'intermission'] as const).map((category) => (
-        <SceneGroup key={category} title={CATEGORY_LABELS[category]}
-          entries={categoryEntries(category)} preview={preview} sources={sources} onScene={onScene} />
-      ))}
-      <details className="scene-advanced">
-        <summary>Advanced programme moments</summary>
-        <SceneGroup title={CATEGORY_LABELS.advanced} entries={categoryEntries('advanced')}
-          preview={preview} sources={sources} onScene={onScene} />
-      </details>
+      {stageIntelligence ? <StageIntelligenceRecommendations result={stageIntelligence}
+        onPreview={(recommendation) => {
+          onRecommendation?.(recommendation);
+          if (recommendation.kind !== 'hold') onScene(recommendation.scene, recommendation.assignments);
+        }} /> : <SceneGroup title={CATEGORY_LABELS.recommended} entries={recommended}
+          preview={preview} sources={sources} onScene={selectManualScene} />}
+      {stageIntelligence ? <>
+        <div className="scene-library-divider"><strong>All scenes</strong><span>Manual control</span></div>
+        {STAGE_FAMILIES.map((family) => <SceneGroup key={family.title} title={family.title}
+          entries={allSceneEntries(family.scenes)} preview={preview} sources={sources}
+          onScene={selectManualScene} />)}
+        <details className="scene-advanced">
+          <summary>Advanced programme moments</summary>
+          <SceneGroup title={CATEGORY_LABELS.advanced} entries={advancedScenes}
+            preview={preview} sources={sources} onScene={selectManualScene} />
+        </details>
+      </> : <>
+        {(['conversation', 'presentation', 'intermission'] as const).map((category) => (
+          <SceneGroup key={category} title={CATEGORY_LABELS[category]}
+            entries={categoryEntries(category)} preview={preview} sources={sources}
+            onScene={selectManualScene} />
+        ))}
+        <details className="scene-advanced">
+          <summary>Advanced programme moments</summary>
+          <SceneGroup title={CATEGORY_LABELS.advanced} entries={categoryEntries('advanced')}
+            preview={preview} sources={sources} onScene={selectManualScene} />
+        </details>
+      </>}
       {assignableSlots.length ? <div className="assignment-grid">
         {assignableSlots.map((slot) => <label className="field-label" key={slot}>
           {slot.replaceAll('_', ' ')}
@@ -121,6 +188,14 @@ export function SceneLibrary({ preview, sources, onScene, onAssignment, onCanvas
           </select>
         </label>)}</div> : null}
       <div className="assignment-grid">
+        {screenPresentationFitFlags.v1 && sources.some((source) => source.type === 'screen_share')
+          ? <div className="field-label">Screen fit
+            <div className="segmented-control" aria-label="Screen fit mode">
+              {(['auto', 'fit', 'fill'] as const).map((mode) => <button key={mode}
+                className={preview.screenFitMode === mode ? 'selected' : ''}
+                onClick={() => onScreenFit(mode)}>{mode[0].toUpperCase()}{mode.slice(1)}</button>)}
+            </div>
+          </div> : null}
         <label className="field-label">Target canvas
           <select value={preview.targetCanvas}
             onChange={(event) => onCanvas(event.target.value as ProgramTargetCanvas)}>

@@ -1,20 +1,31 @@
 import {
   buildStudioTakeCommand,
+  editorialIntentForProgramSceneV1,
   previewFromProgram,
   reduceProgramPreview,
   requiredSlotsForScene,
+  sourceGraphVersionFromSources,
+  stageIntelligenceTelemetryPayloadV1,
+  stageIntelligenceV1,
   type ProgramPreviewAction,
   type ProgramPreviewState,
   type ProgramScene,
   type ProgramSourceSlot,
   type ProgramTargetCanvas,
   type ProgramTransition,
+  type StageIntelligenceTelemetryEventV1,
+  type StageRecommendationV1,
 } from '@betweener/live-program-domain';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { studioApi, type StudioPublicationControl } from '../api/studio-api.ts';
+import {
+  studioApi,
+  type StudioProgrammeAccess,
+  type StudioPublicationControl,
+} from '../api/studio-api.ts';
 import { useControllerLease } from '../hooks/use-controller-lease.ts';
 import { useOperatorConsole } from '../hooks/use-operator-console.ts';
+import { useStudioTeam } from '../hooks/use-studio-team.ts';
 import { useStudioSnapshot } from '../hooks/use-studio-snapshot.ts';
 import { errorMessage, friendlyReason } from '../lib/errors.ts';
 import { studioReleaseProvenance } from '../lib/release-provenance.ts';
@@ -34,7 +45,10 @@ import {
   AdaptiveStageM2PreviewControls,
   useAdaptiveStageM2Review,
 } from '../program/AdaptiveStageM2Preview.tsx';
-import { isAdaptiveStageM2StudioPreviewEnabled } from '../program/adaptive-stage-m2-preview-flags.ts';
+import {
+  isAdaptiveStageM2StudioPreviewEnabled,
+  isStageIntelligenceV1Enabled,
+} from '../program/adaptive-stage-m2-preview-flags.ts';
 import { assignmentsForScene, SceneLibrary } from '../program/SceneLibrary.tsx';
 import { assignmentsContainTerminalSource } from '../program/source-assignments.ts';
 import {
@@ -59,8 +73,15 @@ export function StudioWorkspace({
   const [busy, setBusy] = useState<string | null>(null);
   const [preflightReady, setPreflightReady] = useState(false);
   const [publicationControl, setPublicationControl] = useState<StudioPublicationControl | null>(null);
+  const [programmeAccess, setProgrammeAccess] = useState<StudioProgrammeAccess | null>(null);
   const [m2ReviewActive, setM2ReviewActive] = useState(false);
   const lastShadowKey = useRef<string | null>(null);
+  const lastRecommendationKey = useRef<string | null>(null);
+  const programmeHistory = useRef<ProgramScene[]>([]);
+  const activeRecommendation = useRef<{
+    recommendation: StageRecommendationV1;
+    previewedAt: number;
+  } | null>(null);
   const stepUp = useOperatorStepUp();
   const m2Review = useAdaptiveStageM2Review(
     snapshot?.sources ?? [],
@@ -105,6 +126,22 @@ export function StudioWorkspace({
     return () => { active = false; };
   }, [sessionId]);
 
+  useEffect(() => {
+    let active = true;
+    void studioApi.getProgrammeAccess(sessionId).then((access) => {
+      if (active) setProgrammeAccess(access);
+    }).catch(() => {
+      if (active) setProgrammeAccess(null);
+    });
+    return () => { active = false; };
+  }, [sessionId, snapshot?.session.version]);
+
+  useEffect(() => {
+    const scene = snapshot?.program.scene;
+    if (!scene || programmeHistory.current.at(-1) === scene) return;
+    programmeHistory.current = [...programmeHistory.current.slice(-3), scene];
+  }, [snapshot?.program.scene]);
+
   const onLeaseLost = useCallback(() => {
     setCommandError('This tab no longer owns programme control. Preview was kept locally.');
     void refresh();
@@ -117,6 +154,7 @@ export function StudioWorkspace({
     onLeaseRenewed,
   });
   const operatorConsole = useOperatorConsole(sessionId, controllerInstanceId, lease.ownsControl);
+  const studioTeam = useStudioTeam(sessionId);
 
   const mutatePreview = (action: ProgramPreviewAction) => {
     if (!snapshot) return;
@@ -162,6 +200,15 @@ export function StudioWorkspace({
     }));
     setSnapshot(result.snapshot);
     if (!result.applied) throw new Error(result.reasonCode);
+    if (activeRecommendation.current) {
+      const selected = activeRecommendation.current;
+      recordStageIntelligenceEvent(
+        'stage_recommendation_accepted',
+        selected.recommendation,
+        Date.now() - selected.previewedAt,
+      );
+      activeRecommendation.current = null;
+    }
     setPreview(previewFromProgram(result.snapshot.program));
   });
   const secureTakeProgram = (cut: boolean) => stepUp.runWithStepUp(
@@ -229,6 +276,106 @@ export function StudioWorkspace({
 
   const controllerLabel = useMemo(() => snapshot
     ? friendlyReason(snapshot.program.controller.source) : 'Loading', [snapshot]);
+
+  const recordStageIntelligenceEvent = useCallback((
+    eventName: StageIntelligenceTelemetryEventV1,
+    recommendation?: StageRecommendationV1,
+    timeToActionMs?: number,
+    scene?: ProgramScene,
+  ) => {
+    if (!snapshot || !isStageIntelligenceV1Enabled) return;
+    void studioApi.recordAdaptiveStageDiagnostic(sessionId, eventName,
+      stageIntelligenceTelemetryPayloadV1({
+        recommendation,
+        scene,
+        occupancy: snapshot.sources.filter((source, index, sources) =>
+          ['host_camera', 'participant_camera'].includes(source.type)
+          && ['ready', 'live'].includes(source.readiness)
+          && source.health !== 'lost'
+          && sources.findIndex((candidate) => (
+            candidate.ownerUserId ?? candidate.providerUserId ?? candidate.key
+          ) === (source.ownerUserId ?? source.providerUserId ?? source.key)) === index).length,
+        canvas: preview?.targetCanvas ?? snapshot.program.targetCanvas,
+        programVersion: snapshot.program.programVersion,
+        sourceGraphVersion: sourceGraphVersionFromSources(snapshot.sources),
+        timeToActionMs,
+      })).catch(() => undefined);
+  }, [preview?.targetCanvas, sessionId, snapshot]);
+
+  const stageIntelligence = useMemo(() => {
+    if (!snapshot || !preview || !programmeAccess || !isStageIntelligenceV1Enabled) return null;
+    const usablePeople = snapshot.sources.filter((source, index, sources) =>
+      ['host_camera', 'participant_camera'].includes(source.type)
+      && ['ready', 'live'].includes(source.readiness)
+      && source.health !== 'lost'
+      && sources.findIndex((candidate) => (
+        candidate.ownerUserId ?? candidate.providerUserId ?? candidate.key
+      ) === (source.ownerUserId ?? source.providerUserId ?? source.key)) === index);
+    const orderedPeople = [...usablePeople].sort((left, right) =>
+      Number(right.type === 'host_camera') - Number(left.type === 'host_camera')
+      || left.key.localeCompare(right.key));
+    const primaryHostUserId = studioTeam.snapshot?.primaryHost.userId;
+    const coHostUserIds = new Set(studioTeam.snapshot?.onAirHosts
+      .filter((host) => host.status === 'active')
+      .map((host) => host.userId) ?? []);
+    const programmeRoles = Object.fromEntries(orderedPeople.slice(0, 6).map((source, index) => {
+      const sourceUserId = source.ownerUserId ?? source.providerUserId;
+      const role = sourceUserId === primaryHostUserId ? 'primary_host'
+        : sourceUserId && coHostUserIds.has(sourceUserId) ? 'co_host'
+          : index === 0 && source.type === 'host_camera' ? 'primary_host' : 'guest';
+      return [index === 0 ? 'host' : `guest_${index}`, role];
+    })) as Parameters<typeof stageIntelligenceV1>[0]['programmeRoles'];
+    const pulseSourceReady = snapshot.sources.some((source) =>
+      source.type === 'audience_pulse' && ['ready', 'live'].includes(source.readiness)
+      && source.health !== 'lost');
+    const quickConnectOpen = !['closed', 'disabled', 'ended'].includes(
+      snapshot.quickConnect.state.toLowerCase(),
+    );
+    const publicSafetyRequired = snapshot.program.scene === 'branded_intermission'
+      && /safety|safe_scene|emergency/i.test(snapshot.show.reasonCode ?? '');
+    return stageIntelligenceV1({
+      programScene: snapshot.program.scene,
+      programIntent: editorialIntentForProgramSceneV1(snapshot.program.scene),
+      programAssignments: snapshot.program.sourceAssignments,
+      previewScene: preview.scene,
+      previewIntent: editorialIntentForProgramSceneV1(preview.scene),
+      canvas: preview.targetCanvas,
+      occupancy: orderedPeople.length,
+      programmeRoles,
+      sources: snapshot.sources,
+      activePair: { active: snapshot.quickConnect.activePairCount > 0 },
+      quickConnect: {
+        state: snapshot.quickConnect.state,
+        poolCount: snapshot.quickConnect.poolCount,
+      },
+      audiencePulse: {
+        lifecycle: snapshot.audiencePulse.open ? 'active' : pulseSourceReady ? 'ready' : 'unavailable',
+      },
+      capacity: programmeAccess.maximumPublishers,
+      largePanelEnabled: programmeAccess.largePanelEnabled,
+      sustainedSpeaker: null,
+      lowLiquidity: quickConnectOpen && snapshot.quickConnect.poolCount < 2,
+      safetyMode: publicSafetyRequired ? 'safe_scene_required' : 'normal',
+      manualLocks: { currentScene: false },
+      sceneDwellMs: Math.max(0, Date.now() - Date.parse(snapshot.program.updatedAt)),
+      recentSceneHistory: programmeHistory.current,
+    });
+  }, [preview, programmeAccess, snapshot, studioTeam.snapshot]);
+
+  useEffect(() => {
+    if (!stageIntelligence || !snapshot) return;
+    const key = `${snapshot.program.programVersion}:${sourceGraphVersionFromSources(snapshot.sources)}:${stageIntelligence.recommendations.map((item) => `${item.kind}:${item.strategyId}`).join(',')}`;
+    if (lastRecommendationKey.current === key) return;
+    lastRecommendationKey.current = key;
+    recordStageIntelligenceEvent(
+      'stage_recommendations_generated', stageIntelligence.recommendations[0],
+    );
+    if (stageIntelligence.recommendations[0]?.kind === 'hold') {
+      recordStageIntelligenceEvent(
+        'stage_hold_current_recommended', stageIntelligence.recommendations[0],
+      );
+    }
+  }, [recordStageIntelligenceEvent, snapshot, stageIntelligence]);
 
   if (loading || !snapshot || !preview) {
     return <main className="workspace-loading"><button className="text-button" onClick={onBack}>← Sessions</button>
@@ -366,19 +513,46 @@ export function StudioWorkspace({
                   ? 'Preview only · no Program mutation'
                   : 'Ctrl+Enter TAKE · Ctrl+Shift+Enter CUT'}</span></div>
               {m2ReviewActive ? <AdaptiveStageM2PreviewControls review={m2Review} /> : <SceneLibrary preview={preview} sources={snapshot.sources}
-                onScene={(scene: ProgramScene) => {
+                stageIntelligence={stageIntelligence}
+                onScene={(scene: ProgramScene, assignments) => {
                   setPreview({ ...preview, scene,
-                    sourceAssignments: assignmentsForScene(scene, snapshot.sources, preview.sourceAssignments),
+                    sourceAssignments: assignments
+                      ?? assignmentsForScene(scene, snapshot.sources, preview.sourceAssignments),
                     dirty: true });
+                }}
+                onRecommendation={(recommendation) => {
+                  const pending = activeRecommendation.current;
+                  if (pending && pending.recommendation.strategyId !== recommendation.strategyId) {
+                    recordStageIntelligenceEvent(
+                      'stage_recommendation_ignored', pending.recommendation,
+                      Date.now() - pending.previewedAt,
+                    );
+                  }
+                  activeRecommendation.current = { recommendation, previewedAt: Date.now() };
+                  recordStageIntelligenceEvent('stage_recommendation_previewed', recommendation);
+                }}
+                onManualScene={(scene) => {
+                  const pending = activeRecommendation.current;
+                  if (pending) {
+                    recordStageIntelligenceEvent(
+                      'stage_recommendation_ignored', pending.recommendation,
+                      Date.now() - pending.previewedAt,
+                    );
+                    activeRecommendation.current = null;
+                  }
+                  recordStageIntelligenceEvent('stage_manual_scene_selected', undefined, undefined, scene);
                 }}
                 onAssignment={(slot: ProgramSourceSlot, key: string | null) => mutatePreview({ type: 'assign_source', slot, sourceKey: key })}
                 onCanvas={(canvas: ProgramTargetCanvas) => mutatePreview({ type: 'set_canvas', canvas })}
+                onScreenFit={(screenFitMode) => mutatePreview({
+                  type: 'set_screen_fit', screenFitMode,
+                })}
                 onTransition={(transition: ProgramTransition) => mutatePreview({ type: 'set_transition', transition })} />}
             </section>
           </section>
 
           <aside className="right-rail stack-md"><HostAndRuntimePanel sessionId={sessionId} />
-            <StudioTeamPanel sessionId={sessionId} authorize={stepUp.runWithStepUp} />
+            <StudioTeamPanel team={studioTeam} authorize={stepUp.runWithStepUp} />
             {operatorConsole.consoleState ? <>
               <OperatorSafetyPanel consoleState={operatorConsole.consoleState}
                 canTakeover={snapshot.access.canControl} canModerate={snapshot.access.canModerate}

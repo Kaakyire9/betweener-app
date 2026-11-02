@@ -1,6 +1,8 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
+  readonly VITE_SCREEN_FIT_V1_ENABLED?: string;
+  readonly VITE_SCREEN_FIT_LAB_ENABLED?: string;
   readonly VITE_APP_ENVIRONMENT: 'staging' | 'production';
   readonly VITE_SUPABASE_URL: string;
   readonly VITE_SUPABASE_ANON_KEY: string;
@@ -11,6 +13,7 @@ interface ImportMetaEnv {
   readonly VITE_ADAPTIVE_STAGE_V2_STUDIO_RENDER_ENABLED?: 'true' | 'false';
   readonly VITE_ADAPTIVE_STAGE_M2_ENABLED?: 'true' | 'false';
   readonly VITE_ADAPTIVE_STAGE_M2_STUDIO_PREVIEW_ENABLED?: 'true' | 'false';
+  readonly VITE_ADAPTIVE_STAGE_M2_STAGE_INTELLIGENCE_ENABLED?: 'true' | 'false';
   readonly VITE_SOURCE_REVISION: string;
   readonly VITE_BUILD_IDENTIFIER: string;
 }

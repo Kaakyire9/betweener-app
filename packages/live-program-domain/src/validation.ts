@@ -11,6 +11,8 @@ import {
   PROGRAM_SOURCE_TYPES,
   PROGRAM_TARGET_CANVASES,
   PROGRAM_TRANSITIONS,
+  SCREEN_CONTENT_MODES,
+  SCREEN_FIT_MODES,
   type ProgramSource,
   type ProgramSourceAssignments,
   type ProgramState,
@@ -96,6 +98,7 @@ export const parseProgramState = (value: unknown): ProgramState | null => {
     || typeof value.sessionId !== 'string' || !UUID.test(value.sessionId)
     || !isMember(PROGRAM_SCENES, value.scene)
     || !isMember(PROGRAM_TARGET_CANVASES, value.targetCanvas)
+    || (value.screenFitMode !== undefined && !isMember(SCREEN_FIT_MODES, value.screenFitMode))
     || !isMember(PROGRAM_TRANSITIONS, value.transition)
     || !isMember(PROGRAM_SCENES, value.fallbackScene)
     || !isVersion(value.programVersion) || !isVersion(value.showStateVersion)
@@ -106,7 +109,11 @@ export const parseProgramState = (value: unknown): ProgramState | null => {
     || !nullableString(value.controller.instanceId)
     || !isVersion(value.controller.generation)
     || !nullableString(value.controller.leaseExpiresAt)) return null;
-  return { ...value, sourceAssignments: assignments } as ProgramState;
+  return {
+    ...value,
+    screenFitMode: value.screenFitMode ?? 'auto',
+    sourceAssignments: assignments,
+  } as ProgramState;
 };
 
 export const parseProgramSource = (value: unknown): ProgramSource | null => {
@@ -120,8 +127,22 @@ export const parseProgramSource = (value: unknown): ProgramSource | null => {
     || !isMember(PROGRAM_SOURCE_HEALTH, value.health)
     || typeof value.muted !== 'boolean' || !nullableString(value.failureReasonCode)
     || !isVersion(value.generation) || !isVersion(value.version)
+    || (value.sourceWidth !== undefined && value.sourceWidth !== null
+      && (!isVersion(value.sourceWidth) || value.sourceWidth === 0))
+    || (value.sourceHeight !== undefined && value.sourceHeight !== null
+      && (!isVersion(value.sourceHeight) || value.sourceHeight === 0))
+    || (value.sourceAspectRatio !== undefined && value.sourceAspectRatio !== null
+      && (typeof value.sourceAspectRatio !== 'number' || !Number.isFinite(value.sourceAspectRatio)
+        || value.sourceAspectRatio <= 0))
+    || (value.contentMode !== undefined && !isMember(SCREEN_CONTENT_MODES, value.contentMode))
     || !nullableString(value.lastSeenAt)) return null;
-  return value as ProgramSource;
+  return {
+    ...value,
+    sourceWidth: value.sourceWidth ?? null,
+    sourceHeight: value.sourceHeight ?? null,
+    sourceAspectRatio: value.sourceAspectRatio ?? null,
+    contentMode: value.contentMode ?? 'unknown',
+  } as ProgramSource;
 };
 
 export const parseProgramSources = (value: unknown): ProgramSource[] | null => {
@@ -161,6 +182,11 @@ export const parseLayoutPlanV2 = (value: unknown): LayoutPlanV2 | null => {
       || !parseNormalizedRect(item.rect)
       || !isVersion(item.zIndex)
       || !isMember(['contain', 'cover', 'smart_crop'] as const, item.fit)
+      || !isMember(['brand_static', 'none'] as const, item.matte)
+      || typeof item.occupiedMediaAreaRatio !== 'number'
+      || item.occupiedMediaAreaRatio < 0 || item.occupiedMediaAreaRatio > 1
+      || typeof item.requiredCropFraction !== 'number'
+      || item.requiredCropFraction < 0 || item.requiredCropFraction > 1
       || !(item.focalPoint === null || (isRecord(item.focalPoint)
         && typeof item.focalPoint.x === 'number' && item.focalPoint.x >= 0 && item.focalPoint.x <= 1
         && typeof item.focalPoint.y === 'number' && item.focalPoint.y >= 0 && item.focalPoint.y <= 1))

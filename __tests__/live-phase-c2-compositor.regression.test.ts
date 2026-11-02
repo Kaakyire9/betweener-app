@@ -28,7 +28,7 @@ test('service snapshot is lease-fenced and unavailable to members', () => {
 
 test('credential refresh first proves the active compositor lease', () => {
   assert.match(orchestrator, /action === 'snapshot' \|\| action === 'credentials'/i);
-  assert.match(orchestrator, /rpc_service_get_live_broadcast_snapshot_v1/i);
+  assert.match(orchestrator, /rpc_service_get_live_broadcast_snapshot_v2/i);
   assert.match(orchestrator, /snapshot\?\.available !== true/i);
   assert.match(orchestrator, /generateCallToken/i);
 });

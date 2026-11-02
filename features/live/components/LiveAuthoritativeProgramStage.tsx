@@ -1,5 +1,6 @@
 import {
   isStudioPresentationScene,
+  resolveProgramScreenPresentationV1,
   resolveAssignedProgramLayout,
   type ProgramSource,
   type ProgramState,
@@ -12,6 +13,7 @@ import type { LiveParticipant } from '../application/live-models.ts';
 import type { StreamVideoSdkModule } from '../media/load-stream-video-sdk.ts';
 import type { LiveStageSeat } from '../stage/live-stage-layout.ts';
 import { LiveProgramVisualSource } from './LiveProgramVisualSource.tsx';
+import { LiveScreenPresentationSurface } from './LiveScreenPresentationSurface.tsx';
 import { LiveStageParticipantTile } from './LiveStageParticipantTile.tsx';
 import { LIVE_VISUAL } from './live-visual-tokens.ts';
 
@@ -26,6 +28,9 @@ export const LiveAuthoritativeProgramStage = memo(function LiveAuthoritativeProg
   stageSeats,
   sdk,
   focusedSpeakerUserId,
+  screenShareAspectRatio,
+  screenPresentationFocused = false,
+  onToggleScreenPresentationFocus,
 }: {
   program: ProgramState | null;
   sources: readonly ProgramSource[];
@@ -33,6 +38,9 @@ export const LiveAuthoritativeProgramStage = memo(function LiveAuthoritativeProg
   stageSeats: readonly StageSeat[];
   sdk: StreamVideoSdkModule;
   focusedSpeakerUserId: string | null;
+  screenShareAspectRatio?: number | null;
+  screenPresentationFocused?: boolean;
+  onToggleScreenPresentationFocus?: () => void;
 }) {
   if (!program || !isStudioPresentationScene(program.scene)) return null;
   const layout = resolveAssignedProgramLayout(
@@ -55,6 +63,18 @@ export const LiveAuthoritativeProgramStage = memo(function LiveAuthoritativeProg
           : undefined;
         const trackType: VideoTrackType = source?.type === 'screen_share'
           ? 'screenShareTrack' : 'videoTrack';
+        const isScreenPresentation = trackType === 'screenShareTrack';
+        const fitV1Enabled = process.env.EXPO_PUBLIC_SCREEN_FIT_V1_ENABLED === 'true';
+        const screenPresentation = isScreenPresentation && fitV1Enabled
+          ? resolveProgramScreenPresentationV1(
+            program.screenFitMode ?? 'auto',
+            program.targetCanvas,
+            source ? {
+              ...source,
+              sourceAspectRatio: source.sourceAspectRatio ?? screenShareAspectRatio ?? null,
+            } : undefined,
+          )
+          : null;
         const regionStyle: ViewStyle = {
           left: percent(region.x),
           top: percent(region.y),
@@ -62,19 +82,34 @@ export const LiveAuthoritativeProgramStage = memo(function LiveAuthoritativeProg
           height: percent(region.height),
           zIndex: region.zIndex,
         };
+        const participantTile = participant && isScreenPresentation ? (
+          <LiveScreenPresentationSurface
+            participant={participant}
+            identity={seat?.identity ?? null}
+            sdk={sdk}
+            targetCanvas={program.targetCanvas}
+            sourceAspectRatio={screenShareAspectRatio}
+            fit={screenPresentation?.fit ?? 'contain'}
+            matte={screenPresentation?.matte ?? 'brand_static'}
+            editorialFocus={participant.userId === focusedSpeakerUserId}
+            focused={screenPresentationFocused}
+            onToggleFocus={onToggleScreenPresentationFocus}
+          />
+        ) : participant ? (
+          <LiveStageParticipantTile
+            participant={participant}
+            identity={seat?.identity ?? null}
+            fit="cover"
+            trackType={trackType}
+            editorialFocus={participant.userId === focusedSpeakerUserId}
+            ParticipantViewComponent={sdk.ParticipantView}
+          />
+        ) : <LiveProgramVisualSource source={source} />;
         return (
           <View key={region.slot} style={[styles.region, regionStyle,
-            region.treatment === 'pip' && styles.pip]}>
-            {participant ? (
-              <LiveStageParticipantTile
-                participant={participant}
-                identity={seat?.identity ?? null}
-                fit={trackType === 'screenShareTrack' ? 'contain' : 'cover'}
-                trackType={trackType}
-                editorialFocus={participant.userId === focusedSpeakerUserId}
-                ParticipantViewComponent={sdk.ParticipantView}
-              />
-            ) : <LiveProgramVisualSource source={source} />}
+            region.treatment === 'pip' && styles.pip,
+            isScreenPresentation && styles.screenRegion]}>
+            {participantTile}
           </View>
         );
       })}
@@ -94,6 +129,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   region: { position: 'absolute', padding: 1, overflow: 'hidden', backgroundColor: '#071815B8' },
+  screenRegion: { padding: 0, backgroundColor: '#06110F' },
   pip: {
     borderRadius: 18,
     padding: 2,

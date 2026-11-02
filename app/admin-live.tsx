@@ -1,9 +1,10 @@
 import { AdminScreenShell } from '@/components/admin/AdminScreenShell';
 import { Colors } from '@/constants/theme';
+import { LIVE_PRODUCT_ENABLED } from '@/features/live/config/live-product-release';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { Redirect, router } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -30,7 +31,13 @@ const FLAGS: { key: keyof LiveConfiguration; label: string; detail: string }[] =
   { key: 'large_panel_enabled', label: 'Six-person panels', detail: 'Allows AAL2 operators to opt individual Lives into a six-person stage.' },
 ];
 
-export default function AdminLiveScreen() {
+export default function AdminLiveRoute() {
+  return LIVE_PRODUCT_ENABLED
+    ? <AdminLiveScreen />
+    : <Redirect href="/live-unavailable" />;
+}
+
+function AdminLiveScreen() {
   const colorScheme = useColorScheme();
   const resolvedScheme = (colorScheme ?? 'light') === 'dark' ? 'dark' : 'light';
   const theme = Colors[resolvedScheme];

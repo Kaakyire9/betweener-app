@@ -378,7 +378,7 @@ export const liveRepository = {
 
   async getLiveProgram(sessionId: string): Promise<LiveProgramSnapshotV2> {
     const parsed = parseLiveProgramSnapshotV2(await invoke(
-      'rpc_get_live_program_snapshot_v2',
+      'rpc_get_live_program_snapshot_v3',
       { p_session_id: sessionId },
     ));
     if (parsed.ok === false) throw new Error(parsed.reasonCode);

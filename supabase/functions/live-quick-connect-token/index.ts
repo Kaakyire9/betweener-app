@@ -3,6 +3,7 @@ import { StreamClient } from '@stream-io/node-sdk';
 import { createClient } from '@supabase/supabase-js';
 import { corsHeaders } from '../_shared/cors.ts';
 import { getSupabasePublicApiKey } from '../_shared/supabase-public-key.ts';
+import { isLiveProductEnabled } from '../_shared/live-product-gate.ts';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TOKEN_TTL_SECONDS = 5 * 60;
@@ -61,6 +62,9 @@ Deno.serve(async (request) => {
     const { data: authData, error: authError } = await caller.auth.getUser();
     const userId = authData.user?.id;
     if (authError || !userId) return json({ error: 'unauthorized' }, 401);
+    if (!await isLiveProductEnabled(caller)) {
+      return json({ error: 'live_product_disabled' }, 503);
+    }
 
     const { data, error } = await caller.rpc('rpc_get_live_quick_connect_rtc_admission', {
       p_pairing_id: pairingId,

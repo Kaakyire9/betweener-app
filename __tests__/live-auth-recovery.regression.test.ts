@@ -121,7 +121,7 @@ test('session recovery is single-flight and missing credentials require reauthen
 test('Live catalogue waits for real auth and reloads after auth recovery', () => {
   assert.match(
     liveSessionsHook,
-    /authUnavailable = authStatus !== 'authenticated' \|\| !canPerformAuthenticatedWrites/,
+    /authUnavailable = !enabled\s*\|\| authStatus !== 'authenticated'\s*\|\| !canPerformAuthenticatedWrites/,
   );
   assert.match(liveSessionsHook, /if \(authUnavailable\)[\s\S]*setCanSchedule\(false\)/);
   assert.match(liveSessionsHook, /refresh\(\{ attemptRecovery: false \}\)/);

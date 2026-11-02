@@ -7,6 +7,11 @@ const mockSubscribeCircleLive = jest.fn(() => jest.fn());
 const mockReadCircleLiveSnapshotState = jest.fn();
 const mockWriteCircleLiveSnapshot = jest.fn(async () => undefined);
 let mockCurrentAccountId: string | null = 'account-1';
+let mockLiveEnabled = true;
+
+jest.mock('@/features/live/config/live-product-release', () => ({
+  get LIVE_PRODUCT_ENABLED() { return mockLiveEnabled; },
+}));
 
 jest.mock('@/lib/auth-context', () => ({
   useAuth: () => ({
@@ -39,6 +44,7 @@ describe('useCircleLive', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockCurrentAccountId = 'account-1';
+    mockLiveEnabled = true;
     mockGetCircleLiveSnapshot.mockResolvedValue(snapshot);
     mockReadCircleLiveSnapshotState.mockResolvedValue({
       data: null,
@@ -80,5 +86,29 @@ describe('useCircleLive', () => {
     await act(async () => rerender({}));
 
     await waitFor(() => expect(result.current.snapshot).toBeNull());
+  });
+
+  it('does not load or subscribe when Live is disabled', async () => {
+    mockLiveEnabled = false;
+    const { result } = await renderHook(() => useCircleLive('circle-1', true));
+    expect(result.current.snapshot).toBeNull();
+    expect(result.current.loading).toBe(false);
+    expect(mockGetCircleLiveSnapshot).not.toHaveBeenCalled();
+    expect(mockSubscribeCircleLive).not.toHaveBeenCalled();
+    expect(mockReadCircleLiveSnapshotState).not.toHaveBeenCalled();
+  });
+
+  it('discards a cached result that resolves after switching accounts', async () => {
+    let resolveCache!: (value: unknown) => void;
+    mockGetCircleLiveSnapshot.mockRejectedValueOnce(new Error('offline'));
+    mockReadCircleLiveSnapshotState.mockImplementationOnce(() => new Promise(resolve => { resolveCache = resolve; }));
+    const { result, rerender } = await renderHook(() => useCircleLive('circle-1', true));
+    await waitFor(() => expect(mockReadCircleLiveSnapshotState).toHaveBeenCalled());
+    mockCurrentAccountId = 'account-2';
+    mockGetCircleLiveSnapshot.mockImplementation(() => new Promise(() => undefined));
+    await act(async () => rerender({}));
+    await act(async () => resolveCache({ data: snapshot }));
+    expect(result.current.snapshot).toBeNull();
+    expect(result.current.error).toBeNull();
   });
 });

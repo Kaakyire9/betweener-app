@@ -22,6 +22,7 @@ const ADAPTIVE_STAGE_DIAGNOSTIC_EVENTS = new Set([
   'adaptive_stage_v2_source_identity_missing',
   'adaptive_stage_v2_arbitrary_fallback_prevented',
   'adaptive_stage_v2_plan_generation_error',
+  'screen_presentation_fit_resolved',
 ]);
 const MAX_BODY_BYTES = 4_096;
 const STREAM_TOKEN_SECONDS = 60 * 60;
@@ -115,7 +116,7 @@ Deno.serve(async (request) => {
       }
       step = 'snapshot';
       const { data: snapshot, error: snapshotError } = await service.rpc(
-        'rpc_service_get_live_broadcast_snapshot_v1',
+        'rpc_service_get_live_broadcast_snapshot_v2',
         {
           p_session_id: body.sessionId,
           p_worker_instance_id: body.workerInstanceId,

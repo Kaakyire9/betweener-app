@@ -13,16 +13,21 @@ type Props = PropsWithChildren<{
 /** A single calm control surface shared by public Live and Private Spark. */
 export function LiveControlDock({ accentBorderColor, children, privateMode = false, style }: Props) {
   const visual = useLiveVisualTheme();
+  const privateBackground = visual.isDark ? '#081A17C4' : '#FFFDFCD8';
+  const publicBackground = visual.isDark ? '#081A1791' : '#FFFDFCB8';
   return (
     <LiveGlassSurface
-      intensity={privateMode ? 52 : 42}
+      intensity={privateMode ? 52 : 48}
       style={[
         styles.dock,
         {
           borderRadius: visual.radius.dock,
-          backgroundColor: visual.isDark ? '#081A17C4' : '#FFFDFCD8',
-          borderColor: accentBorderColor ?? visual.color.borderStrong,
+          backgroundColor: privateMode ? privateBackground : publicBackground,
+          borderColor: privateMode
+            ? accentBorderColor ?? visual.color.borderStrong
+            : visual.color.border,
         },
+        !privateMode && styles.publicDock,
         privateMode && styles.privateDock,
         style,
       ]}
@@ -40,6 +45,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
+  },
+  publicDock: {
+    shadowOpacity: 0.1,
+    shadowRadius: 14,
+    elevation: 4,
   },
   privateDock: {
     padding: 8,

@@ -12,6 +12,8 @@
     "typecheck": "tsc -b --pretty false",
     "test:e2e": "playwright test",
     "test:e2e:m2": "playwright test m2-preview.spec.ts --project=mocked-media",
+    "test:e2e:stage-intelligence": "playwright test stage-intelligence-v1.spec.ts --project=mocked-media",
+    "test:e2e:screen-fit": "playwright test screen-presentation-fit-v1.spec.ts --project=mocked-media",
     "test:canary": "playwright test --project=staging-canary"
   },
   "dependencies": {

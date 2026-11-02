@@ -95,8 +95,8 @@ test('Chemistry First keeps its reveal action above device navigation chrome', (
 
 test('standard Room Pulse keeps a curated, readable note preview', () => {
   assert.match(conversationPanel, /comments\.slice\(-2\)/);
-  assert.match(conversationPanel, /numberOfLines=\{compact \? 2 : undefined\}/);
-  assert.match(conversationPanel, /commentCompact:\s*\{ fontSize: 12, lineHeight: 17 \}/);
+  assert.match(conversationPanel, /numberOfLines=\{compact \? 1 : undefined\}/);
+  assert.match(conversationPanel, /commentBodyCompact:\s*\{ color: visual\.color\.textMuted, fontSize: 11, lineHeight: 14 \}/);
   assert.match(conversationPanel, /commentAvatarShellCompact:\s*\{ width: 24, height: 24/);
   assert.match(conversationPanel, /input:\s*\{[^}]*height: 42/);
 });

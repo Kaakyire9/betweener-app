@@ -1,5 +1,6 @@
 import {
   resolveAssignedProgramLayout,
+  resolveProgramScreenPresentationV1,
   type ProgramPreviewState,
   type ProgramSource,
   type ProgramState,
@@ -11,11 +12,12 @@ import {
 } from '@stream-io/video-react-sdk';
 
 import { useStudioMedia } from '../media/studio-media-context.tsx';
+import { screenPresentationFitFlags } from './screen-presentation-fit-flags.ts';
 
 type RenderState = Pick<ProgramState,
-  'scene' | 'targetCanvas' | 'sourceAssignments' | 'transition' | 'programVersion'>
+  'scene' | 'targetCanvas' | 'screenFitMode' | 'sourceAssignments' | 'transition' | 'programVersion'>
   | Pick<ProgramPreviewState,
-    'scene' | 'targetCanvas' | 'sourceAssignments' | 'transition' | 'baseProgramVersion'>;
+    'scene' | 'targetCanvas' | 'screenFitMode' | 'sourceAssignments' | 'transition' | 'baseProgramVersion'>;
 
 const transitionCue = (state: RenderState, label: string) => {
   const version = 'programVersion' in state
@@ -83,8 +85,17 @@ function ConnectedProgramRenderer({
         const source = key ? byKey.get(key) : undefined;
         const participant = participantFor(source);
         const [eyebrow, title] = visualCopy(source);
+        const screenPresentation = source?.type === 'screen_share' && screenPresentationFitFlags.v1
+          ? resolveProgramScreenPresentationV1(
+            state.screenFitMode ?? 'auto', state.targetCanvas, source,
+          )
+          : null;
         return (
-          <div className={`program-region treatment-${region.treatment}`} key={region.slot}
+          <div className={`program-region treatment-${region.treatment} source-${source?.type ?? 'empty'} ${screenPresentation
+            ? `screen-fit-${screenPresentation.fit} screen-matte-${screenPresentation.matte}` : ''}`}
+            data-screen-fit={screenPresentation?.fit}
+            data-screen-matte={screenPresentation?.matte}
+            key={region.slot}
             style={{
               left: `${region.x * 100}%`, top: `${region.y * 100}%`,
               width: `${region.width * 100}%`, height: `${region.height * 100}%`,

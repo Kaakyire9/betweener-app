@@ -26,8 +26,32 @@ const stage = readFileSync(
   new URL('../features/live/components/StreamLiveStage.tsx', import.meta.url),
   'utf8',
 );
+const authoritativeProgramStage = readFileSync(
+  new URL('../features/live/components/LiveAuthoritativeProgramStage.tsx', import.meta.url),
+  'utf8',
+);
+const screenPresentationSurface = readFileSync(
+  new URL('../features/live/components/LiveScreenPresentationSurface.tsx', import.meta.url),
+  'utf8',
+);
+const screenAmbientBackdrop = readFileSync(
+  new URL('../features/live/components/LiveScreenAmbientBackdrop.tsx', import.meta.url),
+  'utf8',
+);
+const mobileProgrammePanel = readFileSync(
+  new URL('../features/live/components/LiveMobileProgrammePanel.tsx', import.meta.url),
+  'utf8',
+);
+const participantTile = readFileSync(
+  new URL('../features/live/components/LiveStageParticipantTile.tsx', import.meta.url),
+  'utf8',
+);
 const compactHeader = readFileSync(
   new URL('../features/live/components/LiveCompactHeader.tsx', import.meta.url),
+  'utf8',
+);
+const controlDock = readFileSync(
+  new URL('../features/live/components/LiveControlDock.tsx', import.meta.url),
   'utf8',
 );
 const stageDesk = readFileSync(
@@ -40,10 +64,6 @@ const liveStudio = readFileSync(
 );
 const quickConnectStage = readFileSync(
   new URL('../features/live/components/LiveQuickConnectStage.tsx', import.meta.url),
-  'utf8',
-);
-const participantTile = readFileSync(
-  new URL('../features/live/components/LiveStageParticipantTile.tsx', import.meta.url),
   'utf8',
 );
 const stageAtmosphere = readFileSync(
@@ -89,11 +109,13 @@ test('solo Host owns the full page while structured scenes use the measured Stag
   assert.match(liveScreen, /const isFullPageSoloHost = !isQuickConnectLive/);
   assert.match(liveScreen, /snapshot\?\.stage\.length === 1/);
   assert.match(liveScreen, /snapshot\.stage\[0\]\?\.role === 'host'/);
-  assert.match(liveScreen, /isStudioPresentationScene\(liveProgram\.state\.program\.scene\)/);
+  assert.match(liveScreen, /const isFullPageSoloHost = !isQuickConnectLive[\s\S]*&& !screenOnlyProgramActive/);
+  assert.match(liveScreen, /const activeProgram = liveProgram\.state\?\.program \?\? null/);
+  assert.match(liveScreen, /activeProgram != null[\s\S]*isStudioPresentationScene\(activeProgram\.scene\)/);
   assert.match(liveScreen, /!programUsesStructuredStage/);
   assert.match(liveScreen, /isPictureInPicture \|\| isFullPageSoloHost \? \([\s\S]*styles\.stageBackground, styles\.fullStageBackground/);
   assert.match(liveScreen, /isFullPageSoloHost[\s\S]*<View pointerEvents="none" style=\{styles\.fullPageHostStageSpace\}/);
-  assert.match(liveScreen, /<View style=\{styles\.adaptiveStage\}>[\s\S]*renderMediaStage\(\)/);
+  assert.match(liveScreen, /<View style=\{\[[\s\S]*styles\.adaptiveStage[\s\S]*renderMediaStage\(\)/);
   assert.match(liveScreen, /fullPageHostStageSpace:\s*\{ flex: 1, minHeight: 150/);
   assert.match(liveScreen, /adaptiveStage:\s*\{ flex: 1, minHeight: 150/);
   assert.match(liveScreen, /<LiveQuickConnectStage/);
@@ -105,12 +127,25 @@ test('interactive Live chrome uses reusable glass surfaces', () => {
   assert.match(liveScreen, /<LiveCompactHeader/);
   assert.match(compactHeader, /<LiveGlassSurface[^>]+style=\{\[styles\.glass/);
   assert.match(liveScreen, /<LiveGlassSurface[\s\S]+styles\.conversationGlass/);
+  assert.match(liveScreen, /intensity=\{keyboardVisible \? 46 : roomPulseMode === 'expanded' \? 56 : 48\}/);
+  assert.match(liveScreen, /colors=\{roomPulseBackdrop\.colors\}/);
+  assert.match(liveScreen, /locations=\{roomPulseBackdrop\.locations\}/);
+  assert.match(liveScreen, /style=\{styles\.conversationGlassBackdrop\}/);
+  assert.match(liveScreen, /conversationGlass:[\s\S]+borderWidth: 0/);
+  assert.match(liveScreen, /backgroundColor: 'transparent'/);
+  assert.doesNotMatch(liveScreen, /conversationVideoBlend/);
   assert.match(liveScreen, /<LiveControlDock/);
+  assert.match(controlDock, /publicBackground = visual\.isDark \? '#081A1791' : '#FFFDFCB8'/);
+  assert.match(controlDock, /!privateMode && styles\.publicDock/);
   assert.match(liveScreen, /<LiveStudioModal/);
   assert.doesNotMatch(liveScreen, /<LiveStageDesk/);
   assert.match(liveScreen, /variant="glass"/);
   assert.match(conversationPanel, /variant\?: 'solid' \| 'glass'/);
   assert.match(conversationPanel, /variant === 'glass' && styles\.panelGlass/);
+  assert.match(conversationPanel, /style=\{styles\.commentIdentityRow\}/);
+  assert.match(conversationPanel, /styles\.commentBody, compact && styles\.commentBodyCompact/);
+  assert.match(conversationPanel, /\(expanded \|\| inputFocused\) && styles\.listContentBottomAligned/);
+  assert.match(conversationPanel, /displayMode !== 'peek'/);
 });
 
 test('full-screen presentation preserves deterministic one-to-four-person stage layouts', () => {
@@ -148,7 +183,7 @@ test('stage management stays outside the public canvas in the Live Control Room'
   assert.match(liveStudio, /<LiveHostedMatchingPanel/);
   assert.match(stageDesk, /STAGE DESK/);
   assert.match(stageDesk, /presentation\?: 'overlay' \| 'studio'/);
-  assert.match(liveScreen, /resolveLiveRoomPulseHeight\(viewport\.height, roomPulseMode\)/);
+  assert.match(liveScreen, /resolveLiveRoomPulseHeight\([\s\S]*viewport\.height,[\s\S]*roomPulseMode,[\s\S]*stageParticipantCount,[\s\S]*expandedRoomPulseCommentCount/);
   assert.match(compactHeader, /minHeight: 56/);
   assert.match(compactHeader, /hostAvatarUrl/);
   assert.match(compactHeader, /hostAvatarShell:[\s\S]*width: 46[\s\S]*height: 46/);
@@ -165,11 +200,14 @@ test('Room Pulse has responsive peek, standard, and expanded snap states', () =>
   assert.match(liveScreen, /useState<LiveRoomPulseMode>/);
   assert.match(liveScreen, /initialLiveRoomPulseMode\(viewport\.width, viewport\.height\)/);
   assert.match(liveScreen, /displayMode=\{roomPulseMode\}/);
-  assert.match(liveScreen, /onDisplayModeChange=\{setRoomPulseMode\}/);
+  assert.match(liveScreen, /onDisplayModeChange=\{changeRoomPulseMode\}/);
   assert.match(liveScreen, /viewport\.width > viewport\.height\) setRoomPulseMode\('peek'\)/);
   assert.match(broadcastViewport, /\['peek', 'standard', 'expanded'\]/);
   assert.match(broadcastViewport, /viewportHeight < 720 \|\| viewportWidth > viewportHeight \? 'peek' : 'standard'/);
-  assert.match(broadcastViewport, /mode === 'expanded'[\s\S]*safeHeight \* 0\.44/);
+  assert.match(broadcastViewport, /mode === 'expanded'[\s\S]*stageParticipantCount >= 3/);
+  assert.match(broadcastViewport, /safeHeight \* 0\.36[\s\S]*safeHeight \* 0\.38[\s\S]*safeHeight \* 0\.44/);
+  assert.match(broadcastViewport, /contentHeight = 192 \+ \(visibleCommentCount \* 32\)/);
+  assert.match(liveScreen, /setExpandedRoomPulseCommentCount\(controller\.commentCount\)/);
   assert.match(conversationPanel, /comments\.slice\(-2\)/);
   assert.match(conversationPanel, /displayMode === 'peek'/);
   assert.match(conversationPanel, /const nextDisplayMode: LiveRoomPulseMode/);
@@ -178,8 +216,76 @@ test('Room Pulse has responsive peek, standard, and expanded snap states', () =>
   assert.doesNotMatch(conversationPanel, /presentation="compact"/);
   assert.match(conversationPanel, /Minimize Room Pulse/);
   assert.match(conversationPanel, /Expand Room Pulse/);
-  assert.match(liveScreen, /roomPulseMode === 'expanded'[\s\S]{0,160}conversationGlassStageOverlay/);
+  assert.match(liveScreen, /const roomPulseOverlaysStage = isFullPageSoloHost[\s\S]*roomPulseMode === 'expanded'/);
+  assert.match(liveScreen, /roomPulseOverlaysStage && styles\.conversationGlassStageOverlay/);
   assert.match(liveScreen, /conversationGlassStageOverlay:\s*\{[\s\S]*position: 'absolute'/);
+  assert.match(liveScreen, /roomPulseAnchorHeight = roomPulseOverlaysStage[\s\S]*standardRoomPulseHeight[\s\S]*roomPulseHeight/);
+  assert.match(liveScreen, /styles\.conversationGlassAnchor[\s\S]*height: roomPulseAnchorHeight/);
+  assert.match(liveScreen, /edges=\{keyboardVisible \? \['top'\] : \['top', 'bottom'\]\}/);
+  assert.match(liveScreen, /conversationGlassAnchorKeyboard:[\s\S]*marginBottom: 0/);
+  assert.doesNotMatch(liveScreen, /bottom: showControlDock \? 55 : 2/);
+});
+
+test('screen-only Program output follows the selected canvas and offers a focused view', () => {
+  assert.match(liveScreen, /const screenOnlyProgramActive = activeProgram\?\.scene === 'screen_full'/);
+  assert.doesNotMatch(liveScreen, /screenOnlyProgramActive = liveProgram\.state\?\.enabled/);
+  assert.match(liveScreen, /resolveLiveScreenOnlyStageSize\(/);
+  assert.match(liveScreen, /liveProgram\.state\?\.program\.targetCanvas/);
+  assert.match(liveScreen, /screenShareAspectRatio/);
+  assert.match(liveScreen, /onLayout=\{handleScreenStageSlotLayout\}/);
+  assert.match(liveScreen, /screenStageSlotSize\.width \|\| viewport\.width/);
+  assert.match(liveScreen, /\(screenStageSlotSize\.height \|\| fallbackScreenSlotHeight\) - SCREEN_STAGE_VERTICAL_GUTTER/);
+  assert.match(liveScreen, /onProgramScreenAspectRatioChange=\{handleProgramScreenAspectRatioChange\}/);
+  assert.match(liveScreen, /screenPresentationFocused=\{screenPresentationFocused\}/);
+  assert.match(liveScreen, /onToggleScreenPresentationFocus=\{toggleScreenPresentationFocus\}/);
+  assert.match(liveScreen, /screenOnlyProgramActive \? \([\s\S]*styles\.screenOnlyStageSlot/);
+  assert.match(liveScreen, /<LiveScreenAmbientBackdrop dark=\{visual\.isDark\} reduceMotion=\{reduceMotion\}/);
+  assert.match(liveScreen, /<View style=\{\[[\s\S]*styles\.screenOnlyStage,/);
+  assert.doesNotMatch(liveScreen, /styles\.adaptiveStage,\s*styles\.screenOnlyStage,/);
+  assert.match(liveScreen, /screenOnlyStageSlot:\s*\{[\s\S]*alignItems: 'center'[\s\S]*justifyContent: 'center'/);
+  assert.doesNotMatch(liveScreen, /screenCanvasTopAligned|screenOnlyStageSlotTopAligned|screenOnlyAmbient/);
+  assert.match(liveScreen, /screenOnlyStage:\s*\{[\s\S]*alignSelf: 'center',[\s\S]*borderRadius: 26/);
+  assert.doesNotMatch(liveScreen.match(/screenOnlyStage:\s*\{[\s\S]*?\n  \},/)?.[0] ?? '', /flex:/);
+  assert.match(liveScreen, /!screenOnlyProgramActive \? \([\s\S]*media\.setVideoEnabled/);
+  assert.match(liveScreen, /if \(screenOnlyProgramActive && !screenOnlyProgramActiveRef\.current\)[\s\S]*changeRoomPulseMode\('peek'\)/);
+  assert.match(broadcastViewport, /LIVE_SCREEN_SHARE_FALLBACK_ASPECT_RATIO = 16 \/ 9/);
+  assert.match(broadcastViewport, /portrait_9_16: 9 \/ 16/);
+  assert.match(broadcastViewport, /landscape_16_9: 16 \/ 9/);
+  assert.match(broadcastViewport, /square_1_1: 1/);
+  assert.match(broadcastViewport, /targetCanvas[\s\S]*LIVE_PROGRAM_CANVAS_ASPECT_RATIOS\[targetCanvas\]/);
+  assert.match(broadcastViewport, /availableHeight \* aspectRatio/);
+  assert.match(broadcastViewport, /resolveLiveScreenMediaContainment/);
+  assert.match(stage, /sdk\.useTrackDimensions\(participant, 'screenShareTrack'\)/);
+  assert.match(stage, /onAspectRatioChange\?\.\(aspectRatio\)/);
+  assert.match(stage, /screenShareAspectRatio=\{screenShareAspectRatio\}/);
+  assert.match(stage, /screenPresentationFocused=\{screenPresentationFocused\}/);
+  assert.match(stage, /onToggleScreenPresentationFocus=\{onToggleScreenPresentationFocus\}/);
+  assert.match(authoritativeProgramStage, /<LiveScreenPresentationSurface/);
+  assert.match(authoritativeProgramStage, /fit=\{screenPresentation\?\.fit \?\? 'contain'\}/);
+  assert.match(screenPresentationSurface, /fit=\{fit\}/);
+  assert.doesNotMatch(screenPresentationSurface, /fit="cover"/);
+  assert.doesNotMatch(screenPresentationSurface, /resolveLiveScreenMediaContainment/);
+  assert.match(screenPresentationSurface, /showFooter=\{false\}/);
+  assert.doesNotMatch(screenPresentationSurface, /SCREEN_CANVAS_LABELS/);
+  assert.doesNotMatch(screenPresentationSurface, /sourceBadge|sourceName|sourceType/);
+  assert.match(screenPresentationSurface, /SCREEN_CONTROLS_VISIBLE_MS = 3_000/);
+  assert.match(screenPresentationSurface, /accessibilityLabel="Show screen controls"/);
+  assert.match(screenPresentationSurface, /onPress=\{revealControls\}/);
+  assert.match(screenPresentationSurface, /pointerEvents=\{controlsVisible \? 'auto' : 'none'\}/);
+  assert.match(screenPresentationSurface, /focused \? Math\.max\(12, safeAreaInsets\.top \+ 8\) : 12/);
+  assert.match(screenPresentationSurface, /accessibilityLabel=\{focused \? 'Exit focused screen view' : 'Focus shared screen'\}/);
+  assert.match(screenPresentationSurface, /<Maximize2/);
+  assert.match(screenPresentationSurface, /<Minimize2/);
+  assert.match(screenAmbientBackdrop, /Animated\.loop/);
+  assert.match(screenAmbientBackdrop, /duration: 7_000/);
+  assert.match(screenAmbientBackdrop, /if \(reduceMotion\)/);
+  assert.match(screenAmbientBackdrop, /outputRange: \[0\.08, 0\.14\]/);
+  assert.match(mobileProgrammePanel, /Landscape is recommended for desktop sharing/);
+  assert.match(mobileProgrammePanel, /item\.scene === 'screen_full'[\s\S]*setCanvas\('landscape_16_9'\)/);
+  assert.match(participantTile, /trackType === 'screenShareTrack'/);
+  assert.match(participantTile, /\? 'SCREEN'/);
+  assert.match(participantTile, /!microphoneOn && !isScreenPresentation/);
+  assert.match(participantTile, /showFooter \? <View pointerEvents="none" style=\{\[styles\.footer/);
 });
 
 test('Quick Connect always gives the host and pool equal stage space', () => {
@@ -189,8 +295,8 @@ test('Quick Connect always gives the host and pool equal stage space', () => {
   assert.doesNotMatch(liveScreen, /compactPool=/);
   assert.match(liveScreen, /allowAtmosphereFraming=\{!isQuickConnectLive\}/);
   assert.match(stage, /allowAtmosphereFraming !== false/);
-  assert.match(liveScreen, /quickConnectConversationGlass:\s*\{ flexShrink: 0 \}/);
-  assert.doesNotMatch(liveScreen, /quickConnectConversationGlass:\s*\{[^}]*height:/);
+  assert.match(liveScreen, /roomPulseAnchorHeight/);
+  assert.doesNotMatch(liveScreen, /quickConnectConversationGlass/);
 });
 
 test('Live surfaces inherit official light and dark brand themes', () => {

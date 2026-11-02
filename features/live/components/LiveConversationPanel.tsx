@@ -142,11 +142,15 @@ const CommentRow = memo(function CommentRow({
         accessibilityHint={canModerate || comment.userId !== currentUserId ? 'Long press for safety actions' : undefined}
         delayLongPress={450}
         onLongPress={canModerate || comment.userId !== currentUserId ? openActions : undefined}
-        style={styles.commentCopy}
+        style={[styles.commentCopy, compact && styles.commentCopyCompact]}
       >
-        <Text numberOfLines={compact ? 2 : undefined} style={[styles.comment, compact && styles.commentCompact]}>
-          <Text style={styles.name}>{comment.fullName || 'Member'}  </Text>
-          {roleLabel ? <Text style={styles.roleBadge}>{roleLabel}  </Text> : null}
+        <View style={styles.commentIdentityRow}>
+          <Text numberOfLines={1} style={[styles.name, compact && styles.nameCompact]}>
+            {comment.fullName || 'Member'}
+          </Text>
+          {roleLabel ? <Text style={styles.roleBadge}>{roleLabel}</Text> : null}
+        </View>
+        <Text numberOfLines={compact ? 1 : undefined} style={[styles.commentBody, compact && styles.commentBodyCompact]}>
           {comment.body}
         </Text>
       </Pressable>
@@ -265,7 +269,9 @@ export const LiveConversationPanel = memo(function LiveConversationPanel({
           <Text style={[styles.heading, { color: resolvedAccent }]}>ROOM PULSE</Text>
         </View>
         <View style={styles.headingActions}>
-          <LiveReactionSummaryChip accentColor={resolvedAccent} summary={reactionSummary} />
+          {displayMode !== 'peek' ? (
+            <LiveReactionSummaryChip accentColor={resolvedAccent} summary={reactionSummary} />
+          ) : null}
           {commentCount > 0 ? <Text style={styles.commentCount}>{commentCount} notes</Text> : null}
           {onDisplayModeChange ? (
             <Pressable
@@ -319,7 +325,10 @@ export const LiveConversationPanel = memo(function LiveConversationPanel({
         data={data}
         keyExtractor={(item) => item.id}
         style={styles.list}
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={[
+          styles.listContent,
+          (expanded || inputFocused) && styles.listContentBottomAligned,
+        ]}
         initialNumToRender={14}
         maxToRenderPerBatch={12}
         windowSize={7}
@@ -442,20 +451,24 @@ const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
   peekRow: { flex: 1, minHeight: 25, justifyContent: 'center', paddingBottom: 3 },
   peekText: { color: visual.color.textMuted, fontSize: 11, fontFamily: 'Manrope_500Medium' },
   list: { flex: 1, minHeight: 40 },
-  listContent: { paddingVertical: 7, gap: 2, flexGrow: 1 },
-  commentRow: { paddingVertical: 4, minHeight: 31, flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
-  commentRowCompact: { paddingVertical: 2, minHeight: 27, gap: 7 },
-  commentCopy: { flex: 1, minHeight: 27, justifyContent: 'center' },
+  listContent: { paddingVertical: 7, gap: 3, flexGrow: 1 },
+  listContentBottomAligned: { justifyContent: 'flex-end' },
+  commentRow: { paddingVertical: 4, minHeight: 43, flexDirection: 'row', alignItems: 'flex-start', gap: 9 },
+  commentRowCompact: { paddingVertical: 1, minHeight: 31, gap: 8 },
+  commentCopy: { flex: 1, minHeight: 36, justifyContent: 'center', gap: 1 },
+  commentCopyCompact: { minHeight: 29, gap: 0 },
+  commentIdentityRow: { flexDirection: 'row', alignItems: 'baseline', gap: 6 },
   commentAvatarShell: { width: 27, height: 27, borderRadius: 14, alignItems: 'center', justifyContent: 'center', overflow: 'hidden', backgroundColor: visual.color.tealSoft, borderWidth: 1, borderColor: visual.color.borderStrong },
   commentAvatar: { width: 27, height: 27, borderRadius: 14 },
   commentAvatarShellCompact: { width: 24, height: 24, borderRadius: 12 },
   commentAvatarCompact: { width: 24, height: 24, borderRadius: 12 },
   commentInitial: { color: visual.color.text, fontSize: 9, fontFamily: 'Manrope_800ExtraBold' },
   commentInitialCompact: { fontSize: 8 },
-  comment: { color: visual.color.text, fontSize: 13, lineHeight: 19, fontFamily: 'Manrope_400Regular' },
-  commentCompact: { fontSize: 12, lineHeight: 17 },
-  name: { color: visual.color.text, fontFamily: 'Manrope_700Bold' },
+  name: { flexShrink: 1, color: visual.color.text, fontSize: 12, lineHeight: 16, fontFamily: 'Manrope_700Bold' },
+  nameCompact: { fontSize: 11, lineHeight: 13 },
   roleBadge: { color: visual.color.teal, fontSize: 9, letterSpacing: 0.7, fontFamily: 'Manrope_800ExtraBold' },
+  commentBody: { color: visual.color.text, fontSize: 13, lineHeight: 18, fontFamily: 'Manrope_400Regular' },
+  commentBodyCompact: { color: visual.color.textMuted, fontSize: 11, lineHeight: 14 },
   empty: { color: visual.color.textMuted, fontSize: 12, marginTop: 12, fontFamily: 'Manrope_500Medium' },
   joinNotice: { minHeight: 38, marginTop: 9, paddingHorizontal: 9, borderRadius: 19, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: visual.color.tealSoft, borderWidth: 1, borderColor: visual.color.borderStrong },
   joinAvatarShell: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', overflow: 'hidden', backgroundColor: visual.color.tealSoft },

@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const e2ePort = Number(process.env.STUDIO_E2E_PORT ?? '4173');
+
 export default defineConfig({
   testDir: './e2e',
   timeout: 30_000,
@@ -7,7 +9,7 @@ export default defineConfig({
   fullyParallel: false,
   reporter: [['list']],
   use: {
-    baseURL: 'http://127.0.0.1:4173',
+    baseURL: `http://127.0.0.1:${e2ePort}`,
     trace: 'retain-on-failure',
     video: 'retain-on-failure',
   },
@@ -16,8 +18,8 @@ export default defineConfig({
     { name: 'staging-canary', use: { ...devices['Desktop Chrome'] }, testMatch: /staging-canary/ },
   ],
   webServer: {
-    command: 'node ../../node_modules/vite/bin/vite.js --host 127.0.0.1 --port 4173 --strictPort',
-    port: 4173,
+    command: `node ../../node_modules/vite/bin/vite.js --host 127.0.0.1 --port ${e2ePort} --strictPort`,
+    port: e2ePort,
     reuseExistingServer: !process.env.CI,
     env: {
       VITE_APP_ENVIRONMENT: 'staging',
@@ -27,6 +29,9 @@ export default defineConfig({
       VITE_STUDIO_ORIGIN: 'https://studio.staging.getbetweener.com',
       VITE_ADAPTIVE_STAGE_M2_ENABLED: 'true',
       VITE_ADAPTIVE_STAGE_M2_STUDIO_PREVIEW_ENABLED: 'true',
+      VITE_ADAPTIVE_STAGE_M2_STAGE_INTELLIGENCE_ENABLED: 'true',
+      VITE_SCREEN_FIT_V1_ENABLED: 'true',
+      VITE_SCREEN_FIT_LAB_ENABLED: 'true',
     },
   },
 });

@@ -40,6 +40,8 @@ export * from './live-visual-tokens.ts';
 export * from './OdoShowDirectorPanel.tsx';
 export * from './OdoProgramStage.tsx';
 export * from './LiveAuthoritativeProgramStage.tsx';
+export * from './LiveScreenPresentationSurface.tsx';
+export * from './LiveScreenAmbientBackdrop.tsx';
 export * from './LiveProgramVisualSource.tsx';
 export * from './LiveProgramTransition.tsx';
 export * from './LiveMusicLibraryPanel.tsx';

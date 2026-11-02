@@ -139,7 +139,8 @@ test('Room Pulse keeps its composer visible and renders human copy while the key
   assert.match(conversation, /onScrollBeginDrag=\{Keyboard\.dismiss\}/);
   assert.match(liveScreen, /KeyboardAvoidingView/);
   assert.match(liveScreen, /Platform\.OS === 'ios' \? 'padding' : 'height'/);
-  assert.match(liveScreen, /keyboardVisible && styles\.conversationGlassKeyboard/);
+  assert.match(liveScreen, /keyboardVisible && styles\.conversationGlassAnchorKeyboard/);
+  assert.match(liveScreen, /edges=\{keyboardVisible \? \['top'\] : \['top', 'bottom'\]\}/);
   assert.match(liveScreen, /const showControlDock = !keyboardVisible/);
   assert.match(liveScreen, /\{showControlDock \? <LiveControlDock[^>]+style=\{styles\.controls\}>/);
 });

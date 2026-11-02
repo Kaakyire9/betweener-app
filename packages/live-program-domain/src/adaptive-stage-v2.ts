@@ -12,6 +12,7 @@ import {
   type ProgramTargetCanvas,
 } from './contracts.ts';
 import { resolveAssignedProgramLayout } from './layout.ts';
+import { resolveProgramScreenPresentationV1 } from './screen-presentation-fit-v1.ts';
 
 export const ADAPTIVE_STAGE_MANIFEST_SCHEMA_VERSION = 2 as const;
 export const ADAPTIVE_STAGE_MANIFEST_VERSION = 'adaptive-stage-v2.0.0-m1' as const;
@@ -215,6 +216,9 @@ export type LayoutPlanRegionV2 = {
   rect: NormalizedRect;
   zIndex: number;
   fit: 'contain' | 'cover' | 'smart_crop';
+  matte: 'brand_static' | 'none';
+  occupiedMediaAreaRatio: number;
+  requiredCropFraction: number;
   focalPoint: { x: number; y: number } | null;
   labelSafeRect: NormalizedRect | null;
   captionExclusionRect: NormalizedRect | null;
@@ -413,6 +417,13 @@ export const resolveLayoutPlanV2 = (input: ResolveLayoutPlanV2Input): LayoutPlan
       const sourceKey = input.programState.sourceAssignments[region.slot];
       const source = sourceKey ? sourcesByKey.get(sourceKey) : undefined;
       if (!sourceKey || !source) return [];
+      const screenPresentation = source.type === 'screen_share'
+        ? resolveProgramScreenPresentationV1(
+          input.programState.screenFitMode ?? 'auto',
+          input.programState.targetCanvas,
+          source,
+        )
+        : null;
       return [{
         id: `${scene}:${region.slot}`,
         slot: region.slot,
@@ -421,13 +432,16 @@ export const resolveLayoutPlanV2 = (input: ResolveLayoutPlanV2Input): LayoutPlan
         track: sourceTrack(source),
         rect: { x: region.x, y: region.y, width: region.width, height: region.height },
         zIndex: region.zIndex,
-        fit: source.type === 'screen_share' ? 'contain' : 'cover',
-        focalPoint: null,
+        fit: screenPresentation?.fit ?? 'cover',
+        matte: screenPresentation?.matte ?? 'none',
+        occupiedMediaAreaRatio: screenPresentation?.occupiedMediaAreaRatio ?? 1,
+        requiredCropFraction: screenPresentation?.requiredCropFraction ?? 0,
+        focalPoint: screenPresentation?.focalPoint ?? null,
         labelSafeRect: definition.canvases[input.programState.targetCanvas].contentSafeRect,
         captionExclusionRect: definition.canvases[input.programState.targetCanvas].captionSafeRect,
         transitionKey: `${input.programState.programVersion}:${region.slot}:${sourceKey}`,
         health: sourceHealth(source),
-        fallbackReason: null,
+        fallbackReason: screenPresentation?.fallbackReason ?? null,
       }];
     });
   const audio = (['audio_host', 'audio_screen', 'audio_atmosphere'] as const)

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 
 import type { StudioTeamOperatorRole, StudioTeamPerson } from '../api/studio-api.ts';
-import { useStudioTeam } from '../hooks/use-studio-team.ts';
+import type { useStudioTeam } from '../hooks/use-studio-team.ts';
 
 const OPERATOR_ROLES: readonly { value: StudioTeamOperatorRole; label: string }[] = [
   { value: 'moderator', label: 'Moderator' },
@@ -13,13 +13,12 @@ const personLabel = (person: Pick<StudioTeamPerson, 'fullName' | 'username' | 'e
   person.fullName || (person.username ? `@${person.username}` : person.email) || 'Team member';
 
 export function StudioTeamPanel({
-  sessionId,
+  team,
   authorize,
 }: {
-  sessionId: string;
+  team: ReturnType<typeof useStudioTeam>;
   authorize: (label: string, operation: () => Promise<void>) => Promise<void>;
 }) {
-  const team = useStudioTeam(sessionId);
   const [operatorEmail, setOperatorEmail] = useState('');
   const [operatorRole, setOperatorRole] = useState<StudioTeamOperatorRole>('moderator');
   const [hostEmail, setHostEmail] = useState('');

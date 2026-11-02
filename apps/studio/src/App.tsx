@@ -20,6 +20,16 @@ const AdaptiveStageM2PreviewHarness = import.meta.env.DEV
     default: module.AdaptiveStageM2PreviewHarness,
   })))
   : null;
+const StageIntelligenceV1Harness = import.meta.env.DEV
+  ? lazy(async () => import('./e2e/StageIntelligenceV1Harness.tsx').then((module) => ({
+    default: module.StageIntelligenceV1Harness,
+  })))
+  : null;
+const ScreenPresentationFitLabHarness = import.meta.env.DEV
+  ? lazy(async () => import('./e2e/ScreenPresentationFitLabHarness.tsx').then((module) => ({
+    default: module.ScreenPresentationFitLabHarness,
+  })))
+  : null;
 
 const sessionFromLocation = () => new URL(window.location.href).searchParams.get('session');
 
@@ -73,6 +83,14 @@ export default function App() {
     : null;
   if (e2eHarness === 'm2-preview' && AdaptiveStageM2PreviewHarness) {
     return <Suspense fallback={null}><AdaptiveStageM2PreviewHarness /></Suspense>;
+  }
+  if (e2eHarness === 'stage-intelligence-v1' && StageIntelligenceV1Harness) {
+    return <Suspense fallback={null}><StageIntelligenceV1Harness /></Suspense>;
+  }
+  if (e2eHarness === 'screen-fit-lab'
+    && import.meta.env.VITE_SCREEN_FIT_LAB_ENABLED === 'true'
+    && ScreenPresentationFitLabHarness) {
+    return <Suspense fallback={null}><ScreenPresentationFitLabHarness /></Suspense>;
   }
   return e2eHarness === 'preflight' && StudioPreflightHarness
     ? <Suspense fallback={null}><StudioPreflightHarness /></Suspense>

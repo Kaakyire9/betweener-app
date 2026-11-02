@@ -1,6 +1,7 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { isStudioPresentationScene } from '@betweener/live-program-domain';
 import * as Haptics from 'expo-haptics';
+import { LinearGradient } from 'expo-linear-gradient';
 import {
   Camera,
   CameraOff,
@@ -18,6 +19,7 @@ import {
   Alert,
   Keyboard,
   KeyboardAvoidingView,
+  LayoutAnimation,
   Platform,
   Pressable,
   Share,
@@ -25,6 +27,7 @@ import {
   Text,
   useWindowDimensions,
   View,
+  type LayoutChangeEvent,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import BetweenerLoader from '@/components/ui/BetweenerLoader';
@@ -50,6 +53,7 @@ import {
   LiveQuickConnectStage,
   LiveRoomEventNotice,
   LiveSafetyReportSheet,
+  LiveScreenAmbientBackdrop,
   LiveStageInvitationPrompt,
   LiveStepUpSheet,
   LiveStudioModal,
@@ -96,6 +100,7 @@ import {
 import {
   initialLiveRoomPulseMode,
   resolveLiveRoomPulseHeight,
+  resolveLiveScreenOnlyStageSize,
   type LiveRoomPulseMode,
 } from '@/features/live/stage/live-broadcast-viewport.ts';
 import { resolveLiveStageChromeAccent } from '@/features/live/stage/live-stage-atmosphere.ts';
@@ -115,6 +120,8 @@ const StreamLiveStage = lazy(async () => {
   BoundStreamLiveStage.displayName = 'BoundStreamLiveStage';
   return { default: BoundStreamLiveStage };
 });
+
+const SCREEN_STAGE_VERTICAL_GUTTER = 32;
 
 type LiveRoomNotice = {
   actionLabel: string;
@@ -160,7 +167,11 @@ export default function LiveSessionScreen() {
   const [roomPulseMode, setRoomPulseMode] = useState<LiveRoomPulseMode>(() => (
     initialLiveRoomPulseMode(viewport.width, viewport.height)
   ));
+  const [expandedRoomPulseCommentCount, setExpandedRoomPulseCommentCount] = useState(0);
   const [isPictureInPicture, setIsPictureInPicture] = useState(false);
+  const [screenShareAspectRatio, setScreenShareAspectRatio] = useState<number | null>(null);
+  const [screenPresentationFocused, setScreenPresentationFocused] = useState(false);
+  const [screenStageSlotSize, setScreenStageSlotSize] = useState({ width: 0, height: 0 });
   const [roomEventNotices, setRoomEventNotices] = useState<readonly LiveRoomNotice[]>([]);
   const [audiencePulseOpenRequest, setAudiencePulseOpenRequest] = useState(0);
   const [hostedPairTransition, setHostedPairTransition] = useState<{
@@ -171,10 +182,44 @@ export default function LiveSessionScreen() {
   const celebratedHostedPairIdsRef = useRef(new Set<string>());
   const [selectedMember, setSelectedMember] = useState<LiveMemberPreview | null>(null);
   const [intentMember, setIntentMember] = useState<LiveMemberPreview | null>(null);
+  const stageParticipantCount = controller.snapshot?.stage.length ?? 1;
   const roomPulseHeight = useMemo(
-    () => resolveLiveRoomPulseHeight(viewport.height, roomPulseMode),
-    [roomPulseMode, viewport.height],
+    () => resolveLiveRoomPulseHeight(
+      viewport.height,
+      roomPulseMode,
+      stageParticipantCount,
+      roomPulseMode === 'expanded' ? expandedRoomPulseCommentCount : undefined,
+    ),
+    [expandedRoomPulseCommentCount, roomPulseMode, stageParticipantCount, viewport.height],
   );
+  const standardRoomPulseHeight = useMemo(
+    () => resolveLiveRoomPulseHeight(viewport.height, 'standard'),
+    [viewport.height],
+  );
+  const roomPulseBackdrop = useMemo(() => {
+    if (keyboardVisible) {
+      return {
+        colors: visual.isDark
+          ? ['rgba(8, 26, 23, 0.01)', 'rgba(8, 26, 23, 0.18)', 'rgba(8, 26, 23, 0.66)', 'rgba(8, 26, 23, 0.88)'] as const
+          : ['rgba(255, 253, 252, 0.02)', 'rgba(255, 253, 252, 0.22)', 'rgba(255, 253, 252, 0.72)', 'rgba(255, 253, 252, 0.90)'] as const,
+        locations: [0, 0.28, 0.7, 1] as const,
+      };
+    }
+    if (roomPulseMode === 'expanded') {
+      return {
+        colors: visual.isDark
+          ? ['rgba(8, 26, 23, 0)', 'rgba(8, 26, 23, 0.09)', 'rgba(8, 26, 23, 0.48)', 'rgba(8, 26, 23, 0.84)'] as const
+          : ['rgba(255, 253, 252, 0)', 'rgba(255, 253, 252, 0.12)', 'rgba(255, 253, 252, 0.54)', 'rgba(255, 253, 252, 0.88)'] as const,
+        locations: [0, 0.24, 0.56, 1] as const,
+      };
+    }
+    return {
+      colors: visual.isDark
+        ? ['rgba(8, 26, 23, 0.02)', 'rgba(8, 26, 23, 0.46)', 'rgba(8, 26, 23, 0.72)'] as const
+        : ['rgba(255, 253, 252, 0.04)', 'rgba(255, 253, 252, 0.54)', 'rgba(255, 253, 252, 0.82)'] as const,
+      locations: [0, 0.22, 1] as const,
+    };
+  }, [keyboardVisible, roomPulseMode, visual.isDark]);
   const [memberActionBusy, setMemberActionBusy] = useState(false);
   const [likedProfileIds, setLikedProfileIds] = useState<ReadonlySet<string>>(() => new Set());
   const [participantAdmissionReady, setParticipantAdmissionReady] = useState(false);
@@ -191,6 +236,21 @@ export default function LiveSessionScreen() {
   useEffect(() => {
     if (viewport.width > viewport.height) setRoomPulseMode('peek');
   }, [viewport.height, viewport.width]);
+
+  const changeRoomPulseMode = useCallback((mode: LiveRoomPulseMode) => {
+    if (!reduceMotion) {
+      LayoutAnimation.configureNext({
+        duration: 220,
+        create: { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.opacity },
+        update: { type: LayoutAnimation.Types.easeInEaseOut },
+        delete: { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.opacity },
+      });
+    }
+    if (mode === 'expanded') {
+      setExpandedRoomPulseCommentCount(controller.commentCount);
+    }
+    setRoomPulseMode(mode);
+  }, [controller.commentCount, reduceMotion]);
 
   const mediaState = media.state;
   useScopedScreenAwake({
@@ -245,6 +305,36 @@ export default function LiveSessionScreen() {
     // second local audio mix, including listener-only audience devices.
     allowMusicPlayback: false,
   });
+  const activeProgram = liveProgram.state?.program ?? null;
+  const screenOnlyProgramActive = activeProgram?.scene === 'screen_full';
+  const screenOnlyProgramActiveRef = useRef(false);
+  useEffect(() => {
+    if (screenOnlyProgramActive && !screenOnlyProgramActiveRef.current) {
+      setScreenShareAspectRatio(null);
+      changeRoomPulseMode('peek');
+    }
+    if (!screenOnlyProgramActive) {
+      setScreenShareAspectRatio(null);
+      setScreenPresentationFocused(false);
+    }
+    screenOnlyProgramActiveRef.current = screenOnlyProgramActive;
+  }, [changeRoomPulseMode, screenOnlyProgramActive]);
+  const handleProgramScreenAspectRatioChange = useCallback((aspectRatio: number | null) => {
+    setScreenShareAspectRatio((current) => (
+      current === aspectRatio
+      || (current !== null && aspectRatio !== null && Math.abs(current - aspectRatio) < 0.01)
+        ? current
+        : aspectRatio
+    ));
+  }, []);
+  const handleScreenStageSlotLayout = useCallback((event: LayoutChangeEvent) => {
+    const { width, height } = event.nativeEvent.layout;
+    setScreenStageSlotSize((current) => (
+      Math.abs(current.width - width) < 1 && Math.abs(current.height - height) < 1
+        ? current
+        : { width, height }
+    ));
+  }, []);
   const mobileProgramme = useLiveMobileProgrammeControl({
     enabled: isLive && participantAdmissionReady,
     sessionId,
@@ -711,17 +801,51 @@ export default function LiveSessionScreen() {
   // joined member is the only connection we can assert safely.
   const attendeeCount = connectedParticipantCount ?? (mediaState === 'joined' ? 1 : 0);
   const hostParticipant = snapshot?.stage.find((participant) => participant.role === 'host') ?? null;
-  const programUsesStructuredStage = liveProgram.state?.enabled === true
-    && isStudioPresentationScene(liveProgram.state.program.scene);
+  const programUsesStructuredStage = activeProgram != null
+    && isStudioPresentationScene(activeProgram.scene);
   const chromeAccent = resolveLiveStageChromeAccent(stageAtmosphere.state?.preset);
   const isFullPageSoloHost = !isQuickConnectLive
+    && !screenOnlyProgramActive
     && stageRequestSeat == null
     && snapshot?.stage.length === 1
     && snapshot.stage[0]?.role === 'host'
     && !programUsesStructuredStage;
+  const roomPulseOverlaysStage = isFullPageSoloHost
+    && roomPulseMode === 'expanded'
+    && !keyboardVisible;
+  const roomPulseAnchorHeight = roomPulseOverlaysStage
+    ? standardRoomPulseHeight
+    : roomPulseHeight;
   const showControlDock = !keyboardVisible
+    && !screenPresentationFocused
     && (canManageStudio || canPublish || canManageStage
       || (!isRoomHost && isOnStage) || Boolean(stageInvitation));
+  const fallbackScreenSlotHeight = Math.max(
+    120,
+    viewport.height - (
+      safeAreaInsets.top
+      + safeAreaInsets.bottom
+      + 76
+      + roomPulseAnchorHeight
+      + (showControlDock ? 78 : 0)
+      + 28
+    ),
+  );
+  const screenOnlyStageSize = resolveLiveScreenOnlyStageSize(
+    screenStageSlotSize.width || viewport.width,
+    Math.max(
+      120,
+      (screenStageSlotSize.height || fallbackScreenSlotHeight) - SCREEN_STAGE_VERTICAL_GUTTER,
+    ),
+    liveProgram.state?.program.targetCanvas,
+    screenShareAspectRatio,
+  );
+  const toggleScreenPresentationFocus = useCallback(() => {
+    if (!reduceMotion) {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    }
+    setScreenPresentationFocused((focused) => !focused);
+  }, [reduceMotion]);
   const stageFooterInset = isFullPageSoloHost
     ? roomPulseHeight + safeAreaInsets.bottom + (showControlDock ? 67 : 8)
     : 0;
@@ -1043,6 +1167,10 @@ export default function LiveSessionScreen() {
               stageParticipants={snapshot.stage}
               localPublisherUserId={canPublish ? user?.id ?? null : null}
               onConnectedParticipantCountChange={handleConnectedParticipantCountChange}
+              onProgramScreenAspectRatioChange={handleProgramScreenAspectRatioChange}
+              screenShareAspectRatio={screenShareAspectRatio}
+              screenPresentationFocused={screenPresentationFocused}
+              onToggleScreenPresentationFocus={toggleScreenPresentationFocus}
               onPictureInPictureModeChange={handlePictureInPictureModeChange}
               tileFooterInset={stageFooterInset}
               requestSeat={stageRequestSeat}
@@ -1214,17 +1342,23 @@ export default function LiveSessionScreen() {
             {renderMediaStage()}
           </View>
         ) : null}
-        {!isPictureInPicture ? <SafeAreaView pointerEvents="box-none" style={styles.safe} edges={['top', 'bottom']}>
-        <LiveCompactHeader
-          accentBorderColor={chromeAccent.borderColor}
-          accentColor={chromeAccent.color}
-          attendeeCount={attendeeCount}
-          hostAvatarUrl={hostParticipant?.avatarUrl ?? null}
-          hostName={hostParticipant?.fullName ?? null}
-          onLeave={isRoomHost ? () => void close() : confirmLeaveLive}
-          onOpenSafety={canReportLive ? () => setSafetyReportOpen(true) : undefined}
-          roomTitle={snapshot.session.title}
-        />
+        {!isPictureInPicture ? <SafeAreaView
+          pointerEvents="box-none"
+          style={styles.safe}
+          edges={keyboardVisible ? ['top'] : ['top', 'bottom']}
+        >
+        {!screenPresentationFocused ? (
+          <LiveCompactHeader
+            accentBorderColor={chromeAccent.borderColor}
+            accentColor={chromeAccent.color}
+            attendeeCount={attendeeCount}
+            hostAvatarUrl={hostParticipant?.avatarUrl ?? null}
+            hostName={hostParticipant?.fullName ?? null}
+            onLeave={isRoomHost ? () => void close() : confirmLeaveLive}
+            onOpenSafety={canReportLive ? () => setSafetyReportOpen(true) : undefined}
+            roomTitle={snapshot.session.title}
+          />
+        ) : null}
         {isQuickConnectLive && !keyboardVisible ? (
           <LiveQuickConnectStage
             hostSurface={renderMediaStage()}
@@ -1249,57 +1383,82 @@ export default function LiveSessionScreen() {
         ) : !keyboardVisible ? (
           isFullPageSoloHost
             ? <View pointerEvents="none" style={styles.fullPageHostStageSpace} />
-            : (
-              <View style={styles.adaptiveStage}>
-                {renderMediaStage()}
+            : screenOnlyProgramActive ? (
+              <View
+                onLayout={handleScreenStageSlotLayout}
+                style={styles.screenOnlyStageSlot}
+              >
+                <LiveScreenAmbientBackdrop dark={visual.isDark} reduceMotion={reduceMotion} />
+                <View style={[
+                  styles.screenOnlyStage,
+                  screenPresentationFocused && styles.screenOnlyStageFocused,
+                  screenOnlyStageSize,
+                ]}>
+                  {renderMediaStage()}
+                </View>
               </View>
+            ) : (
+              <View style={styles.adaptiveStage}>{renderMediaStage()}</View>
             )
         ) : null}
 
-        <LiveGlassSurface
-          intensity={28}
+        {!screenPresentationFocused ? <View
           style={[
-            styles.conversationGlass,
-            { height: roomPulseHeight },
-            { borderColor: chromeAccent.borderColor },
-            roomPulseMode === 'peek' && styles.conversationGlassPeek,
-            roomPulseMode === 'expanded' && styles.conversationGlassExpanded,
-            roomPulseMode === 'expanded'
-              && !keyboardVisible
-              && [styles.conversationGlassStageOverlay, { bottom: showControlDock ? 55 : 2 }],
-            isQuickConnectLive && !keyboardVisible && styles.quickConnectConversationGlass,
-            keyboardVisible && styles.conversationGlassKeyboard,
+            styles.conversationGlassAnchor,
+            { height: roomPulseAnchorHeight },
+            keyboardVisible && styles.conversationGlassAnchorKeyboard,
           ]}
         >
-          <LiveConversationPanel
-            accentBorderColor={chromeAccent.borderColor}
-            accentColor={chromeAccent.color}
-            comments={controller.comments}
-            commentCount={controller.commentCount}
-            currentUserId={user?.id ?? null}
-            canModerate={canModerateComments}
-            audiencePulse={controller.audiencePulse}
-            pollBusy={controller.busyAction?.startsWith('audience-poll:') === true}
-            disabled={controller.state === 'offline'}
-            loadingEarlier={controller.loadingEarlierComments}
-            onLoadEarlier={controller.loadEarlierComments}
-            onComment={controller.createComment}
-            onModerate={controller.moderateComment}
-            onReport={controller.reportComment}
-            onReaction={reactions.send}
-            reactionSummary={reactions.summary}
-            reactionFeedback={reactions.feedback}
-            onOpenPoll={controller.openAudiencePoll}
-            onVotePoll={controller.voteAudiencePoll}
-            onClosePoll={controller.closeAudiencePoll}
-            audiencePulseOpenRequest={audiencePulseOpenRequest}
-            displayMode={roomPulseMode}
-            onDisplayModeChange={setRoomPulseMode}
-            variant="glass"
-            joinNotice={controller.joinNotice}
-            onOpenMember={setSelectedMember}
-          />
-        </LiveGlassSurface>
+          <View
+            style={[
+              styles.conversationGlassFrame,
+              { height: keyboardVisible ? '100%' : roomPulseHeight },
+              roomPulseOverlaysStage && styles.conversationGlassStageOverlay,
+            ]}
+          >
+            <LiveGlassSurface
+              intensity={keyboardVisible ? 46 : roomPulseMode === 'expanded' ? 56 : 48}
+              style={styles.conversationGlass}
+            >
+              <LinearGradient
+                colors={roomPulseBackdrop.colors}
+                end={{ x: 0.5, y: 1 }}
+                locations={roomPulseBackdrop.locations}
+                pointerEvents="none"
+                start={{ x: 0.5, y: 0 }}
+                style={styles.conversationGlassBackdrop}
+              />
+              <LiveConversationPanel
+                accentBorderColor={chromeAccent.borderColor}
+                accentColor={chromeAccent.color}
+                comments={controller.comments}
+                commentCount={controller.commentCount}
+                currentUserId={user?.id ?? null}
+                canModerate={canModerateComments}
+                audiencePulse={controller.audiencePulse}
+                pollBusy={controller.busyAction?.startsWith('audience-poll:') === true}
+                disabled={controller.state === 'offline'}
+                loadingEarlier={controller.loadingEarlierComments}
+                onLoadEarlier={controller.loadEarlierComments}
+                onComment={controller.createComment}
+                onModerate={controller.moderateComment}
+                onReport={controller.reportComment}
+                onReaction={reactions.send}
+                reactionSummary={reactions.summary}
+                reactionFeedback={reactions.feedback}
+                onOpenPoll={controller.openAudiencePoll}
+                onVotePoll={controller.voteAudiencePoll}
+                onClosePoll={controller.closeAudiencePoll}
+                audiencePulseOpenRequest={audiencePulseOpenRequest}
+                displayMode={roomPulseMode}
+                onDisplayModeChange={changeRoomPulseMode}
+                variant="glass"
+                joinNotice={controller.joinNotice}
+                onOpenMember={setSelectedMember}
+              />
+            </LiveGlassSurface>
+          </View>
+        </View> : null}
 
         {showControlDock ? <LiveControlDock accentBorderColor={chromeAccent.borderColor} style={styles.controls}>
           {stageInvitation ? (
@@ -1335,9 +1494,11 @@ export default function LiveSessionScreen() {
               <Pressable disabled={!publicationReady} onPress={() => void media.setAudioEnabled(!media.audioEnabled)} style={[styles.control, !media.audioEnabled && styles.controlOff, !publicationReady && styles.controlDisabled]}>
                 {media.audioEnabled ? <Mic size={20} color={visual.color.accentContrast} /> : <MicOff size={20} color={visual.color.dangerText} />}
               </Pressable>
-              <Pressable disabled={!publicationReady} onPress={() => void media.setVideoEnabled(!media.videoEnabled)} style={[styles.control, !media.videoEnabled && styles.controlOff, !publicationReady && styles.controlDisabled]}>
-                {media.videoEnabled ? <Camera size={20} color={visual.color.accentContrast} /> : <CameraOff size={20} color={visual.color.dangerText} />}
-              </Pressable>
+              {!screenOnlyProgramActive ? (
+                <Pressable disabled={!publicationReady} onPress={() => void media.setVideoEnabled(!media.videoEnabled)} style={[styles.control, !media.videoEnabled && styles.controlOff, !publicationReady && styles.controlDisabled]}>
+                  {media.videoEnabled ? <Camera size={20} color={visual.color.accentContrast} /> : <CameraOff size={20} color={visual.color.dangerText} />}
+                </Pressable>
+              ) : null}
             </>
           ) : null}
           {canManageStage && snapshot.session.createdByUserId === user?.id ? (
@@ -1471,6 +1632,18 @@ const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
   fullStageBackground: { bottom: 0 },
   fullPageHostStageSpace: { flex: 1, minHeight: 150 },
   adaptiveStage: { flex: 1, minHeight: 150, marginHorizontal: 10, marginTop: 7, marginBottom: 7, borderRadius: 26, overflow: 'hidden', borderWidth: 1, borderColor: visual.color.borderStrong, backgroundColor: visual.color.videoChrome },
+  screenOnlyStageSlot: { position: 'relative', flex: 1, minHeight: 150, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
+  screenOnlyStage: {
+    position: 'relative',
+    minHeight: 0,
+    alignSelf: 'center',
+    overflow: 'hidden',
+    borderRadius: 26,
+    borderWidth: 1,
+    borderColor: visual.color.borderStrong,
+    backgroundColor: visual.color.videoChrome,
+  },
+  screenOnlyStageFocused: { borderRadius: 18, borderColor: `${visual.color.teal}8A` },
   loading: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.color.canvas, gap: 18 },
   errorTitle: { color: visual.color.text, fontSize: 21, fontFamily: 'PlayfairDisplay_700Bold' },
   retry: { paddingHorizontal: 20, height: 44, borderRadius: 22, justifyContent: 'center', backgroundColor: visual.color.teal },
@@ -1532,23 +1705,49 @@ const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
   },
   authorityNoticeText: { color: visual.color.text, fontSize: 11, fontFamily: 'Manrope_600SemiBold' },
   stageNoticeCompact: { top: 10, left: 8, right: 8, minHeight: 38, paddingHorizontal: 10 },
-  conversationGlass: { flexShrink: 0, marginHorizontal: 16, marginBottom: 7, borderRadius: 25, backgroundColor: visual.isDark ? '#081A17C7' : '#FFFDFCD9', shadowOpacity: 0.25 },
-  conversationGlassPeek: { borderRadius: 20 },
-  conversationGlassExpanded: { borderColor: visual.color.teal },
+  conversationGlassAnchor: {
+    position: 'relative',
+    zIndex: 30,
+    flexShrink: 0,
+    marginBottom: 7,
+    overflow: 'visible',
+  },
+  conversationGlassAnchorKeyboard: {
+    flex: 1,
+    height: 'auto',
+    minHeight: 0,
+    marginTop: 8,
+    marginBottom: 0,
+  },
+  conversationGlassFrame: {
+    position: 'relative',
+    zIndex: 31,
+    overflow: 'visible',
+  },
+  conversationGlass: {
+    flex: 1,
+    minHeight: 0,
+    borderWidth: 0,
+    borderRadius: 0,
+    backgroundColor: 'transparent',
+    shadowOpacity: 0,
+    elevation: 0,
+  },
+  conversationGlassBackdrop: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+  },
   conversationGlassStageOverlay: {
     position: 'absolute',
+    bottom: 0,
     left: 0,
     right: 0,
-    zIndex: 31,
-    shadowColor: '#000000',
-    shadowOpacity: 0.42,
-    shadowRadius: 26,
-    elevation: 18,
   },
-  quickConnectConversationGlass: { flexShrink: 0 },
-  conversationGlassKeyboard: { flex: 1, height: 'auto', minHeight: 0, marginTop: 8, marginBottom: 4 },
-  controls: { marginHorizontal: 16, marginBottom: 3 },
-  studioButton: { height: 44, borderRadius: 22, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: visual.color.tealSoft, borderWidth: 1, borderColor: visual.color.borderStrong },
+  controls: { position: 'relative', zIndex: 40, marginHorizontal: 16, marginBottom: 3 },
+  studioButton: { height: 44, borderRadius: 22, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: visual.isDark ? '#0B2A2738' : '#FFFFFF66', borderWidth: 1, borderColor: visual.color.border },
   studioText: { color: visual.color.teal, fontSize: 11, fontFamily: 'Manrope_800ExtraBold' },
   leaveButton: {
     height: 44,
