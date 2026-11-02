@@ -84,3 +84,29 @@ it('malformed preferences and write failures remain unconfirmed', async () => {
   await act(async () => { expect(await current.setVoice(true)).toBe(false); });
   expect(current.value).toBeNull(); expect(current.error).toBe(true); expect(current.busy).toBe(false);
 });
+
+it('media-specific video approval never restores a stale voice preference', async () => {
+  const stored = { voice: true, video: false };
+  const port = { get: async () => ({ ...stored }), set: unusedSet(),
+    setMedia: jest.fn(async (media: 'voice' | 'video', enabled: boolean) => { stored[media] = enabled; }) };
+  await render(<Harness port={port} />); await waitFor(() => expect(current.value?.voice).toBe(true));
+  stored.voice = false; // A different device withdraws voice after this screen's read.
+  await act(async () => { expect(await current.setVideo(true)).toBe(true); });
+  expect(port.setMedia).toHaveBeenCalledWith('video', true); expect(port.set).not.toHaveBeenCalled();
+  expect(current.value).toEqual({ voice: false, video: true });
+});
+
+it('legacy pair-only services cannot opt into video', async () => {
+  const port = { get: async () => ({ voice: true, video: false }), set: unusedSet() };
+  await render(<Harness port={port} />); await waitFor(() => expect(current.value).not.toBeNull());
+  await act(async () => { expect(await current.setVideo(true)).toBe(false); });
+  expect(port.set).not.toHaveBeenCalled(); expect(current.error).toBe(true);
+});
+
+it('a resolved media write is not success when authoritative readback disagrees', async () => {
+  const port = { get: async () => ({ voice: false, video: false }), set: unusedSet(), setMedia: jest.fn(async () => undefined) };
+  await render(<Harness port={port} />); await waitFor(() => expect(current.value).not.toBeNull());
+  await act(async () => { expect(await current.setVideo(true)).toBe(false); });
+  expect(current.value?.video).toBe(false);
+  expect(current.error).toBe(true);
+});

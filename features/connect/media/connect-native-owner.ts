@@ -4,6 +4,7 @@ import type { VoiceCredentials, VoiceRoute } from '../voice/voice-types.ts';
 import { streamVideoClientLeaseRegistry, type StreamVideoClientLeaseRegistry, type StreamVideoClientLease } from '../../live/media/stream-video-client-leases.ts';
 import { loadConnectNativeSdk } from './native-stream-sdk.ts';
 import { createNativeAudioRouteSelector, nativeAudioRouteType as routeType } from './native-audio-route.ts';
+import type { VideoPresentation } from '../video/video-types.ts';
 import type { NativeAudioHandle, NativeAudioState, NativeCallHandle, NativeOwnerAccess, NativeOwnerSnapshot, NativeSdkCallState,
   NativeRetirement, NativeSdkClient, NativeStreamSdk, NativeTrack } from './native-owner-types.ts';
 
@@ -28,6 +29,10 @@ export class ConnectNativeMediaOwner {
   private reason: NativeRetirement | null = null;
   private nativeUseStarted = false;
   private stoppingNow = false;
+  private cameraWanted = false;
+  private cameraGeneration = 0;
+  private stoppingCamera = false;
+  private videoSource: VideoPresentation | null = null;
   private releasePromise: Promise<void> | null = null;
   private readonly listeners = new Set<() => void>();
   private readonly unsubscribes: (() => void)[] = [];
@@ -118,9 +123,22 @@ export class ConnectNativeMediaOwner {
       void this.run('leave', () => this.input.handle.leave());
     } finally { this.stoppingNow = false; this.emit(); }
   }
+  private enforceCameraOff() {
+    // The retained offline hardware seam has no SDK camera manager. Its captures
+    // remain owned by that seam and are still collected/released during shutdown.
+    if (!this.input.handle.cameraEnabled || this.cameraWanted || this.stoppingCamera || this.released) return;
+    this.stoppingCamera = true;
+    try {
+      this.collect();
+      if ([...this.tracks.camera].some(track => track.readyState !== 'ended') || this.input.handle.state().cameraStatus === 'enabled') {
+        this.stopTracks('camera');
+        void this.run('camera', () => this.input.handle.disableCamera());
+      }
+    } finally { this.stoppingCamera = false; }
+  }
   retire = (reason: NativeRetirement = 'local_end') => {
     if (this.retired || this.released) return;
-    this.retired = true; this.reason = reason;
+    this.retired = true; this.reason = reason; this.cameraWanted = false; ++this.cameraGeneration;
     this.audioRoute.cancel();
     this.stopNow();
     try { this.input.onRetire?.(reason); } catch { /* Cleanup still owns release even if a composition observer fails. */ }
@@ -142,7 +160,10 @@ export class ConnectNativeMediaOwner {
     this.unsubscribes.push(this.input.audio.observeDevices(state => {
       if (this.isCurrent()) { this.audioStateVersion++; this.audioState = state; this.audioRoute.observe(state); this.emit(); }
     }));
-    this.unsubscribes.push(this.input.handle.observeMedia(() => { if (this.retired) this.stopNow(); else { this.collect(); this.emit(); } }));
+    this.unsubscribes.push(this.input.handle.observeMedia(() => {
+      try { if (this.retired) this.stopNow(); else { this.collect(); this.enforceCameraOff(); this.emit(); } }
+      catch { this.retire('connection_failed'); }
+    }));
     this.unsubscribes.push(this.input.handle.observeState(state => {
       if (this.input.retireOnReconnect && ['reconnecting', 'migrating', 'offline'].includes(state)) this.retire('connection_failed');
       if (this.retired) this.stopNow(); this.emit();
@@ -167,7 +188,36 @@ export class ConnectNativeMediaOwner {
         }),
         disable: async () => { this.stopTracks('microphone'); await this.run('microphone', () => this.input.handle.disableMicrophone()); },
       },
-      camera: { disable: async () => { this.stopTracks('camera'); await this.run('camera', () => this.input.handle.disableCamera()); } },
+      camera: {
+        disable: async () => { this.cameraWanted = false; ++this.cameraGeneration; this.stopTracks('camera'); await this.run('camera', () => this.input.handle.disableCamera()); },
+        enabled: () => this.isCurrent() ? this.input.handle.cameraEnabled?.() ?? null : null,
+        enable: (active = () => true) => this.trackMutation(async () => {
+          this.assertCurrent();
+          const generation = ++this.cameraGeneration;
+          if (this.input.admission.media !== 'video' || this.input.handle.state().callingState !== 'joined'
+            || !this.input.handle.enableCamera || !this.input.access.cameraPermission) throw new Error('connect_video_not_authorized');
+          const permission = await this.input.access.cameraPermission();
+          this.assertCurrent();
+          if (!active() || generation !== this.cameraGeneration) throw new Error('connect_camera_superseded');
+          if (this.input.handle.state().callingState !== 'joined') throw new Error('connect_native_owner_retired');
+          if (permission !== 'granted') throw new Error(permission === 'blocked' ? 'connect_camera_permission_blocked' : 'connect_camera_permission_denied');
+          this.nativeUseStarted = true; this.cameraWanted = true;
+          try { await this.input.handle.enableCamera(); }
+          finally {
+            if (this.retired) this.stopNow();
+            else if (!active() || generation !== this.cameraGeneration) { this.cameraWanted = false; this.enforceCameraOff(); }
+            this.emit();
+          }
+          this.assertCurrent();
+        }),
+        flip: () => this.trackMutation(async () => {
+          this.assertCurrent();
+          if (this.input.admission.media !== 'video' || !this.cameraWanted || this.input.handle.state().callingState !== 'joined'
+            || !this.input.handle.flipCamera || !this.input.handle.cameraEnabled?.()) throw new Error('connect_camera_unavailable');
+          try { return await this.input.handle.flipCamera(); }
+          finally { if (this.retired) this.stopNow(); this.emit(); this.assertCurrent(); }
+        }),
+      },
       state: { callingState$: { subscribe: listener => ({ unsubscribe: this.input.handle.observeState(state => { if (this.isCurrent()) listener(state); }) }) } },
       join: () => this.trackMutation(async () => {
         this.assertCurrent(); this.nativeUseStarted = true;
@@ -180,6 +230,16 @@ export class ConnectNativeMediaOwner {
     },
     routes: () => this.isCurrent() ? [...new Set(this.audioState.devices.map(d => routeType(d.type)).filter((r): r is VoiceRoute => r !== null))] : [],
     audioSample: () => this.isCurrent() ? this.input.handle.audioSample?.() ?? null : null,
+    videoPresentation: () => {
+      if (!this.isCurrent() || this.input.admission.media !== 'video' || !this.input.handle.videoPresentation) return null;
+      if (!this.videoSource) {
+        const source = this.input.handle.videoPresentation(this.isCurrent);
+        this.videoSource = { participants: () => this.isCurrent() ? source.participants() : [],
+          subscribe: listener => { const a = this.subscribe(listener), b = source.subscribe(listener); return () => { a(); b(); }; },
+          render: (id, local) => this.isCurrent() ? source.render(id, local) : null };
+      }
+      return this.videoSource;
+    },
     selectRoute: async route => {
       this.assertCurrent();
       const request = ++this.routeRequest;
@@ -246,7 +306,7 @@ export function createConnectNativeOwnerFactory(dependencies: NativeOwnerDepende
       const valid = (requireInitialExpiry = true) => {
         const live = dependencies.auth.snapshot();
         return activeGeneration() && auth?.authenticated === true && !!auth.generation && live?.authenticated === true && live.userId === auth.userId && live.generation === auth.generation
-          && admission.user.id === auth.userId && admission.media === 'voice' && admission.call.type === 'betweener_connect'
+          && admission.user.id === auth.userId && (admission.media === 'voice' || (flags.videoCalling === true && admission.media === 'video')) && admission.call.type === 'betweener_connect'
           && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(admission.call.id)
           && admission.call.cid === `betweener_connect:${admission.call.id}` && !!admission.apiKey && !!admission.token
           && Number.isFinite(Date.parse(admission.expiresAt)) && (!requireInitialExpiry || Date.parse(admission.expiresAt) > (dependencies.now?.() ?? Date.now()))
@@ -270,6 +330,7 @@ export function createConnectNativeOwnerFactory(dependencies: NativeOwnerDepende
       try {
         const handle = lease.client.call(admission.call.type, admission.call.id);
         if (handle.id !== admission.call.id || handle.type !== admission.call.type || handle.cid !== admission.call.cid) throw new Error('connect_native_identity_invalid');
+        if (admission.media === 'video' && (!handle.enableCamera || !handle.flipCamera || !handle.cameraEnabled || !handle.videoPresentation)) throw new Error('connect_video_build_incompatible');
         owner = new ConnectNativeMediaOwner({ admission, access: dependencies, authGeneration: auth!.generation, handle, retireOnReconnect: dependencies.retireOnReconnect,
           audio: sdk.audio(dependencies.lifecycle.platform), lease, onRetire: dependencies.onRetire });
         current = owner; dependencies.onOwner?.(owner); owner.activate();

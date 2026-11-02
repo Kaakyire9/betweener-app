@@ -3,12 +3,14 @@ import { Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 import { Colors } from '@/constants/theme';
 import type { ConnectProduct } from '../application/product-coordinator';
 import { useCallingPreferences } from '../hooks/use-calling-preferences';
+import type { ConnectMedia } from '../domain/connect';
 
 /** Both participants act through their own authenticated session; reads never grant consent. */
-export function ConnectVoiceSetup({ product, peerId, matched, onEligibility }: {
+export function ConnectVoiceSetup({ product, peerId, matched, onEligibility, media = 'voice' }: {
+  media?: ConnectMedia;
   product: ConnectProduct; peerId: string; matched: boolean; onEligibility(eligible: boolean): void;
 }) {
-  const { value: preferences, busy: preferencesBusy, error: preferencesError, refresh: refreshPreferences, setVoice }
+  const { value: preferences, busy: preferencesBusy, error: preferencesError, refresh: refreshPreferences, setVoice, setVideo }
     = useCallingPreferences(product.services.preferences, { autoLoad: false });
   const [verified, setVerified] = useState<boolean | null>(null);
   const [waiting, setWaiting] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState(false);
@@ -38,14 +40,14 @@ export function ConnectVoiceSetup({ product, peerId, matched, onEligibility }: {
     finally { mutation.current = false; if (mounted.current) setBusy(false); }
   };
   return <View style={styles.card}>
-    <View style={styles.row}><Text style={styles.text}>Allow voice invitations</Text><Switch accessibilityLabel="Allow voice invitations in this account"
-      value={preferences?.voice ?? false} disabled={!preferences || busy || preferencesBusy} onValueChange={voice => {
+    <View style={styles.row}><Text style={styles.text}>Allow {media} invitations</Text><Switch accessibilityLabel={`Allow ${media} invitations in this account`}
+      value={preferences?.[media] ?? false} disabled={!preferences || busy || preferencesBusy} onValueChange={voice => {
         if (preferences) void change(async () => {
-          if (!await setVoice(voice)) throw Error('connect_unavailable');
+          if (!await (media === 'video' ? setVideo(voice) : setVoice(voice))) throw Error('connect_unavailable');
           if (mounted.current && !voice) onEligibility(false);
         }, false);
       }} /></View>
-    <Text style={styles.note}>You choose whether to answer each call. Your camera stays off.</Text>
+    <Text style={styles.note}>{media === 'video' ? 'Video invitations have separate permission. Answer with your camera off, then choose whether to turn it on.' : 'You choose whether to answer each call. Your camera stays off.'}</Text>
     {matched && verified === false && <>
       <Text style={styles.text}>{waiting ? 'Waiting for the other person to confirm.' : 'Both of you need to confirm this connection before your first voice call.'}</Text>
       {!waiting && <Pressable accessibilityRole="button" accessibilityLabel="Confirm this connection for calling" disabled={busy}

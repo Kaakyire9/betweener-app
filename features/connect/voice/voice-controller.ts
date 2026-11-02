@@ -1,4 +1,5 @@
-import { connectedDuration, terminalStates, type ConnectAuthorization, type ConnectSession } from '../domain/connect.ts';
+import { connectedDuration, terminalStates, type ConnectAuthorization, type ConnectSession, type ConnectMedia } from '../domain/connect.ts';
+import { cameraOff } from '../video/video-types.ts';
 import type { MicrophonePermission, VoiceApi, VoicePeer, VoiceTransport, VoiceTransportState, VoiceViewState, VoiceRoute } from './voice-types.ts';
 import { connectFeatureFlags, type ConnectFeatureFlags } from '../config/connect-feature-flags.ts';
 import { pendingShutdown, unverifiedShutdown, normalizeShutdown } from '../media/local-shutdown.ts';
@@ -11,17 +12,18 @@ interface VoiceDependencies {
   failClosedAuthority?: boolean;
   api: VoiceApi; transport: VoiceTransport; selfProfileId: string; userId: string; deviceId: string;
   permission(): Promise<MicrophonePermission>; uuid(): string; now(): number;
+  cameraPermission?(): Promise<MicrophonePermission>;
   peer(profileId: string): Promise<VoicePeer>;
   flags?: ConnectFeatureFlags;
 }
 const initial = (): VoiceViewState => ({ audioHealth: undefined, quality: undefined, interruption: undefined, audioSetupStage: undefined, audioSetupFailure: undefined, endStatus: undefined, localShutdown: unverifiedShutdown(), endBlock: null, phase: 'IDLE', session: null, peer: null, incoming: false, muted: true,
   route: 'earpiece', routes: [], permission: null, error: null, busy: false, durationSeconds: null, foreground: true });
-const safeError = (error: unknown): string => {
+const safeError = (error: unknown, media: ConnectMedia = 'voice'): string => {
   const code = error instanceof Error ? error.message : '';
   if (code === 'connect_busy') return 'They are already on a call. Try again later.';
-  if (code === 'connect_consent_required') return 'Voice calling has not been approved for this connection.';
+  if (code === 'connect_consent_required') return `${media === 'video' ? 'Video' : 'Voice'} calling has not been approved for this connection.`;
   if (code === 'connect_device_conflict') return 'This call was answered on another device.';
-  if (code === 'connect_disabled') return 'Voice calling is currently unavailable.';
+  if (code === 'connect_disabled') return `${media === 'video' ? 'Video' : 'Voice'} calling is currently unavailable.`;
   if (code === 'connect_test_budget_exhausted') return 'This staging test has reached its call limit. Ask the test organiser to continue.';
   if (code === 'stream_native_owner_busy' || code === 'stream_client_release_pending') return 'Audio is in use by another session. Finish it before calling.';
   return 'The call could not continue. Please try again.';
@@ -34,7 +36,7 @@ export class VoiceController {
   private readonly listeners = new Set<() => void>();
   private generation = 0;
   private disposed = false;
-  private request: { peer: VoicePeer; authorization: ConnectAuthorization; grant: string | null; key: string } | null = null;
+  private request: { peer: VoicePeer; media: ConnectMedia; authorization: ConnectAuthorization; grant: string | null; key: string } | null = null;
   private starting: Promise<void> | null = null;
   private connecting: Promise<void> | null = null;
   private polling = false;
@@ -48,6 +50,7 @@ export class VoiceController {
   private lastPoll = -Infinity;
   private muteRequest = 0;
   private routeRequest = 0;
+  private cameraRequest = 0;
   private audioHealth = createAudioHealthMonitor();
   private quality = createCallQualityTracker();
   private blocking: Promise<void> | null = null;
@@ -67,7 +70,8 @@ export class VoiceController {
     this.view = { ...this.view, ...patch, quality: this.quality.snapshot() }; for (const listener of this.listeners) listener();
   }
   private participant(session: ConnectSession): boolean {
-    return session.media === 'voice' && [session.caller_profile_id, session.recipient_profile_id].includes(this.dependencies.selfProfileId);
+    return (session.media === 'voice' || (this.dependencies.flags?.videoCalling === true && session.media === 'video'))
+      && [session.caller_profile_id, session.recipient_profile_id].includes(this.dependencies.selfProfileId);
   }
   private sameCall(a: ConnectSession, b: ConnectSession): boolean {
     return a.id === b.id && a.created_at === b.created_at && a.caller_profile_id === b.caller_profile_id
@@ -81,17 +85,28 @@ export class VoiceController {
       ? 'Allow microphone access in Settings to join a voice call.' : 'Microphone permission is needed for a voice call.' });
     return permission === 'granted';
   }
-  start(peer: VoicePeer, authorization: ConnectAuthorization, grant: string | null = null): Promise<void> {
+  private async prepareCameraPermission(media: ConnectMedia, generation: number) {
+    if (media !== 'video' || !this.dependencies.cameraPermission) return;
+    let permission: MicrophonePermission = 'denied';
+    try { permission = await this.dependencies.cameraPermission(); } catch { /* Camera denial never certifies capture or audio failure. */ }
+    if (generation !== this.generation || this.disposed) return;
+    this.update({ video: { ...cameraOff(), permission, error: permission === 'granted' ? null
+      : 'Camera access is off. You can continue by voice, or enable camera access in Settings before your next video call.' } });
+  }
+  start(peer: VoicePeer, authorization: ConnectAuthorization, grant: string | null = null, media: ConnectMedia = 'voice'): Promise<void> {
     if (this.disposed) return Promise.resolve();
+    if (media !== 'voice' && (media !== 'video' || this.dependencies.flags?.videoCalling !== true)) {
+      this.update({ error: 'Video calling is currently unavailable.' }); return Promise.resolve();
+    }
     if (this.starting) return this.starting;
     if (this.view.session) {
       if (!this.canDismissCompletedCall()) return Promise.resolve();
       this.reset();
     }
-    if (this.request && (this.request.peer.profileId !== peer.profileId || this.request.authorization !== authorization || this.request.grant !== grant)) {
+    if (this.request && (this.request.media !== media || this.request.peer.profileId !== peer.profileId || this.request.authorization !== authorization || this.request.grant !== grant)) {
       this.update({ error: 'Resolve the previous call attempt before starting another.' }); return Promise.resolve();
     }
-    this.request ??= { peer, authorization, grant, key: this.dependencies.uuid() };
+    this.request ??= { peer, media, authorization, grant, key: this.dependencies.uuid() };
     const generation = ++this.generation; this.cancelledDuringStart = false; this.acceptedHere = false;
     this.mediaAttempted = false;
     this.quality = createCallQualityTracker();
@@ -106,12 +121,14 @@ export class VoiceController {
         if (generation === this.generation && !this.disposed && !this.cancelledDuringStart) { this.request = null; this.update({ phase: 'IDLE' }); }
         return;
       }
-      const session = await d.api.createCall(request.peer.profileId, 'voice', request.authorization, request.key, d.deviceId, request.grant);
-      if (!this.participant(session) || session.caller_profile_id !== d.selfProfileId || session.recipient_profile_id !== request.peer.profileId) throw new Error('invalid_session');
+      await this.prepareCameraPermission(request.media, generation);
+      if (generation !== this.generation || this.disposed || this.cancelledDuringStart) return;
+      const session = await d.api.createCall(request.peer.profileId, request.media, request.authorization, request.key, d.deviceId, request.grant);
+      if (!this.participant(session) || session.media !== request.media || session.caller_profile_id !== d.selfProfileId || session.recipient_profile_id !== request.peer.profileId) throw new Error('invalid_session');
       this.request = null;
       if (generation !== this.generation || this.disposed || this.cancelledDuringStart) { await this.endOnServer(session); return; }
       await this.reconcile(session);
-    } catch (error) { if (generation === this.generation) this.update({ phase: 'FAILED', error: safeError(error) }); }
+    } catch (error) { if (generation === this.generation) this.update({ phase: 'FAILED', error: safeError(error, request.media) }); }
   }
   async receive(session: ConnectSession): Promise<void> {
     if (this.disposed || !this.participant(session) || session.recipient_profile_id !== this.dependencies.selfProfileId
@@ -173,6 +190,8 @@ export class VoiceController {
     try {
       if (!await this.permission() || generation !== this.generation || this.disposed) return;
       const session = this.view.session!;
+      await this.prepareCameraPermission(session.media, generation);
+      if (generation !== this.generation || this.disposed) return;
       const accepted = await this.dependencies.api.act(session.id, 'accept', session.version, this.dependencies.deviceId);
       if (!this.sameCall(session, accepted)) throw new Error('invalid_session');
       if (generation !== this.generation || this.disposed) { await this.endOnServer(accepted); return; }
@@ -180,7 +199,7 @@ export class VoiceController {
       await this.reconcile(accepted);
     } catch (error) {
       if (generation !== this.generation || this.disposed) return;
-      this.update({ error: safeError(error) });
+      this.update({ error: safeError(error, this.view.session?.media) });
       if (error instanceof Error && error.message === 'connect_device_conflict') await this.finishLocal('ENDED');
       else await this.refresh();
     } finally { if (generation === this.generation) { this.accepting = false; this.update({ busy: false }); } }
@@ -313,7 +332,8 @@ export class VoiceController {
     if (this.disposed || !this.participant(session) || ['ENDED', 'FAILED'].includes(this.view.phase)) return;
     if (this.view.session && (!this.sameCall(this.view.session, session) || this.view.session.version > session.version
       || terminalStates.includes(this.view.session.state))) return;
-    this.update({ session, authorityStatus: 'current', durationSeconds: session.ended_at ? connectedDuration(session.connected_at, session.ended_at) : this.view.durationSeconds });
+    this.update({ session, video: session.media === 'video' ? this.view.video ?? cameraOff() : undefined,
+      authorityStatus: 'current', durationSeconds: session.ended_at ? connectedDuration(session.connected_at, session.ended_at) : this.view.durationSeconds });
     if (terminalStates.includes(session.state)) {
       this.update({ endStatus: 'terminal' });
       await this.finishLocal(session.state === 'FAILED' ? 'FAILED' : 'ENDED'); return;
@@ -345,10 +365,13 @@ export class VoiceController {
       let stage: AudioSetupStage = 'credentials';
       try {
         if (this.view.permission !== 'granted' && !await this.permission()) { await this.hangup(); return; }
+        // A system permission dialog can finish before RN delivers foreground.
+        // Wait for the ordinary foreground/revalidation path instead of joining muted in the background.
+        if (!this.view.foreground || generation !== this.generation || this.disposed) return;
         this.update({ audioSetupStage: stage });
         const admission = await d.api.credentials(session.id, d.deviceId);
-        if (generation !== this.generation || this.disposed) return;
-        if (admission.user.id !== d.userId || admission.media !== 'voice' || admission.call.id !== session.id) throw new Error('invalid_admission');
+        if (generation !== this.generation || this.disposed || !this.view.foreground) return;
+        if (admission.user.id !== d.userId || admission.media !== session.media || admission.call.id !== session.id) throw new Error('invalid_admission');
         stage = 'native_join';
         this.update({ audioSetupStage: stage });
         this.mediaAttempted = true;
@@ -371,7 +394,8 @@ export class VoiceController {
         await d.transport.setMuted(muted);
         if (generation !== this.generation || this.disposed) { await d.transport.leave(); return; }
         const routes = d.transport.routes();
-        const route = routes.includes('earpiece') ? 'earpiece' : routes[0] ?? 'speaker';
+        const preferred = session.media === 'video' ? routes.find(route => route === 'bluetooth' || route === 'wired') ?? 'speaker' : 'earpiece';
+        const route = routes.includes(preferred) ? preferred : routes[0] ?? 'speaker';
         stage = 'audio_output';
         this.update({ audioSetupStage: stage });
         // Cached availability may still be empty while the native route event
@@ -402,6 +426,62 @@ export class VoiceController {
     const muted = !this.view.muted;
     try { await this.dependencies.transport.setMuted(muted); if (current()) this.update({ muted }); }
     catch { if (current()) this.update({ error: 'Microphone control is unavailable.' }); }
+  }
+  private videoControlsAvailable() {
+    return !this.disposed && this.dependencies.flags?.videoCalling === true && this.view.session?.media === 'video'
+      && this.view.foreground && this.view.phase === 'ACTIVE' && this.view.audioSetupStage === 'ready' && this.joining;
+  }
+  videoPresentation() { return this.videoControlsAvailable() ? this.dependencies.transport.videoPresentation?.() ?? null : null; }
+  /** Explicit camera action only; accepting a video invitation never starts capture. */
+  async toggleCamera() {
+    if (!this.videoControlsAvailable() || !this.dependencies.transport.setCameraEnabled || this.view.video?.camera === 'stopping' || this.view.video?.renderFailed) return;
+    const enabled = !['starting', 'on'].includes(this.view.video?.camera ?? 'off');
+    const generation = this.generation, request = ++this.cameraRequest;
+    const current = () => generation === this.generation && request === this.cameraRequest && this.videoControlsAvailable();
+    this.update({ video: { ...(this.view.video ?? cameraOff()), camera: enabled ? 'starting' : 'stopping', error: null } });
+    try {
+      await this.dependencies.transport.setCameraEnabled(enabled);
+      if (current()) this.update({ video: { ...this.view.video!, camera: enabled ? 'on' : 'off', ...(enabled ? { permission: 'granted' as const } : {}) } });
+    } catch (error) {
+      if (!current()) return;
+      const code = error instanceof Error ? error.message : '';
+      const blocked = code === 'connect_camera_permission_blocked', denied = code === 'connect_camera_permission_denied';
+      const message = blocked ? 'Allow camera access in Settings before your next call. Audio can continue.'
+        : denied ? 'Camera permission was not granted. Audio can continue; enable camera access before your next call.'
+          : 'The camera could not start. Audio can continue; try the camera again.';
+      this.update({ video: { ...this.view.video!, camera: 'off', error: message, ...(blocked || denied ? { permission: blocked ? 'blocked' as const : 'denied' as const } : {}) } });
+      if (code === 'connect_camera_cleanup_unconfirmed') {
+        this.update({ video: { ...this.view.video!, camera: 'failed', error: 'Camera shutdown could not be confirmed. Ending this call.' } });
+        void this.hangup();
+      }
+    }
+  }
+  async flipCamera() {
+    if (!this.videoControlsAvailable() || this.view.video?.camera !== 'on' || !this.dependencies.transport.flipCamera) return;
+    const generation = this.generation, request = ++this.cameraRequest;
+    const current = () => generation === this.generation && request === this.cameraRequest && this.videoControlsAvailable();
+    this.update({ video: { ...this.view.video, camera: 'starting', error: null } });
+    try {
+      const facing = await this.dependencies.transport.flipCamera();
+      if (current()) this.update({ video: { ...this.view.video!, camera: 'on', facing } });
+    } catch (error) {
+      if (current()) {
+        const unsafe = error instanceof Error && error.message === 'connect_camera_cleanup_unconfirmed';
+        this.update({ video: { ...this.view.video!, camera: unsafe ? 'failed' : 'off', error: unsafe
+          ? 'Camera shutdown could not be confirmed. Ending this call.' : 'The camera could not switch. Audio can continue; try the camera again.' } });
+        if (unsafe) void this.hangup();
+      }
+    }
+  }
+  async stopVideoForRenderFailure() {
+    if (!this.videoControlsAvailable() || !this.dependencies.transport.setCameraEnabled) return;
+    const generation = this.generation, request = ++this.cameraRequest;
+    const current = () => generation === this.generation && request === this.cameraRequest && this.videoControlsAvailable();
+    this.update({ video: { ...(this.view.video ?? cameraOff()), camera: 'stopping', renderFailed: true, error: 'Video view unavailable. Stopping your camera; audio can continue.' } });
+    try {
+      await this.dependencies.transport.setCameraEnabled(false);
+      if (current()) this.update({ video: { ...this.view.video!, camera: 'off', error: 'Video view unavailable. Your camera is disabled in the SDK; audio can continue.' } });
+    } catch { if (current()) { this.update({ video: { ...this.view.video!, camera: 'failed', error: 'Camera shutdown could not be confirmed. Ending this call.' } }); void this.hangup(); } }
   }
   async selectRoute(route: VoiceRoute) {
     if (this.view.audioSetupStage && this.view.audioSetupStage !== 'ready') return;
@@ -470,7 +550,7 @@ export class VoiceController {
       this.polling = true;
       try {
         const rows = await d.api.getHistory(null, 30);
-        const candidate = rows.find((s) => s.recipient_profile_id === d.selfProfileId && s.media === 'voice' && s.state === 'RINGING');
+        const candidate = rows.find((s) => s.recipient_profile_id === d.selfProfileId && this.participant(s) && s.state === 'RINGING');
         if (candidate) await this.receive(candidate);
       } catch { /* Foreground hints are best effort and never bypass getCall. */ }
       finally { this.polling = false; }

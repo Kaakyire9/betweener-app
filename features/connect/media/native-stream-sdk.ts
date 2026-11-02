@@ -6,7 +6,7 @@ import { audioSampleFromReport } from './audio-health.ts';
 import { registerConnectRingingOwner } from './native-ringing-guard.ts';
 
 /** Installed SDK boundary. No native module is evaluated until the gated loader runs. */
-export function adaptNativeStreamSdk(sdk: Pick<StreamVideoSdkModule, 'StreamVideoClient' | 'callManager' | 'SfuModels' | 'getCallMediaEngineProvider' | 'setCallMediaEngineProvider'>): NativeStreamSdk {
+export function adaptNativeStreamSdk(sdk: Pick<StreamVideoSdkModule, 'StreamVideoClient' | 'callManager' | 'SfuModels' | 'getCallMediaEngineProvider' | 'setCallMediaEngineProvider' | 'StreamCallProvider' | 'StreamTheme' | 'ParticipantView' | 'hasVideo'>): NativeStreamSdk {
   return {
     createClient({ apiKey, userId, tokenProvider, onConnectionFailure }) {
       const onConnectUserError = () => onConnectionFailure();
@@ -58,10 +58,44 @@ export function adaptNativeStreamSdk(sdk: Pick<StreamVideoSdkModule, 'StreamVide
               // Observing this SDK stream enables its local stats reporter. Raw
               // reports never leave this boundary or enter the product snapshot.
               const d = call.state.callStatsReport$?.subscribe(listener);
-              return () => { a.unsubscribe(); b.unsubscribe(); c.unsubscribe(); d?.unsubscribe(); }; },
+              const e = call.camera.state.status$.subscribe(listener);
+              return () => { a.unsubscribe(); b.unsubscribe(); c.unsubscribe(); d?.unsubscribe(); e.unsubscribe(); }; },
             audioSample: () => audioSampleFromReport(call.state.callStatsReport),
             authorizeRingingJoin: current => registerConnectRingingOwner(call, current),
             enableMicrophone: () => call.microphone.enable(), disableMicrophone: () => call.microphone.disable(true), disableCamera: () => call.camera.disable(true),
+            enableCamera: () => call.camera.enable(),
+            flipCamera: async () => { await call.camera.flip(); return call.camera.state.direction; },
+            cameraEnabled: () => call.camera.state.status === 'enabled' ? true : call.camera.state.status === 'disabled' ? false : null,
+            videoPresentation: current => {
+              // Stable component identity prevents controller ticks from remounting tracks.
+              const ScopedVideoRenderer: NonNullable<import('@stream-io/video-react-native-sdk').ParticipantViewProps['VideoRenderer']> = props => {
+                // eslint-disable-next-line @typescript-eslint/no-require-imports
+                const React = require('react') as typeof import('react');
+                // eslint-disable-next-line @typescript-eslint/no-require-imports
+                const { NativeVideoRenderer } = require('./native-video-renderer') as typeof import('./native-video-renderer');
+                return current() ? React.createElement(NativeVideoRenderer, { ...props, current }) : null;
+              };
+              return {
+              participants: () => call.state.participants.map(p => ({ sessionId: p.sessionId, local: p.isLocalParticipant, cameraOn: sdk.hasVideo(p) })),
+              subscribe: listener => { const subscription = call.state.participants$.subscribe(listener); return () => subscription.unsubscribe(); },
+              render(sessionId, local) {
+                const participant = call.state.participants.find(p => p.sessionId === sessionId && p.isLocalParticipant === local);
+                if (!participant) return null;
+                // eslint-disable-next-line @typescript-eslint/no-require-imports
+                const React = require('react') as typeof import('react');
+                // Pure SDK contexts only: StreamCall/StreamVideo mount native auto-resume,
+                // push-registration and keep-alive effects that Connect does not authorise.
+                return React.createElement(sdk.StreamCallProvider, { call },
+                  React.createElement(sdk.StreamTheme, {}, React.createElement(sdk.ParticipantView, {
+                    participant, trackType: 'videoTrack', objectFit: local ? 'cover' : 'contain',
+                    mirror: local && call.camera.state.direction === 'front', videoZOrder: local ? 1 : 0,
+                    ParticipantLabel: null, ParticipantReaction: null, ParticipantNetworkQualityIndicator: null,
+                    VideoRenderer: ScopedVideoRenderer,
+                    ParticipantVideoFallback: () => null, style: { width: '100%', height: '100%' },
+                  })));
+              },
+              };
+            },
             // These public members are marked SDK-internal. Pin/compile this boundary:
             // disposing the call-owned peer locally need not await an SFU stop ACK.
             disposePublisher: async () => { await call.publisher?.dispose(); }, disposeSubscriber: async () => { await call.subscriber?.dispose(); },

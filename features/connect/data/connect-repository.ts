@@ -15,6 +15,7 @@ export function createConnectRepository(port: ConnectRpcPort) {
     return data as T;
   }
   return {
+    setMediaPreference: (media: ConnectMedia, enabled: boolean) => command<void>('rpc_connect_set_media_preference', { p_media: media, p_enabled: enabled }),
     async prepareEndBlock(call: ConnectSession, peer: string) {
       return readEndBlockContext(await command('rpc_connect_end_block_context', { p_call: call.id, p_peer: peer, p_generation: call.created_at }), call, peer);
     },

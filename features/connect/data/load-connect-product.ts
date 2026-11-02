@@ -36,7 +36,7 @@ export async function loadConnectProduct(identity: ConnectRuntimeIdentity, auth:
       try { const url = new URL(data.avatar_url ?? ''); if (url.protocol === 'https:' && !url.username && !url.password) avatar = url.toString(); } catch { /* Use the local initial. */ }
       return { profileId: data.id, name: (data.full_name || data.username || 'Your connection').slice(0, 100), avatar };
     },
-  });
+  }, { videoCalling: flags.videoCalling === true && connectRuntimeAvailability(identity).video });
   const composition = createConnectNativeSafetyComposition({ ...environment, auth, api: services.api, selfProfileId: profileId,
     deviceId, uuid: crypto.randomUUID, peer: services.peer, flags, retireOnReconnect: true, failClosedAuthority: true });
   // Foreground discovery still works when push registration is unavailable.

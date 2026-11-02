@@ -14,9 +14,9 @@ export function connectRuntimeAvailability(identity: ConnectRuntimeIdentity,
   try { const url = new URL(identity.supabaseUrl); stagingBackend = url.protocol === 'https:' && url.host === 'xsgzxadwuxuziubglvps.supabase.co' && url.pathname === '/' && !url.username && !url.password && !url.search && !url.hash; } catch { /* Fail closed. */ }
   const staging = identity.development && ['ios', 'android'].includes(identity.platform) && identity.variant === 'staging'
     && identity.environment === 'staging' && identity.bundleIdentifier === 'com.aduboffour.betweener.staging' && stagingBackend;
+  const runtime = staging && policy.ui === true && policy.nativeRuntime === true && flags.nativeSafetyOwner === true;
   return Object.freeze({ ui: staging && policy.ui === true,
-    runtime: staging && policy.ui === true && policy.nativeRuntime === true && flags.nativeSafetyOwner === true,
-    video: false as const });
+    runtime, video: runtime && policy.videoTransport === true && flags.videoCalling === true });
 }
 
 /** Internal transports stay default-off outside the verified product identity. */

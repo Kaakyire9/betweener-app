@@ -4,7 +4,14 @@ import type { VoiceApi, VoicePeer } from '../voice/voice-types.ts';
 import { StreamVoiceTransport } from './stream-voice-transport.ts';
 import { createConnectNativeOwnerFactory, type NativeOwnerDependencies } from './connect-native-owner.ts';
 
+const cameraPermissions = () => {
+  // Keep explicit camera actions independent of Metro split-bundle/HMR reloads.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  return require('./native-camera-permission') as typeof import('./native-camera-permission');
+};
+
 interface CompositionInput extends NativeOwnerDependencies {
+  prepareCameraPermission?(): ReturnType<NativeOwnerDependencies['permission']>;
   failClosedAuthority?: boolean;
   api: VoiceApi; selfProfileId: string; deviceId: string;
   uuid(): string; peer(profileId: string): Promise<VoicePeer>;
@@ -39,10 +46,10 @@ export function createConnectNativeSafetyComposition(input: CompositionInput) {
     input.onRetire?.(reason);
   } });
   const transport = new StreamVoiceTransport((admission, refresh, active = () => true) => factory.create(admission, refresh,
-    () => current() && active() && !retiredNavigation.has(admission.call.cid)));
+    () => current() && active() && !retiredNavigation.has(admission.call.cid)), { videoCalling: flags.videoCalling });
   controller = new VoiceController({ api: guardedApi, transport, flags, userId: auth.userId, failClosedAuthority: input.failClosedAuthority,
     selfProfileId: input.selfProfileId, deviceId: input.deviceId, permission: input.permission,
-    uuid: input.uuid, now: input.now ?? Date.now, peer: input.peer });
+    uuid: input.uuid, now: input.now ?? Date.now, peer: input.peer, cameraPermission: input.prepareCameraPermission });
   const unsubscribe = input.auth.subscribe(() => {
     if (!current()) { disposed = true; factory.current()?.retire('account_changed'); void controller.dispose(); }
   });
@@ -72,5 +79,7 @@ export async function loadConnectNativeEnvironment(flags: ConnectFeatureFlags = 
   const { createConnectNativeLifecycle } = await import('./native-lifecycle');
   const lifecycle = createConnectNativeLifecycle();
   const { requestConnectMicrophonePermission } = await import('./native-microphone-permission');
-  return { lifecycle, permission: requestConnectMicrophonePermission };
+  return { lifecycle, permission: requestConnectMicrophonePermission,
+    cameraPermission: flags.videoCalling === true ? () => cameraPermissions().getConnectCameraPermission() : undefined,
+    prepareCameraPermission: flags.videoCalling === true ? () => cameraPermissions().requestConnectCameraPermission() : undefined };
 }

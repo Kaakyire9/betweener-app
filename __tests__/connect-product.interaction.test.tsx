@@ -6,7 +6,7 @@ import ConnectVoiceRoute from '@/app/connect/voice';
 import { ConnectProductProvider, useConnectProduct } from '@/features/connect/components/ConnectProductProvider';
 import { VoiceCallLobby } from '@/features/connect/components/VoiceCallLobby';
 import { VoiceCallScreen } from '@/features/connect/components/VoiceCallScreen';
-import { VideoCallPreparation } from '@/features/connect/components/VideoCallPreparation';
+import ConnectVideoRoute from '@/app/connect/video';
 import { ConnectCallEntry } from '@/features/connect/components/ConnectCallEntry';
 import { ConnectIncomingNotice } from '@/features/connect/components/ConnectIncomingNotice';
 import { useAuth } from '@/lib/auth-context';
@@ -166,13 +166,12 @@ describe('Connect product integration', () => {
     await screen.rerender(<ConnectCallEntry peerId={id(3)} />); await fireEvent.press(screen.getByLabelText('Invite to a voice call'));
     expect(mockPush).toHaveBeenCalledWith({ pathname: '/connect/voice', params: { peerId: id(3), authorization: 'matched' } }); expect(f.counts().createCount).toBe(0); await f.product.dispose();
   });
-  it('video UI never renders a supplied preview without independent video approval and permission', async () => {
-    const state = { consent: 'not_requested' as const, cameraPermission: 'not_requested' as const, camera: 'preview' as const, facing: 'front' as const, microphoneMuted: true };
-    const screen = await render(<VideoCallPreparation state={state} preview={<Text>Captured frames</Text>} onClose={() => {}} />);
-    expect(screen.queryByText('Captured frames')).toBeNull(); expect(screen.getByLabelText('Camera off')).toBeTruthy();
-    await fireEvent.press(screen.getByLabelText('Switch camera')); expect(mockPush).not.toHaveBeenCalled();
-    await screen.rerender(<VideoCallPreparation state={{ ...state, consent: 'approved', cameraPermission: 'granted' }} preview={<Text>Captured frames</Text>} onClose={() => {}} />);
-    expect(screen.getByText('Captured frames')).toBeTruthy(); expect(screen.getByLabelText('Turn camera on')).toBeDisabled();
+  it('the implemented video route remains gated before any camera or credentials are requested', async () => {
+    const f = fixture(); context.mockReturnValue({ ui: true, status: 'ready', product: f.product });
+    mockParams = { peerId: id(3), authorization: 'matched', consent: 'approved' };
+    const screen = await render(<ConnectVideoRoute />);
+    expect(screen.getByText('Video calling is not available yet')).toBeTruthy(); expect(screen.queryByLabelText('Turn camera on')).toBeNull();
+    expect(f.counts().credentialCount).toBe(0); expect(f.cameraCounts().enabled).toBe(0); await f.product.dispose();
   });
   it('active view reports connection state without fabricating a quality score or hardware assurance', async () => {
     const f = fixture(); await f.active(); const state = f.composition.controller.getSnapshot();

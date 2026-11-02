@@ -5,7 +5,6 @@ const { fixture, id, jwt, deferred, settle } = require('./fixtures/connect-produ
 const { createNativeSessionOwner } = require('../lib/auth/native-session-owner.ts');
 const { connectRuntimeAvailability, connectProductPolicy, connectRuntimeFeatureFlags } = require('../features/connect/config/connect-runtime-policy.ts');
 const { readConnectLaunch, connectNotificationTarget, connectNotificationTypes } = require('../features/connect/domain/call-navigation.ts');
-const { videoPreparationStatus } = require('../features/connect/domain/video-preparation.ts');
 const { readCanonicalVoiceSession, invokePinnedConnectRpc } = require('../features/connect/data/authenticated-connect-services.ts');
 const { ConnectProductCoordinator } = require('../features/connect/application/product-coordinator.ts');
 const { retainNativeCaptureTracks } = require('../features/connect/media/native-capture-tracks.ts');
@@ -18,7 +17,7 @@ test('voice is enabled only for the verified staging development identity; video
   assert.deepEqual(connectProductPolicy, { ui: true, nativeRuntime: true, videoTransport: false });
   assert.deepEqual(connectRuntimeAvailability(identity), { ui: true, runtime: true, video: false });
   assert.deepEqual(connectRuntimeFeatureFlags(identity), { nativeSafetyOwner: true, endCallAndBlock: false });
-  assert.deepEqual(connectRuntimeFeatureFlags({ ...identity, variant: 'production' }), { nativeSafetyOwner: false, endCallAndBlock: false });
+  assert.deepEqual(connectRuntimeFeatureFlags({ ...identity, variant: 'production' }), { nativeSafetyOwner: false, endCallAndBlock: false, videoCalling: false });
   assert.equal(connectRuntimeAvailability(identity, policy, flags).runtime, true);
   assert.equal(connectRuntimeAvailability(identity, policy, flags).video, false);
 });
@@ -193,11 +192,13 @@ test('malformed route identities and voice-to-video claims are rejected', () => 
   for (const params of [{ callId: ['array'] }, { peerId: id(3), authorization: 'pre_match' }, { peerId: id(3), authorization: 'matched', grantId: id(4) }, { peerId: id(3), authorization: 'video' }]) assert.equal(readConnectLaunch(params), null);
   assert.deepEqual(readConnectLaunch({ peerId: id(3), authorization: 'pre_match', grantId: id(4), accepted: 'true' }), { kind: 'outgoing', peerId: id(3), authorization: 'pre_match', grantId: id(4) });
 });
-test('even approved video preparation never enables media transport or publication', () => {
-  const state = { consent: 'approved', cameraPermission: 'granted', camera: 'preview', facing: 'front', microphoneMuted: true };
-  assert.equal(videoPreparationStatus(state).previewAllowed, true); assert.equal(videoPreparationStatus(state).transportEnabled, false);
-  assert.equal(videoPreparationStatus({ ...state, consent: 'revoked' }).previewAllowed, false);
-  assert.equal(videoPreparationStatus({ ...state, cameraPermission: 'denied' }).previewAllowed, false);
+test('client video flags or consent-shaped claims cannot activate the installed video gate', () => {
+  assert.equal(connectRuntimeAvailability(identity, connectProductPolicy, { ...flags, videoCalling: true, consent: 'approved' }).video, false);
+  assert.equal(connectRuntimeAvailability(identity, policy, { ...flags, videoCalling: true }).video, true, 'Only explicit internal gates can compose a local video runtime');
+  assert.equal(connectRuntimeAvailability({ ...identity, variant: 'production' }, policy, { ...flags, videoCalling: true }).video, false);
+  const f = fixture();
+  assert.throws(() => readCanonicalVoiceSession({ ...f.model, media: 'video' }, id(2)), /unavailable/);
+  return f.product.dispose();
 });
 test('Connect SDK capture wrapper detaches stream before any native track disposal and keeps stable inspection', () => {
   const events = []; const raw = { enabled: true, readyState: 'live', stop() { this.readyState = 'ended'; }, release() { events.push('track'); } };

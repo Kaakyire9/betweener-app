@@ -9269,6 +9269,7 @@ const resolveQueuedVideoUri = async (
         </TouchableOpacity>
 
         <ConnectCallEntry peerId={peerProfileId} blocked={isChatBlocked || peerHasLeftBetweener} />
+        <ConnectCallEntry media="video" peerId={peerProfileId} blocked={isChatBlocked || peerHasLeftBetweener} />
         <TouchableOpacity
           style={[
             styles.headerOptionsButton,

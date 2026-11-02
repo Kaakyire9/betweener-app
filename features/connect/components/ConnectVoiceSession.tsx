@@ -3,6 +3,7 @@ import { Text } from 'react-native';
 import type { VoiceController } from '../voice/voice-controller';
 import { connectFeatureFlags, type ConnectFeatureFlags } from '../config/connect-feature-flags';
 import { VoiceCallScreen } from './VoiceCallScreen';
+import { VideoCallScreen } from './VideoCallScreen';
 
 interface Props {
   controller: VoiceController; flags?: ConnectFeatureFlags;
@@ -33,7 +34,9 @@ function EnabledSession({ controller, flags, onClose, onOpenSettings, onWithdraw
       });
     };
   }, [controller, ownsController]);
-  return <VoiceCallScreen state={actionError ? { ...state, error: actionError } : state} canDismiss={controller.canDismissCompletedCall()} flags={flags} onAccept={() => { void controller.accept(); }} onDecline={() => { void controller.decline(); }}
+  const Screen = state.session?.media === 'video' ? VideoCallScreen : VoiceCallScreen;
+  return <Screen source={state.session?.media === 'video' ? controller.videoPresentation() : null} onCamera={() => { void controller.toggleCamera(); }} onFlipCamera={() => { void controller.flipCamera(); }} onVideoError={() => { void controller.stopVideoForRenderFailure(); }}
+    state={actionError ? { ...state, error: actionError } : state} canDismiss={controller.canDismissCompletedCall()} flags={flags} onAccept={() => { void controller.accept(); }} onDecline={() => { void controller.decline(); }}
     onHangup={() => { void controller.hangup(); }} onMute={() => { void controller.toggleMute(); }} onRoute={route => { void controller.selectRoute(route); }}
     onDone={() => { if (ownsController) void controller.dispose(); onClose(); }} onOpenSettings={onOpenSettings}
     safetyActions={{ endAndBlock: () => {

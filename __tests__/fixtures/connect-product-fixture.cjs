@@ -12,7 +12,7 @@ function fixture(incoming = false, options = {}) {
   const events = [], states = new Set(), media = new Set(), appListeners = new Set();
   let appState = 'active', eligible = true, blocked = false, permission = 'granted', permissionCalls = 0, createCount = 0, credentialCount = 0, model;
   const seed = () => ({ id: id(10 + createCount), caller_profile_id: incoming ? id(3) : id(2), recipient_profile_id: incoming ? id(2) : id(3),
-    media: 'voice', authorization: 'matched', state: 'RINGING', version: 1, created_at: new Date(Date.now() - 1000).toISOString(),
+    media: options.media ?? 'voice', authorization: 'matched', state: 'RINGING', version: 1, created_at: new Date(Date.now() - 1000).toISOString(),
     accepted_at: null, connected_at: null, ended_at: null, deadline: null, reason: null, duration_seconds: null });
   model = seed(); let context, receipt, preferences = { voice: false, video: false };
   const ports = {
@@ -22,6 +22,7 @@ function fixture(incoming = false, options = {}) {
       if (name === 'rpc_is_relationship_mutually_verified' || name === 'rpc_reconfirm_relationship') return ok(true);
       if (name === 'rpc_connect_get_preferences') return ok({ ...preferences });
       if (name === 'rpc_connect_set_preferences') { preferences = { voice: args.p_voice, video: args.p_video }; return ok(null); }
+      if (name === 'rpc_connect_set_media_preference') { preferences[args.p_media] = args.p_enabled; return ok(null); }
       if (name === 'rpc_connect_check_eligibility') return ok(eligible && !blocked);
       if (name === 'rpc_connect_create_call') {
         if (!eligible || blocked) return fail('connect_consent_required');
@@ -38,7 +39,7 @@ function fixture(incoming = false, options = {}) {
       }
       if (name === 'rpc_connect_end_block_context') {
         context = { call_id: model.id, generation: model.created_at, actor_user_id: id(1), peer_user_id: id(7), peer_profile_id: id(3),
-          caller_profile_id: model.caller_profile_id, recipient_profile_id: model.recipient_profile_id, media: 'voice', authorization: 'matched',
+          caller_profile_id: model.caller_profile_id, recipient_profile_id: model.recipient_profile_id, media: model.media, authorization: 'matched',
           grant_id: null, block_id: null, revocation_at: null }; return ok({ ...context });
       }
       if (name === 'rpc_connect_end_call_and_block') {
@@ -51,25 +52,33 @@ function fixture(incoming = false, options = {}) {
     async credentials(callId, deviceId, token) {
       events.push({ credential: callId, deviceId, token }); credentialCount++;
       if (!eligible || blocked || !['ACCEPTED', 'CONNECTING', 'ACTIVE', 'RECONNECTING'].includes(model.state)) throw Error('connect_unavailable');
-      return { apiKey: 'offline-key', token: 'offline-stream-token', user: { id: id(1) }, media: 'voice', expiresAt: new Date(Date.now() + 120000).toISOString(),
+      return { apiKey: 'offline-key', token: 'offline-stream-token', user: { id: id(1) }, media: options.credentialsMedia ?? model.media, expiresAt: new Date(Date.now() + 120000).toISOString(),
         call: { id: callId, type: 'betweener_connect', cid: `betweener_connect:${callId}` } };
     },
     async peer(profileId) { return { profileId, name: 'Ama', avatar: null }; },
   };
-  const services = createAuthenticatedConnectServices(nativeAuth.owner, id(2), ports);
+  const services = createAuthenticatedConnectServices(nativeAuth.owner, id(2), ports, { videoCalling: options.videoCalling === true });
   const sdkState = { callingState: 'idle', microphoneStatus: 'disabled', cameraStatus: 'disabled', audioPublishing: false, videoPublishing: false, publisherPresent: false, subscriberPresent: false };
-  const tracks = [];
+  const tracks = [], cameraTracks = [];
+  let cameraPermission = 'granted', cameraPermissionCalls = 0, cameraPrepareCalls = 0, facing = 'front';
   const handle = {
     id: model.id, type: 'betweener_connect', cid: `betweener_connect:${model.id}`, state: () => ({ ...sdkState }),
-    tracks: () => ({ microphone: tracks, camera: [], remote: [] }),
+    tracks: () => ({ microphone: tracks, camera: cameraTracks, remote: [] }),
     observeState(fn) { states.add(fn); return () => states.delete(fn); }, observeMedia(fn) { media.add(fn); return () => media.delete(fn); },
     async enableMicrophone() {
       events.push('capture'); const track = { enabled: true, readyState: 'live', stop() { this.readyState = 'ended'; }, release() { events.push('track-release'); } };
       tracks.push(track); sdkState.microphoneStatus = 'enabled'; sdkState.audioPublishing = true; for (const fn of media) fn();
     },
     async disableMicrophone() { sdkState.microphoneStatus = 'disabled'; sdkState.audioPublishing = false; },
-    async disableCamera() { sdkState.cameraStatus = 'disabled'; },
-    async disposePublisher() { sdkState.publisherPresent = false; sdkState.audioPublishing = false; },
+    async disableCamera() { if (options.videoCalling) events.push('camera-disable'); if (options.cameraStopGate) await options.cameraStopGate.promise; sdkState.cameraStatus = 'disabled'; sdkState.videoPublishing = false; },
+    cameraEnabled: () => sdkState.cameraStatus === 'enabled',
+    async enableCamera() { events.push('camera-enable'); if (options.cameraEnableGate) await options.cameraEnableGate.promise;
+      if (options.cameraFailure) throw Error('synthetic-camera-failure');
+      cameraTracks.push({ enabled: true, readyState: 'live', stop() { this.enabled = false; this.readyState = 'ended'; }, release() { events.push('camera-track-release'); } });
+      sdkState.cameraStatus = 'enabled'; sdkState.videoPublishing = true; for (const fn of [...media]) fn(); },
+    async flipCamera() { events.push('camera-flip'); if (options.cameraFlipGate) await options.cameraFlipGate.promise; facing = facing === 'front' ? 'back' : 'front'; return facing; },
+    videoPresentation: () => ({ participants: () => [{ sessionId: 'self', local: true, cameraOn: sdkState.cameraStatus === 'enabled' }], subscribe: () => () => {}, render: () => null }),
+    async disposePublisher() { sdkState.publisherPresent = false; sdkState.audioPublishing = false; sdkState.videoPublishing = false; },
     async disposeSubscriber() { sdkState.subscriberPresent = false; },
     async join() { sdkState.callingState = 'joined'; sdkState.publisherPresent = true; sdkState.subscriberPresent = true; for (const fn of [...states]) fn('joined'); },
     async leave() { sdkState.callingState = 'left'; sdkState.publisherPresent = false; sdkState.subscriberPresent = false; for (const fn of [...states]) fn('left'); },
@@ -81,16 +90,21 @@ function fixture(incoming = false, options = {}) {
     devices: async () => ({ devices: [{ id: 'ear', type: 'Earpiece' }, { id: 'speaker', type: 'Speaker' }], selectedDeviceId }), select(id) { selectedDeviceId = id; },
     observeDevices: () => () => {}, observeInterruption: () => () => {} }) };
   const composition = createConnectNativeSafetyComposition({ auth: nativeAuth.owner, api: services.api, selfProfileId: id(2), deviceId: id(4), peer: services.peer,
-    uuid: () => id(6), now: Date.now, registry, flags: { nativeSafetyOwner: true, endCallAndBlock: true }, retireOnReconnect: true, failClosedAuthority: true,
+    uuid: () => id(6), now: Date.now, registry, flags: { nativeSafetyOwner: true, endCallAndBlock: true, videoCalling: options.videoCalling === true }, retireOnReconnect: true, failClosedAuthority: true,
     lifecycle: { platform: 'android', appState: () => appState, subscribeAppState(fn) { appListeners.add(fn); return () => appListeners.delete(fn); } },
-    permission: async () => { permissionCalls++; return permission; }, loadSdk: options.loadSdk ?? (async () => sdk) });
-  const product = { ...composition, services, selfProfileId: id(2), authGeneration: nativeAuth.owner.snapshot().generation };
+    permission: async () => { permissionCalls++; return permission; }, cameraPermission: async () => { cameraPermissionCalls++; if (options.cameraPermissionGate) await options.cameraPermissionGate.promise; return cameraPermission; },
+    prepareCameraPermission: async () => { cameraPrepareCalls++; if (options.cameraPrepareGate) await options.cameraPrepareGate.promise; return cameraPermission; },
+    loadSdk: options.loadSdk ?? (async () => sdk) });
+  const product = { ...composition, services, selfProfileId: id(2), authGeneration: nativeAuth.owner.snapshot().generation,
+    flags: { nativeSafetyOwner: true, endCallAndBlock: true, videoCalling: options.videoCalling === true }, accountUserId: id(1) };
   return { nativeAuth, ports, services, composition, product, events, registry, client, handle, sdkState, tracks,
     get model() { return model; }, counts: () => ({ permissionCalls, createCount, credentialCount }),
-    eligible(v) { eligible = v; }, permission(v) { permission = v; },
+    eligible(v) { eligible = v; }, permission(v) { permission = v; }, cameraPermission(v) { cameraPermission = v; },
+    cameraCounts: () => ({ permission: cameraPermissionCalls, enabled: events.filter(e => e === 'camera-enable').length }), cameraTracks,
+    cameraPreparationCount: () => cameraPrepareCalls, emitMedia() { for (const fn of [...media]) fn(); },
     emit(state) { sdkState.callingState = state; for (const fn of [...states]) fn(state); },
     background(v) { appState = v; for (const fn of [...appListeners]) fn(v); },
-    async start() { await composition.controller.start({ profileId: id(3), name: 'Ama', avatar: null }, 'matched'); },
+    async start() { await composition.controller.start({ profileId: id(3), name: 'Ama', avatar: null }, 'matched', null, options.media ?? 'voice'); },
     async active() { if (incoming) { await composition.controller.openCall(model.id); await composition.controller.accept(); }
       else { await this.start(); model.state = 'ACTIVE'; model.connected_at = new Date().toISOString(); await composition.controller.refresh(); } },
   };

@@ -5,8 +5,10 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors } from '@/constants/theme';
 import type { VoicePeer } from '../voice/voice-types';
+import type { ConnectMedia } from '../domain/connect';
 
-export function VoiceCallLobby({ peer, eligible, pending, error, setup, onStart, onClose }: {
+export function VoiceCallLobby({ peer, eligible, pending, error, setup, onStart, onClose, media = 'voice' }: {
+  media?: ConnectMedia;
   peer: VoicePeer | null; eligible: boolean; pending: boolean; error: string | null; setup?: React.ReactNode; onStart(): void; onClose(): void;
 }) {
   return <SafeAreaView style={styles.root}><ScrollView contentContainerStyle={styles.content}>
@@ -14,13 +16,13 @@ export function VoiceCallLobby({ peer, eligible, pending, error, setup, onStart,
     <View style={styles.identity}>{peer?.avatar ? <Image source={{ uri: peer.avatar }} style={styles.avatar} contentFit="cover" /> : <View style={[styles.avatar, styles.initial]}><Text style={styles.letter}>{peer?.name.charAt(0) || 'B'}</Text></View>}
       <Text accessibilityRole="header" style={styles.name}>{peer?.name || 'Your connection'}</Text>
       <Text style={styles.copy}>Make space for a real conversation.</Text>
-      <Text accessibilityLiveRegion="polite" style={styles.note}>{pending ? 'Checking voice calling permission…' : eligible ? 'They’ll choose whether to answer. Your camera stays off.' : error || 'Voice calling is not available for this connection.'}</Text>
+      <Text accessibilityLiveRegion="polite" style={styles.note}>{pending ? `Checking ${media} calling permission…` : eligible ? 'They’ll choose whether to answer. Your camera stays off.' : error || `${media === 'video' ? 'Video' : 'Voice'} calling is not available for this connection.`}</Text>
     </View>
     {setup}
-    <Pressable accessibilityRole="button" accessibilityLabel="Start voice call" accessibilityState={{ disabled: !eligible || pending }} disabled={!eligible || pending} onPress={onStart} style={[styles.start, (!eligible || pending) && styles.disabled]}>
-      <Ionicons name="call" size={23} color={Colors.dark.text} /><Text style={styles.action}>Voice call</Text>
+    <Pressable accessibilityRole="button" accessibilityLabel={`Start ${media} call`} accessibilityState={{ disabled: !eligible || pending }} disabled={!eligible || pending} onPress={onStart} style={[styles.start, (!eligible || pending) && styles.disabled]}>
+      <Ionicons name={media === 'video' ? 'videocam' : 'call'} size={23} color={Colors.dark.text} /><Text style={styles.action}>{media === 'video' ? 'Video call' : 'Voice call'}</Text>
     </Pressable>
-    <Pressable accessibilityRole="button" accessibilityLabel="Cancel voice invitation" onPress={onClose} style={styles.back}><Text style={styles.note}>Not now</Text></Pressable>
+    <Pressable accessibilityRole="button" accessibilityLabel={`Cancel ${media} invitation`} onPress={onClose} style={styles.back}><Text style={styles.note}>Not now</Text></Pressable>
   </ScrollView></SafeAreaView>;
 }
 const styles = StyleSheet.create({ root: { flex: 1, backgroundColor: Colors.dark.background }, content: { flexGrow: 1, padding: 30, alignItems: 'center', gap: 20 },

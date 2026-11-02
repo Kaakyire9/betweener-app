@@ -1,4 +1,5 @@
-import type { ConnectAuthorization, ConnectSession } from '../domain/connect.ts';
+import type { ConnectAuthorization, ConnectSession, ConnectMedia } from '../domain/connect.ts';
+import type { VideoControlState, VideoPresentation } from '../video/video-types.ts';
 import type { EndBlockContext, EndBlockReceipt, EndBlockView } from '../domain/end-block.ts';
 import type { LocalShutdownResult } from '../media/local-shutdown.ts';
 import type { AudioSetupFailure, AudioSetupStage } from './audio-setup.ts';
@@ -8,14 +9,14 @@ export type MicrophonePermission = 'granted' | 'denied' | 'blocked';
 export type VoiceRoute = 'earpiece' | 'speaker' | 'bluetooth' | 'wired';
 export type VoiceTransportState = 'idle' | 'connecting' | 'joined' | 'reconnecting' | 'left' | 'failed';
 export interface VoiceCredentials {
-  apiKey: string; token: string; expiresAt: string; media: 'voice'; user: { id: string };
+  apiKey: string; token: string; expiresAt: string; media: ConnectMedia; user: { id: string };
   call: { type: 'betweener_connect'; id: string; cid: string };
 }
 export interface VoiceApi {
   prepareEndBlock?(call: ConnectSession, peer: string): Promise<EndBlockContext>;
   endCallAndBlock?(context: EndBlockContext, key: string): Promise<EndBlockReceipt>;
   getEndBlockStatus?(context: EndBlockContext): Promise<EndBlockReceipt | null>;
-  createCall(peer: string, media: 'voice', authorization: ConnectAuthorization, key: string, device: string, grant: string | null): Promise<ConnectSession>;
+  createCall(peer: string, media: ConnectMedia, authorization: ConnectAuthorization, key: string, device: string, grant: string | null): Promise<ConnectSession>;
   act(id: string, action: 'accept' | 'decline' | 'cancel' | 'end', version: number, device: string): Promise<ConnectSession>;
   getCall(id: string): Promise<ConnectSession>;
   getHistory(before: null, limit: number): Promise<ConnectSession[]>;
@@ -27,11 +28,15 @@ export interface VoiceTransport {
   routes(): readonly VoiceRoute[];
   selectRoute(route: VoiceRoute): Promise<void>;
   audioSample?(): AudioSample | null;
+  setCameraEnabled?(enabled: boolean): Promise<void>;
+  flipCamera?(): Promise<'front' | 'back'>;
+  videoPresentation?(): VideoPresentation | null;
   leave(): Promise<LocalShutdownResult | void>;
 }
 export interface VoicePeer { profileId: string; name: string; avatar: string | null }
 export type VoicePhase = 'IDLE' | 'REQUESTED' | 'RINGING' | 'CONNECTING' | 'ACTIVE' | 'RECONNECTING' | 'ENDING' | 'ENDED' | 'FAILED';
 export interface VoiceViewState {
+  video?: VideoControlState;
   audioHealth?: AudioHealth;
   quality?: CallQuality;
   interruption?: 'background' | 'interruption' | 'connection_failed' | 'navigation' | 'permission_denied' | 'stale_generation';

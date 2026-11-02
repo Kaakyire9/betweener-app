@@ -1,5 +1,6 @@
 import type { MicrophonePermission } from '../voice/voice-types.ts';
 import type { AudioSample } from './audio-health.ts';
+import type { VideoPresentation } from '../video/video-types.ts';
 export interface NativeAuthSnapshot { userId: string; generation: string; authenticated: true }
 export interface NativeAuthOwner {
   snapshot(): NativeAuthSnapshot | null;
@@ -27,6 +28,10 @@ export interface NativeCallHandle {
   enableMicrophone(): Promise<void>;
   disableMicrophone(): Promise<void>;
   disableCamera(): Promise<void>;
+  enableCamera?(): Promise<void>;
+  flipCamera?(): Promise<'front' | 'back'>;
+  cameraEnabled?(): boolean | null;
+  videoPresentation?(current: () => boolean): VideoPresentation;
   disposePublisher(): Promise<void>;
   disposeSubscriber(): Promise<void>;
   join(): Promise<unknown>;
@@ -59,4 +64,5 @@ export interface NativeOwnerSnapshot {
 }
 export interface NativeOwnerAccess {
   auth: NativeAuthOwner; lifecycle: NativeLifecycle; permission(): Promise<MicrophonePermission>;
+  cameraPermission?(): Promise<MicrophonePermission>;
 }

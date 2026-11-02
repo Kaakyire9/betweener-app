@@ -12,13 +12,15 @@ export function ConnectCallingPreferences() {
 }
 function BoundPreferences({ product }: { product: ConnectProduct }) {
   const dark = useColorScheme() === 'dark';
-  const { value, busy, error, refresh, setVoice } = useCallingPreferences(product.services.preferences);
+  const { value, busy, error, refresh, setVoice, setVideo } = useCallingPreferences(product.services.preferences);
   const color = dark ? '#F4EEE7' : '#173C3F';
   return <View style={[styles.root, { backgroundColor: dark ? '#123239' : '#EDF5F1' }]}>
     <Text style={[styles.title, { color }]}>Your calling preferences</Text>
     <View style={styles.row}><Text style={[styles.text, { color }]}>Allow eligible voice invitations</Text><Switch accessibilityLabel="Allow eligible voice invitations" disabled={!value || busy}
       value={value?.voice ?? false} onValueChange={v => { void setVoice(v); }} trackColor={{ true: '#138F91' }} /></View>
-    <Text style={[styles.text, { color }]}>A verified match or your separate, explicit Intent approval is still required. Video stays off in this milestone.</Text>
+    {product.flags?.videoCalling === true && <View style={styles.row}><Text style={[styles.text, { color }]}>Allow eligible video invitations</Text><Switch accessibilityLabel="Allow eligible video invitations" disabled={!value || busy}
+      value={value?.video ?? false} onValueChange={v => { void setVideo(v); }} trackColor={{ true: '#138F91' }} /></View>}
+    <Text style={[styles.text, { color }]}>A verified match or your separate, explicit Intent approval is still required. {product.flags?.videoCalling === true ? 'Voice and video permissions are separate. Your camera starts only when you turn it on.' : 'Video stays off in this milestone.'}</Text>
     {error && <Text accessibilityRole="alert" style={[styles.text, { color }]}>Preferences could not be confirmed. No saved change is assumed.</Text>}
     <Pressable accessibilityRole="button" disabled={busy} onPress={() => { void refresh(); }} style={styles.refresh}><Text style={{ color }}>Refresh calling preferences</Text></Pressable>
   </View>;
