@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
-import { AppState, Platform } from 'react-native';
+import { Platform } from 'react-native';
 import * as Application from 'expo-application';
 import { useAuth } from '@/lib/auth-context';
 import { APP_IDENTITY } from '@/config/app-identity';
@@ -37,11 +37,8 @@ function AuthenticatedHost({ children }: { children: React.ReactNode }) {
     const counts = leases.current; counts.set(coordinator, (counts.get(coordinator) ?? 0) + 1);
     void coordinator.start();
     const tick = setInterval(() => { void coordinator.tick(); }, 1000);
-    const lifecycle = AppState.addEventListener('change', next => {
-      void coordinator.getSnapshot().product?.controller.setForeground(next === 'active');
-    });
     return () => {
-      clearInterval(tick); lifecycle.remove(); counts.set(coordinator, (counts.get(coordinator) ?? 1) - 1);
+      clearInterval(tick); counts.set(coordinator, (counts.get(coordinator) ?? 1) - 1);
       queueMicrotask(() => { if (counts.get(coordinator) === 0) { counts.delete(coordinator); coordinator.dispose(); } });
     };
   }, [coordinator]);

@@ -21,6 +21,28 @@ function fixture(incoming = false) {
     async active() { await start(); model = { ...model, state: 'ACTIVE', version: model.version + 1, connected_at: '2026-10-31T08:00:30Z' }; await controller.refresh(); },
     emit(state) { listener(state); }, advance(ms) { now += ms; }, get joins() { return joins; }, get leaves() { return leaves; } };
 }
+
+test('an owned ringing call notices acceptance on the next one-second tick while ACTIVE retains two-second polling', async () => {
+  const f = fixture(); await f.start(); let reads = 0;
+  const getCall = f.api.getCall; f.api.getCall = async (...args) => { reads++; return getCall(...args); };
+  await f.controller.tick(); assert.equal(reads, 1);
+  f.set({ state: 'ACCEPTED' }); f.advance(1000); await f.controller.tick();
+  assert.equal(reads, 2); assert.equal(f.joins, 1);
+  f.set({ state: 'ACTIVE', connected_at: '2026-10-31T08:00:30Z' }); await f.controller.refresh();
+  const activeReads = reads; f.advance(1000); await f.controller.tick(); assert.equal(reads, activeReads);
+  f.advance(1000); await f.controller.tick(); assert.equal(reads, activeReads + 1);
+  await f.controller.dispose();
+});
+
+test('a failing optional audio observer cannot block setup or local teardown', async () => {
+  for (const phase of ['subscribe', 'unsubscribe']) {
+    const f = fixture();
+    f.transport.observeAudioSamples = () => { if (phase === 'subscribe') throw Error('observer'); return () => { throw Error('observer'); }; };
+    await f.active(); assert.equal(f.controller.getSnapshot().phase, 'ACTIVE');
+    await f.controller.hangup(); assert.equal(f.controller.getSnapshot().phase, 'ENDED'); assert.ok(f.leaves > 0);
+    await f.controller.dispose();
+  }
+});
 test('late permission after End cannot restore IDLE or publish permission', async () => {
   const f = fixture(), permission = deferred(); f.d.permission = () => permission.promise;
   const starting = f.start(); await settle(); await f.controller.hangup(); permission.resolve('granted'); await starting;
@@ -92,14 +114,16 @@ test('an empty cached output list cannot skip native confirmation and report rea
   await f.controller.dispose();
 });
 
-test('freshly confirmed output availability replaces an initially empty cached list', async () => {
-  const f = fixture(); await f.start(); let available = [], selections = [];
+for (const [cached, fresh, expected] of [[[], ['earpiece', 'speaker'], 'earpiece'], [['speaker'], ['speaker'], 'speaker']])
+test(`fresh route confirmation retains ${expected} preference and updates cached availability`, async () => {
+  const f = fixture(); await f.start(); let available = cached, selections = [];
   f.transport.routes = () => available;
-  f.transport.selectRoute = async route => { selections.push(route); available = ['speaker']; };
+  f.transport.selectRoute = async route => { selections.push(route); available = fresh; };
   f.set({ state: 'ACTIVE' }); await f.controller.refresh();
-  assert.deepEqual(selections, ['speaker']);
+  assert.deepEqual(selections, [expected]);
   assert.equal(f.controller.getSnapshot().audioSetupStage, 'ready');
-  assert.deepEqual(f.controller.getSnapshot().routes, ['speaker']);
+  assert.equal(f.controller.getSnapshot().route, expected);
+  assert.deepEqual(f.controller.getSnapshot().routes, fresh);
   await f.controller.dispose();
 });
 test('controller samples local audio growth and clears it for a new call generation', async () => {
@@ -111,6 +135,72 @@ test('controller samples local audio growth and clears it for a new call generat
   await f.controller.hangup(); await settle(); f.controller.reset();
   assert.equal(f.controller.getSnapshot().audioHealth, undefined);
   assert.equal(f.controller.getSnapshot().quality.firstReceivedPacketMs, null);
+  await f.controller.dispose();
+});
+
+test('End stores the validated terminal response instead of retaining a stale ACTIVE snapshot', async () => {
+  const f = fixture(); await f.active(); const version = f.model.version;
+  await f.controller.hangup();
+  assert.equal(f.controller.getSnapshot().endStatus, 'terminal');
+  assert.equal(f.controller.getSnapshot().session.state, 'ENDED');
+  assert.equal(f.controller.getSnapshot().session.version, version + 1);
+  await f.controller.dispose();
+});
+
+test('End preserves an acknowledged ENDING snapshot until later terminal reconciliation', async () => {
+  const f = fixture(); await f.active();
+  f.api.act = async () => { f.set({ state: 'ENDING' }); return f.model; };
+  await f.controller.hangup();
+  assert.equal(f.controller.getSnapshot().endStatus, 'pending');
+  assert.equal(f.controller.getSnapshot().session.state, 'ENDING');
+  f.set({ state: 'ENDED' }); await f.controller.refreshEndStatus();
+  assert.equal(f.controller.getSnapshot().session.state, 'ENDED');
+  await f.controller.dispose();
+});
+
+test('retired audio observations never appear live after End or later background/foreground updates', async () => {
+  const f = fixture(); let stamp = 1, packets = 0, reads = 0;
+  f.transport.audioSample = () => { reads++; return { timestamp: stamp, sentBytes: packets, receivedBytes: packets, receivedPackets: packets,
+    lostPackets: 0, jitterMs: 2, roundTripMs: 8 }; };
+  await f.active(); await f.controller.tick(); stamp++; packets = 100; f.advance(1000); await f.controller.tick();
+  assert.equal(f.controller.getSnapshot().audioHealth.reception, 'receiving');
+  const first = f.controller.getSnapshot().quality.firstReceivedPacketMs;
+  await f.controller.hangup(); const stoppedReads = reads;
+  await f.controller.setForeground(false); f.advance(30_000); await f.controller.setForeground(true);
+  const s = f.controller.getSnapshot();
+  assert.equal(reads, stoppedReads); assert.equal(s.audioHealth.reception, 'unavailable');
+  assert.equal(s.audioHealth.sending, null); assert.equal(s.audioHealth.jitterMs, null); assert.equal(s.audioHealth.roundTripMs, null);
+  assert.equal(s.audioHealth.receivedPackets, 100); assert.equal(s.quality.firstReceivedPacketMs, first);
+  assert.equal(s.audioHealth.audibleOutput, 'not_verified'); await f.controller.dispose();
+});
+
+test('hung local release does not keep a live audio claim or block authoritative End', async () => {
+  const f = fixture(); await f.active(); const gate = deferred(); let stamp = 1;
+  f.transport.audioSample = () => ({ timestamp: stamp, sentBytes: stamp * 100, receivedBytes: stamp * 100, receivedPackets: stamp,
+    lostPackets: 0, jitterMs: 1, roundTripMs: 8 });
+  await f.controller.tick(); stamp++; f.advance(1000); await f.controller.tick();
+  assert.equal(f.controller.getSnapshot().audioHealth.reception, 'receiving');
+  f.transport.leave = () => gate.promise; await f.controller.hangup();
+  assert.equal(f.controller.getSnapshot().endStatus, 'terminal');
+  assert.equal(f.controller.getSnapshot().localShutdown.resourceRelease, 'pending');
+  assert.equal(f.controller.getSnapshot().audioHealth.reception, 'unavailable');
+  gate.resolve(unverifiedShutdown()); await settle(); await f.controller.dispose();
+});
+
+test('a late End response after logout cannot repopulate the retired call', async () => {
+  const f = fixture(); await f.active(); const gate = deferred(), response = { ...f.model, state: 'ENDED', version: f.model.version + 1 };
+  f.api.act = () => gate.promise; const ending = f.controller.hangup(); await settle(); await f.controller.logout();
+  gate.resolve(response); await ending; await settle();
+  assert.equal(f.controller.getSnapshot().phase, 'IDLE'); assert.equal(f.controller.getSnapshot().session, null);
+  await f.controller.dispose();
+});
+
+test('a delayed ENDING acknowledgement cannot downgrade a newer canonical terminal observation', async () => {
+  const f = fixture(); await f.active(); const gate = deferred(), pending = { ...f.model, state: 'ENDING', version: f.model.version + 1 };
+  f.api.act = () => gate.promise; const ending = f.controller.hangup(); await settle();
+  f.set({ state: 'ENDING' }); f.set({ state: 'ENDED' }); await f.controller.refresh();
+  gate.resolve(pending); await ending;
+  assert.equal(f.controller.getSnapshot().session.state, 'ENDED'); assert.equal(f.controller.getSnapshot().endStatus, 'terminal');
   await f.controller.dispose();
 });
 

@@ -14,5 +14,9 @@ export function readConnectCredentials(value: unknown, callId: string, userId?: 
     || (userId && data.user.id !== userId) || !Number.isFinite(Date.parse(data.expiresAt)) || Date.parse(data.expiresAt) <= now) {
     throw new Error('connect_unavailable');
   }
+  const encryption = data.encryption;
+  if (encryption && (!['disabled', 'required'].includes(encryption.mode) || !Number.isFinite(Date.parse(encryption.generation))
+    || !Array.isArray(encryption.participants) || encryption.participants.length !== 2 || new Set(encryption.participants).size !== 2
+    || !encryption.participants.includes(data.user.id))) throw Error('connect_unavailable');
   return data;
 }

@@ -1,0 +1,129 @@
+{
+  "schemaVersion": 1,
+  "status": "ACTIVATION_PASS",
+  "validationCompletedAt": "2026-11-03T14:41:35.852Z",
+  "at": "2026-11-03T14:40:27.915Z",
+  "target": {
+    "name": "betweener-staging",
+    "reference": "xsgzxadwuxuziubglvps",
+    "region": "eu-north-1"
+  },
+  "ownerApproval": "I authorise all three exact staging settings",
+  "approvedSettings": {
+    "private.connect_config.end_block_enabled": true,
+    "stagingClient.endCallAndBlock": true,
+    "stagingClient.connectionRecovery": true
+  },
+  "hostedUpdatedRows": 1,
+  "configurationBefore": {
+    "enabled": true,
+    "environment": "staging",
+    "video_enabled": true,
+    "voice_enabled": true,
+    "provider_ready": true,
+    "end_block_enabled": false,
+    "pre_match_enabled": false,
+    "authorized_accounts": 0,
+    "staging_open_testing": true,
+    "notifications_enabled": false,
+    "other_configuration_md5": "cce3d51b813677ab14f30307b8c3ed2a",
+    "staging_calls_remaining": 63
+  },
+  "configurationAfter": {
+    "enabled": true,
+    "environment": "staging",
+    "video_enabled": true,
+    "voice_enabled": true,
+    "provider_ready": true,
+    "end_block_enabled": true,
+    "pre_match_enabled": false,
+    "authorized_accounts": 0,
+    "staging_open_testing": true,
+    "notifications_enabled": false,
+    "other_configuration_md5": "cce3d51b813677ab14f30307b8c3ed2a",
+    "staging_calls_remaining": 63
+  },
+  "onlyConfigurationColumnChanged": "end_block_enabled",
+  "otherConfigurationDigestUnchanged": true,
+  "nonterminalCalls": 0,
+  "pendingJobs": 0,
+  "schedulerUnchanged": true,
+  "edgeFunctionsUnchanged": 49,
+  "workerRevision": 2,
+  "revokeConsentRevision": 2,
+  "webhookRevision": 2,
+  "sharedPushRevision": 28,
+  "localChanges": [
+    "features/connect/config/connect-runtime-policy.ts",
+    "__tests__/connect-product-integration.regression.test.cjs",
+    "docs/betweener-connect/README.md"
+  ],
+  "stagingIdentityRequired": {
+    "development": true,
+    "platforms": [
+      "ios",
+      "android"
+    ],
+    "variant": "staging",
+    "environment": "staging",
+    "bundleIdentifier": "com.aduboffour.betweener.staging",
+    "supabaseHost": "xsgzxadwuxuziubglvps.supabase.co"
+  },
+  "globalAndProductionDefaults": "OFF_UNCHANGED",
+  "recoveryLimits": {
+    "attemptsPerCall": 2,
+    "releaseDeadlineMs": 8000,
+    "attemptDeadlineMs": 20000,
+    "cameraRequiresExplicitRestart": true,
+    "freshServerAdmissionRequired": true,
+    "providerMediaCutoffGuarantee": "UNVERIFIED"
+  },
+  "tests": {
+    "node": {
+      "passed": 175,
+      "failed": 0
+    },
+    "ui": {
+      "passed": 108,
+      "failed": 0,
+      "suites": 10
+    },
+    "targetedLint": "PASS",
+    "rootTypeScript": "PASS",
+    "network": "DENIED_FOR_TESTS"
+  },
+  "evidenceDirectory": "tmp/connect-provider-install/resume-approved",
+  "priorDeploymentReceipt": "connect-provider-update.execution.json",
+  "priorRejectedIntents": "PRESERVED",
+  "rollback": {
+    "database": "Restore only private.connect_config.end_block_enabled=false in the verified staging singleton after establishing the outcome of any prior write.",
+    "client": "Restore stagingCallingFeatures.endCallAndBlock=false and connectionRecovery=false; reload current staging JavaScript.",
+    "preserve": [
+      "server terminal truth",
+      "pending cleanup jobs",
+      "authenticated worker scheduling",
+      "leases",
+      "shared push",
+      "Live"
+    ],
+    "note": "Disabling admission or client recovery is not proof that existing remote media stops."
+  },
+  "providerCalls": "NONE",
+  "participantTokensIssued": "NONE",
+  "testUsersCreated": "NONE",
+  "pushesSent": "NONE",
+  "accountBudgetConsentChanges": "NONE",
+  "secretsChanged": "NONE",
+  "providerPolicyChanges": "NONE",
+  "migrations": "NONE",
+  "deploymentsThisActivation": "NONE",
+  "builds": "NONE",
+  "OTA": "NONE",
+  "productionAccess": "NONE",
+  "deviceValidation": "NOT_RUN",
+  "lockedScreenIncoming": "NOT_ENABLED",
+  "E2EE": "NOT_ENABLED",
+  "M2A": "BLOCKED",
+  "M2B": "BLOCKED",
+  "remoteRevocation": "UNVERIFIED"
+}

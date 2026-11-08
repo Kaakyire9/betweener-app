@@ -14,23 +14,23 @@ export function assertConnectJobAcknowledged(value: unknown): asserts value is t
 export async function runConnectEndJob(job: ConnectJob, store: Pick<ConnectWorkerStore, 'complete'>,
   provider: Pick<ReturnType<typeof createConnectStreamAdapter>, 'end'>) {
   if (job.operation !== 'end') throw new Error('connect_invalid_cleanup_job');
+  let success = false;
   try {
     const acknowledgement = await provider.end({ id: job.call_id });
     assertConnectEndAcknowledged(acknowledgement, job.call_id);
-    await store.complete(job, true);
-    return { success: true };
-  } catch {
-    await store.complete(job, false);
-    return { success: false };
-  }
+    success = true;
+  } catch { /* Provider failure retains durable retry work. */ }
+  // A failed/unknown database ACK must not trigger another completion write.
+  await store.complete(job, success);
+  return { success };
 }
 /** Durable work is claimed by Postgres with a lease. Completion fences stale work. */
 export async function runConnectProviderJob(job: ConnectJob, store: ConnectWorkerStore, provider: ReturnType<typeof createConnectStreamAdapter>) {
   if (job.operation === 'end') return await runConnectEndJob(job, store, provider);
+  let success = true;
   try {
     const s = await store.snapshot(job.call_id);
-    if (!s) { await store.complete(job, true); return { success: true }; }
-    if (job.operation === 'create') {
+    if (s && job.operation === 'create') {
       if (s.state === 'REQUESTED' && !s.ended_at && s.can_provision) {
         await provider.provision(s);
         const fresh = await store.snapshot(s.id);
@@ -38,17 +38,16 @@ export async function runConnectProviderJob(job: ConnectJob, store: ConnectWorke
           assertConnectEndAcknowledged(await provider.end({ id: s.id }), s.id);
         }
       }
-    } else if (!s.ended_at && ['RINGING', 'ACCEPTED', 'CONNECTING', 'ACTIVE', 'RECONNECTING'].includes(s.state)) {
+    } else if (s && !s.ended_at && ['RINGING', 'ACCEPTED', 'CONNECTING', 'ACTIVE', 'RECONNECTING'].includes(s.state)) {
       const media = await provider.media(s);
       await store.reconcile(s.id, { session: media.session, users: media.sessionEnded ? [] : media.users,
         ended: media.callEnded || media.missing });
     }
-    await store.complete(job, true);
-    return { success: true };
   } catch {
     // The database stores a bounded safe code and retries with backoff. Provider
     // errors and payloads can contain secrets and must never be logged.
-    await store.complete(job, false);
-    return { success: false };
+    success = false;
   }
+  await store.complete(job, success);
+  return { success };
 }

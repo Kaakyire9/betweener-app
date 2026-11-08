@@ -68,14 +68,21 @@ test('B2 reconstruction uses the real provider expression, immutable manifest an
     '__tests__/connect-foundation.regression.test.ts', 'supabase/functions/_shared/connect-stream-adapter.ts',
     // Product audio regressions evolved after B2; the receipt and provider request above stay immutable.
     '__tests__/connect-voice.regression.test.ts',
-    // The CLI script alias was renamed without changing any installed dependency.
-    'package.json']);
+    // Subsequent dependency maintenance uses the archived B2 manifest for replay.
+    'package.json', 'package-lock.json', 'node_modules/playwright-core/package.json', 'node_modules/playwright/package.json']);
   const oldPackagePath = 'docs/betweener-connect/archive/retired-code/package.b2-replay.json.txt';
   assert.equal(sha(oldPackagePath), '17a8635a595d10980a00c837a2163002d69da3467c324449c9189fcdbfabe195');
   const oldPackage = read(oldPackagePath), currentPackage = read('package.json');
-  for (const section of ['dependencies', 'devDependencies', 'overrides']) {
-    assert.deepEqual(currentPackage[section], oldPackage[section], `B2 runtime ${section} must remain unchanged`);
+  // Later owner-approved dependency maintenance does not rewrite B2 evidence.
+  // Keep the transport versions and Metro overrides used by the replay pinned.
+  for (const [name, value] of Object.entries(oldPackage.overrides)) {
+    assert.deepEqual(currentPackage.overrides[name], value, name);
   }
+  for (const name of ['@stream-io/react-native-webrtc', '@stream-io/react-native-callingx', 'react-native', 'react', 'react-dom']) {
+    assert.equal(currentPackage.dependencies[name], oldPackage.dependencies[name], name);
+  }
+  assert.equal(currentPackage.dependencies['@stream-io/video-react-native-sdk'].replace(/^[~^]/, ''),
+    oldPackage.dependencies['@stream-io/video-react-native-sdk'].replace(/^[~^]/, ''));
   for (const entry of evidence.runnerEvidence.provenance.sources) {
     const current = sha(entry.path);
     if (evolvedForB3.has(entry.path) || evolvedForLocalEndBlock.has(entry.path)) evolution.push({ path: entry.path, historicalSha256: entry.sha256, currentSha256: current });

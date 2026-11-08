@@ -10,6 +10,8 @@ do $$ begin
 end $$;
 commit;`;
 function ownedEndSql(binding,{watchdog=false}={}){
+  const media=binding.media??'voice';
+  if(!['voice','video'].includes(media))throw Error('pilot_binding_invalid');
   for(const key of ['id','callerUser','recipientUser','callerProfile','recipientProfile'])if(!uuid.test(binding[key]??''))throw Error('pilot_binding_invalid');
   if(binding.callerUser===binding.recipientUser||binding.callerProfile===binding.recipientProfile||!/^[0-9T:Z+.\-]+$/.test(binding.createdAt??'')||!Number.isFinite(Date.parse(binding.createdAt))||(binding.providerSession!==null&&(typeof binding.providerSession!=='string'||!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/.test(binding.providerSession))))throw Error('pilot_binding_invalid');
   return `begin;
@@ -19,7 +21,7 @@ do $$ declare s private.connect_sessions; begin
   select * into strict s from private.connect_sessions where id=${quote(binding.id)}::uuid for update;
   if s.created_at is distinct from ${quote(binding.createdAt)}::timestamptz or s.caller_user_id<>${quote(binding.callerUser)}::uuid
     or s.recipient_user_id<>${quote(binding.recipientUser)}::uuid or s.caller_profile_id<>${quote(binding.callerProfile)}::uuid
-    or s.recipient_profile_id<>${quote(binding.recipientProfile)}::uuid or s.media<>'voice' or s.auth_mode<>'matched'
+    or s.recipient_profile_id<>${quote(binding.recipientProfile)}::uuid or s.media<>${quote(media)} or s.auth_mode<>'matched'
     or s.provider_session_id is distinct from ${binding.providerSession===null?'null::text':quote(binding.providerSession)} then raise exception 'pilot_ownership_mismatch'; end if;
   if s.ended_at is not null or s.state='ENDING' then return; end if;
   ${watchdog?"if s.connected_at is null then raise exception 'pilot_connection_time_unverified'; end if;\n  if s.connected_at>clock_timestamp()-interval '90 seconds' then return; end if;":''}

@@ -83,7 +83,20 @@ function fixture(platform, { preload = true, runtimeError = null } = {}) {
   const dependency = name => {
     if (name.includes('load-stream-video-sdk')) return loadSdk();
     if (name === './native-runtime-check') return runtimeCheck;
-    assert.ok(['./native-capture-tracks.ts', './native-media-engine-owner.ts', './audio-health.ts', './native-ringing-guard.ts'].includes(name));
+    if (name === '../experimental/encryption-transform-guard.ts') return evaluate(
+      path.resolve('features/connect/experimental/encryption-transform-guard.ts'),
+      dependency => assert.fail(`Pure transform guard imported ${dependency}`), context);
+    if (name === './native-microphone-pause.ts') return evaluate(
+      path.resolve('features/connect/media/native-microphone-pause.ts'),
+      dependency => assert.fail(`Pure microphone pause imported ${dependency}`), context);
+    if (name === './native-call-activation.ts') return evaluate(
+      path.resolve('features/connect/media/native-call-activation.ts'),
+      dependency => assert.fail(`Pure native activation imported ${dependency}`), context);
+    if (name === './native-publisher-retirement.ts' || name === './native-reconnect-diagnostics.ts' || name === './native-call-audio.ts') return evaluate(
+      path.resolve('features/connect/media', name),
+      dependency => assert.fail(`Pure retirement/diagnostic helper imported ${dependency}`), context);
+    assert.ok(['./native-capture-tracks.ts', './native-media-engine-owner.ts', './audio-health.ts', './native-ringing-guard.ts', '../experimental/call-encryption.ts',
+      '../../live/media/stream-video-background-client.ts', './native-ongoing-call.ts'].includes(name));
     return {};
   };
   return { events, requests, reloads, sdk,

@@ -7,6 +7,9 @@ import { createVoicePreview } from '@/features/connect/voice/voice-preview';
 import { pendingShutdown, unverifiedShutdown } from '@/features/connect/media/local-shutdown';
 import type { VoiceViewState } from '@/features/connect/voice/voice-types';
 
+jest.mock('expo-router', () => ({
+  useFocusEffect: (callback: () => () => void) => { require('react').useEffect(callback, [callback]); },
+}));
 jest.mock('expo-image', () => {
   const React = require('react'); const { View } = require('react-native');
   return { Image: (props: Record<string, unknown>) => React.createElement(View, props) };
@@ -19,7 +22,7 @@ jest.mock('react-native-safe-area-context', () => {
   const React = require('react'); const { View } = require('react-native');
   return { SafeAreaView: (props: Record<string, unknown>) => React.createElement(View, props) };
 });
-jest.mock('@expo/vector-icons', () => ({ Ionicons: Object.assign(() => null, { glyphMap: {} }) }));
+jest.mock('@expo/vector-icons', () => ({ Ionicons: Object.assign(() => null, { glyphMap: {} }), MaterialCommunityIcons: () => null }));
 
 const flags = { nativeSafetyOwner: true, endCallAndBlock: true };
 const state: VoiceViewState = { phase: 'ACTIVE', localShutdown: unverifiedShutdown(), endBlock: null,
@@ -28,6 +31,34 @@ const state: VoiceViewState = { phase: 'ACTIVE', localShutdown: unverifiedShutdo
   peer: { profileId: 'peer', name: 'Alex', avatar: null }, incoming: false, muted: false, route: 'earpiece', routes: ['earpiece'], permission: 'granted', error: null, busy: false, durationSeconds: null, foreground: true };
 const handlers = () => ({ onAccept: jest.fn(), onDecline: jest.fn(), onHangup: jest.fn(), onMute: jest.fn(), onRoute: jest.fn(), onDone: jest.fn(), onOpenSettings: jest.fn() });
 const safety = () => ({ endAndBlock: jest.fn(), checkStatus: jest.fn() });
+
+it('required encryption is labelled active only after SDK confirmation', async () => {
+  const screen=await render(<VoiceCallScreen state={{...state,encryption:{required:true,sdkConfirmed:false,identityVerified:false}}} {...handlers()} />);
+  expect(screen.getByText('Securing your call…')).toBeTruthy();expect(screen.queryByText('End-to-end encrypted')).toBeNull();
+  await screen.rerender(<VoiceCallScreen state={{...state,encryption:{required:true,sdkConfirmed:true,identityVerified:false}}} {...handlers()} />);
+  expect(screen.getByText('End-to-end encrypted')).toBeTruthy();
+});
+it('changed-device trust requires an explicit safety-code review and confirmation', async () => {
+  const reviewIdentity=jest.fn<()=>Promise<string>>().mockResolvedValue('abcd ef01');
+  const replaceIdentity=jest.fn<(code:string)=>Promise<void>>().mockResolvedValue(undefined);
+  const screen=await render(<VoiceCallScreen state={state} {...handlers()} flags={{...flags,encryptedCalls:true}}
+    safetyActions={{...safety(),reviewIdentity,replaceIdentity}} />);
+  await fireEvent.press(screen.getByLabelText('Review calling identity'));
+  expect(screen.getByLabelText('Identity verification code')).toBeTruthy();expect(replaceIdentity).not.toHaveBeenCalled();
+  await fireEvent.press(screen.getByLabelText('Confirm compared calling identity'));expect(replaceIdentity).toHaveBeenCalledWith('abcd ef01');
+});
+
+it('a late identity review cannot show the previous call code on another call', async () => {
+  let resolve!: (code:string)=>void;
+  const pending=new Promise<string>(done=>{resolve=done;});
+  const actions={...safety(),reviewIdentity:()=>pending,replaceIdentity:async()=>{}};
+  const screen=await render(<VoiceCallScreen state={state} {...handlers()} flags={{...flags,encryptedCalls:true}} safetyActions={actions} />);
+  await fireEvent.press(screen.getByLabelText('Review calling identity'));
+  await screen.rerender(<VoiceCallScreen state={{...state,session:{...state.session!,id:'another-call'}}} {...handlers()} flags={{...flags,encryptedCalls:true}} safetyActions={actions} />);
+  await act(async()=>{resolve('old peer code');await pending;});
+  expect(screen.queryByText('old peer code')).toBeNull();
+  expect(screen.queryByLabelText('Confirm compared calling identity')).toBeNull();
+});
 
 it('withdrawing calling consent requires confirmation and reports persistence failure truthfully', async () => {
   const withdrawConsent = jest.fn<() => Promise<void>>().mockRejectedValue(Error('offline'));

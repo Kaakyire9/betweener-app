@@ -1,0 +1,116 @@
+{
+  "status": "PROVIDER_DEPLOYMENT_PASS_ACTIVATION_AUTOMATIC_REVIEW_BLOCKED",
+  "target": {
+    "name": "betweener-staging",
+    "reference": "xsgzxadwuxuziubglvps",
+    "region": "eu-north-1"
+  },
+  "proposalSha256": "4a2fb86d7c477cb78cb29326be0073f32ada6a63e8899dcec07db8e9cdd015e3",
+  "recoveryAddendumSha256": "a068158cdf76c0d8864e420bec90dc13423bf61928cbfee6a43e604e867cdbbc",
+  "ownerAmendmentApproved": true,
+  "functions": [
+    {
+      "name": "connect-provider-worker",
+      "priorVersion": 1,
+      "version": 2,
+      "deployedFilesMatched": 12,
+      "verifyJwt": false,
+      "customHmac": true,
+      "unauthenticatedHttpStatus": 401,
+      "bundleSha256": "3e6accbf65f8ecc10034d54a743c3681b667640665fb4cb0a0c8c263a1b997cd"
+    },
+    {
+      "name": "connect-revoke-consent",
+      "priorVersion": 1,
+      "version": 2,
+      "deployedFilesMatched": 11,
+      "verifyJwt": true,
+      "applicationAuthGetUserPreserved": true,
+      "unauthenticatedHttpStatus": 401,
+      "bundleSha256": "94aa9ae765b61c842e51d9120edd7945a7bb57522c48e0781eeaa7f4f2bbfc84"
+    }
+  ],
+  "otherFunctionsUnchanged": 47,
+  "pushRevision": 28,
+  "webhookRevision": 2,
+  "schedulerUnchanged": [
+    {
+      "jobid": 21,
+      "active": true,
+      "schedule": "5 seconds",
+      "command_hash": "822aef05ee809e2696f0bdde299a82ec"
+    }
+  ],
+  "scheduledEmptyQueueObservations": [
+    {
+      "processed": "false",
+      "timed_out": false,
+      "request_id": 45467,
+      "status_code": 200,
+      "dispatched_at": "2026-11-03T13:51:44.744532+00:00"
+    },
+    {
+      "processed": "false",
+      "timed_out": false,
+      "request_id": 45466,
+      "status_code": 200,
+      "dispatched_at": "2026-11-03T13:51:39.724555+00:00"
+    },
+    {
+      "processed": "false",
+      "timed_out": false,
+      "request_id": 45465,
+      "status_code": 200,
+      "dispatched_at": "2026-11-03T13:51:34.702904+00:00"
+    }
+  ],
+  "providerTerminationEvidence": "NOT_TESTED_NO_PROVIDER_JOB_CREATED",
+  "configurationBefore": {
+    "enabled": true,
+    "environment": "staging",
+    "video_enabled": true,
+    "voice_enabled": true,
+    "provider_ready": true,
+    "end_block_enabled": false,
+    "pre_match_enabled": false,
+    "authorized_accounts": 0,
+    "staging_open_testing": true,
+    "notifications_enabled": false,
+    "staging_calls_remaining": 63
+  },
+  "configurationAfter": {
+    "enabled": true,
+    "environment": "staging",
+    "video_enabled": true,
+    "voice_enabled": true,
+    "provider_ready": true,
+    "end_block_enabled": false,
+    "pre_match_enabled": false,
+    "authorized_accounts": 0,
+    "staging_open_testing": true,
+    "notifications_enabled": false,
+    "staging_calls_remaining": 63
+  },
+  "rollbackVerifiedFiles": 22,
+  "activation": {
+    "backendEndBlockEnabled": false,
+    "stagingClientEndCallAndBlock": false,
+    "stagingClientConnectionRecovery": false,
+    "sqlAttempt": "REJECTED_BEFORE_EXECUTION_BY_AUTOMATIC_APPROVAL_REVIEW",
+    "reason": "Review interpreted earlier Scope A instructions as requiring a separate explicit activation approval.",
+    "explicitConfirmationRequired": true
+  },
+  "providerCalls": "NONE",
+  "participantCredentialsIssued": "NONE",
+  "testUsersCreated": "NONE",
+  "pushes": "NONE",
+  "migrations": "NONE",
+  "secretChanges": "NONE",
+  "accountBudgetConsentChanges": "NONE",
+  "builds": "NONE",
+  "ota": "NONE",
+  "productionAccess": "NONE",
+  "M2A": "BLOCKED",
+  "M2B": "BLOCKED",
+  "remoteRevocation": "UNVERIFIED"
+}

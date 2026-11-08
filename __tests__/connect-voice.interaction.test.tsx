@@ -18,7 +18,7 @@ jest.mock('react-native-safe-area-context', () => {
   const React = require('react'); const { View } = require('react-native');
   return { SafeAreaView: (props: Record<string, unknown>) => React.createElement(View, props) };
 });
-jest.mock('@expo/vector-icons', () => ({ Ionicons: Object.assign(() => null, { glyphMap: {} }) }));
+jest.mock('@expo/vector-icons', () => ({ Ionicons: Object.assign(() => null, { glyphMap: {} }), MaterialCommunityIcons: () => null }));
 
 const base: VoiceViewState = { localShutdown: unverifiedShutdown(), endBlock: null, phase: 'RINGING', session: null, peer: { profileId: 'peer', name: 'Alex', avatar: null },
   incoming: true, muted: true, route: 'earpiece', routes: [], permission: null, error: null, busy: false,

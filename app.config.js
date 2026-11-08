@@ -464,7 +464,7 @@ module.exports = ({ config }) => {
       [
         '@stream-io/video-react-native-sdk',
         {
-          ringing: false,
+          ringing: identity.variant === 'staging' && process.env.EXPO_PUBLIC_CONNECT_NATIVE_INCOMING === 'true',
           androidKeepCallAlive: true,
           iosKeepCallAlive: true,
           enableScreenshare: false,

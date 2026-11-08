@@ -9,6 +9,14 @@ const {launch}=require('../scripts/lib/connect-push-rehearsal/edge.cjs');
 const scratch=path.join(dir,'negative-fixtures');fs.mkdirSync(scratch,{recursive:true});
 test('all 66 historical comparisons and all five recovered originals remain unchanged',()=>{verifyFrozen({historicalReplay:true});});
 test('strict current-source verification still rejects the superseded deployment candidate',()=>{assert.throws(()=>verifyFrozen(),/frozen_package_drift/);});
+
+test('historical provider replay is pinned to retained bytes and never substitutes evolved sources',()=>{
+  const {historicalWebhookSource}=require('../scripts/lib/connect-push-rehearsal/historical-source.cjs');
+  const original='5b7ec7409bfe12c07277b373617ea3dfcfb2cf562c092869ee3b1871e046b695';
+  const receipt=historicalWebhookSource('supabase/functions/_shared/connect-provider-end.ts',original,'new-local-source');
+  assert.equal(sha(fs.readFileSync(path.join(root,receipt))),original);
+  assert.throws(()=>historicalWebhookSource('supabase/functions/_shared/connect-provider-end.ts','unapproved','new-local-source'),/unreviewed_historical_source_drift/);
+});
 test('unreviewed source evolution is rejected rather than accepted as historical evidence',()=>{
   const {historicalWebhookSource}=require('../scripts/lib/connect-push-rehearsal/historical-source.cjs');
   assert.throws(()=>historicalWebhookSource('supabase/functions/_shared/connect-webhook.ts','unknown','unknown'),/unreviewed_historical_source_drift/);

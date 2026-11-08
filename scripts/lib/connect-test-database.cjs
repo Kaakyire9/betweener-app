@@ -35,7 +35,7 @@ async function withConnectDatabase(run, options = {}) {
       '--exclude-schema=graphql_public', '--no-publications', '--no-subscriptions']);
     const config = JSON.parse(docker(['inspect', container]))[0];
     const password = config.Config.Env.find((s) => s.startsWith('POSTGRES_PASSWORD=')).slice('POSTGRES_PASSWORD='.length);
-    docker(['exec', '-i', '-e', `PGPASSWORD=${password}`, container, 'psql', '-U', 'supabase_admin', '-d', db, '-X', '-v', 'ON_ERROR_STOP=1'], { input: schema });
+    docker(['exec', '-i', '-e', `PGPASSWORD=${password}`, container, 'psql', '-U', 'supabase_admin', '-d', db, '-X', '--single-transaction', '-v', 'ON_ERROR_STOP=1'], { input: schema });
     // Optional offline staging-shape preparation runs only inside this empty clone.
     await options.prepareBaseline?.({ sql, file });
     sql(file('supabase/tests/fixtures/relationship_acceptance_legacy.sql'));

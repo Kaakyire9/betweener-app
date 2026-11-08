@@ -138,7 +138,8 @@ test('individual SDK failures are retained and not suppressed into full shutdown
 });
 test('stalled microphone stop cannot suppress camera stop, leave or lease release attempts',async()=>{
   const f=transportFixture();await f.transport.join(f.credentials,async()=>f.credentials,()=>{});f.events.length=0;f.setHang();void f.transport.leave();await settle();
-  assert.deepEqual(f.events,['microphone','camera','leave','release']);
+  // Retire/close the publisher first; capture stop attempts remain independent.
+  assert.deepEqual(f.events,['leave','microphone','camera','release']);
 });
 test('mock native-owner inspection supplies separate capture/publication/playback/subscription facts',async()=>{
   const f=transportFixture();f.bindings.inspectShutdown=async()=>({microphoneStopped:true,cameraStopped:true,publicationStopped:true,playbackStopped:false,subscriptionsStopped:true});
@@ -159,8 +160,8 @@ function providerFixture(){
   const stream={async getApp(){return {app:{id:1731011,disable_auth_checks:false,disable_permissions_checks:false}};},video:{call(type,callId){assert.equal(type,'betweener_connect');assert.equal(callId,id);return port;},async getCallType(){throw new Error('ending must not require unchanged type settings');}}};
   return {port,stream,adapter:createConnectStreamAdapter(stream,1731011),counts:()=>({ends,gets})};
 }
-test('qualified server end returns acceptance only, never media termination proof',async()=>{
-  const f=providerFixture();assert.deepEqual(await f.adapter.end({id}),accepted());assert.equal(f.counts().gets,0);
+test('qualified server end still needs readback and returns scoped absence without media proof',async()=>{
+  const f=providerFixture();assert.deepEqual(await f.adapter.end({id}),{...accepted(),outcome:'absent'});assert.equal(f.counts().gets,1);
 });
 for(const [status,code,category]of [[401,16,'permission'],[403,16,'permission'],[503,16,'ambiguous'],[undefined,16,'ambiguous'],[404,'16','ambiguous'],['404',16,'ambiguous'],[408,23,'timeout']])test(`provider end HTTP${status}/code${code} stays ${category}`,async()=>{
   const f=providerFixture();f.port.end=async()=>{throw {code,metadata:{responseCode:status}};};await assert.rejects(f.adapter.end({id}),e=>e.category===category);assert.equal(f.counts().gets,0);
@@ -186,7 +187,7 @@ test('worker keeps missing ACK pending and retries without accepting a stale dat
   const calls=[];const job={call_id:id,operation:'end',lease:'current'};
   assert.equal((await runConnectEndJob(job,{complete:async(_,ok)=>calls.push(ok)},{end:async()=>undefined})).success,false);assert.deepEqual(calls,[false]);
   let attempts=0;const store={complete:async(_,ok)=>{calls.push(ok);assertConnectJobAcknowledged(++attempts>1?true:false);}};
-  assert.equal((await runConnectEndJob(job,store,{end:async()=>accepted()})).success,false);assert.deepEqual(calls.slice(1),[true,false]);
+  await assert.rejects(runConnectEndJob(job,store,{end:async()=>accepted()}),/connect_job_not_acknowledged/);assert.deepEqual(calls.slice(1),[true]);
   assert.equal((await runConnectEndJob({...job,lease:'new'},store,{end:async()=>accepted()})).success,true);
 });
 test('worker rejects wrong-call acknowledgements and falsely verified media assertions',async()=>{

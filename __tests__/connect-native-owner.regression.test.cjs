@@ -261,7 +261,7 @@ test('SDK adapter passes exact native options, force-stops and owns only call pe
   const events=[],t=track(),observable={subscribe(fn){fn();return {unsubscribe(){events.push('unsubscribe');}};}};
   const call={id:uuid(1),cid:`betweener_connect:${uuid(1)}`,type:'betweener_connect',state:{callingState:'joined',remoteParticipants:[{audioStream:{getTracks:()=>[t]}}],callingState$:observable,remoteParticipants$:observable},
     microphone:{state:{status:'enabled',mediaStream:{getTracks:()=>[t]},mediaStream$:observable},async enable(){events.push('enable');},async disable(force){events.push(['mic',force]);}},
-    camera:{state:{status:'disabled',mediaStream$:observable},async disable(force){events.push(['camera',force]);}},publisher:{isPublishing:n=>n===1,async dispose(){events.push('publisher');}},subscriber:{async dispose(){events.push('subscriber');}},
+    camera:{state:{status:'disabled',mediaStream$:observable},async disable(force){events.push(['camera',force]);}},publisher:{getPublishedTracks:()=>[],isPublishing:n=>n===1,async dispose(){events.push('publisher');}},subscriber:{async dispose(){events.push('subscriber');}},
     async join(options){events.push(['join',options]);},async leave(options){events.push(['leave',options]);}};
   let options;
   const client={streamClient:{options:{}},call:()=>call,async disconnectUser(){events.push('disconnect');}};
@@ -269,20 +269,97 @@ test('SDK adapter passes exact native options, force-stops and owns only call pe
   let provider=async()=>({dispose:async()=>true});
   const sdk=adaptNativeStreamSdk({StreamVideoClient:{getOrCreateInstance(o){options=o;client.streamClient.options=o.options;return client;}},callManager:manager,SfuModels:{TrackType:{AUDIO:1,VIDEO:2}},getCallMediaEngineProvider:()=>provider,setCallMediaEngineProvider:value=>{provider=value;}});
   const owned=sdk.createClient({apiKey:'synthetic',userId:uuid(2),tokenProvider:async()=> 'synthetic',onConnectionFailure(){}}),handle=owned.call('betweener_connect',uuid(1));
+  assert.equal(require('../features/live/media/stream-video-background-client.ts').getStreamVideoBackgroundClient(),client);
   assert.equal(options.token,undefined);assert.equal(typeof options.tokenProvider,'function');assert.equal(options.options.maxConnectUserRetries,1);
   assert.equal(handle.state().audioPublishing,true);assert.deepEqual(handle.tracks().remote,[t]);await handle.disableMicrophone();await handle.disableCamera();await handle.join();await handle.disposePublisher();await handle.disposeSubscriber();await handle.leave();
   assert.ok(events.some(e=>Array.isArray(e)&&e[0]==='mic'&&e[1]===true));assert.ok(events.some(e=>Array.isArray(e)&&e[0]==='camera'&&e[1]===true));
   assert.deepEqual(events.find(e=>Array.isArray(e)&&e[0]==='join')[1],{create:false});assert.deepEqual(events.find(e=>Array.isArray(e)&&e[0]==='leave')[1],{reject:false});
   sdk.audio('ios').configure();sdk.audio('ios').clearConfiguration();assert.ok(events.includes('clear-config'));assert.ok(!events.includes('disconnect'));
+  const background=require('../features/live/media/stream-video-background-client.ts'),successor={};
+  background.registerStreamVideoBackgroundClient(successor);
+  await owned.disconnectUser();assert.equal(background.getStreamVideoBackgroundClient(),successor,'Connect cleanup cannot clear a successor registry owner');
+  background.unregisterStreamVideoBackgroundClient(successor);assert.equal(background.getStreamVideoBackgroundClient(),undefined);
 });
 test('foreign cached SDK client is rejected without borrowing token closure or disconnecting',()=>{
   let disconnected=0;const foreign={streamClient:{options:{onConnectUserError(){}}},disconnectUser(){disconnected++;}};
   const sdk=adaptNativeStreamSdk({StreamVideoClient:{getOrCreateInstance:()=>foreign},callManager:{},SfuModels:{}});
   assert.throws(()=>sdk.createClient({apiKey:'x',userId:'y',tokenProvider:async()=>'',onConnectionFailure(){}}),/foreign/);assert.equal(disconnected,0);
 });
-test('native boundary avoids process-wide speaker mute and Live background/token ownership',()=>{
+test('native boundary avoids process-wide speaker mute and Live token ownership',()=>{
   const source=fs.readFileSync('features/connect/media/native-stream-sdk.ts','utf8');
-  assert.ok(!source.includes('speaker.setMute'));assert.ok(!source.includes('registerStreamVideoBackgroundClient'));assert.ok(!source.includes('live-rtc-token'));
+  assert.ok(!source.includes('speaker.setMute'));assert.ok(!source.includes('getStreamVideoBackgroundClient'));assert.ok(!source.includes('live-rtc-token'));
   assert.equal(fs.existsSync('app/connect/voice-preview.tsx'),false,'The retired mock route cannot mount a native owner');
   assert.equal(network,0);
+});
+
+test('the native adapter configures the initial video speaker before join, while voice stays on earpiece', () => {
+  const configs = [];
+  const sdk = adaptNativeStreamSdk({ callManager: { start: config => configs.push(config) } });
+  sdk.audio('ios', 'voice').configure(); sdk.audio('ios', 'video').configure(); sdk.audio('android', 'video').configure();
+  assert.deepEqual(configs, [
+    { audioRole: 'communicator', deviceEndpointType: 'earpiece' },
+    { audioRole: 'communicator', deviceEndpointType: 'speaker' },
+    { audioRole: 'communicator', deviceEndpointType: 'speaker' },
+  ]);
+});
+
+test('the factory binds audio configuration to canonical video admission before native join', async () => {
+  const f = fixture(); f.access.flags.videoCalling = true;
+  Object.assign(f.handle, { enableCamera: async () => {}, flipCamera: async () => 'front', cameraEnabled: () => false,
+    videoPresentation: () => ({ participants: () => [], subscribe: () => () => {}, render: () => null }) });
+  const selections = []; f.sdk.audio = (platform, media, cid) => { selections.push([platform, media, cid]); return f.audio; };
+  const b = await f.create({ ...credentials(), media: 'video' });
+  assert.deepEqual(selections, [['ios', 'video', credentials().call.cid]]); assert.ok(f.events.includes('audio-configure'));
+  assert.ok(!f.events.includes('join')); await b.release();
+});
+
+test('native route snapshots expose only bounded route categories and confirmed selection', async () => {
+  const f = fixture(), b = await f.create();
+  await b.selectRoute('speaker');
+  const route = f.factory.current().getSnapshot().audioRoute;
+  assert.deepEqual(route, { requested: 'speaker', status: 'confirmed', available: ['earpiece', 'speaker', 'bluetooth'], selected: 'speaker', output: null });
+  assert.ok(!JSON.stringify(route).includes('speaker-id')); await b.release();
+});
+
+test('a native owner activates only its joined current call before completing setup', async () => {
+  const f = fixture(), gate = deferred(); let calls = 0;
+  f.handle.activateSystemCall = async current => {
+    calls++; assert.equal(f.state.callingState, 'joined'); assert.equal(current(), true); await gate.promise;
+  };
+  const b = await f.create(); let complete = false;
+  const joining = b.call.join(); void joining.then(() => { complete = true; }); await settle();
+  assert.equal(calls, 1); assert.equal(complete, false); gate.resolve(); await joining; await b.release();
+});
+
+test('failed native activation retires the joined owner and preserves independent cleanup', async () => {
+  const f = fixture(); f.handle.activateSystemCall = async () => { throw Error('SECRET_NATIVE_BODY'); };
+  const b = await f.create(); await assert.rejects(b.call.join(), /connect_native_join_failed/); await b.release();
+  const s = f.factory.current().getSnapshot(); assert.equal(s.reason, 'connection_failed');
+  assert.equal(s.sdk.callingState, 'left'); assert.equal(s.operations.release, 'completed');
+  assert.equal(f.tracks.microphone[0].readyState, 'ended');
+});
+
+test('account retirement while SDK join is pending prevents native activation', async () => {
+  const f = fixture(), gate = deferred(); let activations = 0;
+  f.handle.join = async () => { await gate.promise; };
+  f.handle.activateSystemCall = async () => { activations++; };
+  const b = await f.create(), joining = b.call.join(); const rejected = assert.rejects(joining, /connect_native_owner_retired/);
+  f.account(null); gate.resolve(); await rejected; await b.release(); assert.equal(activations, 0);
+});
+
+for (const event of [{ kind: 'end', cause: 'error' }, { kind: 'hold' }])
+test(`native ${event.kind} retains its first bounded cause and immediately shuts down`, async () => {
+  const f = fixture(); let system;
+  f.handle.observeSystemActions = listener => { system = listener; return () => {}; };
+  const b = await f.create(); await b.call.join(); system(event);
+  const first = f.factory.current().getSnapshot(); assert.equal(first.reason, 'interruption');
+  assert.deepEqual(first.systemInterruption, { kind: event.kind, cause: event.cause ?? 'unknown' });
+  assert.equal(f.tracks.microphone[0].readyState, 'ended');
+  system({ kind: 'end', cause: 'remote' }); await b.release();
+  assert.deepEqual(f.factory.current().getSnapshot().systemInterruption, first.systemInterruption);
+});
+
+test('audio-session interruption is distinguishable from native End and Hold', async () => {
+  const f = fixture(), b = await f.create(); await b.call.join(); f.interrupt('began'); await b.release();
+  assert.deepEqual(f.factory.current().getSnapshot().systemInterruption, { kind: 'audio_session', cause: 'unknown' });
 });

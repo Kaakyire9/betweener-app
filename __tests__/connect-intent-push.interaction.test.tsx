@@ -20,7 +20,7 @@ jest.mock('@/features/connect/config/connect-feature-flags', () => ({ connectFea
 jest.mock('expo-image', () => { const React = require('react'); const { View } = require('react-native'); return { Image: (props: object) => React.createElement(View, props) }; });
 jest.mock('expo-linear-gradient', () => { const React = require('react'); const { View } = require('react-native'); return { LinearGradient: (props: object) => React.createElement(View, props) }; });
 jest.mock('react-native-safe-area-context', () => { const React = require('react'); const { View } = require('react-native'); return { SafeAreaView: (props: object) => React.createElement(View, props), useSafeAreaInsets: () => ({ top: 0 }) }; });
-jest.mock('@expo/vector-icons', () => ({ Ionicons: Object.assign(() => null, { glyphMap: {} }) }));
+jest.mock('@expo/vector-icons', () => ({ Ionicons: Object.assign(() => null, { glyphMap: {} }), MaterialCommunityIcons: () => null }));
 const context = jest.mocked(useConnectProduct);
 beforeEach(() => { jest.clearAllMocks(); mockParams = {}; mockColorScheme = 'dark'; context.mockReturnValue({ ui: false, status: 'disabled', product: null }); });
 function consentFixture(recipient = false, pending = false) {
@@ -42,41 +42,39 @@ describe('Intent calling consent and push journey', () => {
     const screen = await render(<><IntentCallingConsent intentId={id(20)} /><ConnectCallingPreferences /></>);
     expect(screen.queryByText('Calling, by invitation')).toBeNull(); expect(screen.queryByText('Your calling preferences')).toBeNull();
   });
-  it('sender explicitly offers voice while video remains independently unselected', async () => {
+  it('launch keeps voice offers unavailable without changing Intent acceptance', async () => {
     const f = consentFixture(), screen = await render(<IntentCallingConsent intentId={id(20)} />);
-    await waitFor(() => expect(screen.getByLabelText('Offer voice availability')).toBeTruthy());
-    await fireEvent(screen.getByLabelText('Offer voice availability'), 'valueChange', true);
-    expect(screen.getByLabelText('Offer video availability').props.value).toBe(false);
-    await fireEvent.press(screen.getByLabelText('Offer selected calling availability'));
-    await waitFor(() => expect(f.offer).toHaveBeenCalledWith(id(20), true, false));
+    await waitFor(() => expect(screen.getByText('Calls before matching aren’t available yet. You can still connect through a chat Intent.')).toBeTruthy());
+    expect(screen.queryByLabelText('Offer voice availability')).toBeNull(); expect(f.offer).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText('Invite to a voice call')).toBeNull(); await screen.unmount(); await f.f.product.dispose();
+  });
+  it('launch keeps video offers unavailable even when a prior context allows the media', async () => {
+    const f = consentFixture(); f.model.offer_video = true;
+    const screen = await render(<IntentCallingConsent intentId={id(20)} />);
+    await waitFor(() => expect(screen.getByText('Calls before matching aren’t available yet. You can still connect through a chat Intent.')).toBeTruthy());
+    expect(screen.queryByLabelText('Offer video availability')).toBeNull(); expect(f.offer).not.toHaveBeenCalled();
+    await screen.unmount(); await f.f.product.dispose();
+  });
+  it('a pending pre-match grant cannot be approved from the launch screen', async () => {
+    const f = consentFixture(true, true), screen = await render(<IntentCallingConsent intentId={id(20)} />);
+    await waitFor(() => expect(screen.getByText('This request has no active calling access.')).toBeTruthy());
+    expect(screen.queryByLabelText('Approve voice calling')).toBeNull(); expect(screen.queryByLabelText('Approve video calling')).toBeNull();
     expect(f.decide).not.toHaveBeenCalled(); await screen.unmount(); await f.f.product.dispose();
   });
-  it('video offer without approval remains pending and has no call action', async () => {
-    const f = consentFixture(), screen = await render(<IntentCallingConsent intentId={id(20)} />);
-    await waitFor(() => expect(screen.getByLabelText('Offer video availability')).toBeTruthy());
-    await fireEvent(screen.getByLabelText('Offer video availability'), 'valueChange', true); await fireEvent.press(screen.getByLabelText('Offer selected calling availability'));
-    await waitFor(() => expect(f.offer).toHaveBeenCalledWith(id(20), false, true)); expect(screen.queryByLabelText('Invite to a voice call')).toBeNull();
-    await screen.unmount(); await f.f.product.dispose();
-  });
-  it('recipient must explicitly choose media; approving voice leaves video off', async () => {
+  it('recipient can withdraw a legacy pending grant without enabling calls', async () => {
     const f = consentFixture(true, true), screen = await render(<IntentCallingConsent intentId={id(20)} />);
-    await waitFor(() => expect(screen.getByLabelText('Approve voice calling')).toBeTruthy()); expect(f.decide).not.toHaveBeenCalled();
-    await fireEvent(screen.getByLabelText('Approve voice calling'), 'valueChange', true); await fireEvent.press(screen.getByLabelText('Approve selected media'));
-    await waitFor(() => expect(f.decide).toHaveBeenCalledWith(id(21), true, false)); expect(screen.queryByLabelText('Invite to a voice call')).toBeNull();
-    await screen.unmount(); await f.f.product.dispose();
+    await waitFor(() => expect(screen.getByLabelText('Withdraw calling permission')).toBeTruthy());
+    await fireEvent.press(screen.getByLabelText('Withdraw calling permission'));
+    await waitFor(() => expect(f.withdraw).toHaveBeenCalledWith(id(21))); expect(f.decide).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText('Invite to a voice call')).toBeNull(); await screen.unmount(); await f.f.product.dispose();
   });
-  it('recipient decline calls false/false and grants no permission', async () => {
-    const f = consentFixture(true, true), screen = await render(<IntentCallingConsent intentId={id(20)} />);
-    await waitFor(() => expect(screen.getByLabelText('Decline calling permission')).toBeTruthy()); await fireEvent.press(screen.getByLabelText('Decline calling permission'));
-    await waitFor(() => expect(f.decide).toHaveBeenCalledWith(id(21), false, false)); expect(f.model.grant!.voice).toBe(false);
-    await screen.unmount(); await f.f.product.dispose();
-  });
-  it('active permission is viewable and withdrawal removes the start action', async () => {
+  it('saved grants remain viewable and withdrawable but cannot start pre-match calls', async () => {
     const f = consentFixture(false, true); Object.assign(f.model.grant!, { status: 'accepted', voice: true }); f.model.can_call_voice = true;
-    const screen = await render(<IntentCallingConsent intentId={id(20)} />); await waitFor(() => expect(screen.getByLabelText('Invite to a voice call')).toBeTruthy());
-    await fireEvent.press(screen.getByLabelText('Invite to a voice call')); expect(mockPush).toHaveBeenCalledWith({ pathname: '/connect/voice', params: { peerId: id(3), authorization: 'pre_match', grantId: id(21) } });
+    const screen = await render(<IntentCallingConsent intentId={id(20)} />);
+    await waitFor(() => expect(screen.getByText('Saved permission: voice.')).toBeTruthy());
+    expect(screen.queryByLabelText('Invite to a voice call')).toBeNull(); expect(mockPush).not.toHaveBeenCalled();
     await fireEvent.press(screen.getByLabelText('Withdraw calling permission')); await waitFor(() => expect(f.withdraw).toHaveBeenCalledWith(id(21)));
-    await waitFor(() => expect(screen.queryByLabelText('Invite to a voice call')).toBeNull()); await screen.unmount(); await f.f.product.dispose();
+    await screen.unmount(); await f.f.product.dispose();
   });
   it('unconfirmed withdrawal removes cached acceptance and never claims it was saved', async () => {
     const f = consentFixture(false, true); Object.assign(f.model.grant!, { status: 'accepted', voice: true }); f.model.can_call_voice = true;
@@ -85,12 +83,12 @@ describe('Intent calling consent and push journey', () => {
     await waitFor(() => expect(screen.getByText('The change could not be confirmed. Refresh before trying again.')).toBeTruthy()); expect(screen.queryByLabelText('Invite to a voice call')).toBeNull();
     await screen.unmount(); await f.f.product.dispose();
   });
-  it('double offer taps dispatch one mutation while the first is pending', async () => {
-    const f = consentFixture(), gate = deferred(); f.offer.mockImplementationOnce(() => gate.promise);
-    const screen = await render(<IntentCallingConsent intentId={id(20)} />); await waitFor(() => expect(screen.getByLabelText('Offer voice availability')).toBeTruthy());
-    await fireEvent(screen.getByLabelText('Offer voice availability'), 'valueChange', true);
-    await fireEvent.press(screen.getByLabelText('Offer selected calling availability')); await fireEvent.press(screen.getByLabelText('Offer selected calling availability'));
-    expect(f.offer).toHaveBeenCalledTimes(1); await act(async () => { gate.resolve(); }); await screen.unmount(); await f.f.product.dispose();
+  it('double withdrawal taps dispatch one mutation while the first is pending', async () => {
+    const f = consentFixture(false, true), gate = deferred(); f.withdraw.mockImplementationOnce(() => gate.promise);
+    const screen = await render(<IntentCallingConsent intentId={id(20)} />);
+    await waitFor(() => expect(screen.getByLabelText('Withdraw calling permission')).toBeTruthy());
+    await fireEvent.press(screen.getByLabelText('Withdraw calling permission')); await fireEvent.press(screen.getByLabelText('Withdraw calling permission'));
+    expect(f.withdraw).toHaveBeenCalledTimes(1); await act(async () => { gate.resolve(); }); await screen.unmount(); await f.f.product.dispose();
   });
   it('blocked/expired Intent disables offers and calls while permitting withdrawal', async () => {
     const f = consentFixture(false, true); f.model.available = false;

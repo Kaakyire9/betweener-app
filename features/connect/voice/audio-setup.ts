@@ -5,6 +5,8 @@ export interface AudioSetupFailure { stage: AudioSetupStage; code: string; missi
 
 /** Closed diagnostic codes only: no raw SDK errors, credentials, SDP or provider bodies. */
 export function audioSetupFailure(stage: AudioSetupStage, error: unknown): AudioSetupFailure {
+  if (error instanceof Error && error.message === 'connect_peer_key_changed') return { stage, code: 'call_identity_changed', missingNativeApis: [] };
+  if (error instanceof Error && ['connect_e2ee_unavailable','connect_e2ee_native_unsupported','connect_e2ee_not_confirmed','connect_key_authentication_failed','connect_key_binding_invalid','connect_encryption_downgrade'].includes(error.message)) return { stage, code: 'call_encryption_unavailable', missingNativeApis: [] };
   if (stage === 'audio_output' && error instanceof Error) {
     if (error.message === 'connect_native_route_unconfirmed') return { stage, code: 'audio_output_unconfirmed', missingNativeApis: [] };
     if (error.message === 'connect_native_route_unavailable') return { stage, code: 'audio_output_unavailable', missingNativeApis: [] };
@@ -18,6 +20,8 @@ export function audioSetupFailure(stage: AudioSetupStage, error: unknown): Audio
 }
 
 export function audioSetupMessage(failure: AudioSetupFailure) {
+  if (failure.code === 'call_identity_changed') return 'Your connection’s calling devices changed. Review calling identity before trying again.';
+  if (failure.code === 'call_encryption_unavailable') return 'A secure connection could not be established. Check device support and try again.';
   if (failure.code === 'native_build_incompatible') return 'This development build is missing required calling support. Open Call details to see what is missing.';
   if (failure.stage === 'microphone') return 'The microphone could not start. Check microphone access and try again.';
   if (failure.stage === 'audio_output') return 'The audio output could not be selected. Please try again.';

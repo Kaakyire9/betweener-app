@@ -10,6 +10,7 @@ import type { ConnectMedia } from '../domain/connect';
 /** Match/grant inputs select a server check; they never certify eligibility. */
 export function ConnectCallEntry({ peerId, blocked = false, grantId, media = 'voice' }: { peerId: string | null; blocked?: boolean; grantId?: string; media?: ConnectMedia }) {
   const { ui, status, product } = useConnectProduct(), router = useRouter();
+  if (grantId) return null;
   if (!ui || status !== 'ready' || blocked || !connectUuid(peerId)) return null;
   if (media === 'video' && product?.flags?.videoCalling !== true) return null;
   return <Pressable accessibilityRole="button" accessibilityLabel={`Invite to a ${media} call`} onPress={() => router.push({ pathname: media === 'video' ? '/connect/video' : '/connect/voice',

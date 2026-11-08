@@ -4,6 +4,7 @@ import { VoiceController } from '../features/connect/voice/voice-controller.ts';
 import { StreamVoiceTransport, type VoiceBindings } from '../features/connect/media/stream-voice-transport.ts';
 import { createNativeAudioRouteSelector } from '../features/connect/media/native-audio-route.ts';
 import { resolveMicrophonePermission } from '../features/connect/media/microphone-permission.ts';
+import { unverifiedShutdown } from '../features/connect/media/local-shutdown.ts';
 import { createVoicePreview } from '../features/connect/voice/voice-preview.ts';
 import type { ConnectSession } from '../features/connect/domain/connect.ts';
 import type { VoiceApi, VoiceCredentials, VoiceTransport, VoiceTransportState, MicrophonePermission } from '../features/connect/voice/voice-types.ts';
@@ -50,9 +51,31 @@ function fixture(incoming = false) {
     setPermission: (p: MicrophonePermission) => { permission = p; }, advance: (ms: number) => { now += ms; },
     emit: (s: VoiceTransportState) => listener(s), get joins() { return joins; }, get leaves() { return leaves; }, get capturing() { return capturing; } };
 }
+for (const reset of ['reset', 'dismiss', 'logout'] as const) test(`${reset} clears the previous call recovery clock before the next invitation`, async () => {
+  const f = fixture();
+  // SDK completion is a fixture observation, not a hardware shutdown assertion.
+  f.transport.leave = async () => ({ ...unverifiedShutdown(), sdkLeave: 'completed', resourceRelease: 'completed' });
+  await f.connected(); f.emit('reconnecting');
+  assert.equal(f.controller.getSnapshot().phase, 'RECONNECTING');
+  if (reset === 'logout') await f.controller.logout();
+  else {
+    await f.controller.hangup(); await settle();
+    if (reset === 'dismiss') assert.equal(f.controller.dismissCompletedCall(), true);
+    else f.controller.reset();
+  }
+  f.set({ id: 'ab220000-0000-4000-8000-000000000099', state: 'RINGING', accepted_at: null,
+    connected_at: null, ended_at: null, deadline: new Date(Date.now() + 120000).toISOString() });
+  await f.start(); const actions = f.actions.length;
+  f.advance(31000); await f.controller.tick();
+  assert.equal(f.controller.getSnapshot().phase, 'RINGING');
+  assert.equal(f.controller.getSnapshot().error, null);
+  assert.equal(f.actions.length, actions);
+  await f.controller.dispose();
+});
+
 test('voice start preserves server authorization and never sends actor identity', async () => {
-  const f = fixture(); await f.controller.start({ profileId: peer, name: 'Alex', avatar: null }, 'pre_match', 'voice-grant');
-  assert.deepEqual(f.starts[0], [peer, 'voice', 'pre_match', 'idempotency-1', device, 'voice-grant']);
+  const f = fixture(); await f.controller.start({ profileId: peer, name: 'Alex', avatar: null }, 'matched', null);
+  assert.deepEqual(f.starts[0], [peer, 'voice', 'matched', 'idempotency-1', device, null]);
   assert.equal(f.controller.getSnapshot().phase, 'RINGING'); assert.equal(f.joins, 0); assert.equal(f.capturing, false);
 });
 for (const permission of ['denied', 'blocked'] as const) test(`${permission} microphone prevents outgoing creation`, async () => {

@@ -1,0 +1,55 @@
+{
+  "scope": "LOCAL_CONNECT_ENCRYPTED_HANGUP_REPAIR",
+  "preparedAt": "2026-11-05T17:12:48.436106+00:00",
+  "observedCall": "c-0a4c48585fd24644",
+  "observedFault": {
+    "platform": "ios",
+    "sequence": 236,
+    "code": "e2ee.unencrypted_frame",
+    "track": "AUDIO",
+    "party": "remote"
+  },
+  "repair": {
+    "transportRetiresOwnerBeforeDeviceUnpublish": true,
+    "publisherCloseStartsBeforeCaptureStopAndRelease": true,
+    "captureShutdownDoesNotAwaitPublisherOrNetwork": true,
+    "activeEncryptionFaultHandlingChanged": false,
+    "orderingVerifiedAgainstInstalledPublisherDisposal": true
+  },
+  "files": [
+    {
+      "path": "features/connect/media/connect-native-owner.ts",
+      "beforeSha256": "168603a9cb5cbc0807b5cc2bde9f51224a7b4cf5956d143d12797594261e68d1",
+      "afterSha256": "7ecb3214e90daa8186ea2640d692c888120f2096b64e8a1ed91c9ce15620860f"
+    },
+    {
+      "path": "features/connect/media/stream-voice-transport.ts",
+      "beforeSha256": "2de16647d780948a88fe59d0d03d9a22598af790b289a54a5fa1f532e34d13b6",
+      "afterSha256": "0e7b4f9a8b455ceea3ec3565219ffc61b35dd281180fb34dc5b5e2856b9d702b"
+    },
+    {
+      "path": "__tests__/connect-end-block.regression.test.cjs",
+      "beforeSha256": "6c875564c88f562afe0aa1c9526b3b7f19f7bb4d51fa530ce61170614d7a09f3",
+      "afterSha256": "ef42d1cf294aae0d4963b00f52068a6289ea64fa96de5c4054545fca74bbc82d"
+    },
+    {
+      "path": "__tests__/connect-encrypted-hangup.regression.test.cjs",
+      "beforeSha256": null,
+      "afterSha256": "7672d8b5a12e2a623ad81dec9def6940e963d3f26b56cfe8c76f8a9701f8847a"
+    }
+  ],
+  "validation": {
+    "newOrderingTestsFailedBeforeRepair": 7,
+    "regressionTestsPassed": 335,
+    "regressionTestsFailed": 0,
+    "changedFilesLintPassed": true,
+    "repositoryTypecheck": "PASSED",
+    "realDeviceRetest": "NOT_TESTED",
+    "providerTermination": "UNVERIFIED"
+  },
+  "hostedChanges": 0,
+  "builds": 0,
+  "otaPublications": 0,
+  "callingGatesChanged": false,
+  "remaining": "Reload both staging phones and repeat the foreground voice call, compare safety codes, and end on Android while capturing both logs."
+}

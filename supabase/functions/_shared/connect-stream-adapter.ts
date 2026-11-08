@@ -1,9 +1,10 @@
 // Pure server adapter. No native client, shared Live singleton or environment reads.
-import { isAcceptedEnd, isScopedNotFound, unconfirmedEnd, type ConnectEndAcknowledgement } from './connect-provider-end.ts';
+import { isAcceptedEnd, isScopedEndedCall, isScopedNotFound, unconfirmedEnd, type ConnectEndAcknowledgement } from './connect-provider-end.ts';
 export const CONNECT_CALL_TYPE = 'betweener_connect';
 export const CONNECT_TOKEN_TTL = 120;
 type Json = Record<string, unknown>;
 export interface ProviderSnapshot {
+  encryption_required?: boolean; native_incoming?: boolean; created_at?: string;
   id: string; state: string; media: 'voice' | 'video'; ended_at: string | null; can_provision: boolean;
   caller_user_id: string; recipient_user_id: string; provider_session_id: string | null;
 }
@@ -19,7 +20,7 @@ export interface StreamCallPort {
   getOrCreate(input: { ring: boolean; notify: boolean; data: {
     created_by_id: string; members: { user_id: string; role: string }[];
     custom: { betweener_connect_id: string; media: string };
-    settings_override: { limits: { max_participants: number }; video: { enabled: boolean; camera_default_on: boolean; target_resolution: { width: number; height: number; bitrate: number } } };
+    settings_override: { encryption?: { mode: 'auto-on' }; limits: { max_participants: number }; video: { enabled: boolean; camera_default_on: boolean; target_resolution: { width: number; height: number; bitrate: number } } };
   } }): Promise<unknown>;
   get(): Promise<{ call: { id: string; type: string; custom: unknown; settings: unknown; ended_at?: string | Date | null; session?: unknown }; members: { user_id?: string; user?: { id: string } }[] }>;
   updateCallMembers(input: { update_members: { user_id: string; role: string }[] }): Promise<unknown>;
@@ -83,9 +84,11 @@ export function createConnectStreamAdapter(stream: StreamServerPort, expectedApp
     if (!Number.isSafeInteger(expectedAppId) || expectedAppId <= 0 || app.id !== expectedAppId
       || app.disable_auth_checks !== false || app.disable_permissions_checks !== false) throw new Error('connect_provider_policy_unsafe');
   }
-  async function verifyPolicy() {
+  async function verifyPolicy(requireEncryption = false) {
     await verifyApplication();
-    assertConnectCallType(await stream.video.getCallType({ name: CONNECT_CALL_TYPE }));
+    const type = await stream.video.getCallType({ name: CONNECT_CALL_TYPE });
+    assertConnectCallType(type);
+    if (requireEncryption && !['available','auto-on'].includes(String(record(record(type.settings).encryption).mode))) throw Error('connect_provider_encryption_unavailable');
   }
   async function verifyMembers(s: ProviderSnapshot, c: StreamCallPort) {
     const result = await c.get();
@@ -94,21 +97,23 @@ export function createConnectStreamAdapter(stream: StreamServerPort, expectedApp
     if (JSON.stringify(actual) !== JSON.stringify(expected) || result.call.id !== s.id || result.call.type !== CONNECT_CALL_TYPE
       || record(result.call.custom).betweener_connect_id !== s.id || record(result.call.custom).media !== s.media) throw new Error('connect_provider_identity_invalid');
     assertConnectSessionSettings(result.call.settings, s.media);
+    const mode = record(record(result.call.settings).encryption).mode;
+    if ((s.encryption_required === true && mode !== 'auto-on') || (s.encryption_required !== true && mode === 'auto-on')) throw Error('connect_provider_encryption_mismatch');
     return result;
   }
   return {
     verifyPolicy,
     async provision(s: ProviderSnapshot) {
       if (s.state !== 'REQUESTED' || s.ended_at || !s.can_provision || s.caller_user_id === s.recipient_user_id) throw new Error('connect_provider_unavailable');
-      await verifyPolicy();
+      await verifyPolicy(s.encryption_required === true);
       // Do not overwrite application roles of existing Live users.
       await stream.upsertUsers([{ id: 'betweener-connect-system' }, { id: s.caller_user_id }, { id: s.recipient_user_id }]);
       const c = call(s);
-      await c.getOrCreate({ ring: true, notify: false, data: {
+      await c.getOrCreate({ ring: s.native_incoming !== false, notify: false, data: {
         created_by_id: 'betweener-connect-system',
         members: [s.caller_user_id, s.recipient_user_id].map((user_id) => ({ user_id, role: 'connect_invited' })),
         custom: { betweener_connect_id: s.id, media: s.media },
-        settings_override: { limits: { max_participants: 2 }, video: { enabled: s.media === 'video', camera_default_on: false,
+        settings_override: { ...(s.encryption_required === true ? { encryption: { mode: 'auto-on' as const } } : {}), limits: { max_participants: 2 }, video: { enabled: s.media === 'video', camera_default_on: false,
           target_resolution: { width: 640, height: 480, bitrate: 600000 } } },
       } });
       const result = await verifyMembers(s, c);
@@ -117,7 +122,7 @@ export function createConnectStreamAdapter(stream: StreamServerPort, expectedApp
     async credentials(s: ProviderSnapshot, userId: string) {
       if (!['ACCEPTED', 'CONNECTING', 'ACTIVE', 'RECONNECTING'].includes(s.state) || s.ended_at
         || ![s.caller_user_id, s.recipient_user_id].includes(userId)) throw new Error('connect_provider_unavailable');
-      await verifyPolicy(); const c = call(s); const result = await verifyMembers(s, c);
+      await verifyPolicy(s.encryption_required === true); const c = call(s); const result = await verifyMembers(s, c);
       if (result.call.ended_at) throw new Error('connect_provider_unavailable');
       await c.updateCallMembers({ update_members: [s.caller_user_id, s.recipient_user_id].map((user_id) => ({ user_id, role: `connect_${s.media}` })) });
       // Call tokens implicitly add membership. Ordinary short-lived user tokens
@@ -130,18 +135,23 @@ export function createConnectStreamAdapter(stream: StreamServerPort, expectedApp
     async end(s: Pick<ProviderSnapshot, 'id'>): Promise<ConnectEndAcknowledgement> {
       const c = call(s);
       try { await verifyApplication(); } catch (error) { throw unconfirmedEnd(error); }
+      let accepted = false;
       try {
         if (!isAcceptedEnd(await c.end())) throw unconfirmedEnd(null);
-        return { type: CONNECT_CALL_TYPE, id: s.id, outcome: 'accepted', mediaEnforcement: 'unverified' };
+        accepted = true;
       } catch (error) {
         if (!isScopedNotFound(error)) throw unconfirmedEnd(error);
-        // Fresh authenticated read, on the same app/type/ID. Absence is not media proof.
-        try { await c.get(); } catch (readError) {
-          if (isScopedNotFound(readError)) return { type: CONNECT_CALL_TYPE, id: s.id, outcome: 'absent', mediaEnforcement: 'unverified' };
-          throw unconfirmedEnd(readError);
-        }
-        throw unconfirmedEnd(null);
       }
+      // An HTTP ACK alone is not persisted provider termination. A delayed,
+      // mismatched or unavailable read keeps the durable end job retryable.
+      // Neither an ended call nor scoped absence proves cessation of remote RTP.
+      let result: Awaited<ReturnType<StreamCallPort['get']>>;
+      try { result = await c.get(); } catch (error) {
+        if (isScopedNotFound(error)) return { type: CONNECT_CALL_TYPE, id: s.id, outcome: 'absent', mediaEnforcement: 'unverified' };
+        throw unconfirmedEnd(error);
+      }
+      if (!accepted || !isScopedEndedCall(result, s.id)) throw unconfirmedEnd(null);
+      return { type: CONNECT_CALL_TYPE, id: s.id, outcome: 'accepted', mediaEnforcement: 'unverified' };
     },
     async media(s: ProviderSnapshot): Promise<ConnectProviderObservation> {
       let provider: Awaited<ReturnType<StreamCallPort['get']>>['call'];

@@ -2,13 +2,13 @@ import type { StreamVideoSdkModule } from '../../live/media/load-stream-video-sd
 import { connectUuid } from '../domain/call-navigation.ts';
 
 export interface EncryptionBinding {
-  cid: string; userId: string; authEpoch: string; participants: readonly string[];
+  cid: string; userId: string; authEpoch: string; participants: readonly string[]; generation?: string;
 }
 export interface AuthenticatedCallKey extends EncryptionBinding {
   mode: 'required'; epoch: number; expiresAt: number; key: ArrayBuffer;
 }
-/** Must authenticate peer/device identity and call authority outside Stream.
- * No implementation is installed. A server-visible shared secret is unsuitable. */
+/** Authenticates peer/device identity and call authority outside Stream.
+ * The mounted implementation is security/call-key-agent.ts, not a shared server secret. */
 export interface CallKeyAgent { acquire(binding: EncryptionBinding): Promise<AuthenticatedCallKey> }
 type Manager = Pick<Awaited<ReturnType<StreamVideoSdkModule['EncryptionManager']['create']>>,
   'setSharedKey' | 'removeSharedKey' | 'dispose'>;
@@ -16,16 +16,19 @@ interface EncryptionSdk {
   isSupported(): boolean;
   create(userId: string, options: { algorithm: 'AES-128-GCM' | 'AES-256-GCM' }): Promise<Manager>;
 }
-interface EncryptionCall { cid: string; attach(manager: Manager): void; hasLeft(): boolean }
+interface EncryptionCall { cid: string; attach(manager: Manager): void; hasLeft(): boolean; hasJoined(): boolean; mode(): 'auto-on' | 'disabled' | 'unknown' }
 const sameMembers = (a: readonly string[], b: readonly string[]) => a.length === 2 && b.length === 2
   && new Set(a).size === 2 && new Set(b).size === 2 && [...a].sort().every((id, i) => id === [...b].sort()[i]);
 
-/** Experimental SDK boundary only. Not mounted in the product; never joins a call or transmits keys. */
+/** Mounted pre-join SDK boundary. Never joins a call or transmits keys itself. */
 export async function prepareCallEncryption(input: {
   required: boolean; binding: EncryptionBinding; call: EncryptionCall; sdk: EncryptionSdk;
   agent?: CallKeyAgent; current(): boolean; now(): number;
 }) {
   if (!input.required) return null;
+  // Encryption mode is fixed at provider call creation. Attaching a transform
+  // to an ordinary/already-joined call cannot certify an encrypted connection.
+  if (input.call.mode() !== 'auto-on' || input.call.hasJoined() || input.call.hasLeft()) throw Error('connect_e2ee_call_not_prepared');
   const binding = { ...input.binding, participants: [...input.binding.participants] };
   if (!input.agent) throw new Error('connect_e2ee_key_distribution_unavailable');
   if (!input.sdk.isSupported()) throw new Error('connect_e2ee_native_unsupported');
@@ -36,13 +39,13 @@ export async function prepareCallEncryption(input: {
   }
   let manager: Manager | null = null, epoch = -1, retired = false, disposed = false, algorithmBytes = 0;
   const installedEpochs = new Set<number>();
-  const current = () => !retired && !disposed && input.current() && input.call.cid === binding.cid && !input.call.hasLeft();
+  const current = () => !retired && !disposed && input.current() && input.call.cid === binding.cid && !input.call.hasLeft() && input.call.mode() === 'auto-on';
   const acquire = async () => {
     if (!current()) throw new Error('connect_e2ee_owner_retired');
     const lease = await input.agent!.acquire({ ...binding, participants: [...binding.participants] });
     try {
       if (!current()) throw new Error('connect_e2ee_owner_retired');
-      if (lease.cid !== binding.cid || lease.authEpoch !== binding.authEpoch || lease.userId !== binding.userId
+      if (lease.cid !== binding.cid || lease.authEpoch !== binding.authEpoch || lease.userId !== binding.userId || lease.generation !== binding.generation
         || lease.mode !== 'required' || !sameMembers(lease.participants, binding.participants)
         || !Number.isInteger(lease.epoch) || lease.epoch <= epoch || lease.epoch > 255
         || !Number.isFinite(lease.expiresAt) || lease.expiresAt <= input.now()
@@ -56,8 +59,9 @@ export async function prepareCallEncryption(input: {
   const first = await acquire();
   algorithmBytes = first.key.byteLength;
   try {
+    if (input.call.hasJoined()) throw Error('connect_e2ee_call_already_joined');
     manager = await input.sdk.create(binding.userId, { algorithm: first.key.byteLength === 32 ? 'AES-256-GCM' : 'AES-128-GCM' });
-    if (!current()) throw new Error('connect_e2ee_owner_retired');
+    if (!current() || input.call.hasJoined()) throw new Error('connect_e2ee_owner_retired');
     if (first.expiresAt <= input.now()) throw new Error('connect_e2ee_key_expired');
     installedEpochs.add(first.epoch); manager.setSharedKey(first.epoch, first.key); epoch = first.epoch;
     input.call.attach(manager);

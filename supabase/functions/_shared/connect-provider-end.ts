@@ -19,6 +19,14 @@ export function isAcceptedEnd(value: unknown): boolean {
   return typeof status === 'number' && Number.isInteger(status) && status >= 200 && status < 300
     && typeof r.duration === 'string' && r.duration.trim().length > 0 && r.code === undefined;
 }
+/** Persisted control-plane state only, never remote-media cutoff evidence. */
+export function isScopedEndedCall(value: unknown, id: string): boolean {
+  const call = object(object(value).call);
+  const endedAt = call.ended_at;
+  const timestamp = endedAt instanceof Date ? endedAt.getTime()
+    : typeof endedAt === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(endedAt) ? Date.parse(endedAt) : NaN;
+  return call.id === id && call.type === 'betweener_connect' && Number.isFinite(timestamp);
+}
 export function assertConnectEndAcknowledged(value: unknown, id: string): asserts value is ConnectEndAcknowledgement {
   const r = object(value);
   if (r.type !== 'betweener_connect' || r.id !== id || (r.outcome !== 'accepted' && r.outcome !== 'absent')

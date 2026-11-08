@@ -40,13 +40,16 @@ test('grant response binding rejects wrong Intent, party, media and malformed fl
     { grant: grant({ voice: true, requested_voice: false }) }, { grant: grant({ expires_at: 'invalid' }) }]) assert.throws(() => readIntentCallingContext({ ...consent(), ...patch }, id(20), id(2)), /unavailable/);
   assert.equal(readIntentCallingContext(consent(), id(20), id(2)).grant, null);
 });
-test('consent methods use existing recipient RPCs and pinned epoch, never credentials', async () => {
+test('launch defers new pre-match grants while reads, declines and withdrawal retain pinned ownership', async () => {
   const f = fixture(), events = [];
   const services = createAuthenticatedConnectServices(f.nativeAuth.owner, id(2), { rpc: async (name, args, token) => { events.push({ name,args,token }); return { data: name.includes('get_intent') ? consent() : null, error:null }; }, credentials:()=>{throw Error('forbidden');}, peer:()=>{throw Error('forbidden');} });
-  await services.consent.get(id(20)); await services.consent.offer(id(20),true,false); await services.consent.decide(id(21),false,false); await services.consent.withdraw(id(21));
-  assert.deepEqual(events.map(e=>e.name),['rpc_connect_get_intent_consent','rpc_connect_request_grant','rpc_connect_decide_grant','rpc_connect_revoke_grant']);
-  assert.deepEqual(events[2].args,{p_grant:id(21),p_voice:false,p_video:false});
-  f.nativeAuth.invalidate(); await assert.rejects(services.consent.offer(id(20),true,false), /unauthenticated/); assert.equal(events.length,4); await f.product.dispose();
+  await services.consent.get(id(20));
+  await assert.rejects(services.consent.offer(id(20),true,false), /connect_disabled/);
+  await assert.rejects(services.consent.decide(id(21),true,false), /connect_disabled/);
+  await services.consent.decide(id(21),false,false); await services.consent.withdraw(id(21));
+  assert.deepEqual(events.map(e=>e.name),['rpc_connect_get_intent_consent','rpc_connect_decide_grant','rpc_connect_revoke_grant']);
+  assert.deepEqual(events[1].args,{p_grant:id(21),p_voice:false,p_video:false});
+  f.nativeAuth.invalidate(); await assert.rejects(services.consent.offer(id(20),true,false), /unauthenticated/); assert.equal(events.length,3); await f.product.dispose();
 });
 test('late consent responses are rejected after account retirement', async () => {
   const f=fixture(), gate=deferred();
@@ -100,13 +103,13 @@ test('blocked during ringing cannot produce accepted media and still cleans up',
 test('signed out consent recovery cannot retain the native owner', async()=>{
   const f=fixture();await f.active();f.nativeAuth.invalidate();await settle();assert.equal(f.composition.owner().getSnapshot().retired,true);await f.product.dispose();
 });
-test('server code reuses canonical outbox and staging voice leaves video and push off', () => {
+test('server code reuses canonical outbox, keeps push default-off and gates staging video by trusted identity', () => {
   const sql=fs.readFileSync('supabase/migrations/20261031191352_connect_m3_1_intent_and_notifications.sql','utf8');
   assert.ok(!/create table/i.test(sql));assert.match(sql,/notifications_enabled boolean not null default false/);
   assert.match(sql,/dispatch_push_notification_event_v1/);assert.match(sql,/connect_push_current\(p_event_id\)/);
   const {connectRuntimeAvailability}=require('../features/connect/config/connect-runtime-policy.ts');
   const identity={development:true,platform:'android',variant:'staging',environment:'staging',bundleIdentifier:'com.aduboffour.betweener.staging',supabaseUrl:'https://xsgzxadwuxuziubglvps.supabase.co'};
-  assert.deepEqual(connectRuntimeAvailability(identity),{ui:true,runtime:true,video:false});
+  assert.deepEqual(connectRuntimeAvailability(identity),{ui:true,runtime:true,video:true});
   assert.equal(connectRuntimeAvailability({...identity,variant:'production'}).runtime,false);
 });
 test('staging pair restriction retains every existing match, preference and media-specific grant predicate',()=>{

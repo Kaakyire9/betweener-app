@@ -62,7 +62,7 @@ const scopedScreenAwakeHook = fs.readFileSync(
 
 test('Stream native setup enables active-call continuity and native PiP', () => {
   assert.match(appConfig, /'@stream-io\/video-react-native-sdk'/);
-  assert.match(appConfig, /ringing:\s*false/);
+  assert.match(appConfig, /ringing:\s*identity\.variant === 'staging' && process\.env\.EXPO_PUBLIC_CONNECT_NATIVE_INCOMING === 'true'/);
   assert.match(appConfig, /androidKeepCallAlive:\s*true/);
   assert.match(appConfig, /iosKeepCallAlive:\s*true/);
   assert.match(appConfig, /enableScreenshare:\s*false/);

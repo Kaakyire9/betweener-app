@@ -14,12 +14,14 @@ export function ConnectIncomingNotice({ controller }: { controller: VoiceControl
   const callPath = media === 'video' ? '/connect/video' as const : '/connect/voice' as const;
   const incoming = state.incoming && state.phase === 'RINGING';
   const finished = ['ENDING', 'ENDED', 'FAILED'].includes(state.phase);
+  const ongoing = state.minimized && ['ACTIVE', 'CONNECTING', 'RECONNECTING'].includes(state.phase);
   const dismissible = controller.canDismissCompletedCall();
-  if (!incoming && !finished) return null;
-  return <View accessibilityLabel={incoming ? `Incoming ${media} call notice` : 'Call cleanup notice'} style={[styles.card, { top: insets.top + 12 }]}>
-    <Text style={styles.title}>{incoming ? `${state.peer?.name || 'Your connection'} is calling` : dismissible ? `${media === 'video' ? 'Video' : 'Voice'} call ended` : 'Call status needs attention'}</Text>
-    <Text style={styles.caption}>{incoming ? `${media === 'video' ? 'Video' : 'Voice'} call · camera off` : dismissible ? 'View the call result or dismiss this notice.' : 'Check local shutdown and call termination status.'}</Text>
+  if (!incoming && !finished && !ongoing) return null;
+  return <View accessibilityLabel={ongoing ? 'Ongoing call notice' : incoming ? `Incoming ${media} call notice` : 'Call cleanup notice'} style={[styles.card, { top: insets.top + 12 }]}>
+    <Text style={styles.title}>{ongoing ? `On a ${media} call with ${state.peer?.name || 'your connection'}` : incoming ? `${state.peer?.name || 'Your connection'} is calling` : dismissible ? `${media === 'video' ? 'Video' : 'Voice'} call ended` : 'Call status needs attention'}</Text>
+    <Text style={styles.caption}>{ongoing ? 'Your conversation continues. Open the call to use its controls.' : incoming ? `${media === 'video' ? 'Video' : 'Voice'} call · camera off · E2EE unavailable in staging` : dismissible ? 'View the call result or dismiss this notice.' : 'Check local shutdown and call termination status.'}</Text>
     <View style={styles.row}>
+      {ongoing && <Pressable accessibilityRole="button" accessibilityLabel="End minimized call" style={styles.button} onPress={() => { void controller.hangup(); }}><Text style={styles.caption}>End call</Text></Pressable>}
       {incoming && <Pressable accessibilityRole="button" accessibilityLabel={`Accept incoming ${media} call`} disabled={state.busy} onPress={() => {
         router.push({ pathname: callPath, params: { callId: state.session!.id } });
         void controller.accept();

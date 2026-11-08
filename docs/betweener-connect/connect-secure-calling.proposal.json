@@ -1,0 +1,821 @@
+{
+  "schemaVersion": 1,
+  "revision": 4,
+  "scope": "LOCAL_PROPOSAL_ONLY_NOT_AUTHORISED",
+  "target": {
+    "name": "betweener-staging",
+    "reference": "xsgzxadwuxuziubglvps",
+    "region": "eu-north-1",
+    "streamApplication": 1731011,
+    "callType": "betweener_connect"
+  },
+  "sourceAmendment": {
+    "previousDraft": "tmp/connect-secure-calling/proposal-draft-20b341864dec96348dee68ba7cb577c1fa333bd7cde30966a300de2d7fcbd525.json",
+    "sha256": "20b341864dec96348dee68ba7cb577c1fa333bd7cde30966a300de2d7fcbd525",
+    "reason": "Do not retire a foreground-answered call on delayed OS events; route outgoing system End through the existing hangup/cancel authority. No server, provider or gate changes."
+  },
+  "historicalPackages": [
+    {
+      "path": "docs/betweener-connect/connect-provider-update.proposal.json",
+      "sha256": "4a2fb86d7c477cb78cb29326be0073f32ada6a63e8899dcec07db8e9cdd015e3"
+    },
+    {
+      "path": "docs/betweener-connect/connect-provider-update.recovery-addendum.json",
+      "sha256": "a068158cdf76c0d8864e420bec90dc13423bf61928cbfee6a43e604e867cdbbc"
+    },
+    {
+      "path": "docs/betweener-connect/connect-staging-operations-package.json",
+      "sha256": "ce84c688bdb91f9b2d394f6d35f0669b631748db57d9b11341f3f36e7487ead7"
+    },
+    {
+      "path": "docs/betweener-connect/connect-v1-m3-3-staging-deployment-package.json",
+      "sha256": "4769fc763db17990a3d37018e69a4150458b0ef89e87aa5ba14fb2cd13582ed3"
+    },
+    {
+      "path": "tmp/connect-secure-calling/proposal-draft-1fec4d288e806a0772a4a6a8ad9529e366fefd88688dbe33caad84f35906a888.json",
+      "sha256": "1fec4d288e806a0772a4a6a8ad9529e366fefd88688dbe33caad84f35906a888"
+    },
+    {
+      "path": "tmp/connect-secure-calling/proposal-draft-cd0fff61f5a2c760a6396f668fb79e93129e8d7dad7e9db01951cc85dd1adfd7.json",
+      "sha256": "cd0fff61f5a2c760a6396f668fb79e93129e8d7dad7e9db01951cc85dd1adfd7"
+    },
+    {
+      "path": "tmp/connect-secure-calling/proposal-draft-20b341864dec96348dee68ba7cb577c1fa333bd7cde30966a300de2d7fcbd525.json",
+      "sha256": "20b341864dec96348dee68ba7cb577c1fa333bd7cde30966a300de2d7fcbd525"
+    }
+  ],
+  "sourceDeltas": [
+    {
+      "path": "supabase/functions/_shared/connect-stream-adapter.ts",
+      "previousSha256": "b915afd82fc730328e7dec906091c0d0a6db7b0b99e2d3cb61f93aab3c0c5c59",
+      "sha256": "2e68cbf51a507e49f64a493113b64932e55a0779da78b5726618f09ffbf5f242"
+    },
+    {
+      "path": "supabase/functions/connect-provider-worker/index.ts",
+      "previousSha256": "ccb7a4ac79e1de97c598dd1917621716e3f322ebba459bf41a1320f78dc92d1d",
+      "sha256": "366d4a786b31c743f72ed882dccdebf681864e14adc94e3c1f678e773dd618c9"
+    }
+  ],
+  "migrations": [
+    {
+      "path": "supabase/migrations/20261103150558_connect_secure_calling.sql",
+      "sha256": "0ba7446a64b213847d7a2762eb70cdfd47dd6694ccf18f619c7a351850039597",
+      "after": [
+        "20261101060133_connect_staging_tester_scope",
+        "20261102165936_connect_staging_video_testing"
+      ],
+      "defaultOff": [
+        "native_incoming_enabled",
+        "e2ee_enabled"
+      ]
+    }
+  ],
+  "functions": [
+    {
+      "name": "connect-provider-worker",
+      "verifyJwt": false,
+      "authentication": "dedicated worker HMAC before privileged processing",
+      "deploymentArguments": [
+        "functions",
+        "deploy",
+        "connect-provider-worker",
+        "--project-ref",
+        "xsgzxadwuxuziubglvps",
+        "--use-api",
+        "--no-verify-jwt"
+      ],
+      "forward": {
+        "root": "tmp/connect-secure-calling/package/connect-provider-worker/forward",
+        "files": [
+          {
+            "path": "supabase/functions/_shared/connect-edge.ts",
+            "sha256": "708101e75f9c3bfe5afe30edb9978c232fd1cbbb2ddeab7617382b290c354ff5"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-environment.ts",
+            "sha256": "6c8b72a88c5ebd2a93a5d0d3bef378d340a0653bb6f2b73714b495d196cdf523"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-native-destination.ts",
+            "sha256": "b10a855410cb0f8d5e5432e075d94f267aade8cf6735fbc607adda24ab5df7ec"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-provider-batch.ts",
+            "sha256": "e0999e1266ab1c9e1247d32edded917eed2ea27d846a13f03f14f65a46c944e8"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-provider-end.ts",
+            "sha256": "8d26cec70d4e0eadc60389684e7bf0997a47a666c78905861446ef1260d788ed"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-provider-worker.ts",
+            "sha256": "8e3aeb685ba165cc64b85be4a6db3feef3717d167b9eefac0757aa561c443791"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-stream-adapter.ts",
+            "sha256": "2e68cbf51a507e49f64a493113b64932e55a0779da78b5726618f09ffbf5f242"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-webhook.ts",
+            "sha256": "c63ff22a6bc80307628e403335f7f7466546b023e62750905a7f44f12e1b4998"
+          },
+          {
+            "path": "supabase/functions/_shared/cors.ts",
+            "sha256": "2b7f755ddc2f0e3a17f70694541f1760b43513f133a0bef2cbc9db6938e2bc2b"
+          },
+          {
+            "path": "supabase/functions/_shared/supabase-admin-key.ts",
+            "sha256": "326dfe3df009483cc38828b48902fe4fc074262760a68d813c60b49edeaebacc"
+          },
+          {
+            "path": "supabase/functions/_shared/supabase-public-key.ts",
+            "sha256": "9ce797d773cc4a552679ab1201de67ea1a1f8ada8079a0c143c406b939048b85"
+          },
+          {
+            "path": "supabase/functions/connect-provider-worker/index.ts",
+            "sha256": "366d4a786b31c743f72ed882dccdebf681864e14adc94e3c1f678e773dd618c9"
+          },
+          {
+            "path": "supabase/functions/connect-provider-worker/deno.json",
+            "sha256": "926e31574d93ff0885ef4f296ed3d5bce1458056256efb2d47343c8914003f68"
+          }
+        ],
+        "external": [
+          "npm:@stream-io/node-sdk@0.7.63",
+          "npm:@supabase/supabase-js@2.110.7"
+        ]
+      },
+      "rollback": {
+        "root": "tmp/connect-secure-calling/package/connect-provider-worker/rollback",
+        "files": [
+          {
+            "path": "supabase/functions/connect-provider-worker/index.ts",
+            "sha256": "ccb7a4ac79e1de97c598dd1917621716e3f322ebba459bf41a1320f78dc92d1d"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-edge.ts",
+            "sha256": "708101e75f9c3bfe5afe30edb9978c232fd1cbbb2ddeab7617382b290c354ff5"
+          },
+          {
+            "path": "supabase/functions/_shared/supabase-public-key.ts",
+            "sha256": "9ce797d773cc4a552679ab1201de67ea1a1f8ada8079a0c143c406b939048b85"
+          },
+          {
+            "path": "supabase/functions/_shared/supabase-admin-key.ts",
+            "sha256": "326dfe3df009483cc38828b48902fe4fc074262760a68d813c60b49edeaebacc"
+          },
+          {
+            "path": "supabase/functions/_shared/cors.ts",
+            "sha256": "2b7f755ddc2f0e3a17f70694541f1760b43513f133a0bef2cbc9db6938e2bc2b"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-stream-adapter.ts",
+            "sha256": "b915afd82fc730328e7dec906091c0d0a6db7b0b99e2d3cb61f93aab3c0c5c59"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-provider-end.ts",
+            "sha256": "8d26cec70d4e0eadc60389684e7bf0997a47a666c78905861446ef1260d788ed"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-environment.ts",
+            "sha256": "6c8b72a88c5ebd2a93a5d0d3bef378d340a0653bb6f2b73714b495d196cdf523"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-provider-worker.ts",
+            "sha256": "8e3aeb685ba165cc64b85be4a6db3feef3717d167b9eefac0757aa561c443791"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-provider-batch.ts",
+            "sha256": "e0999e1266ab1c9e1247d32edded917eed2ea27d846a13f03f14f65a46c944e8"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-webhook.ts",
+            "sha256": "c63ff22a6bc80307628e403335f7f7466546b023e62750905a7f44f12e1b4998"
+          },
+          {
+            "path": "supabase/functions/connect-provider-worker/deno.json",
+            "sha256": "926e31574d93ff0885ef4f296ed3d5bce1458056256efb2d47343c8914003f68"
+          }
+        ],
+        "revision": 2,
+        "bundleSha256": "3e6accbf65f8ecc10034d54a743c3681b667640665fb4cb0a0c8c263a1b997cd",
+        "source": "READ_ONLY_STAGING_SOURCE_RECEIPT_2026_11_03"
+      }
+    },
+    {
+      "name": "connect-credentials",
+      "verifyJwt": true,
+      "authentication": "gateway JWT + auth.getUser + actor-bound RPC",
+      "deploymentArguments": [
+        "functions",
+        "deploy",
+        "connect-credentials",
+        "--project-ref",
+        "xsgzxadwuxuziubglvps",
+        "--use-api"
+      ],
+      "forward": {
+        "root": "tmp/connect-secure-calling/package/connect-credentials/forward",
+        "files": [
+          {
+            "path": "supabase/functions/_shared/connect-credential-issuance.ts",
+            "sha256": "a535781e13a0fd427209862e05740ddfb3a2922ee45b442e2210609e1cb226b4"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-edge.ts",
+            "sha256": "708101e75f9c3bfe5afe30edb9978c232fd1cbbb2ddeab7617382b290c354ff5"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-environment.ts",
+            "sha256": "6c8b72a88c5ebd2a93a5d0d3bef378d340a0653bb6f2b73714b495d196cdf523"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-provider-end.ts",
+            "sha256": "8d26cec70d4e0eadc60389684e7bf0997a47a666c78905861446ef1260d788ed"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-stream-adapter.ts",
+            "sha256": "2e68cbf51a507e49f64a493113b64932e55a0779da78b5726618f09ffbf5f242"
+          },
+          {
+            "path": "supabase/functions/_shared/cors.ts",
+            "sha256": "2b7f755ddc2f0e3a17f70694541f1760b43513f133a0bef2cbc9db6938e2bc2b"
+          },
+          {
+            "path": "supabase/functions/_shared/supabase-admin-key.ts",
+            "sha256": "326dfe3df009483cc38828b48902fe4fc074262760a68d813c60b49edeaebacc"
+          },
+          {
+            "path": "supabase/functions/_shared/supabase-public-key.ts",
+            "sha256": "9ce797d773cc4a552679ab1201de67ea1a1f8ada8079a0c143c406b939048b85"
+          },
+          {
+            "path": "supabase/functions/connect-credentials/index.ts",
+            "sha256": "80913e587aea67bdd4b7756a196d5e3585fc2dadcef81d8099eb6ae366ecdce5"
+          },
+          {
+            "path": "supabase/functions/connect-credentials/deno.json",
+            "sha256": "926e31574d93ff0885ef4f296ed3d5bce1458056256efb2d47343c8914003f68"
+          }
+        ],
+        "external": [
+          "npm:@stream-io/node-sdk@0.7.63",
+          "npm:@supabase/supabase-js@2.110.7"
+        ]
+      },
+      "rollback": {
+        "root": "tmp/connect-secure-calling/package/connect-credentials/rollback",
+        "files": [
+          {
+            "path": "supabase/functions/connect-credentials/index.ts",
+            "sha256": "78853fa464bf65d221a88aaa7044149ec3641c76c1038ae6d65f42b4b4a8e2fc"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-edge.ts",
+            "sha256": "708101e75f9c3bfe5afe30edb9978c232fd1cbbb2ddeab7617382b290c354ff5"
+          },
+          {
+            "path": "supabase/functions/_shared/supabase-public-key.ts",
+            "sha256": "9ce797d773cc4a552679ab1201de67ea1a1f8ada8079a0c143c406b939048b85"
+          },
+          {
+            "path": "supabase/functions/_shared/supabase-admin-key.ts",
+            "sha256": "326dfe3df009483cc38828b48902fe4fc074262760a68d813c60b49edeaebacc"
+          },
+          {
+            "path": "supabase/functions/_shared/cors.ts",
+            "sha256": "2b7f755ddc2f0e3a17f70694541f1760b43513f133a0bef2cbc9db6938e2bc2b"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-stream-adapter.ts",
+            "sha256": "4cfc00c772d845b005ced0499897c7327a405ed67a489a120d2126f9cfc53357"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-provider-end.ts",
+            "sha256": "5b7ec7409bfe12c07277b373617ea3dfcfb2cf562c092869ee3b1871e046b695"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-environment.ts",
+            "sha256": "6c8b72a88c5ebd2a93a5d0d3bef378d340a0653bb6f2b73714b495d196cdf523"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-credential-issuance.ts",
+            "sha256": "3cbec7082ae6c9c27911d63033e08106aa99221e8a25d08f9672e63d3b94ef92"
+          },
+          {
+            "path": "supabase/functions/connect-credentials/deno.json",
+            "sha256": "926e31574d93ff0885ef4f296ed3d5bce1458056256efb2d47343c8914003f68"
+          }
+        ],
+        "revision": 2,
+        "bundleSha256": "5d3876633a52d81603676af8e17aab5a2896c960d7b4a2037040511b5529630f",
+        "source": "READ_ONLY_STAGING_SOURCE_RECEIPT_2026_11_03"
+      }
+    },
+    {
+      "name": "connect-native-device",
+      "verifyJwt": true,
+      "authentication": "gateway JWT + auth.getUser + actor-bound RPC",
+      "deploymentArguments": [
+        "functions",
+        "deploy",
+        "connect-native-device",
+        "--project-ref",
+        "xsgzxadwuxuziubglvps",
+        "--use-api"
+      ],
+      "forward": {
+        "root": "tmp/connect-secure-calling/package/connect-native-device/forward",
+        "files": [
+          {
+            "path": "supabase/functions/_shared/connect-edge.ts",
+            "sha256": "708101e75f9c3bfe5afe30edb9978c232fd1cbbb2ddeab7617382b290c354ff5"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-environment.ts",
+            "sha256": "6c8b72a88c5ebd2a93a5d0d3bef378d340a0653bb6f2b73714b495d196cdf523"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-provider-end.ts",
+            "sha256": "8d26cec70d4e0eadc60389684e7bf0997a47a666c78905861446ef1260d788ed"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-stream-adapter.ts",
+            "sha256": "2e68cbf51a507e49f64a493113b64932e55a0779da78b5726618f09ffbf5f242"
+          },
+          {
+            "path": "supabase/functions/_shared/cors.ts",
+            "sha256": "2b7f755ddc2f0e3a17f70694541f1760b43513f133a0bef2cbc9db6938e2bc2b"
+          },
+          {
+            "path": "supabase/functions/_shared/supabase-admin-key.ts",
+            "sha256": "326dfe3df009483cc38828b48902fe4fc074262760a68d813c60b49edeaebacc"
+          },
+          {
+            "path": "supabase/functions/_shared/supabase-public-key.ts",
+            "sha256": "9ce797d773cc4a552679ab1201de67ea1a1f8ada8079a0c143c406b939048b85"
+          },
+          {
+            "path": "supabase/functions/connect-native-device/index.ts",
+            "sha256": "43cf6812f6afcd5cf601fcc69f20e9a2545cb0d58f6a0d2fb2e44fc2238dfeef"
+          },
+          {
+            "path": "supabase/functions/connect-native-device/deno.json",
+            "sha256": "926e31574d93ff0885ef4f296ed3d5bce1458056256efb2d47343c8914003f68"
+          }
+        ],
+        "external": [
+          "npm:@stream-io/node-sdk@0.7.63",
+          "npm:@supabase/supabase-js@2.110.7"
+        ]
+      },
+      "rollback": null
+    }
+  ],
+  "mobileFiles": [
+    {
+      "path": "app.config.js",
+      "sha256": "ad2753e5ead38f71b8433fd943fdef26d383296dd195ba138fc783b626f2f5f9"
+    },
+    {
+      "path": "features/connect/application/native-call-coordinator.ts",
+      "sha256": "a9fd218744412818eb5e9fbb9f26d2be0292b996b154205a151c25b1f29d9235"
+    },
+    {
+      "path": "features/connect/application/native-device-registration.ts",
+      "sha256": "aad25966df4a9369ebb65f7cc1b62ccbb9eff5a254558e2e119c0fa5fd39d716"
+    },
+    {
+      "path": "features/connect/application/native-incoming-bootstrap.ts",
+      "sha256": "4ce496fe5a8a38f6d79ceb087ee1faa52722cb8b0c693c23703e4b366f369296"
+    },
+    {
+      "path": "features/connect/application/native-invitation-action.ts",
+      "sha256": "f66862467e6ee6f8a80eb8a52be9631fd22401edfe7ebc0dae074390eea6f3b7"
+    },
+    {
+      "path": "features/connect/application/product-coordinator.ts",
+      "sha256": "b421c3380cca78562931645daa9e87c154e4cff70e1a98debb4582078986fff4"
+    },
+    {
+      "path": "features/connect/application/product-lease.ts",
+      "sha256": "e2b832ac126fd6cda5912d3560bfb058a8f2628a4aeb320341893b173aeaf471"
+    },
+    {
+      "path": "features/connect/application/withdraw-calling-consent.ts",
+      "sha256": "418900ad87ac27360f955ba15bed45d5c53772851635c93f709277622d3af299"
+    },
+    {
+      "path": "features/connect/components/AudioConnectionStatus.tsx",
+      "sha256": "1963827935149526644efa52b39931127be1aa8cb4ae422ed1550dab699c8d02"
+    },
+    {
+      "path": "features/connect/components/CallContinuityControls.tsx",
+      "sha256": "4314033737c7fc7c40cac8e65d4d7d4e9f0edea728e57915aa1e3eb21179817e"
+    },
+    {
+      "path": "features/connect/components/CallControlButton.tsx",
+      "sha256": "1780933e4285addd8df7da493404f08c8ee0921ac6e3b0bd245137fe1ebfb596"
+    },
+    {
+      "path": "features/connect/components/CallEncryptionStatus.tsx",
+      "sha256": "73455aa91b78b485f8c97b3d11664ba913d28e1b7c07fba087ee631bf3ecc9a2"
+    },
+    {
+      "path": "features/connect/components/CallPrivacyNotice.tsx",
+      "sha256": "91b72fbe4288eba1555318b40fe1dd10243c37232cd628eda84c3928482c0f41"
+    },
+    {
+      "path": "features/connect/components/ConnectCallEntry.tsx",
+      "sha256": "941a716a37093debdaa86ad869587e9c56f351706c8d7b39f2e2f69728eaa63e"
+    },
+    {
+      "path": "features/connect/components/ConnectCallRoute.tsx",
+      "sha256": "cd4911499319e2e169dcfef09ad47a0fd1f74200e4a7cc7371e308f9efbff124"
+    },
+    {
+      "path": "features/connect/components/ConnectCallingPreferences.tsx",
+      "sha256": "4e824f50b3a367a0d400813563ab9b07b980214e980cc3da9dc5f9dab2bda896"
+    },
+    {
+      "path": "features/connect/components/ConnectIncomingNotice.tsx",
+      "sha256": "7916f6499cbacbd5775b6cde452a6ffad8683d5385f4f95e705a498ec449a70d"
+    },
+    {
+      "path": "features/connect/components/ConnectProductProvider.tsx",
+      "sha256": "8f6f1e7e726fb3694cd0a699ea461a3a98397b4eedab8aa11d37bc6876d8a0f1"
+    },
+    {
+      "path": "features/connect/components/ConnectRingtone.tsx",
+      "sha256": "ff79e292676ed4d9d8ebb9a80ed48b2bf442c6b3f44b975c75d99e77800bf76d"
+    },
+    {
+      "path": "features/connect/components/ConnectStatusScreen.tsx",
+      "sha256": "b017d33ae592fe3921ead295b39abc2820f3c4593a5402fabb7d5463f69fc312"
+    },
+    {
+      "path": "features/connect/components/ConnectVoiceSession.tsx",
+      "sha256": "fcf2473c4a5953cccc8b7afb1a1c2b112748f8fc1495d896599bc0be35dadd1b"
+    },
+    {
+      "path": "features/connect/components/ConnectVoiceSetup.tsx",
+      "sha256": "09f9adb03334c9bf67753b7e25a764629d47c708c1816d736b984e2e2033dc14"
+    },
+    {
+      "path": "features/connect/components/ConversationPrompts.tsx",
+      "sha256": "a8e5970c989777d021208b97583015cabeb76016bc5ce05a575208514420a962"
+    },
+    {
+      "path": "features/connect/components/FloatingVideoPreview.tsx",
+      "sha256": "f9e39d2fedf26ec513d3ab773e7738ce3fca301438c2ebc59ad75bdd13511e27"
+    },
+    {
+      "path": "features/connect/components/IntentCallingConsent.tsx",
+      "sha256": "63cab755a0c8c06d13ec258cb4c6ef8228cb6fa020bdf713aef2c71d72eba2e5"
+    },
+    {
+      "path": "features/connect/components/VideoCallOptions.tsx",
+      "sha256": "be360f2688a5b2baefc6d6a3176d198f9cb291b449903ff5144923ceef932c85"
+    },
+    {
+      "path": "features/connect/components/VideoCallScreen.tsx",
+      "sha256": "f86f48626d0c3f1e13a0de366b52071f57f73d2526794d256afdb0fcfb6a8662"
+    },
+    {
+      "path": "features/connect/components/VideoCallStage.tsx",
+      "sha256": "ad238159d87e91895bd3d5b7a330c3a7049c0e92475b15c74809a01319c07545"
+    },
+    {
+      "path": "features/connect/components/VoiceCallControls.tsx",
+      "sha256": "34aea00580414b6df02907af7eb07853f80779c9c6100dd0d7b3e18cee084da6"
+    },
+    {
+      "path": "features/connect/components/VoiceCallLobby.tsx",
+      "sha256": "c3ad5d5daf02a9a8c00635bc075e7e16c171f7cc377679ee583f0ac670d46121"
+    },
+    {
+      "path": "features/connect/components/VoiceCallScreen.tsx",
+      "sha256": "0b36b6c1f45a8ba6becc3a1b1243b165760448a6287c70d5d1782bff773eb959"
+    },
+    {
+      "path": "features/connect/components/VoiceSafetyPanel.tsx",
+      "sha256": "c0534a190c5813eaf3ce8ce2e0cfcdb3127acf037a1c4527b2f182a0cd965785"
+    },
+    {
+      "path": "features/connect/components/WithdrawCallingConsent.tsx",
+      "sha256": "ae19607103a83420cc014847985041ab18225cf3d629779a58e9c3712f5ddfe4"
+    },
+    {
+      "path": "features/connect/config/connect-feature-flags.ts",
+      "sha256": "ab097e753d56b6ca1065d9f253ba2c2903e15153e5e2e908d4096f82cb5a6d94"
+    },
+    {
+      "path": "features/connect/config/connect-runtime-policy.ts",
+      "sha256": "caff9f4e791b80f17344f1a791f70caf1e50dcbad6e6439d9da4886b893e0da9"
+    },
+    {
+      "path": "features/connect/config/native-incoming-policy.ts",
+      "sha256": "9a3702199596bca99a8f7854a4c4e00b49e95942ce7310a908d7e7fa9902db90"
+    },
+    {
+      "path": "features/connect/data/authenticated-connect-services.ts",
+      "sha256": "1e45a2e86a744cc19aaed50af42a4fa56c51d96ea8e0b17bc89d840f11c9de95"
+    },
+    {
+      "path": "features/connect/data/connect-repository.ts",
+      "sha256": "b7d89dd888e3d7060625017ca842a42c8aa873f9ec789fe69110c3be1df49218"
+    },
+    {
+      "path": "features/connect/data/load-connect-product.ts",
+      "sha256": "bf9bdad1b1a942b7674b57ae9f434c198b79ee47a21303833c98e55a6c2a318e"
+    },
+    {
+      "path": "features/connect/data/voice-api.ts",
+      "sha256": "237a4a7302beb37548f0de3e8df3308d75feefcb16791aa3d84e8fc000165f5e"
+    },
+    {
+      "path": "features/connect/development/startup-check.ts",
+      "sha256": "f48ceb75ebd505b4b06f2543846ed593d1da3dbe262ab084a73cafdab328c01f"
+    },
+    {
+      "path": "features/connect/diagnostics/connect-terminal-logger.ts",
+      "sha256": "54fcdc466c844c20e4e3dd4f758fade8712fb791b6345abd0da7429eb3e03b32"
+    },
+    {
+      "path": "features/connect/domain/call-history.ts",
+      "sha256": "e708a62907f3b2aca9c976d6027fa7121864e5a9edc36a44f6673ff99fc777b9"
+    },
+    {
+      "path": "features/connect/domain/call-navigation.ts",
+      "sha256": "ebdc1cac91227dbd11c63df8c71c110976724ef84a593238ab71dbee3daccad8"
+    },
+    {
+      "path": "features/connect/domain/connect.ts",
+      "sha256": "ec87a35dcee1633f57069574b264c6e42713662034cb06ced9c6803d4014c08c"
+    },
+    {
+      "path": "features/connect/domain/end-block.ts",
+      "sha256": "f6518ff1fa9b6830451df346550b5968252581bc9b97fc67670b4b9aa6fe10d9"
+    },
+    {
+      "path": "features/connect/domain/intent-consent.ts",
+      "sha256": "a770d66855fe379d1e796f0b5ed2c06dbbdf1ef828f6cc0d16de6f8e74869cde"
+    },
+    {
+      "path": "features/connect/domain/notification-binding.ts",
+      "sha256": "9349f3f9184616cfd09aa1624fbd56f607445eb7d7c21d4f522c042ea36c6f1f"
+    },
+    {
+      "path": "features/connect/experimental/call-encryption.ts",
+      "sha256": "3954f3c02c6fbc77f66893c4642abdd7981808ca531fc7ea237dd85e633837f3"
+    },
+    {
+      "path": "features/connect/experimental/capabilities.ts",
+      "sha256": "a897c8643ba815e2d4b605f2496caa84fea5ca031624c99adc5059bc3bdd7bc8"
+    },
+    {
+      "path": "features/connect/hooks/use-calling-preferences.ts",
+      "sha256": "4753440a0918aa4f22932af2e7f0d84853bb5062e57d0322f5749bfc9000c49c"
+    },
+    {
+      "path": "features/connect/hooks/use-recent-calls.ts",
+      "sha256": "134a4b04a68185d2fed74c3f0a6b3b93990081099e21a8396d31574e6a560aa2"
+    },
+    {
+      "path": "features/connect/media/audio-health.ts",
+      "sha256": "dd96dbb0859ebafa9d5c4463d08687f6adf77dd398087388c3df96fc7025e91d"
+    },
+    {
+      "path": "features/connect/media/capture-permission.ts",
+      "sha256": "8009e39a2993827f531db39a293ca0c5c27044d2e30acd192ba4d21f910cd207"
+    },
+    {
+      "path": "features/connect/media/connect-native-owner.ts",
+      "sha256": "604746f6f6dcdba7954f59ca067ad64755b13a45b6dcfd6bd003396b5f72e903"
+    },
+    {
+      "path": "features/connect/media/connection-quality.ts",
+      "sha256": "1b95596289bff45f65cad02948751612ee4ed65553042d4155c16e26cae52d43"
+    },
+    {
+      "path": "features/connect/media/local-shutdown.ts",
+      "sha256": "00def1110814b2cc05e2c3bfcce936e9f2fe7730d93e0be4ee2661d2e974a9d1"
+    },
+    {
+      "path": "features/connect/media/microphone-permission.ts",
+      "sha256": "1f932552302e1810bbcf4f38806f99594505039e874df12241c950f865531d4c"
+    },
+    {
+      "path": "features/connect/media/native-answer-lease.ts",
+      "sha256": "aae3f2fe78ab0d1514702245b2a023dcf03ff2ca6db9a6722c059d75cd100acf"
+    },
+    {
+      "path": "features/connect/media/native-audio-route.ts",
+      "sha256": "860372f4a94d75ad57345a1c604330bd15b396ebb597cbcb67cb9a9f7dbcdb42"
+    },
+    {
+      "path": "features/connect/media/native-camera-permission.ts",
+      "sha256": "66d380cb3563008e1989c4176bff83b8c499108f5c7fb7cd67f7955e19ba20b8"
+    },
+    {
+      "path": "features/connect/media/native-capture-tracks.ts",
+      "sha256": "99fafc94a23ba5e62b87de41fb6c4d0ecfa879e41f2fb6c89baedc89ded4a169"
+    },
+    {
+      "path": "features/connect/media/native-lifecycle.ts",
+      "sha256": "b6abada4a1f34af662c8cc7dbff13575eab67f3e6889a3d3e5c7f20e01799312"
+    },
+    {
+      "path": "features/connect/media/native-media-engine-owner.ts",
+      "sha256": "5e58066197626eb1c9d9f15956aee7adff41f05ab5287a03e8a8b9f331ed6618"
+    },
+    {
+      "path": "features/connect/media/native-microphone-permission.ts",
+      "sha256": "556c80a85736fd0ac18f9dd9facb0e16b050904898b560f7591a10bff90550d2"
+    },
+    {
+      "path": "features/connect/media/native-ongoing-call.ts",
+      "sha256": "340c517d5e5068b4bb9184d001719d9773346722e06dfc0d9c9dd8eb53b361ce"
+    },
+    {
+      "path": "features/connect/media/native-owner-types.ts",
+      "sha256": "186d12bea347c7bd7344c45db91bf228349675451ba7f6aefc384e9152801d96"
+    },
+    {
+      "path": "features/connect/media/native-ringing-guard.ts",
+      "sha256": "0212f5c3e128a48ce36c5386063cdf1bd88efd7ef14e898960b2a70c1f07cec0"
+    },
+    {
+      "path": "features/connect/media/native-runtime-check.ts",
+      "sha256": "e8a13761193d25fc1c09dbc5ace885e9a14aaf0ec96a260f3410838abd07caf4"
+    },
+    {
+      "path": "features/connect/media/native-runtime-contract.ts",
+      "sha256": "f5d725e6eb5390cebdbb7d9b673db5e612a948eaadeec251415d10a354448f02"
+    },
+    {
+      "path": "features/connect/media/native-safety-composition.ts",
+      "sha256": "8aaeae16794fc72fe588660383db2b29671949ef61cb2757abdc61148fb90fc6"
+    },
+    {
+      "path": "features/connect/media/native-stream-sdk.ts",
+      "sha256": "4cf607e6fade0eef1a8da787c6de0a8ee692051bf5e4e69942a0b6c9d36b4bc0"
+    },
+    {
+      "path": "features/connect/media/native-video-renderer.tsx",
+      "sha256": "959c20c2156f5859da14c94cca60ea178c2920fc0b11e724bd2920d8e6f34541"
+    },
+    {
+      "path": "features/connect/media/recovery-policy.ts",
+      "sha256": "026d7901319e0192938ee0f0f73b61c3f74c5d51fdf2e118bd6a35d608858e8b"
+    },
+    {
+      "path": "features/connect/media/stream-voice-transport.ts",
+      "sha256": "bbc8a17915a33ddf9ee9ae44d2df927d413413317f73c0e6e89b95b566281a22"
+    },
+    {
+      "path": "features/connect/security/call-key-agent.ts",
+      "sha256": "2c1d7cb9b028dfd51ea5d19576dec4fb67ed3ec28b9ba117326e27eb8a73575c"
+    },
+    {
+      "path": "features/connect/security/device-keys.ts",
+      "sha256": "5ddb671b5d9702966d2c1d812ff3e0bbc995a45f4a8c06274512225fa6181413"
+    },
+    {
+      "path": "features/connect/security/load-call-security.ts",
+      "sha256": "22675e5c13d6dda5d4a45bc7f2375e2ff6649505b8a474594dba4c5e699c96cb"
+    },
+    {
+      "path": "features/connect/video/video-types.ts",
+      "sha256": "531284f6699c044c53fbad163fd916c21f972e8b2d62b909634c8d9da35663fc"
+    },
+    {
+      "path": "features/connect/voice/audio-setup.ts",
+      "sha256": "e7f486c88171cce3c503381f1cfb9b79fc61d6bc488f10d238ce325e079b88b1"
+    },
+    {
+      "path": "features/connect/voice/call-presentation.ts",
+      "sha256": "7b5fe7303f8087ab0a14285bdca6f450af916acea77cf64c90e6ad9f8955f8d1"
+    },
+    {
+      "path": "features/connect/voice/call-quality.ts",
+      "sha256": "d6f191cc7a23304e4d7b9ac9ee0425fe3ced630367b065be67c321012c216349"
+    },
+    {
+      "path": "features/connect/voice/ringtone.ts",
+      "sha256": "2ee0667d0d3c0e10f6f768500a439f28ebf0f6379d1d6f9d1a439137625c77bc"
+    },
+    {
+      "path": "features/connect/voice/voice-controller.ts",
+      "sha256": "c28c571e1f064ddb256e813c97eb8b2f8c158ef627ec5a4c1403ee45d4a99aab"
+    },
+    {
+      "path": "features/connect/voice/voice-preview.ts",
+      "sha256": "8ce3efb90ebe712de095cbcefbe5c5e300529fcc251c1166a72df4250a086f27"
+    },
+    {
+      "path": "features/connect/voice/voice-safety-status.ts",
+      "sha256": "21ea208a1c62d70cfd186278ecab0e6f80374e07e7860c29f63856444a96b5da"
+    },
+    {
+      "path": "features/connect/voice/voice-types.ts",
+      "sha256": "1410124e5993e5ed96a64d3a01832790ec882f1d58cabade70b0a1e5c2ea583d"
+    },
+    {
+      "path": "index.js",
+      "sha256": "31ec6c70b87ea24a00a97907fd5a7b9d586c502d5d06b60a28b3310258fbcded"
+    },
+    {
+      "path": "lib/auth-context.tsx",
+      "sha256": "1bacd231f869fa8266fe41256b8e9130cbc04f911730970457fb6de612e1a980"
+    },
+    {
+      "path": "lib/auth/application-native-owner.ts",
+      "sha256": "eea574597fbad55141b18098b6d277817a433cfa7a3ebbf7fb1e37a228756a0b"
+    },
+    {
+      "path": "patches/@stream-io+video-react-native-sdk+1.46.3.patch",
+      "sha256": "8179d07c7c0f1308d428b761d8332d434c10a5ef37d3d8b18e650f53d203ea68"
+    }
+  ],
+  "serverConfigurationNames": [
+    "CONNECT_NATIVE_APNS_PROVIDER",
+    "CONNECT_NATIVE_FCM_PROVIDER"
+  ],
+  "publicClientConfigurationNames": [
+    "EXPO_PUBLIC_CONNECT_NATIVE_INCOMING",
+    "EXPO_PUBLIC_CONNECT_APNS_PROVIDER",
+    "EXPO_PUBLIC_CONNECT_FCM_PROVIDER"
+  ],
+  "providerPrerequisites": [
+    "Approved staging APNS VoIP and FCM provider aliases bound to the correct native app and Firebase project; preserve existing aliases/Live providers.",
+    "Read-only attestation: custom betweener_connect call type supports encryption available/auto-on. If absent, separately approve only this encryption setting; no role/global/Live changes.",
+    "Provider payload template must contain only generic caller display and exact Connect CID; no secrets or unnecessary private content."
+  ],
+  "nativePrerequisites": [
+    "Check actual iPhone entitlements/VoIP background mode, PushKit/CallKit and APS environment.",
+    "Check actual Android Firebase messaging, Telecom/Callingx, foreground service and notification/full-screen intent declarations and OS permissions.",
+    "EncryptionManager.isSupported and secure keychain access after first unlock on both installed clients.",
+    "Use current root Metro; build/sign/install only if an actual native/entitlement incompatibility is confirmed and separately approved."
+  ],
+  "preflight": [
+    "Fresh exact staging identity, migration history and both deployed revision-2 source closures; stop on drift.",
+    "Verify every frozen artifact; no broad migration push.",
+    "Pause phone calls; no active Connect setup or unresolved owned provider work at installation.",
+    "Names-only configuration checks; never retrieve secret-bearing responses.",
+    "Confirm JWT/custom authentication, private table ACL/RLS and exact RPC signatures after installation.",
+    "Verify new gates remain false, existing approved settings unchanged, worker scheduler/webhook2/shared-push28 and Live unchanged."
+  ],
+  "activation": {
+    "authorised": false,
+    "installationOnly": {
+      "native_incoming_enabled": false,
+      "e2ee_enabled": false
+    },
+    "later": "Separate approval for the two new staging gates, public native incoming opt-in and matching provider aliases. Both existing owner accounts must reopen the app and register device public keys/destinations before an encrypted invitation. Existing match, consent, block, admission, account scope and budget remain authoritative.",
+    "createsDuringThisPreparation": {
+      "users": 0,
+      "calls": 0,
+      "participantTokens": 0,
+      "pushes": 0
+    },
+    "accountChanges": [],
+    "budgetChanges": [],
+    "existingSecretChanges": [],
+    "schedulerChanges": [],
+    "sharedPushChanges": [],
+    "liveChanges": []
+  },
+  "securityLimits": [
+    "Encrypted transport is not an audited Signal-style ratchet or post-compromise forward-secrecy claim. Compare safety codes out of band; first use is unverified.",
+    "Manual SDK device registration disables automatic token logging and client-side provider registration. All Connect device enrollment uses the authenticated native-device endpoint and durable worker.",
+    "SDK encryption state is not encrypted-media device proof. No plaintext fallback is permitted for a required-encryption call.",
+    "Provider device writes are not remotely atomic with SQL. Recheck lease/session/gates before registering; retain private possible-owner tombstones and reconcile transferred/removed tokens every five minutes. An audited retention/purge process is separate; do not discard unresolved removal work.",
+    "OS force-stop, first boot before unlock and platform push delivery limits still apply. Incoming push never grants admission.",
+    "JWT expiry and local watchdogs do not prove remote media cutoff."
+  ],
+  "rollback": {
+    "automatic": false,
+    "sql": "Forward-only: retain new SQL, terminal truth, leases, envelopes and removal tombstones. No database downgrade.",
+    "steps": [
+      "Disable only the new admission/encryption/native incoming features with separately reviewed authority; flags alone do not stop existing media.",
+      "End owned active calls through existing call-bound authority and retain termination processing.",
+      "Keep the new authenticated worker while native registration/removal work or private tombstones exist. Older worker2 cannot process that journal.",
+      "Restore credential2 only after every required-encryption call is terminal; restoring it earlier would bypass the new key-envelope admission fence.",
+      "Restore worker2 only after independently verified device removals, no in-flight destination writes and an approved tombstone handoff. Otherwise retain the new cleanup-capable worker.",
+      "The new JWT-protected native-device endpoint may remain deployed with its gate false. Restore mobile root configuration and pinned SDK patch only after call owners release.",
+      "Preserve existing 5-second scheduler, webhook2, push28, prior approvals and consumed ledgers."
+    ],
+    "stop": [
+      "ambiguous write: read back effects, do not retry blindly",
+      "source/revision/auth drift",
+      "missing native/provider prerequisites",
+      "unknown provider removal outcome",
+      "unverified cleanup/recovery path"
+    ]
+  },
+  "M2A": "BLOCKED",
+  "M2B": "BLOCKED",
+  "remoteRevocation": "UNVERIFIED",
+  "deviceValidation": "NOT_RUN"
+}

@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "scope": "LOCAL_CLIENT_REPAIR_NO_HOSTED_DEPLOYMENT",
+  "authorisation": "Owner: Still the same; continue investigation of the supplied physical-phone logs",
+  "frozenPackage": {
+    "path": "docs/betweener-connect/connect-secure-calling.proposal.json",
+    "sha256": "37d133fb060af0eaed44f4526d5d60fe4c08f3065fd3d2ede6d2f63d573f6c72"
+  },
+  "baseLocalChange": {
+    "path": "docs/betweener-connect/connect-mute-controls-fix.local.json",
+    "sha256": "2bb8ac776903ab49cd02f95e36bbf90a7164f7d9248582721afc860018de0748"
+  },
+  "reason": "Retain the first bounded native encryption fault across recovery and final summaries; record lifecycle state; fence late retired-manager events without relaxing active encryption failures.",
+  "files": [
+    {
+      "path": "features/connect/media/native-stream-sdk.ts",
+      "beforeSha256": "5863414413380670ef870c7b413af19556cd07bbb717f191bbb5c33fe26b0fad",
+      "beforeSnapshot": "tmp/connect-secure-calling/mute-fault-diagnostics/native-stream-sdk.ts.before",
+      "afterSha256": "94d23e8d38e0506d3b22a227a4e2f60ad49fbd64ecace7abbdc41da79b449a31"
+    },
+    {
+      "path": "features/connect/media/native-owner-types.ts",
+      "beforeSha256": "186d12bea347c7bd7344c45db91bf228349675451ba7f6aefc384e9152801d96",
+      "beforeSnapshot": "tmp/connect-secure-calling/mute-fault-diagnostics/native-owner-types.ts.before",
+      "afterSha256": "ee92e78dfba087d27df666dc5039c52a96f0b3ee9ca3e47d1ba362bfa38ef2c5"
+    },
+    {
+      "path": "features/connect/media/connect-native-owner.ts",
+      "beforeSha256": "bbb57d7298fab2eedbe2cb3e1f9ecf8115a5a1be74c56d0b96de1984320de9b1",
+      "beforeSnapshot": "tmp/connect-secure-calling/mute-fault-diagnostics/connect-native-owner.ts.before",
+      "afterSha256": "29d077a8ccde9eaa1e0b25c9ed94ab3e239b453807a8d6905769f01560de03f9"
+    },
+    {
+      "path": "features/connect/diagnostics/connect-terminal-logger.ts",
+      "beforeSha256": "e28fd54e11891be1d780aa65f5b67236fce538718ce88056304b8af607b9ba17",
+      "beforeSnapshot": "tmp/connect-secure-calling/mute-fault-diagnostics/connect-terminal-logger.ts.before",
+      "afterSha256": "43f85b67b3262d0c6b63318e5ecb61e4afd2bfc98bfa180843e740232cb3e703"
+    }
+  ],
+  "regressions": [
+    "__tests__/connect-encrypted-native-owner.regression.test.cjs",
+    "__tests__/connect-terminal-logging.regression.test.cjs"
+  ],
+  "hostedChanges": 0,
+  "newBuildRequired": false,
+  "priorMuteRepairDeviceRetest": "FAIL",
+  "deviceRetest": "DIAGNOSTIC_CAPTURE_PENDING",
+  "symptomResolved": false,
+  "remoteRevocation": "UNVERIFIED",
+  "limits": {
+    "activeEncryptionFaultsRemainFatal": true,
+    "plaintextFallback": false,
+    "keyMaterialLogged": false,
+    "providerCalls": 0,
+    "lifecyclePolicyChanged": false,
+    "rawNativeReasons": false,
+    "retainedFaultCalls": 4
+  },
+  "observations": {
+    "encryptionFaultHypothesis": "INFERENCE_FROM_ADAPTER_STATE_NOT_DEVICE_PROOF",
+    "muteCommandConfirmedSequence": 76,
+    "iosRetirementSequence": 174,
+    "iosRetirementReason": "background",
+    "iosFirstSequence": 85,
+    "iosEndRequestSequence": 187,
+    "attachmentSha256": "294d6b93819c8f34945d617c94ad81aaa19e55a33f3b000b456098d3912c5e7c",
+    "androidFailureSequence": 77,
+    "nativeFaultCategory": "UNKNOWN",
+    "initialSdkCause": "NOT_CAPTURED",
+    "androidFirstSequence": 72,
+    "muteCommandConfirmedElapsedMs": 56770,
+    "androidFailureElapsedMs": 56852,
+    "nativeLifecycleSignal": "inactive",
+    "call": "c-62ee639156a0a5ed",
+    "ownerReport": "Calling app stayed visible throughout"
+  }
+}

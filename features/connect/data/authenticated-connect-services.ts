@@ -1,3 +1,4 @@
+import { launchAllowsCalling, launchAllowsSession } from '../domain/calling-launch-policy.ts';
 import type { NativeSessionOwner } from '../../../lib/auth/native-session-owner.ts';
 import { createConnectRepository, type ConnectRpcPort } from './connect-repository.ts';
 import { createVoiceApi, readConnectCredentials } from './voice-api.ts';
@@ -35,6 +36,8 @@ export function readCanonicalVoiceSession(value: unknown, selfProfileId: string,
     || call.caller_profile_id === call.recipient_profile_id || ![call.caller_profile_id, call.recipient_profile_id].includes(selfProfileId)
     || (call.media !== 'voice' && !(allowVideo && call.media === 'video')) || !Object.hasOwn(transitions, call.state) || !['matched', 'pre_match'].includes(call.authorization)
     || !Number.isSafeInteger(call.version) || call.version < 1 || !Number.isFinite(Date.parse(call.created_at))) throw new Error('connect_unavailable');
+  if ((call.encryption_required !== undefined && typeof call.encryption_required !== 'boolean')
+    || (call.native_incoming !== undefined && typeof call.native_incoming !== 'boolean')) throw Error('connect_unavailable');
   return call;
 }
 /** Same repository/RPC/issuer, with explicit per-request bearer and immutable Auth epoch. */
@@ -57,10 +60,17 @@ export function createAuthenticatedConnectServices(auth: NativeSessionOwner, sel
   const api = createVoiceApi({
     ...repository,
     createCall: async (...args) => {
+      if (!launchAllowsCalling(args[2], args[5] ?? null)) throw new Error('connect_disabled');
       if (args[1] === 'video' && options.videoCalling !== true) throw new Error('connect_disabled');
       return readCanonicalVoiceSession(await repository.createCall(...args), selfProfileId, options.videoCalling === true);
     },
-    act: async (...args) => readCanonicalVoiceSession(await repository.act(...args), selfProfileId, options.videoCalling === true),
+    act: async (...args) => {
+      if (args[1] === 'accept') {
+        const call = readCanonicalVoiceSession(await repository.getCall(args[0]), selfProfileId, options.videoCalling === true);
+        if (!launchAllowsSession(call)) throw new Error('connect_disabled');
+      }
+      return readCanonicalVoiceSession(await repository.act(...args), selfProfileId, options.videoCalling === true);
+    },
     getCall: async id => readCanonicalVoiceSession(await repository.getCall(id), selfProfileId, options.videoCalling === true),
     getHistory: async (...args) => {
       const rows = await repository.getHistory(...args);
@@ -68,15 +78,23 @@ export function createAuthenticatedConnectServices(auth: NativeSessionOwner, sel
       return rows.filter(call => call.media === 'voice' || (options.videoCalling === true && call.media === 'video'))
         .map(call => readCanonicalVoiceSession(call, selfProfileId, options.videoCalling === true));
     },
-  }, (call, device) => guard(async token => readConnectCredentials(await ports.credentials(call, device, token), call, binding.userId, Date.now(), options.videoCalling === true)));
-  return { api, checkEligibility: repository.checkEligibility, getGrant: repository.getGrant,
+  }, (call, device) => guard(async token => {
+    const canonical = readCanonicalVoiceSession(await repository.getCall(call), selfProfileId, options.videoCalling === true);
+    if (!launchAllowsSession(canonical)) throw new Error('connect_disabled');
+    return readConnectCredentials(await ports.credentials(call, device, token), call, binding.userId, Date.now(), options.videoCalling === true);
+  }));
+  return { api, checkEligibility: (peer: string, media: 'voice' | 'video', authorization: 'matched' | 'pre_match', grant: string | null = null) =>
+      launchAllowsCalling(authorization, grant) ? repository.checkEligibility(peer, media, authorization, grant) : Promise.resolve(false), getGrant: repository.getGrant,
     relationship: {
       verified: (peerId: string) => relationshipCommand('rpc_is_relationship_mutually_verified', peerId),
       confirm: (peerId: string) => relationshipCommand('rpc_reconfirm_relationship', peerId),
     },
     consent: {
       get: async (intent: string) => readIntentCallingContext(await repository.getIntentConsent(intent), intent, selfProfileId),
-      offer: repository.requestGrant, decide: repository.decideGrant, withdraw: repository.revokeGrant,
+      offer: (_intent: string, _voice: boolean, _video: boolean) => guard(async () => { throw new Error('connect_disabled'); }),
+      decide: (grant: string, voice: boolean, video: boolean) => voice || video
+        ? guard(async () => { throw new Error('connect_disabled'); }) : repository.decideGrant(grant, false, false),
+      withdraw: repository.revokeGrant,
     },
     preferences: { get: repository.getPreferences, set: repository.setPreferences,
       ...(options.videoCalling === true ? { setMedia: repository.setMediaPreference } : {}) },

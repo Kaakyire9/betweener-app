@@ -1,0 +1,242 @@
+{
+  "status": "INSTALLATION_PASS_NEW_FEATURES_OFF",
+  "target": {
+    "name": "betweener-staging",
+    "reference": "xsgzxadwuxuziubglvps",
+    "region": "eu-north-1"
+  },
+  "ownerAuthorization": "I authorise all deployments",
+  "proposalSha256": "37d133fb060af0eaed44f4526d5d60fe4c08f3065fd3d2ede6d2f63d573f6c72",
+  "approvedScope": {
+    "migration": "20261103150558_connect_secure_calling",
+    "functions": [
+      "connect-provider-worker",
+      "connect-credentials",
+      "connect-native-device"
+    ],
+    "newFeatureGates": false,
+    "activation": false,
+    "providerConfigurationChanges": false,
+    "builds": false,
+    "ota": false
+  },
+  "preflight": {
+    "artifactHashChecks": 153,
+    "actualDeployedRollbackComparisons": 22,
+    "baselineVersions": {
+      "worker": 2,
+      "credentials": 2,
+      "webhook": 2,
+      "push": 28
+    },
+    "activeCalls": 0,
+    "pendingProviderJobs": 0,
+    "configuration": {
+      "stagingOpenTesting": true,
+      "callsRemaining": 63,
+      "accountScopeCount": 0,
+      "voice": true,
+      "video": true,
+      "notifications": false,
+      "endAndBlock": true
+    },
+    "existingConfigurationFingerprint": "9c3f36bba8436a3d3d2d7f38e592b550",
+    "existingHistoryFingerprint": "e82444fa0cb66807b7520a75c353d4ad",
+    "workerSchedule": {
+      "job": 21,
+      "seconds": 5,
+      "active": true,
+      "commandMd5": "822aef05ee809e2696f0bdde299a82ec"
+    },
+    "requiredExistingConfigurationEvidence": "Five genuine authenticated scheduled HTTP 200 processed:false responses through the unchanged source-verified worker validate required existing CONNECT_* resolution. No secret values read. New native-provider aliases are not required while both new gates are off.",
+    "cliCredential": "DPAPI_UNAVAILABLE_AUTHENTICATED_CONNECTOR_USED",
+    "supabaseSqlRole": "postgres",
+    "sqlHistoryUpdatePrivilege": true
+  },
+  "migration": {
+    "version": "20261103150558",
+    "name": "connect_secure_calling",
+    "sha256": "0ba7446a64b213847d7a2762eb70cdfd47dd6694ccf18f619c7a351850039597",
+    "sqlMd5": "dab8bf51fd362de27697947c4b5b44eb",
+    "mcpGeneratedVersion": "20261103172110",
+    "originalVersionRegistration": "CORRECTED_AND_VERIFIED_AFTER_EXPLICIT_OWNER_AUTHORIZATION",
+    "applied": true,
+    "newGates": {
+      "native_incoming_enabled": false,
+      "e2ee_enabled": false
+    },
+    "expectedOriginalVersion": "20261103150558"
+  },
+  "functions": [
+    {
+      "name": "connect-provider-worker",
+      "priorVersion": 2,
+      "version": 3,
+      "verifyJwt": false,
+      "filesMatched": 13,
+      "bundleSha256": "748e5f968382dfa6749a4392f73274454e4d7d098c48d1c31146d1dfde30df46"
+    },
+    {
+      "name": "connect-credentials",
+      "priorVersion": 2,
+      "version": 3,
+      "verifyJwt": true,
+      "filesMatched": 10,
+      "bundleSha256": "a22992aeb9bc27867fb9d353b1815795d83541f41fbe3b31a8fe21e14c0df7a2"
+    },
+    {
+      "name": "connect-native-device",
+      "priorVersion": null,
+      "version": 1,
+      "verifyJwt": true,
+      "filesMatched": 9,
+      "bundleSha256": "53207a1c342194e2bb09d6d37984f2df4ea297aa1ac6c69380a6e383eec37c98"
+    }
+  ],
+  "hostedWrites": [
+    "apply connect_secure_calling migration",
+    "deploy connect-provider-worker revision 3",
+    "deploy connect-credentials revision 3",
+    "deploy connect-native-device revision 1",
+    "correct only new migration-history version 20261103172110 to 20261103150558"
+  ],
+  "M2A": "BLOCKED",
+  "M2B": "BLOCKED",
+  "remoteRevocation": "UNVERIFIED",
+  "blockers": [],
+  "verification": {
+    "schemaDefinitionsMatched": 14,
+    "privateTablesRlsAndPrivileges": "PASS",
+    "deployedSourceFilesMatched": 32,
+    "unauthenticatedHttpChecks": [
+      {
+        "name": "connect-provider-worker",
+        "unauthenticatedStatus": 401,
+        "expected": 401
+      },
+      {
+        "name": "connect-credentials",
+        "unauthenticatedStatus": 401,
+        "expected": 401
+      },
+      {
+        "name": "connect-native-device",
+        "unauthenticatedStatus": 401,
+        "expected": 401
+      }
+    ],
+    "unrelatedEdgeFunctionsUnchanged": 47,
+    "sharedPushRevision": 28,
+    "webhookRevision": 2,
+    "worker": {
+      "scheduleUnchanged": [
+        {
+          "job": 21,
+          "active": true,
+          "cadence": "5 seconds",
+          "command_md5": "822aef05ee809e2696f0bdde299a82ec"
+        }
+      ],
+      "scheduledNoopsObserved": [
+        {
+          "processed": "false",
+          "timed_out": false,
+          "request_id": 48127,
+          "status_code": 200,
+          "dispatched_at": "2026-11-03T17:30:53.743494+00:00",
+          "transport_error": false
+        },
+        {
+          "processed": "false",
+          "timed_out": false,
+          "request_id": 48126,
+          "status_code": 200,
+          "dispatched_at": "2026-11-03T17:30:48.722008+00:00",
+          "transport_error": false
+        },
+        {
+          "processed": "false",
+          "timed_out": false,
+          "request_id": 48125,
+          "status_code": 200,
+          "dispatched_at": "2026-11-03T17:30:43.705203+00:00",
+          "transport_error": false
+        },
+        {
+          "processed": "false",
+          "timed_out": false,
+          "request_id": 48124,
+          "status_code": 200,
+          "dispatched_at": "2026-11-03T17:30:38.692665+00:00",
+          "transport_error": false
+        },
+        {
+          "processed": "false",
+          "timed_out": false,
+          "request_id": 48123,
+          "status_code": 200,
+          "dispatched_at": "2026-11-03T17:30:33.67186+00:00",
+          "transport_error": false
+        }
+      ],
+      "realProviderCleanup": "NOT_TESTED"
+    },
+    "newGates": {
+      "native_incoming_enabled": false,
+      "e2ee_enabled": false
+    },
+    "existingConfigurationUnchanged": true,
+    "existingHistoryRowsUnchanged": true,
+    "activeCalls": 0,
+    "pendingProviderJobs": 0,
+    "newSecureDevices": 0,
+    "keyEnvelopes": 0,
+    "nativeDestinations": 0,
+    "budgetRemaining": 63
+  },
+  "proposedHistoryCorrection": {
+    "path": "tmp/connect-secure-calling/deployment/register-original-version.proposed.sql",
+    "sha256": "784021db1d35fa3f926633fd6ea674366f61ad00db8151d7980f95a80fbe2f30",
+    "from": "20261103172110",
+    "to": "20261103150558",
+    "authorised": true,
+    "attemptedWrite": "EXECUTED_AFTER_NEW_EXPLICIT_AUTHORIZATION",
+    "retried": false,
+    "priorAttemptedWrite": "REJECTED_BEFORE_EXECUTION",
+    "status": "PASS"
+  },
+  "providerWrites": 0,
+  "callsCreated": 0,
+  "participantTokensIssued": 0,
+  "pushesSent": 0,
+  "accountsEnrolled": 0,
+  "secretChanges": 0,
+  "builds": 0,
+  "ota": 0,
+  "productionAccess": "NONE",
+  "liveModifications": "NONE",
+  "historyCorrection": {
+    "status": "PASS",
+    "ownerAuthorization": "I authorised you to correct that new migration-history ID",
+    "from": "20261103172110",
+    "to": "20261103150558",
+    "sqlSha256": "784021db1d35fa3f926633fd6ea674366f61ad00db8151d7980f95a80fbe2f30",
+    "verifiedAt": "2026-11-03T17:58:38.295Z",
+    "rowsChanged": 1,
+    "sqlUnchanged": true,
+    "otherHistoryUnchanged": true,
+    "historyCountUnchanged": true,
+    "connectFunctionsUnchanged": true,
+    "configurationUnchanged": true,
+    "beforeReceipt": "tmp/connect-secure-calling/deployment/history-correction-before.json",
+    "afterReceipt": "tmp/connect-secure-calling/deployment/history-correction-after.json"
+  },
+  "priorAutomaticReviewRejection": [
+    {
+      "action": "Change only this newly applied migration-history version 20261103172110 to 20261103150558 after exact SQL-hash verification",
+      "automaticReview": "REJECTED",
+      "reason": "Migration-history metadata rewrite is outside the explicitly approved migration application; renewed owner authorization required.",
+      "retried": false
+    }
+  ]
+}

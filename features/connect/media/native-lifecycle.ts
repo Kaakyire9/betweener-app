@@ -12,7 +12,8 @@ export function createConnectNativeLifecycle(): NativeLifecycle {
       const subscription = AppState.addEventListener('change', listener);
       // Android can lose window focus without changing AppState (notification shade).
       const blur = platform === 'android' ? AppState.addEventListener('blur', () => listener('inactive')) : null;
-      return () => { subscription.remove(); blur?.remove(); };
+      const focus = platform === 'android' ? AppState.addEventListener('focus', () => listener(AppState.currentState)) : null;
+      return () => { subscription.remove(); blur?.remove(); focus?.remove(); };
     },
   };
 }

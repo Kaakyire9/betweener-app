@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "scope": "LOCAL_CLIENT_REPAIR_NO_HOSTED_DEPLOYMENT",
+  "authorisation": "Owner: Lets do the next Android repairs please",
+  "frozenPackage": {
+    "path": "docs/betweener-connect/connect-secure-calling.proposal.json",
+    "sha256": "37d133fb060af0eaed44f4526d5d60fe4c08f3065fd3d2ede6d2f63d573f6c72"
+  },
+  "reason": "Ordinary peer hang-up must not be shown as a failed recovery or cause overlapping End requests.",
+  "files": [
+    {
+      "path": "features/connect/voice/voice-controller.ts",
+      "beforeSha256": "c28c571e1f064ddb256e813c97eb8b2f8c158ef627ec5a4c1403ee45d4a99aab",
+      "afterSha256": "51778da6c17484007987f78659da66cbf28e81d79f4b41ef9ec2771dea6bdf3c",
+      "originalSnapshot": "tmp/connect-secure-calling/package/mobile-revision-4/forward/features/connect/voice/voice-controller.ts"
+    }
+  ],
+  "regression": "__tests__/connect-peer-ending.regression.test.cjs",
+  "hostedChanges": 0,
+  "newBuildRequired": false,
+  "deviceRetest": "PENDING",
+  "remoteRevocation": "UNVERIFIED"
+}

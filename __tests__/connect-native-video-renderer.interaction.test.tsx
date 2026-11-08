@@ -46,3 +46,13 @@ it('an owner retirement fences delayed layout callbacks even if the SDK still sa
   await screen.rerender(<NativeVideoRenderer current={() => active} participant={participant()} />);
   expect(screen.queryByTestId('native-video-fixture')).toBeNull();
 });
+
+it('fill and fit update the native surface without changing the call or stream binding', async () => {
+  const current = () => true, peer = participant();
+  const screen = await render(<NativeVideoRenderer current={current} participant={peer} objectFit="cover" />);
+  expect(screen.getByTestId('native-video-fixture').props.objectFit).toBe('cover');
+  const stream = screen.getByTestId('native-video-fixture').props.streamURL;
+  await screen.rerender(<NativeVideoRenderer current={current} participant={peer} objectFit="contain" />);
+  expect(screen.getByTestId('native-video-fixture').props.objectFit).toBe('contain');
+  expect(screen.getByTestId('native-video-fixture').props.streamURL).toBe(stream);
+});

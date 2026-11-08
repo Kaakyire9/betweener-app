@@ -2,6 +2,7 @@ import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { Colors } from '@/constants/theme';
 import type { AudioHealth } from '../media/audio-health';
+import { connectionQuality } from '../media/connection-quality';
 
 export function AudioConnectionStatus({ health }: { health?: AudioHealth }) {
   const reception = health?.reception;
@@ -11,6 +12,7 @@ export function AudioConnectionStatus({ health }: { health?: AudioHealth }) {
   return <View accessibilityLabel="Call connection established" style={styles.root}>
     <Text style={styles.title}>Call connected</Text>
     <Text style={styles.detail}>{text}</Text>
+    {connectionQuality(health) !== 'unknown' && <Text style={styles.detail}>{connectionQuality(health) === 'good' ? 'Connection stable' : 'Connection is weak'}</Text>}
   </View>;
 }
 const styles = StyleSheet.create({

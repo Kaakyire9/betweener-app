@@ -4,6 +4,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useConnectProduct } from './ConnectProductProvider';
 import { ConnectCallEntry } from './ConnectCallEntry';
 import { connectUuid } from '../domain/call-navigation';
+import { launchAllowsCalling } from '../domain/calling-launch-policy';
 import { intentConsentPresentation, type IntentCallingContext } from '../domain/intent-consent';
 import type { ConnectProduct } from '../application/product-coordinator';
 
@@ -14,6 +15,7 @@ export function IntentCallingConsent({ intentId }: { intentId: string }) {
   return <BoundConsent key={`${context.product.authGeneration}:${intentId}`} product={context.product} intentId={intentId} />;
 }
 function BoundConsent({ product, intentId }: { product: ConnectProduct; intentId: string }) {
+  const preMatchAvailable = launchAllowsCalling('pre_match');
   const dark = useColorScheme() === 'dark', [value, setValue] = useState<IntentCallingContext | null>(null);
   const [voice, setVoice] = useState(false), [video, setVideo] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState<string | null>(null);
   const mounted = useRef(true), pending = useRef(false), readSequence = useRef(0);
@@ -38,16 +40,18 @@ function BoundConsent({ product, intentId }: { product: ConnectProduct; intentId
   const button = (label: string, onPress: () => void, disabled = false) => <Pressable accessibilityRole="button" accessibilityLabel={label} disabled={busy || disabled} onPress={onPress}
     style={[styles.button, (busy || disabled) && styles.disabled]}><Text style={styles.buttonText}>{label}</Text></Pressable>;
   return <View style={[styles.card, { backgroundColor: dark ? '#123239' : '#F0F7F4' }]}>
-    <Text accessibilityRole="header" style={[styles.title, { color: text }]}>Calling, by invitation</Text>
-    <Text style={[styles.note, { color: muted }]}>Only the request sender may start an approved call. You can withdraw permission at any time. Voice never includes video.</Text>
+    <Text accessibilityRole="header" style={[styles.title, { color: text }]}>{preMatchAvailable ? 'Calling, by invitation' : 'Calls before matching'}</Text>
+    <Text style={[styles.note, { color: muted }]}>{preMatchAvailable
+      ? 'Only the request sender may start an approved call. You can withdraw permission at any time. Voice never includes video.'
+      : 'Calls before matching aren’t available yet. You can still connect through a chat Intent.'}</Text>
     {error && <Text accessibilityRole="alert" style={[styles.note, { color: muted }]}>{error}</Text>}
     {!value && button('Refresh calling permissions', () => { void run(); })}
     {value && p && <>
-      <Text style={[styles.note, { color: text }]}>{p.state === 'accepted' ? `Approved: ${[grant?.voice && 'voice', grant?.video && 'video'].filter(Boolean).join(' and ')}.`
-        : p.state === 'pending' ? p.sender ? 'Waiting for their explicit media approval.' : 'Choose what you want to allow. Accepting the text request grants no calling permission.'
-        : p.state === 'not_offered' ? p.sender ? 'Offer availability. They choose whether to approve.' : 'No calling availability has been offered.'
+      <Text style={[styles.note, { color: text }]}>{p.state === 'accepted' ? `${preMatchAvailable ? 'Approved' : 'Saved permission'}: ${[grant?.voice && 'voice', grant?.video && 'video'].filter(Boolean).join(' and ')}.`
+        : p.state === 'pending' ? preMatchAvailable ? p.sender ? 'Waiting for their explicit media approval.' : 'Choose what you want to allow. Accepting the text request grants no calling permission.' : 'This request has no active calling access.'
+        : p.state === 'not_offered' ? preMatchAvailable ? p.sender ? 'Offer availability. They choose whether to approve.' : 'No calling availability has been offered.' : 'Calling requests are paused for launch.'
         : 'Calling permission is expired, withdrawn or unavailable.'}</Text>
-      {(p.canOffer || p.canDecide) && <>
+      {preMatchAvailable && (p.canOffer || p.canDecide) && <>
         <View style={styles.row}><Text style={[styles.note, { color: text }]}>Voice {p.canOffer ? 'availability' : 'approval'}</Text><Switch accessibilityLabel={p.canOffer ? 'Offer voice availability' : 'Approve voice calling'} value={voice}
           disabled={busy || (p.canOffer ? !value.offer_voice : !grant?.requested_voice || !value.offer_voice)} onValueChange={setVoice} trackColor={{ true: '#138F91' }} /></View>
         <View style={styles.row}><Text style={[styles.note, { color: text }]}>Video {p.canOffer ? 'availability' : 'approval'} · separate</Text><Switch accessibilityLabel={p.canOffer ? 'Offer video availability' : 'Approve video calling'} value={video}
@@ -58,7 +62,7 @@ function BoundConsent({ product, intentId }: { product: ConnectProduct; intentId
           {button('Decline calling permission', () => { void run(() => product.services.consent.decide(grant!.id, false, false)); })}</>}
       </>}
       {p.canWithdraw && button('Withdraw calling permission', () => { void run(() => product.services.consent.withdraw(grant!.id)); })}
-      {p.canCallVoice && <View style={styles.row}><Text style={[styles.note, { color: text }]}>Invite them to a voice call</Text><ConnectCallEntry peerId={value.recipient_profile_id} grantId={grant!.id} /></View>}
+      {preMatchAvailable && p.canCallVoice && <View style={styles.row}><Text style={[styles.note, { color: text }]}>Invite them to a voice call</Text><ConnectCallEntry peerId={value.recipient_profile_id} grantId={grant!.id} /></View>}
       {button('Refresh calling permissions', () => { void run(); })}
     </>}
     <Text style={[styles.note, { color: muted }]}>Incoming invitations also require your calling preference above. These changes need a confirmed connection; an unconfirmed change is never shown as saved.</Text>

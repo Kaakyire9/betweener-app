@@ -197,3 +197,50 @@ test('permission-dialog foreground recovery precedes credentials and native join
   assert.equal(f.composition.controller.getSnapshot().muted, false); assert.equal(f.cameraCounts().enabled, 0);
   await close(f);
 });
+
+for (const ended of [false, true]) test(`a background video caller revalidates on return (${ended ? 'already ended' : 'still accepted'})`, async () => {
+  const f = fixture(false, { media: 'video', videoCalling: true });
+  const controller = f.composition.controller;
+  await f.start();
+  await controller.setForeground(false);
+  f.model.state = 'ACCEPTED'; f.model.version++;
+  await controller.refresh();
+  assert.equal(f.counts().credentialCount, 0);
+  assert.equal(f.events.includes('client-created'), false);
+  if (ended) { f.model.state = 'FAILED'; f.model.version++; f.model.ended_at = new Date().toISOString(); }
+  await controller.setForeground(true);
+  assert.equal(f.counts().credentialCount, ended ? 0 : 1);
+  assert.equal(f.cameraCounts().enabled, 0);
+  if (ended) {
+    assert.equal(controller.getSnapshot().phase, 'FAILED');
+    assert.equal(f.events.includes('client-created'), false);
+  } else assert.ok(f.composition.owner());
+  await close(f);
+});
+
+test('video fit options reach only the current call-owned renderer and cannot survive retirement', async () => {
+  const f = await active(); const rendered = [];
+  f.handle.videoPresentation = () => ({ participants: () => [], subscribe: () => () => {}, render: (...args) => { rendered.push(args); return 'offline-frame'; } });
+  const source = f.composition.controller.videoPresentation();
+  assert.equal(source.render('peer', false, { fit: 'cover' }), 'offline-frame');
+  assert.equal(source.render('self', true, { fit: 'contain' }), 'offline-frame');
+  assert.deepEqual(rendered, [['peer', false, { fit: 'cover' }], ['self', true, { fit: 'contain' }]]);
+  await f.composition.controller.hangup();
+  assert.equal(source.render('peer', false, { fit: 'cover' }), null);
+  assert.equal(rendered.length, 2); await f.composition.owner().release(); await f.product.dispose();
+});
+
+test('a completed video camera state cannot carry into the next incoming invitation', async () => {
+  const f = await active({}, true), controller = f.composition.controller;
+  await controller.toggleCamera(); assert.equal(controller.getSnapshot().video.camera, 'on');
+  await controller.hangup(); await f.composition.owner().release(); await settle();
+  assert.equal(f.sdkState.cameraStatus, 'disabled');
+  assert.equal(controller.dismissCompletedCall(), true);
+  assert.equal(controller.getSnapshot().video, undefined);
+  Object.assign(f.model, { id: id(50), state: 'RINGING', version: 1, connected_at: null, ended_at: null, created_at: new Date().toISOString() });
+  await controller.receive({ ...f.model });
+  assert.equal(controller.getSnapshot().phase, 'RINGING');
+  assert.notEqual(controller.getSnapshot().video?.camera, 'on');
+  assert.equal(f.cameraCounts().enabled, 1, 'The new invitation never starts another capture');
+  await f.product.dispose();
+});

@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "scope": "LOCAL_CLIENT_REPAIR_NO_HOSTED_DEPLOYMENT",
+  "authorisation": "Owner: continue Connect testing and investigate linked mute/automatic end",
+  "frozenPackage": {
+    "sha256": "37d133fb060af0eaed44f4526d5d60fe4c08f3065fd3d2ede6d2f63d573f6c72",
+    "path": "docs/betweener-connect/connect-secure-calling.proposal.json"
+  },
+  "baseLocalChange": {
+    "sha256": "2d6f5972367c764f7f6cc60ac1f210345eb4a0c8980224b2cf020c2e4893b3d8",
+    "path": "docs/betweener-connect/connect-startup-recovery-fix.local.json"
+  },
+  "reason": "Separate ordinary local mute from emergency capture release; fence superseded commands and preserve pending mute intent through recovery; trace closed command states.",
+  "files": [
+    {
+      "path": "features/connect/media/connect-native-owner.ts",
+      "beforeSha256": "604746f6f6dcdba7954f59ca067ad64755b13a45b6dcfd6bd003396b5f72e903",
+      "beforeSnapshot": "tmp/connect-secure-calling/mute-control-fix/connect-native-owner.ts.before",
+      "afterSha256": "bbb57d7298fab2eedbe2cb3e1f9ecf8115a5a1be74c56d0b96de1984320de9b1"
+    },
+    {
+      "path": "features/connect/media/stream-voice-transport.ts",
+      "beforeSha256": "bbc8a17915a33ddf9ee9ae44d2df927d413413317f73c0e6e89b95b566281a22",
+      "beforeSnapshot": "tmp/connect-secure-calling/mute-control-fix/stream-voice-transport.ts.before",
+      "afterSha256": "2de16647d780948a88fe59d0d03d9a22598af790b289a54a5fa1f532e34d13b6"
+    },
+    {
+      "path": "features/connect/voice/voice-controller.ts",
+      "beforeSha256": "1fa296158f60d63aae8a825263e9f76be1edbfa062a2ddb4f24f458bc80b9392",
+      "beforeSnapshot": "tmp/connect-secure-calling/mute-control-fix/voice-controller.ts.before",
+      "afterSha256": "e83044e2a316da6905335566061e19e751c645b68ddd2a21bf0341ff4642025f"
+    },
+    {
+      "path": "features/connect/voice/voice-types.ts",
+      "beforeSha256": "1410124e5993e5ed96a64d3a01832790ec882f1d58cabade70b0a1e5c2ea583d",
+      "beforeSnapshot": "tmp/connect-secure-calling/mute-control-fix/voice-types.ts.before",
+      "afterSha256": "1e5276b8655aa00618b77de8fdf8180e27dcabfdf8f9d3df69b3d9ed30f48b9b"
+    },
+    {
+      "path": "features/connect/diagnostics/connect-terminal-logger.ts",
+      "beforeSha256": "54fcdc466c844c20e4e3dd4f758fade8712fb791b6345abd0da7429eb3e03b32",
+      "beforeSnapshot": "tmp/connect-secure-calling/mute-control-fix/connect-terminal-logger.ts.before",
+      "afterSha256": "e28fd54e11891be1d780aa65f5b67236fce538718ce88056304b8af607b9ba17"
+    }
+  ],
+  "regressions": [
+    "__tests__/connect-mute-controls.regression.test.cjs"
+  ],
+  "limits": {
+    "plaintextFallback": false,
+    "ownerReleaseDeadlineMs": 8000,
+    "recoveryDeadlineMs": 20000,
+    "attemptsPerCall": 2,
+    "immediateMuteTrackDisable": true,
+    "emergencyStopAndReleaseUnchanged": true
+  },
+  "hostedChanges": 0,
+  "newBuildRequired": false,
+  "deviceRetest": "PENDING",
+  "remoteRevocation": "UNVERIFIED",
+  "observations": {
+    "androidFirstSequence": 177,
+    "androidLaterReconnectSequence": 250,
+    "attachmentSha256": "4e92e6ef807e4287e7f7fb7612800228eaf8a4a8e2a7457c84dcbcafc106f793",
+    "call": "c-11d55835c3328a09",
+    "ownerReport": "Muting Android also changed iPhone mute button; subsequent iPhone mute ended call",
+    "androidEndRequestSequence": 288,
+    "firstInterruptionCause": "NOT_CAPTURED",
+    "iosFirstSequence": 193,
+    "androidMicrophoneFailureSequence": 281,
+    "causality": "Local defects reproduced; exact first device trigger remains unproven"
+  }
+}

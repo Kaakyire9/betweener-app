@@ -9,6 +9,7 @@ export type MicrophonePermission = 'granted' | 'denied' | 'blocked';
 export type VoiceRoute = 'earpiece' | 'speaker' | 'bluetooth' | 'wired';
 export type VoiceTransportState = 'idle' | 'connecting' | 'joined' | 'reconnecting' | 'left' | 'failed';
 export interface VoiceCredentials {
+  encryption?: { mode: 'required' | 'disabled'; generation: string; participants: readonly string[] };
   apiKey: string; token: string; expiresAt: string; media: ConnectMedia; user: { id: string };
   call: { type: 'betweener_connect'; id: string; cid: string };
 }
@@ -23,25 +24,35 @@ export interface VoiceApi {
   credentials(id: string, device: string): Promise<VoiceCredentials>;
 }
 export interface VoiceTransport {
+  encryptionStatus?(): { mode: 'disabled' | 'required'; sdkConfirmed: boolean; safetyCode?: string };
   join(admission: VoiceCredentials, refresh: () => Promise<VoiceCredentials>, listener: (state: VoiceTransportState) => void): Promise<void>;
+  recover?(admission: VoiceCredentials, refresh: () => Promise<VoiceCredentials>, listener: (state: VoiceTransportState) => void): Promise<void>;
   setMuted(muted: boolean): Promise<void>;
   routes(): readonly VoiceRoute[];
   selectRoute(route: VoiceRoute): Promise<void>;
   audioSample?(): AudioSample | null;
+  observeAudioSamples?(listener: (sample: AudioSample | null) => void): () => void;
+  setBackgroundAudio?(enabled: boolean): Promise<boolean>;
+  setCameraQuality?(quality: 'standard' | 'data_saver'): Promise<void>;
   setCameraEnabled?(enabled: boolean): Promise<void>;
   flipCamera?(): Promise<'front' | 'back'>;
   videoPresentation?(): VideoPresentation | null;
   leave(): Promise<LocalShutdownResult | void>;
 }
-export interface VoicePeer { profileId: string; name: string; avatar: string | null }
+export interface VoicePeer { profileId: string; name: string; avatar: string | null; photos?: readonly string[] }
 export type VoicePhase = 'IDLE' | 'REQUESTED' | 'RINGING' | 'CONNECTING' | 'ACTIVE' | 'RECONNECTING' | 'ENDING' | 'ENDED' | 'FAILED';
 export interface VoiceViewState {
+  requestedMedia?: ConnectMedia;
+  encryption?: { required: boolean; sdkConfirmed: boolean; safetyCode?: string; identityVerified: boolean };
+  backgroundAudio?: 'off' | 'starting' | 'enabled' | 'unavailable';
+  minimized?: boolean;
   video?: VideoControlState;
   audioHealth?: AudioHealth;
   quality?: CallQuality;
-  interruption?: 'background' | 'interruption' | 'connection_failed' | 'navigation' | 'permission_denied' | 'stale_generation';
+  interruption?: 'background' | 'interruption' | 'connection_failed' | 'encryption_failed' | 'navigation' | 'permission_denied' | 'stale_generation';
   audioSetupStage?: AudioSetupStage | 'ready';
   audioSetupFailure?: AudioSetupFailure;
+  muteControl?: { request: number; source: 'app' | 'system'; requestedMuted: boolean; status: 'pending' | 'confirmed' | 'failed' };
   authorityStatus?: 'current' | 'unavailable';
   endStatus?: 'pending' | 'terminal' | 'unconfirmed';
   localShutdown: LocalShutdownResult; endBlock: EndBlockView | null;

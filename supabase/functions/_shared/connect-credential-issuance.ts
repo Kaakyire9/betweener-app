@@ -20,5 +20,8 @@ export async function issueConnectCredentials(port: CredentialPort, userId: stri
   if (!snapshot || snapshot.id !== callId || snapshot.media !== media) throw new Error('connect_unavailable');
   const credentials = await port.issue(snapshot, userId);
   if (requireAdmission(await port.admit(), userId, callId) !== media) throw new Error('connect_unavailable');
-  return { ...credentials, media };
+  return { ...credentials, media, ...(snapshot.encryption_required !== undefined ? { encryption: {
+    mode: snapshot.encryption_required ? 'required' as const : 'disabled' as const, generation: snapshot.created_at,
+    participants: [snapshot.caller_user_id, snapshot.recipient_user_id],
+  } } : {}) };
 }

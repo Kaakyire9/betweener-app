@@ -16,6 +16,7 @@ export interface ConnectGrant {
 }
 export interface ConnectParticipant { user_id: string; profile_id: string; role: 'caller' | 'recipient' }
 export interface ConnectSession {
+  encryption_required?: boolean; native_incoming?: boolean; grant_id?: string | null;
   id: string; caller_profile_id: string; recipient_profile_id: string; media: ConnectMedia;
   authorization: ConnectAuthorization; state: ConnectState; version: number;
   created_at: string; accepted_at: string | null; connected_at: string | null; ended_at: string | null;

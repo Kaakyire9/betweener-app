@@ -15,6 +15,6 @@ test('clock regression does not become a positive latency', () => {
 });
 test('backend terminality and SDK disposal never prove provider media or hardware shutdown', () => {
   const q = createCallQualityTracker(); q.mark('end_requested', 100); q.mark('sdk_released', 150); q.mark('authority_terminal', 200);
-  assert.deepEqual(q.snapshot(), { nativeJoinMs: null, microphoneEnableMs: null, outputSelectionMs: null, setupMs: null,
-    firstReceivedPacketMs: null, sdkReleaseMs: 50, authorityEndMs: 100, physicalShutdown: 'not_verified', providerMediaTermination: 'not_verified' });
+  assert.deepEqual(q.snapshot(), { credentialsMs: null, nativeJoinMs: null, microphoneEnableMs: null, outputSelectionMs: null, setupMs: null,
+    firstReceivedPacketMs: null, firstReceiverGrowthMs: null, sdkReleaseMs: 50, authorityEndMs: 100, physicalShutdown: 'not_verified', providerMediaTermination: 'not_verified' });
 });

@@ -18,7 +18,7 @@ Deno.serve(async (request) => {
     if (error || !data.user) return connectJson({ error: 'unauthorized' }, 401);
     const args = { p_call: body.callId, p_device: body.deviceId };
     const credentials = await issueConnectCredentials({
-      admit: () => connectRpc(userClient, 'rpc_connect_admission', args),
+      admit: () => connectRpc(userClient, 'rpc_connect_secure_admission', args),
       snapshot: () => connectRpc(service, 'rpc_connect_worker_snapshot', { p_call: body.callId }),
       issue: (snapshot, userId) => adapter.credentials(snapshot, userId),
     }, data.user.id, body.callId);

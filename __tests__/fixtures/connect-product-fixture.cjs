@@ -84,19 +84,25 @@ function fixture(incoming = false, options = {}) {
     async leave() { sdkState.callingState = 'left'; sdkState.publisherPresent = false; sdkState.subscriberPresent = false; for (const fn of [...states]) fn('left'); },
   };
   let selectedDeviceId = 'ear';
+  if (options.nativeIncoming) {
+    let backgroundAudio = false;
+    handle.setBackgroundAudio = async (enabled, current) => { if (!current()) throw Error('retired'); backgroundAudio = enabled; return enabled; };
+    handle.backgroundAudioActive = () => backgroundAudio;
+  }
   const registry = new StreamVideoClientLeaseRegistry();
   const client = { call(_type, callId) { handle.id = callId; handle.cid = `betweener_connect:${callId}`; return handle; }, async disconnectUser() { events.push('disconnect'); } };
   const sdk = { createClient(input) { events.push('client-created'); client.input = input; return client; }, audio: () => ({ configure() {}, clearConfiguration() {},
     devices: async () => ({ devices: [{ id: 'ear', type: 'Earpiece' }, { id: 'speaker', type: 'Speaker' }], selectedDeviceId }), select(id) { selectedDeviceId = id; },
     observeDevices: () => () => {}, observeInterruption: () => () => {} }) };
-  const composition = createConnectNativeSafetyComposition({ auth: nativeAuth.owner, api: services.api, selfProfileId: id(2), deviceId: id(4), peer: services.peer,
-    uuid: () => id(6), now: Date.now, registry, flags: { nativeSafetyOwner: true, endCallAndBlock: true, videoCalling: options.videoCalling === true }, retireOnReconnect: true, failClosedAuthority: true,
+  const composition = createConnectNativeSafetyComposition({ auth: nativeAuth.owner, api: options.wrapApi ? options.wrapApi(services.api) : services.api, selfProfileId: id(2), deviceId: id(4), peer: services.peer,
+    uuid: () => id(6), now: Date.now, registry, flags: { nativeSafetyOwner: true, endCallAndBlock: true, videoCalling: options.videoCalling === true, ...(options.videoCameraOnEntry ? { videoCameraOnEntry: true } : {}), backgroundAudio: options.backgroundAudio === true, connectionRecovery: options.connectionRecovery === true, ...(options.nativeIncoming ? { nativeIncoming: true } : {}) }, retireOnReconnect: true, failClosedAuthority: true,
+    nativeAnswerAllowed: options.nativeAnswerAllowed, cameraPreview: options.cameraPreview,
     lifecycle: { platform: 'android', appState: () => appState, subscribeAppState(fn) { appListeners.add(fn); return () => appListeners.delete(fn); } },
-    permission: async () => { permissionCalls++; return permission; }, cameraPermission: async () => { cameraPermissionCalls++; if (options.cameraPermissionGate) await options.cameraPermissionGate.promise; return cameraPermission; },
+    permission: async () => { permissionCalls++; return permission; }, checkPermission: async () => permission, cameraPermission: async () => { cameraPermissionCalls++; if (options.cameraPermissionGate) await options.cameraPermissionGate.promise; return cameraPermission; },
     prepareCameraPermission: async () => { cameraPrepareCalls++; if (options.cameraPrepareGate) await options.cameraPrepareGate.promise; return cameraPermission; },
-    loadSdk: options.loadSdk ?? (async () => sdk) });
+    loadSdk: options.loadSdk ?? (async () => sdk), onOwner: options.onOwner });
   const product = { ...composition, services, selfProfileId: id(2), authGeneration: nativeAuth.owner.snapshot().generation,
-    flags: { nativeSafetyOwner: true, endCallAndBlock: true, videoCalling: options.videoCalling === true }, accountUserId: id(1) };
+    flags: { nativeSafetyOwner: true, endCallAndBlock: true, videoCalling: options.videoCalling === true, ...(options.videoCameraOnEntry ? { videoCameraOnEntry: true } : {}), backgroundAudio: options.backgroundAudio === true, connectionRecovery: options.connectionRecovery === true }, accountUserId: id(1) };
   return { nativeAuth, ports, services, composition, product, events, registry, client, handle, sdkState, tracks,
     get model() { return model; }, counts: () => ({ permissionCalls, createCount, credentialCount }),
     eligible(v) { eligible = v; }, permission(v) { permission = v; }, cameraPermission(v) { cameraPermission = v; },

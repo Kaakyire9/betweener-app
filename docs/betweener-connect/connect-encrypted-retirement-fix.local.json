@@ -1,0 +1,113 @@
+{
+  "scope": "LOCAL_CONNECT_ENCRYPTED_RETIREMENT_REPAIR",
+  "preparedAt": "2026-11-06T14:54:46.654975+00:00",
+  "observedCall": "c-3e382ada04f4583e",
+  "deviceObservation": {
+    "manualEndConfirmedByUser": true,
+    "iosSequence": 87,
+    "fault": "e2ee.unencrypted_frame",
+    "track": "AUDIO",
+    "party": "remote",
+    "previousPublisherFirstRepairDidNotEliminateDeviceFault": true
+  },
+  "changes": {
+    "terminalCallbacksRetireBeforeEmergencyDisable": true,
+    "closedPublisherRemovedBeforeDeviceStopPublish": true,
+    "senderClonesRetainedForImmediateHardStop": true,
+    "failedDisposalRemainsVisibleForRetry": true,
+    "cryptoFaultsNeverRequestAutomaticRecoveryCredentials": true,
+    "knownCaptureStopsDespiteFailedTrackInspection": true,
+    "boundedStartupSfuCauseRetainedAcrossRecovery": true,
+    "encryptionManagerDisposalStillRequiresSdkLeave": true
+  },
+  "files": [
+    {
+      "path": "__tests__/connect-encrypted-hangup.regression.test.cjs",
+      "beforeSha256": "7672d8b5a12e2a623ad81dec9def6940e963d3f26b56cfe8c76f8a9701f8847a",
+      "afterSha256": "d5735eec8ade44a7735327f886b21da355a8347919628575d98414b8607500e6"
+    },
+    {
+      "path": "__tests__/connect-encrypted-native-owner.regression.test.cjs",
+      "beforeSha256": "e5b8c5cf0868a65b4d1bffddbb8086fc6f717cda3068e786e7d578678120ed6a",
+      "afterSha256": "b611a7f3a1e2104e3fbe5ce3fa1ff446ee291e0adf0b7fcda7a64857c742287c"
+    },
+    {
+      "path": "features/connect/media/native-publisher-retirement.ts",
+      "beforeSha256": null,
+      "afterSha256": "9f6d17b817221825a431561adc843c77ca2a71763843a1d3f7213bcc07baaf66"
+    },
+    {
+      "path": "features/connect/media/native-stream-sdk.ts",
+      "beforeSha256": "17742ede7c6e05a82ce3c8fd6f4ae9625bf63e79126db6508a407ab19c5fc009",
+      "afterSha256": "740b358a4b59753afa5212b943952b74765a806d8b7cee990fee32e3b4022bc4"
+    },
+    {
+      "path": "features/connect/media/native-owner-types.ts",
+      "beforeSha256": "d2fc21c240b3c83a25b26ee03457da0e740c7afb9b3475304def53e5225d65cf",
+      "afterSha256": "a16c33ebf2a05759f8668a89940795bc3d4e6726ca0696e32f90dad0a6294a96"
+    },
+    {
+      "path": "features/connect/media/connect-native-owner.ts",
+      "beforeSha256": "0435ecaffa0074408fb473af2b70ac43c61bbeaa535f332e55dbfd9bbb0baba0",
+      "afterSha256": "2c184f11aeeef169b1605c8d0987f422376e94993e28cf16962b70520d06be64"
+    },
+    {
+      "path": "features/connect/media/stream-voice-transport.ts",
+      "beforeSha256": "0e7b4f9a8b455ceea3ec3565219ffc61b35dd281180fb34dc5b5e2856b9d702b",
+      "afterSha256": "48d67067802fd9d265d6ccf740eb4ca74f314d64365fd63d2204bdfd7fe594d1"
+    },
+    {
+      "path": "features/connect/voice/voice-types.ts",
+      "beforeSha256": "2719df6660b77997fceab9caab79a62067436884c7a6263e45256763927413a9",
+      "afterSha256": "dcf1e9a8dae02210add111d9c77f2dd4142d137d480bc6b34e661f96a2e1c135"
+    },
+    {
+      "path": "features/connect/diagnostics/connect-terminal-logger.ts",
+      "beforeSha256": "7cf885dbc42586c7b546d50d646c51dac10a6483ed141f7c08ceb4ea073a3c71",
+      "afterSha256": "f64a3364b4b80eaa7bca296e629568fdd9e944f1b5210cd6c806d700945b65b5"
+    },
+    {
+      "path": "features/connect/media/native-reconnect-diagnostics.ts",
+      "beforeSha256": null,
+      "afterSha256": "cc12178b4e11ba579eae215ad7e747ff19cc21335ab12005ae3c04d3870d3d31"
+    },
+    {
+      "path": "__tests__/connect-terminal-logging.regression.test.cjs",
+      "beforeSha256": "6436fc9815c4787ce11b45b73066d3fe18d7c0d27eab5b3600b196ca78c949e3",
+      "afterSha256": "7fdee5f4bdc3fc5510739ce859356e21cc9bce5bda945345219f04f89f86ff0a"
+    },
+    {
+      "path": "__tests__/connect-native-owner.regression.test.cjs",
+      "beforeSha256": "c20fe7f1a1f5d78a69e7b0abd3c788f780e1ed5c7c139d498ed7e5d05edb9885",
+      "afterSha256": "948cfe5e812c35ec9536ecfc00dcfbaf58515896caf9937997a7eb922dffb519"
+    },
+    {
+      "path": "__tests__/connect-native-bootstrap.regression.test.cjs",
+      "beforeSha256": "73373d333fb1b5cf46989f043fa78edf39a35d75025b58556ab9e8156de9ebc6",
+      "afterSha256": "9bbca5c2cfed2c4549036262b0f8a0d5b9289e18dfe1b130718fe2d9e9bccbf1"
+    }
+  ],
+  "validation": {
+    "initialFocusedRegressionsReproduced": 5,
+    "finalTestsPassed": 403,
+    "finalTestsFailed": 0,
+    "regressionFiles": 21,
+    "installedSdkPublisherAndDeviceManagerCompatibilityPassed": true,
+    "changedFilesLintPassed": true,
+    "repositoryTypecheckPassed": true,
+    "finalChangedSourceTypecheckPassed": true,
+    "physicalDeviceRetest": "PENDING"
+  },
+  "remaining": [
+    "Repeat a foreground two-phone staging voice call, compare safety codes, test independent mute and End on Android while capturing both logs.",
+    "Android startup transport cause remains unconfirmed; bounded SDK error/strategy diagnostics are now available.",
+    "Origin of the native unframed packet and native receive-side strictness remain unverified; no fault suppression or plaintext fallback was added."
+  ],
+  "hostedChanges": 0,
+  "providerCalls": 0,
+  "builds": 0,
+  "otaPublications": 0,
+  "callingGatesChanged": false,
+  "providerTermination": "UNVERIFIED",
+  "remoteRevocation": "UNVERIFIED"
+}

@@ -33,12 +33,12 @@ test('Connect backend identity rejects production, mismatched and missing enviro
 });
 function fixture() {
   const operations: { name: string; input: unknown }[] = [];
-  const result = { call: { id, type: 'betweener_connect', custom: { betweener_connect_id: id, media: 'voice' }, settings: policy().settings, session: {
+  const result = { call: { id, type: 'betweener_connect', ended_at: null as string | null, custom: { betweener_connect_id: id, media: 'voice' }, settings: policy().settings, session: {
     id: 'provider-session', participants: [{ user: { id: caller } }, { user: { id: recipient } }],
   } }, members: [{ user_id: caller }, { user_id: recipient }] };
   const call = { async getOrCreate(input: unknown) { operations.push({ name: 'create', input }); },
     async get() { return result; }, async updateCallMembers(input: unknown) { operations.push({ name: 'members', input }); },
-    async end() { operations.push({ name: 'end', input: null }); return { duration: '1ms', metadata: { responseCode: 200 } }; } };
+    async end() { operations.push({ name: 'end', input: null }); result.call.ended_at = '2026-11-03T12:00:00Z'; return { duration: '1ms', metadata: { responseCode: 200 } }; } };
   const stream: StreamServerPort = { async getApp() { return { app: { id: 1731011, disable_auth_checks: false, disable_permissions_checks: false } }; }, video: { async getCallType() { return policy(); }, call(type, callId) {
     assert.equal(type, 'betweener_connect'); assert.equal(callId, id); return call;
   } }, async upsertUsers(input) { operations.push({ name: 'users', input }); }, generateUserToken(input) { operations.push({ name: 'token', input }); return 'test-token'; } };

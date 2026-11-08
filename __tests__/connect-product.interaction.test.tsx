@@ -1,8 +1,11 @@
 import React from 'react';
 import { describe, expect, it, jest, beforeEach } from '@jest/globals';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
-import { Text } from 'react-native';
+import { Text, AppState } from 'react-native';
+import { JournalStore } from '@/features/connect/journal/journal-store';
+import { JournalStoreProvider } from '@/features/connect/journal/journal-context';
 import ConnectVoiceRoute from '@/app/connect/voice';
+import ConnectInboxRoute from '@/app/connect/index';
 import { ConnectProductProvider, useConnectProduct } from '@/features/connect/components/ConnectProductProvider';
 import { VoiceCallLobby } from '@/features/connect/components/VoiceCallLobby';
 import { VoiceCallScreen } from '@/features/connect/components/VoiceCallScreen';
@@ -11,7 +14,7 @@ import { ConnectCallEntry } from '@/features/connect/components/ConnectCallEntry
 import { ConnectIncomingNotice } from '@/features/connect/components/ConnectIncomingNotice';
 import { useAuth } from '@/lib/auth-context';
 import { ConnectNativeBuildError } from '@/features/connect/media/native-runtime-contract';
-const { fixture, id, settle } = require('./fixtures/connect-product-fixture.cjs');
+const { fixture, id, settle, deferred } = require('./fixtures/connect-product-fixture.cjs');
 
 const mockPush = jest.fn(), mockBack = jest.fn();
 let mockParams: Record<string, unknown> = {};
@@ -30,7 +33,7 @@ jest.mock('@/features/connect/config/connect-feature-flags', () => ({ connectFea
 jest.mock('expo-image', () => { const React = require('react'); const { View } = require('react-native'); return { Image: (props: object) => React.createElement(View, props) }; });
 jest.mock('expo-linear-gradient', () => { const React = require('react'); const { View } = require('react-native'); return { LinearGradient: (props: object) => React.createElement(View, props) }; });
 jest.mock('react-native-safe-area-context', () => { const React = require('react'); const { View } = require('react-native'); return { SafeAreaView: (props: object) => React.createElement(View, props), useSafeAreaInsets: () => ({ top: 0 }) }; });
-jest.mock('@expo/vector-icons', () => ({ Ionicons: Object.assign(() => null, { glyphMap: {} }) }));
+jest.mock('@expo/vector-icons', () => ({ Ionicons: Object.assign(() => null, { glyphMap: {} }), MaterialCommunityIcons: () => null }));
 const context = jest.mocked(useConnectProduct);
 beforeEach(() => { jest.clearAllMocks(); mockParams = {}; mockPathname = '/connect/voice'; context.mockReturnValue({ ui: false, status: 'disabled', product: null }); });
 const peer = { profileId: id(3), name: 'Ama', avatar: null };
@@ -48,6 +51,7 @@ describe('Connect product integration', () => {
     const start = jest.fn(); const screen = await render(<VoiceCallLobby peer={peer} eligible={false} pending={false} error="Voice permission required" onStart={start} onClose={() => {}} />);
     await fireEvent.press(screen.getByLabelText('Start voice call')); expect(start).not.toHaveBeenCalled();
     await screen.rerender(<VoiceCallLobby peer={peer} eligible pending={false} error={null} onStart={start} onClose={() => {}} />);
+    expect(screen.getByLabelText('Staging call privacy')).toBeTruthy();
     expect(start).not.toHaveBeenCalled(); await fireEvent.press(screen.getByLabelText('Start voice call')); expect(start).toHaveBeenCalledTimes(1);
   });
   it('outgoing route checks eligibility without dialing; double taps cannot duplicate creation', async () => {
@@ -172,6 +176,61 @@ describe('Connect product integration', () => {
     const screen = await render(<ConnectVideoRoute />);
     expect(screen.getByText('Video calling is not available yet')).toBeTruthy(); expect(screen.queryByLabelText('Turn camera on')).toBeNull();
     expect(f.counts().credentialCount).toBe(0); expect(f.cameraCounts().enabled).toBe(0); await f.product.dispose();
+  });
+  it('explicit Return to chat preserves an active call and the ongoing banner can end it', async () => {
+    const f = fixture(); await f.active(); context.mockReturnValue({ ui: true, status: 'ready', product: f.product }); mockParams = { callId: f.model.id };
+    const screen = await render(<ConnectVoiceRoute />);
+    await fireEvent.press(screen.getByLabelText('Minimize call'));
+    await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
+    await screen.unmount(); await act(async () => { await settle(); });
+    expect(f.composition.owner().getSnapshot().retired).toBe(false);
+    expect(f.composition.controller.getSnapshot().minimized).toBe(true);
+    mockPathname = '/chat'; const notice = await render(<ConnectIncomingNotice controller={f.composition.controller} />);
+    expect(notice.getByLabelText('Ongoing call notice')).toBeTruthy();
+    await fireEvent.press(notice.getByLabelText('End minimized call'));
+    await waitFor(() => expect(f.model.state).toBe('ENDED'));
+    await notice.unmount(); await f.product.dispose();
+  });
+  it('ordinary call-route unmount still ends capture; it does not implicitly minimize', async () => {
+    const f = fixture(); await f.active(); context.mockReturnValue({ ui: true, status: 'ready', product: f.product }); mockParams = { callId: f.model.id };
+    const screen = await render(<ConnectVoiceRoute />); await screen.unmount(); await act(async () => { await settle(); });
+    expect(f.composition.owner().getSnapshot().retired).toBe(true); expect(f.model.state).toBe('ENDED'); await f.product.dispose();
+  });
+  it('authority recovery shows Reconnecting with End available and a late response cannot reopen an ended call', async () => {
+    const f = fixture(false, { connectionRecovery: true }), gate = deferred(); await f.active();
+    context.mockReturnValue({ ui: true, status: 'ready', product: f.product }); mockParams = { callId: f.model.id };
+    const get = f.services.api.getCall; f.services.api.getCall = async (...args: unknown[]) => { await gate.promise; return get(...args); };
+    const screen = await render(<ConnectVoiceRoute />);
+    await act(async () => { f.emit('offline'); await settle(); }); expect(screen.getByText('Reconnecting…')).toBeTruthy();
+    expect(screen.getByLabelText('End call')).toBeEnabled(); await fireEvent.press(screen.getByLabelText('End call'));
+    await act(async () => { gate.resolve(); await settle(); });
+    expect(f.counts().credentialCount).toBe(1); expect(f.events.filter((e: unknown) => e === 'client-created')).toHaveLength(1);
+    await screen.unmount(); await f.product.dispose();
+  });
+  it('background audio is an explicit active-call switch and unavailable native support keeps foreground working', async () => {
+    const f = fixture(false, { backgroundAudio: true }); await f.active(); context.mockReturnValue({ ui: true, status: 'ready', product: f.product }); mockParams = { callId: f.model.id };
+    const screen = await render(<ConnectVoiceRoute />), toggle = screen.getByLabelText('Continue audio in background');
+    expect(toggle.props.accessibilityState.checked).toBe(false);
+    await fireEvent.press(toggle);
+    await waitFor(() => expect(screen.getByText('Background audio is unavailable on this device. Keep the app open for this call.')).toBeTruthy());
+    expect(f.composition.controller.getSnapshot().phase).toBe('ACTIVE'); expect(f.composition.owner().getSnapshot().retired).toBe(false);
+    await fireEvent.press(screen.getByLabelText('End call')); await screen.unmount(); await f.product.dispose();
+  });
+  it('Journal history stays independent of calling activation and paginates using canonical cursors', async () => {
+    const previousAppState = AppState.currentState; AppState.currentState = 'active';
+    const f = fixture(), requests: any[] = [], { entry } = require('./fixtures/connect-journal-fixture.cjs');
+    const first = entry(1, { media: 'video', state: 'MISSED', connected_at: null }); first.direction = 'incoming';
+    const second = entry(2), cursor = { at: first.call.created_at, id: first.call.id };
+    const store = new JournalStore({ userId: id(1), profileId: id(2), epoch: 'fixture', current: () => true,
+      page: async query => { requests.push(query); return query.cursor ? { items: [second], nextCursor: null } : { items: [first], nextCursor: cursor }; }, previews: async () => [] });
+    const screen = await render(<JournalStoreProvider value={store}><ConnectInboxRoute /></JournalStoreProvider>);
+    await waitFor(() => expect(screen.getByText(/Missed video call/)).toBeTruthy());
+    expect(screen.queryByText('Call again')).toBeNull(); expect(f.counts().credentialCount).toBe(0);
+    await fireEvent(screen.getByTestId('connection-journal-list'), 'endReached');
+    await waitFor(() => expect(requests[1].cursor).toEqual(cursor));
+    await fireEvent(screen.getByTestId('connection-journal-list'), 'refresh');
+    await waitFor(() => expect(requests[2].cursor).toBeNull());
+    expect(mockPush).not.toHaveBeenCalled(); await screen.unmount(); store.retire(); AppState.currentState = previousAppState; await f.product.dispose();
   });
   it('active view reports connection state without fabricating a quality score or hardware assurance', async () => {
     const f = fixture(); await f.active(); const state = f.composition.controller.getSnapshot();

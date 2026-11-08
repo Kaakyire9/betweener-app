@@ -17,7 +17,7 @@ export function registerConnectRingingOwner(call: RingingCall, current: () => bo
 }
 
 /** Entry-point hook: unrelated Live call types retain their existing behaviour.
- * Native incoming activation stays OFF. A push is never an admission grant. */
+ * Native incoming is separately gated. A push is never an admission grant. */
 export async function assertConnectRingingOwner(call: RingingCall) {
   if (call.type !== 'betweener_connect') return;
   const permit = permits.get(call);

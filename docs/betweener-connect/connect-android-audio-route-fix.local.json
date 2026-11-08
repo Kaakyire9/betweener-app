@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "scope": "LOCAL_CLIENT_REPAIR_NO_HOSTED_DEPLOYMENT",
+  "authorisation": "Continuing owner-authorised local Android repairs from the supplied device retest log",
+  "frozenPackage": {
+    "path": "docs/betweener-connect/connect-secure-calling.proposal.json",
+    "sha256": "37d133fb060af0eaed44f4526d5d60fe4c08f3065fd3d2ede6d2f63d573f6c72"
+  },
+  "baseLocalChange": {
+    "path": "docs/betweener-connect/connect-android-ending-fix.local.json",
+    "sha256": "b3ed0374d2a4c69f003ba84e09485f816532abf70e9288b040a6a63d4e06a034"
+  },
+  "reason": "Wait within the existing route deadline for Telecom endpoint discovery; preserve the voice earpiece preference without certifying an empty snapshot.",
+  "files": [
+    {
+      "path": "features/connect/media/native-audio-route.ts",
+      "beforeSha256": "860372f4a94d75ad57345a1c604330bd15b396ebb597cbcb67cb9a9f7dbcdb42",
+      "afterSha256": "f3996f5b29475cdf0422304546d20a6d267f280942d79c294eb6f1516f030e2f",
+      "beforeSnapshot": "tmp/connect-secure-calling/android-route-fix/native-audio-route.before.ts"
+    },
+    {
+      "path": "features/connect/voice/voice-controller.ts",
+      "beforeSha256": "51778da6c17484007987f78659da66cbf28e81d79f4b41ef9ec2771dea6bdf3c",
+      "afterSha256": "8bf56cb3a8382cdc1885506613875abe0ed7f111ec46278801df0bfb2f142f7c",
+      "beforeSnapshot": "tmp/connect-secure-calling/android-route-fix/voice-controller.before.ts"
+    }
+  ],
+  "regression": "__tests__/connect-audio-route-readiness.regression.test.cjs",
+  "hostedChanges": 0,
+  "newBuildRequired": false,
+  "deviceRetest": "PENDING",
+  "remoteRevocation": "UNVERIFIED"
+}

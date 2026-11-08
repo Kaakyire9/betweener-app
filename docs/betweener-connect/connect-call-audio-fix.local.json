@@ -1,0 +1,85 @@
+{
+  "scope": "LOCAL_CONNECT_ANDROID_CALL_AUDIO_REPAIR",
+  "preparedAt": "2026-11-08T16:35:01.849892+00:00",
+  "observedCall": "c-44bc27a4470bf850",
+  "observedFailure": "audio_output_unconfirmed",
+  "localReproduction": {
+    "installedSdkSelectsFirstGlobalRegistration": true,
+    "currentCallCanHaveEndpointsWhileThatRegistrationHasNone": true,
+    "regressionsFailedBeforeRepair": 10,
+    "deviceRegistrationOrderingNotCaptured": true
+  },
+  "changes": [
+    "Bind Android Telecom endpoint reads and changes to the admitted canonical call CID.",
+    "Treat installed SDK route events as invalidations and reconcile exact-call Telecom state.",
+    "Fence stale reads, registration loss and unsubscribed observers.",
+    "Require the native switch acknowledgement plus selected-route evidence within the unchanged three-second deadline."
+  ],
+  "files": [
+    {
+      "path": "__tests__/connect-call-audio.regression.test.cjs",
+      "beforeSha256": null,
+      "afterSha256": "23700993ce79d1072bf173f834d6cbf691ef1ac1b34f16442b767f35276ff922"
+    },
+    {
+      "path": "features/connect/media/native-call-audio.ts",
+      "beforeSha256": null,
+      "afterSha256": "193e8057b6c369a9f3ba27205ae0ac6f9635d6ff53b2641ff004a7c1898e7dde"
+    },
+    {
+      "path": "features/connect/media/native-stream-sdk.ts",
+      "beforeSha256": "740b358a4b59753afa5212b943952b74765a806d8b7cee990fee32e3b4022bc4",
+      "afterSha256": "9d6cb87c2e70ddaa6270ae22b2a33fde02f75c6c5def67739f0f97e725605372"
+    },
+    {
+      "path": "features/connect/media/native-owner-types.ts",
+      "beforeSha256": "a16c33ebf2a05759f8668a89940795bc3d4e6726ca0696e32f90dad0a6294a96",
+      "afterSha256": "a656f17b2c56aed6927259e89391b4412e3ae53ca43d69f3aaf93e81aea8b105"
+    },
+    {
+      "path": "features/connect/media/connect-native-owner.ts",
+      "beforeSha256": "2c184f11aeeef169b1605c8d0987f422376e94993e28cf16962b70520d06be64",
+      "afterSha256": "b8ffb2831c639e349cd821c2ca1d9be25c32611a03c1d7a61d9e31782821a3c3"
+    },
+    {
+      "path": "features/connect/media/native-audio-route.ts",
+      "beforeSha256": "f3996f5b29475cdf0422304546d20a6d267f280942d79c294eb6f1516f030e2f",
+      "afterSha256": "a28c0b1e3d09bb65e6e627017173e5b485503fef0542c706690130c320ac5776"
+    },
+    {
+      "path": "__tests__/connect-native-bootstrap.regression.test.cjs",
+      "beforeSha256": "9bbca5c2cfed2c4549036262b0f8a0d5b9289e18dfe1b130718fe2d9e9bccbf1",
+      "afterSha256": "beca9432dbf86fd405f1d04b237abc34a64d9162fbd2db97507ffe6551b8c200"
+    },
+    {
+      "path": "__tests__/connect-native-owner.regression.test.cjs",
+      "beforeSha256": "948cfe5e812c35ec9536ecfc00dcfbaf58515896caf9937997a7eb922dffb519",
+      "afterSha256": "48026ddfddaddb8b8b6ae78f2050f9dfdb17357d7a144ccc5bce919fc8de5f5c"
+    },
+    {
+      "path": "__tests__/connect-audio-route.regression.test.cjs",
+      "beforeSha256": "53ee5283c7db241363c4d00b35406ccb3b692e6b67082da0894decccb4ff77a2",
+      "afterSha256": "1054ce7479aa438184f77920e8d6f578a33fce812107aa13f3c2661d88506386"
+    }
+  ],
+  "validation": {
+    "regressionFiles": 24,
+    "testsPassed": 484,
+    "testsFailed": 0,
+    "testsUseOfflineNetworkGuard": true,
+    "lint": "PASSED",
+    "repositoryTypecheck": "PASSED",
+    "physicalDeviceRetest": "PENDING",
+    "completedAt": "2026-11-08T16:40:54.212155+00:00"
+  },
+  "boundaries": {
+    "callingGatesChanged": false,
+    "encryptionProtectionsChanged": false,
+    "nativeSourceOrDependencyChanges": false,
+    "hostedChanges": 0,
+    "buildsOrOtaPublications": 0,
+    "newBuildRequired": false,
+    "providerRevocation": "UNVERIFIED"
+  },
+  "deviceRetest": "Reload idle staging apps, keep both DevTools consoles open, test one foreground iPhone-to-Android voice call, verify earpiece and speaker, independent mute, compare safety codes, then manually End on Android and capture both final summaries."
+}

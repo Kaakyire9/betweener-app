@@ -21,6 +21,8 @@ export const initSentry = () => {
     tracesSampleRate: isDev ? 1.0 : 0.15,
 
     beforeBreadcrumb(breadcrumb) {
+      // Connect's staging call trace is console-only, even when Sentry instruments console.log.
+      if (breadcrumb.category === "console" && breadcrumb.message?.startsWith("[Connect] ")) return null;
       try {
         return {
           ...breadcrumb,

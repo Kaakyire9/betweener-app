@@ -13,11 +13,13 @@ let network = 0; globalThis.fetch = () => { network++; throw Error('offline-only
 const identity = { development: true, platform: 'android', variant: 'staging', environment: 'staging', bundleIdentifier: 'com.aduboffour.betweener.staging', supabaseUrl: 'https://xsgzxadwuxuziubglvps.supabase.co' };
 const policy = { ui: true, nativeRuntime: true, videoTransport: true }, flags = { nativeSafetyOwner: true, endCallAndBlock: true };
 
-test('voice is enabled only for the verified staging development identity; video stays off', () => {
-  assert.deepEqual(connectProductPolicy, { ui: true, nativeRuntime: true, videoTransport: false });
-  assert.deepEqual(connectRuntimeAvailability(identity), { ui: true, runtime: true, video: false });
-  assert.deepEqual(connectRuntimeFeatureFlags(identity), { nativeSafetyOwner: true, endCallAndBlock: false });
-  assert.deepEqual(connectRuntimeFeatureFlags({ ...identity, variant: 'production' }), { nativeSafetyOwner: false, endCallAndBlock: false, videoCalling: false });
+test('voice and video are enabled only for the owner-authorised staging development identity', () => {
+  assert.deepEqual(connectProductPolicy, { ui: true, nativeRuntime: true, videoTransport: true });
+  assert.deepEqual(connectRuntimeAvailability(identity), { ui: true, runtime: true, video: true });
+  for (const platform of ['ios', 'android']) {
+    assert.deepEqual(connectRuntimeFeatureFlags({ ...identity, platform }), { nativeSafetyOwner: true, endCallAndBlock: true, videoCalling: true, videoCameraOnEntry: true, backgroundAudio: true, connectionRecovery: true });
+  }
+  assert.deepEqual(connectRuntimeFeatureFlags({ ...identity, variant: 'production' }), { nativeSafetyOwner: false, endCallAndBlock: false, videoCalling: false, backgroundAudio: false, connectionRecovery: false });
   assert.equal(connectRuntimeAvailability(identity, policy, flags).runtime, true);
   assert.equal(connectRuntimeAvailability(identity, policy, flags).video, false);
 });
@@ -36,7 +38,11 @@ test('failed installation storage leaves no fabricated device identity and permi
   await assert.rejects(get('staging'), /storage/); assert.equal(await get('staging'), id(4));
 });
 for (const [key, value] of Object.entries({ development: false, platform: 'web', variant: 'production', environment: 'production', bundleIdentifier: 'com.aduboffour.betweener', supabaseUrl: 'https://jbyblhithbqwojhwlenv.supabase.co' })) {
-  test(`runtime rejects mismatched ${key} despite explicitly enabled test switches`, () => assert.equal(connectRuntimeAvailability({ ...identity, [key]: value }, policy, flags).runtime, false));
+  test(`runtime rejects mismatched ${key} despite explicitly enabled test switches`, () => {
+    const mismatch = { ...identity, [key]: value };
+    assert.equal(connectRuntimeAvailability(mismatch, policy, flags).runtime, false);
+    assert.deepEqual(connectRuntimeFeatureFlags(mismatch), { nativeSafetyOwner: false, endCallAndBlock: false, videoCalling: false, backgroundAudio: false, connectionRecovery: false });
+  });
 }
 test('token refresh keeps the same epoch while same-account new session replaces it', () => {
   const a = createNativeSessionOwner(); a.accept({ user: { id: id(1) }, access_token: jwt() }); const original = a.owner.snapshot();
@@ -193,7 +199,7 @@ test('malformed route identities and voice-to-video claims are rejected', () => 
   assert.deepEqual(readConnectLaunch({ peerId: id(3), authorization: 'pre_match', grantId: id(4), accepted: 'true' }), { kind: 'outgoing', peerId: id(3), authorization: 'pre_match', grantId: id(4) });
 });
 test('client video flags or consent-shaped claims cannot activate the installed video gate', () => {
-  assert.equal(connectRuntimeAvailability(identity, connectProductPolicy, { ...flags, videoCalling: true, consent: 'approved' }).video, false);
+  assert.equal(connectRuntimeAvailability(identity, { ...connectProductPolicy, videoTransport: false }, { ...flags, videoCalling: true, consent: 'approved' }).video, false);
   assert.equal(connectRuntimeAvailability(identity, policy, { ...flags, videoCalling: true }).video, true, 'Only explicit internal gates can compose a local video runtime');
   assert.equal(connectRuntimeAvailability({ ...identity, variant: 'production' }, policy, { ...flags, videoCalling: true }).video, false);
   const f = fixture();

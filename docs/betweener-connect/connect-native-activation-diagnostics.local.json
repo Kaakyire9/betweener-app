@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "scope": "LOCAL_CLIENT_REPAIR_NO_HOSTED_DEPLOYMENT",
+  "diagnosticOnly": true,
+  "authorisation": "Owner continued Connect repairs and supplied the failed activation retest",
+  "frozenPackage": {
+    "path": "docs/betweener-connect/connect-secure-calling.proposal.json",
+    "sha256": "37d133fb060af0eaed44f4526d5d60fe4c08f3065fd3d2ede6d2f63d573f6c72"
+  },
+  "baseLocalChange": {
+    "path": "docs/betweener-connect/connect-native-activation-fix.local.json",
+    "sha256": "94cb6080c8e6c748f67c5ebe4d3b0f56309e69d30af060c07a75f2c55c20586e"
+  },
+  "reason": "Differentiate native registration, bridge API, subscription, activation request, cancellation and timeout failures without changing activation requirements or deadlines. Retest failed before any pending activation state.",
+  "files": [
+    {
+      "path": "features/connect/media/native-stream-sdk.ts",
+      "beforeSha256": "1a95985a3703ce1fe5f1e94e557cfd568e1e3732efe3b2e6f194f7427f7ca1e9",
+      "beforeSnapshot": "tmp/connect-secure-calling/native-activation-diagnostics/native-stream-sdk.ts.before",
+      "afterSha256": "2f579d8cdb3d67908d15106bf601009f0dacfb549026d0c9001e8de0c9ab1328"
+    },
+    {
+      "path": "features/connect/media/native-owner-types.ts",
+      "beforeSha256": "581a3565134591c8aeea409baa57960ae7270fcfafb92a45e2ac76862064bbb7",
+      "beforeSnapshot": "tmp/connect-secure-calling/native-activation-diagnostics/native-owner-types.ts.before",
+      "afterSha256": "25e96bbabee26675eaec90aafccbf0209672f1fe93c379556cb9def34863f59c"
+    },
+    {
+      "path": "features/connect/media/connect-native-owner.ts",
+      "beforeSha256": "e1aac3e4a08b82daebf63a0a6af952374d20ffbbfc07f93e5378ceb6e956d488",
+      "beforeSnapshot": "tmp/connect-secure-calling/native-activation-diagnostics/connect-native-owner.ts.before",
+      "afterSha256": "168603a9cb5cbc0807b5cc2bde9f51224a7b4cf5956d143d12797594261e68d1"
+    },
+    {
+      "path": "features/connect/diagnostics/connect-terminal-logger.ts",
+      "beforeSha256": "4da5b3f16c3104e1705b512e8c18dda4040bf465484ec8d48c56684adc7f4165",
+      "beforeSnapshot": "tmp/connect-secure-calling/native-activation-diagnostics/connect-terminal-logger.ts.before",
+      "afterSha256": "fb2861741bb582bdf6d5b61573cdb1e812c36a1235d6636fe0a8833eb8d977a9"
+    },
+    {
+      "path": "features/connect/media/native-call-activation.ts",
+      "beforeSha256": "57a7b31b7d5ba8586c4b85a7fa517fe6fd2aa8853c1aa8389cfe3b4f890d752c",
+      "beforeSnapshot": "tmp/connect-secure-calling/native-activation-diagnostics/native-call-activation.ts.before",
+      "afterSha256": "7e42a80966990830c887476dd8353887d487dfeef51a5be33697eda3f0d38893"
+    }
+  ],
+  "regressions": [
+    "__tests__/connect-native-activation.regression.test.cjs",
+    "__tests__/connect-terminal-logging.regression.test.cjs",
+    "__tests__/connect-secure-calling-package.regression.test.cjs",
+    "tmp/connect-secure-calling/configuration-checks/android-native-activation-check.test.cjs"
+  ],
+  "observations": {
+    "path": "tmp/connect-secure-calling/native-activation-diagnostics/device-log-review.json",
+    "sha256": "ebe7eac52f42bcc1c98c4708a8f998e0aa649581281ec1b8e937ac5a64788343",
+    "rootCause": "NOT_YET_ESTABLISHED",
+    "installedBinaryProbe": "PENDING_OWNER_RESULT"
+  },
+  "limits": {
+    "activationDeadlineMs": 3000,
+    "activeEventAndBridgeAckRequired": true,
+    "unregisteredCallCannotActivate": true,
+    "rawNativeErrorsRetained": false,
+    "activeEncryptionFaultsRemainFatal": true,
+    "hostedChanges": 0,
+    "providerCalls": 0
+  },
+  "symptomResolved": false,
+  "deviceRetest": "PENDING",
+  "remoteRevocation": "UNVERIFIED",
+  "strictNativeReceive": "UNVERIFIED_REQUIRES_SEPARATE_NATIVE_HARDENING",
+  "productionReadiness": "NOT_ESTABLISHED"
+}

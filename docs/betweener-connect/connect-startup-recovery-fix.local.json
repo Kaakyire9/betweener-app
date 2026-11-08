@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "scope": "LOCAL_CLIENT_REPAIR_NO_HOSTED_DEPLOYMENT",
+  "authorisation": "Owner: Lets do the next repairs",
+  "frozenPackage": {
+    "path": "docs/betweener-connect/connect-secure-calling.proposal.json",
+    "sha256": "37d133fb060af0eaed44f4526d5d60fe4c08f3065fd3d2ede6d2f63d573f6c72"
+  },
+  "baseLocalChange": {
+    "path": "docs/betweener-connect/connect-android-audio-route-fix.local.json",
+    "sha256": "953fc1bf3ec17fb1e2e6e5b0eb1ddf3692361e3222d379727d141be8fc2463ec"
+  },
+  "reason": "Bounded same-call startup recovery after confirmed release and fresh admission; fail-closed disposal guard for late encrypted media callbacks.",
+  "files": [
+    {
+      "path": "features/connect/voice/voice-controller.ts",
+      "beforeSha256": "8bf56cb3a8382cdc1885506613875abe0ed7f111ec46278801df0bfb2f142f7c",
+      "beforeSnapshot": "tmp/connect-secure-calling/startup-recovery-fix/voice-controller.ts.before",
+      "afterSha256": "1fa296158f60d63aae8a825263e9f76be1edbfa062a2ddb4f24f458bc80b9392"
+    },
+    {
+      "path": "features/connect/media/recovery-policy.ts",
+      "beforeSha256": "026d7901319e0192938ee0f0f73b61c3f74c5d51fdf2e118bd6a35d608858e8b",
+      "beforeSnapshot": "tmp/connect-secure-calling/startup-recovery-fix/recovery-policy.ts.before",
+      "afterSha256": "59a469da69bd3ad1f87788122ad95e12581b8940dfdc58914b491752a23311f2"
+    },
+    {
+      "path": "features/connect/media/native-stream-sdk.ts",
+      "beforeSha256": "4cf607e6fade0eef1a8da787c6de0a8ee692051bf5e4e69942a0b6c9d36b4bc0",
+      "beforeSnapshot": "tmp/connect-secure-calling/startup-recovery-fix/native-stream-sdk.ts.before",
+      "afterSha256": "5863414413380670ef870c7b413af19556cd07bbb717f191bbb5c33fe26b0fad"
+    },
+    {
+      "path": "features/connect/experimental/encryption-transform-guard.ts",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "49bc2f4359c30b461639f4abbceb35a06aacd0d6005efb5d4a52c0d6ea0feed3"
+    }
+  ],
+  "regressions": [
+    "__tests__/connect-startup-recovery.regression.test.cjs",
+    "__tests__/connect-encrypted-native-owner.regression.test.cjs"
+  ],
+  "limits": {
+    "attemptsPerCall": 2,
+    "recoveryDeadlineMs": 20000,
+    "ownerReleaseDeadlineMs": 8000,
+    "videoResumesOff": true,
+    "plaintextFallback": false,
+    "muteStatePreserved": true
+  },
+  "hostedChanges": 0,
+  "newBuildRequired": false,
+  "deviceRetest": "PENDING",
+  "remoteRevocation": "UNVERIFIED"
+}

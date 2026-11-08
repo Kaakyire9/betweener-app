@@ -95,14 +95,16 @@ for (const platform of ['ios', 'android']) test(`${platform} bootstrap avoids de
   f.appState.currentState = 'background';
   assert.equal(environment.lifecycle.appState(), 'background');
   f.subscriptions.get('change')('background');
-  if (platform === 'android') f.subscriptions.get('blur')();
+  if (platform === 'android') { f.subscriptions.get('blur')(); f.appState.currentState = 'active'; f.subscriptions.get('focus')(); }
   else assert.equal(f.subscriptions.has('blur'), false);
-  assert.deepEqual(states, platform === 'android' ? ['background', 'inactive'] : ['background']);
+  assert.deepEqual(states, platform === 'android' ? ['background', 'inactive', 'active'] : ['background']);
   unsubscribe();
   assert.equal(f.subscriptions.size, 0);
-  assert.deepEqual(f.removed, platform === 'android' ? ['change', 'blur'] : ['change']);
+  assert.deepEqual(f.removed, platform === 'android' ? ['change', 'blur', 'focus'] : ['change']);
   assert.equal(await environment.permission(), 'granted');
   assert.deepEqual(f.permissions(), { reads: 1, requests: 1 });
+  assert.equal(await environment.checkPermission(), 'denied');
+  assert.deepEqual(f.permissions(), { reads: 2, requests: 1 }, 'background checks never prompt for a new permission');
   assert.deepEqual(f.deprecatedReads, []);
 });
 

@@ -1,0 +1,100 @@
+{
+  "scope": "LOCAL_CONNECT_RECEIVER_RETIREMENT_AND_FAULT_TRUTH",
+  "preparedAt": "2026-11-08T17:15:44.752678+00:00",
+  "observedCall": "c-febd4128ea65e5a4",
+  "deviceObservation": {
+    "userReportedEndOn": "ios",
+    "speechClearBothWays": true,
+    "iosFirstFaultSequence": 94,
+    "fault": "e2ee.unencrypted_frame",
+    "track": "AUDIO",
+    "party": "remote",
+    "safetyCodesCompared": false,
+    "packetOrigin": "UNVERIFIED",
+    "previousPublisherFirstRepairEliminatedDeviceFault": false
+  },
+  "changes": {
+    "receiverCloseRequestedBeforeSenderAndCaptureMutation": true,
+    "hungOrFailedReceiverDoesNotDelayCaptureStopOrLeave": true,
+    "publisherStillClosesBeforeCaptureReleaseAndUnpublish": true,
+    "lateNativeFaultCorrectsItsCanonicalCallSummary": true,
+    "retainedEncryptionFaultCannotProduceFailedFalse": true,
+    "successorCallNotContaminatedByPriorFault": true,
+    "activeEncryptionFailuresRemainFatal": true,
+    "managerDisposalStillRequiresSdkLeave": true,
+    "plaintextFallbackAdded": false
+  },
+  "validation": {
+    "initialFailingRegressions": 11,
+    "focusedRegressions": {
+      "tests": 61,
+      "pass": 61,
+      "fail": 0
+    },
+    "regressionFiles": 25,
+    "testsPassed": 537,
+    "testsFailed": 0,
+    "offlineNetworkGuardUsed": true,
+    "installedSdkReceiverAndPublisherJsOrderTested": true,
+    "changedFilesLintPassed": true,
+    "fullRepositoryTypecheckPassed": true,
+    "nativePatchAppliesToPinnedSource": true,
+    "nativeCppTests": "NOT_RUN",
+    "nativeArtifactCompilation": "NOT_RUN",
+    "physicalDeviceRetest": "NOT_RUN"
+  },
+  "nativeReviewArtifact": "native-patches/stream-webrtc-145.17.0/strict-framing.patch",
+  "nativePatchInstalled": false,
+  "remaining": [
+    "Pinned native DecryptFramed currently forwards nonempty unframed frames before JavaScript fault handling. Prepared strict-drop patch is review-only.",
+    "Review global framed-manager compatibility, run native crypto tests and produce reviewed immutable Android/iOS WebRTC artifacts before approved staging builds.",
+    "Observed packet source remains unverified. Strict receive rejection does not promise to remove unencrypted-frame notifications.",
+    "Repeat two-phone foreground voice validation with both logs, End from each phone and safety-code comparison after the selected repair is installed."
+  ],
+  "files": [
+    {
+      "path": "features/connect/media/connect-native-owner.ts",
+      "beforeSha256": "b8ffb2831c639e349cd821c2ca1d9be25c32611a03c1d7a61d9e31782821a3c3",
+      "afterSha256": "cc966c7e5c1e56c21d832a679307d185459f8bbd98e0473296e3b08db2124734"
+    },
+    {
+      "path": "features/connect/diagnostics/connect-terminal-logger.ts",
+      "beforeSha256": "f64a3364b4b80eaa7bca296e629568fdd9e944f1b5210cd6c806d700945b65b5",
+      "afterSha256": "ff3d9c6eb3f325c63f9e250a0b4fe09b73ef1f827379827b398477df8df93206"
+    },
+    {
+      "path": "__tests__/connect-encrypted-hangup.regression.test.cjs",
+      "beforeSha256": "d5735eec8ade44a7735327f886b21da355a8347919628575d98414b8607500e6",
+      "afterSha256": "b0685a7ec0a7ac602989b3aebc77ffe96ab7efb893eb79bb266f70f98abc883e"
+    },
+    {
+      "path": "__tests__/connect-terminal-logging.regression.test.cjs",
+      "beforeSha256": "7fdee5f4bdc3fc5510739ce859356e21cc9bce5bda945345219f04f89f86ff0a",
+      "afterSha256": "3563b8a0f3bc2afb31d780387fd7f87ab7976fd2e69270263d11f4c721ee917f"
+    },
+    {
+      "path": "native-patches/stream-webrtc-145.17.0/strict-framing.patch",
+      "beforeSha256": null,
+      "afterSha256": "789936f4866c5f05760715fba633ceb402a8089d50bc1674161d3afdfb8aa7d5"
+    },
+    {
+      "path": "native-patches/stream-webrtc-145.17.0/manifest.json",
+      "beforeSha256": null,
+      "afterSha256": "69b8b58a705e3223e8151d3e2c6425a6dda190a6e82d9b2b3fa334b177f645b7"
+    },
+    {
+      "path": "native-patches/stream-webrtc-145.17.0/README.md",
+      "beforeSha256": null,
+      "afterSha256": "a15354a55875bb87ba08ccb2a3e4dd3a690f073facd399632847d58820f51682"
+    }
+  ],
+  "hostedChanges": 0,
+  "providerCalls": 0,
+  "builds": 0,
+  "otaPublications": 0,
+  "callingGatesChanged": false,
+  "videoPublicationEnabled": false,
+  "providerTermination": "UNVERIFIED",
+  "remoteRevocation": "UNVERIFIED",
+  "hangupEncryptionFaultConfirmedFixed": false
+}
