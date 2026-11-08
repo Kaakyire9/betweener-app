@@ -1,0 +1,41 @@
+{
+  "scope": "MACOS_HOST_NATIVE_CRYPTO_VALIDATION_ONLY",
+  "status": "PASS",
+  "repositoryCommit": "c30eee95ead4f5dcb00b7a677730ed7dbc1debee",
+  "workflowRun": 42533471293,
+  "workflowUrl": "https://github.com/Kaakyire9/betweener-app/actions/runs/42533471293",
+  "nativeSource": "eeff9252f32a40d1671974c31c096ce9fa776130",
+  "patchSha256": "789936f4866c5f05760715fba633ceb402a8089d50bc1674161d3afdfb8aa7d5",
+  "depotToolsCommit": "289a37bda3d848cfe16e6c1c599741ed3890ab55",
+  "host": "Darwin",
+  "architecture": "arm64",
+  "original": {
+    "tests": 79,
+    "expectedFailures": 6,
+    "failedTests": [
+      "DefaultEncryptionManager.DecodeBadMagicDropsAsUnencrypted",
+      "DefaultEncryptionManager.DecodeOversizeClearBytesDropsAsUnencrypted",
+      "DefaultEncryptionManager.DecodeTooShortDropsAsUnencrypted",
+      "DefaultEncryptionManager.StrictUnframedDropDoesNotPoisonAes256RoundTrip",
+      "DefaultEncryptionManager.UnframedDropsEveryTrackBeforeAndAfterKeySetup",
+      "FrameCryptorTransformer.FrameTrailerUnframedDrops"
+    ]
+  },
+  "patched": {
+    "tests": 79,
+    "passed": 79,
+    "failed": 0,
+    "disabled": 0,
+    "skipped": 0
+  },
+  "artifacts": {
+    "run.json": "769df22969e2d124e055ca88e907b42f3e2ac4cc84e8009b4487e5d819a5cda1",
+    "unpatched.json": "2c66ec02940f14e3eb2c6964c9670120bf9c2bc3f47ea2933c75689cdf93f4f6",
+    "patched.json": "c8bf5b3048ab59cada54038756dc9b52eaea449125c283bab24320fb3d9f7bd0"
+  },
+  "mobileFrameworksBuilt": 0,
+  "easBuilds": 0,
+  "providerCalls": 0,
+  "phoneVerification": "NOT_RUN",
+  "nativeLibraryIntegration": "NOT_DONE"
+}

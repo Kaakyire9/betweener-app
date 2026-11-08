@@ -62,8 +62,27 @@ test('native CI is manual, read-only and defaults to tests without artifact publ
   const workflow = yaml.parse(fs.readFileSync('.github/workflows/connect-native-crypto.yml', 'utf8'));
   assert.deepEqual(Object.keys(workflow.on), ['workflow_dispatch']);
   assert.equal(workflow.on.workflow_dispatch.inputs.build_ios_artifact.default, false);
+  assert.equal(workflow.on.workflow_dispatch.inputs.build_android_artifact.default, false);
+  assert.equal(workflow.jobs.android_crypto.if, '${{ inputs.build_android_artifact }}');
   assert.deepEqual(workflow.permissions, { contents: 'read' });
   assert.equal(workflow.jobs.macos_crypto['runs-on'], 'macos-26');
   const checkout = workflow.jobs.macos_crypto.steps.find(step => step.uses?.startsWith('actions/checkout@'));
   assert.equal(checkout.with['persist-credentials'], false);
+});
+
+test('Android artifact creation also rejects a failed native-test receipt before creating a source tree', t => {
+  const f = fixture(t); fs.mkdirSync(f.results);
+  fs.writeFileSync(path.join(f.results, 'run.json'), JSON.stringify({ status: 'FAILED' }));
+  const result = spawnSync('python', [path.join(inputs, 'android-build.py'), '--work', f.work, '--input', f.input, '--results', f.results], { encoding: 'utf8', timeout: 15000 });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /passing patched native crypto tests/);
+  assert.equal(fs.existsSync(path.join(f.work, 'src')), false);
+});
+
+test('a checkout cannot request both mobile platforms before validation starts', t => {
+  const f = fixture(t), result = f.run(['--prepare-ios', '--prepare-android']);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /not allowed with argument/);
+  assert.equal(fs.existsSync(f.results), false);
+  assert.equal(fs.existsSync(path.join(f.work, 'src')), false);
 });
