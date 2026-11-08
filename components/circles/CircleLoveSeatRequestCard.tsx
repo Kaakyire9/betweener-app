@@ -7,7 +7,7 @@ import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-nativ
 import type { CircleLoveSeatRequest } from '@/lib/circles/pulse/circle-pulse-types';
 import { useCirclePulsePalette, type CirclePulsePalette } from '@/lib/circles/pulse/circle-pulse-theme';
 
-const chairFront = require('@/assets/images/circle-pulse/love-seat/chair-front.png');
+const chairFront = require('@/assets/images/circle-pulse/love-seat/chair-front.webp');
 
 type Props = {
   request: CircleLoveSeatRequest | null;

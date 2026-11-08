@@ -1,4 +1,4 @@
-import { readOfflineState, writeOfflineEnvelope, type OfflineReadState } from '@/lib/offline/core';
+import { readOfflineState, removeOfflineEnvelope, writeOfflineEnvelope, type OfflineReadState } from '@/lib/offline/core';
 import type { CirclePulseItem } from '@/lib/circles/pulse/circle-pulse-types';
 
 const CIRCLE_PULSE_SNAPSHOT_VERSION = 1;
@@ -30,4 +30,12 @@ export async function writeCirclePulseSnapshot(
     kind: 'circle-pulse-snapshot',
     staleAfterMs: options?.staleAfterMs ?? CIRCLE_PULSE_STALE_AFTER_MS,
   });
+}
+
+export async function clearCirclePulseSnapshot(
+  circleId: string,
+  viewerProfileId?: string | null,
+) {
+  if (!circleId || !viewerProfileId) return;
+  await removeOfflineEnvelope(buildCirclePulseSnapshotStoreKey(circleId, viewerProfileId));
 }

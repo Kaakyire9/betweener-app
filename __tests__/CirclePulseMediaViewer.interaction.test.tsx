@@ -123,7 +123,7 @@ describe('CirclePulseMediaViewer', () => {
     expect(onOpenComments).toHaveBeenCalledWith(editorialItem);
   });
 
-  it('uses intro-video chrome for direct Circle videos', async () => {
+  it('starts direct Circle videos muted and supports independent audio control', async () => {
     const videoItem = {
       ...editorialItem,
       id: 'pulse-video',
@@ -144,8 +144,9 @@ describe('CirclePulseMediaViewer', () => {
 
     expect(getByText('Circle video')).toBeTruthy();
     expect(getByText('Swipe down to close')).toBeTruthy();
+    await fireEvent.press(getByLabelText('Unmute Circle video'));
+    expect(getByLabelText('Mute Circle video')).toBeTruthy();
     await fireEvent.press(getByLabelText('Mute Circle video'));
-
     expect(getByLabelText('Unmute Circle video')).toBeTruthy();
   });
 

@@ -366,3 +366,20 @@ export const clearOfflineImagesForOwner = async (ownerUserId: string) => {
     await writeImageCacheMap(retained);
   });
 };
+
+export const clearOfflineImagesMatchingSourceKey = async (sourceKeyFragment: string) => {
+  if (!sourceKeyFragment) return;
+  await queueImageManifestMutation(async () => {
+    const entries = await readImageCacheMap();
+    const retained: ImageCacheMap = {};
+    await Promise.all(Object.entries(entries).map(async ([key, entry]) => {
+      if (!key.includes(sourceKeyFragment) && !entry.sourceKey.includes(sourceKeyFragment)) {
+        retained[key] = entry;
+        return;
+      }
+      imageDownloads.delete(key);
+      await FileSystem.deleteAsync(entry.localUri, { idempotent: true }).catch(() => undefined);
+    }));
+    await writeImageCacheMap(retained);
+  });
+};

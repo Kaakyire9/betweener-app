@@ -3,7 +3,8 @@ import React from 'react';
 import { Alert } from 'react-native';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 
-jest.setTimeout(20000);
+// This screen exercises many async hooks; allow instrumented and slower CI runs.
+jest.setTimeout(60000);
 
 let mockParams: Record<string, any> = { id: 'circle-1' };
 let mockProfile: any = { id: 'profile-me', city: 'London' };
@@ -192,6 +193,11 @@ jest.mock('@/lib/circles/pulse/circle-pulse-service', () => ({
   cancelCircleLoveSeatRequest: jest.fn(async () => true),
   endCircleLoveSeat: jest.fn(),
   fetchCirclePulseDiscussionReadStates: jest.fn(async () => []),
+  fetchSavedCircleMediaIds: jest.fn(async () => new Set()),
+  recordCircleMediaAggregateEvent: jest.fn(async () => undefined),
+  fetchCircleMediaReactionSummaries: jest.fn(async () => []),
+  toggleSavedCircleMedia: jest.fn(async () => true),
+  toggleCircleMediaReaction: jest.fn(async () => 'love'),
   fetchCirclePulseWelcomeViewStates: jest.fn(async () => []),
   fetchMyCircleLoveSeatRequest: jest.fn(async () => null),
   recordCirclePulseWelcomeEvent: jest.fn(async () => 0),

@@ -15,7 +15,8 @@ test('Circle Pulse is a stable vertical journal without nested carousel controls
   assert.match(board, /getCirclePulseHeroEyebrow/);
   assert.doesNotMatch(board, /The clearest next step|PRIORITY/);
   assert.match(board, /CirclePulseWelcomeConstellation/);
-  assert.match(board, /groups\.map/);
+  assert.match(board, /groups\.filter\(\(group\) => group\.key !== 'media'\)\.map/);
+  assert.match(board, /CircleMediaHubSection/);
   assert.doesNotMatch(board, /AUTO_ADVANCE_MS|Next Circle spotlight|Previous Circle spotlight/);
   assert.doesNotMatch(constellation, /Next new member|Previous new member/);
 });
@@ -31,10 +32,10 @@ test('Love Seat reveals the featured portrait through a restrained one-shot chai
   assert.match(board, /CircleLoveSeatPortrait/);
   assert.doesNotMatch(board, /CircleLoveSeatCeremony/);
   assert.match(loveSeatArrivalPrompt, /CircleLoveSeatCeremony/);
-  assert.match(loveSeatCeremony, /chair-front\.png/);
-  assert.match(loveSeatCeremony, /chair-three-quarter\.png/);
-  assert.match(loveSeatCeremony, /chair-dissolve\.png/);
-  assert.match(loveSeatCeremony, /portrait-halo\.png/);
+  assert.match(loveSeatCeremony, /chair-front\.webp/);
+  assert.match(loveSeatCeremony, /chair-three-quarter\.webp/);
+  assert.match(loveSeatCeremony, /chair-dissolve\.webp/);
+  assert.match(loveSeatCeremony, /portrait-halo\.webp/);
   assert.match(loveSeatCeremony, /duration: 3700/);
   assert.match(loveSeatCeremony, /AccessibilityInfo\.isReduceMotionEnabled/);
   assert.doesNotMatch(loveSeatCeremony, /Animated\.loop|setInterval/);

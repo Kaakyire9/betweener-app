@@ -5,7 +5,7 @@ import { Pressable, StyleSheet, View } from 'react-native';
 
 import type { CirclePulsePalette } from '@/lib/circles/pulse/circle-pulse-theme';
 
-const portraitHalo = require('@/assets/images/circle-pulse/love-seat/portrait-halo.png');
+const portraitHalo = require('@/assets/images/circle-pulse/love-seat/portrait-halo.webp');
 
 type Props = {
   avatarUrl?: string | null;

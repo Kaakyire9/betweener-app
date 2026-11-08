@@ -22,7 +22,7 @@ test('Circle Pulse creates a fresh Realtime topic before registering callbacks',
 });
 
 test('private Love Seat requests use the original ceremonial chair asset', () => {
-  assert.match(requestCard, /chair-front\.png/);
+  assert.match(requestCard, /chair-front\.webp/);
   assert.match(requestCard, /source=\{chairFront\}/);
   assert.doesNotMatch(requestCard, /name=\{queued \? 'shield-check-outline' : 'seat-outline'\}/);
 });

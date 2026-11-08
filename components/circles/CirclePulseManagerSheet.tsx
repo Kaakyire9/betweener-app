@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import CirclePulseMediaComposer from './CirclePulseMediaComposer';
+import CircleMediaSubmissionQueue from './CircleMediaSubmissionQueue';
 import CircleLoveSeatDurationPicker from './CircleLoveSeatDurationPicker';
 import {
   archiveCirclePulseItem,
@@ -78,6 +79,7 @@ export default function CirclePulseManagerSheet({
   const [loveSeatRequests, setLoveSeatRequests] = useState<CircleLoveSeatHostRequest[]>([]);
   const [loveSeatDurationHours, setLoveSeatDurationHours] = useState<CircleLoveSeatDurationHours>(24);
   const [mediaComposerOpen, setMediaComposerOpen] = useState(false);
+  const [mediaUploadProgress, setMediaUploadProgress] = useState<number | null>(null);
   const featured = useMemo(
     () => ({
       hostNote: featuredItems.some((item) => item.type === 'host_note'),
@@ -325,15 +327,24 @@ export default function CirclePulseManagerSheet({
       return;
     }
     setSavingKey('editorial-media');
+    setMediaUploadProgress(0);
     try {
-      await createCirclePulseEditorialMedia(circleId, actorProfileId, input);
+      const result = await createCirclePulseEditorialMedia(circleId, actorProfileId, input, {
+        onUploadProgress: setMediaUploadProgress,
+      });
       await onFeatured();
-      Alert.alert('Added to Circle Pulse', 'Members will now see this Circle Media spotlight.');
+      Alert.alert(
+        result?.state === 'published' ? 'Added to Circle Pulse' : 'Media is awaiting approval',
+        result?.state === 'published'
+          ? 'Members will now see this Circle Media spotlight.'
+          : 'It will appear after safety review and every named person approves.',
+      );
       setMediaComposerOpen(false);
       onClose();
     } catch (error) {
       Alert.alert('Circle Media', error instanceof Error ? error.message : 'Could not publish this Circle Media right now.');
     } finally {
+      setMediaUploadProgress(null);
       setSavingKey(null);
     }
   };
@@ -603,9 +614,14 @@ export default function CirclePulseManagerSheet({
             <Text style={styles.sectionTitle}>Circle Media</Text>
             <Text style={styles.subtitle}>Share host-curated images, short guides, and Circle promotions with members.</Text>
           </View>
+          {actorProfileId ? (
+            <CircleMediaSubmissionQueue circleId={circleId} actorProfileId={actorProfileId} onChanged={onFeatured} />
+          ) : null}
           {mediaComposerOpen ? (
             <CirclePulseMediaComposer
               saving={savingKey === 'editorial-media'}
+              uploadProgress={mediaUploadProgress}
+              subjectCandidates={loveSeatCandidates}
               onCancel={() => setMediaComposerOpen(false)}
               onPublish={publishEditorialMedia}
             />

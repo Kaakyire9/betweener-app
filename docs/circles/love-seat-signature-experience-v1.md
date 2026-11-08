@@ -46,7 +46,9 @@ Performance hardening: `20261030163332_love_seat_signature_experience_v1_perform
 
 ## Asset performance and production specification
 
-Current approved source PNGs are 1312×1199 and total 7,603,382 bytes. V1 runtime references three chair frames (`front`, `three-quarter`, `dissolve`) plus the halo; the side and reduced-motion source frames are not bundled by this surface. Decoded peak must still be measured on a low-memory physical device before release.
+The four runtime assets are tightly cropped transparent WebPs. They total **216,382 bytes** compressed and have a conservative RGBA decoded-size estimate of **3,150,336 bytes**. All runtime canvases are at or below 512×512; the halo is 384×371. `npm run verify:love-seat-assets` enforces the 1.25 MB compressed and 18 MB decoded-estimate ceilings in CI/release checks.
+
+The original PNGs remain source assets only. No Love Seat runtime component imports them.
 
 Production delivery target for a true rotating-chair asset set:
 
@@ -59,21 +61,21 @@ Production delivery target for a true rotating-chair asset set:
 - preload only the first two frames and dispose the modal after settling;
 - static portrait remains available if any frame fails.
 
-The current three-frame treatment is a polished crossfade, not true 3D rotation. Do not describe it as a 360-degree chair until the production asset set above is supplied and device-validated.
+The current three-frame treatment is a polished crossfade, not true 3D rotation. Do not describe it as a 360-degree chair.
 
 An optional featured-member opening question is intentionally deferred. Adding it cleanly requires a separate moderated content field, edit/report lifecycle, and notification policy; it is not multiplexed into the private request note or public quote.
 
-## Staging rollout order
+## Production promotion order
 
-No deployment was performed as part of implementation.
+The two Love Seat V1 migrations are applied and verified on staging. Production has not been changed.
 
-1. Confirm staging link and migration history with `scripts\supabase-staging.cmd migration list`.
-2. Preview schema changes with `scripts\supabase-staging.cmd db push --dry-run`.
-3. Apply only after explicit approval: `scripts\supabase-staging.cmd db push`.
-4. Verify `circle_love_seat_updates` is the only new Love Seat publication table.
-5. Verify `cron.job` contains exactly one enabled `circle-love-seat-cleanup-v1` row; if `pg_cron` is absent, record cleanup as blocked.
-6. Publish a staging app build/OTA only after migration verification.
-7. Run the two-client matrix below before any production promotion.
+1. Freeze the reviewed Love Seat client and migration diff; exclude unrelated dirty-worktree changes.
+2. Confirm the production project identity and migration history with the repository Supabase wrapper.
+3. Preview only the pending Love Seat migrations with a linked production dry-run; stop on unexpected history or schema drift.
+4. Apply only after explicit production-deployment approval.
+5. Verify `circle_love_seat_updates` is the only Love Seat table in `supabase_realtime`, both V1 tables have RLS enabled, direct client grants remain revoked, and authenticated RPC grants match the migration.
+6. Verify exactly one enabled `circle-love-seat-cleanup-v1` cron row and a successful run.
+7. Release the client only after the database verification, then run the request → select → accept → converge → ceremony smoke test with two production-safe accounts.
 
 Rollback: remove the cleanup job, remove only `circle_love_seat_updates` from the publication, revert clients to foreground/RPC refresh, then drop the V1 RPCs/triggers/tables only after confirming no client still calls them. Do not roll back the older private-request migration.
 
@@ -94,11 +96,20 @@ Rollback: remove the cleanup job, remove only `circle_love_seat_updates` from th
 ## Validation status
 
 - TypeScript compile: PASS.
-- Focused local Love Seat regressions: PASS.
+- Focused Love Seat source contracts: PASS, 35/35.
+- Focused React Native interactions: PASS, 40/40; process exits cleanly without `--forceExit`.
 - Notification routing regression: PASS when run with the staging environment flag.
 - SQL source-contract regression: PASS.
-- Migration applied to staging: NOT RUN.
-- Two-client staging lifecycle: NOT RUN.
-- Physical-device animation/performance/accessibility: NOT RUN.
-- Production asset budget: PARTIAL; current approved sources exceed the target and true rotation assets are not yet available.
-- Production readiness: NOT CLAIMED.
+- Migration applied to staging: PASS; both V1 migrations are present.
+- Staging publication/RLS/RPC/cron verification: PASS; latest observed cleanup run succeeded on 2026-11-05.
+- Two-client staging lifecycle: PASS, owner-confirmed on 2026-11-05 for request → host selection → member acceptance → both-device convergence → ceremony.
+- Runtime asset budget: PASS; 216,382 compressed bytes and 3,150,336 estimated decoded RGBA bytes.
+- Physical-device animation and core interaction: PASS by the owner-confirmed two-device staging run. A dedicated low-memory allocation profile remains recommended release telemetry, not a V1 blocker at the current 3.0 MiB static decoded estimate.
+- Local Android Expo export preflight: INCONCLUSIVE; the full workspace Metro export stalled twice after startup on Windows without emitting a Love Seat asset or resolver error. The normal EAS release build remains a required promotion gate.
+- Production readiness: **READY FOR CONTROLLED PRODUCTION PROMOTION**. This is a code/staging declaration, not evidence that the production migration or app release has occurred.
+
+## Accepted advisor exceptions
+
+- `circle_love_seat_arrival_acknowledgements` intentionally has RLS with no direct client policy because it is RPC-only and has no anon/authenticated table grants.
+- The two authenticated `SECURITY DEFINER` arrival RPCs are intentional. They validate `auth.uid()`, profile ownership, active Circle membership, Circle/Love Seat binding, and active-seat state before reading or writing acknowledgements.
+- The new viewer index can appear unused until production traffic exercises cross-device ceremony suppression.

@@ -7,6 +7,7 @@ import type { CircleMemberPortrait } from '@/components/circles/CircleMemberPort
 import CirclePulseBoard from '@/components/circles/CirclePulseBoard';
 import CirclePulseCommentSheet from '@/components/circles/CirclePulseCommentSheet';
 import CirclePulseManagerSheet from '@/components/circles/CirclePulseManagerSheet';
+import CircleMediaSubmissionSheet from '@/components/circles/CircleMediaSubmissionSheet';
 import CirclePulseMediaViewer from '@/components/circles/CirclePulseMediaViewer';
 import CirclePulseModerationSheet from '@/components/circles/CirclePulseModerationSheet';
 import CircleDetailHero from '@/components/circles/CircleDetailHero';
@@ -36,7 +37,7 @@ import { useAuth } from '@/lib/auth-context';
 import { getCircleAccessLabel, getCircleScopeLabel } from '@/lib/circles/circle-display';
 import { getCircleLocationAffinity } from '@/lib/location/location-intelligence';
 import { buildLocationDisplay } from '@/lib/location/location-display';
-import { endCircleLoveSeat, fetchCirclePulseDiscussionReadStates } from '@/lib/circles/pulse/circle-pulse-service';
+import { endCircleLoveSeat, fetchCirclePulseDiscussionReadStates, recordCircleMediaAggregateEvent } from '@/lib/circles/pulse/circle-pulse-service';
 import { respondToCircleInvitation } from '@/lib/circles/circle-invitations';
 import { uploadImage } from '@/lib/image-upload';
 import { cacheOfflineImage, getOfflineImageUri, resolveOfflineImageUri } from '@/lib/offline/image-store';
@@ -657,6 +658,7 @@ export default function CircleDetailScreen() {
   const [pulseCommentFocusId, setPulseCommentFocusId] = useState<string | null>(null);
   const [pulseCommentParentFocusId, setPulseCommentParentFocusId] = useState<string | null>(null);
   const [pulseMediaTarget, setPulseMediaTarget] = useState<CirclePulseItem | null>(null);
+  const [circleMediaSubmissionOpen, setCircleMediaSubmissionOpen] = useState(false);
   const [pulseModerationOpen, setPulseModerationOpen] = useState(false);
   const [inviteSheetOpen, setInviteSheetOpen] = useState(false);
   const [circleOptionsOpen, setCircleOptionsOpen] = useState(false);
@@ -3746,6 +3748,7 @@ export default function CircleDetailScreen() {
       }
     }
     if (item.mediaUrl || item.imageUrl) {
+      void recordCircleMediaAggregateEvent(item.id, 'open');
       setPulseMediaTarget(item);
       return;
     }
@@ -4614,6 +4617,7 @@ export default function CircleDetailScreen() {
                 joinLabel={joinLabel}
                 onJoin={handleJoin}
                 onAddToPulse={() => setPulseManagerOpen(true)}
+                onSubmitMedia={() => setCircleMediaSubmissionOpen(true)}
                 onAnswerPrompt={openPulsePrompt}
                 onOpenGathering={openPulseGathering}
                 onOpenMedia={openPulseMedia}
@@ -5815,6 +5819,13 @@ export default function CircleDetailScreen() {
         onClose={() => setPulseManagerOpen(false)}
         onFeatured={reloadPulse}
         onOpenModeration={() => setPulseModerationOpen(true)}
+      />
+      <CircleMediaSubmissionSheet
+        visible={circleMediaSubmissionOpen}
+        circleId={circleId}
+        actorProfileId={currentProfileId}
+        subjectCandidates={pulseLoveSeatCandidates}
+        onClose={() => setCircleMediaSubmissionOpen(false)}
       />
       <CirclePulseCommentSheet
         visible={!!pulseCommentTarget}

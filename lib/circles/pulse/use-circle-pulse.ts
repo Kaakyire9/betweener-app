@@ -4,7 +4,8 @@ import { supabase } from '@/lib/supabase';
 import { fetchCirclePulseItemSnapshot, fetchCirclePulseItems } from './circle-pulse-service';
 import type { CirclePulseItem } from './circle-pulse-types';
 import { useCirclePulseRefresh } from './use-circle-pulse-refresh';
-import { readCirclePulseSnapshotState, writeCirclePulseSnapshot } from '@/lib/offline/circle-pulse-store';
+import { clearCirclePulseSnapshot, readCirclePulseSnapshotState, writeCirclePulseSnapshot } from '@/lib/offline/circle-pulse-store';
+import { clearOfflineImagesMatchingSourceKey } from '@/lib/offline/image-store';
 import { isLikelyNetworkError } from '@/lib/network';
 import { isNetworkConnectionAvailable } from '@/lib/network-state';
 import { createEphemeralRealtimeTopic } from '@/lib/realtime/realtime-channel-topic';
@@ -99,6 +100,14 @@ export function useCirclePulse({
     canPersistSnapshotRef.current = false;
     setItems([]);
     setError(null);
+  }, [circleId, enabled, viewerProfileId]);
+
+  useEffect(() => {
+    if (enabled || !circleId || !viewerProfileId) return;
+    void Promise.all([
+      clearCirclePulseSnapshot(circleId, viewerProfileId),
+      clearOfflineImagesMatchingSourceKey(`circle-pulse:${circleId}:`),
+    ]);
   }, [circleId, enabled, viewerProfileId]);
 
   useEffect(() => {

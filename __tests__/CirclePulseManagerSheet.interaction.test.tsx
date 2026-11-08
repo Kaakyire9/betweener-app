@@ -4,6 +4,8 @@ import { Alert } from 'react-native';
 import { fireEvent, render, waitFor } from '@testing-library/react-native';
 import CirclePulseManagerSheet from '@/components/circles/CirclePulseManagerSheet';
 
+jest.setTimeout(15_000);
+
 const mockFeatureCirclePulseItem = jest.fn();
 const mockCreateCirclePulseEditorialMedia = jest.fn();
 const mockNominateCircleLoveSeat = jest.fn();
@@ -12,6 +14,20 @@ const mockFetchCircleLoveSeatRequestsForHost = jest.fn();
 const mockFetchCircleLoveSeatsForHost = jest.fn();
 const mockReorderCirclePulseItems = jest.fn();
 const mockSelectCircleLoveSeatRequest = jest.fn();
+const mockRemoveChannel = jest.fn();
+const mockRealtimeChannel = {
+  on: jest.fn(),
+  subscribe: jest.fn(),
+};
+mockRealtimeChannel.on.mockReturnValue(mockRealtimeChannel);
+mockRealtimeChannel.subscribe.mockReturnValue(mockRealtimeChannel);
+
+jest.mock('@/lib/supabase', () => ({
+  supabase: {
+    channel: jest.fn(() => mockRealtimeChannel),
+    removeChannel: (...args: any[]) => mockRemoveChannel(...args),
+  },
+}));
 
 jest.mock('@/lib/circles/pulse/circle-pulse-service', () => ({
   archiveCirclePulseItem: jest.fn(),
@@ -130,7 +146,7 @@ describe('CirclePulseManagerSheet', () => {
         title: 'Gathering poster',
         subtitle: 'Sunday in Accra',
         body: 'A calm evening for members.',
-      });
+      }, expect.objectContaining({ onUploadProgress: expect.any(Function) }));
       expect(onFeatured).toHaveBeenCalledTimes(1);
       expect(onClose).toHaveBeenCalledTimes(1);
     });

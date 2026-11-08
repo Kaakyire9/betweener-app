@@ -408,7 +408,7 @@ describe('CirclePulseBoard', () => {
 
     expect(getByText('Gathering image')).toBeTruthy();
     expect(getByText('First date guide')).toBeTruthy();
-    expect(getByText('Moments worth opening')).toBeTruthy();
+    expect(getByText('Watch, save and talk about it')).toBeTruthy();
     expect(queryByLabelText('Next Circle spotlight')).toBeNull();
   });
 

@@ -30,6 +30,29 @@ test('duration, notifications, cleanup, and legacy grants are bounded', () => {
   assert.match(migration, /revoke all on function public\.rpc_nominate_circle_love_seat\(uuid, uuid, uuid, text, text\) from public, anon/);
 });
 
+test('push lifecycle is complete and never reads the private request note', () => {
+  const notificationFunction = migration.match(
+    /create or replace function public\.notify_circle_love_seat_push\(\)[\s\S]*?\n\$\$;/,
+  )?.[0];
+
+  assert.ok(notificationFunction);
+  for (const eventType of [
+    'request_received',
+    'invitation',
+    'selected',
+    'accepted',
+    'declined',
+    'withdrawn',
+    'ended',
+  ]) {
+    assert.match(notificationFunction, new RegExp(`'${eventType}'`));
+  }
+  assert.doesNotMatch(notificationFunction, /\bnew\.reason\b|\bnew\.note\b/);
+  assert.match(notificationFunction, /'data', jsonb_build_object\(/);
+  assert.match(notificationFunction, /'circle_id', new\.circle_id/);
+  assert.match(notificationFunction, /'love_seat_id', new\.id/);
+});
+
 test('arrival acknowledgement and invalidation reads are indexed for scale', () => {
   assert.match(performanceMigration, /circle_love_seat_arrival_ack_viewer_idx/);
   assert.match(performanceMigration, /\(select auth\.uid\(\)\)/);

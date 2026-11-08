@@ -22,10 +22,10 @@ type Props = {
   onOpenProfile?: () => void;
 };
 
-const chairFront = require('@/assets/images/circle-pulse/love-seat/chair-front.png');
-const chairThreeQuarter = require('@/assets/images/circle-pulse/love-seat/chair-three-quarter.png');
-const chairDissolve = require('@/assets/images/circle-pulse/love-seat/chair-dissolve.png');
-const portraitHalo = require('@/assets/images/circle-pulse/love-seat/portrait-halo.png');
+const chairFront = require('@/assets/images/circle-pulse/love-seat/chair-front.webp');
+const chairThreeQuarter = require('@/assets/images/circle-pulse/love-seat/chair-three-quarter.webp');
+const chairDissolve = require('@/assets/images/circle-pulse/love-seat/chair-dissolve.webp');
+const portraitHalo = require('@/assets/images/circle-pulse/love-seat/portrait-halo.webp');
 
 const imageOpacity = (progress: Animated.Value, inputRange: number[]) => progress.interpolate({
   inputRange,

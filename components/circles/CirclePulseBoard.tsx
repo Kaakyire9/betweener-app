@@ -7,6 +7,8 @@ import { Alert, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'reac
 
 import CircleLoveSeatPortrait from '@/components/circles/CircleLoveSeatPortrait';
 import CircleLoveSeatRequestCard from '@/components/circles/CircleLoveSeatRequestCard';
+import CircleMediaHubSection from '@/components/circles/CircleMediaHubSection';
+import CircleMediaConsentRequests from '@/components/circles/CircleMediaConsentRequests';
 import CirclePulseReveal from '@/components/circles/CirclePulseReveal';
 import CirclePulseWelcomeConstellation, {
   type CirclePulseWelcomeEntry,
@@ -49,6 +51,7 @@ type Props = {
   joinLabel?: string;
   onJoin?: () => void;
   onAddToPulse?: () => void;
+  onSubmitMedia?: () => void;
   onAnswerPrompt?: (promptId: string) => void;
   onOpenGathering?: (gatheringId: string) => void;
   onOpenMedia?: (item: CirclePulseItem) => void;
@@ -511,6 +514,7 @@ export default function CirclePulseBoard({
   joinLabel = 'Join Circle',
   onJoin,
   onAddToPulse,
+  onSubmitMedia,
   onAnswerPrompt,
   onOpenGathering,
   onOpenMedia,
@@ -536,6 +540,7 @@ export default function CirclePulseBoard({
     [items, liveGatheringIds],
   );
   const { orderedItems, welcomeItems, hostNoteItems, heroItem, groups } = presentation;
+  const mediaHubItems = useMemo(() => orderedItems.filter((item) => item.type === 'media'), [orderedItems]);
   const welcomeEntries = useMemo(
     () => buildWelcomeEntries(welcomeItems, welcomeProfileLocationsById),
     [welcomeItems, welcomeProfileLocationsById],
@@ -610,6 +615,7 @@ export default function CirclePulseBoard({
         </CirclePulseReveal>
       ) : (
         <>
+          {viewerProfileId ? <CircleMediaConsentRequests circleId={circleId} actorProfileId={viewerProfileId} /> : null}
           {hostNoteItems.slice(0, 1).map((item) => (
             <CirclePulseReveal key={`host-note:${item.id}`} style={styles.hostNotePrelude}>
               <PulseItemCard
@@ -626,7 +632,7 @@ export default function CirclePulseBoard({
             </CirclePulseReveal>
           ))}
 
-          {heroItem ? (
+          {heroItem && heroItem.type !== 'media' ? (
             <CirclePulseReveal key={`hero:${heroItem.id}`} style={styles.heroSection}>
               <View style={styles.heroHeading}>
                 <View style={[styles.liveDot, { backgroundColor: palette.tealStrong }]} />
@@ -665,7 +671,40 @@ export default function CirclePulseBoard({
             onGalleryOpened={(entries) => void recordEvent(entries.map((entry) => entry.profile.profileId), 'gallery_opened')}
           />
 
-          {groups.map((group, groupIndex) => (
+          {mediaHubItems.length > 0 ? (
+            <CirclePulseReveal delay={95} style={styles.groupSection}>
+              <View style={styles.sectionHeading}>
+                <View style={styles.sectionHeadingCopy}>
+                  <Text style={[styles.sectionEyebrow, { color: palette.teal }]}>CIRCLE MEDIA</Text>
+                  <Text style={[styles.sectionTitle, { color: palette.text }]}>Watch, save and talk about it</Text>
+                  <Text style={[styles.sectionDescription, { color: palette.textMuted }]}>Photos, short films and stories shared safely with this Circle.</Text>
+                </View>
+                <Text style={[styles.groupCount, { color: palette.textMuted }]}>{mediaHubItems.length}</Text>
+              </View>
+              <CircleMediaHubSection
+                circleId={circleId}
+                viewerProfileId={viewerProfileId}
+                items={mediaHubItems}
+                onSubmitMedia={onSubmitMedia}
+                renderItem={(item) => (
+                  <PulseItemCard
+                    item={item}
+                    hero={item.id === heroItem?.id}
+                    unreadCount={Math.max(0, discussionUnreadByItemId?.[item.id] ?? 0)}
+                    palette={palette}
+                    compactWidth={responsive.compactWidth}
+                    onOpenMedia={onOpenMedia}
+                    onOpenComments={onOpenComments}
+                    onReportItem={onReportItem}
+                    viewerProfileId={viewerProfileId}
+                    canManage={canManage}
+                  />
+                )}
+              />
+            </CirclePulseReveal>
+          ) : null}
+
+          {groups.filter((group) => group.key !== 'media').map((group, groupIndex) => (
             <CirclePulseReveal key={group.key} delay={Math.min(240, 70 + (groupIndex * 45))} style={styles.groupSection}>
               <View style={styles.sectionHeading}>
                 <View style={styles.sectionHeadingCopy}>
