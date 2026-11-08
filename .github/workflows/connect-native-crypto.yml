@@ -17,15 +17,14 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: connect-native-crypto-${{ github.ref }}
-  cancel-in-progress: false
-
 jobs:
   macos_crypto:
     name: Pinned native crypto tests and optional iOS artifact
     if: ${{ !inputs.build_android_artifact || inputs.build_ios_artifact }}
     runs-on: macos-26
+    concurrency:
+      group: connect-native-ios-${{ github.ref }}
+      cancel-in-progress: false
     timeout-minutes: 180
     env:
       DEPOT_TOOLS_UPDATE: '0'
@@ -72,6 +71,9 @@ jobs:
     name: Pinned native crypto tests and Android artifact
     if: ${{ inputs.build_android_artifact }}
     runs-on: ubuntu-24.04
+    concurrency:
+      group: connect-native-android-${{ github.ref }}
+      cancel-in-progress: false
     timeout-minutes: 180
     env:
       DEPOT_TOOLS_UPDATE: '0'
