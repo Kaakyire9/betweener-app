@@ -115,7 +115,9 @@ test('session recovery is single-flight and missing credentials require reauthen
   assert.match(authContext, /signOutSupabaseSession\(\{[\s\S]*scope: 'local'/);
   assert.match(signOutSession, /supabase\.auth\.signOut\(\{ scope: options\.scope \}\)/);
   assert.match(authContext, /finally \{[\s\S]*applySignedOutState\(\)/);
-  assert.match(packageManifest, /"@supabase\/supabase-js": "\^2\.118\.0"/);
+  const sdkVersion = JSON.parse(packageManifest).dependencies['@supabase/supabase-js'];
+  assert.match(sdkVersion, /^2\.\d+\.\d+$/); // Keep the reviewed v2 SDK exactly pinned.
+  assert.ok(Number(sdkVersion.split('.')[1]) >= 118);
 });
 
 test('Live catalogue waits for real auth and reloads after auth recovery', () => {

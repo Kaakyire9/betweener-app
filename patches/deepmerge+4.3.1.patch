@@ -1,0 +1,42 @@
+diff --git a/node_modules/deepmerge/index.js b/node_modules/deepmerge/index.js
+--- a/node_modules/deepmerge/index.js
++++ b/node_modules/deepmerge/index.js
+@@ -33,7 +33,9 @@
+ }
+ 
+ function getKeys(target) {
+-	return Object.keys(target).concat(getEnumerableOwnPropertySymbols(target))
++	return Object.keys(target).concat(getEnumerableOwnPropertySymbols(target)).filter(function(key) {
++		return key !== '__proto__'
++	})
+ }
+ 
+ function propertyIsOnObject(object, property) {
+diff --git a/node_modules/deepmerge/dist/cjs.js b/node_modules/deepmerge/dist/cjs.js
+--- a/node_modules/deepmerge/dist/cjs.js
++++ b/node_modules/deepmerge/dist/cjs.js
+@@ -58,7 +58,9 @@
+ }
+ 
+ function getKeys(target) {
+-	return Object.keys(target).concat(getEnumerableOwnPropertySymbols(target))
++	return Object.keys(target).concat(getEnumerableOwnPropertySymbols(target)).filter(function(key) {
++		return key !== '__proto__'
++	})
+ }
+ 
+ function propertyIsOnObject(object, property) {
+diff --git a/node_modules/deepmerge/dist/umd.js b/node_modules/deepmerge/dist/umd.js
+--- a/node_modules/deepmerge/dist/umd.js
++++ b/node_modules/deepmerge/dist/umd.js
+@@ -62,7 +62,9 @@
+ 	}
+ 
+ 	function getKeys(target) {
+-		return Object.keys(target).concat(getEnumerableOwnPropertySymbols(target))
++		return Object.keys(target).concat(getEnumerableOwnPropertySymbols(target)).filter(function(key) {
++		return key !== '__proto__'
++	})
+ 	}
+ 
+ 	function propertyIsOnObject(object, property) {

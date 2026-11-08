@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 
 const cards = [
   ...(['portrait_9_16', 'square_1_1', 'landscape_16_9'] as const).flatMap((canvas) =>

@@ -93,7 +93,8 @@
       "env": {
         "APP_VARIANT": "staging",
         "EXPO_PUBLIC_ENABLE_INTERNAL_TOOLS": "false",
-        "EXPO_USE_POD_REPO_UPDATE": "1"
+        "EXPO_USE_POD_REPO_UPDATE": "1",
+        "EXPO_PUBLIC_ENVIRONMENT": "staging"
       }
     },
     "testflightStaging": {

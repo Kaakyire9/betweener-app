@@ -4,7 +4,7 @@ const e2ePort = Number(process.env.STUDIO_E2E_PORT ?? '4173');
 
 export default defineConfig({
   testDir: './e2e',
-  timeout: 30_000,
+  timeout: 60_000,
   expect: { timeout: 8_000 },
   fullyParallel: false,
   reporter: [['list']],

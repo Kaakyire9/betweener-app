@@ -1,0 +1,92 @@
+{
+  "scope": "LOCAL_PLAY_STAGING_BUILD_READINESS",
+  "recordedFor": "2026-11-08",
+  "status": "READY_FOR_STAGING_BUILD_NOT_A_RELEASE_APPROVAL",
+  "activities": [
+    "Authentication and account deletion",
+    "Circle media and Love Seat",
+    "Connect encrypted lifecycle",
+    "Audio and video calling UI",
+    "Connection Journal and chat timeline",
+    "Native validation tooling",
+    "Compatible dependencies and quality checks"
+  ],
+  "checks": {
+    "mobileTypeScript": "PASS",
+    "workspaceTypeScript": "PASS",
+    "lintErrors": 0,
+    "lintWarnings": 0,
+    "expoDoctor": "21/21 PASS",
+    "nodeRegressions": "2592/2592 PASS",
+    "reactNativeInteractions": "492/492 PASS across 85 suites; no detected open handles",
+    "mockedStudioBrowser": "34/34 PASS; external network denied",
+    "audioWorker": "8/8 PASS",
+    "compositorWorker": "6/6 PASS",
+    "infrastructure": "TypeScript, strict lint, format, 2/2 assertions PASS",
+    "disposableSql": {
+      "journal": 17,
+      "accountDeletion": 10,
+      "secureCalling": 18,
+      "matchedLaunch": 6,
+      "videoActivation": 9,
+      "pendingSecurity": 6
+    },
+    "dependencySecurityAndCleanup": "7/7 PASS",
+    "postinstallPatches": "5/5 apply to integrity-verified pristine packages",
+    "lockfileDryRun": "PASS",
+    "androidHermesExport": "PASS",
+    "androidReleasePolicy": "PASS",
+    "easProjectIsolation": "PASS",
+    "runtimeAssets": "PASS",
+    "publicationCredentialScan": "NO_FINDINGS",
+    "githubCleanCheckoutCi": "VERIFY_AFTER_PUSH"
+  },
+  "dependencies": {
+    "strategy": "Compatible SDK updates; native versions remain pinned to reviewed patches",
+    "expo": "57.0.32",
+    "reactNative": "0.86.3",
+    "supabase": "2.119.0",
+    "audit": {
+      "info": 0,
+      "low": 7,
+      "moderate": 0,
+      "high": 0,
+      "critical": 0,
+      "total": 7
+    },
+    "remainingAdvisory": {
+      "id": "GHSA-gcqx-w48m-w2h4",
+      "severity": "low",
+      "upstreamReleaseFix": false,
+      "localMitigation": "deepmerge+4.3.1.patch with source/target prototype regressions",
+      "note": "npm reports 7 affected package records for this one advisory by version"
+    }
+  },
+  "profile": {
+    "name": "playStaging",
+    "platform": "android",
+    "package": "com.aduboffour.betweener.staging",
+    "easProject": "7f38a835-2da7-419b-a20b-e1a12e021547",
+    "channel": "staging",
+    "environment": "preview",
+    "runtimeEnvironment": "staging",
+    "distribution": "store",
+    "artifact": "app-bundle",
+    "resolvedStagingBackend": true,
+    "googleServicesFileConfigured": true
+  },
+  "limits": {
+    "optionalAndroidGiphyKey": "MISSING; GIF search unavailable",
+    "nativeCryptoCandidate": "REVIEW_ONLY; not integrated into mobile dependencies",
+    "macOsNativeValidation": "NOT_RUN",
+    "physicalDeviceVerification": "NOT_RUN",
+    "remoteProviderRevocation": "UNVERIFIED",
+    "callingReleaseGates": "UNCHANGED",
+    "M2A": "BLOCKED",
+    "M2B": "BLOCKED",
+    "nativeBuildsStarted": 0,
+    "otaPublications": 0,
+    "hostedWrites": 0,
+    "productionBackendAccess": false
+  }
+}

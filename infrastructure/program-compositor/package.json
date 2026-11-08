@@ -8,7 +8,7 @@
   },
   "scripts": {
     "build": "tsc --noEmit",
-    "lint": "eslint bin lib test",
+    "lint": "eslint bin lib test --max-warnings 0",
     "format:check": "prettier --check .",
     "test": "tsx --test test/*.test.ts",
     "check": "npm run build && npm run lint && npm run format:check && npm test",
@@ -16,18 +16,18 @@
     "diff": "cdk diff"
   },
   "dependencies": {
-    "aws-cdk-lib": "^2.274.0",
+    "aws-cdk-lib": "^2.275.0",
     "constructs": "^10.8.1"
   },
   "devDependencies": {
-    "@types/node": "^26.6.5",
-    "aws-cdk": "2.1146.1",
-    "eslint": "^10.13.0",
+    "@types/node": "^26.6.6",
+    "aws-cdk": "2.1148.0",
+    "eslint": "^10.14.0",
     "eslint-plugin-awscdk": "^4.4.4",
     "prettier": "^3.9.10",
     "tsx": "^4.23.15",
     "typescript": "~6.0.3",
-    "typescript-eslint": "^8.72.0"
+    "typescript-eslint": "^8.72.1"
   },
   "allowScripts": {
     "esbuild@0.28.2": true

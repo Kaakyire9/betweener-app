@@ -25,13 +25,22 @@ jobs:
         run: npm ci
 
       - name: Lint
-        run: npm run lint
+        run: npm run lint -- --max-warnings 0
 
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Verify Love Seat runtime assets
+        run: npm run verify:love-seat-assets
+
       - name: Expo Doctor
         run: npx expo-doctor
+
+      - name: Dependency security regressions
+        run: node --require ./test/offline-network-guard.cjs --test __tests__/dependency-security.regression.test.cjs
+
+      - name: Runtime dependency audit
+        run: npm audit --omit=dev --audit-level=moderate
 
       - name: React Native interaction tests
         run: npm run test:rn
@@ -44,3 +53,33 @@ jobs:
 
       - name: Liveness logic tests
         run: npm run test:liveness-logic
+
+  workspace-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+          cache: npm
+      - run: npm ci
+      - run: npm run studio:typecheck
+      - run: npm run program-audio:check
+      - run: npm run program-audio:test
+      - run: npm run program-compositor:check
+      - run: npm run program-compositor:test
+
+  infrastructure-quality:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infrastructure/program-compositor
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+          cache: npm
+          cache-dependency-path: infrastructure/program-compositor/package-lock.json
+      - run: npm ci
+      - run: npm run check

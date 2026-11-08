@@ -18,6 +18,8 @@ module.exports = defineConfig([
       '**/.vercel/**',
       '**/.turbo/**',
       '**/cdk.out/**',
+      // Independent package: checked with its own TypeScript and ESLint configuration.
+      'infrastructure/program-compositor/**',
       // Release-candidate snapshots are immutable verification artifacts, not source inputs.
       'tmp/**',
       '**/android/**',

@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 
 test('preflight validates mocked camera, microphone and network readiness', async ({ page }) => {
   await page.addInitScript(() => {

@@ -26,6 +26,7 @@ jest.mock("@sentry/react-native", () => ({
 
 jest.mock("expo", () => ({
   useEvent: (_emitter: any, _eventName: string, initialState: any) => initialState ?? {},
+  useEventListener: jest.fn(),
   requireNativeModule: jest.fn(() => ({})),
 }));
 
