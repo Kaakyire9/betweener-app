@@ -1,0 +1,66 @@
+{
+  "scope": "STAGING_ACCOUNT_DELETION_GUARD_REPAIR",
+  "deployedAt": "2026-11-05T08:25:59.003Z",
+  "project": "xsgzxadwuxuziubglvps",
+  "edge": {
+    "path": "supabase/functions/delete-account/index.ts",
+    "beforeVersion": 39,
+    "version": 40,
+    "status": "ACTIVE",
+    "verify_jwt": true,
+    "sourceMatches": true,
+    "helpersMatch": true,
+    "bundleSha256": "8d5e95fb091b2c43eb533c3b3e0577db7a85f13dc627e84b9c7941420dd11952",
+    "sourceSha256": "96c219652ba105e5094d789fe5179f85a9a898dfce64e47de6b53c195d25973a"
+  },
+  "migration": {
+    "path": "supabase/migrations/20261105054114_account_deletion_guarded_profile_mask.sql",
+    "version": "20261105054114",
+    "apiGeneratedVersion": "20261105082224",
+    "sha256": "6f1c6111a95e0e3e11e9227a34dc1215acc6623d5385542820de9fd002580a50",
+    "historyAlignment": "Only the just-applied row was aligned to the repository version after exact SQL hash verification."
+  },
+  "verification": {
+    "databaseSmoke": {
+      "anonDenied": true,
+      "authenticatedDenied": true,
+      "realAccountDeletions": 0,
+      "unknownServiceRequestDenied": true
+    },
+    "unauthenticatedHttp": {
+      "status": 401,
+      "body": "{\"code\":\"UNAUTHORIZED_NO_AUTH_HEADER\",\"message\":\"Missing authorization header\"}"
+    },
+    "handlerTests": {
+      "passed": 6,
+      "failed": 0
+    },
+    "priorLocalValidationReceipt": "account-deletion-guard-fix.local.json",
+    "advisoryDelta": {
+      "before": 1131,
+      "after": 1131,
+      "added": []
+    },
+    "protectedStateBefore": {
+      "config": "d66c4dc93ca9d3e5295271b5183a4c80",
+      "guards": {
+        "profile_guard_protect_system_fields": "9a0a23bc3772bbb554f025386b0a7609",
+        "profile_handle_prevent_unmanaged_write": "1739b5cc14dcc1e2a0a7a782e230d6e6",
+        "profile_guard_prevent_direct_public_text_write": "079a08813e55b4cb732983f76adca59b"
+      }
+    },
+    "protectedStateAfter": {
+      "config": "d66c4dc93ca9d3e5295271b5183a4c80",
+      "guards": {
+        "profile_guard_protect_system_fields": "9a0a23bc3772bbb554f025386b0a7609",
+        "profile_handle_prevent_unmanaged_write": "1739b5cc14dcc1e2a0a7a782e230d6e6",
+        "profile_guard_prevent_direct_public_text_write": "079a08813e55b4cb732983f76adca59b"
+      }
+    },
+    "migrationsBefore": 283,
+    "migrationsAfter": 284
+  },
+  "realAccountDeletions": 0,
+  "hostedAuthStorageEndToEndTested": false,
+  "remaining": "App deletion test using an explicitly approved disposable staging account."
+}

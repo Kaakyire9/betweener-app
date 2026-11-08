@@ -1,338 +1,73 @@
-// @ts-nocheck
-// Supabase Edge Function - runs in Deno runtime
-// TypeScript errors are expected in VS Code Node.js environment
+// @ts-nocheck -- Supabase Edge runtime supplies Deno and remote imports.
+import { createPhoneAdmin, phoneJson, phonePreflight } from '../_shared/phone-verification-runtime.ts';
+import {
+  getPhoneVerifyConfig, isVerificationSid, normalizeVerificationInput,
+  phoneVerificationRateAllowed, resolveVerificationCaller,
+} from '../_shared/phone-verification-boundary.ts';
 
-// @deno-types="https://esm.sh/@supabase/functions-js/src/edge-runtime.d.ts"
-
-import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { corsHeaders } from '../_shared/cors.ts'
-import { getSupabaseAdminKey } from '../_shared/supabase-admin-key.ts'
-
-const twilioAccountSid = Deno.env.get('TWILIO_ACCOUNT_SID')!
-const twilioAuthToken = Deno.env.get('TWILIO_AUTH_TOKEN')!
-const twilioVerifyServiceSid = Deno.env.get('TWILIO_VERIFY_SERVICE_SID')!
-
-const hasTwilioVerifyConfig =
-  /^AC[a-zA-Z0-9]{32}$/.test(twilioAccountSid || '') &&
-  Boolean(twilioAuthToken?.trim()) &&
-  /^VA[a-zA-Z0-9]{32}$/.test(twilioVerifyServiceSid || '')
-
-interface SendVerificationRequest {
-  phoneNumber: string
-  userId?: string | null
-  signupSessionId?: string
+function phoneConfidenceScore(phone: string, carrier?: { name?: string; type?: string }) {
+  const ghanaMobile = /^\+233(?:20|23|24|26|27|28|50|54|55|56|57|59)/.test(phone);
+  const prefixScore = ghanaMobile ? 40 : phone.startsWith('+233') ? 25 : 15;
+  return prefixScore + 20 + (carrier?.name ? 10 : 0) + (carrier?.type === 'mobile' ? 15 : 0);
 }
 
-interface TwilioCarrierInfo {
-  name?: string
-  type?: string
-}
-
-interface TwilioLookupInfo {
-  carrier?: TwilioCarrierInfo
-}
-
-interface TwilioVerifyResponse {
-  sid: string
-  status: string
-  valid: boolean
-  lookup?: TwilioLookupInfo
-}
-
-const getClientIp = (req: Request) => {
-  const forwarded = req.headers.get('x-forwarded-for')
-  if (forwarded) {
-    return forwarded.split(',')[0]?.trim()
-  }
-  return req.headers.get('cf-connecting-ip') || req.headers.get('x-real-ip') || null
-}
-
-const enforceRateLimit = async (
-  supabase: any,
-  key: string,
-  windowSeconds: number,
-  limit: number
-) => {
-  const { data, error } = await supabase.rpc('bump_rate_limit', {
-    p_key: key,
-    p_window_seconds: windowSeconds,
-    p_limit: limit
-  })
-  if (error) {
-    console.error('Rate limit error:', error)
-    return { allowed: false, error: 'Rate limiter unavailable' }
-  }
-  const row = Array.isArray(data) ? data[0] : data
-  return {
-    allowed: !!row?.allowed,
-    count: row?.current_count ?? 0,
-    windowBucket: row?.window_bucket_out ?? row?.window_bucket ?? null,
-  }
-}
-
-function cleanPhoneNumber(phone: string): string {
-  // Remove all non-digit characters
-  const cleaned = phone.replace(/\D/g, '')
-
-  // Ghana: if the caller already prepended +233 and the local number included trunk "0"
-  // (e.g. +233024xxxxxxx), remove the 0 to form valid E.164 (+23324xxxxxxx).
-  if (cleaned.startsWith('2330') && cleaned.length >= 12) {
-    return `+233${cleaned.substring(4)}`
-  }
-  
-  // Handle Ghana numbers
-  if (cleaned.startsWith('0') && cleaned.length === 10) {
-    return `+233${cleaned.substring(1)}`
-  }
-  
-  // Add + (we intentionally strip '+' above)
-  return `+${cleaned}`
-}
-
-function calculatePhoneScore(phoneNumber: string, carrierInfo?: TwilioCarrierInfo): number {
-  let score = 0
-  
-  // Ghana mobile prefixes (higher confidence)
-  const ghanaMobilePrefixes = ['20', '23', '24', '26', '27', '28', '50', '54', '55', '56', '57', '59']
-  const cleanNumber = phoneNumber.replace(/\D/g, '')
-  
-  if (cleanNumber.startsWith('233')) {
-    const prefix = cleanNumber.substring(3, 5)
-    if (ghanaMobilePrefixes.includes(prefix)) {
-      score += 40 // High confidence for Ghana mobile
-    } else {
-      score += 25 // Medium confidence for Ghana landline
-    }
-  } else {
-    score += 15 // Lower confidence for international numbers
-  }
-  
-  // Carrier information bonus
-  if (carrierInfo?.name) {
-    score += 10
-  }
-  if (carrierInfo?.type === 'mobile') {
-    score += 15
-  }
-  
-  return Math.min(score, 100)
-}
-
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders })
-  }
+Deno.serve(async (req: Request) => {
+  if (req.method === 'OPTIONS') return phonePreflight();
+  if (req.method !== 'POST') return phoneJson({ error: 'Method not allowed' }, 405);
 
   try {
-    const { phoneNumber, userId, signupSessionId }: SendVerificationRequest = await req.json()
-    
-    const missing: string[] = []
-    if (!phoneNumber) missing.push('phoneNumber')
-    if (!signupSessionId) missing.push('signupSessionId')
-    if (missing.length > 0) {
-      return new Response(
-        JSON.stringify({
-          error: 'Missing required fields',
-          missing,
-          hasUserId: !!userId,
-        }),
-        { 
-          status: 400, 
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
-        }
-      )
+    const body = await req.json().catch(() => null);
+    const input = body && normalizeVerificationInput(body);
+    if (!input) return phoneJson({ error: 'A valid phone number and signup attempt are required.' }, 400);
+
+    const admin = createPhoneAdmin();
+    const caller = await resolveVerificationCaller(req, token => admin.auth.getUser(token), body.userId);
+    if (caller.status !== 200) {
+      return phoneJson({ error: 'Sign in to verify your phone.', code: 'sign_in_required' }, caller.status);
     }
 
-    if (!hasTwilioVerifyConfig) {
-      console.error('Twilio Verify configuration is missing or invalid')
-      return new Response(
-        JSON.stringify({
-          error: 'Phone verification is temporarily unavailable',
-          code: 'missing_config',
-        }),
-        {
-          status: 503,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        }
-      )
+    const twilio = getPhoneVerifyConfig(name => Deno.env.get(name));
+    if (!twilio) return phoneJson({ error: 'Phone verification is temporarily unavailable.' }, 503);
+    const daily = Deno.env.get('ENVIRONMENT') !== 'development';
+    if (!await phoneVerificationRateAllowed(admin.rpc.bind(admin), req, 'send', caller.userId, input.phone, daily)) {
+      return phoneJson({ error: 'Too many attempts. Please wait and try again.' }, 429);
     }
 
-    // Clean and format phone number
-    const cleanedPhone = cleanPhoneNumber(phoneNumber)
-    
-    // Create Supabase client
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!
-    const supabaseServiceKey = getSupabaseAdminKey()
-    const supabase = createClient(supabaseUrl, supabaseServiceKey)
+    const { data: reservation, error } = await admin.rpc('rpc_reserve_phone_challenge_v1', {
+      p_user_id: caller.userId, p_signup_session_id: input.signupSessionId, p_phone: input.phone,
+    });
+    if (error) return phoneJson({ error: 'Unable to start verification.' }, 503);
+    if (reservation?.state === 'busy') {
+      return phoneJson({ error: 'A verification is already in progress. Please wait and try again.' }, 429);
+    }
+    if (reservation?.state === 'complete') {
+      return phoneJson({ error: 'This verification is complete. Submit the code you already used to continue.' }, 409);
+    }
+    if (reservation?.state !== 'send') return phoneJson({ error: 'Unable to start verification.' }, 400);
 
-    // Only trust userId when the caller is authenticated as that user.
-    // These functions can be called anonymously (verify_jwt=false), so we must not accept arbitrary user IDs.
-    const authHeader = req.headers.get('Authorization') ?? ''
-    const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null
-    let authedUserId: string | null = null
-    if (bearer) {
-      try {
-        const { data: authData, error: authError } = await supabase.auth.getUser(bearer)
-        authedUserId = !authError && authData?.user?.id ? authData.user.id : null
-      } catch {
-        authedUserId = null
-      }
-    }
-    if (userId && authedUserId && userId !== authedUserId) {
-      return new Response(
-        JSON.stringify({ error: 'User mismatch' }),
-        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
-    }
-    const effectiveUserId = authedUserId
-
-    // Rate limits (defaults)
-    const clientIp = getClientIp(req) || 'unknown'
-    const environment = Deno.env.get('ENVIRONMENT') || 'production'
-    const rateChecks = [
-      { name: 'ip_10min', key: `ip:${clientIp}`, windowSeconds: 600, limit: 5 },
-      { name: 'phone_10min', key: `phone:${cleanedPhone}`, windowSeconds: 600, limit: 3 },
-      { name: 'signup_10min', key: `signup:${signupSessionId}`, windowSeconds: 600, limit: 5 },
-    ]
-    if (environment !== 'development') {
-      rateChecks.splice(2, 0, { name: 'phone_day', key: `phone:${cleanedPhone}:day`, windowSeconds: 86400, limit: 5 })
-    }
-    const rateResults = await Promise.all(
-      rateChecks.map(async (rule) => {
-        const res = await enforceRateLimit(supabase, rule.key, rule.windowSeconds, rule.limit)
-        return { ...rule, ...res }
-      })
-    )
-    const blocked = rateResults.find((r) => !r.allowed)
-    if (blocked) {
-      const errorMessage =
-        blocked.name === 'phone_day'
-          ? 'Too many requests. Please wait and try again after 24 hours.'
-          : 'Too many requests. Please wait and try again.'
-      return new Response(
-        JSON.stringify({
-          error: errorMessage,
-          limit: {
-            name: blocked.name,
-            key: blocked.key,
-            windowSeconds: blocked.windowSeconds,
-            limit: blocked.limit,
-            count: blocked.count ?? null,
-            windowBucket: blocked.windowBucket ?? null,
-          },
-          clientIp,
-          serverTime: new Date().toISOString(),
-        }),
-        { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
-    }
-
-    // Send verification via Twilio
-    const twilioUrl = `https://verify.twilio.com/v2/Services/${twilioVerifyServiceSid}/Verifications`
-    const twilioAuth = btoa(`${twilioAccountSid}:${twilioAuthToken}`)
-    
-    const formData = new URLSearchParams()
-    formData.append('To', cleanedPhone)
-    formData.append('Channel', 'sms')
-    formData.append('Locale', 'en')
-    
-    const twilioResponse = await fetch(twilioUrl, {
+    const response = await fetch(twilio.base + '/Verifications', {
       method: 'POST',
-      headers: {
-        'Authorization': `Basic ${twilioAuth}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: formData
-    })
-
-    if (!twilioResponse.ok) {
-      const errorText = await twilioResponse.text()
-      let errorJson: any = null
-      try {
-        errorJson = JSON.parse(errorText)
-      } catch {
-        errorJson = null
-      }
-      const twilioError =
-        errorJson?.message || errorJson?.error || errorText || 'Unknown Twilio error'
-      const twilioCode = errorJson?.code || errorJson?.status
-      console.error('Twilio error:', twilioCode, twilioError)
-      return new Response(
-        JSON.stringify({
-          error: 'Failed to send verification code',
-          twilioError,
-          twilioCode,
-        }),
-        {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        }
-      )
+      headers: { Authorization: twilio.authorization, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ To: input.phone, Channel: 'sms', Locale: 'en' }),
+      signal: AbortSignal.timeout(12000),
+    });
+    const provider = await response.json().catch(() => null);
+    if (!response.ok || !isVerificationSid(provider?.sid) || provider?.to !== input.phone ||
+        provider?.status !== 'pending') {
+      return phoneJson({ error: 'Unable to send a verification code. Please try again.' }, 502);
     }
 
-    const twilioData: TwilioVerifyResponse = await twilioResponse.json()
-    
-    // Calculate confidence score
-    const confidenceScore = calculatePhoneScore(cleanedPhone, twilioData.lookup?.carrier)
-    
-    // Store verification attempt in database
-    const { error: dbError } = await supabase
-      .from('phone_verifications')
-      .insert({
-        signup_session_id: signupSessionId,
-        user_id: effectiveUserId ?? null,
-        phone_number: cleanedPhone,
-        verification_sid: twilioData.sid,
-        confidence_score: confidenceScore,
-        carrier_name: twilioData.lookup?.carrier?.name,
-        carrier_type: twilioData.lookup?.carrier?.type,
-        status: 'pending',
-        request_ip: clientIp,
-        request_user_agent: req.headers.get('user-agent')
-      })
-
-    if (dbError) {
-      console.error('Database error:', dbError)
-      // Twilio already sent the SMS. Treat storage as best-effort so the user can still verify.
-      // Finalization can still succeed via signup_events (verify-phone updates it on approval).
-      return new Response(
-        JSON.stringify({
-          success: true,
-          stored: false,
-          verificationSid: twilioData.sid,
-          phoneNumber: cleanedPhone,
-          carrierInfo: twilioData.lookup?.carrier,
-        }),
-        {
-          status: 200,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        }
-      )
+    const carrier = provider.lookup?.carrier;
+    const { data: stored, error: storeError } = await admin.rpc('rpc_record_phone_dispatch_v1', {
+      p_user_id: caller.userId, p_id: reservation.id, p_dispatch_id: reservation.dispatch_id,
+      p_sid: provider.sid, p_score: phoneConfidenceScore(input.phone, carrier),
+    });
+    if (storeError || stored !== true) {
+      return phoneJson({ error: 'Unable to bind this verification attempt. Please wait before requesting a new code.' }, 409);
     }
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        stored: true,
-        verificationSid: twilioData.sid,
-        phoneNumber: cleanedPhone,
-        carrierInfo: twilioData.lookup?.carrier
-      }),
-      { 
-        status: 200, 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
-      }
-    )
-
-  } catch (error) {
-    console.error('Function error:', error)
-    return new Response(
-      JSON.stringify({ error: 'Internal server error' }),
-      { 
-        status: 500, 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
-      }
-    )
+    return phoneJson({ success: true, stored: true, phoneNumber: input.phone, carrierInfo: carrier });
+  } catch {
+    return phoneJson({ error: 'Phone verification is temporarily unavailable.' }, 503);
   }
-})
+});

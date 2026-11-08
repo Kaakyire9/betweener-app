@@ -20,7 +20,6 @@ import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/lib/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { logger } from "@/lib/telemetry/logger";
-import { buildSupabasePublicHeaders } from "@/lib/supabase-public-headers";
 
 const normalizeRecoveryMethod = (value?: string | null) => {
   const normalized = String(value ?? "").trim().toLowerCase();
@@ -39,6 +38,7 @@ export default function VerifyPhoneScreen() {
     refreshPhoneState,
     refreshProfile,
     isAuthenticated,
+    isLoading,
     hasProfile,
     phoneVerified,
     signOut,
@@ -161,6 +161,12 @@ export default function VerifyPhoneScreen() {
     };
   }, [isAuthenticated, phoneVerified, refreshPhoneState, hasProfile, nextRoute]);
 
+  useEffect(() => {
+    if (!isLoading && !_isPreparing && !isAuthenticated) {
+      router.replace("/(auth)/welcome");
+    }
+  }, [isLoading, _isPreparing, isAuthenticated, router]);
+
   const handleCancel = () => {
     if (!isAuthenticated) {
       router.replace("/(auth)/welcome");
@@ -214,9 +220,8 @@ export default function VerifyPhoneScreen() {
       style={styles.gradient}
     >
       <SafeAreaView style={styles.safeArea}>
-        {showVerification ? (
+        {showVerification && isAuthenticated && !!user?.id ? (
           <PhoneVerification
-            allowAnonymous
             userId={user?.id ?? null}
             signupSessionId={signupSessionId}
             countryLabel={countryLabel}
@@ -229,7 +234,7 @@ export default function VerifyPhoneScreen() {
             }}
             onRecoveryRequired={handleRecoveryRequired}
             onVerificationComplete={async (success) => {
-              if (!success) return;
+              if (!success || !user?.id) return;
 
               try {
                 if (typeof __DEV__ !== "undefined" && __DEV__) {
@@ -238,6 +243,10 @@ export default function VerifyPhoneScreen() {
                     hasUser: !!user?.id,
                   });
                 }
+                // The server has committed this phone to the account that sent the code.
+                const { data, error } = await supabase.auth.getSession();
+                if (error || data.session?.user.id !== user.id) return;
+
                 // Ensure signup session exists and persist local "verified" state.
                 const ensuredSignupSessionId = await getOrCreateSignupSessionId();
                 await setSignupPhoneVerified(true);
@@ -289,62 +298,6 @@ export default function VerifyPhoneScreen() {
 
                 // Continue in background (best-effort) to persist flags and clean up local state.
                 void (async () => {
-                // Persist verified state on profile (abortable REST call).
-                // IMPORTANT: Avoid supabase-js upsert here (can hang on some mobile networks).
-                if (isAuthenticated && user?.id) {
-                  try {
-                    const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-                    const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
-                    if (!supabaseUrl || !anonKey) {
-                      throw new Error("missing_supabase_env");
-                    }
-
-                    const { data: sessionData } = await supabase.auth.getSession();
-                    const accessToken = sessionData?.session?.access_token ?? null;
-
-                    const controller = new AbortController();
-                    const timeout = setTimeout(() => controller.abort(), 4000);
-                    const url = `${supabaseUrl}/rest/v1/profiles?user_id=eq.${user.id}`;
-
-                    const res = (await withTimeout(
-                      fetch(url, {
-                        method: "PATCH",
-                        headers: {
-                          ...buildSupabasePublicHeaders({ apiKey: anonKey, accessToken }),
-                          "Content-Type": "application/json",
-                          Prefer: "return=minimal",
-                        },
-                        body: JSON.stringify({
-                          phone_verified: true,
-                          phone_number: localPhone,
-                          updated_at: new Date().toISOString(),
-                        }),
-                        signal: controller.signal,
-                      }),
-                      5000,
-                      "profile_rest_patch"
-                    )) as Response;
-                    clearTimeout(timeout);
-
-                    if (!res.ok) {
-                      let bodyText = "";
-                      try {
-                        bodyText = await res.text();
-                      } catch {
-                        bodyText = "<unreadable body>";
-                      }
-                      console.warn("[verify-phone] profile rest patch failed", {
-                        status: res.status,
-                        body: bodyText,
-                      });
-                    } else if (typeof __DEV__ !== "undefined" && __DEV__) {
-                      console.log("[verify-phone] profile rest patch ok");
-                    }
-                  } catch (e) {
-                    console.warn("[verify-phone] profile rest patch error", e);
-                  }
-                }
-
                 // Refresh in-app state (best-effort).
                 try {
                   const refreshedVerified = await withTimeout(refreshPhoneState(), 5000, "refreshPhoneState");

@@ -61,7 +61,6 @@ test('invalid public API keys fail closed', () => {
 
 test('manual client requests use the canonical public-header helper', () => {
   const expectedFiles = [
-    'app/(auth)/verify-phone.tsx',
     'lib/auth-context.tsx',
     'lib/phone-verification.ts',
     'lib/supabase.ts',
@@ -104,10 +103,10 @@ test('authenticated REST fallbacks pass the user token separately', () => {
     authSource,
     /buildSupabasePublicHeaders\(\{ apiKey: anonKey, accessToken \}\)/,
   );
-  assert.match(
-    verificationSource,
-    /buildSupabasePublicHeaders\(\{ apiKey: anonKey, accessToken \}\)/,
-  );
+  // Verification now binds the server-committed phone to the current account;
+  // the screen must not reintroduce the former client-side profile REST write.
+  assert.doesNotMatch(verificationSource, /fetch\s*\(|buildSupabasePublicHeaders/);
+  assert.match(verificationSource, /data\.session\?\.user\.id !== user\.id/);
 });
 
 test('storage upload keeps API key and user JWT in separate headers', () => {

@@ -42,6 +42,14 @@ verify_jwt = false
 # Scheduled requests authenticate with a function-owned secret.
 verify_jwt = false
 
+[functions.circle-media-lifecycle]
+# Scheduled requests authenticate with x-cron-secret; no end-user JWT exists.
+verify_jwt = false
+
+[functions.circle-media-moderation]
+# Moderation submission is always bound to the uploader's authenticated session.
+verify_jwt = true
+
 [functions.send-verification]
 # Signup phone verification is intentionally callable before a user session exists.
 # The handler rate-limits requests and ignores unverified caller-supplied user IDs.
@@ -417,6 +425,9 @@ enabled = false
 authorization_url_path = "/oauth/consent"
 # Allow dynamic client registration
 allow_dynamic_registration = false
+
+[functions.connect-native-device]
+verify_jwt = true
 
 [edge_runtime]
 enabled = true

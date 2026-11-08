@@ -57,6 +57,7 @@ import {
 } from '@/lib/auth/last-sign-in-method';
 import { createAuthRecoveryGeneration } from '@/lib/auth/recovery-generation';
 import { createNativeSessionOwner, type NativeSessionOwner } from '@/lib/auth/native-session-owner';
+import { getApplicationNativeSession } from '@/lib/auth/application-native-owner';
 
 type Profile = Database['public']['Tables']['profiles']['Row'];
 type FetchProfileOptions = { force?: boolean };
@@ -419,7 +420,7 @@ const fetchVerifiedPhoneViaRest = async (
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const nativeSessionRef = useRef<ReturnType<typeof createNativeSessionOwner> | null>(null);
-  if (!nativeSessionRef.current) nativeSessionRef.current = createNativeSessionOwner();
+  if (!nativeSessionRef.current) nativeSessionRef.current = getApplicationNativeSession();
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
