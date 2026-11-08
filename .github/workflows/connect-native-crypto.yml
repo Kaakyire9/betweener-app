@@ -24,6 +24,7 @@ concurrency:
 jobs:
   macos_crypto:
     name: Pinned native crypto tests and optional iOS artifact
+    if: ${{ !inputs.build_android_artifact || inputs.build_ios_artifact }}
     runs-on: macos-26
     timeout-minutes: 180
     env:

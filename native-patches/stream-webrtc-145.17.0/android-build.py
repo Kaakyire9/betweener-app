@@ -22,7 +22,7 @@ build([sys.executable, 'tools_webrtc/android/build_aar.py', '--arch', *abis,
        '--extra-gn-args', 'treat_warnings_as_errors=false', 'rtc_build_examples=false',
        'rtc_build_tools=false', 'rtc_libvpx_build_vp9=true', 'use_rtti=false',
        'use_remoteexec=false', 'use_reclient=false', 'symbol_level=1',
-       '--extra-ninja-switches=-j4'], source)
+       '--extra-ninja-switches=-j', '4'], source)
 
 
 def load_alignments(binary):
