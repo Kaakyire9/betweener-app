@@ -1,0 +1,55 @@
+{
+  "status": "PASSED_NATIVE_HOST_CRYPTO",
+  "sourceCommit": "eeff9252f32a40d1671974c31c096ce9fa776130",
+  "patchSha256": "789936f4866c5f05760715fba633ceb402a8089d50bc1674161d3afdfb8aa7d5",
+  "phase": "test_patched_crypto",
+  "host": "Linux",
+  "architecture": "x86_64",
+  "buildJobs": 4,
+  "providerCalls": 0,
+  "appBuilds": 0,
+  "startedAt": 1794163551.1980402,
+  "initialFreeGB": 902.9,
+  "depotToolsCommit": "289a37bda3d848cfe16e6c1c599741ed3890ab55",
+  "unrelatedMediaFixtureHookSkipped": true,
+  "gnArgs": "is_debug=false is_component_build=false rtc_include_tests=true rtc_build_examples=false rtc_build_tools=false treat_warnings_as_errors=false rtc_use_x11=false rtc_use_pipewire=false symbol_level=0 use_siso=false use_remoteexec=false use_reclient=false",
+  "unpatched": {
+    "tests": 79,
+    "failures": 6,
+    "disabled": 0,
+    "errors": 0,
+    "time": "0.778s",
+    "failedTests": [
+      "DefaultEncryptionManager.DecodeBadMagicDropsAsUnencrypted",
+      "DefaultEncryptionManager.DecodeOversizeClearBytesDropsAsUnencrypted",
+      "DefaultEncryptionManager.DecodeTooShortDropsAsUnencrypted",
+      "DefaultEncryptionManager.StrictUnframedDropDoesNotPoisonAes256RoundTrip",
+      "DefaultEncryptionManager.UnframedDropsEveryTrackBeforeAndAfterKeySetup",
+      "FrameCryptorTransformer.FrameTrailerUnframedDrops"
+    ]
+  },
+  "patched": {
+    "tests": 79,
+    "failures": 0,
+    "disabled": 0,
+    "errors": 0,
+    "time": "0.694s",
+    "failedTests": []
+  },
+  "finishedAt": 1794163639.3511834,
+  "toolchain": {
+    "binarySha256": "3f99025d1851a94932e1af849dd1bbddbb2ff22cee723d1465ae7bd4fa87be94",
+    "sourceHead": "eeff9252f32a40d1671974c31c096ce9fa776130",
+    "clang": "clang version 22.0.0git (https://chromium.googlesource.com/a/external/github.com/llvm/llvm-project bd1bd178f8e3770b296f9b042bef1d45bd736e51)\nTarget: x86_64-unknown-linux-gnu\nThread model: posix\nInstalledDir: /work/src/third_party/llvm-build/Release+Asserts/bin",
+    "ninja": "1.11.1"
+  },
+  "recordedAt": "2026-11-08T18:52:29.034221+00:00",
+  "testResults": {
+    "unpatched.json": "d8584e88547ac5781b8ce88614c53fe9a35405ed9ed420a52bd10e895056d5b7",
+    "patched.json": "b789e2b37697aa98f6e87eb70838159e3174bfe408cdde86474fffacb5181770"
+  },
+  "scope": "COMPILED_LINUX_HOST_CRYPTO_ONLY",
+  "physicalDeviceTested": false,
+  "mobileArtifactsBuilt": 0,
+  "macOSJobDispatched": false
+}
