@@ -20,6 +20,7 @@ import AccountRecoveryNotice from "@/components/AccountRecoveryNotice";
 import RecoveryMergeSuggestionNotice from "@/components/RecoveryMergeSuggestionNotice";
 import InAppToasts from "@/components/InAppToasts";
 import { ConnectProductProvider } from '@/features/connect/components/ConnectProductProvider';
+import { ConnectionJournalProvider } from '@/features/connect/journal/ConnectionJournalProvider';
 import IntentResponseReminder from "@/components/IntentResponseReminder";
 import NetworkStatusBanner from "@/components/NetworkStatusBanner";
 import AppVersionGateHost from "@/components/updates/AppVersionGateHost";
@@ -799,6 +800,7 @@ function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <AuthProvider>
+        <ConnectionJournalProvider>
         <ConnectProductProvider>
         <SparkWalletProvider>
           <View style={{ flex: 1, backgroundColor: Colors[colorScheme].background }}>
@@ -996,6 +998,7 @@ function RootLayout() {
           </View>
         </SparkWalletProvider>
         </ConnectProductProvider>
+        </ConnectionJournalProvider>
       </AuthProvider>
     </GestureHandlerRootView>
   );

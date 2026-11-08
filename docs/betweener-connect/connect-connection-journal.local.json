@@ -1,0 +1,317 @@
+{
+  "schemaVersion": 1,
+  "scope": "LOCAL_HISTORY_UI_AND_READ_MODEL_NO_HOSTED_DEPLOYMENT",
+  "authorisation": "Owner requested Connection Journal with canonical history, chat cards, previews, safety and continuity; local implementation and disposable tests only",
+  "frozenPackage": {
+    "path": "docs/betweener-connect/connect-secure-calling.proposal.json",
+    "sha256": "37d133fb060af0eaed44f4526d5d60fe4c08f3065fd3d2ede6d2f63d573f6c72"
+  },
+  "baseLocalChange": {
+    "path": "docs/betweener-connect/connect-video-call-ui.local.json",
+    "sha256": "106824ead900a36868b220c408d8bfd0eb3b57beba481dae373fe0ea67f736b9"
+  },
+  "files": [
+    {
+      "path": "features/connect/components/ConnectCallRoute.tsx",
+      "beforeSha256": "63d958b18239b22152fef3928e7cbaec2bcdceab61717e970009a743568a9419",
+      "beforeSnapshot": "tmp/connect-secure-calling/connection-journal/before/features/connect/components/ConnectCallRoute.tsx",
+      "afterSha256": "68a938d0ff263427ba95f460b4b9f40fbe5ae00307a0c6e1a94795e3749a420f"
+    },
+    {
+      "path": "features/connect/journal/CallTimelineCard.tsx",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "adf49880db83cfa6c4efa55e08cd846384c98912b93e6f711a39722ed181e52a"
+    },
+    {
+      "path": "features/connect/journal/ConnectedCallTimelineCard.tsx",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "ef2038edd0744f82ab02541d59fb6b0aa228988fdbb98b9c6ffd65104cb4493d"
+    },
+    {
+      "path": "features/connect/journal/ConnectionJournalProvider.tsx",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "69389ad828185e178d77eac277f8102c773703d6406bb58bc60e0cf584b618c5"
+    },
+    {
+      "path": "features/connect/journal/ConnectionJournalRoute.tsx",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "31a7391fa3878fea61d4f8f5e7b2a34a1afe79a45d722e78acf321ac3667049e"
+    },
+    {
+      "path": "features/connect/journal/journal-context.ts",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "2467651af5175f754ecae80dcf6e42068265a0108843c981a20a69eed4ad5792"
+    },
+    {
+      "path": "features/connect/journal/journal-continuity.ts",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "86ce15fb0c097e2691c9e285b0b856f097efbb81eed3339593de95beb7b7bf84"
+    },
+    {
+      "path": "features/connect/journal/journal-integrity.ts",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "1d8fdf1e08fe74045c131664b310f78a4a5fb67d41b5a68be99bc2a8f257bb72"
+    },
+    {
+      "path": "features/connect/journal/journal-presentation.ts",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "cb02f24ee59d1358a493db5f0491977275f85d0fbc77943a18c785c7f81a3785"
+    },
+    {
+      "path": "features/connect/journal/journal-runtime.ts",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "dee52ac923f9101886c6e0238ca116c701f12a20aef823962f60a33794df0db2"
+    },
+    {
+      "path": "features/connect/journal/journal-safety-actions.ts",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "b23f736736b08fea4cbc9080283cf30e8d83b6ab52625a7b40c39f21e51d978c"
+    },
+    {
+      "path": "features/connect/journal/journal-service.ts",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "bb0b2e459118abe4a053e89f626fde17d4060fd0e9f1407c0992a3bec77bd72b"
+    },
+    {
+      "path": "features/connect/journal/journal-store.ts",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "56e7b752e4d2a050ffdc9923d22877531e38d6ce505d03f01df0d6cae20a71eb"
+    },
+    {
+      "path": "features/connect/journal/journal-timeline.ts",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "ad593085a9846da61aa3ac5d73083bfb6f0ecc96e00b88edac662af34f1fbc9a"
+    },
+    {
+      "path": "features/connect/journal/journal-types.ts",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "316621320f53aedfd53348ea1425f08b6ec0c98bac2d90b5ddcbeed63b69f98c"
+    },
+    {
+      "path": "features/connect/journal/JournalDetailRoute.tsx",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "a9fa143f98ac85d4402b26cd6a762a3fad5c5721d84dab89252a134bb2445c1a"
+    },
+    {
+      "path": "features/connect/journal/JournalDetails.tsx",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "12226399cccb3c495fdb390ae2fc56f4d86256bc7a2dd33ca28703a55008a359"
+    },
+    {
+      "path": "features/connect/journal/JournalPrimitives.tsx",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "370090dd569529ef221ae4589ce59bfb62c13c11ff68e0ff07c974ba11b49a6a"
+    },
+    {
+      "path": "features/connect/journal/JournalPulse.tsx",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "7d3b560e3cad57490c0abc7bea75c71b3a6285e9f1470502442287625caaecbf"
+    },
+    {
+      "path": "features/connect/journal/JournalScreen.tsx",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "1058ca37eb507db4e37e7d996d287cbb315911890d6df4ea01bb64067d9c43e3"
+    },
+    {
+      "path": "features/connect/journal/JournalShortcut.tsx",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "6d49c41d25d4a34b5065beefc00dce53ea0b8ddfa60a73b603ccc3939c1787b9"
+    },
+    {
+      "path": "features/connect/journal/use-journal-actions.ts",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "1fd7221a2a323c4d392377ef160ee113fed66789e9632d05d508b4a69916ad75"
+    },
+    {
+      "path": "features/connect/journal/use-journal-feed.ts",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "bee73ea02a3a9b3de6d46d2ef8faf5ae0c747ad0d53f5fb86c69bd02dac6527f"
+    }
+  ],
+  "integrationFiles": [
+    {
+      "path": "app/(tabs)/chat.tsx",
+      "beforeSha256": "baf4dee9737043451a495c35d48cfaf4ebe3f292aa48fbdd47038af6cc8fd32a",
+      "beforeSnapshot": "tmp/connect-secure-calling/connection-journal/before/app/(tabs)/chat.tsx",
+      "afterSha256": "f4b6eee80ec45c2c0cdd55bf8f295bc30cc24541ddb45b733159f08049df32d9"
+    },
+    {
+      "path": "app/_layout.tsx",
+      "beforeSha256": "19712dcbac9498ecc68edc64b6aecf0fbdefe9af9c6fe53e00ba40e55a7478e6",
+      "beforeSnapshot": "tmp/connect-secure-calling/connection-journal/before/app/_layout.tsx",
+      "afterSha256": "4942885179bb49583f207eb3904caa70b0b5abc23821be34c7dff507c30b7792"
+    },
+    {
+      "path": "app/connect/history/[callId].tsx",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "36b998f978b5bad8c19cee192bf88389e99c6dc9a9ace58d2da2118b1a8c07e1"
+    },
+    {
+      "path": "app/connect/index.tsx",
+      "beforeSha256": "5131917f0dcabca61fffe692d72178325416bd1a4053df48983ae4dc01f4b2d5",
+      "beforeSnapshot": "tmp/connect-secure-calling/connection-journal/before/app/connect/index.tsx",
+      "afterSha256": "4b8993d4cbea5c419a8a13d79ab0f684fbe5146fb270965e9e705040ade51816"
+    },
+    {
+      "path": "components/chat/ChatMessageList.tsx",
+      "beforeSha256": "bc63a8b4605aa7e233917f09e230ca21146ae9ff549d237848e93b730a4268b6",
+      "beforeSnapshot": "tmp/connect-secure-calling/connection-journal/before/components/chat/ChatMessageList.tsx",
+      "afterSha256": "573740557599c151c414d2c126f66a7f83cd6feb32a707567b9f03074fafb5ea"
+    },
+    {
+      "path": "components/chat/ChatScreen.tsx",
+      "beforeSha256": "0ad0960012e0827687b492ae8c367d4a0d7446696e1c454ad523745f71a5eb0f",
+      "beforeSnapshot": "tmp/connect-secure-calling/connection-journal/before/components/chat/ChatScreen.tsx",
+      "afterSha256": "7aac53df6f8e48669a43fa45b5f02b3631b10ac9dcd5373dc00073a03ee19e54"
+    },
+    {
+      "path": "components/chat/PlainChatMessageList.tsx",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "10d5ed10c9c64f134feaed1498675f82d7744abdba32a04715e00dce18d65c04"
+    },
+    {
+      "path": "lib/chat/hooks/use-chat-list-filters.ts",
+      "beforeSha256": "a62bf1e51295e016cbfa0a7f9cd39ee88152b6cd790bffb71193cfe14d0056d9",
+      "beforeSnapshot": "tmp/connect-secure-calling/connection-journal/before/lib/chat/hooks/use-chat-list-filters.ts",
+      "afterSha256": "c2d44df456a73f663d0ef2ee9acb2ccd232535c2c8571a8e4390bf908e009a5e"
+    },
+    {
+      "path": "lib/chat/hooks/use-chat-list-row-presentation.ts",
+      "beforeSha256": "5c7bfb3ff528553748426844468e7fd94525da56ccab4859d72f79907cf90977",
+      "beforeSnapshot": "tmp/connect-secure-calling/connection-journal/before/lib/chat/hooks/use-chat-list-row-presentation.ts",
+      "afterSha256": "99056a3141fd50d90a85acc3f90dbcc3460523be2cce10792d5e67d078cf444b"
+    },
+    {
+      "path": "lib/chat/list/chat-list-model.ts",
+      "beforeSha256": "c2bed7268c7f18916a403832bd99bb529abd162ba6fb8032ff4c1ce0931288f1",
+      "beforeSnapshot": "tmp/connect-secure-calling/connection-journal/before/lib/chat/list/chat-list-model.ts",
+      "afterSha256": "4dcbe48ec866027100a1577fc608b9b8b3e08e06fe5d786b44c130f249544fc5"
+    },
+    {
+      "path": "lib/realtime/user-chat-broadcast.ts",
+      "beforeSha256": "2c7fb4f79aebb77ff84678657f602850d7b00b7a224b6b1342d4b37c7c5fc1dc",
+      "beforeSnapshot": "tmp/connect-secure-calling/connection-journal/before/lib/realtime/user-chat-broadcast.ts",
+      "afterSha256": "e635581eab5b7ed3fabe0138eca98991776c037829c8f8dcda08c060a77fb8b5"
+    }
+  ],
+  "validationFiles": [
+    {
+      "path": "__tests__/connect-journal-actions.interaction.test.tsx",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "13ef240b555f0c177561aed9dc55fc952d664364ea847fffa63a6647d1aaeca8"
+    },
+    {
+      "path": "__tests__/connect-journal-chat.interaction.test.tsx",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "9ae49d03bc90a7905b498a728f175606a28373331b8ae62afd1cd8c8a5a3307f"
+    },
+    {
+      "path": "__tests__/connect-journal-motion.interaction.test.tsx",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "1249f4b01ae12abe7777ab2abe3b5dae61386bfd999b1e1437bc0f87f6062022"
+    },
+    {
+      "path": "__tests__/connect-journal-preview.interaction.test.tsx",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "592403add643c05d5f6020ed95941b681e456313cedbb4a2aafcc06c2ffb27e5"
+    },
+    {
+      "path": "__tests__/connect-journal-service.regression.test.cjs",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "5a50640950378887200333193e894bc805b2846abee78354c3726192c0c9d684"
+    },
+    {
+      "path": "__tests__/connect-journal.interaction.test.tsx",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "3351b6e91ca26623ae5c144320bc182d213dce35797c12aec3450ecfefa8eeb9"
+    },
+    {
+      "path": "__tests__/connect-journal.regression.test.cjs",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "a7cb54774d29fd606c5594d2b11eb45a36e99f95e2e1b07be5cba7b80888069c"
+    },
+    {
+      "path": "__tests__/connect-product.interaction.test.tsx",
+      "beforeSha256": "a37231387ead49bf5c19c7673a0e5732bf4f3ae9e827e652f41d0b9ef58fe630",
+      "beforeSnapshot": "tmp/connect-secure-calling/connection-journal/before/__tests__/connect-product.interaction.test.tsx",
+      "afterSha256": "c516432fa5eb8a6a8f8c45921cc0c0530c87cf56e8b1e7b92d6090d1136a0d25"
+    },
+    {
+      "path": "__tests__/fixtures/connect-journal-fixture.cjs",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "4df1001485ecf338d2d3604b97db4e26909782e47a509464fb5a7369c95f76ea"
+    },
+    {
+      "path": "harnesses/connect-journal-visual/entry.tsx",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "3b328c7c5fffbb628aaa23d4c433b842b48d99df4a4ea27156a7964dde26a12e"
+    },
+    {
+      "path": "scripts/test-connect-journal-local.cjs",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "755aba7f8948df95e8c1719e3d0d69ada7dbf7ce0c91fb5de9564418fa2049c9"
+    }
+  ],
+  "backendChanges": [
+    {
+      "path": "supabase/migrations/20261105031025_connect_connection_journal.sql",
+      "sha256": "a551e1e841dca98a5f8b14a14cad58d6a95f768f925852402f681c4b89fa56e2",
+      "deployed": false
+    }
+  ],
+  "hostedChanges": 0,
+  "providerCalls": 0,
+  "dependencyChanges": 0,
+  "behavior": {
+    "canonicalSource": "private.connect_sessions",
+    "clientCallWrites": 0,
+    "callingGatesChanged": false,
+    "historyReadsDefaultOff": true,
+    "productionRuntimeEnabled": false,
+    "unreadMessageSemanticsChanged": false,
+    "persistentHistoryCache": false,
+    "redialRevalidatesEligibility": true,
+    "automaticRedial": false,
+    "privateNotes": false,
+    "groupCallingAdded": false
+  },
+  "validation": {
+    "deviceValidation": "NOT_RUN",
+    "securityReleaseApproval": false,
+    "sharedDatabaseModified": false
+  }
+}

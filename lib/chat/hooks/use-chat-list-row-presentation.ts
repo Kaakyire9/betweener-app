@@ -39,6 +39,7 @@ export type ChatConversationRowItem = {
     isOnline: boolean;
     lastSeen: Date;
   };
+  callPreview?: { callId: string; text: string; at: Date; media: 'voice' | 'video' };
   lastMessage: {
     id: string;
     text: string;
@@ -167,7 +168,7 @@ export const useChatListRowPresentation = ({
     const isLeftBetweener = item.peerHasLeft && !isBlocked;
     const isUnread = item.unreadCount > 0;
     const hasActiveMoment = activeMomentPeerUserIds.has(String(item.id));
-    const isMyLastMessage = item.lastMessage.senderId === (userId || '');
+    const isMyLastMessage = !item.callPreview && item.lastMessage.senderId === (userId || '');
     const isLastMessageDeleted =
       item.lastMessage.deletedForAll ||
       item.lastMessage.localStatus === 'deleted';
@@ -198,7 +199,7 @@ export const useChatListRowPresentation = ({
           : null,
       isTyping,
     });
-    const previewText = isTyping
+    const previewText = !isTyping && !isBlocked && item.callPreview ? item.callPreview.text : isTyping
       ? 'Typing...'
       : formatConversationPreview({
           messagePreview: normalPreviewText,
@@ -224,7 +225,7 @@ export const useChatListRowPresentation = ({
       avatarUri,
       shouldUseFallbackAvatar,
       avatarPalette,
-      formattedTime: formatLastMessageTime(
+      formattedTime: item.callPreview ? formatLastMessageTime(item.callPreview.at) : formatLastMessageTime(
         item.latestActivity?.kind === 'reaction' &&
           item.latestActivity.createdAt.getTime() >
             item.lastMessage.timestamp.getTime()

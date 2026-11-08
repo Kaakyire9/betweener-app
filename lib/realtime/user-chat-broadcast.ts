@@ -9,10 +9,12 @@ export type UserChatBroadcastChange = {
 
 type Listener = (change: UserChatBroadcastChange) => void;
 type StatusListener = (status: string) => void;
+type JournalHint = { callId: string; version: number; deleted?: boolean };
 type Entry = {
   channel: ReturnType<typeof supabase.channel> | null;
   listeners: Set<Listener>;
   statusListeners: Set<StatusListener>;
+  journalListeners: Set<(hint?: JournalHint) => void>;
   status: string | null;
   startPromise: Promise<void> | null;
   cleanupTimer: ReturnType<typeof setTimeout> | null;
@@ -50,7 +52,13 @@ const start = (userId: string, entry: Entry) => {
       .channel(`user:${userId}:chat`, { config: { private: true } })
       .on('broadcast', { event: 'INSERT' }, (payload) => notify('INSERT', payload))
       .on('broadcast', { event: 'UPDATE' }, (payload) => notify('UPDATE', payload))
-      .on('broadcast', { event: 'DELETE' }, (payload) => notify('DELETE', payload));
+      .on('broadcast', { event: 'DELETE' }, (payload) => notify('DELETE', payload))
+      .on('broadcast', { event: 'CONNECT_JOURNAL' }, envelope => {
+        const hint = envelope?.payload;
+        if (typeof hint?.call_id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(hint.call_id)
+          || !Number.isSafeInteger(hint.version) || hint.version < 1) return;
+        entry.journalListeners.forEach(listener => listener({ callId: hint.call_id, version: hint.version, deleted: hint.deleted === true }));
+      });
     entry.channel = channel;
     channel.subscribe((status) => {
       entry.status = status;
@@ -75,6 +83,7 @@ export const subscribeUserChatBroadcast = (
       channel: null,
       listeners: new Set(),
       statusListeners: new Set(),
+      journalListeners: new Set(),
       status: null,
       startPromise: null,
       cleanupTimer: null,
@@ -107,3 +116,10 @@ export const subscribeUserChatBroadcast = (
     }, 1_000);
   };
 };
+
+/** Reuses the private owner chat subscription. Hints are never authoritative records. */
+export function subscribeUserConnectJournal(userId: string, listener: (hint?: JournalHint) => void) {
+  const release = subscribeUserChatBroadcast(userId, () => {}, status => { if (status === 'SUBSCRIBED') listener(); });
+  const entry = entries.get(userId)!; entry.journalListeners.add(listener);
+  return () => { entry.journalListeners.delete(listener); release(); };
+}

@@ -80,6 +80,8 @@ import { ChatListSkeleton } from "@/components/ui/Skeleton";
 import { ChatConversationRow } from "@/components/chat/ChatConversationRow";
 import { ChatEmptyState } from "@/components/chat/ChatEmptyState";
 import { ChatListHeader } from "@/components/chat/ChatListHeader";
+import { JournalShortcut } from "@/features/connect/journal/JournalShortcut";
+import { useJournalPreviews } from "@/features/connect/journal/use-journal-feed";
 import { ChatNewMatchesStrip } from "@/components/chat/ChatNewMatchesStrip";
 
 const NEW_MATCHES_REFRESH_INTERVAL_MS = 45_000;
@@ -1208,12 +1210,13 @@ export default function ChatScreen() {
     return () => clearTimeout(t);
   }, [conversations.length, isLoading, loadError, user?.id]);
 
+  const journalConversations = useJournalPreviews(conversations);
   const {
     filteredConversations,
     unreadConversationCount,
     archivedConversationCount,
   } = useChatListFilters({
-    conversations,
+    conversations: journalConversations,
     searchQuery,
     activeTab,
   });
@@ -1306,6 +1309,7 @@ export default function ChatScreen() {
         styles={styles}
         theme={theme}
       />
+      <JournalShortcut />
       <ChatNewMatchesStrip
         newMatches={newMatches}
         newMatchesLoading={newMatchesLoading}

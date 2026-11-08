@@ -1,0 +1,273 @@
+{
+  "schemaVersion": 1,
+  "scope": "STAGING_CONNECTION_JOURNAL_MIGRATION_DEPLOYMENT",
+  "authorisation": "User requested: Let’s deploy the migration",
+  "target": {
+    "reference": "xsgzxadwuxuziubglvps",
+    "name": "betweener-staging"
+  },
+  "migration": {
+    "path": "supabase/migrations/20261105031025_connect_connection_journal.sql",
+    "version": "20261105031025",
+    "name": "connect_connection_journal",
+    "sha256": "a551e1e841dca98a5f8b14a14cad58d6a95f768f925852402f681c4b89fa56e2",
+    "deployed": true
+  },
+  "startedAt": "2026-11-05T04:50:59.990Z",
+  "verifiedAt": "2026-11-05T04:54:45.595Z",
+  "transport": "Supabase authenticated connector, single reviewed apply_migration",
+  "cli": {
+    "attempted": true,
+    "result": "DPAPI credential decryption unavailable, authenticated connector fallback used",
+    "broadPushRun": false
+  },
+  "sourceReceipt": {
+    "path": "docs/betweener-connect/connect-connection-journal.local.json",
+    "sha256": "3ea520889719f87d898030894056db01a69739da4cb2158e62aafe43233035ff",
+    "historicalLocalReceiptRetained": true
+  },
+  "historyAlignment": {
+    "connectorGeneratedVersion": "20261105045112",
+    "repositoryVersion": "20261105031025",
+    "sameStoredSqlSha256Verified": true,
+    "otherHistoryChanged": false
+  },
+  "preflight": {
+    "config": {
+      "hash": "d73255911945660ec5e1532499aa529c",
+      "enabled": true,
+      "environment": "staging",
+      "e2ee_enabled": true,
+      "video_enabled": true,
+      "voice_enabled": true,
+      "pre_match_enabled": false,
+      "staging_open_testing": true,
+      "native_incoming_enabled": true
+    },
+    "canonicalCalls": 57,
+    "activeCalls": 0,
+    "cleanupJobs": 165,
+    "localPending": [
+      "20261023164001_adaptive_stage_engine_2_milestone_2_flags.sql",
+      "20261023170552_adaptive_stage_m2_studio_preview_gate.sql",
+      "20261023192724_adaptive_stage_intelligence_v1_telemetry.sql",
+      "20261027102730_live_product_release_gate.sql",
+      "20261105002952_connect_matched_only_launch.sql",
+      "20261105031025_connect_connection_journal.sql"
+    ],
+    "remoteOnly": [
+      "20261027103846_live_product_release_gate"
+    ]
+  },
+  "verification": {
+    "objects": {
+      "acl": {
+        "anonHistory": false,
+        "anonPreviews": false,
+        "authenticatedHistory": true,
+        "authenticatedPreviews": true,
+        "authenticatedInternalProjection": false
+      },
+      "indexes": [
+        "connect_journal_caller_peer_idx",
+        "connect_journal_chat_hides_pkey",
+        "connect_journal_recipient_peer_idx"
+      ],
+      "triggers": [
+        {
+          "name": "connect_journal_changed",
+          "table": "private.connect_sessions",
+          "enabled": "O"
+        },
+        {
+          "name": "connect_journal_hide_chat",
+          "table": "peer_visibility_prefs",
+          "enabled": "O"
+        }
+      ],
+      "functions": [
+        {
+          "hash": "c310850941ca13e8680c84626aa4b99b",
+          "name": "connect_journal_changed",
+          "schema": "private",
+          "searchPath": [
+            "search_path=pg_catalog"
+          ],
+          "securityDefiner": true
+        },
+        {
+          "hash": "a61f3eda6d035d3a7187b32f221ba01f",
+          "name": "connect_journal_entry",
+          "schema": "private",
+          "searchPath": [
+            "search_path=pg_catalog"
+          ],
+          "securityDefiner": true
+        },
+        {
+          "hash": "eaa100fbd8af4c3e7e102820cda06632",
+          "name": "connect_journal_hide_chat",
+          "schema": "private",
+          "searchPath": [
+            "search_path=pg_catalog"
+          ],
+          "securityDefiner": true
+        },
+        {
+          "hash": "c5e21948c3ad1a9e48559c1c0372bfd9",
+          "name": "rpc_connect_journal",
+          "schema": "public",
+          "searchPath": [
+            "search_path=pg_catalog"
+          ],
+          "securityDefiner": true
+        },
+        {
+          "hash": "394048163fa19cc4684e39e14ca09cbe",
+          "name": "rpc_connect_journal_previews",
+          "schema": "public",
+          "searchPath": [
+            "search_path=pg_catalog"
+          ],
+          "securityDefiner": true
+        }
+      ],
+      "privateTable": {
+        "rls": true,
+        "anonRead": false,
+        "authenticatedRead": false,
+        "authenticatedWrite": false
+      },
+      "hiddenChatBackfillComplete": true
+    },
+    "accessSmoke": {
+      "missingActorDenied": true,
+      "anonymousHistoryDenied": true,
+      "nonexistentActorDenied": true,
+      "anonymousPreviewsDenied": true
+    },
+    "protectedComparisons": {
+      "config": true,
+      "protectedFunctions": true,
+      "chatPolicies": true,
+      "schedules": true,
+      "canonicalCalls": true
+    },
+    "canonicalSnapshotBefore": {
+      "hash": "76555d9ff35f2b1e2da7bbd1d9c074e0",
+      "count": 57
+    },
+    "canonicalSnapshotAfter": {
+      "hash": "76555d9ff35f2b1e2da7bbd1d9c074e0",
+      "count": 57
+    },
+    "migrationHistoryAdded": [
+      {
+        "version": "20261105031025",
+        "name": "connect_connection_journal"
+      }
+    ],
+    "protectedFunctionCount": 60
+  },
+  "advisoryReview": {
+    "beforeFindings": 1128,
+    "afterFindings": 1131,
+    "newFindings": [
+      {
+        "lint": "rls_enabled_no_policy",
+        "level": "INFO",
+        "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0008_rls_enabled_no_policy",
+        "detail": "Table \\`private.connect_journal_chat_hides\\` has RLS enabled, but no policies exist",
+        "metadata": {
+          "name": "connect_journal_chat_hides",
+          "type": "table",
+          "schema": "private"
+        },
+        "observed_at": "2026-11-05T04:53:02.912Z"
+      },
+      {
+        "lint": "authenticated_security_definer_function_executable",
+        "level": "WARN",
+        "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0029_authenticated_security_definer_function_executable",
+        "detail": "Function `public.rpc_connect_journal(p_query jsonb)` can be executed by the `authenticated` role as a `SECURITY DEFINER` function via `/rest/v1/rpc/rpc_connect_journal`. Revoke `EXECUTE` or switch it to `SECURITY INVOKER` if that is not intentional.",
+        "metadata": {
+          "name": "rpc_connect_journal",
+          "schema": "public",
+          "language": "plpgsql",
+          "arguments": "p_query jsonb",
+          "security_definer": true
+        },
+        "observed_at": "2026-11-05T04:53:02.912Z"
+      },
+      {
+        "lint": "authenticated_security_definer_function_executable",
+        "level": "WARN",
+        "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0029_authenticated_security_definer_function_executable",
+        "detail": "Function `public.rpc_connect_journal_previews(p_peers uuid[])` can be executed by the `authenticated` role as a `SECURITY DEFINER` function via `/rest/v1/rpc/rpc_connect_journal_previews`. Revoke `EXECUTE` or switch it to `SECURITY INVOKER` if that is not intentional.",
+        "metadata": {
+          "name": "rpc_connect_journal_previews",
+          "schema": "public",
+          "language": "plpgsql",
+          "arguments": "p_peers uuid[]",
+          "security_definer": true
+        },
+        "observed_at": "2026-11-05T04:53:02.912Z"
+      }
+    ],
+    "journalFindings": [
+      {
+        "lint": "rls_enabled_no_policy",
+        "level": "INFO",
+        "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0008_rls_enabled_no_policy",
+        "detail": "Table \\`private.connect_journal_chat_hides\\` has RLS enabled, but no policies exist",
+        "metadata": {
+          "name": "connect_journal_chat_hides",
+          "type": "table",
+          "schema": "private"
+        },
+        "observed_at": "2026-11-05T04:53:02.912Z"
+      },
+      {
+        "lint": "authenticated_security_definer_function_executable",
+        "level": "WARN",
+        "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0029_authenticated_security_definer_function_executable",
+        "detail": "Function `public.rpc_connect_journal(p_query jsonb)` can be executed by the `authenticated` role as a `SECURITY DEFINER` function via `/rest/v1/rpc/rpc_connect_journal`. Revoke `EXECUTE` or switch it to `SECURITY INVOKER` if that is not intentional.",
+        "metadata": {
+          "name": "rpc_connect_journal",
+          "schema": "public",
+          "language": "plpgsql",
+          "arguments": "p_query jsonb",
+          "security_definer": true
+        },
+        "observed_at": "2026-11-05T04:53:02.912Z"
+      },
+      {
+        "lint": "authenticated_security_definer_function_executable",
+        "level": "WARN",
+        "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0029_authenticated_security_definer_function_executable",
+        "detail": "Function `public.rpc_connect_journal_previews(p_peers uuid[])` can be executed by the `authenticated` role as a `SECURITY DEFINER` function via `/rest/v1/rpc/rpc_connect_journal_previews`. Revoke `EXECUTE` or switch it to `SECURITY INVOKER` if that is not intentional.",
+        "metadata": {
+          "name": "rpc_connect_journal_previews",
+          "schema": "public",
+          "language": "plpgsql",
+          "arguments": "p_peers uuid[]",
+          "security_definer": true
+        },
+        "observed_at": "2026-11-05T04:53:02.912Z"
+      }
+    ],
+    "review": "Private table intentionally has RLS with no client policies or grants. Public RPCs require SECURITY DEFINER to read private canonical records, enforce connect_actor and participant identity, and deny anonymous execution."
+  },
+  "application": {
+    "historyReadFlagEnabled": false,
+    "callingGateValuesModified": false,
+    "builds": 0,
+    "otaPublications": 0,
+    "providerCalls": 0
+  },
+  "remaining": [
+    "Journal app read flag activation requires a separate instruction",
+    "Native device and authenticated participant integration checks pending",
+    "Existing delete-account profile-guard conflict remains a separate integration issue"
+  ]
+}

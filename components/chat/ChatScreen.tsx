@@ -8851,14 +8851,14 @@ const resolveQueuedVideoUri = async (
   }, [closeMessageActions, deleteMessageForEveryone, hideMessageForMe, user?.id]);
 
   const renderMessage = useCallback(
-    ({ item, index }: { item: MessageType; index: number }) => {
+    ({ item, index, journalBoundaryBefore = false, journalBoundaryAfter = false }: { item: MessageType; index: number; journalBoundaryBefore?: boolean; journalBoundaryAfter?: boolean }) => {
       const meta = messageRenderMetaById.get(item.id);
       const isSystemMessage = item.type === 'system' || item.isSystem;
       const isMyMessage = meta?.isMyMessage ?? (!isSystemMessage && item.senderId === (user?.id || ''));
       const prevMessage = messagesRef.current[index - 1];
-      const isGroupedWithPrev = meta?.isGroupedWithPrev ?? false;
-      const isGroupedWithNext = meta?.isGroupedWithNext ?? false;
-      const showAvatar = meta?.showAvatar ?? false;
+      const isGroupedWithPrev = !journalBoundaryBefore && (meta?.isGroupedWithPrev ?? false);
+      const isGroupedWithNext = !journalBoundaryAfter && (meta?.isGroupedWithNext ?? false);
+      const showAvatar = journalBoundaryAfter ? !isMyMessage && !isSystemMessage : meta?.showAvatar ?? false;
       const showAvatarSpacer = meta?.showAvatarSpacer ?? false;
       const shouldAnimateEntry =
         seededMessageAnimationsRef.current &&
@@ -10786,6 +10786,8 @@ const resolveQueuedVideoUri = async (
               routeKey={routeId}
               listRef={flatListRef}
               messages={renderedMessages}
+              journalPeerUserId={!isChatBlocked && !peerHasLeftBetweener ? activePeerMessageUserId : null}
+              hasEarlierMessages={hasMore}
               renderItem={renderMessage}
               getItemType={getMessageItemType}
               keyExtractor={keyExtractor}

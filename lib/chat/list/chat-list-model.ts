@@ -31,6 +31,7 @@ export type ConversationType = {
     preview: string;
     createdAt: Date;
   } | null;
+  callPreview?: { callId: string; text: string; at: Date; media: 'voice' | 'video' };
   lastMessage: {
     id: string;
     text: string;
