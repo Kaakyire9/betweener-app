@@ -22,6 +22,10 @@ import type {
   LiveCancellationReason,
   LiveSessionSummary,
 } from '../application/index.ts';
+import type { LiveHostingManagementController } from '../hooks/use-live-hosting-management.ts';
+import { useLiveOperatorManagement } from '../hooks/use-live-operator-management.ts';
+import { LiveHostingManagementPanel } from './LiveHostingManagementPanel.tsx';
+import { LiveOperatorAssignmentPanel } from './LiveOperatorAssignmentPanel.tsx';
 import { type LiveVisualTheme, useLiveVisualTheme } from './live-visual-tokens.ts';
 
 const CANCELLATION_REASONS: readonly {
@@ -71,6 +75,9 @@ export function LiveEventManagementSheet({
   onDuplicate,
   onCancel,
   onArchive,
+  hostingController,
+  canManageEvent = true,
+  canAssignOperators = false,
 }: {
   visible: boolean;
   session: LiveSessionSummary;
@@ -81,6 +88,9 @@ export function LiveEventManagementSheet({
   onDuplicate: () => void;
   onCancel: (reason: LiveCancellationReason) => void;
   onArchive: () => void;
+  hostingController: LiveHostingManagementController;
+  canManageEvent?: boolean;
+  canAssignOperators?: boolean;
 }) {
   const visual = useLiveVisualTheme();
   const styles = useMemo(() => createStyles(visual), [visual]);
@@ -88,6 +98,10 @@ export function LiveEventManagementSheet({
   const editable = ['scheduled', 'waiting_for_quorum', 'confirmed'].includes(session.status);
   const cancellable = ['draft', 'scheduled', 'waiting_for_quorum', 'confirmed', 'backstage'].includes(session.status);
   const archivable = session.status === 'ended' || session.status === 'cancelled';
+  const operators = useLiveOperatorManagement({
+    sessionId: session.id,
+    enabled: visible && canAssignOperators,
+  });
 
   const confirmCancellation = () => {
     const label = CANCELLATION_REASONS.find((item) => item.value === reason)?.label ?? 'Plans changed';
@@ -108,18 +122,20 @@ export function LiveEventManagementSheet({
         <View style={styles.sheet}>
           <View style={styles.handle} />
           <View style={styles.header}>
-            <View><Text style={styles.eyebrow}>HOST CONTROLS</Text><Text style={styles.title}>Manage Live</Text></View>
+            <View><Text style={styles.eyebrow}>LIVE OPERATIONS</Text><Text style={styles.title}>Manage Live</Text></View>
             <Pressable accessibilityLabel="Close" onPress={onClose} style={styles.close}><X size={20} color={visual.text} /></Pressable>
           </View>
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
-            {editable ? (
+            {canManageEvent ? <LiveHostingManagementPanel controller={hostingController} /> : null}
+            {canAssignOperators ? <LiveOperatorAssignmentPanel controller={operators} /> : null}
+            {canManageEvent && editable ? (
               <>
                 <Action icon={<Pencil size={18} color={visual.teal} />} title="Edit details" description="Refine the story, poster, room settings, or time." onPress={onEdit} />
                 <Action icon={<CalendarClock size={18} color={visual.teal} />} title="Reschedule" description="Choose a new time; existing guests must reconfirm." onPress={onReschedule} />
               </>
             ) : null}
-            <Action icon={<Copy size={18} color={visual.teal} />} title="Create a copy" description="Start a new Studio draft using this Live as the foundation." onPress={onDuplicate} />
-            {cancellable ? (
+            {canManageEvent ? <Action icon={<Copy size={18} color={visual.teal} />} title="Create a copy" description="Start a new Studio draft using this Live as the foundation." onPress={onDuplicate} /> : null}
+            {canManageEvent && cancellable ? (
               <View style={styles.cancelBlock}>
                 <View style={styles.cancelHeading}><RotateCcw size={16} color={visual.danger} /><Text style={styles.cancelTitle}>Cancellation reason</Text></View>
                 <View style={styles.reasons}>
@@ -138,7 +154,7 @@ export function LiveEventManagementSheet({
                 <Action icon={<Trash2 size={18} color={visual.danger} />} title="Cancel Live" description="Close the room and notify guests without deleting its safety record." destructive onPress={confirmCancellation} />
               </View>
             ) : null}
-            {archivable ? <Action icon={<Archive size={18} color={visual.teal} />} title="Archive from Studio" description="Remove this completed record from your Studio list." onPress={onArchive} /> : null}
+            {canManageEvent && archivable ? <Action icon={<Archive size={18} color={visual.teal} />} title="Archive from Studio" description="Remove this completed record from your Studio list." onPress={onArchive} /> : null}
           </ScrollView>
           {busy ? <View style={styles.busy}><ActivityIndicator color={visual.accentContrast} /><Text style={styles.busyText}>Updating Live…</Text></View> : null}
         </View>

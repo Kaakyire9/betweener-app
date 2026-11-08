@@ -1,5 +1,5 @@
 import { Image } from 'expo-image';
-import { X } from 'lucide-react-native';
+import { ShieldAlert, X } from 'lucide-react-native';
 import { memo, useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -7,10 +7,13 @@ import { LiveGlassSurface } from './LiveGlassSurface.tsx';
 import { type LiveVisualTheme, useLiveVisualTheme } from './live-visual-tokens.ts';
 
 type LiveCompactHeaderProps = {
+  accentColor?: string;
+  accentBorderColor?: string;
   attendeeCount: number;
   hostAvatarUrl: string | null;
   hostName: string | null;
   onLeave: () => void;
+  onOpenSafety?: () => void;
   roomTitle: string;
 };
 
@@ -22,20 +25,25 @@ const initials = (name: string | null) => {
 
 /** Compact room identity chrome that leaves the stage as the visual focus. */
 export const LiveCompactHeader = memo(function LiveCompactHeader({
+  accentColor,
+  accentBorderColor,
   attendeeCount,
   hostAvatarUrl,
   hostName,
   onLeave,
+  onOpenSafety,
   roomTitle,
 }: LiveCompactHeaderProps) {
   const visual = useLiveVisualTheme();
   const styles = useMemo(() => createStyles(visual), [visual]);
   const displayName = hostName?.trim() || 'Host';
+  const resolvedAccent = accentColor ?? visual.color.teal;
+  const resolvedBorder = accentBorderColor ?? visual.color.borderStrong;
 
   return (
-    <LiveGlassSurface intensity={48} style={styles.glass}>
+    <LiveGlassSurface intensity={58} style={[styles.glass, { borderColor: resolvedBorder }]}>
       <View style={styles.header}>
-        <View accessibilityLabel={`Hosted by ${displayName}`} style={styles.hostAvatarShell}>
+        <View accessibilityLabel={`Hosted by ${displayName}`} style={[styles.hostAvatarShell, { borderColor: resolvedBorder }]}>
           {hostAvatarUrl ? (
             <Image contentFit="cover" source={{ uri: hostAvatarUrl }} style={styles.hostAvatar} transition={120} />
           ) : (
@@ -47,7 +55,7 @@ export const LiveCompactHeader = memo(function LiveCompactHeader({
         <View style={styles.copy}>
           <View style={styles.hostRow}>
             <Text numberOfLines={1} style={styles.hostName}>{displayName}</Text>
-            <Text style={styles.hostLabel}>HOST</Text>
+            <Text style={[styles.hostLabel, { color: resolvedAccent }]}>HOST</Text>
           </View>
           <View style={styles.roomRow}>
             <View style={styles.liveDot} />
@@ -57,22 +65,42 @@ export const LiveCompactHeader = memo(function LiveCompactHeader({
           </View>
         </View>
 
-        <Pressable
-          accessibilityLabel="Leave live room"
-          accessibilityRole="button"
-          hitSlop={8}
-          onPress={onLeave}
-          style={styles.iconButton}
-        >
-          <X size={20} color={visual.color.text} />
-        </Pressable>
+        <View style={styles.actions}>
+          {onOpenSafety ? (
+            <Pressable
+              accessibilityHint="Opens a private report form"
+              accessibilityLabel="Report this Live"
+              accessibilityRole="button"
+              hitSlop={8}
+              onPress={onOpenSafety}
+              style={styles.secondaryIconButton}
+            >
+              <ShieldAlert size={17} color={visual.color.textMuted} />
+            </Pressable>
+          ) : null}
+          <Pressable
+            accessibilityLabel="Leave live room"
+            accessibilityRole="button"
+            hitSlop={8}
+            onPress={onLeave}
+            style={styles.iconButton}
+          >
+            <X size={20} color={visual.color.text} />
+          </Pressable>
+        </View>
       </View>
     </LiveGlassSurface>
   );
 });
 
 const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
-  glass: { marginHorizontal: 10, marginTop: 4, borderRadius: 26 },
+  glass: {
+    marginHorizontal: 12,
+    marginTop: 5,
+    borderRadius: 27,
+    backgroundColor: visual.isDark ? '#081A17C9' : '#FFFDFCDD',
+    shadowOpacity: visual.isDark ? 0.26 : 0.15,
+  },
   header: {
     minHeight: 56,
     paddingHorizontal: 9,
@@ -85,6 +113,17 @@ const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
     width: 38,
     height: 38,
     borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: visual.color.surfaceTranslucent,
+    borderWidth: 1,
+    borderColor: visual.color.border,
+  },
+  actions: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  secondaryIconButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: visual.color.surfaceTranslucent,

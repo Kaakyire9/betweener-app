@@ -1,11 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ProgramSourceType, StudioOperationalSnapshot } from '@betweener/live-program-domain';
+import {
+  SCREEN_CONTENT_MODES,
+  type ProgramSourceType,
+  type ScreenContentMode,
+  type StudioOperationalSnapshot,
+} from '@betweener/live-program-domain';
 
 import { studioApi } from '../api/studio-api.ts';
 import { errorMessage } from '../lib/errors.ts';
 import { AudioMeter } from './AudioMeter.tsx';
 import { useAudioMeter } from './use-audio-meter.ts';
 import { useStudioMedia } from './studio-media-context.tsx';
+import { screenPresentationFitFlags } from '../program/screen-presentation-fit-flags.ts';
 
 const sourceKey = (instanceId: string, type: ProgramSourceType) =>
   `studio:${instanceId.replaceAll('-', '')}:${type}`;
@@ -14,10 +20,12 @@ export function StudioMediaControls({
   snapshot,
   controllerInstanceId,
   onChanged,
+  authorizePublish,
 }: {
   snapshot: StudioOperationalSnapshot;
   controllerInstanceId: string;
   onChanged: () => void;
+  authorizePublish: (label: string, operation: () => Promise<void>) => Promise<void>;
 }) {
   const media = useStudioMedia();
   const call = media.binding?.call;
@@ -29,9 +37,11 @@ export function StudioMediaControls({
   const [screenOn, setScreenOn] = useState(false);
   const [screenAudioOn, setScreenAudioOn] = useState(false);
   const [includeScreenAudio, setIncludeScreenAudio] = useState(false);
+  const [screenContentMode, setScreenContentMode] = useState<ScreenContentMode>('unknown');
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const stoppingScreenRef = useRef(false);
+  const lastScreenDimensionsRef = useRef('');
   const microphoneLevel = useAudioMeter(call?.microphone.state.mediaStream);
   const screenAudioLevel = useAudioMeter(
     screenAudioOn ? call?.screenShare.state.mediaStream : undefined,
@@ -78,6 +88,9 @@ export function StudioMediaControls({
     hasVideo: boolean;
     hasAudio: boolean;
     muted?: boolean;
+    sourceWidth?: number | null;
+    sourceHeight?: number | null;
+    contentMode?: ScreenContentMode;
   }) => {
     if (!admission) return;
     await studioApi.upsertSource({
@@ -92,8 +105,43 @@ export function StudioMediaControls({
       readiness: 'live',
       health: 'healthy',
       muted: input.muted,
+      sourceWidth: input.sourceWidth,
+      sourceHeight: input.sourceHeight,
+      contentMode: input.contentMode,
     });
   }, [admission, snapshot.session.id]);
+
+  const screenMetadata = useCallback(() => {
+    const settings = call?.screenShare.state.mediaStream?.getVideoTracks()[0]?.getSettings();
+    return {
+      sourceWidth: settings?.width ?? null,
+      sourceHeight: settings?.height ?? null,
+      contentMode: screenContentMode,
+    };
+  }, [call, screenContentMode]);
+
+  useEffect(() => {
+    if (!screenOn) {
+      lastScreenDimensionsRef.current = '';
+      return undefined;
+    }
+    const reconcile = () => {
+      const metadata = screenMetadata();
+      const key = `${metadata.sourceWidth ?? 0}x${metadata.sourceHeight ?? 0}`;
+      if (key === '0x0' || key === lastScreenDimensionsRef.current) return;
+      lastScreenDimensionsRef.current = key;
+      void upsert({
+        key: screenKey,
+        type: 'screen_share',
+        hasVideo: true,
+        hasAudio: false,
+        ...metadata,
+      }).then(onChanged).catch(() => undefined);
+    };
+    reconcile();
+    const timer = window.setInterval(reconcile, 1_000);
+    return () => window.clearInterval(timer);
+  }, [onChanged, screenKey, screenMetadata, screenOn, upsert]);
 
   useEffect(() => {
     if (!admission || (!cameraOn && !microphoneOn && !screenOn && !screenAudioOn)) {
@@ -102,7 +150,10 @@ export function StudioMediaControls({
     const heartbeat = () => {
       if (cameraOn) void upsert({ key: hostCameraKey, type: 'host_camera', hasVideo: true, hasAudio: false });
       if (microphoneOn) void upsert({ key: hostMicrophoneKey, type: 'host_microphone', hasVideo: false, hasAudio: true });
-      if (screenOn) void upsert({ key: screenKey, type: 'screen_share', hasVideo: true, hasAudio: false });
+      if (screenOn) void upsert({
+        key: screenKey, type: 'screen_share', hasVideo: true, hasAudio: false,
+        ...screenMetadata(),
+      });
       if (screenAudioOn) {
         void upsert({
           key: screenAudioKey,
@@ -125,7 +176,7 @@ export function StudioMediaControls({
     };
   }, [
     admission, cameraOn, hostCameraKey, hostMicrophoneKey, microphoneOn,
-    screenAudioKey, screenAudioOn, screenKey, screenOn, upsert,
+    screenAudioKey, screenAudioOn, screenKey, screenMetadata, screenOn, upsert,
   ]);
 
   const run = async (name: string, operation: () => Promise<void>) => {
@@ -195,7 +246,10 @@ export function StudioMediaControls({
     await call.screenShare.enable();
     const stream = call.screenShare.state.mediaStream;
     const hasAudio = Boolean(stream?.getAudioTracks().length);
-    await upsert({ key: screenKey, type: 'screen_share', hasVideo: true, hasAudio: false });
+    await upsert({
+      key: screenKey, type: 'screen_share', hasVideo: true, hasAudio: false,
+      ...screenMetadata(),
+    });
     if (hasAudio) {
       await upsert({
         key: screenAudioKey,
@@ -230,7 +284,9 @@ export function StudioMediaControls({
     return (
       <div className="stack-sm">
         <p className="muted compact">Connect only when you are ready to grant browser media access.</p>
-        <button className="button button-secondary" disabled={media.connecting} onClick={() => void media.connect()}>
+        <button className="button button-secondary" disabled={media.connecting}
+          onClick={() => void authorizePublish('Connect studio media', media.connect)
+            .catch((failure) => setError(errorMessage(failure, 'Step-up failed.')))}>
           {media.connecting ? 'Connecting…' : 'Connect studio media'}
         </button>
         {media.error ? <p className="error-copy" role="alert">{media.error}</p> : null}
@@ -274,6 +330,30 @@ export function StudioMediaControls({
       </button>
       {snapshot.access.canScreenShare ? (
         <>
+          {screenPresentationFitFlags.v1 ? <label className="field-label">Screen content
+            <select value={screenContentMode} onChange={(event) => {
+              const contentMode = event.target.value as ScreenContentMode;
+              setScreenContentMode(contentMode);
+              if (screenOn) {
+                const dimensions = screenMetadata();
+                void upsert({
+                  key: screenKey,
+                  type: 'screen_share',
+                  hasVideo: true,
+                  hasAudio: false,
+                  sourceWidth: dimensions.sourceWidth,
+                  sourceHeight: dimensions.sourceHeight,
+                  contentMode,
+                }).then(onChanged).catch((failure) => {
+                  setError(errorMessage(failure, 'Screen metadata update failed.'));
+                });
+              }
+            }}>
+              {SCREEN_CONTENT_MODES.map((mode) => <option key={mode} value={mode}>
+                {mode[0].toUpperCase()}{mode.slice(1)}
+              </option>)}
+            </select>
+          </label> : null}
           <label className="check-row">
             <input type="checkbox" checked={includeScreenAudio}
               disabled={!canShareAudio || screenOn}

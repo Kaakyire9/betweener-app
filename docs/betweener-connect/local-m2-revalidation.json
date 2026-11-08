@@ -1,0 +1,192 @@
+{
+  "recordedAt": "2026-10-28T16:42:11.474Z",
+  "execution": "LOCAL_IMPLEMENTATION_AND_READ_ONLY_PROVIDER_REVALIDATION",
+  "providerWrites": 0,
+  "newProviderUsers": 0,
+  "newProviderCalls": 0,
+  "sharedDatabaseModified": false,
+  "deployed": false,
+  "nativeBindingsInstalled": false,
+  "nativeBuildsStarted": 0,
+  "physicalDeviceTestsExecuted": false,
+  "change": "Require literal true from rpc_connect_complete_job before acknowledging worker/revocation cleanup",
+  "implementationFiles": [
+    "supabase/functions/_shared/connect-provider-worker.ts",
+    "supabase/functions/connect-provider-worker/index.ts",
+    "supabase/functions/connect-revoke-consent/index.ts",
+    "scripts/lib/connect-stream-closure-worker.ts",
+    "scripts/test-connect-revocation.cjs",
+    "__tests__/connect-consent-revocation.regression.test.ts"
+  ],
+  "reports": [
+    "10-connect-v1-final-validation.md",
+    "13-connect-v1-m2-security-validation.md",
+    "14-connect-v1-m2-voice-implementation.md",
+    "15-connect-v1-m2-device-test-plan.md",
+    "16-connect-v1-m2a-security-closure.md"
+  ],
+  "readOnlyProvider": {
+    "timestamp": "2026-10-28T16:37:44.559Z",
+    "mode": "READ_ONLY",
+    "providerWrites": 0,
+    "app": {
+      "id": 1731011,
+      "name": "Betweener Staging",
+      "disable_auth_checks": false,
+      "disable_permissions_checks": false
+    },
+    "fullCallTypeDigest": "12e74f5fca79a1dea2b48a8c950bbc3a2189a3ffdf9e04ccb43d28c4e4533a7e",
+    "matchesApprovedBaseline": true,
+    "connectPolicyVerified": true,
+    "callTypeNames": [
+      "betweener_live",
+      "default",
+      "development",
+      "livestream",
+      "agent",
+      "audio_call",
+      "audio_room",
+      "betweener_connect"
+    ]
+  },
+  "retainedRealProviderEvidence": [
+    "stream-staging-connect-m2a-closure-evidence.json",
+    "stream-staging-connect-video-security-evidence.json"
+  ],
+  "retainedProviderFinding": "Held ordinary Stream token joined and published synthetic media after DB consent revocation while provider end failed",
+  "freshLocalChecks": {
+    "connect": {
+      "tests": 82,
+      "pass": 82,
+      "fail": 0
+    },
+    "ui": {
+      "passed": 7,
+      "total": 7
+    },
+    "acl": {
+      "databaseAclAssertions": 15
+    },
+    "security": {
+      "connectDatabaseIntegrationCases": 67,
+      "separateConnectionRaceCases": 6,
+      "directHttpAdversarialCases": 6,
+      "realStreamCalls": 0
+    },
+    "revocation": {
+      "revocationDatabaseCases": 20,
+      "separateConnectionRaces": 4,
+      "realProviderCalls": 0
+    },
+    "relationship": {
+      "relationshipSecurityAssertions": 88,
+      "failures": 0
+    },
+    "relationshipRaces": {
+      "separateConnectionConcurrencyCases": 6,
+      "failures": 0
+    },
+    "relationshipHttp": {
+      "directHttpAdversarialCases": 4,
+      "failures": 0,
+      "endpoint": "isolated_loopback_postgrest"
+    },
+    "originalVulnerabilityReproduction": {
+      "originalVulnerabilityAssertions": 9,
+      "meaning": "vulnerability reproduced before repair"
+    },
+    "baseline": {
+      "tests": 91,
+      "pass": 91,
+      "fail": 0
+    },
+    "chat": {
+      "tests": 234,
+      "pass": 234,
+      "fail": 0
+    },
+    "intent": {
+      "tests": 2,
+      "pass": 2,
+      "fail": 0
+    },
+    "live": {
+      "counts": {
+        "tests": 508,
+        "pass": 504,
+        "fail": 4
+      },
+      "failures": [
+        {
+          "file": "__tests__/live-auth-recovery.regression.test.ts",
+          "line": 121
+        },
+        {
+          "file": "__tests__/live-fullscreen-stage.regression.test.ts",
+          "line": 229
+        },
+        {
+          "file": "__tests__/live-phase10g-studio-database.regression.test.ts",
+          "line": 271
+        },
+        {
+          "file": "__tests__/live-room-safety.regression.test.ts",
+          "line": 96
+        }
+      ],
+      "signatures": {
+        "codes": 4,
+        "matchOperators": 4
+      },
+      "unchanged": true
+    },
+    "typeScript": "PASS",
+    "strictDenoEdgeEntrypoints": 4,
+    "targetedLint": "PASS",
+    "isolation": "PASS",
+    "statuses": {
+      "rn": 0,
+      "connect": 0,
+      "security": 0,
+      "revocation": 0,
+      "relationship": 0,
+      "revocationAck": 0,
+      "chat": 0,
+      "baseline": 0,
+      "intent": 0,
+      "live": 1,
+      "lint": 0,
+      "typeScript": 0,
+      "deno": 0,
+      "androidIsolation": 0,
+      "liveIsolation": 0,
+      "easIsolation": 0
+    }
+  },
+  "cleanup": {
+    "sharedConnectAbsent": true,
+    "sharedProofAbsent": true,
+    "sharedRevocationRpcAbsent": true,
+    "sharedSecurityMigrationRows": 0,
+    "disposableDatabases": 0,
+    "disposableRestContainers": 0
+  },
+  "declarations": {
+    "CONNECT_M2_STREAM_SECURITY": "FAIL",
+    "CONNECT_M2_VOICE_DOMAIN": "PASS",
+    "CONNECT_M2_CALL_LIFECYCLE": "PASS",
+    "CONNECT_M2_VOICE_UI": "CONDITIONAL_PASS",
+    "CONNECT_M2_AUDIO_ROUTING": "NOT_TESTED",
+    "CONNECT_M2_IN_APP_RINGING": "NOT_TESTED",
+    "CONNECT_M2_DEVICE_VALIDATION": "BLOCKED",
+    "CONNECT_M2_LIVE_ISOLATION": "PASS",
+    "CONNECT_M3_READY": "BLOCKED"
+  },
+  "limitations": [
+    "Hosted Edge HTTP handlers not invoked or deployed",
+    "Retained SFU receipts are not new provider executions",
+    "Job acknowledgement correction does not prevent remote held-token access during provider-end failure",
+    "Real native client ownership, foreground host, physical audio routes and two-device calling remain unexecuted"
+  ],
+  "logs": "tmp/connect-m2-revalidation/"
+}

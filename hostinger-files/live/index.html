@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Open Betweener Live</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, -apple-system, sans-serif; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #061f21; color: #f6eee4; padding: 24px; }
+    main { width: min(100%, 520px); padding: 32px; border: 1px solid #315054; border-radius: 28px; background: #0b292b; text-align: center; }
+    p { color: #b8c5c4; line-height: 1.6; }
+    a { display: inline-flex; min-height: 48px; align-items: center; justify-content: center; margin-top: 12px; padding: 0 22px; border-radius: 24px; background: #16b8b4; color: #041719; font-weight: 700; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <main>
+    <p>Betweener Live</p>
+    <h1>Continue in Betweener</h1>
+    <p>Open this Live safely in the Betweener app. Sign in or join its Circle when required.</p>
+    <a id="open-app" href="https://getbetweener.com">Open Betweener</a>
+  </main>
+  <script>
+    (() => {
+      const staging = window.location.hostname.toLowerCase() === 'staging.getbetweener.com';
+      const sessionId = window.location.pathname.split('/').filter(Boolean)[1] || '';
+      const scheme = staging ? 'betweenerstaging' : 'betweenerapp';
+      const query = window.location.search || '';
+      document.getElementById('open-app').href = `${scheme}://live/${sessionId}${query}`;
+    })();
+  </script>
+</body>
+</html>

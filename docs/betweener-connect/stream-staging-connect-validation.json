@@ -1,0 +1,542 @@
+{
+  "date": "2026-10-28T13:15:40.738Z",
+  "target": {
+    "id": 1731011,
+    "name": "Betweener Staging",
+    "disable_auth_checks": false,
+    "disable_permissions_checks": false
+  },
+  "approval": "User approved scoped development configuration and isolated tests",
+  "securityGate": "BLOCKED",
+  "review": {
+    "coordinatorContract": "PASS",
+    "unexpectedResponses": [],
+    "mediaPermissionProof": "BLOCKED",
+    "revocationEndAck": "PASS",
+    "databaseRevocationToProviderCleanup": "NOT_TESTED",
+    "cleanup": "PASS",
+    "existingTypesUnchanged": true,
+    "globalChecksEnabled": true,
+    "result": "BLOCKED"
+  },
+  "proposalCanonicalSha256": "64c5af1bee8cb45288a4c72795e8b3e4d30bd10ed099692dc4f26bae436ea958",
+  "existingCallTypesCanonicalSha256": "ece8a9e0e931ea954bc6a134f067a1c9145112fd6d94cdf5bccfd8751cecb17d",
+  "providerConfiguration": {
+    "createdRoles": [
+      "connect_invited",
+      "connect_voice",
+      "connect_video"
+    ],
+    "roleCreationHttpStatus": 201,
+    "callTypeCreationHttpStatus": 201,
+    "connectRtmpDisableHttpStatus": 201,
+    "compatibility": {
+      "unsupportedEmptyChatFeedRolesOmitted": true,
+      "omittedOptionalEmptyRoleEntriesOnReadback": true,
+      "disabledVideoResolution": {
+        "width": 640,
+        "height": 480,
+        "bitrate": 600000
+      },
+      "disabledHlsQualityTracks": [
+        "720p"
+      ],
+      "disabledFrameCaptureIntervalSeconds": 3
+    },
+    "readback": {
+      "name": "betweener_connect",
+      "grants": {
+        "global_read_only": [],
+        "call_member": [],
+        "guest": [],
+        "connect_video": [
+          "join-call",
+          "read-call",
+          "send-audio",
+          "send-video"
+        ],
+        "admin": [],
+        "connect_voice": [
+          "join-call",
+          "read-call",
+          "send-audio"
+        ],
+        "global_admin": [],
+        "user": [],
+        "connect_invited": [
+          "read-call"
+        ]
+      },
+      "settings": {
+        "audio": {
+          "access_request_enabled": false,
+          "opus_dtx_enabled": false,
+          "redundant_coding_enabled": false,
+          "mic_default_on": false,
+          "speaker_default_on": false,
+          "default_device": "earpiece",
+          "noise_cancellation": {
+            "mode": "auto-on"
+          },
+          "hifi_audio_enabled": false
+        },
+        "video": {
+          "enabled": false,
+          "access_request_enabled": false,
+          "target_resolution": {
+            "width": 640,
+            "height": 480,
+            "bitrate": 600000
+          },
+          "camera_default_on": false,
+          "camera_facing": ""
+        },
+        "limits": {
+          "max_participants": 2,
+          "max_participants_exclude_roles": [],
+          "max_duration_seconds": null
+        },
+        "ring": {
+          "incoming_call_timeout_ms": 45000,
+          "auto_cancel_timeout_ms": 45000,
+          "missed_call_timeout_ms": 45000
+        },
+        "session": {
+          "inactivity_timeout_seconds": 30
+        },
+        "recording": {
+          "mode": "disabled",
+          "audio_only": true
+        },
+        "transcription": {
+          "mode": "disabled",
+          "closed_caption_mode": "disabled"
+        },
+        "individual_recording": {
+          "mode": "disabled"
+        },
+        "raw_recording": {
+          "mode": "disabled"
+        },
+        "frame_recording": {
+          "mode": "disabled",
+          "quality": "720p",
+          "capture_interval_in_seconds": 3
+        },
+        "screensharing": {
+          "enabled": false,
+          "access_request_enabled": false
+        },
+        "thumbnails": {
+          "enabled": false
+        },
+        "ingress": {
+          "enabled": false
+        },
+        "broadcasting": {
+          "enabled": false,
+          "hls": {
+            "enabled": false
+          },
+          "rtmp": {
+            "enabled": false
+          }
+        }
+      },
+      "notificationsEnabled": false
+    },
+    "checks": {
+      "approvedSubsetMatches": true,
+      "existingTypesUnchanged": true,
+      "globalChecksEnabled": true,
+      "localAdapterPolicyAccepted": true
+    }
+  },
+  "fixtureApplicationRoles": [
+    "user",
+    "user",
+    "user",
+    "user"
+  ],
+  "requests": [
+    {
+      "name": "A_arbitrary_create",
+      "status": 403,
+      "code": 17,
+      "message": "GetOrCreateCall failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-c' with role 'user' is not allowed to perform action CreateCall in scope 'video:betweener_connect'\"",
+      "receivedSfuCredentials": false
+    },
+    {
+      "name": "B_unrelated_read",
+      "status": 403,
+      "code": 17,
+      "message": "GetCall failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-c' with role 'user' is not allowed to perform action ReadCall in scope 'video:betweener_connect'\"",
+      "receivedSfuCredentials": false
+    },
+    {
+      "name": "B_unrelated_join",
+      "status": 403,
+      "code": 17,
+      "message": "JoinCall failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-c' with role 'user' is not allowed to perform action JoinCall in scope 'video:betweener_connect'\"",
+      "receivedSfuCredentials": false
+    },
+    {
+      "name": "D_unmatched_ring_create",
+      "status": 403,
+      "code": 17,
+      "message": "GetOrCreateCall failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-c' with role 'user' is not allowed to perform action CreateCall in scope 'video:betweener_connect'\"",
+      "receivedSfuCredentials": false
+    },
+    {
+      "name": "D_unrelated_existing_ring",
+      "status": 403,
+      "code": 17,
+      "message": "RingCall failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-c' with role 'user' is not allowed to perform action SendEvent in scope 'video:betweener_connect'\"",
+      "receivedSfuCredentials": false
+    },
+    {
+      "name": "control_invited_read",
+      "status": 200,
+      "code": null,
+      "capabilities": [
+        "read-call"
+      ],
+      "videoEnabled": false,
+      "memberCount": 2,
+      "receivedSfuCredentials": false
+    },
+    {
+      "name": "control_invited_cannot_join",
+      "status": 403,
+      "code": 17,
+      "message": "JoinCall failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-a' with roles ['user', 'connect_invited'] is not allowed to perform action JoinCall in scope 'video:betweener_connect'\"",
+      "receivedSfuCredentials": false
+    },
+    {
+      "name": "control_voice_member_a",
+      "status": 200,
+      "code": null,
+      "capabilities": [
+        "join-call",
+        "read-call",
+        "send-audio"
+      ],
+      "videoEnabled": false,
+      "memberCount": 2,
+      "receivedSfuCredentials": false
+    },
+    {
+      "name": "control_voice_member_b",
+      "status": 200,
+      "code": null,
+      "capabilities": [
+        "join-call",
+        "read-call",
+        "send-audio"
+      ],
+      "videoEnabled": false,
+      "memberCount": 2,
+      "receivedSfuCredentials": false
+    },
+    {
+      "name": "control_voice_join_a",
+      "status": 201,
+      "code": null,
+      "capabilities": [
+        "join-call",
+        "read-call",
+        "send-audio"
+      ],
+      "videoEnabled": false,
+      "memberCount": 2,
+      "receivedSfuCredentials": true
+    },
+    {
+      "name": "control_voice_join_b",
+      "status": 201,
+      "code": null,
+      "capabilities": [
+        "join-call",
+        "read-call",
+        "send-audio"
+      ],
+      "videoEnabled": false,
+      "memberCount": 2,
+      "receivedSfuCredentials": true
+    },
+    {
+      "name": "C_add_third_member",
+      "status": 403,
+      "code": 17,
+      "message": "UpdateCallMembers failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-a' with roles ['user', 'connect_voice'] is not allowed to perform action UpdateCallMember in scope 'video:betweener_connect'\"",
+      "receivedSfuCredentials": false
+    },
+    {
+      "name": "F_override_video_setting",
+      "status": 403,
+      "code": 17,
+      "message": "UpdateCall failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-a' with roles ['user', 'connect_voice'] is not allowed to perform action UpdateCall in scope 'video:betweener_connect'\"",
+      "receivedSfuCredentials": false
+    },
+    {
+      "name": "F_join_with_video_flag",
+      "status": 201,
+      "code": null,
+      "capabilities": [
+        "join-call",
+        "read-call",
+        "send-audio"
+      ],
+      "videoEnabled": false,
+      "memberCount": 2,
+      "receivedSfuCredentials": true
+    },
+    {
+      "name": "F_grant_self_video",
+      "status": 403,
+      "code": 17,
+      "message": "UpdateUserPermissions failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-a' with roles ['user', 'connect_voice'] is not allowed to perform action UpdateCallPermissions in scope 'video:betweener_connect'\"",
+      "receivedSfuCredentials": false
+    },
+    {
+      "name": "F_sfu_probe_admission",
+      "status": 201,
+      "code": null,
+      "capabilities": [
+        "join-call",
+        "read-call",
+        "send-audio"
+      ],
+      "videoEnabled": false,
+      "memberCount": 2,
+      "receivedSfuCredentials": true
+    },
+    {
+      "name": "G_mismatched_query_identity",
+      "status": 403,
+      "code": 17,
+      "message": "GetCall failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-c' with role 'user' is not allowed to perform action ReadCall in scope 'video:betweener_connect'\"",
+      "receivedSfuCredentials": false
+    },
+    {
+      "name": "G_tampered_signed_identity",
+      "status": 401,
+      "code": 5,
+      "message": "GetCall failed with error: \"Token signature is invalid\"",
+      "receivedSfuCredentials": false
+    },
+    {
+      "name": "I_self_role_escalation",
+      "status": 403,
+      "code": 17,
+      "message": "UpdateCallMembers failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-a' with roles ['user', 'connect_voice'] is not allowed to perform action UpdateCallMember in scope 'video:betweener_connect'\"",
+      "receivedSfuCredentials": false
+    },
+    {
+      "name": "I_update_settings",
+      "status": 403,
+      "code": 17,
+      "message": "UpdateCall failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-a' with roles ['user', 'connect_voice'] is not allowed to perform action UpdateCall in scope 'video:betweener_connect'\"",
+      "receivedSfuCredentials": false
+    },
+    {
+      "name": "I_end_call",
+      "status": 403,
+      "code": 17,
+      "message": "EndCall failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-a' with roles ['user', 'connect_voice'] is not allowed to perform action EndCall in scope 'video:betweener_connect'\"",
+      "receivedSfuCredentials": false
+    },
+    {
+      "name": "I_start_recording",
+      "status": 403,
+      "code": 17,
+      "message": "StartRecording failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-a' with roles ['user', 'connect_voice'] is not allowed to perform action StartRecording in scope 'video:betweener_connect'\"",
+      "receivedSfuCredentials": false
+    },
+    {
+      "name": "I_start_transcription",
+      "status": 403,
+      "code": 17,
+      "message": "StartTranscription failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-a' with roles ['user', 'connect_voice'] is not allowed to perform action StartTranscription in scope 'video:betweener_connect'\"",
+      "receivedSfuCredentials": false
+    },
+    {
+      "name": "I_start_broadcasting",
+      "status": 403,
+      "code": 17,
+      "message": "StartHLSBroadcasting failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-a' with roles ['user', 'connect_voice'] is not allowed to perform action StartBroadcasting in scope 'video:betweener_connect'\"",
+      "receivedSfuCredentials": false
+    },
+    {
+      "name": "J_valid_live_call_token_control",
+      "status": 200,
+      "code": null,
+      "capabilities": [
+        "create-call",
+        "create-reaction",
+        "enable-noise-cancellation",
+        "end-call",
+        "join-call",
+        "join-ended-call",
+        "read-call",
+        "remove-call-member",
+        "send-audio",
+        "update-call-member"
+      ],
+      "videoEnabled": false,
+      "memberCount": 2,
+      "receivedSfuCredentials": false
+    },
+    {
+      "name": "J_live_call_token_connect_join",
+      "status": 403,
+      "code": 17,
+      "message": "JoinCall failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-c' with role 'user' is not allowed to perform action JoinCall in scope 'video:betweener_connect'\"",
+      "receivedSfuCredentials": false
+    },
+    {
+      "name": "J_live_call_token_connect_create",
+      "status": 403,
+      "code": 17,
+      "message": "GetOrCreateCall failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-c' with role 'user' is not allowed to perform action CreateCall in scope 'video:betweener_connect'\"",
+      "receivedSfuCredentials": false
+    },
+    {
+      "name": "E_held_token_before_provider_cleanup",
+      "status": 201,
+      "code": null,
+      "capabilities": [
+        "join-call",
+        "read-call",
+        "send-audio"
+      ],
+      "videoEnabled": false,
+      "memberCount": 2,
+      "receivedSfuCredentials": true
+    },
+    {
+      "name": "E_held_token_after_end_ack",
+      "status": 403,
+      "code": 17,
+      "message": "JoinCall failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-a' with roles ['user', 'connect_voice'] is not allowed to perform action JoinEndedCall in scope 'video:betweener_connect'\"",
+      "receivedSfuCredentials": false
+    },
+    {
+      "name": "E_held_token_after_membership_removal",
+      "status": 403,
+      "code": 17,
+      "message": "JoinCall failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-a' with role 'user' is not allowed to perform action JoinCall in scope 'video:betweener_connect'\"",
+      "receivedSfuCredentials": false
+    },
+    {
+      "name": "H_terminal_ringing_rejoin",
+      "status": 403,
+      "code": 17,
+      "message": "JoinCall failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-a' with roles ['user', 'connect_voice'] is not allowed to perform action JoinEndedCall in scope 'video:betweener_connect'\"",
+      "receivedSfuCredentials": false
+    },
+    {
+      "name": "H_terminal_rering",
+      "status": 403,
+      "code": 17,
+      "message": "RingCall failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-a' with roles ['user', 'connect_voice'] is not allowed to perform action SendEvent in scope 'video:betweener_connect'\"",
+      "receivedSfuCredentials": false
+    }
+  ],
+  "sfuProbe": {
+    "kind": "SFU_PUBLISH_BOUNDARY",
+    "results": [
+      {
+        "track": "video",
+        "status": 200,
+        "code": "ERROR_CODE_REQUEST_VALIDATION_FAILED",
+        "message": "Invalid SetPublisher request",
+        "answerReceived": false
+      },
+      {
+        "track": "screenshare",
+        "status": 200,
+        "code": "ERROR_CODE_REQUEST_VALIDATION_FAILED",
+        "message": "Invalid SetPublisher request",
+        "answerReceived": false
+      },
+      {
+        "track": "audio",
+        "status": 200,
+        "code": null,
+        "message": null,
+        "answerReceived": true
+      }
+    ],
+    "joinAcknowledged": true,
+    "publishOptionTrackTypes": [
+      1,
+      2,
+      3,
+      4
+    ]
+  },
+  "cleanup": [
+    {
+      "operation": "delete_accepted_call",
+      "status": "completed"
+    },
+    {
+      "operation": "remove_accepted_call",
+      "status": "requested"
+    },
+    {
+      "operation": "delete_terminal_call",
+      "status": "completed"
+    },
+    {
+      "operation": "remove_terminal_call",
+      "status": "requested"
+    },
+    {
+      "operation": "remove_arbitrary_call",
+      "status": "requested"
+    },
+    {
+      "operation": "delete_live_call",
+      "status": "completed"
+    },
+    {
+      "operation": "remove_live_call",
+      "status": "requested"
+    },
+    {
+      "operation": "delete_fixture_users",
+      "status": "completed"
+    }
+  ],
+  "remainingFixtureUsers": 0,
+  "remainingFixtureCalls": [
+    {
+      "purpose": "accepted",
+      "exists": false,
+      "status": 404,
+      "code": 16
+    },
+    {
+      "purpose": "terminal",
+      "exists": false,
+      "status": 404,
+      "code": 16
+    },
+    {
+      "purpose": "arbitrary",
+      "exists": false,
+      "status": 404,
+      "code": 16
+    },
+    {
+      "purpose": "live",
+      "exists": false,
+      "status": 404,
+      "code": 16
+    }
+  ],
+  "existingTypesUnchangedAfterTests": true,
+  "globalChecksEnabledAfterTests": true
+}

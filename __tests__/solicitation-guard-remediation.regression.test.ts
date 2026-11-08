@@ -31,7 +31,8 @@ test('ordinary chat image reviews bind approval to held bytes', () => {
   assert.match(attachment, /restoreApprovedChatImage/);
   assert.match(attachment, /priorReview\?\.status === 'PENDING_REVIEW'/);
   assert.match(attachment, /bucket: hold\.bucket, path: hold\.path/);
-  assert.match(attachment, /imageSafety\.decision !== 'ALLOW' \|\| imageSafety\.failureReason/);
+  assert.match(attachment, /if \(imageSafety\.failureReason\)/);
+  assert.match(attachment, /if \(imageSafety\.decision !== 'ALLOW'\)/);
 });
 
 test('captions and provider calls cannot bypass moderation boundaries', () => {

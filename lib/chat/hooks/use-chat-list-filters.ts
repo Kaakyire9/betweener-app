@@ -10,6 +10,7 @@ type ChatListFilterConversation = {
   matchedUser: {
     name: string;
   };
+  callPreview?: { at: Date };
   lastMessage: {
     timestamp: Date;
   };
@@ -51,10 +52,12 @@ export const useChatListFilters = <TConversation extends ChatListFilterConversat
         if (!a.isPinned && b.isPinned) return 1;
         const aActivityAt = Math.max(
           a.lastMessage.timestamp.getTime(),
+          a.callPreview?.at.getTime() ?? 0,
           a.latestActivity?.createdAt.getTime() ?? 0,
         );
         const bActivityAt = Math.max(
           b.lastMessage.timestamp.getTime(),
+          b.callPreview?.at.getTime() ?? 0,
           b.latestActivity?.createdAt.getTime() ?? 0,
         );
         return bActivityAt - aActivityAt;

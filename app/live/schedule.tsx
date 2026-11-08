@@ -26,6 +26,7 @@ import {
 } from '@/features/live/application/index.ts';
 import {
   LIVE_CREATION_STEPS,
+  LiveAudienceReachStep,
   LiveCreationMomentStep,
   LiveCreationProgress,
   LiveCreationReviewStep,
@@ -52,6 +53,7 @@ import { useAuth } from '@/lib/auth-context';
 type StudioParams = {
   circleId?: string;
   circleName?: string;
+  circleReachLabel?: string;
   sessionId?: string;
   duplicateSessionId?: string;
   initialStep?: LiveCreationStep;
@@ -65,6 +67,7 @@ export default function ScheduleLiveScreen() {
   const params = useLocalSearchParams<StudioParams>();
   const circleIdParam = asParam(params.circleId);
   const circleName = asParam(params.circleName);
+  const circleReachLabel = asParam(params.circleReachLabel);
   const editSessionId = asParam(params.sessionId);
   const duplicateSessionId = asParam(params.duplicateSessionId);
   const sourceSessionId = editSessionId ?? duplicateSessionId;
@@ -114,6 +117,7 @@ export default function ScheduleLiveScreen() {
       setDraft(createLiveCreationDraftFromSession(sourceSession, Crypto.randomUUID(), {
         duplicate: Boolean(duplicateSessionId),
         circleName,
+        circleReachLabel,
       }));
       return;
     }
@@ -131,11 +135,12 @@ export default function ScheduleLiveScreen() {
           clientRequestId: Crypto.randomUUID(),
           circleId: circleIdParam,
           circleName,
+          circleReachLabel,
         }));
       }
     });
     return () => { active = false; };
-  }, [circleIdParam, circleName, duplicateSessionId, editSessionId, sessionsLoading, sourceSession, sourceSessionId, user?.id]);
+  }, [circleIdParam, circleName, circleReachLabel, duplicateSessionId, editSessionId, sessionsLoading, sourceSession, sourceSessionId, user?.id]);
 
   useEffect(() => {
     if (!draft || !storageKey || isEditing || publicationComplete.current) return;
@@ -239,6 +244,7 @@ export default function ScheduleLiveScreen() {
             clientRequestId: Crypto.randomUUID(),
             circleId,
             circleName: draft.circleName,
+            circleReachLabel: draft.circleReachLabel,
           }));
           setPoster(null);
           setTeaser(null);
@@ -357,8 +363,8 @@ export default function ScheduleLiveScreen() {
             <ArrowLeft size={22} color={visual.text} />
           </Pressable>
           <View style={styles.headerCopy}>
-            <Text style={styles.eyebrow}>LIVE CREATION STUDIO</Text>
-            <Text style={styles.heading}>{isEditing ? 'Refine your Live' : duplicateSessionId ? 'Create from Live' : 'Create a Live'}</Text>
+            <Text style={styles.eyebrow}>LIVE HOST SETUP</Text>
+            <Text style={styles.heading}>{isEditing ? 'Refine your Live' : duplicateSessionId ? 'Host from a previous Live' : 'Host a Live'}</Text>
           </View>
           {!isEditing ? (
             <Pressable accessibilityLabel="Discard Live draft" onPress={discardDraft} style={styles.discardIcon}>
@@ -395,6 +401,13 @@ export default function ScheduleLiveScreen() {
                 onRemoveTeaser={() => { setTeaser(null); setTeaserRemoved(true); }}
               />
             ) : null}
+            {step === 'audience' ? (
+              <LiveAudienceReachStep
+                draft={draft}
+                preserveExisting={isEditing && !draft.circleId}
+                onChange={updateDraft}
+              />
+            ) : null}
             {step === 'room' ? (
               <LiveCreationRoomStep
                 draft={draft}
@@ -408,7 +421,7 @@ export default function ScheduleLiveScreen() {
                 onChange={updateDraft}
               />
             ) : null}
-            {step === 'review' ? <LiveCreationReviewStep draft={draft} posterUri={posterUri} isEditing={isEditing} /> : null}
+            {step === 'review' ? <LiveCreationReviewStep draft={draft} posterUri={posterUri} isEditing={isEditing} preserveExistingAudience={isEditing && !draft.circleId} /> : null}
             {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
           </ScrollView>
           <View style={styles.footer}>

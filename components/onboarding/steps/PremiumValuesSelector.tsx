@@ -11,7 +11,7 @@ type Props = {
   onSelect: (value: string) => void;
 };
 
-const PRIMARY_VALUES = ["Christian", "Muslim", "Traditionalist", "Spiritual", "No religion"];
+const PRIMARY_VALUES = ["Christian", "Muslim", "Traditionalist", "Spiritual", "No religion", "Prefer not to say"];
 
 const VALUE_META: Record<string, { icon: string; description: string }> = {
   Christian: { icon: "cross", description: "Christian faith and tradition" },
@@ -23,6 +23,7 @@ const VALUE_META: Record<string, { icon: string; description: string }> = {
   Hindu: { icon: "flower-outline", description: "Hindu faith and tradition" },
   Buddhist: { icon: "meditation", description: "Buddhist faith and practice" },
   Other: { icon: "dots-horizontal-circle-outline", description: "Another faith or worldview" },
+  "Prefer not to say": { icon: "lock-outline", description: "Keep this detail off your profile" },
 };
 
 function getMeta(label: string) {

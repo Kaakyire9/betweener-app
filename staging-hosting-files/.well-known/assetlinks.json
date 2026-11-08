@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.aduboffour.betweener.staging",
+      "sha256_cert_fingerprints": [
+        "DD:AA:74:85:27:A4:AD:D3:FD:F6:5E:CC:33:43:93:9A:88:CB:ED:5B:42:85:19:48:F1:4E:09:B6:1A:AA:AE:98"
+      ]
+    }
+  }
+]

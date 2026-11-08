@@ -14,6 +14,12 @@ import {
 import { LinearGradient } from "expo-linear-gradient";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { clearPendingAuthFlow, markPendingAuthFlow } from "@/lib/auth-callback";
+import { APP_WEB_AUTH_CALLBACK_URL } from "@/config/app-identity";
+import {
+  beginSignInMethodAttempt,
+  cancelSignInMethodAttempt,
+  type PendingSignInMethodAttempt,
+} from "@/lib/auth/last-sign-in-method";
 
 export default function MagicLinkScreen() {
   const [email, setEmail] = useState("");
@@ -52,13 +58,20 @@ export default function MagicLinkScreen() {
     setError("");
     setSuccess("");
 
+    let methodAttempt: PendingSignInMethodAttempt | null = null;
     try {
-      await markPendingAuthFlow(isSignup ? "email_signup" : "email_link");
+      if (!isSignup) {
+        methodAttempt = await beginSignInMethodAttempt("email_link");
+      }
+      await markPendingAuthFlow(
+        isSignup ? "email_signup" : "email_link",
+        methodAttempt?.attemptId,
+      );
       const { error } = await supabase.auth.signInWithOtp({
         email: email,
         options: {
           shouldCreateUser: isSignup,
-          emailRedirectTo: "https://getbetweener.com/auth/callback",
+          emailRedirectTo: APP_WEB_AUTH_CALLBACK_URL,
         },
       });
 
@@ -72,12 +85,14 @@ export default function MagicLinkScreen() {
 
         if (!isSignup && isMissingAccount) {
           await clearPendingAuthFlow();
+          await cancelSignInMethodAttempt(methodAttempt?.attemptId);
           setCooldown(90);
           setSuccess(
             "If an account matches this email, a sign-in link is on the way. If nothing arrives, check the address or create an account below."
           );
         } else {
           await clearPendingAuthFlow();
+          await cancelSignInMethodAttempt(methodAttempt?.attemptId);
           setError(error.message);
         }
         return;
@@ -96,6 +111,7 @@ export default function MagicLinkScreen() {
       }, 2000);
     } catch (_err: any) {
       await clearPendingAuthFlow();
+      await cancelSignInMethodAttempt(methodAttempt?.attemptId);
       setError("An unexpected error occurred. Please try again.");
     } finally {
       setLoading(false);

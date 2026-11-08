@@ -1,6 +1,8 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
+set local role postgres;
+set search_path = public, extensions, pg_catalog;
 select plan(16);
 
 select ok(
@@ -28,6 +30,7 @@ select ok(
   'service role can execute atomic onboarding'
 );
 
+select set_config('request.jwt.claim.role', 'service_role', true);
 select set_config('app.profile_guard_write', 'on', true);
 insert into auth.users(id, email) values
   ('9b000000-0000-4000-8000-000000000001', 'atomic-safe@example.test'),
@@ -151,6 +154,6 @@ $sql$, '40001', 'PROFILE_WRITE_CONFLICT',
   'stale onboarding submissions cannot overwrite newer state'
 );
 
-reset role;
+set local role postgres;
 select * from finish();
 rollback;

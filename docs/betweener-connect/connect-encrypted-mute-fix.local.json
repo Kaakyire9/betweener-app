@@ -1,0 +1,107 @@
+{
+  "schemaVersion": 1,
+  "scope": "LOCAL_CLIENT_REPAIR_NO_HOSTED_DEPLOYMENT",
+  "authorisation": "Owner: continue Connect testing after both-phone mute and automatic End",
+  "frozenPackage": {
+    "path": "docs/betweener-connect/connect-secure-calling.proposal.json",
+    "sha256": "37d133fb060af0eaed44f4526d5d60fe4c08f3065fd3d2ede6d2f63d573f6c72"
+  },
+  "baseLocalChange": {
+    "path": "docs/betweener-connect/connect-mute-fault-diagnostics.local.json",
+    "sha256": "d8d72e1c9dc229418fdb81e79c4e62e84aaef98c40266c2c66813b881df1c0de"
+  },
+  "reason": "Pause source and encrypted sender audio clones together across ordinary mute; disable unowned muted-talker capture; preserve explicit microphone intent independently of setup safety mute.",
+  "files": [
+    {
+      "path": "features/connect/media/native-stream-sdk.ts",
+      "beforeSha256": "94d23e8d38e0506d3b22a227a4e2f60ad49fbd64ecace7abbdc41da79b449a31",
+      "beforeSnapshot": "tmp/connect-secure-calling/encrypted-mute-fix/native-stream-sdk.ts.before",
+      "afterSha256": "d3b9f90ed5a10429e40fd9d238f665d180903813c638a786b9eac4c7fc1fad07"
+    },
+    {
+      "path": "features/connect/media/native-owner-types.ts",
+      "beforeSha256": "ee92e78dfba087d27df666dc5039c52a96f0b3ee9ca3e47d1ba362bfa38ef2c5",
+      "beforeSnapshot": "tmp/connect-secure-calling/encrypted-mute-fix/native-owner-types.ts.before",
+      "afterSha256": "ce504562d6447f423e35fb0a3bb4025075b18ef330bc615d5b5392c4e6095df5"
+    },
+    {
+      "path": "features/connect/media/connect-native-owner.ts",
+      "beforeSha256": "29d077a8ccde9eaa1e0b25c9ed94ab3e239b453807a8d6905769f01560de03f9",
+      "beforeSnapshot": "tmp/connect-secure-calling/encrypted-mute-fix/connect-native-owner.ts.before",
+      "afterSha256": "5885ff70430777e64c1bce77c088275268de425b4b5f2dd02d88731f558d6a0c"
+    },
+    {
+      "path": "features/connect/voice/voice-controller.ts",
+      "beforeSha256": "e83044e2a316da6905335566061e19e751c645b68ddd2a21bf0341ff4642025f",
+      "beforeSnapshot": "tmp/connect-secure-calling/encrypted-mute-fix/voice-controller.ts.before",
+      "afterSha256": "75d8a950126bcfabff166f3d70b53b04235946c42efdfac8b747f5606ab52f09"
+    },
+    {
+      "path": "features/connect/media/native-microphone-pause.ts",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "2021eb58ae39669ad180bf85da3861cc0ee61be1ac9f1a959e755583d9068310"
+    }
+  ],
+  "regressions": [
+    "__tests__/connect-encrypted-microphone-pause.regression.test.cjs",
+    "__tests__/connect-encrypted-native-owner.regression.test.cjs",
+    "__tests__/connect-startup-recovery.regression.test.cjs",
+    "__tests__/connect-native-bootstrap.regression.test.cjs"
+  ],
+  "limits": {
+    "dependencyChanges": 0,
+    "emergencyStopAndReleaseUnchanged": true,
+    "ownerReleaseDeadlineMs": 8000,
+    "plaintextFallback": false,
+    "recoveryDeadlineMs": 20000,
+    "liveSharedSourcesChanged": 0,
+    "attemptsPerCall": 2,
+    "unencryptedFrameEventsRemainFatal": true,
+    "providerCalls": 0
+  },
+  "hostedChanges": 0,
+  "newBuildRequired": false,
+  "deviceRetest": "PENDING",
+  "remoteRevocation": "UNVERIFIED",
+  "observations": {
+    "silenceFrameHypothesis": "UNPROVEN",
+    "iosMuteConfirmed": {
+      "elapsedMs": 72270,
+      "seq": 183
+    },
+    "payloadContent": "UNKNOWN_NOT_CAPTURED",
+    "platformsPresent": [
+      "ios"
+    ],
+    "attachmentSha256": "1f6d59040eaeb60b1cbcf06c204f668536b64611b39be93c786305d68fa153d4",
+    "call": "c-d724ce7bae955d37",
+    "ownerReport": "Android stayed muted after answer; Android mute affected both; iPhone mute ended call",
+    "secondFault": {
+      "party": "remote",
+      "code": "e2ee.unencrypted_frame",
+      "elapsedMs": 72339,
+      "generation": 2,
+      "seq": 184,
+      "track": "AUDIO"
+    },
+    "firstFault": {
+      "party": "remote",
+      "code": "e2ee.unencrypted_frame",
+      "elapsedMs": 57570,
+      "generation": 1,
+      "seq": 72,
+      "track": "AUDIO"
+    },
+    "appForegroundAtSecondFault": true,
+    "androidLog": "NOT_SUPPLIED"
+  },
+  "nativeReceiveBoundary": {
+    "classifyCapturedFrameAsSilence": false,
+    "noTrailerDecode": "Native default manager permits cleartext before notifying JS",
+    "upstreamCommit": "eeff9252f32a40d1671974c31c096ce9fa776130",
+    "version": "145.17.0",
+    "strictNativeReceive": "UNVERIFIED_REQUIRES_SEPARATE_NATIVE_HARDENING",
+    "productionE2eeReadiness": "NOT_ESTABLISHED"
+  }
+}

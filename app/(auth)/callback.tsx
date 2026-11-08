@@ -6,12 +6,20 @@ import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
 import {
   clearPendingAuthFlow,
+  clearPendingAuthProvider,
   getFreshPendingAuthFlow,
+  getFreshPendingAuthProvider,
   isTrustedAuthCallbackUrl,
   LAST_DEEP_LINK_URL_KEY,
   LEGACY_AUTH_PENDING_TOKENS_KEY,
   urlHasAuthPayload,
 } from "@/lib/auth-callback";
+import {
+  cancelSignInMethodAttempt,
+  completeSignInMethodAttempt,
+  type LastSignInMethod,
+} from "@/lib/auth/last-sign-in-method";
+import type { Session } from "@supabase/supabase-js";
 
 type CallbackParams = Record<string, string | undefined>;
 const AUTH_CALLBACK_LAST_SIG_KEY = "auth_callback_last_sig_v1";
@@ -116,6 +124,33 @@ export default function AuthCallback() {
     ]);
   };
 
+  const completePendingMethod = async (
+    session: Session | null,
+    pendingFlow: Awaited<ReturnType<typeof getFreshPendingAuthFlow>>,
+    pendingProvider: Awaited<ReturnType<typeof getFreshPendingAuthProvider>>,
+  ) => {
+    if (!session?.user || !pendingFlow?.attemptId) return false;
+
+    let method: LastSignInMethod | null = null;
+    if (
+      pendingFlow.purpose === "oauth" &&
+      pendingProvider?.attemptId === pendingFlow.attemptId
+    ) {
+      method = pendingProvider.provider;
+    } else if (pendingFlow.purpose === "email_link") {
+      method = "email_link";
+    }
+    if (!method) return false;
+
+    const completed = await completeSignInMethodAttempt({
+      attemptId: pendingFlow.attemptId,
+      method,
+      sessionUserId: session.user.id,
+    });
+    if (completed) await clearPendingAuthProvider();
+    return completed;
+  };
+
   useEffect(() => {
     if (didRunRef.current) return;
     didRunRef.current = true;
@@ -124,6 +159,7 @@ export default function AuthCallback() {
       setIsProcessing(true);
       try {
         const pendingFlow = await getFreshPendingAuthFlow();
+        const pendingProvider = await getFreshPendingAuthProvider();
         const pendingPurpose = pendingFlow?.purpose ?? null;
         const isPendingPasswordReset = pendingPurpose === "password_reset";
         if (typeof __DEV__ !== "undefined" && __DEV__) {
@@ -135,6 +171,9 @@ export default function AuthCallback() {
 
         const hasExistingSession = await waitForSession(800);
         if (hasExistingSession && !isPendingPasswordReset) {
+          const { data } = await supabase.auth.getSession();
+          await completePendingMethod(data.session, pendingFlow, pendingProvider);
+          await clearPendingAuthFlow();
           await routeToGate(800);
           return;
         }
@@ -153,7 +192,7 @@ export default function AuthCallback() {
           isTrustedAuthCallbackUrl(initialUrl)
         ) {
           if (typeof __DEV__ !== "undefined" && __DEV__) {
-            console.log("[auth-callback] using initial url", initialUrl);
+            console.log("[auth-callback] using trusted initial callback url");
           }
           mergeParamsFromUrl(merged, initialUrl);
         }
@@ -165,7 +204,7 @@ export default function AuthCallback() {
             isTrustedAuthCallbackUrl(storedUrl)
           ) {
             if (typeof __DEV__ !== "undefined" && __DEV__) {
-              console.log("[auth-callback] using stored url", storedUrl);
+              console.log("[auth-callback] using trusted stored callback url");
             }
             mergeParamsFromUrl(merged, storedUrl);
           }
@@ -207,11 +246,13 @@ export default function AuthCallback() {
             console.warn("[auth-callback] callback error payload", {
               callbackError,
               callbackErrorCode,
-              callbackErrorDescription,
+              hasErrorDescription: !!callbackErrorDescription,
             });
           }
 
           await clearPendingAuthFlow();
+          await clearPendingAuthProvider();
+          await cancelSignInMethodAttempt(pendingFlow?.attemptId);
           const recoveryContextRaw = await AsyncStorage.getItem(PENDING_RECOVERY_EMAIL_CONTEXT_KEY);
           if (pendingPurpose === "email_link" && recoveryContextRaw) {
             try {
@@ -266,6 +307,8 @@ export default function AuthCallback() {
         if (callbackSig) {
           const lastSig = await AsyncStorage.getItem(AUTH_CALLBACK_LAST_SIG_KEY);
           if (lastSig === callbackSig) {
+            const { data } = await supabase.auth.getSession();
+            await completePendingMethod(data.session, pendingFlow, pendingProvider);
             await clearPendingAuthFlow();
             if (isRecoveryFlow) {
               await AsyncStorage.removeItem(PENDING_RECOVERY_EMAIL_CONTEXT_KEY);
@@ -288,7 +331,7 @@ export default function AuthCallback() {
 
         if (tokenHash && type) {
           setStatus(isRecoveryFlow ? "Verifying your reset link..." : "Verifying your email...");
-          const { error } = await withTimeout(
+          const { data, error } = await withTimeout(
             supabase.auth.verifyOtp({
               token_hash: tokenHash,
               type: type as any,
@@ -300,6 +343,7 @@ export default function AuthCallback() {
           if (callbackSig) {
             await AsyncStorage.setItem(AUTH_CALLBACK_LAST_SIG_KEY, callbackSig);
           }
+          await completePendingMethod(data.session, pendingFlow, pendingProvider);
           await clearPendingAuthFlow();
           if (isRecoveryFlow) {
             await AsyncStorage.removeItem(PENDING_RECOVERY_EMAIL_CONTEXT_KEY);
@@ -318,7 +362,7 @@ export default function AuthCallback() {
 
         if (code) {
           setStatus(isRecoveryFlow ? "Preparing password reset..." : "Completing sign in...");
-          const { error } = await withTimeout(
+          const { data, error } = await withTimeout(
             supabase.auth.exchangeCodeForSession(code),
             9000,
             "exchange_code_timeout"
@@ -327,6 +371,7 @@ export default function AuthCallback() {
           if (callbackSig) {
             await AsyncStorage.setItem(AUTH_CALLBACK_LAST_SIG_KEY, callbackSig);
           }
+          await completePendingMethod(data.session, pendingFlow, pendingProvider);
           await clearPendingAuthFlow();
           if (isRecoveryFlow) {
             await AsyncStorage.removeItem(PENDING_RECOVERY_EMAIL_CONTEXT_KEY);
@@ -353,6 +398,8 @@ export default function AuthCallback() {
           if (callbackSig) {
             await AsyncStorage.setItem(AUTH_CALLBACK_LAST_SIG_KEY, callbackSig);
           }
+          const completedSession = sessionData.session ?? (await supabase.auth.getSession()).data.session;
+          await completePendingMethod(completedSession, pendingFlow, pendingProvider);
           await clearPendingAuthFlow();
           if (isRecoveryFlow) {
             await AsyncStorage.removeItem(PENDING_RECOVERY_EMAIL_CONTEXT_KEY);
@@ -393,6 +440,8 @@ export default function AuthCallback() {
           console.error("[auth-callback] callback error", error);
         }
         const pendingFlow = await getFreshPendingAuthFlow();
+        await cancelSignInMethodAttempt(pendingFlow?.attemptId);
+        await clearPendingAuthProvider();
         if (pendingFlow?.purpose === "password_reset") {
           await clearPendingAuthFlow();
           await routeToResetPassword(1200);

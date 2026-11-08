@@ -1,0 +1,46 @@
+{
+  "scope": "LOCAL_ACCOUNT_DELETION_GUARD_REPAIR",
+  "preparedAt": "2026-11-05T05:59:17.942688+00:00",
+  "rootCause": "The deletion Edge Function directly updates protected profile fields without the trusted profile-guard context.",
+  "edge": {
+    "path": "supabase/functions/delete-account/index.ts",
+    "beforeSha256": "d5f5a54d5cbb6c97e7aaab28a3ceb7201088b82c9b85d3515868882c13c6a0bc",
+    "afterSha256": "96c219652ba105e5094d789fe5179f85a9a898dfce64e47de6b53c195d25973a",
+    "deployed": false
+  },
+  "migration": {
+    "path": "supabase/migrations/20261105054114_account_deletion_guarded_profile_mask.sql",
+    "sha256": "6f1c6111a95e0e3e11e9227a34dc1215acc6623d5385542820de9fd002580a50",
+    "deployed": false
+  },
+  "behavior": {
+    "rpc": "public.rpc_mask_account_deletion_profile(uuid)",
+    "executionRole": "service_role",
+    "securityInvoker": true,
+    "ownerFromServerCreatedRequest": true,
+    "fixedMaskFieldCount": 54,
+    "guardContextRestored": true,
+    "maskBeforeStorageCleanup": true,
+    "profileGuardDefinitionsChanged": false,
+    "authSoftDeletePreserved": true
+  },
+  "validation": {
+    "edgeHandlerFixtureTestsPassed": 6,
+    "existingProfileGuardTestsPassed": 68,
+    "disposableDatabaseChecksPassed": 10,
+    "existingRelationshipAssertionsPassed": 88,
+    "nodeFilesLintClean": true,
+    "edgeTypeScriptTranspileErrors": 0,
+    "edgeExcludedByRepositoryEslintConfiguration": true,
+    "hostedAccountDeletionTested": false,
+    "sharedDatabaseModified": false,
+    "disposableDatabaseAndRestRemoved": true
+  },
+  "rollout": [
+    "Separately approve and apply this migration to xsgzxadwuxuziubglvps.",
+    "Deploy only delete-account with its existing JWT verification and shared helper contracts.",
+    "Validate through the app using an explicitly approved disposable staging account."
+  ],
+  "hostedChanges": 0,
+  "realAccountDeletions": 0
+}

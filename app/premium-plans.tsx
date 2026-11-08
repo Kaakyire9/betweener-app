@@ -1,193 +1,151 @@
-import { Colors } from "@/constants/theme";
-import { usePremiumState } from "@/hooks/use-premium-state";
-import { useColorScheme } from "@/hooks/use-color-scheme";
-import { Motion } from "@/lib/motion";
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import { router } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
+import { useEffect, useMemo, useState } from 'react';
+import Animated, { FadeInDown } from 'react-native-reanimated';
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import type { PurchasesOfferings, PurchasesPackage } from 'react-native-purchases';
+import { SafeAreaView } from 'react-native-safe-area-context';
+
 import {
-  PremiumPlan,
-  PremiumPlanInterval,
-  derivePlanFromCustomerInfo,
+  CommerceBackdrop,
+  type CommerceTheme,
+  CommerceHeader,
+  CommercePill,
+  SparkOrb,
+  useCommerceTheme,
+} from '@/components/economy/CommerceVisuals';
+import { MembershipDurationSelector } from '@/components/economy/MembershipDurationSelector';
+import {
+  MembershipTierCard,
+  type MembershipTierVisual,
+} from '@/components/economy/MembershipTierCard';
+import { PremiumHeroArt } from '@/components/economy/PremiumHeroArt';
+import { SparkBalanceChip } from '@/components/economy/SparkBalanceChip';
+import { useReduceMotion } from '@/hooks/useReduceMotion';
+import { usePremiumState } from '@/hooks/use-premium-state';
+import { useAuth } from '@/lib/auth-context';
+import { useSparkWallet } from '@/lib/economy/wallet/use-spark-wallet';
+import { Motion } from '@/lib/motion';
+import {
+  type PremiumPlan,
+  type PremiumPlanInterval,
   findPackageForPlan,
+  getMembershipPurchaseErrorMessage,
   getPackagesForPlan,
   getPlanIntervalFromPackage,
   isPurchaseCancelled,
   isRevenueCatConfiguredForPlatform,
   purchasePlanPackage,
   restoreRevenueCatPurchases,
-} from "@/lib/subscriptions";
-import { openExternalUrl, openSupportEmail, TRUST_LINKS } from "@/lib/trust-links";
-import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
-import { router } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
-import Animated, { FadeInDown } from "react-native-reanimated";
-import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import { PurchasesOfferings, PurchasesPackage } from "react-native-purchases";
-import { SafeAreaView } from "react-native-safe-area-context";
+} from '@/lib/subscriptions';
+import { openExternalUrl, openSupportEmail, TRUST_LINKS } from '@/lib/trust-links';
 
-type PaidPlan = Exclude<PremiumPlan, "FREE">;
-type TierPlan = PremiumPlan;
-
-const INTERVALS: PremiumPlanInterval[] = ["monthly", "quarterly", "annual"];
-
-const INTERVAL_META: Record<
-  PremiumPlanInterval,
-  { label: string; short: string; spotlight?: string }
-> = {
-  monthly: { label: "Monthly", short: "1 mo" },
-  quarterly: { label: "Quarterly", short: "3 mo", spotlight: "Balanced" },
-  annual: { label: "Annual", short: "12 mo", spotlight: "Best value" },
-};
-
-const PLAN_CONFIG: Record<
-  PaidPlan,
-  {
-    label: string;
-    eyebrow: string;
-    subtitle: string;
-    features: string[];
-    accent: string;
-    halo: [string, string];
-  }
-> = {
-  SILVER: {
-    label: "Silver",
-    eyebrow: "Essential tier",
-    subtitle: "Stronger visibility, cleaner trust signals, and more momentum.",
-    features: [
-      "30-minute profile boosts",
-      "Advanced Vibes filters for trust, chemistry, and distance",
-      "Send standard gifts before the chat cools off",
-      "Initiate date plans from chat when the energy is right",
-    ],
-    accent: "#14B8D4",
-    halo: ["rgba(20,184,212,0.28)", "rgba(20,184,212,0.03)"],
-  },
-  GOLD: {
-    label: "Gold",
-    eyebrow: "Signature tier",
-    subtitle: "The strongest premium positioning, priority, and polish.",
-    features: [
-      "Everything in Silver, plus the highest premium placement",
-      "Signature gifts like the Ring",
-      "Betweener concierge help for accepted date plans",
-      "The strongest trust framing across core member surfaces",
-    ],
-    accent: "#EAB308",
-    halo: ["rgba(234,179,8,0.32)", "rgba(234,179,8,0.04)"],
-  },
-};
+type PaidPlan = Exclude<PremiumPlan, 'FREE'>;
 
 const PLAN_DEFAULT_INTERVAL: Record<PaidPlan, PremiumPlanInterval> = {
-  SILVER: "quarterly",
-  GOLD: "annual",
+  SILVER: 'quarterly',
+  GOLD: 'annual',
 };
 
-const TIER_MODEL: {
-  plan: TierPlan;
-  eyebrow: string;
-  title: string;
-  summary: string;
-  bullets: string[];
-}[] = [
-  {
-    plan: "FREE",
-    eyebrow: "Open social core",
-    title: "Match, chat, and keep the room alive.",
-    summary: "Free should feel usable before anyone pays.",
-    bullets: [
-      "Create your profile, browse Vibes, match, and chat normally",
-      "Open enough to build chemistry before premium takes over",
-    ],
+function buildPlanVisuals(theme: CommerceTheme): Record<PremiumPlan, MembershipTierVisual> {
+  return {
+  FREE: {
+    plan: 'FREE',
+    label: 'Free',
+    tagline: 'Chat, match, and explore.',
+    accent: theme.cyan,
+    icon: 'sprout',
+    benefits: ['Basic chat', 'Standard visibility'],
   },
-  {
-    plan: "SILVER",
-    eyebrow: "Momentum tier",
-    title: "Get seen faster and open stronger.",
-    summary: "Silver is the value tier for traction and timing.",
-    bullets: [
-      "Profile boosts and stronger discovery visibility",
-      "Advanced filters, gifts, and date-plan initiation",
-    ],
+  SILVER: {
+    plan: 'SILVER',
+    label: 'Silver',
+    tagline: 'Get seen faster. Keep momentum moving.',
+    accent: theme.silver,
+    icon: 'diamond-stone',
+    benefits: ['Profile boosts', 'Advanced filters', 'Send gifts'],
   },
-  {
-    plan: "GOLD",
-    eyebrow: "Status tier",
-    title: "Get the strongest presence and the smoothest path to a real date.",
-    summary: "Gold is for top priority, polish, and status.",
-    bullets: [
-      "Everything in Silver, plus the highest premium placement",
-      "Concierge help and signature gestures like the Ring",
-    ],
+  GOLD: {
+    plan: 'GOLD',
+    label: 'Gold',
+    tagline: 'The strongest presence and premium polish.',
+    accent: theme.gold,
+    icon: 'crown',
+    benefits: ['Highest visibility', 'Concierge help', 'The Ring'],
   },
-];
+  };
+}
 
-const FEATURE_MATRIX: {
-  label: string;
-  free: string;
-  silver: string;
-  gold: string;
-}[] = [
-  { label: "Basic matching and chat", free: "Included", silver: "Included", gold: "Included" },
-  { label: "Advanced Vibes filters", free: "No", silver: "Included", gold: "Included" },
-  { label: "Standard gifts", free: "No", silver: "Included", gold: "Included" },
-  { label: "Date-plan initiation", free: "No", silver: "Included", gold: "Included" },
-  { label: "Betweener concierge help", free: "No", silver: "No", gold: "Included" },
-  { label: "Profile boosts", free: "No", silver: "Included", gold: "Included" },
-  { label: "Signature Ring gift", free: "No", silver: "No", gold: "Included" },
-  { label: "Discovery visibility", free: "Standard", silver: "Elevated", gold: "Highest" },
+const PLAN_FEATURES: Record<PaidPlan, string[]> = {
+  SILVER: [
+    '30-minute profile boosts',
+    'Advanced Vibes filters for trust, chemistry, and distance',
+    'Send standard gifts before the conversation cools off',
+    'Initiate date plans when the energy is right',
+  ],
+  GOLD: [
+    'Everything in Silver, plus the highest premium placement',
+    'Signature gifts, including the Ring',
+    'Betweener concierge support for accepted date plans',
+    'The strongest trust framing across member surfaces',
+  ],
+};
+
+const FEATURE_MATRIX = [
+  { label: 'Matching and chat', free: 'Included', silver: 'Included', gold: 'Included' },
+  { label: 'Discovery visibility', free: 'Standard', silver: 'Elevated', gold: 'Highest' },
+  { label: 'Advanced filters', free: '—', silver: 'Included', gold: 'Included' },
+  { label: 'Profile boosts', free: '—', silver: 'Included', gold: 'Included' },
+  { label: 'Signature Ring', free: '—', silver: '—', gold: 'Included' },
+  { label: 'Concierge help', free: '—', silver: '—', gold: 'Included' },
 ];
 
 export default function PremiumPlansScreen() {
-  const colorScheme = useColorScheme();
-  const resolvedScheme = (colorScheme ?? "light") === "dark" ? "dark" : "light";
-  const theme = Colors[resolvedScheme];
-  const isDark = resolvedScheme === "dark";
-  const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
+  const { profile, user } = useAuth();
+  const reduceMotion = useReduceMotion();
+  const theme = useCommerceTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+  const planVisuals = useMemo(() => buildPlanVisuals(theme), [theme]);
+  const membership = usePremiumState();
   const {
-    activeBoostEndsAt,
-    billingReady,
-    billingSupported,
-    currentPlan,
-    currentPlanEndsAt,
-    customerInfo,
-    error: billingError,
-    hasActiveBoost,
-    offerings,
-    loading,
-    refresh,
-  } = usePremiumState();
+    wallet: sparkWallet,
+    flags: economyFlags,
+    flagsLoading: economyFlagsLoading,
+    refresh: refreshSparkWallet,
+  } = useSparkWallet();
+  const [selectedPlan, setSelectedPlan] = useState<PremiumPlan>('SILVER');
+  const [selectedIntervals, setSelectedIntervals] = useState<Record<PaidPlan, PremiumPlanInterval>>(PLAN_DEFAULT_INTERVAL);
   const [actionKey, setActionKey] = useState<string | null>(null);
   const [restoring, setRestoring] = useState(false);
-  const [selectedIntervals, setSelectedIntervals] = useState<Record<PaidPlan, PremiumPlanInterval>>(PLAN_DEFAULT_INTERVAL);
-  const showDeveloperBillingNotice = __DEV__ && !billingReady && !loading && isRevenueCatConfiguredForPlatform() === false;
-  const formattedCurrentPlanEndsAt = formatMembershipDate(currentPlanEndsAt);
-  const accountLabel = Platform.OS === "android" ? "Google Play account" : "Apple ID account";
-  const manageLocationLabel = Platform.OS === "android" ? "Google Play subscription settings" : "App Store account settings";
-  const restoreLabel = Platform.OS === "android" ? "Google Play account" : "Apple ID";
+  const [comparisonOpen, setComparisonOpen] = useState(false);
+  const showDeveloperBillingNotice = __DEV__
+    && !membership.billingReady
+    && !membership.loading
+    && !isRevenueCatConfiguredForPlatform();
+  const accountLabel = Platform.OS === 'android' ? 'Google Play account' : 'Apple ID account';
+  const manageLocationLabel = Platform.OS === 'android' ? 'Google Play subscription settings' : 'App Store account settings';
 
-  const packageCatalog = useMemo(
-    () => ({
-      SILVER: buildPackageMap(offerings, "SILVER"),
-      GOLD: buildPackageMap(offerings, "GOLD"),
-    }),
-    [offerings],
-  );
+  const packageCatalog = useMemo(() => ({
+    SILVER: buildPackageMap(membership.offerings, 'SILVER'),
+    GOLD: buildPackageMap(membership.offerings, 'GOLD'),
+  }), [membership.offerings]);
+
+  useEffect(() => {
+    if (membership.currentPlan !== 'FREE') setSelectedPlan(membership.currentPlan);
+  }, [membership.currentPlan]);
 
   useEffect(() => {
     setSelectedIntervals((current) => {
-      let changed = false;
       const next = { ...current };
-      (Object.keys(PLAN_CONFIG) as PaidPlan[]).forEach((plan) => {
+      let changed = false;
+      (['SILVER', 'GOLD'] as const).forEach((plan) => {
         if (packageCatalog[plan][current[plan]]) return;
-        const preferred = [
-          PLAN_DEFAULT_INTERVAL[plan],
-          "monthly",
-          "quarterly",
-          "annual",
-        ] as PremiumPlanInterval[];
-        const available = preferred.find((interval) => packageCatalog[plan][interval]);
-        if (available && available !== current[plan]) {
-          next[plan] = available;
+        const replacement = ([PLAN_DEFAULT_INTERVAL[plan], 'monthly', 'quarterly', 'annual'] as PremiumPlanInterval[])
+          .find((interval) => packageCatalog[plan][interval]);
+        if (replacement && replacement !== current[plan]) {
+          next[plan] = replacement;
           changed = true;
         }
       });
@@ -196,24 +154,24 @@ export default function PremiumPlansScreen() {
   }, [packageCatalog]);
 
   const handlePurchase = async (plan: PaidPlan, interval: PremiumPlanInterval) => {
-    const targetPackage = getSelectedPlanPackage(packageCatalog[plan], interval);
+    const targetPackage = packageCatalog[plan][interval];
     if (!targetPackage) {
-      Alert.alert("Plan unavailable", `${PLAN_CONFIG[plan].label} ${INTERVAL_META[interval].label.toLowerCase()} is not available right now.`);
+      Alert.alert('Plan unavailable', `${planVisuals[plan].label} ${interval} is not available right now.`);
       return;
     }
-
     try {
       setActionKey(`${plan}:${interval}`);
-      const result = await purchasePlanPackage(targetPackage);
-      if (result.customerInfo && derivePlanFromCustomerInfo(result.customerInfo) !== "FREE") {
-        await refresh();
+      if (!user?.id) throw new Error('An authenticated account is required.');
+      const result = await purchasePlanPackage(targetPackage, user.id);
+      if (result.currentPlan !== 'FREE') {
+        await Promise.allSettled([
+          membership.refresh(),
+          refreshSparkWallet({ invalidate: true, reason: 'membership_purchase' }),
+        ]);
       }
-      Alert.alert("Premium active", `${PLAN_CONFIG[plan].label} ${INTERVAL_META[interval].label.toLowerCase()} is now active on this account.`);
+      Alert.alert('Premium active', `${planVisuals[plan].label} is now active on this account.`);
     } catch (error) {
-      if (!isPurchaseCancelled(error)) {
-        const message = error instanceof Error ? error.message : "Unable to complete this purchase right now.";
-        Alert.alert("Purchase failed", message);
-      }
+      if (!isPurchaseCancelled(error)) Alert.alert('Purchase failed', getMembershipPurchaseErrorMessage(error));
     } finally {
       setActionKey(null);
     }
@@ -222,335 +180,350 @@ export default function PremiumPlansScreen() {
   const handleRestore = async () => {
     try {
       setRestoring(true);
-      await restoreRevenueCatPurchases();
-      await refresh();
-      Alert.alert("Purchases restored", "Your premium membership has been refreshed.");
+      if (!user?.id) throw new Error('An authenticated account is required.');
+      await restoreRevenueCatPurchases(user.id);
+      await Promise.allSettled([
+        membership.refresh(),
+        refreshSparkWallet({ invalidate: true, reason: 'restore_purchases' }),
+      ]);
+      Alert.alert('Purchases restored', 'Your premium membership has been refreshed.');
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to restore purchases right now.";
-      Alert.alert("Restore failed", message);
+      Alert.alert('Restore failed', getMembershipPurchaseErrorMessage(error));
     } finally {
       setRestoring(false);
     }
   };
 
   const handleManage = async () => {
-    if (customerInfo?.managementURL) {
-      await openExternalUrl(customerInfo.managementURL);
+    if (membership.managementURL) {
+      await openExternalUrl(membership.managementURL);
       return;
     }
     await openSupportEmail(
-      "Betweener premium support",
-      "Hello Betweener team,%0D%0A%0D%0AI need help managing my premium plan.%0D%0A",
+      'Betweener premium support',
+      'Hello Betweener team,%0D%0A%0D%0AI need help managing my premium plan.%0D%0A',
     );
   };
 
+  const selectedPaidPlan = selectedPlan === 'FREE' ? null : selectedPlan;
+  const selectedVisual = planVisuals[selectedPlan];
+  const selectedInterval = selectedPaidPlan ? selectedIntervals[selectedPaidPlan] : null;
+  const selectedPackage = selectedPaidPlan && selectedInterval
+    ? packageCatalog[selectedPaidPlan][selectedInterval]
+    : null;
+  const monthlyPackage = selectedPaidPlan ? packageCatalog[selectedPaidPlan].monthly : null;
+  const monthlyEquivalent = selectedPackage ? formatMonthlyEquivalent(selectedPackage) : null;
+  const savingsLabel = selectedPackage && monthlyPackage ? getSavingsLabel(selectedPackage, monthlyPackage) : null;
+  const planEndsAt = formatMembershipDate(membership.currentPlanEndsAt);
+  const activeSelected = membership.currentPlan === selectedPlan;
+  const purchaseBusy = Boolean(actionKey);
+  const currentPlanAccent = membership.currentPlan === 'GOLD'
+    ? theme.gold
+    : membership.currentPlan === 'SILVER'
+      ? theme.silver
+      : theme.cyan;
+
   return (
     <View style={styles.container}>
-      <LinearGradient
-        colors={[withAlpha(theme.tint, isDark ? 0.24 : 0.14), withAlpha(theme.accent, isDark ? 0.18 : 0.08), "transparent"]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.bgGlow}
-      />
+      <StatusBar style={theme.mode === 'dark' ? 'light' : 'dark'} />
+      <CommerceBackdrop variant={selectedPlan === 'GOLD' ? 'gold' : 'mixed'} />
       <SafeAreaView style={styles.safeArea}>
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-          <Animated.View entering={FadeInDown.duration(Motion.duration.slow)}>
-            <Pressable style={styles.backButton} onPress={() => router.back()}>
-              <MaterialCommunityIcons name="chevron-left" size={20} color={theme.text} />
-              <Text style={styles.backLabel}>Back</Text>
-            </Pressable>
+          <CommerceHeader
+            title="Premium Plans"
+            onBack={() => router.back()}
+            trailing={(
+              <View style={styles.currentBadge}>
+                <Text style={styles.currentBadgeLabel}>CURRENT</Text>
+                <Text style={[styles.currentBadgeValue, { color: currentPlanAccent }]}>
+                  {membership.loading ? '···' : membership.currentPlan}
+                </Text>
+              </View>
+            )}
+          />
 
-            <View style={styles.heroCard}>
-              <View style={styles.heroBadge}>
-                <Text style={styles.heroBadgeText}>Premium Plans</Text>
+          <Animated.View entering={reduceMotion ? undefined : FadeInDown.duration(Motion.duration.slow)} style={styles.hero}>
+            <LinearGradient
+              colors={theme.mode === 'dark'
+                ? ['rgba(5,95,99,0.42)', 'rgba(10,36,39,0.88)', 'rgba(82,48,26,0.30)']
+                : ['rgba(178,229,220,0.94)', 'rgba(255,254,250,0.97)', 'rgba(237,203,132,0.58)']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={StyleSheet.absoluteFill}
+            />
+            <View style={styles.heroArt}>
+              <PremiumHeroArt viewerGender={profile?.gender} />
+            </View>
+            <LinearGradient
+              pointerEvents="none"
+              colors={theme.mode === 'dark'
+                ? ['rgba(5,41,42,0.94)', 'rgba(5,41,42,0.50)', 'rgba(5,41,42,0.04)']
+                : ['rgba(225,242,235,0.98)', 'rgba(239,246,239,0.68)', 'rgba(239,246,239,0.03)']}
+              locations={[0, 0.54, 1]}
+              start={{ x: 0, y: 0.5 }}
+              end={{ x: 1, y: 0.5 }}
+              style={styles.heroSideScrim}
+            />
+            <LinearGradient
+              pointerEvents="none"
+              colors={theme.mode === 'dark'
+                ? ['rgba(7,29,31,0)', 'rgba(7,29,31,0.88)']
+                : ['rgba(255,254,250,0)', 'rgba(255,254,250,0.96)']}
+              locations={[0, 1]}
+              style={styles.heroBottomScrim}
+            />
+            <View style={styles.heroCopy}>
+              <Text style={styles.heroEyebrow}>MORE THAN A MATCH</Text>
+              <Text style={styles.heroTitle}>Choose your{`\n`}pace.</Text>
+              <Text style={styles.heroBody}>Same great conversations. More of what happens next.</Text>
+            </View>
+            <View style={styles.heroBenefits}>
+              <CommercePill compact icon="rocket-launch-outline" label="Get seen" />
+              <CommercePill compact icon="shield-check-outline" label="Build trust" />
+              <CommercePill compact icon="calendar-heart" label="Make plans" />
+            </View>
+            <View style={styles.heroStatus}>
+              <View style={styles.heroStatusCopy}>
+                <Text style={styles.heroStatusLabel}>MEMBERSHIP STATUS</Text>
+                <Text style={styles.heroStatusText}>
+                  {planEndsAt
+                    ? `${membership.currentPlan} active until ${planEndsAt}`
+                    : membership.currentPlan === 'FREE'
+                      ? 'Free, with room to move faster'
+                      : `${membership.currentPlan} active on this account`}
+                </Text>
               </View>
-              <Text style={styles.heroTitle}>Choose the premium pace that fits your momentum</Text>
-              <Text style={styles.heroBody}>
-                Basic chat stays open. Premium accelerates what happens next: stronger visibility,
-                cleaner trust, and more momentum toward a real date.
-              </Text>
-              <View style={styles.heroHighlights}>
-                <View style={styles.heroPill}>
-                  <MaterialCommunityIcons name="rocket-launch-outline" size={16} color={theme.tint} />
-                  <Text style={styles.heroPillText}>Visibility that converts</Text>
-                </View>
-                <View style={styles.heroPill}>
-                  <MaterialCommunityIcons name="shield-check-outline" size={16} color={theme.tint} />
-                  <Text style={styles.heroPillText}>Trust that reads fast</Text>
-                </View>
-                <View style={styles.heroPill}>
-                  <MaterialCommunityIcons name="calendar-clock-outline" size={16} color={theme.tint} />
-                  <Text style={styles.heroPillText}>Momentum toward dates</Text>
-                </View>
-              </View>
-              <View style={styles.statusRow}>
-                <Text style={styles.statusLabel}>Current membership</Text>
-                <Text style={styles.statusValue}>{loading ? "Checking..." : currentPlan}</Text>
-              </View>
-              <Text style={styles.statusMeta}>
-                {formattedCurrentPlanEndsAt
-                  ? `Active until ${formattedCurrentPlanEndsAt}`
-                  : currentPlan === "FREE"
-                    ? "You are currently on the free plan."
-                    : "Premium is active on this account."}
-              </Text>
-              <Text style={styles.statusMeta}>
-                {billingReady
-                  ? billingSupported
-                    ? "In-app purchases are available on this device."
-                    : "Purchases are not available on this device right now."
-                  : "Plan pricing is still loading for this device."}
-              </Text>
-              <Text style={styles.statusMeta}>
-                {hasActiveBoost && activeBoostEndsAt
-                  ? `Boost currently live until ${new Date(activeBoostEndsAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
-                  : "No live boost is running right now."}
-              </Text>
+              {membership.hasActiveBoost ? <CommercePill icon="rocket-launch" label="Boost live" tone="gold" /> : null}
             </View>
           </Animated.View>
 
-          {billingError ? (
-            <View style={styles.noticeCard}>
-              <Text style={styles.noticeTitle}>Plans are temporarily unavailable</Text>
-              <Text style={styles.noticeBody}>
-                We could not load premium plans right now. Refresh this screen or try again in a moment.
-              </Text>
+          {membership.error ? (
+            <View style={styles.notice}>
+              <MaterialCommunityIcons name="alert-circle-outline" size={20} color={theme.gold} />
+              <View style={styles.noticeCopy}>
+                <Text style={styles.noticeTitle}>Plans are temporarily unavailable</Text>
+                <Text style={styles.noticeBody}>Refresh this screen or try again in a moment.</Text>
+              </View>
             </View>
           ) : null}
 
           {showDeveloperBillingNotice ? (
-            <View style={styles.noticeCard}>
-              <Text style={styles.noticeTitle}>Developer billing notice</Text>
-              <Text style={styles.noticeBody}>
-                Add `EXPO_PUBLIC_REVENUECAT_APPLE_API_KEY` and `EXPO_PUBLIC_REVENUECAT_GOOGLE_API_KEY` to unlock live billing on device.
-              </Text>
+            <View style={styles.notice}>
+              <MaterialCommunityIcons name="code-tags" size={20} color={theme.cyan} />
+              <View style={styles.noticeCopy}>
+                <Text style={styles.noticeTitle}>Developer billing notice</Text>
+                <Text style={styles.noticeBody}>RevenueCat public SDK keys are required for live device pricing.</Text>
+              </View>
             </View>
           ) : null}
 
-          <View style={styles.modelCard}>
-            <View style={styles.modelHeader}>
-              <Text style={styles.modelEyebrow}>Betweener Model</Text>
-              <Text style={styles.modelTitle}>Free keeps chat alive. Silver and Gold move faster.</Text>
-              <Text style={styles.modelBody}>
-                Betweener monetizes momentum and status, not the ability to speak.
-              </Text>
+          <View style={styles.sectionHeading}>
+            <View>
+              <Text style={styles.eyebrow}>FIND YOUR MOMENTUM</Text>
+              <Text style={styles.sectionTitle}>A plan for every pace</Text>
             </View>
+            <Text style={styles.sectionHint}>Tap to explore</Text>
+          </View>
 
-            <View style={styles.tierStack}>
-              {TIER_MODEL.map((tier) => {
-                const accent =
-                  tier.plan === "FREE"
-                    ? theme.textMuted
-                    : tier.plan === "SILVER"
-                      ? PLAN_CONFIG.SILVER.accent
-                      : PLAN_CONFIG.GOLD.accent;
+          <View style={styles.tierStack}>
+            {(Object.keys(planVisuals) as PremiumPlan[]).map((plan, index) => (
+              <Animated.View key={plan} entering={reduceMotion ? undefined : FadeInDown.delay((index + 1) * 55).duration(Motion.duration.slow)}>
+                <MembershipTierCard
+                  tier={planVisuals[plan]}
+                  selected={selectedPlan === plan}
+                  current={membership.currentPlan === plan}
+                  onPress={() => setSelectedPlan(plan)}
+                />
+              </Animated.View>
+            ))}
+          </View>
 
-                return (
-                  <View key={tier.plan} style={styles.tierCard}>
-                    <Text style={[styles.tierEyebrow, { color: accent }]}>{tier.eyebrow}</Text>
-                    <View style={styles.tierTitleRow}>
-                      <Text style={styles.tierName}>{tier.plan === "FREE" ? "Free" : tier.plan === "SILVER" ? "Silver" : "Gold"}</Text>
-                      <View style={[styles.tierBadge, currentPlan === tier.plan && styles.tierBadgeActive]}>
-                        <Text style={[styles.tierBadgeText, currentPlan === tier.plan && styles.tierBadgeTextActive]}>
-                          {currentPlan === tier.plan ? "Current" : "Tier"}
-                        </Text>
-                      </View>
+          {selectedPaidPlan && selectedInterval ? (
+            <Animated.View key={selectedPaidPlan} entering={reduceMotion ? undefined : FadeInDown.duration(Motion.duration.base)} style={styles.purchasePanel}>
+              <LinearGradient
+                colors={theme.mode === 'dark'
+                  ? selectedPaidPlan === 'GOLD'
+                    ? ['rgba(171,112,12,0.36)', 'rgba(41,31,12,0.18)', 'rgba(8,28,30,0.92)']
+                    : ['rgba(211,232,235,0.13)', 'rgba(9,61,64,0.30)', 'rgba(8,28,30,0.92)']
+                  : selectedPaidPlan === 'GOLD'
+                    ? ['rgba(230,180,65,0.38)', 'rgba(255,254,250,0.99)']
+                    : ['rgba(169,211,207,0.62)', 'rgba(255,254,250,0.99)']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={StyleSheet.absoluteFill}
+              />
+              <View style={styles.purchaseHeader}>
+                <View>
+                  <Text style={[styles.purchaseEyebrow, { color: selectedVisual.accent }]}>
+                    {selectedPaidPlan === 'GOLD' ? 'SIGNATURE TIER' : 'ESSENTIAL TIER'}
+                  </Text>
+                  <Text style={styles.purchaseTitle}>{selectedVisual.label}</Text>
+                </View>
+                <View style={[styles.planState, { borderColor: selectedVisual.accent }]}>
+                  <Text style={[styles.planStateText, { color: selectedVisual.accent }]}>
+                    {activeSelected ? 'ACTIVE' : selectedPackage ? 'AVAILABLE' : 'PREPARING'}
+                  </Text>
+                </View>
+              </View>
+
+              <MembershipDurationSelector
+                packages={packageCatalog[selectedPaidPlan]}
+                selected={selectedInterval}
+                accent={selectedVisual.accent}
+                billingReady={membership.billingReady}
+                onSelect={(interval) => setSelectedIntervals((current) => ({ ...current, [selectedPaidPlan]: interval }))}
+              />
+
+              <View style={styles.pricePanel}>
+                <View style={styles.priceCopy}>
+                  <Text style={styles.priceLabel}>{selectedInterval.toUpperCase()} BILLING</Text>
+                  <Text adjustsFontSizeToFit minimumFontScale={0.72} numberOfLines={1} style={styles.priceValue}>
+                    {selectedPackage?.product.priceString ?? (membership.billingReady ? 'Unavailable' : 'Loading price')}
+                  </Text>
+                  <Text style={styles.priceMeta}>Localized price from your App Store storefront.</Text>
+                </View>
+                <View style={styles.priceAside}>
+                  {monthlyEquivalent ? <Text style={styles.monthlyValue}>{monthlyEquivalent}</Text> : null}
+                  {savingsLabel ? <Text style={[styles.savings, { color: selectedVisual.accent }]}>{savingsLabel}</Text> : null}
+                </View>
+              </View>
+
+              <Text style={styles.includedLabel}>INCLUDED IN {selectedVisual.label.toUpperCase()}</Text>
+              <View style={styles.featureList}>
+                {PLAN_FEATURES[selectedPaidPlan].map((feature) => (
+                  <View key={feature} style={styles.featureRow}>
+                    <View style={[styles.check, { backgroundColor: `${selectedVisual.accent}1F` }]}>
+                      <MaterialCommunityIcons name="check" size={14} color={selectedVisual.accent} />
                     </View>
-                    <Text style={styles.tierSummaryTitle}>{tier.title}</Text>
-                    <View style={styles.tierBullets}>
-                      {tier.bullets.map((bullet) => (
-                        <View key={bullet} style={styles.tierBulletRow}>
-                          <MaterialCommunityIcons name="check-circle-outline" size={16} color={accent} />
-                          <Text style={styles.tierBulletText}>{bullet}</Text>
-                        </View>
-                      ))}
-                    </View>
+                    <Text style={styles.featureText}>{feature}</Text>
                   </View>
-                );
-              })}
-            </View>
+                ))}
+              </View>
 
-            <View style={styles.matrixCard}>
-              <Text style={styles.matrixTitle}>What changes between tiers</Text>
+              {activeSelected ? (
+                <Pressable style={styles.manageButton} onPress={() => void handleManage()}>
+                  <Text style={styles.manageButtonText}>Manage membership</Text>
+                  <MaterialCommunityIcons name="open-in-new" size={17} color={theme.text} />
+                </Pressable>
+              ) : (
+                <Pressable
+                  disabled={!membership.billingReady || !membership.billingSupported || !selectedPackage || purchaseBusy}
+                  onPress={() => void handlePurchase(selectedPaidPlan, selectedInterval)}
+                  style={({ pressed }) => [
+                    styles.purchaseButton,
+                    { backgroundColor: selectedPaidPlan === 'GOLD' ? theme.gold : theme.cyanDeep },
+                    (!membership.billingReady || !membership.billingSupported || !selectedPackage || purchaseBusy) && styles.disabled,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <MaterialCommunityIcons
+                    name={selectedPaidPlan === 'GOLD' ? 'crown' : 'diamond-stone'}
+                    size={19}
+                    color={selectedPaidPlan === 'GOLD' ? '#2D1D02' : '#FFFFFF'}
+                  />
+                  <Text style={[styles.purchaseButtonText, selectedPaidPlan === 'GOLD' && styles.purchaseButtonTextGold]}>
+                    {actionKey === `${selectedPaidPlan}:${selectedInterval}`
+                      ? 'Confirming with the App Store…'
+                      : selectedPackage
+                        ? `Choose ${selectedVisual.label} ${capitalize(selectedInterval)}`
+                        : membership.billingReady
+                          ? 'Plan unavailable'
+                          : 'Loading local price'}
+                  </Text>
+                </Pressable>
+              )}
+              <Text style={styles.renewalNote}>Cancel anytime in your {manageLocationLabel}.</Text>
+            </Animated.View>
+          ) : (
+            <View style={styles.freePanel}>
+              <MaterialCommunityIcons name="message-text-outline" size={27} color={theme.cyan} />
+              <View style={styles.freePanelCopy}>
+                <Text style={styles.freePanelTitle}>The social core stays open.</Text>
+                <Text style={styles.freePanelBody}>Create your profile, explore Vibes, match, and chat without a subscription.</Text>
+              </View>
+            </View>
+          )}
+
+          {!economyFlagsLoading && economyFlags.spark_wallet_enabled ? (
+            <View style={styles.sparkCard}>
+              <LinearGradient
+                colors={theme.mode === 'dark'
+                  ? ['rgba(10,121,124,0.38)', 'rgba(102,48,132,0.30)']
+                  : ['rgba(118,205,195,0.54)', 'rgba(190,143,214,0.34)']}
+                style={StyleSheet.absoluteFill}
+              />
+              <View style={styles.sparkCardCopy}>
+                <Text style={styles.eyebrow}>SPARKS</Text>
+                <Text style={styles.sparkTitle}>Premium moments, on your terms.</Text>
+                <Text style={styles.sparkBody}>Your verified balance stays separate from membership.</Text>
+                <Pressable style={styles.sparkButton} onPress={() => router.push('/wallet/sparks' as never)}>
+                  <Text style={styles.sparkButtonText}>Open Sparks</Text>
+                  <MaterialCommunityIcons name="arrow-right" size={17} color="#FFFFFF" />
+                </Pressable>
+              </View>
+              <View style={styles.sparkCardVisual}>
+                <SparkOrb compact />
+                <SparkBalanceChip wallet={sparkWallet} compact />
+              </View>
+            </View>
+          ) : null}
+
+          <Pressable style={styles.compareButton} onPress={() => setComparisonOpen((current) => !current)}>
+            <View style={styles.compareLabelRow}>
+              <MaterialCommunityIcons name="chart-bar" size={20} color={theme.cyan} />
+              <Text style={styles.compareButtonText}>Compare all features</Text>
+            </View>
+            <MaterialCommunityIcons name={comparisonOpen ? 'chevron-up' : 'chevron-down'} size={22} color={theme.text} />
+          </Pressable>
+
+          {comparisonOpen ? (
+            <View style={styles.matrix}>
+              <View style={styles.matrixHeader}>
+                <Text style={[styles.matrixFeature, styles.matrixHeaderFeature]}>FEATURE</Text>
+                <Text style={styles.matrixValue}>FREE</Text>
+                <Text style={styles.matrixValue}>SILVER</Text>
+                <Text style={[styles.matrixValue, { color: theme.gold }]}>GOLD</Text>
+              </View>
               {FEATURE_MATRIX.map((row) => (
                 <View key={row.label} style={styles.matrixRow}>
                   <Text style={styles.matrixFeature}>{row.label}</Text>
-                  <View style={styles.matrixValues}>
-                    <Text style={styles.matrixValue}>{row.free}</Text>
-                    <Text style={styles.matrixValue}>{row.silver}</Text>
-                    <Text style={styles.matrixValue}>{row.gold}</Text>
-                  </View>
+                  <Text style={styles.matrixValue}>{row.free}</Text>
+                  <Text style={styles.matrixValue}>{row.silver}</Text>
+                  <Text style={styles.matrixValue}>{row.gold}</Text>
                 </View>
               ))}
-              <View style={styles.matrixLegend}>
-                <Text style={styles.matrixLegendText}>Columns read left to right: Free, Silver, Gold.</Text>
-              </View>
             </View>
-          </View>
-
-          {(Object.keys(PLAN_CONFIG) as PaidPlan[]).map((plan, index) => {
-            const config = PLAN_CONFIG[plan];
-            const active = currentPlan === plan;
-            const packageMap = packageCatalog[plan];
-            const selectedInterval = selectedIntervals[plan];
-            const selectedPackage = getSelectedPlanPackage(packageMap, selectedInterval);
-            const monthlyPackage = packageMap.monthly;
-            const savingsLabel = getSavingsLabel(selectedPackage, monthlyPackage);
-            const monthlyEquivalent = formatMonthlyEquivalent(selectedPackage);
-            const selectedPrice = selectedPackage?.product.priceString ?? null;
-
-            return (
-              <Animated.View key={plan} entering={FadeInDown.delay((index + 1) * 80).duration(Motion.duration.slow)}>
-                <View style={styles.planCard}>
-                  <LinearGradient colors={config.halo} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.planGlow} />
-                  <View style={styles.planHeader}>
-                    <View style={styles.planHeaderCopy}>
-                      <Text style={[styles.planEyebrow, { color: config.accent }]}>{config.eyebrow}</Text>
-                      <Text style={styles.planName}>{config.label}</Text>
-                      <Text style={styles.planSubtitle}>{config.subtitle}</Text>
-                    </View>
-                    <View style={[styles.planBadge, active && styles.planBadgeActive]}>
-                      <Text style={[styles.planBadgeText, active && styles.planBadgeTextActive]}>
-                        {active ? "Active" : selectedPackage ? "Available" : "Preparing"}
-                      </Text>
-                    </View>
-                  </View>
-
-                  <View style={styles.durationRail}>
-                    {INTERVALS.map((interval) => {
-                      const pkg = packageMap[interval];
-                      const selected = interval === selectedInterval;
-                      const intervalMeta = INTERVAL_META[interval];
-                      return (
-                        <Pressable
-                          key={interval}
-                          style={[styles.durationChip, selected && styles.durationChipSelected, !pkg && styles.durationChipDisabled]}
-                          disabled={!pkg}
-                          onPress={() => setSelectedIntervals((current) => ({ ...current, [plan]: interval }))}
-                        >
-                          <Text style={[styles.durationChipLabel, selected && styles.durationChipLabelSelected]}>
-                            {intervalMeta.label}
-                          </Text>
-                          <Text style={[styles.durationChipPrice, selected && styles.durationChipPriceSelected]}>
-                            {pkg?.product.priceString || (billingReady ? "Unavailable" : "Loading")}
-                          </Text>
-                          {intervalMeta.spotlight && pkg ? (
-                            <View style={[styles.durationSpotlight, selected && styles.durationSpotlightSelected]}>
-                              <Text style={[styles.durationSpotlightText, selected && styles.durationSpotlightTextSelected]}>
-                                {intervalMeta.spotlight}
-                              </Text>
-                            </View>
-                          ) : null}
-                          {selected ? <View style={[styles.durationChipGlow, { borderColor: withAlpha(config.accent, 0.42) }]} /> : null}
-                        </Pressable>
-                      );
-                    })}
-                  </View>
-
-                  <View style={styles.priceHeroShell}>
-                    <LinearGradient
-                      colors={[withAlpha(config.accent, isDark ? 0.16 : 0.12), withAlpha(config.accent, 0.02)]}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 1 }}
-                      style={styles.priceHeroGlow}
-                    />
-                    <View style={styles.priceHeroTopline}>
-                      <Text style={styles.priceHeroKicker}>
-                        {selectedPackage ? `${INTERVAL_META[selectedInterval].label} billing` : "Local price"}
-                      </Text>
-                      {INTERVAL_META[selectedInterval].spotlight ? (
-                        <View style={[styles.priceHeroBadge, { backgroundColor: withAlpha(config.accent, 0.16) }]}>
-                          <Text style={[styles.priceHeroBadgeText, { color: config.accent }]}>
-                            {INTERVAL_META[selectedInterval].spotlight}
-                          </Text>
-                        </View>
-                      ) : null}
-                    </View>
-                  <View style={styles.priceHero}>
-                    <View>
-                      <Text style={styles.priceHeroValue}>{selectedPrice || (billingReady ? "Unavailable" : "Loading local price")}</Text>
-                      <Text style={styles.priceHeroMeta}>
-                        {selectedPackage
-                          ? `${INTERVAL_META[selectedInterval].label} billing`
-                          : billingReady
-                            ? "This plan is not available from the App Store for this device right now."
-                            : "Fetching the exact App Store price for your region."}
-                      </Text>
-                    </View>
-                    <View style={styles.priceHeroAside}>
-                      {monthlyEquivalent ? <Text style={styles.priceHeroAsideValue}>{monthlyEquivalent}</Text> : null}
-                      {savingsLabel ? <Text style={styles.priceHeroAsideMeta}>{savingsLabel}</Text> : null}
-                    </View>
-                  </View>
-                  </View>
-
-                  <Text style={styles.sectionLabel}>Included in {config.label}</Text>
-                  <View style={styles.features}>
-                    {config.features.map((feature) => (
-                      <View key={feature} style={styles.featureRow}>
-                        <MaterialCommunityIcons name="check-circle-outline" size={18} color={config.accent} />
-                        <Text style={styles.featureText}>{feature}</Text>
-                      </View>
-                    ))}
-                  </View>
-
-                  <View style={styles.planActions}>
-                    {active ? (
-                      <Pressable style={[styles.planButton, styles.planButtonMuted]} onPress={() => void handleManage()}>
-                        <Text style={[styles.planButtonText, styles.planButtonTextMuted]}>Manage membership</Text>
-                      </Pressable>
-                    ) : billingReady && billingSupported && selectedPackage ? (
-                      <Pressable style={styles.planButton} onPress={() => void handlePurchase(plan, selectedInterval)}>
-                        <Text style={styles.planButtonText}>
-                          {actionKey === `${plan}:${selectedInterval}` ? "Processing..." : `Choose ${config.label} ${INTERVAL_META[selectedInterval].label}`}
-                        </Text>
-                      </Pressable>
-                    ) : (
-                      <Pressable style={[styles.planButton, styles.planButtonMuted]} disabled>
-                        <Text style={[styles.planButtonText, styles.planButtonTextMuted]}>
-                          {billingReady ? "Plan unavailable" : "Loading local price"}
-                        </Text>
-                      </Pressable>
-                    )}
-                  </View>
-                  <Text style={styles.planFootnote}>
-                    Cancel anytime in your Apple subscription settings.
-                  </Text>
-                </View>
-              </Animated.View>
-            );
-          })}
+          ) : null}
 
           <View style={styles.footerCard}>
-            <Text style={styles.footerTitle}>Restore purchases</Text>
-            <Text style={styles.footerBody}>
-              {`Already subscribed on this ${restoreLabel}? Restore your purchases to refresh your membership on this device.`}
-            </Text>
+            <View style={styles.footerHeader}>
+              <View style={styles.footerIcon}>
+                <MaterialCommunityIcons name="restore" size={22} color={theme.cyan} />
+              </View>
+              <View style={styles.footerHeaderCopy}>
+                <Text style={styles.footerTitle}>Already a member?</Text>
+                <Text style={styles.footerBody}>Restore purchases from this {accountLabel}.</Text>
+              </View>
+            </View>
             <View style={styles.footerActions}>
               <Pressable
-                style={[styles.secondaryButton, (!billingReady || restoring) && styles.secondaryButtonMuted]}
-                disabled={!billingReady || restoring}
+                disabled={!membership.billingReady || restoring}
                 onPress={() => void handleRestore()}
+                style={[styles.footerButton, (!membership.billingReady || restoring) && styles.disabled]}
               >
-                <Text style={styles.secondaryButtonText}>{restoring ? "Restoring..." : "Restore purchases"}</Text>
+                <Text style={styles.footerButtonText}>{restoring ? 'Restoring…' : 'Restore purchases'}</Text>
               </Pressable>
-              <Pressable style={styles.secondaryButton} onPress={() => void refresh()}>
-                <Text style={styles.secondaryButtonText}>Refresh plans</Text>
+              <Pressable onPress={() => void membership.refresh()} style={styles.footerButton}>
+                <Text style={styles.footerButtonText}>Refresh plans</Text>
               </Pressable>
             </View>
-            <View style={styles.legalFooter}>
-              <Text style={styles.legalCopy}>
-                {`Payment will be charged to your ${accountLabel} at confirmation of purchase. Subscriptions renew automatically unless cancelled at least 24 hours before the end of the current period. You can manage and cancel your subscriptions in ${manageLocationLabel}.`}
-              </Text>
-              <View style={styles.legalLinksRow}>
-                <Pressable onPress={() => void openExternalUrl(TRUST_LINKS.terms)}>
-                  <Text style={styles.legalLink}>Terms of Use</Text>
-                </Pressable>
-                <Text style={styles.legalDivider}>|</Text>
-                <Pressable onPress={() => void openExternalUrl(TRUST_LINKS.privacy)}>
-                  <Text style={styles.legalLink}>Privacy Policy</Text>
-                </Pressable>
-              </View>
+            <Text style={styles.legalCopy}>
+              Payment is charged to your {accountLabel} at confirmation. Subscriptions renew automatically unless cancelled at least 24 hours before the current period ends.
+            </Text>
+            <View style={styles.legalLinks}>
+              <Pressable onPress={() => void openExternalUrl(TRUST_LINKS.terms)}><Text style={styles.legalLink}>Terms of Use</Text></Pressable>
+              <View style={styles.legalDot} />
+              <Pressable onPress={() => void openExternalUrl(TRUST_LINKS.privacy)}><Text style={styles.legalLink}>Privacy Policy</Text></Pressable>
             </View>
           </View>
         </ScrollView>
@@ -560,445 +533,146 @@ export default function PremiumPlansScreen() {
 }
 
 function buildPackageMap(offerings: PurchasesOfferings | null, plan: PaidPlan) {
+  if (!offerings) return { monthly: null, quarterly: null, annual: null };
   const packages = getPackagesForPlan(offerings, plan);
   return {
-    monthly: packages.find((pkg) => getPlanIntervalFromPackage(pkg) === "monthly") || findPackageForPlan(offerings, plan, "monthly"),
-    quarterly: packages.find((pkg) => getPlanIntervalFromPackage(pkg) === "quarterly") || findPackageForPlan(offerings, plan, "quarterly"),
-    annual: packages.find((pkg) => getPlanIntervalFromPackage(pkg) === "annual") || findPackageForPlan(offerings, plan, "annual"),
+    monthly: packages.find((pkg) => getPlanIntervalFromPackage(pkg) === 'monthly') || findPackageForPlan(offerings, plan, 'monthly'),
+    quarterly: packages.find((pkg) => getPlanIntervalFromPackage(pkg) === 'quarterly') || findPackageForPlan(offerings, plan, 'quarterly'),
+    annual: packages.find((pkg) => getPlanIntervalFromPackage(pkg) === 'annual') || findPackageForPlan(offerings, plan, 'annual'),
   };
 }
 
-function getSelectedPlanPackage(
-  packageMap: Record<PremiumPlanInterval, PurchasesPackage | null>,
-  selectedInterval: PremiumPlanInterval,
-) {
-  return packageMap[selectedInterval] || null;
-}
-
 function getMonthsForInterval(interval: PremiumPlanInterval) {
-  switch (interval) {
-    case "monthly":
-      return 1;
-    case "quarterly":
-      return 3;
-    case "annual":
-      return 12;
-  }
-}
-
-function getPackagePrice(pkg: PurchasesPackage | null) {
-  const price = pkg?.product.price;
-  return typeof price === "number" ? price : null;
+  if (interval === 'monthly') return 1;
+  if (interval === 'quarterly') return 3;
+  return 12;
 }
 
 function formatCurrency(amount: number, pkg: PurchasesPackage) {
-  const currencyCode = pkg.product.currencyCode || "USD";
+  const currencyCode = pkg.product.currencyCode || 'USD';
   try {
-    return new Intl.NumberFormat(undefined, {
-      style: "currency",
-      currency: currencyCode,
-    }).format(amount);
+    return new Intl.NumberFormat(undefined, { style: 'currency', currency: currencyCode }).format(amount);
   } catch {
     return `${currencyCode} ${amount.toFixed(2)}`;
   }
 }
 
-function formatMonthlyEquivalent(pkg: PurchasesPackage | null) {
-  if (!pkg) return null;
-  const price = getPackagePrice(pkg);
+function formatMonthlyEquivalent(pkg: PurchasesPackage) {
   const interval = getPlanIntervalFromPackage(pkg);
-  if (price == null || !interval) return null;
-  return `${formatCurrency(price / getMonthsForInterval(interval), pkg)}/mo`;
+  if (!interval || typeof pkg.product.price !== 'number') return null;
+  return `${formatCurrency(pkg.product.price / getMonthsForInterval(interval), pkg)}/mo`;
+}
+
+function getSavingsLabel(selected: PurchasesPackage, monthly: PurchasesPackage) {
+  const interval = getPlanIntervalFromPackage(selected);
+  if (!interval || interval === 'monthly') return null;
+  const selectedPrice = selected.product.price;
+  const monthlyPrice = monthly.product.price;
+  if (!Number.isFinite(selectedPrice) || !Number.isFinite(monthlyPrice)) return null;
+  const savings = ((monthlyPrice - selectedPrice / getMonthsForInterval(interval)) / monthlyPrice) * 100;
+  return savings >= 4 ? `Save ${Math.round(savings)}%` : null;
 }
 
 function formatMembershipDate(value: string | null) {
   if (!value) return null;
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return null;
-
-  return new Intl.DateTimeFormat(undefined, {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  }).format(parsed);
+  return new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short', year: 'numeric' }).format(parsed);
 }
 
-function getSavingsLabel(selectedPackage: PurchasesPackage | null, monthlyPackage: PurchasesPackage | null) {
-  const selectedPrice = getPackagePrice(selectedPackage);
-  const monthlyPrice = getPackagePrice(monthlyPackage);
-  const interval = selectedPackage ? getPlanIntervalFromPackage(selectedPackage) : null;
-
-  if (selectedPrice == null || monthlyPrice == null || !interval || interval === "monthly") {
-    return null;
-  }
-
-  const selectedMonthlyEquivalent = selectedPrice / getMonthsForInterval(interval);
-  const savings = ((monthlyPrice - selectedMonthlyEquivalent) / monthlyPrice) * 100;
-
-  if (!Number.isFinite(savings) || savings < 4) {
-    return null;
-  }
-
-  return `Save ${Math.round(savings)}%`;
+function capitalize(value: string) {
+  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
-const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
-  StyleSheet.create({
-    container: { flex: 1, backgroundColor: theme.background },
-    safeArea: { flex: 1 },
-    bgGlow: {
-      position: "absolute",
-      top: -100,
-      left: -90,
-      width: 320,
-      height: 320,
-      borderRadius: 320,
-    },
-    content: { paddingHorizontal: 18, paddingTop: 10, paddingBottom: 28, gap: 18 },
-    backButton: {
-      alignSelf: "flex-start",
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 4,
-      paddingHorizontal: 10,
-      paddingVertical: 7,
-      borderRadius: 999,
-      backgroundColor: withAlpha(theme.text, isDark ? 0.08 : 0.05),
-      marginBottom: 14,
-    },
-    backLabel: { color: theme.text, fontSize: 12, fontWeight: "600" },
-    heroCard: {
-      borderRadius: 28,
-      padding: 22,
-      gap: 14,
-      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.34 : 0.8),
-      borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.08),
-    },
-    heroBadge: {
-      alignSelf: "flex-start",
-      paddingHorizontal: 10,
-      paddingVertical: 5,
-      borderRadius: 999,
-      borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.1),
-      backgroundColor: withAlpha(theme.background, isDark ? 0.36 : 0.92),
-    },
-    heroBadgeText: { color: theme.textMuted, fontSize: 10, fontWeight: "700", letterSpacing: 0.3 },
-    heroTitle: { color: theme.text, fontSize: 30, lineHeight: 36, fontFamily: "PlayfairDisplay_700Bold" },
-    heroBody: { color: theme.textMuted, fontSize: 13, lineHeight: 21, fontFamily: "Manrope_500Medium" },
-    heroHighlights: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-    heroPill: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 6,
-      paddingHorizontal: 12,
-      paddingVertical: 8,
-      borderRadius: 999,
-      backgroundColor: withAlpha(theme.background, isDark ? 0.4 : 0.92),
-      borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.08),
-    },
-    heroPillText: { color: theme.text, fontSize: 11, fontWeight: "700" },
-    statusRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 2 },
-    statusLabel: { color: theme.textMuted, fontSize: 12, fontFamily: "Archivo_700Bold" },
-    statusValue: { color: theme.text, fontSize: 16, fontFamily: "Archivo_700Bold" },
-    statusMeta: { color: theme.textMuted, fontSize: 12, lineHeight: 18, fontFamily: "Manrope_500Medium" },
-    noticeCard: {
-      borderRadius: 18,
-      padding: 16,
-      gap: 8,
-      backgroundColor: withAlpha(theme.accent, isDark ? 0.12 : 0.08),
-      borderWidth: 1,
-      borderColor: withAlpha(theme.accent, 0.22),
-    },
-    noticeTitle: { color: theme.text, fontSize: 15, fontFamily: "Archivo_700Bold" },
-    noticeBody: { color: theme.textMuted, fontSize: 12, lineHeight: 18, fontFamily: "Manrope_500Medium" },
-    modelCard: {
-      borderRadius: 24,
-      padding: 18,
-      gap: 16,
-      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.3 : 0.76),
-      borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
-    },
-    modelHeader: { gap: 6 },
-    modelEyebrow: {
-      color: theme.tint,
-      fontSize: 10,
-      fontWeight: "700",
-      letterSpacing: 1.2,
-      textTransform: "uppercase",
-    },
-    modelTitle: { color: theme.text, fontSize: 20, lineHeight: 26, fontFamily: "PlayfairDisplay_700Bold" },
-    modelBody: { color: theme.textMuted, fontSize: 13, lineHeight: 20, fontFamily: "Manrope_500Medium" },
-    tierStack: { gap: 12 },
-    tierCard: {
-      borderRadius: 20,
-      padding: 16,
-      gap: 6,
-      backgroundColor: withAlpha(theme.background, isDark ? 0.38 : 0.94),
-      borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
-    },
-    tierEyebrow: {
-      fontSize: 10,
-      fontWeight: "700",
-      letterSpacing: 1,
-      textTransform: "uppercase",
-    },
-    tierTitleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
-    tierName: { color: theme.text, fontSize: 19, fontFamily: "Archivo_700Bold" },
-    tierBadge: {
-      paddingHorizontal: 10,
-      paddingVertical: 5,
-      borderRadius: 999,
-      borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
-      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.34 : 0.92),
-    },
-    tierBadgeActive: { borderColor: theme.tint, backgroundColor: withAlpha(theme.tint, 0.14) },
-    tierBadgeText: { color: theme.textMuted, fontSize: 10, fontWeight: "700", letterSpacing: 0.3 },
-    tierBadgeTextActive: { color: theme.tint },
-    tierSummaryTitle: { color: theme.text, fontSize: 14, lineHeight: 20, fontFamily: "Manrope_700Bold" },
-    tierBullets: { gap: 8, marginTop: 4 },
-    tierBulletRow: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
-    tierBulletText: { flex: 1, color: theme.text, fontSize: 12, lineHeight: 18, fontFamily: "Manrope_500Medium" },
-    matrixCard: {
-      borderRadius: 20,
-      padding: 16,
-      gap: 10,
-      backgroundColor: withAlpha(theme.background, isDark ? 0.38 : 0.94),
-      borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
-    },
-    matrixTitle: { color: theme.text, fontSize: 15, fontFamily: "Archivo_700Bold" },
-    matrixRow: {
-      gap: 8,
-      paddingTop: 10,
-      borderTopWidth: 1,
-      borderTopColor: withAlpha(theme.text, isDark ? 0.12 : 0.06),
-    },
-    matrixFeature: { color: theme.text, fontSize: 12, fontFamily: "Manrope_700Bold" },
-    matrixValues: { flexDirection: "row", justifyContent: "space-between", gap: 8 },
-    matrixValue: {
-      flex: 1,
-      color: theme.textMuted,
-      fontSize: 11,
-      lineHeight: 16,
-      fontFamily: "Manrope_600SemiBold",
-      textAlign: "center",
-    },
-    matrixLegend: {
-      marginTop: 4,
-      paddingTop: 10,
-      borderTopWidth: 1,
-      borderTopColor: withAlpha(theme.text, isDark ? 0.12 : 0.06),
-    },
-    matrixLegendText: { color: theme.textMuted, fontSize: 11, lineHeight: 16, fontFamily: "Manrope_500Medium" },
-    planCard: {
-      position: "relative",
-      overflow: "hidden",
-      borderRadius: 26,
-      padding: 20,
-      gap: 14,
-      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.3 : 0.75),
-      borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
-    },
-    planGlow: { ...StyleSheet.absoluteFill },
-    planHeader: { flexDirection: "row", justifyContent: "space-between", gap: 12 },
-    planHeaderCopy: { flex: 1, gap: 4 },
-    planEyebrow: { fontSize: 10, fontWeight: "700", letterSpacing: 1.4, textTransform: "uppercase" },
-    planName: { color: theme.text, fontSize: 24, fontFamily: "PlayfairDisplay_700Bold" },
-    planSubtitle: { color: theme.textMuted, fontSize: 13, lineHeight: 20, fontFamily: "Manrope_500Medium" },
-    planBadge: {
-      alignSelf: "flex-start",
-      paddingHorizontal: 11,
-      paddingVertical: 6,
-      borderRadius: 999,
-      borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.1),
-      backgroundColor: withAlpha(theme.background, isDark ? 0.34 : 0.92),
-    },
-    planBadgeActive: { borderColor: theme.tint, backgroundColor: withAlpha(theme.tint, 0.14) },
-    planBadgeText: { color: theme.textMuted, fontSize: 10, fontWeight: "700", letterSpacing: 0.4 },
-    planBadgeTextActive: { color: theme.tint },
-    durationRail: { flexDirection: "row", gap: 10 },
-    durationChip: {
-      position: "relative",
-      flex: 1,
-      minHeight: 82,
-      paddingHorizontal: 11,
-      paddingVertical: 12,
-      borderRadius: 18,
-      borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
-      backgroundColor: withAlpha(theme.background, isDark ? 0.36 : 0.9),
-      justifyContent: "space-between",
-    },
-    durationChipSelected: {
-      borderColor: theme.tint,
-      backgroundColor: withAlpha(theme.tint, isDark ? 0.18 : 0.12),
-      transform: [{ translateY: -3 }],
-    },
-    durationChipDisabled: { opacity: 0.42 },
-    durationChipLabel: { color: theme.text, fontSize: 12, fontWeight: "700" },
-    durationChipLabelSelected: { color: theme.text },
-    durationChipPrice: { color: theme.textMuted, fontSize: 11, fontWeight: "700" },
-    durationChipPriceSelected: { color: theme.text },
-    durationSpotlight: {
-      alignSelf: "flex-start",
-      paddingHorizontal: 7,
-      paddingVertical: 3,
-      borderRadius: 999,
-      backgroundColor: withAlpha(theme.text, isDark ? 0.12 : 0.06),
-    },
-    durationSpotlightSelected: { backgroundColor: withAlpha(theme.tint, 0.18) },
-    durationSpotlightText: { color: theme.textMuted, fontSize: 9, fontWeight: "700", letterSpacing: 0.2 },
-    durationSpotlightTextSelected: { color: theme.text },
-    durationChipGlow: {
-      position: "absolute",
-      inset: 0,
-      borderRadius: 18,
-      borderWidth: 1.5,
-    },
-    priceHeroShell: {
-      position: "relative",
-      overflow: "hidden",
-      borderRadius: 22,
-      padding: 16,
-      gap: 8,
-      borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
-      backgroundColor: withAlpha(theme.background, isDark ? 0.4 : 0.94),
-    },
-    priceHeroGlow: {
-      ...StyleSheet.absoluteFill,
-    },
-    priceHeroTopline: {
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "space-between",
-      gap: 12,
-    },
-    priceHeroKicker: {
-      color: theme.textMuted,
-      fontSize: 10,
-      fontWeight: "700",
-      letterSpacing: 0.8,
-      textTransform: "uppercase",
-    },
-    priceHeroBadge: {
-      paddingHorizontal: 10,
-      paddingVertical: 5,
-      borderRadius: 999,
-    },
-    priceHeroBadgeText: {
-      fontSize: 10,
-      fontWeight: "700",
-      letterSpacing: 0.3,
-    },
-    priceHero: {
-      flexDirection: "row",
-      alignItems: "flex-end",
-      justifyContent: "space-between",
-      gap: 12,
-    },
-    priceHeroValue: { color: theme.text, fontSize: 32, lineHeight: 36, fontFamily: "Archivo_700Bold" },
-    priceHeroMeta: { color: theme.textMuted, fontSize: 12, marginTop: 3, lineHeight: 17, fontFamily: "Manrope_500Medium" },
-    priceHeroAside: { alignItems: "flex-end", gap: 4 },
-    priceHeroAsideValue: { color: theme.text, fontSize: 12, fontWeight: "700" },
-    priceHeroAsideMeta: { color: theme.tint, fontSize: 11, fontWeight: "700" },
-    sectionLabel: {
-      color: theme.textMuted,
-      fontSize: 11,
-      fontWeight: "700",
-      letterSpacing: 0.6,
-      textTransform: "uppercase",
-    },
-    features: { gap: 9 },
-    featureRow: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
-    featureText: { flex: 1, color: theme.text, fontSize: 12, lineHeight: 18, fontFamily: "Manrope_500Medium" },
-    planActions: { marginTop: 0 },
-    planButton: {
-      paddingHorizontal: 14,
-      paddingVertical: 14,
-      borderRadius: 999,
-      backgroundColor: theme.tint,
-      alignItems: "center",
-    },
-    planButtonMuted: {
-      backgroundColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
-    },
-    planButtonText: { color: Colors.light.background, fontSize: 12, fontWeight: "700" },
-    planButtonTextMuted: { color: theme.text },
-    planFootnote: {
-      color: theme.textMuted,
-      fontSize: 10,
-      lineHeight: 15,
-      fontFamily: "Manrope_500Medium",
-      textAlign: "center",
-    },
-    footerCard: {
-      borderRadius: 18,
-      padding: 16,
-      gap: 10,
-      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.28 : 0.72),
-      borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
-    },
-    footerTitle: { color: theme.text, fontSize: 16, fontFamily: "Archivo_700Bold" },
-    footerBody: { color: theme.textMuted, fontSize: 12, lineHeight: 18, fontFamily: "Manrope_500Medium" },
-    footerActions: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-    legalFooter: {
-      gap: 8,
-      paddingTop: 4,
-      borderTopWidth: 1,
-      borderTopColor: withAlpha(theme.text, isDark ? 0.12 : 0.06),
-    },
-    legalCopy: {
-      color: theme.textMuted,
-      fontSize: 10.5,
-      lineHeight: 16,
-      fontFamily: "Manrope_500Medium",
-    },
-    legalLinksRow: {
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "center",
-      gap: 8,
-    },
-    legalLink: {
-      color: theme.tint,
-      fontSize: 11,
-      fontWeight: "700",
-    },
-    legalDivider: {
-      color: theme.textMuted,
-      fontSize: 11,
-      fontWeight: "700",
-    },
-    secondaryButton: {
-      paddingHorizontal: 14,
-      paddingVertical: 10,
-      borderRadius: 999,
-      borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.1),
-      backgroundColor: withAlpha(theme.background, isDark ? 0.34 : 0.92),
-    },
-    secondaryButtonMuted: { opacity: 0.5 },
-    secondaryButtonText: { color: theme.text, fontSize: 12, fontWeight: "600" },
+function createStyles(theme: CommerceTheme) {
+  return StyleSheet.create({
+  container: { flex: 1, backgroundColor: theme.canvas },
+  safeArea: { flex: 1 },
+  content: { paddingHorizontal: 18, paddingBottom: 52, gap: 16 },
+  currentBadge: { minWidth: 74, alignItems: 'flex-end' },
+  currentBadgeLabel: { color: theme.textMuted, fontFamily: 'Manrope_700Bold', fontSize: 7, letterSpacing: 1.1 },
+  currentBadgeValue: { fontFamily: 'Archivo_700Bold', fontSize: 11, marginTop: 2 },
+  hero: { minHeight: 372, overflow: 'hidden', borderRadius: 30, borderWidth: 1, borderColor: theme.lineBright, padding: 21, shadowColor: theme.shadow, shadowOpacity: theme.mode === 'light' ? 0.13 : 0.04, shadowRadius: 18, shadowOffset: { width: 0, height: 9 }, elevation: theme.mode === 'light' ? 4 : 0 },
+  heroCopy: { width: '64%', zIndex: 3 },
+  heroEyebrow: { color: theme.cyan, fontFamily: 'Manrope_700Bold', fontSize: 9, letterSpacing: 2.2 },
+  heroTitle: { color: theme.text, fontFamily: 'PlayfairDisplay_700Bold', fontSize: 44, lineHeight: 45, marginTop: 15 },
+  heroBody: { color: theme.textMuted, fontFamily: 'Manrope_500Medium', fontSize: 13, lineHeight: 20, marginTop: 10 },
+  heroArt: { position: 'absolute', width: 222, height: 318, top: 4, right: -22, zIndex: 1 },
+  heroSideScrim: { position: 'absolute', top: 0, bottom: 92, left: 0, right: 0, zIndex: 2 },
+  heroBottomScrim: { position: 'absolute', height: 150, left: 0, right: 0, bottom: 0, zIndex: 2 },
+  heroBenefits: { marginTop: 25, flexDirection: 'row', gap: 5, zIndex: 3 },
+  heroStatus: { marginTop: 18, minHeight: 64, paddingTop: 14, borderTopWidth: 1, borderTopColor: theme.line, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, zIndex: 3 },
+  heroStatusCopy: { flex: 1 },
+  heroStatusLabel: { color: theme.textMuted, fontFamily: 'Manrope_700Bold', fontSize: 8, letterSpacing: 1.2 },
+  heroStatusText: { color: theme.text, fontFamily: 'Manrope_600SemiBold', fontSize: 12, marginTop: 4 },
+  notice: { padding: 15, borderRadius: 18, flexDirection: 'row', gap: 11, borderWidth: 1, borderColor: `${theme.gold}44`, backgroundColor: theme.warningSurface },
+  noticeCopy: { flex: 1 },
+  noticeTitle: { color: theme.text, fontFamily: 'Manrope_700Bold', fontSize: 13 },
+  noticeBody: { color: theme.textMuted, fontFamily: 'Manrope_500Medium', fontSize: 11, lineHeight: 16, marginTop: 3 },
+  sectionHeading: { marginTop: 4, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', gap: 10 },
+  eyebrow: { color: theme.cyan, fontFamily: 'Manrope_700Bold', fontSize: 9, letterSpacing: 1.7 },
+  sectionTitle: { color: theme.text, fontFamily: 'PlayfairDisplay_700Bold', fontSize: 25, marginTop: 5 },
+  sectionHint: { color: theme.textMuted, fontFamily: 'Manrope_500Medium', fontSize: 10 },
+  tierStack: { gap: 10 },
+  purchasePanel: { overflow: 'hidden', borderRadius: 28, borderWidth: 1, borderColor: theme.lineBright, padding: 18, gap: 17, shadowColor: theme.shadow, shadowOpacity: theme.mode === 'light' ? 0.12 : 0.03, shadowRadius: 15, shadowOffset: { width: 0, height: 8 }, elevation: theme.mode === 'light' ? 3 : 0 },
+  purchaseHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
+  purchaseEyebrow: { fontFamily: 'Manrope_700Bold', fontSize: 9, letterSpacing: 1.6 },
+  purchaseTitle: { color: theme.text, fontFamily: 'PlayfairDisplay_700Bold', fontSize: 30, marginTop: 3 },
+  planState: { minHeight: 30, paddingHorizontal: 10, borderRadius: 15, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  planStateText: { fontFamily: 'Archivo_700Bold', fontSize: 8, letterSpacing: 0.8 },
+  pricePanel: { minHeight: 116, padding: 15, borderRadius: 20, borderWidth: 1, borderColor: theme.line, backgroundColor: theme.surfaceStrong, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+  priceCopy: { flex: 1 },
+  priceLabel: { color: theme.textMuted, fontFamily: 'Manrope_700Bold', fontSize: 8, letterSpacing: 1.1 },
+  priceValue: { color: theme.text, fontFamily: 'Archivo_700Bold', fontSize: 29, marginTop: 5 },
+  priceMeta: { color: theme.textMuted, fontFamily: 'Manrope_500Medium', fontSize: 9, lineHeight: 13, marginTop: 4 },
+  priceAside: { alignItems: 'flex-end' },
+  monthlyValue: { color: theme.text, fontFamily: 'Archivo_700Bold', fontSize: 11 },
+  savings: { fontFamily: 'Manrope_700Bold', fontSize: 10, marginTop: 5 },
+  includedLabel: { color: theme.textMuted, fontFamily: 'Manrope_700Bold', fontSize: 9, letterSpacing: 1.15 },
+  featureList: { gap: 11 },
+  featureRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
+  check: { width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
+  featureText: { flex: 1, color: theme.text, fontFamily: 'Manrope_500Medium', fontSize: 12, lineHeight: 18 },
+  purchaseButton: { minHeight: 54, borderRadius: 27, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, paddingHorizontal: 16 },
+  purchaseButtonText: { color: '#FFFFFF', fontFamily: 'Manrope_700Bold', fontSize: 13 },
+  purchaseButtonTextGold: { color: '#2D1D02' },
+  manageButton: { minHeight: 52, borderRadius: 26, borderWidth: 1, borderColor: theme.lineBright, backgroundColor: theme.surfaceStrong, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  manageButtonText: { color: theme.text, fontFamily: 'Manrope_700Bold', fontSize: 13 },
+  renewalNote: { color: theme.textMuted, textAlign: 'center', fontFamily: 'Manrope_500Medium', fontSize: 9 },
+  disabled: { opacity: 0.42 },
+  pressed: { opacity: 0.84, transform: [{ scale: 0.99 }] },
+  freePanel: { padding: 18, borderRadius: 22, borderWidth: 1, borderColor: theme.line, backgroundColor: theme.surface, flexDirection: 'row', alignItems: 'center', gap: 13 },
+  freePanelCopy: { flex: 1 },
+  freePanelTitle: { color: theme.text, fontFamily: 'PlayfairDisplay_700Bold', fontSize: 19 },
+  freePanelBody: { color: theme.textMuted, fontFamily: 'Manrope_500Medium', fontSize: 11, lineHeight: 17, marginTop: 4 },
+  sparkCard: { minHeight: 190, overflow: 'hidden', borderRadius: 27, borderWidth: 1, borderColor: theme.lineBright, padding: 18, flexDirection: 'row', alignItems: 'center' },
+  sparkCardCopy: { flex: 1, zIndex: 2 },
+  sparkTitle: { color: theme.text, fontFamily: 'PlayfairDisplay_700Bold', fontSize: 23, lineHeight: 27, marginTop: 7 },
+  sparkBody: { color: theme.textMuted, fontFamily: 'Manrope_500Medium', fontSize: 11, lineHeight: 16, marginTop: 6 },
+  sparkButton: { alignSelf: 'flex-start', marginTop: 13, minHeight: 39, borderRadius: 20, paddingHorizontal: 14, backgroundColor: theme.cyanDeep, flexDirection: 'row', alignItems: 'center', gap: 7 },
+  sparkButtonText: { color: '#FFFFFF', fontFamily: 'Manrope_700Bold', fontSize: 11 },
+  sparkCardVisual: { width: 122, alignItems: 'center', gap: 7 },
+  compareButton: { minHeight: 58, borderRadius: 24, borderWidth: 1, borderColor: theme.lineBright, backgroundColor: theme.surface, paddingHorizontal: 17, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  compareLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 9 },
+  compareButtonText: { color: theme.text, fontFamily: 'Manrope_700Bold', fontSize: 13 },
+  matrix: { borderRadius: 22, borderWidth: 1, borderColor: theme.line, overflow: 'hidden', backgroundColor: theme.surface },
+  matrixHeader: { minHeight: 42, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.panelStrong },
+  matrixRow: { minHeight: 52, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', borderTopWidth: 1, borderTopColor: theme.line },
+  matrixFeature: { width: '34%', color: theme.text, fontFamily: 'Manrope_600SemiBold', fontSize: 9.5 },
+  matrixHeaderFeature: { color: theme.textMuted, fontSize: 8, letterSpacing: 0.7 },
+  matrixValue: { width: '22%', color: theme.textMuted, textAlign: 'center', fontFamily: 'Manrope_600SemiBold', fontSize: 8.5 },
+  footerCard: { padding: 18, borderRadius: 24, borderWidth: 1, borderColor: theme.line, backgroundColor: theme.surface, gap: 14 },
+  footerHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  footerIcon: { width: 44, height: 44, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(11,100,101,0.22)' },
+  footerHeaderCopy: { flex: 1 },
+  footerTitle: { color: theme.text, fontFamily: 'PlayfairDisplay_700Bold', fontSize: 18 },
+  footerBody: { color: theme.textMuted, fontFamily: 'Manrope_500Medium', fontSize: 11, marginTop: 2 },
+  footerActions: { flexDirection: 'row', gap: 9 },
+  footerButton: { flex: 1, minHeight: 43, borderRadius: 21, borderWidth: 1, borderColor: theme.lineBright, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.surfaceStrong },
+  footerButtonText: { color: theme.text, fontFamily: 'Manrope_700Bold', fontSize: 10 },
+  legalCopy: { color: theme.textMuted, fontFamily: 'Manrope_500Medium', fontSize: 8.5, lineHeight: 14, textAlign: 'center' },
+  legalLinks: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 10 },
+  legalLink: { color: theme.cyan, fontFamily: 'Manrope_700Bold', fontSize: 9 },
+  legalDot: { width: 3, height: 3, borderRadius: 2, backgroundColor: theme.textMuted },
   });
-
-const withAlpha = (hex: string, alpha: number) => {
-  const normalized = hex.replace("#", "");
-  const bigint = parseInt(
-    normalized.length === 3 ? normalized.split("").map((c) => c + c).join("") : normalized,
-    16,
-  );
-  const r = (bigint >> 16) & 255;
-  const g = (bigint >> 8) & 255;
-  const b = bigint & 255;
-  return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, alpha))})`;
-};
+}

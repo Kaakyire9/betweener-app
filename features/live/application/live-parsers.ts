@@ -1,4 +1,7 @@
-import { LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT } from '@betweener/live-program-domain';
+import {
+  LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT,
+  LIVE_STANDARD_STAGE_PUBLISHER_LIMIT,
+} from '@betweener/live-program-domain';
 import {
   LIVE_CAPABILITIES,
   type LiveCapability,
@@ -22,6 +25,10 @@ import type {
   LiveConversationSpark,
   LiveHostedCandidate,
   LiveHostedMatchingSnapshot,
+  LiveHostingManagementSnapshot,
+  LiveStudioOperatorManagementSnapshot,
+  LiveStudioSessionOperatorRole,
+  LiveStudioSessionOperatorStatus,
   LiveChemistrySnapshot,
   CircleLiveSnapshot,
   LiveQuickConnectDecision,
@@ -33,6 +40,7 @@ import type {
   LiveMatchRoundPerson,
   LiveMatchRoundState,
   LiveParticipant,
+  LivePrivateActivitySnapshot,
   LivePrivateSpark,
   LivePoolCandidatePreview,
   LiveQuorumPoolingSnapshot,
@@ -58,6 +66,92 @@ const asNumber = (value: unknown, fallback = 0) => {
 };
 const includes = <T extends string>(values: readonly T[], value: unknown): value is T =>
   typeof value === 'string' && values.includes(value as T);
+
+export const parseLiveHostingManagementSnapshot = (
+  value: unknown,
+): LiveHostingManagementSnapshot => {
+  if (!isRecord(value) || !isRecord(value.host) || !isRecord(value.schedule)
+    || !isRecord(value.traffic)) {
+    throw new Error('live_hosting_management_snapshot_invalid');
+  }
+  const endPolicy = value.schedule.endPolicy;
+  if (endPolicy !== 'scheduled' && endPolicy !== 'manual') {
+    throw new Error('live_hosting_management_end_policy_invalid');
+  }
+  return {
+    schemaVersion: value.schemaVersion === 2 ? 2 : 1,
+    serverNow: asString(value.serverNow),
+    sessionId: asString(value.sessionId),
+    title: asString(value.title),
+    status: asString(value.status),
+    canManageSession: value.canManageSession === true || value.canDelegateHosts === true,
+    canDelegateHosts: value.canDelegateHosts === true,
+    canExtend: value.canExtend === true,
+    host: {
+      userId: asString(value.host.userId),
+      profileId: asString(value.host.profileId),
+      fullName: asNullableString(value.host.fullName),
+      username: asNullableString(value.host.username),
+      avatarUrl: asNullableString(value.host.avatarUrl),
+      delegated: value.host.delegated === true,
+    },
+    schedule: {
+      scheduledStart: asNullableString(value.schedule.scheduledStart),
+      scheduledEnd: asNullableString(value.schedule.scheduledEnd),
+      runtimeEndAt: asNullableString(value.schedule.runtimeEndAt),
+      durationMinutes: Math.max(0, Math.floor(asNumber(value.schedule.durationMinutes))),
+      endPolicy,
+      lastExtendedAt: asNullableString(value.schedule.lastExtendedAt),
+    },
+    traffic: {
+      audienceNow: Math.max(0, Math.floor(asNumber(value.traffic.audienceNow))),
+      totalAttendees: Math.max(0, Math.floor(asNumber(value.traffic.totalAttendees))),
+      reactions: Math.max(0, Math.floor(asNumber(value.traffic.reactions))),
+    },
+  };
+};
+
+const LIVE_STUDIO_OPERATOR_ROLES = ['viewer', 'producer', 'moderator'] as const;
+const LIVE_STUDIO_OPERATOR_STATUSES = ['active', 'expired', 'revoked'] as const;
+
+export const parseLiveStudioOperatorManagementSnapshot = (
+  value: unknown,
+): LiveStudioOperatorManagementSnapshot => {
+  if (!isRecord(value) || !Array.isArray(value.operators)) {
+    throw new Error('live_studio_operator_management_snapshot_invalid');
+  }
+  const operators = value.operators.map((entry) => {
+    if (!isRecord(entry)
+      || !includes(LIVE_STUDIO_OPERATOR_ROLES, entry.operatorRole)
+      || !includes(LIVE_STUDIO_OPERATOR_STATUSES, entry.status)) {
+      throw new Error('live_studio_operator_invalid');
+    }
+    return {
+      assignmentId: asString(entry.assignmentId),
+      userId: asString(entry.userId),
+      email: asString(entry.email),
+      fullName: asNullableString(entry.fullName),
+      username: asNullableString(entry.username),
+      avatarUrl: asNullableString(entry.avatarUrl),
+      operatorRole: entry.operatorRole as LiveStudioSessionOperatorRole,
+      status: entry.status as LiveStudioSessionOperatorStatus,
+      assignedAt: asString(entry.assignedAt),
+      expiresAt: asString(entry.expiresAt),
+      note: asNullableString(entry.note),
+    };
+  });
+
+  return {
+    schemaVersion: 1,
+    serverNow: asString(value.serverNow),
+    sessionId: asString(value.sessionId),
+    sessionTitle: asString(value.sessionTitle),
+    sessionStatus: asString(value.sessionStatus),
+    canAssign: value.canAssign === true,
+    defaultExpiresAt: asString(value.defaultExpiresAt),
+    operators,
+  };
+};
 
 const RSVP_VALUES = ['none', 'invited', 'going', 'waitlisted', 'declined'] as const;
 const MATCH_ROUND_STATES = [
@@ -108,7 +202,7 @@ export const parseCircleLiveSnapshot = (value: unknown): CircleLiveSnapshot => {
       return {
         sessionId: asString(item.session_id),
         gatheringId: asNullableString(item.gathering_id),
-        title: asString(item.title, 'Circle Live'),
+        title: asString(item.title, 'Gathering with Live'),
         description: asNullableString(item.description),
         status: parseStatus(item.status),
         scheduledStart: asNullableString(item.scheduled_start),
@@ -137,6 +231,7 @@ export const parseLiveParticipant = (value: unknown): LiveParticipant => {
     state: parseState(value.state),
     rsvpStatus: parseRsvp(value.rsvp_status),
     openToIntroductions: value.open_to_introductions === true,
+    introductionPreferenceDecidedAt: asNullableString(value.introduction_preference_decided_at),
     stageSlot: value.stage_slot == null ? null : asNumber(value.stage_slot),
     connectionQualityState: asString(value.connection_quality_state, 'unknown'),
     microphoneMutedByModerator: value.microphone_muted_by_moderator === true,
@@ -195,7 +290,7 @@ export const parseLiveComment = (value: unknown): LiveComment => {
 const parseSessionRecord = (value: unknown): LiveSessionRecord => {
   if (!isRecord(value)) throw new Error('live_session_invalid');
   const maximumPublishers = Math.max(1, Math.min(
-    asNumber(value.maximum_publishers, LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT),
+    asNumber(value.maximum_publishers, LIVE_STANDARD_STAGE_PUBLISHER_LIMIT),
     LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT,
   ));
   const maximumGuestSeats = Math.max(0, maximumPublishers - 1);
@@ -256,6 +351,7 @@ export const parseLiveSessionSummary = (value: unknown): LiveSessionSummary => {
       'host_unavailable',
       'not_enough_people',
       'safety',
+      'host_no_show',
       'other',
     ].includes(String(value.cancellation_reason))
       ? value.cancellation_reason as LiveSessionSummary['cancellationReason']
@@ -270,7 +366,7 @@ export const parseLiveSessionSummary = (value: unknown): LiveSessionSummary => {
       ? null
       : Math.max(0, asNumber(value.teaser_duration_seconds)),
     maximumPublishers: Math.max(1, Math.min(
-      asNumber(value.maximum_publishers, LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT),
+      asNumber(value.maximum_publishers, LIVE_STANDARD_STAGE_PUBLISHER_LIMIT),
       LIVE_PUBLIC_STAGE_PUBLISHER_LIMIT,
     )),
     rsvpStatus: parseRsvp(value.rsvp_status),
@@ -418,6 +514,32 @@ export const parseLiveSessionSnapshot = (value: unknown): LiveSessionSnapshot =>
       : parseLiveStageInvitation(value.myStageInvitation),
     comments,
     commentCount: Math.max(asNumber(value.commentCount), comments.length),
+  };
+};
+
+export const parseLivePrivateActivitySnapshot = (value: unknown): LivePrivateActivitySnapshot => {
+  if (!isRecord(value)) throw new Error('live_private_activity_snapshot_invalid');
+  const hostedPairCount = Math.max(0, Math.floor(asNumber(value.hosted_pair_count)));
+  const quickConnectPairCount = Math.max(0, Math.floor(asNumber(value.quick_connect_pair_count)));
+  const activePairCount = hostedPairCount + quickConnectPairCount;
+  const formation = isRecord(value.latest_hosted_pair_formation)
+    ? value.latest_hosted_pair_formation
+    : null;
+  return {
+    sessionId: asString(value.session_id),
+    hostedPairCount,
+    quickConnectPairCount,
+    activePairCount,
+    activePeopleCount: activePairCount * 2,
+    latestHostedPairRoundId: asNullableString(value.latest_hosted_pair_round_id),
+    latestHostedPairActivatedAt: asNullableString(value.latest_hosted_pair_activated_at),
+    latestHostedPairFormation: formation ? {
+      roundId: asString(formation.round_id),
+      activatedAt: asString(formation.activated_at),
+      participantA: parseMatchPerson(formation.participant_a),
+      participantB: parseMatchPerson(formation.participant_b),
+    } : null,
+    serverNow: asString(value.server_now, new Date().toISOString()),
   };
 };
 
@@ -758,6 +880,7 @@ export const parseLiveQuickConnectPoolSnapshot = (value: unknown): LiveQuickConn
     throw new Error('live_quick_connect_pool_snapshot_invalid');
   }
   const members = Array.isArray(value.members) ? value.members : [];
+  const publicFormations = Array.isArray(value.public_formations) ? value.public_formations : [];
   return {
     sessionId: asString(value.session_id),
     stageLayout: includes(QUICK_STAGE_LAYOUTS, value.stage_layout)
@@ -790,6 +913,39 @@ export const parseLiveQuickConnectPoolSnapshot = (value: unknown): LiveQuickConn
         age: member.age == null ? null : asNumber(member.age),
         city: asNullableString(member.city),
         expressedInterest: member.expressed_interest === true,
+      }];
+    }),
+    publicFormations: publicFormations.flatMap((formation) => {
+      if (!isRecord(formation)
+        || !isRecord(formation.participant_a)
+        || !isRecord(formation.participant_b)) return [];
+      const pairingId = asString(formation.pairing_id);
+      const startsAt = asString(formation.starts_at);
+      const participantAUserId = asString(formation.participant_a.user_id);
+      const participantAProfileId = asString(formation.participant_a.profile_id);
+      const participantBUserId = asString(formation.participant_b.user_id);
+      const participantBProfileId = asString(formation.participant_b.profile_id);
+      if (!pairingId
+        || !startsAt
+        || !participantAUserId
+        || !participantAProfileId
+        || !participantBUserId
+        || !participantBProfileId) return [];
+      return [{
+        pairingId,
+        startsAt,
+        participantA: {
+          userId: participantAUserId,
+          profileId: participantAProfileId,
+          fullName: asNullableString(formation.participant_a.full_name),
+          avatarUrl: asNullableString(formation.participant_a.avatar_url),
+        },
+        participantB: {
+          userId: participantBUserId,
+          profileId: participantBProfileId,
+          fullName: asNullableString(formation.participant_b.full_name),
+          avatarUrl: asNullableString(formation.participant_b.avatar_url),
+        },
       }];
     }),
     queue: value.queue == null ? null : parseLiveQuickConnectSnapshot(value.queue),

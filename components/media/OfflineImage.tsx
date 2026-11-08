@@ -5,6 +5,7 @@ import { StyleSheet, View, type StyleProp, type ViewStyle, type ImageStyle } fro
 type OfflineImageProps = {
   uri?: string | null;
   style: StyleProp<ImageStyle>;
+  accessibilityLabel?: string;
   blurRadius?: number;
   contentFit?: ImageContentFit;
   contentPosition?: ImageContentPosition;
@@ -19,6 +20,7 @@ type OfflineImageProps = {
 export default function OfflineImage({
   uri,
   style,
+  accessibilityLabel,
   blurRadius,
   contentFit = "cover",
   contentPosition,
@@ -32,6 +34,7 @@ export default function OfflineImage({
   const [failed, setFailed] = useState(false);
   const normalizedUri = typeof uri === "string" ? uri.trim() : "";
   const hasUri = normalizedUri.length > 0;
+  const effectiveCachePolicy = normalizedUri.startsWith("file://") ? "none" : cachePolicy;
 
   useEffect(() => {
     setFailed(false);
@@ -49,8 +52,9 @@ export default function OfflineImage({
     <ExpoImage
       source={{ uri: normalizedUri }}
       style={style}
+      accessibilityLabel={accessibilityLabel}
       blurRadius={blurRadius}
-      cachePolicy={cachePolicy}
+      cachePolicy={effectiveCachePolicy}
       contentFit={contentFit}
       contentPosition={contentPosition}
       transition={transition}

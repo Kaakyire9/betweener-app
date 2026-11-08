@@ -1,0 +1,1785 @@
+{
+  "recordedAt": "2026-10-28T15:05:19.916Z",
+  "target": {
+    "appId": 1731011,
+    "name": "Betweener Staging"
+  },
+  "providerPolicyWrites": 0,
+  "sharedDatabaseModified": false,
+  "liveBaselineUnchanged": true,
+  "coordinator": {
+    "timestamp": "2026-10-28T15:01:20.992Z",
+    "appId": 1731011,
+    "mode": "ISOLATED_ORDINARY_USER_TESTS",
+    "cases": [
+      {
+        "name": "A_arbitrary_create",
+        "actor": 2,
+        "method": "POST",
+        "path": "/api/v2/video/call/betweener_connect/2ae2b35d-3a7c-4bd9-9067-c40f1b51bd80",
+        "status": 403,
+        "code": 17,
+        "message": "GetOrCreateCall failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-c' with role 'user' is not allowed to perform action CreateCall in scope 'video:betweener_connect'\"",
+        "receivedSfuCredentials": false
+      },
+      {
+        "name": "B_unrelated_read",
+        "actor": 2,
+        "method": "GET",
+        "path": "/api/v2/video/call/betweener_connect/439a8d14-fa13-4146-ad1e-e4100b37264e",
+        "status": 403,
+        "code": 17,
+        "message": "GetCall failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-c' with role 'user' is not allowed to perform action ReadCall in scope 'video:betweener_connect'\"",
+        "receivedSfuCredentials": false
+      },
+      {
+        "name": "B_unrelated_join",
+        "actor": 2,
+        "method": "POST",
+        "path": "/api/v2/video/call/betweener_connect/439a8d14-fa13-4146-ad1e-e4100b37264e/join",
+        "status": 403,
+        "code": 17,
+        "message": "JoinCall failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-c' with role 'user' is not allowed to perform action JoinCall in scope 'video:betweener_connect'\"",
+        "receivedSfuCredentials": false
+      },
+      {
+        "name": "D_unmatched_ring_create",
+        "actor": 2,
+        "method": "POST",
+        "path": "/api/v2/video/call/betweener_connect/2ae2b35d-3a7c-4bd9-9067-c40f1b51bd80",
+        "status": 403,
+        "code": 17,
+        "message": "GetOrCreateCall failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-c' with role 'user' is not allowed to perform action CreateCall in scope 'video:betweener_connect'\"",
+        "receivedSfuCredentials": false
+      },
+      {
+        "name": "D_unrelated_existing_ring",
+        "actor": 2,
+        "method": "POST",
+        "path": "/api/v2/video/call/betweener_connect/439a8d14-fa13-4146-ad1e-e4100b37264e/ring",
+        "status": 403,
+        "code": 17,
+        "message": "RingCall failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-c' with role 'user' is not allowed to perform action SendEvent in scope 'video:betweener_connect'\"",
+        "receivedSfuCredentials": false
+      },
+      {
+        "name": "control_invited_read",
+        "actor": 0,
+        "method": "GET",
+        "path": "/api/v2/video/call/betweener_connect/439a8d14-fa13-4146-ad1e-e4100b37264e",
+        "status": 200,
+        "code": null,
+        "capabilities": [
+          "read-call"
+        ],
+        "videoEnabled": false,
+        "memberCount": 2,
+        "endedAt": null,
+        "receivedSfuCredentials": false
+      },
+      {
+        "name": "control_invited_cannot_join",
+        "actor": 0,
+        "method": "POST",
+        "path": "/api/v2/video/call/betweener_connect/439a8d14-fa13-4146-ad1e-e4100b37264e/join",
+        "status": 403,
+        "code": 17,
+        "message": "JoinCall failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-a' with roles ['user', 'connect_invited'] is not allowed to perform action JoinCall in scope 'video:betweener_connect'\"",
+        "receivedSfuCredentials": false
+      },
+      {
+        "name": "control_voice_member_a",
+        "actor": 0,
+        "method": "GET",
+        "path": "/api/v2/video/call/betweener_connect/439a8d14-fa13-4146-ad1e-e4100b37264e",
+        "status": 200,
+        "code": null,
+        "capabilities": [
+          "join-call",
+          "read-call",
+          "send-audio"
+        ],
+        "videoEnabled": false,
+        "memberCount": 2,
+        "endedAt": null,
+        "receivedSfuCredentials": false
+      },
+      {
+        "name": "control_voice_member_b",
+        "actor": 1,
+        "method": "GET",
+        "path": "/api/v2/video/call/betweener_connect/439a8d14-fa13-4146-ad1e-e4100b37264e",
+        "status": 200,
+        "code": null,
+        "capabilities": [
+          "join-call",
+          "read-call",
+          "send-audio"
+        ],
+        "videoEnabled": false,
+        "memberCount": 2,
+        "endedAt": null,
+        "receivedSfuCredentials": false
+      },
+      {
+        "name": "control_voice_join_a",
+        "actor": 0,
+        "method": "POST",
+        "path": "/api/v2/video/call/betweener_connect/439a8d14-fa13-4146-ad1e-e4100b37264e/join",
+        "status": 201,
+        "code": null,
+        "capabilities": [
+          "join-call",
+          "read-call",
+          "send-audio"
+        ],
+        "videoEnabled": false,
+        "memberCount": 2,
+        "endedAt": null,
+        "receivedSfuCredentials": true
+      },
+      {
+        "name": "control_voice_join_b",
+        "actor": 1,
+        "method": "POST",
+        "path": "/api/v2/video/call/betweener_connect/439a8d14-fa13-4146-ad1e-e4100b37264e/join",
+        "status": 201,
+        "code": null,
+        "capabilities": [
+          "join-call",
+          "read-call",
+          "send-audio"
+        ],
+        "videoEnabled": false,
+        "memberCount": 2,
+        "endedAt": null,
+        "receivedSfuCredentials": true
+      },
+      {
+        "name": "C_add_third_member",
+        "actor": 0,
+        "method": "POST",
+        "path": "/api/v2/video/call/betweener_connect/439a8d14-fa13-4146-ad1e-e4100b37264e/members",
+        "status": 403,
+        "code": 17,
+        "message": "UpdateCallMembers failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-a' with roles ['user', 'connect_voice'] is not allowed to perform action UpdateCallMember in scope 'video:betweener_connect'\"",
+        "receivedSfuCredentials": false
+      },
+      {
+        "name": "F_override_video_setting",
+        "actor": 0,
+        "method": "PATCH",
+        "path": "/api/v2/video/call/betweener_connect/439a8d14-fa13-4146-ad1e-e4100b37264e",
+        "status": 403,
+        "code": 17,
+        "message": "UpdateCall failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-a' with roles ['user', 'connect_voice'] is not allowed to perform action UpdateCall in scope 'video:betweener_connect'\"",
+        "receivedSfuCredentials": false
+      },
+      {
+        "name": "F_join_with_video_flag",
+        "actor": 0,
+        "method": "POST",
+        "path": "/api/v2/video/call/betweener_connect/439a8d14-fa13-4146-ad1e-e4100b37264e/join",
+        "status": 201,
+        "code": null,
+        "capabilities": [
+          "join-call",
+          "read-call",
+          "send-audio"
+        ],
+        "videoEnabled": false,
+        "memberCount": 2,
+        "endedAt": null,
+        "receivedSfuCredentials": true
+      },
+      {
+        "name": "F_grant_self_video",
+        "actor": 0,
+        "method": "POST",
+        "path": "/api/v2/video/call/betweener_connect/439a8d14-fa13-4146-ad1e-e4100b37264e/user_permissions",
+        "status": 403,
+        "code": 17,
+        "message": "UpdateUserPermissions failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-a' with roles ['user', 'connect_voice'] is not allowed to perform action UpdateCallPermissions in scope 'video:betweener_connect'\"",
+        "receivedSfuCredentials": false
+      },
+      {
+        "name": "F_request_video",
+        "actor": 0,
+        "method": "POST",
+        "path": "/api/v2/video/call/betweener_connect/439a8d14-fa13-4146-ad1e-e4100b37264e/request_permission",
+        "status": 201,
+        "code": null,
+        "receivedSfuCredentials": false
+      },
+      {
+        "name": "F_request_screenshare",
+        "actor": 0,
+        "method": "POST",
+        "path": "/api/v2/video/call/betweener_connect/439a8d14-fa13-4146-ad1e-e4100b37264e/request_permission",
+        "status": 201,
+        "code": null,
+        "receivedSfuCredentials": false
+      },
+      {
+        "name": "F_capabilities_after_request",
+        "actor": 0,
+        "method": "GET",
+        "path": "/api/v2/video/call/betweener_connect/439a8d14-fa13-4146-ad1e-e4100b37264e",
+        "status": 200,
+        "code": null,
+        "capabilities": [
+          "join-call",
+          "read-call",
+          "send-audio"
+        ],
+        "videoEnabled": false,
+        "memberCount": 2,
+        "endedAt": null,
+        "receivedSfuCredentials": false
+      },
+      {
+        "name": "G_mismatched_query_identity",
+        "actor": 2,
+        "method": "GET",
+        "path": "/api/v2/video/call/betweener_connect/439a8d14-fa13-4146-ad1e-e4100b37264e",
+        "status": 403,
+        "code": 17,
+        "message": "GetCall failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-c' with role 'user' is not allowed to perform action ReadCall in scope 'video:betweener_connect'\"",
+        "receivedSfuCredentials": false
+      },
+      {
+        "name": "G_tampered_signed_identity",
+        "actor": 0,
+        "method": "GET",
+        "path": "/api/v2/video/call/betweener_connect/439a8d14-fa13-4146-ad1e-e4100b37264e",
+        "status": 401,
+        "code": 5,
+        "message": "GetCall failed with error: \"Token signature is invalid\"",
+        "receivedSfuCredentials": false
+      },
+      {
+        "name": "I_self_role_escalation",
+        "actor": 0,
+        "method": "POST",
+        "path": "/api/v2/video/call/betweener_connect/439a8d14-fa13-4146-ad1e-e4100b37264e/members",
+        "status": 403,
+        "code": 17,
+        "message": "UpdateCallMembers failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-a' with roles ['user', 'connect_voice'] is not allowed to perform action UpdateCallMember in scope 'video:betweener_connect'\"",
+        "receivedSfuCredentials": false
+      },
+      {
+        "name": "I_update_settings",
+        "actor": 0,
+        "method": "PATCH",
+        "path": "/api/v2/video/call/betweener_connect/439a8d14-fa13-4146-ad1e-e4100b37264e",
+        "status": 403,
+        "code": 17,
+        "message": "UpdateCall failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-a' with roles ['user', 'connect_voice'] is not allowed to perform action UpdateCall in scope 'video:betweener_connect'\"",
+        "receivedSfuCredentials": false
+      },
+      {
+        "name": "I_end_call",
+        "actor": 0,
+        "method": "POST",
+        "path": "/api/v2/video/call/betweener_connect/439a8d14-fa13-4146-ad1e-e4100b37264e/mark_ended",
+        "status": 403,
+        "code": 17,
+        "message": "EndCall failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-a' with roles ['user', 'connect_voice'] is not allowed to perform action EndCall in scope 'video:betweener_connect'\"",
+        "receivedSfuCredentials": false
+      },
+      {
+        "name": "I_start_recording",
+        "actor": 0,
+        "method": "POST",
+        "path": "/api/v2/video/call/betweener_connect/439a8d14-fa13-4146-ad1e-e4100b37264e/start_recording",
+        "status": 403,
+        "code": 17,
+        "message": "StartRecording failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-a' with roles ['user', 'connect_voice'] is not allowed to perform action StartRecording in scope 'video:betweener_connect'\"",
+        "receivedSfuCredentials": false
+      },
+      {
+        "name": "I_start_transcription",
+        "actor": 0,
+        "method": "POST",
+        "path": "/api/v2/video/call/betweener_connect/439a8d14-fa13-4146-ad1e-e4100b37264e/start_transcription",
+        "status": 403,
+        "code": 17,
+        "message": "StartTranscription failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-a' with roles ['user', 'connect_voice'] is not allowed to perform action StartTranscription in scope 'video:betweener_connect'\"",
+        "receivedSfuCredentials": false
+      },
+      {
+        "name": "I_start_broadcasting",
+        "actor": 0,
+        "method": "POST",
+        "path": "/api/v2/video/call/betweener_connect/439a8d14-fa13-4146-ad1e-e4100b37264e/start_broadcasting",
+        "status": 403,
+        "code": 17,
+        "message": "StartHLSBroadcasting failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-a' with roles ['user', 'connect_voice'] is not allowed to perform action StartBroadcasting in scope 'video:betweener_connect'\"",
+        "receivedSfuCredentials": false
+      },
+      {
+        "name": "J_valid_live_call_token_control",
+        "actor": 2,
+        "method": "GET",
+        "path": "/api/v2/video/call/betweener_live/139e1282-515f-488b-adbd-c956c693c4a7",
+        "status": 200,
+        "code": null,
+        "capabilities": [
+          "create-call",
+          "create-reaction",
+          "enable-noise-cancellation",
+          "end-call",
+          "join-call",
+          "join-ended-call",
+          "read-call",
+          "remove-call-member",
+          "send-audio",
+          "update-call-member"
+        ],
+        "videoEnabled": false,
+        "memberCount": 2,
+        "endedAt": null,
+        "receivedSfuCredentials": false
+      },
+      {
+        "name": "J_live_call_token_connect_join",
+        "actor": 2,
+        "method": "POST",
+        "path": "/api/v2/video/call/betweener_connect/439a8d14-fa13-4146-ad1e-e4100b37264e/join",
+        "status": 403,
+        "code": 17,
+        "message": "JoinCall failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-c' with role 'user' is not allowed to perform action JoinCall in scope 'video:betweener_connect'\"",
+        "receivedSfuCredentials": false
+      },
+      {
+        "name": "J_live_call_token_connect_create",
+        "actor": 2,
+        "method": "POST",
+        "path": "/api/v2/video/call/betweener_connect/2ae2b35d-3a7c-4bd9-9067-c40f1b51bd80",
+        "status": 403,
+        "code": 17,
+        "message": "GetOrCreateCall failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-c' with role 'user' is not allowed to perform action CreateCall in scope 'video:betweener_connect'\"",
+        "receivedSfuCredentials": false
+      },
+      {
+        "name": "E_held_token_before_provider_cleanup",
+        "actor": 0,
+        "method": "POST",
+        "path": "/api/v2/video/call/betweener_connect/439a8d14-fa13-4146-ad1e-e4100b37264e/join",
+        "status": 201,
+        "code": null,
+        "capabilities": [
+          "join-call",
+          "read-call",
+          "send-audio"
+        ],
+        "videoEnabled": false,
+        "memberCount": 2,
+        "endedAt": null,
+        "receivedSfuCredentials": true
+      },
+      {
+        "name": "E_held_token_after_end_ack",
+        "actor": 0,
+        "method": "POST",
+        "path": "/api/v2/video/call/betweener_connect/439a8d14-fa13-4146-ad1e-e4100b37264e/join",
+        "status": 403,
+        "code": 17,
+        "message": "JoinCall failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-a' with roles ['user', 'connect_voice'] is not allowed to perform action JoinEndedCall in scope 'video:betweener_connect'\"",
+        "receivedSfuCredentials": false
+      },
+      {
+        "name": "E_held_token_after_membership_removal",
+        "actor": 0,
+        "method": "POST",
+        "path": "/api/v2/video/call/betweener_connect/439a8d14-fa13-4146-ad1e-e4100b37264e/join",
+        "status": 403,
+        "code": 17,
+        "message": "JoinCall failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-a' with role 'user' is not allowed to perform action JoinCall in scope 'video:betweener_connect'\"",
+        "receivedSfuCredentials": false
+      },
+      {
+        "name": "H_terminal_ringing_rejoin",
+        "actor": 0,
+        "method": "POST",
+        "path": "/api/v2/video/call/betweener_connect/e53f7ae8-56f4-4519-8843-970a998f3359/join",
+        "status": 403,
+        "code": 17,
+        "message": "JoinCall failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-a' with roles ['user', 'connect_voice'] is not allowed to perform action JoinEndedCall in scope 'video:betweener_connect'\"",
+        "receivedSfuCredentials": false
+      },
+      {
+        "name": "H_terminal_rering",
+        "actor": 0,
+        "method": "POST",
+        "path": "/api/v2/video/call/betweener_connect/e53f7ae8-56f4-4519-8843-970a998f3359/ring",
+        "status": 403,
+        "code": 17,
+        "message": "RingCall failed with error: \"User 'betweener-connect-m2-test-4d669d74-4ee8-4c73-980b-d6d24a25d918-a' with roles ['user', 'connect_voice'] is not allowed to perform action SendEvent in scope 'video:betweener_connect'\"",
+        "receivedSfuCredentials": false
+      }
+    ],
+    "cleanup": [
+      {
+        "operation": "delete_accepted_call",
+        "status": "completed"
+      },
+      {
+        "operation": "remove_accepted_call",
+        "status": "requested"
+      },
+      {
+        "operation": "delete_terminal_call",
+        "status": "completed"
+      },
+      {
+        "operation": "remove_terminal_call",
+        "status": "requested"
+      },
+      {
+        "operation": "remove_arbitrary_call",
+        "status": "requested"
+      },
+      {
+        "operation": "delete_live_call",
+        "status": "completed"
+      },
+      {
+        "operation": "remove_live_call",
+        "status": "requested"
+      },
+      {
+        "operation": "delete_fixture_users",
+        "status": "completed"
+      }
+    ],
+    "result": "BLOCKED",
+    "app": {
+      "id": 1731011,
+      "name": "Betweener Staging",
+      "disable_auth_checks": false,
+      "disable_permissions_checks": false
+    },
+    "fixtureApplicationRoles": [
+      "user",
+      "user",
+      "user",
+      "user"
+    ],
+    "terminalEndedPreserved": true,
+    "remainingFixtureUsers": 0,
+    "remainingFixtureCalls": [
+      {
+        "purpose": "accepted",
+        "exists": false,
+        "status": 404,
+        "code": 16
+      },
+      {
+        "purpose": "terminal",
+        "exists": false,
+        "status": 404,
+        "code": 16
+      },
+      {
+        "purpose": "arbitrary",
+        "exists": false,
+        "status": 404,
+        "code": 16
+      },
+      {
+        "purpose": "live",
+        "exists": false,
+        "status": 404,
+        "code": 16
+      }
+    ],
+    "existingTypesUnchanged": true,
+    "globalChecksEnabled": true,
+    "review": {
+      "coordinatorContract": "PASS",
+      "unexpectedResponses": [],
+      "mediaPermissionProof": "BLOCKED",
+      "revocationEndAck": "PASS",
+      "databaseRevocationToProviderCleanup": "NOT_TESTED",
+      "cleanup": "PASS",
+      "existingTypesUnchanged": true,
+      "globalChecksEnabled": true,
+      "result": "BLOCKED"
+    }
+  },
+  "integrated": {
+    "date": "2026-10-28T14:46:49.313Z",
+    "scope": "DISPOSABLE_DB_AND_STREAM_1731011",
+    "checks": [
+      "real provider create versus revoke compensates and retains fenced cleanup",
+      "revocation before a fresh call denies creation",
+      "ringing acceptance versus revocation serializes to terminal state",
+      "duplicate revocation after cleanup is idempotent",
+      "actual database revoke and provider worker end ACK deny both held identities",
+      "another device cannot obtain fresh admission after revoke",
+      "late trusted provider evidence cannot resurrect a revoked session",
+      "provider outage retains retry/occupancy and denies fresh backend creation",
+      "block overrides revoked consent during pending provider cleanup",
+      "durable retry performs real provider cleanup after recovery"
+    ],
+    "provider": [
+      {
+        "name": "active_a_before_revoke",
+        "status": 201,
+        "code": null,
+        "capabilities": [
+          "join-call",
+          "read-call",
+          "send-audio"
+        ]
+      },
+      {
+        "name": "active_b_before_revoke",
+        "status": 201,
+        "code": null,
+        "capabilities": [
+          "join-call",
+          "read-call",
+          "send-audio"
+        ]
+      },
+      {
+        "name": "held_a_after_fast_revoke",
+        "status": 403,
+        "code": 17
+      },
+      {
+        "name": "held_b_after_fast_revoke",
+        "status": 403,
+        "code": 17
+      },
+      {
+        "name": "outage_before_revoke",
+        "status": 201,
+        "code": null,
+        "capabilities": [
+          "join-call",
+          "read-call",
+          "send-audio"
+        ]
+      },
+      {
+        "name": "held_join_after_database_revoke_during_outage",
+        "status": 201,
+        "code": null,
+        "capabilities": [
+          "join-call",
+          "read-call",
+          "send-audio"
+        ]
+      },
+      {
+        "name": "held_join_after_outage_recovery",
+        "status": 403,
+        "code": 17
+      }
+    ],
+    "sharedDatabaseModified": false,
+    "identity": {
+      "app": {
+        "id": 1731011,
+        "name": "Betweener Staging",
+        "disable_auth_checks": false,
+        "disable_permissions_checks": false
+      },
+      "users": 3
+    },
+    "activeMediaA": {
+      "kind": "SFU_PUBLISH_BOUNDARY",
+      "results": [
+        {
+          "track": "video",
+          "status": 200,
+          "code": "ERROR_CODE_PERMISSION_DENIED",
+          "message": "participant f0110000-0000-4000-8000-000000000007 is not authorized to publish track TRACK_TYPE_VIDEO",
+          "answerReceived": false,
+          "optionMatched": false
+        },
+        {
+          "track": "screenshare",
+          "status": 200,
+          "code": "ERROR_CODE_PERMISSION_DENIED",
+          "message": "participant f0110000-0000-4000-8000-000000000007 is not authorized to publish track TRACK_TYPE_SCREEN_SHARE",
+          "answerReceived": false,
+          "optionMatched": true
+        },
+        {
+          "track": "audio",
+          "status": 200,
+          "code": null,
+          "message": null,
+          "answerReceived": true,
+          "optionMatched": true
+        }
+      ],
+      "callEndedObserved": false,
+      "joinAcknowledged": true,
+      "publishOptions": [
+        {
+          "id": 0,
+          "trackType": 1,
+          "codec": "Opus",
+          "videoDimension": {
+            "width": 0,
+            "height": 0
+          }
+        },
+        {
+          "id": 0,
+          "trackType": 2,
+          "codec": "VP9",
+          "videoDimension": {
+            "width": 640,
+            "height": 480
+          }
+        },
+        {
+          "id": 0,
+          "trackType": 3,
+          "codec": "VP8",
+          "videoDimension": {
+            "width": 2560,
+            "height": 1440
+          }
+        },
+        {
+          "id": 0,
+          "trackType": 4,
+          "codec": "Opus",
+          "videoDimension": {
+            "width": 0,
+            "height": 0
+          }
+        }
+      ],
+      "audioStats": {
+        "connectionState": "connected",
+        "bytesSent": 561,
+        "packetsSent": 8
+      }
+    },
+    "activeMediaB": {
+      "kind": "SFU_PUBLISH_BOUNDARY",
+      "results": [
+        {
+          "track": "video",
+          "status": 200,
+          "code": "ERROR_CODE_PERMISSION_DENIED",
+          "message": "participant f0110000-0000-4000-8000-000000000008 is not authorized to publish track TRACK_TYPE_VIDEO",
+          "answerReceived": false,
+          "optionMatched": false
+        },
+        {
+          "track": "screenshare",
+          "status": 200,
+          "code": "ERROR_CODE_PERMISSION_DENIED",
+          "message": "participant f0110000-0000-4000-8000-000000000008 is not authorized to publish track TRACK_TYPE_SCREEN_SHARE",
+          "answerReceived": false,
+          "optionMatched": true
+        },
+        {
+          "track": "audio",
+          "status": 200,
+          "code": null,
+          "message": null,
+          "answerReceived": true,
+          "optionMatched": true
+        }
+      ],
+      "callEndedObserved": false,
+      "joinAcknowledged": true,
+      "publishOptions": [
+        {
+          "id": 0,
+          "trackType": 1,
+          "codec": "Opus",
+          "videoDimension": {
+            "width": 0,
+            "height": 0
+          }
+        },
+        {
+          "id": 0,
+          "trackType": 2,
+          "codec": "VP9",
+          "videoDimension": {
+            "width": 640,
+            "height": 480
+          }
+        },
+        {
+          "id": 0,
+          "trackType": 3,
+          "codec": "VP8",
+          "videoDimension": {
+            "width": 2560,
+            "height": 1440
+          }
+        },
+        {
+          "id": 0,
+          "trackType": 4,
+          "codec": "Opus",
+          "videoDimension": {
+            "width": 0,
+            "height": 0
+          }
+        }
+      ],
+      "audioStats": {
+        "connectionState": "connected",
+        "bytesSent": 544,
+        "packetsSent": 8
+      }
+    },
+    "activeProvider": {
+      "ended": false,
+      "sessionEnded": false,
+      "users": [
+        "f0110000-0000-4000-8000-000000000008",
+        "f0110000-0000-4000-8000-000000000007"
+      ]
+    },
+    "reconciledStateBeforeRevoke": "ACTIVE",
+    "fastRevoke": {
+      "revoked": true,
+      "providerCleanup": "complete",
+      "elapsedMs": 1030
+    },
+    "endedMediaA": {
+      "id": 26,
+      "connectionState": "connected",
+      "bytesSent": 36876,
+      "packetsSent": 457,
+      "callEndedObserved": true,
+      "callEndedAt": 1793198899821
+    },
+    "endedMediaB": {
+      "id": 27,
+      "connectionState": "connected",
+      "bytesSent": 17901,
+      "packetsSent": 223,
+      "callEndedObserved": true,
+      "callEndedAt": 1793198899821
+    },
+    "outageJoin": {
+      "status": 201,
+      "code": null,
+      "capabilities": [
+        "join-call",
+        "read-call",
+        "send-audio"
+      ]
+    },
+    "outageMedia": {
+      "kind": "SFU_PUBLISH_BOUNDARY",
+      "results": [
+        {
+          "track": "video",
+          "status": 200,
+          "code": "ERROR_CODE_PERMISSION_DENIED",
+          "message": "participant f0110000-0000-4000-8000-000000000007 is not authorized to publish track TRACK_TYPE_VIDEO",
+          "answerReceived": false,
+          "optionMatched": false
+        },
+        {
+          "track": "screenshare",
+          "status": 200,
+          "code": "ERROR_CODE_PERMISSION_DENIED",
+          "message": "participant f0110000-0000-4000-8000-000000000007 is not authorized to publish track TRACK_TYPE_SCREEN_SHARE",
+          "answerReceived": false,
+          "optionMatched": true
+        },
+        {
+          "track": "audio",
+          "status": 200,
+          "code": null,
+          "message": null,
+          "answerReceived": true,
+          "optionMatched": true
+        }
+      ],
+      "callEndedObserved": false,
+      "joinAcknowledged": true,
+      "publishOptions": [
+        {
+          "id": 0,
+          "trackType": 1,
+          "codec": "Opus",
+          "videoDimension": {
+            "width": 0,
+            "height": 0
+          }
+        },
+        {
+          "id": 0,
+          "trackType": 2,
+          "codec": "VP9",
+          "videoDimension": {
+            "width": 640,
+            "height": 480
+          }
+        },
+        {
+          "id": 0,
+          "trackType": 3,
+          "codec": "VP8",
+          "videoDimension": {
+            "width": 2560,
+            "height": 1440
+          }
+        },
+        {
+          "id": 0,
+          "trackType": 4,
+          "codec": "Opus",
+          "videoDimension": {
+            "width": 0,
+            "height": 0
+          }
+        }
+      ],
+      "audioStats": {
+        "connectionState": "connected",
+        "bytesSent": 630,
+        "packetsSent": 9
+      }
+    },
+    "outageEndedMedia": {
+      "id": 38,
+      "connectionState": "connected",
+      "bytesSent": 6906,
+      "packetsSent": 87,
+      "callEndedObserved": true,
+      "callEndedAt": 1793198914664
+    },
+    "consentGate": "BLOCKED_HELD_TOKEN_WINDOW_PROVEN",
+    "cleanup": {
+      "usersRemaining": 0,
+      "calls": [
+        {
+          "status": 404,
+          "code": 16
+        },
+        {
+          "status": 404,
+          "code": 16
+        },
+        {
+          "status": 404,
+          "code": 16
+        },
+        {
+          "status": 404,
+          "code": 16
+        }
+      ],
+      "unchangedCallTypes": true,
+      "app": {
+        "id": 1731011,
+        "name": "Betweener Staging",
+        "disable_auth_checks": false,
+        "disable_permissions_checks": false
+      },
+      "cleaned": true
+    }
+  },
+  "declarations": {
+    "CONNECT_VOICE_MEDIA_ISOLATION": "PASS",
+    "CONNECT_VIDEO_PERMISSION_ENFORCEMENT": "PASS",
+    "CONNECT_SCREENSHARE_DENIAL": "PASS",
+    "CONNECT_PERMISSION_ESCALATION_RESISTANCE": "PASS",
+    "CONNECT_CONSENT_REVOCATION": "FAIL",
+    "CONNECT_PROVIDER_BYPASS_TESTS": "FAIL",
+    "CONNECT_LIVE_ISOLATION": "PASS",
+    "CONNECT_M2A_SECURITY_GATE": "BLOCKED",
+    "CONNECT_M2B_REAL_VOICE_TEST_READY": "BLOCKED"
+  },
+  "finalLocalAudit": {
+    "sharedConnectTablesAbsent": true,
+    "sharedRelationshipProofAbsent": true,
+    "sharedRevocationRpcAbsent": true,
+    "installedConnectMigrationRows": 0,
+    "disposableTestDatabases": 0,
+    "disposableRestContainers": 0
+  },
+  "video": {
+    "date": "2026-10-28T16:17:16.927Z",
+    "scope": "APPROVED_ONE_VIDEO_CALL_STREAM_1731011",
+    "proposal": "stream-staging-connect-video-security-verification-proposal.json",
+    "providerPolicyWrites": 0,
+    "sharedDatabaseModified": false,
+    "checks": [
+      "voice-only grant cannot create VIDEO, using authenticated authority",
+      "members remain invited and credential issuance is denied before acceptance",
+      "ordinary VIDEO identities cannot add members, escalate permissions/settings, end, record, transcribe or broadcast",
+      "both consenting VIDEO identities publish real synthetic video/audio RTP; SFU explicitly denies screen sharing; actual worker reconciles ACTIVE"
+    ],
+    "result": "PASS",
+    "identity": {
+      "app": {
+        "id": 1731011,
+        "name": "Betweener Staging",
+        "disable_auth_checks": false,
+        "disable_permissions_checks": false
+      },
+      "users": 3
+    },
+    "call": {
+      "id": "06c99bd3-ab27-4dd7-a7c7-21a1545af83d",
+      "media": "video",
+      "serverGenerated": true,
+      "ring": false,
+      "notify": false
+    },
+    "invitedPolicy": {
+      "settings": {
+        "audio": {
+          "access_request_enabled": false,
+          "opus_dtx_enabled": false,
+          "redundant_coding_enabled": false,
+          "mic_default_on": false,
+          "speaker_default_on": false,
+          "default_device": "earpiece",
+          "noise_cancellation": {
+            "mode": "auto-on"
+          },
+          "hifi_audio_enabled": false
+        },
+        "backstage": {
+          "enabled": false
+        },
+        "broadcasting": {
+          "enabled": false,
+          "hls": {
+            "auto_on": false,
+            "enabled": false,
+            "quality_tracks": [
+              "720p"
+            ],
+            "layout": {
+              "name": "spotlight",
+              "external_app_url": "",
+              "external_css_url": "",
+              "detect_orientation": false
+            }
+          },
+          "rtmp": {
+            "enabled": false,
+            "quality": "720p",
+            "layout": {
+              "name": "spotlight",
+              "external_app_url": "",
+              "external_css_url": "",
+              "detect_orientation": false
+            }
+          }
+        },
+        "geofencing": {
+          "names": []
+        },
+        "recording": {
+          "audio_only": true,
+          "mode": "disabled",
+          "quality": "720p",
+          "layout": {
+            "name": "spotlight",
+            "external_app_url": "",
+            "external_css_url": "",
+            "detect_orientation": false
+          }
+        },
+        "individual_recording": {
+          "mode": "disabled"
+        },
+        "raw_recording": {
+          "mode": "disabled"
+        },
+        "frame_recording": {
+          "mode": "disabled",
+          "quality": "720p",
+          "capture_interval_in_seconds": 3
+        },
+        "ring": {
+          "incoming_call_timeout_ms": 45000,
+          "auto_cancel_timeout_ms": 45000,
+          "missed_call_timeout_ms": 45000
+        },
+        "screensharing": {
+          "enabled": false,
+          "access_request_enabled": false,
+          "target_resolution": null
+        },
+        "transcription": {
+          "mode": "disabled",
+          "closed_caption_mode": "disabled",
+          "languages": [],
+          "language": "",
+          "translation": {
+            "enabled": false,
+            "languages": [
+              "en"
+            ]
+          },
+          "speech_segment_config": {
+            "max_speech_caption_ms": 9000,
+            "silence_duration_ms": 700
+          }
+        },
+        "video": {
+          "enabled": true,
+          "access_request_enabled": false,
+          "target_resolution": {
+            "width": 640,
+            "height": 480,
+            "bitrate": 600000
+          },
+          "camera_default_on": false,
+          "camera_facing": ""
+        },
+        "thumbnails": {
+          "enabled": false
+        },
+        "limits": {
+          "max_participants": 2,
+          "max_participants_exclude_roles": [],
+          "max_duration_seconds": null
+        },
+        "session": {
+          "inactivity_timeout_seconds": 30
+        },
+        "ingress": {
+          "enabled": false,
+          "video_encoding_options": {
+            "2560x1440x30": {
+              "source": {
+                "width": 2560,
+                "height": 1440,
+                "fps": 30
+              },
+              "layers": [
+                {
+                  "codec": "h264",
+                  "bitrate": 9000000,
+                  "min_dimension": 1440,
+                  "max_dimension": 2560,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 6000000,
+                  "min_dimension": 1080,
+                  "max_dimension": 1920,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 2500000,
+                  "min_dimension": 720,
+                  "max_dimension": 1280,
+                  "frame_rate_limit": 30
+                }
+              ]
+            },
+            "3840x2160x30": {
+              "source": {
+                "width": 3840,
+                "height": 2160,
+                "fps": 30
+              },
+              "layers": [
+                {
+                  "codec": "h264",
+                  "bitrate": 18000000,
+                  "min_dimension": 2160,
+                  "max_dimension": 3840,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 8000000,
+                  "min_dimension": 1080,
+                  "max_dimension": 1920,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 2500000,
+                  "min_dimension": 720,
+                  "max_dimension": 1280,
+                  "frame_rate_limit": 30
+                }
+              ]
+            },
+            "1280x720x30": {
+              "source": {
+                "width": 1280,
+                "height": 720,
+                "fps": 30
+              },
+              "layers": [
+                {
+                  "codec": "h264",
+                  "bitrate": 3000000,
+                  "min_dimension": 720,
+                  "max_dimension": 1280,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 1800000,
+                  "min_dimension": 600,
+                  "max_dimension": 800,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 700000,
+                  "min_dimension": 360,
+                  "max_dimension": 640,
+                  "frame_rate_limit": 30
+                }
+              ]
+            },
+            "1920x1080x30": {
+              "source": {
+                "width": 1920,
+                "height": 1080,
+                "fps": 30
+              },
+              "layers": [
+                {
+                  "codec": "h264",
+                  "bitrate": 6000000,
+                  "min_dimension": 1080,
+                  "max_dimension": 1920,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 3000000,
+                  "min_dimension": 720,
+                  "max_dimension": 1280,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 1600000,
+                  "min_dimension": 600,
+                  "max_dimension": 800,
+                  "frame_rate_limit": 30
+                }
+              ]
+            }
+          }
+        },
+        "encryption": {
+          "mode": "disabled"
+        },
+        "lifecycle": {
+          "mode": "reusable"
+        }
+      },
+      "custom": {
+        "isolated_security_fixture": true,
+        "media": "video",
+        "betweener_connect_id": "06c99bd3-ab27-4dd7-a7c7-21a1545af83d"
+      },
+      "members": [
+        {
+          "user": "f0110000-0000-4000-8000-000000000007",
+          "role": "connect_invited"
+        },
+        {
+          "user": "f0110000-0000-4000-8000-000000000008",
+          "role": "connect_invited"
+        }
+      ],
+      "userRoles": [
+        {
+          "id": "f0110000-0000-4000-8000-000000000009",
+          "role": "user"
+        },
+        {
+          "id": "f0110000-0000-4000-8000-000000000008",
+          "role": "user"
+        },
+        {
+          "id": "f0110000-0000-4000-8000-000000000007",
+          "role": "user"
+        }
+      ]
+    },
+    "consent": {
+      "independentRecipientVideo": true,
+      "voiceGrantDenied": true,
+      "state": "ACCEPTED"
+    },
+    "joins": [
+      {
+        "status": 201,
+        "code": null,
+        "capabilities": [
+          "join-call",
+          "read-call",
+          "send-audio",
+          "send-video"
+        ]
+      },
+      {
+        "status": 201,
+        "code": null,
+        "capabilities": [
+          "join-call",
+          "read-call",
+          "send-audio",
+          "send-video"
+        ]
+      }
+    ],
+    "privileges": [
+      {
+        "name": "add_third_member",
+        "status": 403,
+        "code": 17
+      },
+      {
+        "name": "self_admin_role",
+        "status": 403,
+        "code": 17
+      },
+      {
+        "name": "grant_screenshare",
+        "status": 403,
+        "code": 17
+      },
+      {
+        "name": "enable_screenshare",
+        "status": 403,
+        "code": 17
+      },
+      {
+        "name": "start_recording",
+        "status": 403,
+        "code": 17
+      },
+      {
+        "name": "start_transcription",
+        "status": 403,
+        "code": 17
+      },
+      {
+        "name": "start_broadcasting",
+        "status": 403,
+        "code": 17
+      },
+      {
+        "name": "end_call",
+        "status": 403,
+        "code": 17
+      },
+      {
+        "name": "capabilities_after_attempts",
+        "status": 200,
+        "code": null,
+        "capabilities": [
+          "join-call",
+          "read-call",
+          "send-audio",
+          "send-video"
+        ]
+      }
+    ],
+    "acceptedPolicy": {
+      "settings": {
+        "audio": {
+          "access_request_enabled": false,
+          "opus_dtx_enabled": false,
+          "redundant_coding_enabled": false,
+          "mic_default_on": false,
+          "speaker_default_on": false,
+          "default_device": "earpiece",
+          "noise_cancellation": {
+            "mode": "auto-on"
+          },
+          "hifi_audio_enabled": false
+        },
+        "backstage": {
+          "enabled": false
+        },
+        "broadcasting": {
+          "enabled": false,
+          "hls": {
+            "auto_on": false,
+            "enabled": false,
+            "quality_tracks": [
+              "720p"
+            ],
+            "layout": {
+              "name": "spotlight",
+              "external_app_url": "",
+              "external_css_url": "",
+              "detect_orientation": false
+            }
+          },
+          "rtmp": {
+            "enabled": false,
+            "quality": "720p",
+            "layout": {
+              "name": "spotlight",
+              "external_app_url": "",
+              "external_css_url": "",
+              "detect_orientation": false
+            }
+          }
+        },
+        "geofencing": {
+          "names": []
+        },
+        "recording": {
+          "audio_only": true,
+          "mode": "disabled",
+          "quality": "720p",
+          "layout": {
+            "name": "spotlight",
+            "external_app_url": "",
+            "external_css_url": "",
+            "detect_orientation": false
+          }
+        },
+        "individual_recording": {
+          "mode": "disabled"
+        },
+        "raw_recording": {
+          "mode": "disabled"
+        },
+        "frame_recording": {
+          "mode": "disabled",
+          "quality": "720p",
+          "capture_interval_in_seconds": 3
+        },
+        "ring": {
+          "incoming_call_timeout_ms": 45000,
+          "auto_cancel_timeout_ms": 45000,
+          "missed_call_timeout_ms": 45000
+        },
+        "screensharing": {
+          "enabled": false,
+          "access_request_enabled": false,
+          "target_resolution": null
+        },
+        "transcription": {
+          "mode": "disabled",
+          "closed_caption_mode": "disabled",
+          "languages": [],
+          "language": "",
+          "translation": {
+            "enabled": false,
+            "languages": [
+              "en"
+            ]
+          },
+          "speech_segment_config": {
+            "max_speech_caption_ms": 9000,
+            "silence_duration_ms": 700
+          }
+        },
+        "video": {
+          "enabled": true,
+          "access_request_enabled": false,
+          "target_resolution": {
+            "width": 640,
+            "height": 480,
+            "bitrate": 600000
+          },
+          "camera_default_on": false,
+          "camera_facing": ""
+        },
+        "thumbnails": {
+          "enabled": false
+        },
+        "limits": {
+          "max_participants": 2,
+          "max_participants_exclude_roles": [],
+          "max_duration_seconds": null
+        },
+        "session": {
+          "inactivity_timeout_seconds": 30
+        },
+        "ingress": {
+          "enabled": false,
+          "video_encoding_options": {
+            "1920x1080x30": {
+              "source": {
+                "width": 1920,
+                "height": 1080,
+                "fps": 30
+              },
+              "layers": [
+                {
+                  "codec": "h264",
+                  "bitrate": 6000000,
+                  "min_dimension": 1080,
+                  "max_dimension": 1920,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 3000000,
+                  "min_dimension": 720,
+                  "max_dimension": 1280,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 1600000,
+                  "min_dimension": 600,
+                  "max_dimension": 800,
+                  "frame_rate_limit": 30
+                }
+              ]
+            },
+            "2560x1440x30": {
+              "source": {
+                "width": 2560,
+                "height": 1440,
+                "fps": 30
+              },
+              "layers": [
+                {
+                  "codec": "h264",
+                  "bitrate": 9000000,
+                  "min_dimension": 1440,
+                  "max_dimension": 2560,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 6000000,
+                  "min_dimension": 1080,
+                  "max_dimension": 1920,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 2500000,
+                  "min_dimension": 720,
+                  "max_dimension": 1280,
+                  "frame_rate_limit": 30
+                }
+              ]
+            },
+            "3840x2160x30": {
+              "source": {
+                "width": 3840,
+                "height": 2160,
+                "fps": 30
+              },
+              "layers": [
+                {
+                  "codec": "h264",
+                  "bitrate": 18000000,
+                  "min_dimension": 2160,
+                  "max_dimension": 3840,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 8000000,
+                  "min_dimension": 1080,
+                  "max_dimension": 1920,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 2500000,
+                  "min_dimension": 720,
+                  "max_dimension": 1280,
+                  "frame_rate_limit": 30
+                }
+              ]
+            },
+            "1280x720x30": {
+              "source": {
+                "width": 1280,
+                "height": 720,
+                "fps": 30
+              },
+              "layers": [
+                {
+                  "codec": "h264",
+                  "bitrate": 3000000,
+                  "min_dimension": 720,
+                  "max_dimension": 1280,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 1800000,
+                  "min_dimension": 600,
+                  "max_dimension": 800,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 700000,
+                  "min_dimension": 360,
+                  "max_dimension": 640,
+                  "frame_rate_limit": 30
+                }
+              ]
+            }
+          }
+        },
+        "encryption": {
+          "mode": "disabled"
+        },
+        "lifecycle": {
+          "mode": "reusable"
+        }
+      },
+      "custom": {
+        "betweener_connect_id": "06c99bd3-ab27-4dd7-a7c7-21a1545af83d",
+        "isolated_security_fixture": true,
+        "media": "video"
+      },
+      "members": [
+        {
+          "user": "f0110000-0000-4000-8000-000000000007",
+          "role": "connect_video"
+        },
+        {
+          "user": "f0110000-0000-4000-8000-000000000008",
+          "role": "connect_video"
+        }
+      ],
+      "userRoles": [
+        {
+          "id": "f0110000-0000-4000-8000-000000000009",
+          "role": "user"
+        },
+        {
+          "id": "f0110000-0000-4000-8000-000000000008",
+          "role": "user"
+        },
+        {
+          "id": "f0110000-0000-4000-8000-000000000007",
+          "role": "user"
+        }
+      ]
+    },
+    "sessions": [
+      {
+        "kind": "SFU_PUBLISH_BOUNDARY",
+        "results": [
+          {
+            "track": "video",
+            "status": 200,
+            "code": null,
+            "message": null,
+            "answerReceived": true,
+            "optionMatched": true
+          },
+          {
+            "track": "screenshare",
+            "status": 200,
+            "code": "ERROR_CODE_PERMISSION_DENIED",
+            "message": "participant f0110000-0000-4000-8000-000000000007 is not authorized to publish track TRACK_TYPE_SCREEN_SHARE",
+            "answerReceived": false,
+            "optionMatched": true
+          },
+          {
+            "track": "audio",
+            "status": 200,
+            "code": null,
+            "message": null,
+            "answerReceived": true,
+            "optionMatched": true
+          }
+        ],
+        "callEndedObserved": false,
+        "joinAcknowledged": true,
+        "publishOptions": [
+          {
+            "id": 0,
+            "trackType": 1,
+            "codec": "Opus",
+            "videoDimension": {
+              "width": 0,
+              "height": 0
+            }
+          },
+          {
+            "id": 0,
+            "trackType": 2,
+            "codec": "VP9",
+            "videoDimension": {
+              "width": 640,
+              "height": 480
+            }
+          },
+          {
+            "id": 0,
+            "trackType": 3,
+            "codec": "VP8",
+            "videoDimension": {
+              "width": 2560,
+              "height": 1440
+            }
+          },
+          {
+            "id": 0,
+            "trackType": 4,
+            "codec": "Opus",
+            "videoDimension": {
+              "width": 0,
+              "height": 0
+            }
+          }
+        ],
+        "videoStats": {
+          "connectionState": "connected",
+          "bytesSent": 131340,
+          "packetsSent": 225,
+          "framesEncoded": 175,
+          "remoteReportsReceived": 0,
+          "codec": "video/VP9"
+        },
+        "audioStats": {
+          "connectionState": "connected",
+          "bytesSent": 886,
+          "packetsSent": 13
+        }
+      },
+      {
+        "kind": "SFU_PUBLISH_BOUNDARY",
+        "results": [
+          {
+            "track": "video",
+            "status": 200,
+            "code": null,
+            "message": null,
+            "answerReceived": true,
+            "optionMatched": true
+          },
+          {
+            "track": "screenshare",
+            "status": 200,
+            "code": "ERROR_CODE_PERMISSION_DENIED",
+            "message": "participant f0110000-0000-4000-8000-000000000008 is not authorized to publish track TRACK_TYPE_SCREEN_SHARE",
+            "answerReceived": false,
+            "optionMatched": true
+          },
+          {
+            "track": "audio",
+            "status": 200,
+            "code": null,
+            "message": null,
+            "answerReceived": true,
+            "optionMatched": true
+          }
+        ],
+        "callEndedObserved": false,
+        "joinAcknowledged": true,
+        "publishOptions": [
+          {
+            "id": 0,
+            "trackType": 1,
+            "codec": "Opus",
+            "videoDimension": {
+              "width": 0,
+              "height": 0
+            }
+          },
+          {
+            "id": 0,
+            "trackType": 2,
+            "codec": "VP9",
+            "videoDimension": {
+              "width": 640,
+              "height": 480
+            }
+          },
+          {
+            "id": 0,
+            "trackType": 3,
+            "codec": "VP8",
+            "videoDimension": {
+              "width": 2560,
+              "height": 1440
+            }
+          },
+          {
+            "id": 0,
+            "trackType": 4,
+            "codec": "Opus",
+            "videoDimension": {
+              "width": 0,
+              "height": 0
+            }
+          }
+        ],
+        "videoStats": {
+          "connectionState": "connected",
+          "bytesSent": 130654,
+          "packetsSent": 224,
+          "framesEncoded": 175,
+          "remoteReportsReceived": 0,
+          "codec": "video/VP9"
+        },
+        "audioStats": {
+          "connectionState": "connected",
+          "bytesSent": 867,
+          "packetsSent": 13
+        }
+      }
+    ],
+    "reconciledState": "ACTIVE",
+    "cleanup": {
+      "usersRemaining": 0,
+      "calls": [
+        {
+          "status": 404,
+          "code": 16
+        }
+      ],
+      "unchangedCallTypes": true,
+      "callTypesBefore": "12e74f5fca79a1dea2b48a8c950bbc3a2189a3ffdf9e04ccb43d28c4e4533a7e",
+      "callTypesAfter": "12e74f5fca79a1dea2b48a8c950bbc3a2189a3ffdf9e04ccb43d28c4e4533a7e",
+      "app": {
+        "id": 1731011,
+        "name": "Betweener Staging",
+        "disable_auth_checks": false,
+        "disable_permissions_checks": false
+      },
+      "cleaned": true
+    }
+  },
+  "updatedAt": "2026-10-28T16:19:10.343Z",
+  "latestVideoVerification": {
+    "result": "PASS",
+    "integratedChecks": 4,
+    "connectRegressionTests": {
+      "passed": 80,
+      "total": 80
+    },
+    "rnTests": {
+      "passed": 7,
+      "total": 7
+    },
+    "typeScript": "PASS",
+    "denoFixtureCheck": "PASS",
+    "targetedLint": "PASS",
+    "sharedConnectAbsent": true,
+    "sharedProofAbsent": true,
+    "sharedRevocationRpcAbsent": true,
+    "remainingDisposableDatabases": 0,
+    "remainingDisposableRestContainers": 0
+  }
+}

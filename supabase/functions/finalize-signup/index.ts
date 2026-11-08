@@ -1,164 +1,28 @@
-// @ts-nocheck
-// Supabase Edge Function - runs in Deno runtime
-// @deno-types="https://esm.sh/@supabase/functions-js/src/edge-runtime.d.ts"
+// @ts-nocheck -- Supabase Edge runtime supplies Deno and remote imports.
+import { createPhoneAdmin, phoneJson, phonePreflight } from '../_shared/phone-verification-runtime.ts';
+import { resolveVerificationCaller } from '../_shared/phone-verification-boundary.ts';
 
-import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { corsHeaders } from '../_shared/cors.ts'
-
-interface FinalizeSignupRequest {
-  signupSessionId: string
-}
-
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders })
-  }
-
+Deno.serve(async (req: Request) => {
+  if (req.method === 'OPTIONS') return phonePreflight();
+  if (req.method !== 'POST') return phoneJson({ error: 'Method not allowed' }, 405);
   try {
-    const { signupSessionId }: FinalizeSignupRequest = await req.json()
-    if (!signupSessionId) {
-      return new Response(
-        JSON.stringify({ error: 'Signup session ID is required' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+    const admin = createPhoneAdmin();
+    const caller = await resolveVerificationCaller(req, token => admin.auth.getUser(token));
+    if (caller.status !== 200) return phoneJson({ error: 'Unauthorized' }, caller.status);
+
+    // verify-phone commits ownership before returning success. Finalization
+    // acknowledges that result for legacy callers without reassigning proof.
+    const { data: profile, error } = await admin.from('profiles')
+      .select('phone_verified,phone_number,deleted_at,identity_status')
+      .eq('user_id', caller.userId).maybeSingle();
+    if (error) return phoneJson({ error: 'Unable to load verification status' }, 503);
+    if (!profile?.phone_verified || !profile.phone_number || profile.deleted_at ||
+        ['recovered_into_existing_account', 'discarded_duplicate'].includes(profile.identity_status)) {
+      return phoneJson({ error: 'Verify your phone after signing in to continue.' }, 409);
     }
 
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!
-    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-
-    const authHeader = req.headers.get('Authorization') ?? ''
-    const authClient = createClient(supabaseUrl, supabaseAnonKey, {
-      global: { headers: { Authorization: authHeader } },
-    })
-    const { data: authData, error: authError } = await authClient.auth.getUser()
-    const user = authData?.user
-    if (authError || !user) {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      })
-    }
-
-    const supabase = createClient(supabaseUrl, supabaseServiceKey)
-    const { data: verification, error: verificationError } = await supabase
-      .from('phone_verifications')
-      .select('phone_number, confidence_score, status')
-      .eq('signup_session_id', signupSessionId)
-      .eq('status', 'verified')
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-
-    if (verificationError) {
-      return new Response(JSON.stringify({ error: 'Failed to fetch verification' }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      })
-    }
-
-    let verifiedPhone: string | null = verification?.phone_number ?? null
-    let normalizedScore = Math.max(0, Math.min(1, (verification?.confidence_score ?? 0) / 100))
-    const nowIso = new Date().toISOString()
-
-    if (!verifiedPhone) {
-      return new Response(JSON.stringify({ error: 'No verified phone found' }), {
-        status: 404,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      })
-    }
-
-    // Ensure a minimal profile row exists (Phase-2 allows progressive completion).
-    const { error: ensureProfileError } = await supabase
-      .from('profiles')
-      .upsert({ user_id: user.id }, { onConflict: 'user_id' })
-    if (ensureProfileError) {
-      console.log('Ensure profile error', ensureProfileError)
-    }
-
-    // Link verified phone_verifications rows to this user (prevents "verified but unlinked" dead-ends).
-    const { error: linkPhoneError } = await supabase
-      .from('phone_verifications')
-      .update({ user_id: user.id })
-      .eq('signup_session_id', signupSessionId)
-      .eq('status', 'verified')
-      .is('user_id', null)
-
-    if (linkPhoneError) {
-      console.log('Phone verification link error', linkPhoneError)
-    }
-
-    const { data: profileRow, error: profileFetchError } = await supabase
-      .from('profiles')
-      .select('verification_level,identity_status,profile_completed')
-      .eq('user_id', user.id)
-      .limit(1)
-      .maybeSingle()
-
-    if (profileFetchError) {
-      console.log('Profile fetch error', profileFetchError)
-    }
-
-    if (
-      profileRow?.identity_status === 'recovered_into_existing_account' ||
-      profileRow?.identity_status === 'discarded_duplicate'
-    ) {
-      return new Response(JSON.stringify({ error: 'This account shell was already retired after recovery' }), {
-        status: 409,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      })
-    }
-
-    const nextLevel = Math.max(profileRow?.verification_level ?? 0, 1)
-    const inferredProvider =
-      user.app_metadata?.provider === 'google' ||
-      user.app_metadata?.provider === 'apple'
-        ? user.app_metadata.provider
-        : 'email'
-
-    // Upsert verification flags (belt + suspenders).
-    const { error: profileError } = await supabase
-      .from('profiles')
-      .upsert(
-        {
-          user_id: user.id,
-          phone_number: verifiedPhone,
-          phone_verified: true,
-          phone_verified_at: nowIso,
-          phone_verification_score: normalizedScore,
-          verification_level: nextLevel,
-          identity_status: profileRow?.profile_completed ? 'active' : 'pending_onboarding',
-          last_successful_auth_provider: inferredProvider,
-        },
-        { onConflict: 'user_id' }
-      )
-
-    if (profileError) {
-      return new Response(JSON.stringify({ error: 'Failed to update profile' }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      })
-    }
-
-    const { error: signupError } = await supabase
-      .from('signup_events')
-      .update({ user_id: user.id })
-      .eq('signup_session_id', signupSessionId)
-
-    if (signupError) {
-      console.log('Signup event link error', signupError)
-    }
-
-    return new Response(
-      JSON.stringify({ success: true, phone_number: verifiedPhone }),
-      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    )
-  } catch (error) {
-    console.error('Finalize signup error', error)
-    return new Response(
-      JSON.stringify({ error: 'Internal server error' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    )
+    return phoneJson({ success: true, phone_number: profile.phone_number });
+  } catch {
+    return phoneJson({ error: 'Unable to load verification status' }, 503);
   }
-})
+});

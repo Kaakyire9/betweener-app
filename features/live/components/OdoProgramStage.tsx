@@ -5,6 +5,7 @@ import { AccessibilityInfo, Animated, StyleSheet, Text, View } from 'react-nativ
 
 import type { ProgramScene } from '@betweener/live-program-domain';
 import type { LiveProgramSnapshotV2 } from '../odo/show/odo-show-contracts.ts';
+import { LiveMusicProgramStage } from './LiveMusicProgramStage.tsx';
 import { type LiveVisualTheme, useLiveVisualTheme } from './live-visual-tokens.ts';
 
 const COPY: Partial<Record<ProgramScene, { eyebrow: string; title: string; body: string }>> = {
@@ -78,7 +79,13 @@ const programCopy = (program: LiveProgramSnapshotV2) => {
   }
 };
 
-export function OdoProgramStage({ program }: { program: LiveProgramSnapshotV2 | null }) {
+export function OdoProgramStage({
+  program,
+  compact = false,
+}: {
+  program: LiveProgramSnapshotV2 | null;
+  compact?: boolean;
+}) {
   const visual = useLiveVisualTheme();
   const styles = useMemo(() => createStyles(visual), [visual]);
   const [reduceMotion, setReduceMotion] = useState(false);
@@ -108,35 +115,42 @@ export function OdoProgramStage({ program }: { program: LiveProgramSnapshotV2 | 
     opacity: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.55, 1] }),
     transform: [{ scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1.04] }) }],
   }), [pulse]);
-  if (!copy || program?.enabled !== true) return null;
-  const musicVisible = program.currentScene === 'music_intermission'
+  const musicVisible = program?.currentScene === 'music_intermission'
     && program.music.status !== 'stopped';
+  if (musicVisible && program) return <LiveMusicProgramStage music={program.music} />;
+  if (!copy || program?.enabled !== true) return null;
 
   return (
-    <View accessibilityLabel={`${copy.eyebrow}. ${copy.title}`} pointerEvents="none" style={styles.root}>
+    <View
+      accessibilityLabel={`${copy.eyebrow}. ${copy.title}`}
+      pointerEvents="none"
+      style={[styles.root, compact && styles.rootCompact]}
+    >
       <LinearGradient
         colors={visual.isDark
           ? [visual.color.videoChrome, visual.color.surfaceSoft, visual.color.canvas]
           : [visual.color.surfaceRaised, visual.color.surfaceSoft, visual.color.canvas]}
         style={StyleSheet.absoluteFill}
       />
-      <View style={styles.orbitLarge} />
-      <View style={styles.orbitSmall} />
-      <Animated.View style={[styles.mark, animatedStyle]}>
+      <View style={[styles.orbitLarge, compact && styles.orbitLargeCompact]} />
+      {!compact ? <View style={styles.orbitSmall} /> : null}
+      <Animated.View style={[styles.mark, compact && styles.markCompact, animatedStyle]}>
         {musicVisible
-          ? <Music2 color={visual.color.purple} size={27} />
-          : <Bot color={visual.color.purple} size={27} />}
+          ? <Music2 color={visual.color.purple} size={compact ? 16 : 27} />
+          : <Bot color={visual.color.purple} size={compact ? 16 : 27} />}
       </Animated.View>
-      <Text style={styles.eyebrow}>{copy.eyebrow}</Text>
-      <Text style={styles.title}>{copy.title}</Text>
-      <Text style={styles.body}>{copy.body}</Text>
-      <View style={styles.signalRow}>
+      <Text style={[styles.eyebrow, compact && styles.eyebrowCompact]}>{copy.eyebrow}</Text>
+      <Text numberOfLines={compact ? 2 : undefined} style={[styles.title, compact && styles.titleCompact]}>
+        {copy.title}
+      </Text>
+      {!compact ? <Text style={styles.body}>{copy.body}</Text> : null}
+      {!compact ? <View style={styles.signalRow}>
         <Heart color={visual.color.purple} size={14} />
         <View style={styles.signalLine} />
         <Radio color={visual.color.teal} size={14} />
         <View style={styles.signalLine} />
         <Sparkles color={visual.color.purple} size={14} />
-      </View>
+      </View> : null}
       {musicVisible ? (
         <Text style={styles.track}>{program.music.title} · {program.music.artist}</Text>
       ) : null}
@@ -145,12 +159,17 @@ export function OdoProgramStage({ program }: { program: LiveProgramSnapshotV2 | 
 }
 
 const createStyles = (visual: LiveVisualTheme) => StyleSheet.create({
-  root: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, zIndex: 4, alignItems: 'center', justifyContent: 'center', overflow: 'hidden', paddingHorizontal: 28, paddingVertical: 24 },
+  root: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, zIndex: 4, alignItems: 'center', justifyContent: 'center', overflow: 'hidden', borderRadius: 22, paddingHorizontal: 28, paddingVertical: 24 },
+  rootCompact: { borderRadius: 0, paddingHorizontal: 14, paddingVertical: 10 },
   orbitLarge: { position: 'absolute', width: 330, height: 330, borderRadius: 165, borderWidth: 1, borderColor: visual.color.borderStrong },
+  orbitLargeCompact: { width: 150, height: 150, borderRadius: 75 },
   orbitSmall: { position: 'absolute', width: 230, height: 230, borderRadius: 115, borderWidth: 1, borderColor: visual.color.tealSoft },
   mark: { width: 62, height: 62, borderRadius: 31, alignItems: 'center', justifyContent: 'center', backgroundColor: visual.color.purpleSoft, borderWidth: 1, borderColor: visual.color.purple, shadowColor: visual.color.purple, shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.16, shadowRadius: 14, elevation: 4 },
+  markCompact: { width: 34, height: 34, borderRadius: 17 },
   eyebrow: { marginTop: 18, color: visual.color.purple, fontSize: 9, letterSpacing: 2.2, textAlign: 'center', fontFamily: 'Manrope_800ExtraBold' },
+  eyebrowCompact: { marginTop: 8, fontSize: 6, letterSpacing: 1.4 },
   title: { marginTop: 9, maxWidth: 330, color: visual.color.oat, fontSize: 27, lineHeight: 34, textAlign: 'center', fontFamily: 'PlayfairDisplay_700Bold' },
+  titleCompact: { marginTop: 4, maxWidth: 190, fontSize: 14, lineHeight: 17 },
   body: { marginTop: 9, maxWidth: 320, color: visual.color.textMuted, fontSize: 12, lineHeight: 19, textAlign: 'center', fontFamily: 'Manrope_500Medium' },
   signalRow: { marginTop: 22, flexDirection: 'row', alignItems: 'center', gap: 8 },
   signalLine: { width: 28, height: 1, backgroundColor: visual.color.borderStrong },

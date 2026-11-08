@@ -1,11 +1,18 @@
 import { useLocalSearchParams, router } from 'expo-router';
 import { Camera, CameraOff, ChevronLeft, Mic, MicOff, ShieldCheck, Wifi } from 'lucide-react-native';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { LiveBackstagePreview } from '@/features/live/components/index.ts';
+import { LiveBackstagePreview, LiveStepUpSheet } from '@/features/live/components/index.ts';
 import { type LiveVisualTheme, useLiveVisualTheme } from '@/features/live/components/live-visual-tokens.ts';
 import { useLiveDeviceReadiness, useLiveSessionController } from '@/features/live/hooks/index.ts';
+import {
+  getLiveServerClockOffsetMs,
+  getLivePublicationErrorCode,
+  getLivePublicationErrorMessage,
+  liveRepository,
+  type LivePublicationControl,
+} from '@/features/live/application/index.ts';
 import {
   getLiveReturnParams,
   type LiveReturnRouteParams,
@@ -27,18 +34,62 @@ export default function LiveBackstageScreen() {
   const [guestReady, setGuestReady] = useState(false);
   const [cameraHandoff, setCameraHandoff] = useState(false);
   const [clock, setClock] = useState(() => Date.now());
+  const [publication, setPublication] = useState<LivePublicationControl | null>(null);
+  const [publicationError, setPublicationError] = useState<string | null>(null);
+  const [stepUpVisible, setStepUpVisible] = useState(false);
+  const [publicationBusy, setPublicationBusy] = useState(false);
   const canOpenStage = controller.snapshot?.capabilities.includes('live.start_session') === true;
-  const scheduledStartMs = controller.snapshot?.session.scheduledStart
-    ? Date.parse(controller.snapshot.session.scheduledStart)
+  const serverOffsetMs = useMemo(
+    () => publication ? getLiveServerClockOffsetMs(publication.serverNow) : 0,
+    [publication?.serverNow],
+  );
+  const authoritativeNow = clock + serverOffsetMs;
+  const scheduledStartMs = publication?.scheduledStart
+    ? Date.parse(publication.scheduledStart)
+    : controller.snapshot?.session.scheduledStart
+      ? Date.parse(controller.snapshot.session.scheduledStart)
     : 0;
-  const stageIsDue = !scheduledStartMs || scheduledStartMs <= clock;
+  const stageIsDue = !scheduledStartMs || scheduledStartMs <= authoritativeNow;
+  const studioControlled = publication?.broadcastAuthority === 'studio_producer';
   const startsIn = useMemo(() => {
-    const remainingMinutes = Math.max(1, Math.ceil((scheduledStartMs - clock) / 60_000));
+    const remainingMinutes = Math.max(1, Math.ceil((scheduledStartMs - authoritativeNow) / 60_000));
     if (remainingMinutes < 60) return `Available in ${remainingMinutes} min`;
     const hours = Math.floor(remainingMinutes / 60);
     const minutes = remainingMinutes % 60;
     return `Available in ${hours}h${minutes ? ` ${minutes}m` : ''}`;
-  }, [clock, scheduledStartMs]);
+  }, [authoritativeNow, scheduledStartMs]);
+
+  const loadPublication = useCallback(async () => {
+    if (!sessionId || !canOpenStage) return null;
+    const next = await liveRepository.getPublicationControl(sessionId);
+    setPublication(next);
+    return next;
+  }, [canOpenStage, sessionId]);
+
+  useEffect(() => {
+    if (!canOpenStage || !controller.snapshot) return;
+    let active = true;
+    setPublicationBusy(true);
+    void loadPublication().then(async (next) => {
+      if (!active || !next || ['backstage', 'live', 'ending'].includes(next.status)) return;
+      try {
+        const opened = await liveRepository.openBackstage(sessionId, next.version);
+        if (active) setPublication(opened);
+      } catch (nextError) {
+        if (getLivePublicationErrorCode(nextError) === 'live_session_version_conflict') {
+          const refreshed = await liveRepository.getPublicationControl(sessionId);
+          if (active) setPublication(refreshed);
+          return;
+        }
+        if (active) setPublicationError(getLivePublicationErrorMessage(nextError));
+      }
+    }).catch((nextError) => {
+      if (active) setPublicationError(getLivePublicationErrorMessage(nextError));
+    }).finally(() => {
+      if (active) setPublicationBusy(false);
+    });
+    return () => { active = false; };
+  }, [canOpenStage, controller.snapshot?.session.id, loadPublication, sessionId]);
 
   useEffect(() => {
     if (!canOpenStage || stageIsDue) return;
@@ -62,27 +113,63 @@ export default function LiveBackstageScreen() {
     });
   };
 
+  const continueIntoLive = useCallback(() => {
+    router.replace({
+      pathname: '/live/[sessionId]',
+      params: {
+        sessionId,
+        startAudio: microphoneReady ? '1' : '0',
+        startVideo: cameraReady ? '1' : '0',
+        ...liveReturnParams,
+      },
+    });
+  }, [cameraReady, liveReturnParams, microphoneReady, sessionId]);
+
+  const openPublicStage = useCallback(async () => {
+    if (!publication || publicationBusy) return false;
+    setPublicationBusy(true);
+    setPublicationError(null);
+    try {
+      const started = await liveRepository.startSession(sessionId, publication.version);
+      setPublication(started);
+      setStepUpVisible(false);
+      return started.status === 'live' || started.status === 'ending';
+    } catch (nextError) {
+      const code = getLivePublicationErrorCode(nextError);
+      if (code === 'live_step_up_required' || code === 'live_studio_step_up_required') {
+        setStepUpVisible(true);
+      } else if (code === 'live_session_version_conflict') {
+        await loadPublication().catch(() => undefined);
+      }
+      setPublicationError(getLivePublicationErrorMessage(nextError));
+      return false;
+    } finally {
+      setPublicationBusy(false);
+    }
+  }, [loadPublication, publication, publicationBusy, sessionId]);
+
+  const startAfterVerification = useCallback(async () => {
+    const latest = await liveRepository.getPublicationControl(sessionId);
+    setPublication(latest);
+    const started = await liveRepository.startSession(sessionId, latest.version);
+    setPublication(started);
+    setStepUpVisible(false);
+    if (started.status === 'live' || started.status === 'ending') continueIntoLive();
+  }, [continueIntoLive, sessionId]);
+
   const enterRoom = async () => {
     if (canOpenStage) {
-      if (!stageIsDue) return;
+      if (!stageIsDue || studioControlled || !publication) return;
       // Release Vision Camera before Stream requests the native capture
       // session. iOS otherwise intermittently rejects the immediate handoff.
       setCameraHandoff(true);
       await new Promise((resolve) => setTimeout(resolve, 250));
-      const transitioned = await controller.prepareAndStartSession();
+      const transitioned = await openPublicStage();
       if (!transitioned) {
         setCameraHandoff(false);
         return;
       }
-      router.replace({
-        pathname: '/live/[sessionId]',
-        params: {
-          sessionId,
-          startAudio: microphoneReady ? '1' : '0',
-          startVideo: cameraReady ? '1' : '0',
-          ...liveReturnParams,
-        },
-      });
+      continueIntoLive();
       return;
     }
     setGuestReady(true);
@@ -141,10 +228,12 @@ export default function LiveBackstageScreen() {
         <View style={styles.bottom}>
           <View style={styles.copy}>
             <Text style={styles.title}>{canOpenStage
-              ? stageIsDue ? 'Everything ready?' : 'Your private rehearsal room.'
+              ? studioControlled ? 'You’re ready for Studio.' : stageIsDue ? 'Everything ready?' : 'Your private rehearsal room.'
               : 'Look and sound like yourself.'}</Text>
             <Text style={styles.body}>{canOpenStage
-              ? stageIsDue
+              ? studioControlled
+                ? 'Your producer controls the public programme. Stay backstage and ready; Studio will open the room.'
+                : stageIsDue
                 ? 'Make one final check, then open the public stage when you are ready to welcome everyone.'
                 : 'Check your frame, microphone, and connection now. The public stage will unlock at the scheduled time.'
               : 'Only you can see this check. The host will bring you onto the public stage when the room is ready.'}</Text>
@@ -158,15 +247,31 @@ export default function LiveBackstageScreen() {
             </Pressable>
           </View>
           <Pressable
-            disabled={devices.state !== 'ready' || guestReady || (canOpenStage && !stageIsDue)}
+            disabled={devices.state !== 'ready' || guestReady || publicationBusy || (canOpenStage && (!stageIsDue || studioControlled || !publication))}
             onPress={() => void enterRoom()}
-            style={[styles.ready, (devices.state !== 'ready' || guestReady || (canOpenStage && !stageIsDue)) && styles.readyDisabled]}
+            style={[styles.ready, (devices.state !== 'ready' || guestReady || publicationBusy || (canOpenStage && (!stageIsDue || studioControlled || !publication))) && styles.readyDisabled]}
           >
-            <Text style={styles.readyText}>{canOpenStage ? (stageIsDue ? 'Open the public stage' : startsIn) : guestReady ? 'Ready · waiting for the host' : 'I’m ready for the room'}</Text>
+            <Text style={styles.readyText}>{canOpenStage
+              ? studioControlled
+                ? 'Ready · waiting for Studio'
+                : publicationBusy
+                  ? 'Securing backstage…'
+                  : stageIsDue ? 'Open the public stage' : startsIn
+              : guestReady ? 'Ready · waiting for the host' : 'I’m ready for the room'}</Text>
           </Pressable>
-          {controller.error ? <Text accessibilityLiveRegion="polite" style={styles.errorText}>{controller.error.includes('live_session_not_due') ? 'This event is not due yet. The public stage will unlock at its scheduled time.' : 'That could not be completed yet. Check your connection and try again.'}</Text> : null}
+          {publicationError || controller.error ? (
+            <Text accessibilityLiveRegion="polite" style={styles.errorText}>
+              {publicationError ?? getLivePublicationErrorMessage(controller.error)}
+            </Text>
+          ) : null}
         </View>
       </SafeAreaView>
+      <LiveStepUpSheet
+        visible={stepUpVisible}
+        actionLabel="Open public stage"
+        onCancel={() => setStepUpVisible(false)}
+        onVerified={startAfterVerification}
+      />
     </View>
   );
 }

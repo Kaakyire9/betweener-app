@@ -1,0 +1,481 @@
+{
+  "schemaVersion": 1,
+  "status": "ENABLED_FOR_STAGING_DEVELOPMENT_FOREGROUND_VOICE_TESTING",
+  "authorization": "Owner requested voice calling through the normal staging development app and removal of the special preview launcher.",
+  "target": {
+    "supabaseProject": "xsgzxadwuxuziubglvps",
+    "name": "betweener-staging",
+    "streamAppId": 1731011,
+    "callType": "betweener_connect"
+  },
+  "observedAt": "2026-11-01 21:43:26.992894+00",
+  "serverReadback": {
+    "observed_at": "2026-11-01 21:43:26.992894+00",
+    "config": {
+      "enabled": true,
+      "singleton": true,
+      "environment": "staging",
+      "video_enabled": false,
+      "voice_enabled": true,
+      "provider_ready": true,
+      "end_block_enabled": false,
+      "pre_match_enabled": false,
+      "staging_open_testing": true,
+      "notifications_enabled": false,
+      "staging_calls_remaining": 100
+    },
+    "calls": 0,
+    "pending_jobs": 0,
+    "occupancy": 0,
+    "recent_worker_responses": [
+      {
+        "timed_out": false,
+        "request_id": 16203,
+        "status_code": 200,
+        "transport_error": false
+      },
+      {
+        "timed_out": false,
+        "request_id": 16202,
+        "status_code": 200,
+        "transport_error": false
+      },
+      {
+        "timed_out": false,
+        "request_id": 16201,
+        "status_code": 200,
+        "transport_error": false
+      }
+    ]
+  },
+  "client": {
+    "developmentOnly": true,
+    "platforms": [
+      "ios",
+      "android"
+    ],
+    "bundleIdentifier": "com.aduboffour.betweener.staging",
+    "ui": true,
+    "nativeRuntime": true,
+    "nativeSafetyOwner": true,
+    "video": false,
+    "endCallAndBlock": false,
+    "normalStart": "npm.cmd start -- --dev-client",
+    "specialLauncherRequired": false
+  },
+  "consent": {
+    "automaticOptIn": false,
+    "administrativeProofInsertion": false,
+    "setup": "Each signed-in participant opens the chat phone button, enables voice invitations and explicitly confirms the connection if requested.",
+    "authority": "Existing rpc_reconfirm_relationship and rpc_connect_set_preferences; eligibility and per-call recipient acceptance remain authoritative."
+  },
+  "flow": [
+    "Chat phone button",
+    "Start voice call",
+    "Foreground ringtone and Accept/Decline",
+    "Accepted voice session",
+    "End call",
+    "Done after authoritative/local-owner cleanup"
+  ],
+  "fixes": [
+    "Matching incoming call replaces the recipient setup lobby without accepting automatically.",
+    "Retain and retry SDK-swallowed media-factory disposal failures before native lease handoff.",
+    "Continue polling pending server termination after credential setup failure.",
+    "Disable Done until authoritative termination and local resource release settle."
+  ],
+  "removed": [
+    "scripts/start-connect-staging-preview.cjs",
+    "features/connect/development/ConnectStartupMenu.tsx"
+  ],
+  "tests": {
+    "ui": {
+      "suites": 5,
+      "passed": 55,
+      "failed": 0
+    },
+    "node": {
+      "passed": 638,
+      "failed": 4,
+      "knownBaselineFailures": [
+        "connect-push-rollback: three frozen-package/dependency checks reject the previously documented webhook delta",
+        "connect-staging-preparation: historical Edge closure expects the older webhook hash"
+      ]
+    },
+    "disposableSqlRest": {
+      "passed": 6,
+      "failed": 0,
+      "relationshipAssertions": 88,
+      "providerMedia": "SYNTHETIC",
+      "sharedDatabaseModified": false,
+      "ownedResourcesRemoved": true
+    },
+    "typeScript": "PASS",
+    "eslint": "PASS",
+    "normalExpoConfiguration": "PASS",
+    "liveAndEasIsolation": "PASS"
+  },
+  "sourceHashes": [
+    {
+      "path": "features/connect/config/connect-runtime-policy.ts",
+      "sha256": "a1c3c40ac95bb7c99d2e0e49fabd07466fd89791b9063e3cb23c7383c16d0799"
+    },
+    {
+      "path": "features/connect/components/ConnectProductProvider.tsx",
+      "sha256": "3957f471423d4c865adf62984a8043027823da1d44dbdbdd3f857c56749f66de"
+    },
+    {
+      "path": "features/connect/components/ConnectVoiceSetup.tsx",
+      "sha256": "ffc8f94c732197c242022228850fa38e5098c807f78092a2bde22bf2ed4ebdd9"
+    },
+    {
+      "path": "features/connect/components/ConnectRingtone.tsx",
+      "sha256": "ff79e292676ed4d9d8ebb9a80ed48b2bf442c6b3f44b975c75d99e77800bf76d"
+    },
+    {
+      "path": "features/connect/data/load-connect-product.ts",
+      "sha256": "5a63577897976c387d24600b40bfc7fcaf6f36e3273eb4e88b0efddd896548b5"
+    },
+    {
+      "path": "features/connect/data/authenticated-connect-services.ts",
+      "sha256": "33213b84f9f484f1a9aaa8af1e55f9022538e6d4e14a084df2d0f877fb98483e"
+    },
+    {
+      "path": "features/connect/media/native-media-engine-owner.ts",
+      "sha256": "5e58066197626eb1c9d9f15956aee7adff41f05ab5287a03e8a8b9f331ed6618"
+    },
+    {
+      "path": "features/connect/media/native-stream-sdk.ts",
+      "sha256": "4c75766de68fb2ace52f5489346d76eef8555c8af6882bf564be809ef81d6c9d"
+    },
+    {
+      "path": "features/connect/voice/ringtone.ts",
+      "sha256": "2ee0667d0d3c0e10f6f768500a439f28ebf0f6379d1d6f9d1a439137625c77bc"
+    },
+    {
+      "path": "features/connect/voice/voice-controller.ts",
+      "sha256": "4a6a3233d6902ce4bdb43c9d737aced7b654981a1649220c8ffa5b2a0c2328e4"
+    },
+    {
+      "path": "features/connect/components/VoiceCallLobby.tsx",
+      "sha256": "7053a6df5612a46cb1268dcafbd863ae29e6e41c1b7bfeec5c6bfef720236065"
+    },
+    {
+      "path": "features/connect/components/VoiceCallScreen.tsx",
+      "sha256": "0db64aaccce5771d8d7ff82f17a3dbd79acae952c3dab172f48a090e86f74e09"
+    },
+    {
+      "path": "features/connect/components/ConnectVoiceSession.tsx",
+      "sha256": "5659eb9b826da9ee8339fa582555b50f38eea0fa048d42c466b166629cfd9e40"
+    },
+    {
+      "path": "features/connect/components/ConnectIncomingNotice.tsx",
+      "sha256": "51952cdb13377a30afd4097e6118715e425e59fcce57f9dac59fd0fb3710594e"
+    },
+    {
+      "path": "app/connect/voice.tsx",
+      "sha256": "6e8e42d8f24a5b14e3f1e32cc2d2856b8f486dae7eb4ccd9bfedc139b117a385"
+    },
+    {
+      "path": "assets/audio/connect-incoming.wav",
+      "sha256": "12f36ed18f8a5ba0fd16cd75670ec77f26a8ba9e5954d6e05133944d482ea196"
+    },
+    {
+      "path": "assets/audio/connect-ringback.wav",
+      "sha256": "3bb6acbf33e80f1fee2fc1b249850336836827e9bbfa22721275061add93d151"
+    },
+    {
+      "path": "scripts/test-connect-staging-voice-local.cjs",
+      "sha256": "46b56bbe364800fee82043b2d4dce529c9c307da63ac5c9cbf9a04cd86bbeca3"
+    },
+    {
+      "path": "features/connect/media/native-safety-composition.ts",
+      "sha256": "f82282b44d98d06c0aba84fbb2a44060f3111cfd19ed628cd15497e490848222"
+    },
+    {
+      "path": "features/connect/media/native-lifecycle.ts",
+      "sha256": "486e9fcf6335e0949006e943ceba85768679eaf718d8a270e386d748464b3e27"
+    },
+    {
+      "path": "__tests__/connect-native-environment.regression.test.cjs",
+      "sha256": "050e941f65d388c6e8b7da4af1f94dfa7578267952d24dc1ce927c4775874456"
+    },
+    {
+      "path": "features/connect/media/native-runtime-contract.ts",
+      "sha256": "f5d725e6eb5390cebdbb7d9b673db5e612a948eaadeec251415d10a354448f02"
+    },
+    {
+      "path": "features/connect/media/native-runtime-check.ts",
+      "sha256": "e8a13761193d25fc1c09dbc5ace885e9a14aaf0ec96a260f3410838abd07caf4"
+    },
+    {
+      "path": "features/connect/voice/audio-setup.ts",
+      "sha256": "99a6c26879510ecc6c2347f607048b52734c4d54249a47b2ec63cf5984bc3286"
+    },
+    {
+      "path": "features/connect/voice/voice-types.ts",
+      "sha256": "92198b01d992d71db6d788b8205c2f18fad2c35e4a4cc26fbb6fc6410e88c409"
+    },
+    {
+      "path": "features/connect/components/VoiceSafetyPanel.tsx",
+      "sha256": "a3c857358f9a5f779b2f347fc86d6cb778799e536ad807d67cb9b4ed66373022"
+    },
+    {
+      "path": "__tests__/connect-audio-setup.regression.test.cjs",
+      "sha256": "08cd973c60d4ef5610e77321304809d31918adbf1b41383edb3110fd02ea59c1"
+    },
+    {
+      "path": "__tests__/fixtures/connect-product-fixture.cjs",
+      "sha256": "80686c502b0c0c54c81e07fb2c63d9a4b9ccb8069bf7a2d819affe1c39841df9"
+    },
+    {
+      "path": "__tests__/connect-product.interaction.test.tsx",
+      "sha256": "71283f8a648f560428e4ffecb2c4ea8fd54eb8d8ce97243cdc17c54e38eeac7f"
+    },
+    {
+      "path": "__tests__/connect-voice.interaction.test.tsx",
+      "sha256": "187130016083874c7ec5f8118709ed43f256b35d3c96b2c274cf18e315ac826d"
+    },
+    {
+      "path": "features/connect/media/native-audio-route.ts",
+      "sha256": "d4249cdd603fa9d324175a167d59547117c4f9b911f5001178758a9b34520382"
+    },
+    {
+      "path": "features/connect/media/connect-native-owner.ts",
+      "sha256": "70ce5c23e5f4511149aeafbc02a643d7abefe175df7b4343086f9ce1ead11fa7"
+    },
+    {
+      "path": "features/connect/media/native-owner-types.ts",
+      "sha256": "651cf739ae473748b0ba759870335e7d061a364bb7824d6f31ed41b34ee2e766"
+    },
+    {
+      "path": "features/connect/components/VoiceCallControls.tsx",
+      "sha256": "9a8a946a92c740103526d568b542402f365e63dfaae35975a8ce1cd66452c88a"
+    },
+    {
+      "path": "__tests__/connect-audio-route.regression.test.cjs",
+      "sha256": "f46ebbcc7b1f91e3d09eaccf9387274084dcf48fd368b7aac42ce899b2e04a4d"
+    },
+    {
+      "path": "__tests__/connect-native-owner.regression.test.cjs",
+      "sha256": "978e0dd3d02c836245626af4f5dd3eee50bf73338eb31750c451e29d1d4ad42c"
+    },
+    {
+      "path": "__tests__/connect-voice-completion.regression.test.cjs",
+      "sha256": "027cf691b015fe4d1b99e60d2cda597d2ed0edf797d92d295e0adb66d18d39ae"
+    },
+    {
+      "path": "features/live/media/load-stream-video-sdk.ts",
+      "sha256": "b0ab1c550e29fc5678c30fabb3aca2fdbc0cba40b64835f655d4aece9b0e7937"
+    },
+    {
+      "path": "__tests__/connect-native-bootstrap.regression.test.cjs",
+      "sha256": "5d19661cb3bc6fdb420d76a7af35889b369da3a07578ffe15656f8a01a9dcd7b"
+    }
+  ],
+  "limits": {
+    "realPhoneVoiceAudio": "OWNER_REPORTED_AUDIO_FAILURE_AND_ACCEPT_RELOAD_RETEST_PENDING",
+    "physicalHardwareShutdown": "NOT_VERIFIED",
+    "remoteMediaRevocation": "UNVERIFIED",
+    "productionCalling": "DISABLED",
+    "videoImplementation": "DEFERRED",
+    "M2A": "BLOCKED",
+    "M2B": "BLOCKED",
+    "foregroundOnly": true,
+    "pushAndBackgroundRinging": false,
+    "stagingInvitationBudget": 100
+  },
+  "changes": {
+    "hostedConfiguration": "Connect staging configuration only",
+    "migrations": "NONE",
+    "edgeDeployments": "NONE",
+    "streamOperations": "NONE",
+    "production": "NONE",
+    "newNativeBuilds": "NONE",
+    "ota": "NONE",
+    "historicalB3Evidence": "UNCHANGED"
+  },
+  "runtimeRepairs": [
+    {
+      "recordedAt": "2026-11-01T21:59:24.301Z",
+      "issue": "NativeEventEmitter crash during Connect bootstrap",
+      "cause": "Metro importAll enumerated deprecated React Native CommonJS exports, including unavailable PushNotificationIOS.",
+      "resolution": "Lazy local lifecycle module uses static named AppState and Platform imports; microphone requests remain explicit.",
+      "regressionTest": "__tests__/connect-native-environment.regression.test.cjs",
+      "validation": {
+        "targetedNode": {
+          "passed": 109,
+          "failed": 0
+        },
+        "expoTransforms": [
+          "ios",
+          "android"
+        ],
+        "eslint": "PASS",
+        "physicalDevice": "NOT_TESTED",
+        "typeScript": "PASS"
+      }
+    },
+    {
+      "recordedAt": "2026-11-01T22:40:14.379Z",
+      "issue": "Owner reports Accept succeeded but no voice audio was heard.",
+      "status": "DEVICE_AUDIO_FAILURE_UNRESOLVED_AWAITING_ON_DEVICE_DETAILS",
+      "stagingEvidence": {
+        "access": "READ_ONLY",
+        "callId": "58809ef6-80f2-4efd-b0f5-4eceed9bdd33",
+        "createdAt": "2026-11-01T22:19:51.432813Z",
+        "acceptedAt": "2026-11-01T22:20:23.170831Z",
+        "connectedAt": null,
+        "endedAt": "2026-11-01T22:20:34.104369Z",
+        "finalState": "ENDED",
+        "reason": "provider_cleanup",
+        "credentialResponses": [
+          {
+            "at": "2026-11-01T22:20:25.410Z",
+            "status": 200
+          },
+          {
+            "at": "2026-11-01T22:20:25.415Z",
+            "status": 200
+          }
+        ],
+        "providerJobs": [
+          {
+            "operation": "create",
+            "status": "done",
+            "attempts": 1,
+            "lastError": null
+          },
+          {
+            "operation": "sync",
+            "status": "done",
+            "attempts": 1,
+            "lastError": null
+          },
+          {
+            "operation": "end",
+            "status": "done",
+            "attempts": 1,
+            "lastError": null
+          }
+        ],
+        "remainingInvitationsObserved": 99,
+        "limits": "Backend timestamps and HTTP success do not establish a native join, audible playback or physical shutdown."
+      },
+      "localChanges": [
+        "Required native bridge APIs are checked without invoking them, before the Stream client is constructed.",
+        "Retain the last audio setup stage and bounded failure codes without raw provider/native errors or credentials.",
+        "Ordinary completion keeps audit details behind Call details; failed or unconfirmed cleanup remains visible.",
+        "Notify the view when audio setup settles so Done availability updates; retain authority/resource-release gates."
+      ],
+      "validation": {
+        "targetedNode": {
+          "passed": 134,
+          "failed": 0
+        },
+        "ui": {
+          "suites": 3,
+          "passed": 36,
+          "failed": 0
+        },
+        "eslint": "PASS",
+        "typeScript": "PASS",
+        "deviceAudioRetest": "PENDING",
+        "typeScriptCommand": "tsc -p tsconfig.json --noEmit --incremental --tsBuildInfoFile tmp/connect-voice-audio-repair.tsbuildinfo"
+      },
+      "changes": {
+        "hostedWrites": "NONE",
+        "providerOperations": "NONE",
+        "newCallExecutions": 0,
+        "nativeBuild": "NONE",
+        "production": "NONE",
+        "historicalB3Evidence": "UNCHANGED"
+      }
+    },
+    {
+      "recordedAt": "2026-11-01T23:27:03.900Z",
+      "issue": "Owner Android screenshot reports Audio setup: audio_output and Diagnostic code: audio_audio_output_failed.",
+      "status": "ROUTE_CONFIRMATION_FIX_LOCAL_PASS_DEVICE_RETEST_REQUIRED",
+      "reproducedLocally": [
+        "The old owner rejected a valid asynchronous output switch after reading the previous device immediately.",
+        "The old owner unnecessarily switched an already active built-in output reported by endpoint type without a selected device ID."
+      ],
+      "localChanges": [
+        "Read current outputs before selecting; skip native selection when the requested output is already confirmed.",
+        "Wait for the existing native device event subscription or bounded fresh status polling; issue one native switch request.",
+        "Require an exact selected ID for peripherals; permit endpoint-type confirmation only for a uniquely identified built-in output when selected ID is unknown.",
+        "Cancel route confirmation on retirement or newer selection; discard stale reads and clear confirmation timers.",
+        "Disable manual output changes during initial audio setup so they cannot cancel startup; End remains available.",
+        "Retain unavailable and unconfirmed routing failures as distinct bounded diagnostic codes."
+      ],
+      "confirmationBudgetMs": 3000,
+      "validation": {
+        "targetedNode": {
+          "passed": 151,
+          "failed": 0
+        },
+        "ui": {
+          "suites": 3,
+          "passed": 37,
+          "failed": 0
+        },
+        "eslint": "PASS",
+        "typeScript": "PASS",
+        "deviceAudioRetest": "PENDING"
+      },
+      "changes": {
+        "hostedWrites": "NONE",
+        "providerOperations": "NONE",
+        "newCallExecutions": 0,
+        "nativeBuild": "NONE",
+        "production": "NONE",
+        "historicalB3Evidence": "UNCHANGED"
+      },
+      "limits": "Local regression tests reproduce and fix route confirmation defects. Audible audio and native shutdown on the two physical phones still require their own verification."
+    },
+    {
+      "recordedAt": "2026-11-02T05:09:38.898Z",
+      "issue": "Owner reports the development app reloads when answering; pasted logs repeat root Stream push setup and initial Auth session around native runtime-check and index bundle requests.",
+      "status": "ACCEPT_SPLIT_BUNDLE_RELOAD_PATH_FIXED_LOCALLY_DEVICE_RETEST_REQUIRED",
+      "reproducedLocally": [
+        "The installed Expo native async loader requests a split bundle even when Metro has already evaluated the SDK at normal app startup.",
+        "The installed Expo bundle-registration and HMR code invokes window.location.reload when that split bundle registers after its HMR connection becomes unavailable.",
+        "Before the repair, the actual Accept bootstrap requested both the native runtime-check and SDK split bundles in the simulated disconnected-HMR environment; afterward it requested neither."
+      ],
+      "causalLimit": "The supplied combined iOS/Android log has no native crash stack or explicit Metro-disconnect reason. The local reproduction confirms an applicable reload mechanism; the exact reason each phone restarted and audible voice success remain unverified.",
+      "localChanges": [
+        "The shared Stream SDK loader uses a deferred literal require to reuse the same Metro module as index.js, retaining its memoized promise and retry behavior.",
+        "The native runtime check remains inside the gated Accept loader and uses a local require without a split bundle or React Native barrel enumeration.",
+        "No authenticated client is constructed during SDK lookup; native API, permission, admission and exclusive owner checks remain in place."
+      ],
+      "regressionTest": "__tests__/connect-native-bootstrap.regression.test.cjs",
+      "validation": {
+        "bootstrap": {
+          "passed": 7,
+          "failed": 0,
+          "runtime": "Installed Expo asyncRequireModule, loadBundle, HMR and Metro require; simulated network/HMR socket and native SDK"
+        },
+        "targetedNode": {
+          "files": 11,
+          "status": "PASS",
+          "includes": [
+            "Connect Accept, owner, route, setup, lifecycle, product and completion",
+            "Live bootstrap, native configuration and media provider"
+          ]
+        },
+        "eslint": "PASS",
+        "typeScript": "PASS",
+        "diffWhitespace": "PASS",
+        "deviceReloadRetest": "PENDING",
+        "deviceAudioRetest": "PENDING"
+      },
+      "changes": {
+        "hostedWrites": "NONE",
+        "providerOperations": "NONE",
+        "newCallExecutions": 0,
+        "nativeBuild": "NONE",
+        "production": "NONE",
+        "historicalB3Evidence": "UNCHANGED"
+      }
+    }
+  ]
+}

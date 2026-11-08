@@ -5,10 +5,12 @@ import {
 } from "@/lib/recovery-merge-notice";
 import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/lib/supabase";
+import { signOutSupabaseSession } from "@/lib/auth/sign-out-session";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as AppleAuthentication from "expo-apple-authentication";
 import { makeRedirectUri } from "expo-auth-session";
+import { APP_SCHEME } from "@/config/app-identity";
 import * as WebBrowser from "expo-web-browser";
 import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -199,7 +201,7 @@ export default function AccountRecoveryScreen() {
 
   const getRedirectUrl = () =>
     makeRedirectUri({
-      scheme: "betweenerapp",
+      scheme: APP_SCHEME,
       path: "auth/callback",
     });
 
@@ -215,7 +217,7 @@ export default function AccountRecoveryScreen() {
 
   const signOutBeforeRecovery = async () => {
     try {
-      await supabase.auth.signOut();
+      await signOutSupabaseSession({ reason: 'account_recovery_start' });
     } catch {
       // best effort only
     }

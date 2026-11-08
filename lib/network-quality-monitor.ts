@@ -28,6 +28,16 @@ const IGNORED_URL_PARTS = [
   '127.0.0.1:',
 ];
 
+// These requests are expected to be long-lived and already expose progress or
+// recovery in their owning UI. Treating them as connection-quality probes
+// produces false "Slow connection" banners during healthy media sends.
+const EXPECTED_LONG_RUNNING_URL_PARTS = [
+  '/functions/v1/chat-attachment-finalize',
+  '/functions/v1/profile-media-guard-v1-2',
+  '/storage/v1/object/',
+  '/storage/v1/upload/',
+];
+
 const getRequestUrl = (input: RequestInfo | URL) => {
   if (typeof input === 'string') return input;
   if (input instanceof URL) return input.toString();
@@ -36,12 +46,15 @@ const getRequestUrl = (input: RequestInfo | URL) => {
   return typeof maybeUrl === 'string' ? maybeUrl : '';
 };
 
-const shouldTrackRequest = (input: RequestInfo | URL) => {
+export const shouldTrackNetworkQualityRequest = (input: RequestInfo | URL) => {
   const url = getRequestUrl(input);
   if (!/^https?:\/\//i.test(url)) return false;
 
   const lowerUrl = url.toLowerCase();
-  return !IGNORED_URL_PARTS.some((part) => lowerUrl.includes(part));
+  return ![
+    ...IGNORED_URL_PARTS,
+    ...EXPECTED_LONG_RUNNING_URL_PARTS,
+  ].some((part) => lowerUrl.includes(part));
 };
 
 const createSnapshot = (snapshot: NetworkQualitySnapshot): NetworkQualitySnapshot => ({
@@ -79,7 +92,7 @@ const ensureNetworkQualityMonitor = () => {
   };
 
   const patchedFetch: typeof fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-    if (!shouldTrackRequest(input)) {
+    if (!shouldTrackNetworkQualityRequest(input)) {
       return originalFetch(input, init);
     }
 

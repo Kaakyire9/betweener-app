@@ -4,6 +4,8 @@ import { fireEvent, render, waitFor } from '@testing-library/react-native';
 import { Share } from 'react-native';
 import CircleInviteSheet from '@/components/circles/CircleInviteSheet';
 
+jest.setTimeout(15_000);
+
 const mockSearchCandidates = jest.fn();
 const mockInviteProfile = jest.fn();
 

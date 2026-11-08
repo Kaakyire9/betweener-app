@@ -1,35 +1,81 @@
+# Version control and installed dependencies
 .git
 node_modules
 **/node_modules
+
+# Generated native projects and build output
 android
 ios
+.kotlin
 .expo
 .expo-home
 dist
+dist-export-android
 web-build
+coverage
+tmp
+*.tsbuildinfo
+*.orig.*
+
+# Package-manager and Metro caches/logs
 .npm-cache
 .npm-cache*
 **/.npm-cache
 **/.npm-cache*
+.metro-health-check*
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# Local environment, credentials, and service-account files.
+# EAS file variables provide Firebase configuration during cloud builds.
+.env*
+*.jks
+*.keystore
+credentials.json
+*.p8
+*.p12
+*.key
+*.pem
+*.mobileprovision
+google-services.json
+google-services.*.json
+GoogleService-Info*.plist
+google-play-service-account*.json
+*service-account*.json
+
+# Tests and documentation are not needed to compile the mobile app
+__tests__
+docs
+
+# Supabase deployment sources are not needed by the mobile build.
+# Keep supabase/types because the app imports its generated Database type.
+supabase/.temp
+supabase/.branches
+supabase/functions
+supabase/migrations
+supabase/tests
+supabase/baseline-backups
+supabase/migrations_legacy_20260713
+
+# Hosting/deployment bundles are deployed separately
+hostinger-files
+staging-hosting-files
+public
+.vercel
+
+# Local scripts and abandoned generated directories
+*.ps1
+app-example
 %cd%
 betweener
 
-# Supabase local artifacts not needed for mobile build
-supabase/.temp
-supabase/.branches
-
-# Hosting/deployment bundles not needed for app build
-hostinger-files
-public
-
-# Local scripts and env
-.env*
-*.ps1
-
-# Editor / AI tooling (causing Android tar permission issues)
+# Editor, CI, and AI tooling
 .vscode
 .cursor
 .github
+.agents
+.codex
 
 # OS junk
 .DS_Store

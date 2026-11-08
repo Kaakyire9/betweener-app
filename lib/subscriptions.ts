@@ -9,14 +9,30 @@ import Purchases, {
   PURCHASES_ERROR_CODE,
 } from "react-native-purchases";
 import { Platform } from "react-native";
+import { logger } from "@/lib/telemetry/logger";
+import {
+  resolveMembershipTier,
+  type RevenueCatCustomerInfoLike,
+} from "@/lib/membership/membership-resolver";
+import {
+  MEMBERSHIP_PACKAGE_IDS,
+  resolveExactMembershipCatalog,
+  resolveExactMembershipPackage,
+} from "@/lib/membership/offering-resolver";
+import {
+  resolveRevenueCatLegacyProductHints,
+  resolveRevenueCatMembershipProducts,
+} from "@/lib/membership/revenuecat-product-config";
+import { RevenueCatIdentitySession } from "@/lib/membership/revenuecat-identity-core";
+import { requireEconomyAccountOwnership } from "@/lib/economy/account-ownership";
+import { EconomyError } from "@/lib/economy/types";
+import { clearClientFinancialState } from "@/lib/economy/financial-state-reset";
 
 export type PremiumPlan = "FREE" | "SILVER" | "GOLD";
 export type PremiumPlanInterval = "monthly" | "quarterly" | "annual";
 
 type ConfigureArgs = {
   appUserID: string;
-  email?: string | null;
-  displayName?: string | null;
 };
 
 const IOS_API_KEY = process.env.EXPO_PUBLIC_REVENUECAT_APPLE_API_KEY || "";
@@ -24,7 +40,7 @@ const ANDROID_API_KEY = process.env.EXPO_PUBLIC_REVENUECAT_GOOGLE_API_KEY || "";
 
 type RevenueCatEventBridge = {
   registered: boolean;
-  subscribers: Set<CustomerInfoUpdateListener>;
+  subscribers: Set<(customerInfo: CustomerInfo | null) => void>;
   customerInfoListener: CustomerInfoUpdateListener;
 };
 
@@ -32,13 +48,18 @@ type RevenueCatGlobal = typeof globalThis & {
   __betweenerRevenueCatEventBridge?: RevenueCatEventBridge;
 };
 
+function hasBoundRevenueCatIdentity() {
+  return Boolean(revenueCatIdentity.getBoundUserId());
+}
+
 const revenueCatGlobal = globalThis as RevenueCatGlobal;
 const revenueCatEventBridge = revenueCatGlobal.__betweenerRevenueCatEventBridge ?? (() => {
-  const subscribers = new Set<CustomerInfoUpdateListener>();
+  const subscribers = new Set<(customerInfo: CustomerInfo | null) => void>();
   const bridge: RevenueCatEventBridge = {
     registered: false,
     subscribers,
     customerInfoListener: (customerInfo) => {
+      if (!hasBoundRevenueCatIdentity()) return;
       subscribers.forEach((listener) => listener(customerInfo));
     },
   };
@@ -52,31 +73,29 @@ const revenueCatLogHandler: LogHandler = (level, message) => {
   }
 };
 
-const getPlatformEnv = (sharedName: string, androidName?: string) => {
-  if (Platform.OS === "android" && androidName) {
-    return process.env[androidName] || process.env[sharedName] || "";
-  }
-  return process.env[sharedName] || "";
-};
-
 const SILVER_ENTITLEMENT = (process.env.EXPO_PUBLIC_REVENUECAT_SILVER_ENTITLEMENT || "silver").toLowerCase();
 const GOLD_ENTITLEMENT = (process.env.EXPO_PUBLIC_REVENUECAT_GOLD_ENTITLEMENT || "gold").toLowerCase();
 const SILVER_PACKAGE_HINT = (process.env.EXPO_PUBLIC_REVENUECAT_SILVER_PACKAGE || "silver").toLowerCase();
 const GOLD_PACKAGE_HINT = (process.env.EXPO_PUBLIC_REVENUECAT_GOLD_PACKAGE || "gold").toLowerCase();
-const SILVER_PRODUCT_HINT = (getPlatformEnv("EXPO_PUBLIC_REVENUECAT_SILVER_PRODUCT", "EXPO_PUBLIC_REVENUECAT_ANDROID_SILVER_PRODUCT") || "silver").toLowerCase();
-const GOLD_PRODUCT_HINT = (getPlatformEnv("EXPO_PUBLIC_REVENUECAT_GOLD_PRODUCT", "EXPO_PUBLIC_REVENUECAT_ANDROID_GOLD_PRODUCT") || "gold").toLowerCase();
+const PLATFORM_PRODUCT_IDS = resolveRevenueCatMembershipProducts(Platform.OS);
+const LEGACY_PRODUCT_HINTS = resolveRevenueCatLegacyProductHints(Platform.OS);
+const SILVER_PRODUCT_HINT = LEGACY_PRODUCT_HINTS.silver;
+const GOLD_PRODUCT_HINT = LEGACY_PRODUCT_HINTS.gold;
 const SILVER_MONTHLY_PACKAGE_HINT = (process.env.EXPO_PUBLIC_REVENUECAT_SILVER_MONTHLY_PACKAGE || "silver_monthly").toLowerCase();
 const SILVER_QUARTERLY_PACKAGE_HINT = (process.env.EXPO_PUBLIC_REVENUECAT_SILVER_QUARTERLY_PACKAGE || "silver_quarterly").toLowerCase();
 const SILVER_ANNUAL_PACKAGE_HINT = (process.env.EXPO_PUBLIC_REVENUECAT_SILVER_ANNUAL_PACKAGE || "silver_annual").toLowerCase();
 const GOLD_MONTHLY_PACKAGE_HINT = (process.env.EXPO_PUBLIC_REVENUECAT_GOLD_MONTHLY_PACKAGE || "gold_monthly").toLowerCase();
 const GOLD_QUARTERLY_PACKAGE_HINT = (process.env.EXPO_PUBLIC_REVENUECAT_GOLD_QUARTERLY_PACKAGE || "gold_quarterly").toLowerCase();
 const GOLD_ANNUAL_PACKAGE_HINT = (process.env.EXPO_PUBLIC_REVENUECAT_GOLD_ANNUAL_PACKAGE || "gold_annual").toLowerCase();
-const SILVER_MONTHLY_PRODUCT_HINT = (getPlatformEnv("EXPO_PUBLIC_REVENUECAT_SILVER_MONTHLY_PRODUCT", "EXPO_PUBLIC_REVENUECAT_ANDROID_SILVER_MONTHLY_PRODUCT") || "silver.monthly").toLowerCase();
-const SILVER_QUARTERLY_PRODUCT_HINT = (getPlatformEnv("EXPO_PUBLIC_REVENUECAT_SILVER_QUARTERLY_PRODUCT", "EXPO_PUBLIC_REVENUECAT_ANDROID_SILVER_QUARTERLY_PRODUCT") || "silver.quarterly").toLowerCase();
-const SILVER_ANNUAL_PRODUCT_HINT = (getPlatformEnv("EXPO_PUBLIC_REVENUECAT_SILVER_ANNUAL_PRODUCT", "EXPO_PUBLIC_REVENUECAT_ANDROID_SILVER_ANNUAL_PRODUCT") || "silver.annual").toLowerCase();
-const GOLD_MONTHLY_PRODUCT_HINT = (getPlatformEnv("EXPO_PUBLIC_REVENUECAT_GOLD_MONTHLY_PRODUCT", "EXPO_PUBLIC_REVENUECAT_ANDROID_GOLD_MONTHLY_PRODUCT") || "gold.monthly").toLowerCase();
-const GOLD_QUARTERLY_PRODUCT_HINT = (getPlatformEnv("EXPO_PUBLIC_REVENUECAT_GOLD_QUARTERLY_PRODUCT", "EXPO_PUBLIC_REVENUECAT_ANDROID_GOLD_QUARTERLY_PRODUCT") || "gold.quarterly").toLowerCase();
-const GOLD_ANNUAL_PRODUCT_HINT = (getPlatformEnv("EXPO_PUBLIC_REVENUECAT_GOLD_ANNUAL_PRODUCT", "EXPO_PUBLIC_REVENUECAT_ANDROID_GOLD_ANNUAL_PRODUCT") || "gold.annual").toLowerCase();
+const SILVER_MONTHLY_PRODUCT_HINT = PLATFORM_PRODUCT_IDS.silver.monthly;
+const SILVER_QUARTERLY_PRODUCT_HINT = PLATFORM_PRODUCT_IDS.silver.quarterly;
+const SILVER_ANNUAL_PRODUCT_HINT = PLATFORM_PRODUCT_IDS.silver.annual;
+const GOLD_MONTHLY_PRODUCT_HINT = PLATFORM_PRODUCT_IDS.gold.monthly;
+const GOLD_QUARTERLY_PRODUCT_HINT = PLATFORM_PRODUCT_IDS.gold.quarterly;
+const GOLD_ANNUAL_PRODUCT_HINT = PLATFORM_PRODUCT_IDS.gold.annual;
+
+const isProductionMembershipResolution = () =>
+  String(process.env.EXPO_PUBLIC_ENVIRONMENT || "").trim().toLowerCase() === "production";
 
 const INTERVAL_ORDER: Record<PremiumPlanInterval, number> = {
   monthly: 0,
@@ -116,6 +135,29 @@ const getRevenueCatApiKey = () => {
   return "";
 };
 
+const revenueCatIdentity = new RevenueCatIdentitySession(
+  {
+    isConfigured: () => Purchases.isConfigured().catch(() => false),
+    configure: (appUserId) => {
+      Purchases.configure({ apiKey: getRevenueCatApiKey(), appUserID: appUserId });
+    },
+    getAppUserId: () => Purchases.getAppUserID().catch(() => null),
+    logIn: (appUserId) => Purchases.logIn(appUserId),
+    logOut: () => Purchases.logOut(),
+  },
+  (event) => {
+    logger.info(
+      event.type === "changed" ? "revenuecat.identity.changed" : `revenuecat.identity.${event.type}`,
+      {
+        succeeded: event.succeeded,
+        reason: event.reason,
+        accountChanged:
+          Boolean(event.previousUserId) && event.previousUserId !== event.nextUserId,
+      },
+    );
+  },
+);
+
 export const isRevenueCatConfiguredForPlatform = () => Boolean(getRevenueCatApiKey()) && Platform.OS !== "web";
 
 function ensureRevenueCatEventBridge() {
@@ -126,7 +168,9 @@ function ensureRevenueCatEventBridge() {
   revenueCatEventBridge.registered = true;
 }
 
-export function subscribeToRevenueCatCustomerInfo(listener: CustomerInfoUpdateListener) {
+export function subscribeToRevenueCatCustomerInfo(
+  listener: (customerInfo: CustomerInfo | null) => void,
+) {
   if (!isRevenueCatConfiguredForPlatform()) return () => {};
 
   ensureRevenueCatEventBridge();
@@ -136,32 +180,47 @@ export function subscribeToRevenueCatCustomerInfo(listener: CustomerInfoUpdateLi
   };
 }
 
-export async function ensureRevenueCatConfigured({ appUserID, email, displayName }: ConfigureArgs) {
+const clearRevenueCatCustomerInfo = () => {
+  revenueCatEventBridge.subscribers.forEach((listener) => listener(null));
+};
+
+export function blockRevenueCatIdentityAccess() {
+  revenueCatIdentity.blockAccess();
+  clearRevenueCatCustomerInfo();
+  clearClientFinancialState();
+}
+
+export function detachRevenueCatIdentity(reason = "explicit_sign_out") {
+  revenueCatIdentity.detach(reason);
+  clearRevenueCatCustomerInfo();
+  clearClientFinancialState();
+}
+
+/**
+ * Terminal-only SDK identity reset. Normal sign-out must use detachRevenueCatIdentity so the
+ * next authenticated UUID can transition directly through Purchases.logIn().
+ */
+export async function logOutRevenueCatIdentity(reason = "deleted_account_cleanup") {
+  blockRevenueCatIdentityAccess();
+  if (!isRevenueCatConfiguredForPlatform()) return { error: null };
+  return revenueCatIdentity.clearSdkIdentity(reason);
+}
+
+export async function bindRevenueCatIdentity(appUserID: string) {
   if (!isRevenueCatConfiguredForPlatform()) return false;
 
   ensureRevenueCatEventBridge();
-
-  const configured = await Purchases.isConfigured().catch(() => false);
-  if (!configured) {
-    Purchases.configure({
-      apiKey: getRevenueCatApiKey(),
-      appUserID,
-    });
-  } else {
-    const currentUser = await Purchases.getAppUserID().catch(() => null);
-    if (currentUser && currentUser !== appUserID) {
-      await Purchases.logIn(appUserID);
-    }
-  }
-
-  if (email) {
-    await Purchases.setEmail(email).catch(() => {});
-  }
-  if (displayName) {
-    await Purchases.setDisplayName(displayName).catch(() => {});
-  }
-
+  if (revenueCatIdentity.getBoundUserId() !== appUserID) clearRevenueCatCustomerInfo();
+  await revenueCatIdentity.bind(appUserID);
   return true;
+}
+
+export function canAccessRevenueCatForUser(appUserID: string) {
+  return revenueCatIdentity.canAccessFor(appUserID);
+}
+
+export async function ensureRevenueCatConfigured({ appUserID }: ConfigureArgs) {
+  return bindRevenueCatIdentity(appUserID);
 }
 
 export async function loadRevenueCatState(args: ConfigureArgs): Promise<{
@@ -188,6 +247,11 @@ export async function loadRevenueCatState(args: ConfigureArgs): Promise<{
     Purchases.getCustomerInfo().catch(() => null),
   ]);
 
+  if (!isProductionMembershipResolution() && offerings) {
+    resolveExactMembershipCatalog(offerings, PLATFORM_PRODUCT_IDS);
+    logger.info("economy.config.loaded", { area: "membership_offering", environment: "staging" });
+  }
+
   return {
     enabled: true,
     canMakePayments,
@@ -198,20 +262,12 @@ export async function loadRevenueCatState(args: ConfigureArgs): Promise<{
 }
 
 export function derivePlanFromCustomerInfo(customerInfo: CustomerInfo | null): PremiumPlan {
-  if (!customerInfo) return "FREE";
-  const activeEntitlements = Object.keys(customerInfo.entitlements.active || {}).map((key) => key.toLowerCase());
-  const activeProducts = (customerInfo.activeSubscriptions || []).map((key) => key.toLowerCase());
-
-  const hasGold =
-    activeEntitlements.some((key) => key.includes(GOLD_ENTITLEMENT)) ||
-    activeProducts.some((key) => key.includes(GOLD_PRODUCT_HINT));
-  if (hasGold) return "GOLD";
-
-  const hasSilver =
-    activeEntitlements.some((key) => key.includes(SILVER_ENTITLEMENT)) ||
-    activeProducts.some((key) => key.includes(SILVER_PRODUCT_HINT));
-  if (hasSilver) return "SILVER";
-
+  const resolution = resolveMembershipTier(customerInfo as RevenueCatCustomerInfoLike | null, {
+    allowLegacyProductFallback: isProductionMembershipResolution(),
+    legacyProductHints: { silver: SILVER_PRODUCT_HINT, gold: GOLD_PRODUCT_HINT },
+  });
+  if (resolution.tier === "gold") return "GOLD";
+  if (resolution.tier === "silver") return "SILVER";
   return "FREE";
 }
 
@@ -238,6 +294,11 @@ function entitlementMatchesPlan(
 export function getPlanEndsAtFromCustomerInfo(customerInfo: CustomerInfo | null, plan: PremiumPlan) {
   if (!customerInfo || plan === "FREE") return null;
 
+  if (!isProductionMembershipResolution()) {
+    const entitlement = customerInfo.entitlements.active?.[plan.toLowerCase()];
+    return entitlement?.isActive === false ? null : entitlement?.expirationDate ?? null;
+  }
+
   const activeEntitlement = Object.entries(customerInfo.entitlements.active || {}).find(([entitlementId, entitlement]) => (
     entitlement.isActive && entitlementMatchesPlan(entitlementId, entitlement.productIdentifier, plan)
   ));
@@ -261,6 +322,12 @@ export function getPlanIntervalFromPackage(pkg: PurchasesPackage): PremiumPlanIn
   const subscriptionPeriod = String(pkg.product.subscriptionPeriod || "").toUpperCase();
   const packageId = (pkg.identifier || "").toLowerCase();
   const productId = (pkg.product.identifier || "").toLowerCase();
+
+  for (const tier of ["silver", "gold"] as const) {
+    for (const interval of ["monthly", "quarterly", "annual"] as const) {
+      if (packageId === MEMBERSHIP_PACKAGE_IDS[tier][interval]) return interval;
+    }
+  }
 
   if (subscriptionPeriod === "P1M" || packageId.includes("monthly") || productId.includes("monthly")) {
     return "monthly";
@@ -301,6 +368,12 @@ function packageMatchesPlanAndInterval(
 }
 
 export function getPackagesForPlan(offerings: PurchasesOfferings | null, plan: Exclude<PremiumPlan, "FREE">) {
+  if (!isProductionMembershipResolution()) {
+    const tier = plan.toLowerCase() as "silver" | "gold";
+    const catalog = resolveExactMembershipCatalog(offerings, PLATFORM_PRODUCT_IDS);
+    return (["monthly", "quarterly", "annual"] as const).map((interval) => catalog[tier][interval]);
+  }
+
   return (["monthly", "quarterly", "annual"] as const)
     .map((interval) => findPackageForPlan(offerings, plan, interval))
     .filter((pkg): pkg is PurchasesPackage => Boolean(pkg))
@@ -316,6 +389,15 @@ export function findPackageForPlan(
   plan: Exclude<PremiumPlan, "FREE">,
   interval: PremiumPlanInterval = "monthly",
 ) {
+  if (!isProductionMembershipResolution()) {
+    return resolveExactMembershipPackage(
+      offerings,
+      plan.toLowerCase() as "silver" | "gold",
+      interval,
+      PLATFORM_PRODUCT_IDS[plan.toLowerCase() as "silver" | "gold"][interval],
+    );
+  }
+
   const packages = offerings?.current?.availablePackages || [];
 
   const exactMatch = packages.find((pkg) => packageMatchesPlanAndInterval(pkg, plan, interval));
@@ -338,12 +420,18 @@ export function findPackageForPlan(
   return null;
 }
 
-export async function purchasePlanPackage(pkg: PurchasesPackage) {
-  return Purchases.purchasePackage(pkg);
+export async function purchasePlanPackage(pkg: PurchasesPackage, appUserID: string) {
+  await requireEconomyAccountOwnership(appUserID);
+  const result = await Purchases.purchasePackage(pkg);
+  await requireEconomyAccountOwnership(appUserID);
+  return { currentPlan: derivePlanFromCustomerInfo(result.customerInfo) };
 }
 
-export async function restoreRevenueCatPurchases() {
-  return Purchases.restorePurchases();
+export async function restoreRevenueCatPurchases(appUserID: string) {
+  await requireEconomyAccountOwnership(appUserID);
+  const customerInfo = await Purchases.restorePurchases();
+  await requireEconomyAccountOwnership(appUserID);
+  return { currentPlan: derivePlanFromCustomerInfo(customerInfo) };
 }
 
 export function isPurchaseCancelled(error: unknown) {
@@ -352,4 +440,27 @@ export function isPurchaseCancelled(error: unknown) {
     purchasesError?.code === PURCHASES_ERROR_CODE.PURCHASE_CANCELLED_ERROR ||
     purchasesError?.userCancelled === true
   );
+}
+
+export function getMembershipPurchaseErrorMessage(error: unknown) {
+  if (error instanceof EconomyError && error.code === "ACCOUNT_PREPARATION_REQUIRED") {
+    return error.message;
+  }
+  const purchasesError = error as PurchasesError | undefined;
+  if (
+    purchasesError?.code === PURCHASES_ERROR_CODE.RECEIPT_ALREADY_IN_USE_ERROR ||
+    purchasesError?.code === PURCHASES_ERROR_CODE.PRODUCT_ALREADY_PURCHASED_ERROR
+  ) {
+    return "This store receipt belongs to another Betweener account. Sign in to its original account or use a different store test account.";
+  }
+  if (purchasesError?.code === PURCHASES_ERROR_CODE.NETWORK_ERROR) {
+    return "Check your connection and try again.";
+  }
+  if (purchasesError?.code === PURCHASES_ERROR_CODE.PAYMENT_PENDING_ERROR) {
+    return "This purchase is pending approval in the App Store.";
+  }
+  if (purchasesError?.code === PURCHASES_ERROR_CODE.PURCHASE_NOT_ALLOWED_ERROR) {
+    return "Purchases are not allowed for this App Store account.";
+  }
+  return "Unable to complete this membership request right now.";
 }

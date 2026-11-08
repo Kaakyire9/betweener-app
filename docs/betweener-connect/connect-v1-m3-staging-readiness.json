@@ -1,0 +1,339 @@
+{
+  "schemaVersion": 2,
+  "scope": "CONNECT_M3_1_LOCAL_PRODUCT_PREPARATION_ONLY",
+  "executionAuthorized": false,
+  "providerFixtureAllocated": false,
+  "deviceValidation": "DEFERRED",
+  "target": {
+    "applicationId": "com.aduboffour.betweener.staging",
+    "scheme": "betweenerstaging",
+    "supabaseProjectRef": "xsgzxadwuxuziubglvps",
+    "streamApplicationId": "1731011",
+    "streamIdentityAttestation": "HISTORICAL_ONLY_REQUIRES_APPROVED_FRESH_VERIFICATION",
+    "devices": [
+      "Galaxy A17 5G",
+      "iPhone 15 Pro"
+    ]
+  },
+  "checkedInSwitches": {
+    "productUi": false,
+    "nativeRuntime": false,
+    "nativeSafetyOwner": false,
+    "endCallAndBlock": false,
+    "videoTransport": false,
+    "notificationsMigrationDefault": false,
+    "notificationsEdgeDefault": false,
+    "stagingAllowedAuthUsers": []
+  },
+  "newNativeDependency": false,
+  "newMigration": true,
+  "migrationParityRequired": [
+    "supabase/migrations/20261028064220_relationship_acceptance_authority.sql",
+    "supabase/migrations/20261028074908_connect_v1_foundation.sql",
+    "supabase/migrations/20261028143424_connect_m2a_revocation_cleanup.sql",
+    "supabase/migrations/20261029081013_connect_forensic_repair_1.sql",
+    "supabase/migrations/20261031035826_connect_end_block_local_foundation.sql",
+    "supabase/migrations/20260913200000_live_notification_campaigns.sql",
+    "supabase/migrations/20260914123000_push_notification_event_security.sql",
+    "supabase/migrations/20260914124000_push_notification_delivery_reservations.sql",
+    "supabase/migrations/20260914125000_push_notification_dispatch_reliability.sql",
+    "supabase/migrations/20260914126000_push_notification_atomic_rate_limits.sql",
+    "supabase/migrations/20260914127000_push_notification_expiry_lifecycle.sql",
+    "supabase/migrations/20261006150000_push_environment_provenance_hardening.sql",
+    "supabase/migrations/20261006170000_update_staging_push_eas_project_identity.sql",
+    "supabase/migrations/20261031191352_connect_m3_1_intent_and_notifications.sql"
+  ],
+  "edgeParityRequired": [
+    "connect-credentials",
+    "connect-revoke-consent",
+    "connect-provider-worker",
+    "connect-webhook",
+    "push-notifications"
+  ],
+  "serverContractsRequired": [
+    "Authenticated pair availability, current mutual-match proof or approved directional voice grant",
+    "Exact call generation, selected accepting device, terminality and idempotency",
+    "Two affirmative credential admission fences",
+    "Existing public.blocks authority and atomic call-bound block/end/outbox transaction",
+    "Strict provider accepted/verified-absence acknowledgements; unconfirmed work stays pending",
+    "End-prioritized worker scheduling, leases, durable retry, webhook authentication and reconciliation",
+    "Empty staging_test_users denies all staging admission; exactly the two approved Auth user IDs must match BOTH participants, including service-side admission",
+    "Existing directional/media-specific grant RPCs with canonical Intent discovery; accepting text never approves calls",
+    "Canonical RINGING/terminal event production in existing signed outbox; exact call creation generation and version",
+    "Canonical validation at both claim and token reservation; direct legacy delegates inaccessible",
+    "Opted-in verified staging installation contract resets on token/account registration changes"
+  ],
+  "configurationParityRequired": {
+    "databaseEnvironment": "staging",
+    "flagsRequireSeparateReview": [
+      "enabled",
+      "voice_enabled",
+      "provider_ready",
+      "pre_match_enabled",
+      "end_block_enabled",
+      "notifications_enabled",
+      "staging_test_users"
+    ],
+    "videoMustRemainDisabled": true,
+    "edgeConfigurationNamesOnly": [
+      "CONNECT_ENVIRONMENT",
+      "CONNECT_STREAM_API_KEY",
+      "CONNECT_STREAM_API_SECRET",
+      "CONNECT_STREAM_APP_ID",
+      "SUPABASE_URL",
+      "CONNECT_NOTIFICATIONS_ENABLED",
+      "PUSH_DELIVERY_MODE",
+      "PUSH_APP_ENVIRONMENT",
+      "PUSH_APPLICATION_ID",
+      "PUSH_EXPO_PROJECT_ID",
+      "PUSH_HMAC_CURRENT_KEY_ID",
+      "PUSH_HMAC_CURRENT_SECRET",
+      "PUSH_HMAC_PREVIOUS_KEY_ID",
+      "PUSH_HMAC_PREVIOUS_SECRET",
+      "PUSH_HMAC_PREVIOUS_VALID_UNTIL",
+      "SUPABASE_SECRET_KEYS",
+      "BETWEENER_SUPABASE_SECRET_KEY",
+      "BETWEENER_SUPABASE_SECRET_KEY_NAME"
+    ],
+    "providerType": "betweener_connect",
+    "providerPolicy": "Existing exact roles, pair membership, disabled capture/egress capabilities and effective settings; never copy Live grants",
+    "sharedProviderConfigurationChangesAuthorized": false,
+    "privatePushConfigurationReferences": [
+      "private.push_config",
+      "private.push_application_config",
+      "private.push_config.active_signing_secret_name"
+    ],
+    "printSecretValues": false,
+    "changeProductionPushConfiguration": false
+  },
+  "installedJsSdkVersions": {
+    "streamReactNative": "1.46.3",
+    "streamVideoClient": "1.62.0",
+    "streamWebRtc": "145.4.1",
+    "callingx": "0.11.5",
+    "expo": "57.0.30",
+    "reactNative": "0.86.3",
+    "supabaseJs": "2.118.0"
+  },
+  "retainedBuilds": {
+    "android": "https://expo.dev/accounts/kaakyire9/projects/betweener-staging/builds/a3d480e9-38f9-4e75-beb6-55038e91bc00",
+    "ios": "https://expo.dev/accounts/kaakyire9/projects/betweener-staging/builds/43e33173-cd96-41b1-8e9e-9df6834930a8",
+    "metadataPath": "tmp/connect-device-preflight-41/expo-build-metadata-reviewed.json",
+    "newLookupPerformed": false,
+    "integratedCompatibilityVerified": false,
+    "knownReviewPoint": "Retained Stream RN native build metadata 1.46.0 versus current JS SDK 1.46.3; app/runtime version alone is insufficient"
+  },
+  "nativeCompatibilityRequired": [
+    "Verify the actually installed binary and native application ID on each physical device",
+    "Verify WebRTC, Callingx, microphone permissions, SDK media-engine/factory lifecycle and audio-route API compatibility",
+    "Verify exclusive Live/Connect ownership and Connect-only refresh on the real SDK",
+    "Verify stream-before-track native disposal, leave failure/quarantine, no stale restart and independent hardware/OS evidence",
+    "Do not build/install/publish without a separately approved need",
+    "Verify existing ExpoNotifications/APNs/FCM registration and notification permission for standard push taps on each installed build",
+    "No automatic native rebuild; any module mismatch or missing permission/entitlement stops before build/install/signing approval",
+    "No new native VoIP/CallKit/Telecom services are needed for the proposed standard-notification foreground voice test"
+  ],
+  "pushReadiness": {
+    "foregroundCanonicalDiscoveryImplementedLocal": true,
+    "callIdNavigationContractsImplementedLocal": true,
+    "canonicalConnectPushProducerImplementedLocal": true,
+    "canonicalConnectPushProducerDeployed": false,
+    "hostedDeploymentStatus": "UNKNOWN_NO_HOSTED_READ",
+    "eventTypes": [
+      "connect_voice_incoming",
+      "connect_voice_cancelled",
+      "connect_voice_declined",
+      "connect_voice_missed",
+      "connect_voice_expired",
+      "connect_voice_revoked",
+      "connect_voice_blocked"
+    ],
+    "wireFields": [
+      "type",
+      "call_id",
+      "call_generation",
+      "call_version",
+      "recipient_user_id"
+    ],
+    "sensitiveContentIncluded": false,
+    "noPushAcceptance": true,
+    "canonicalClaimAndReservation": true,
+    "installationOptInContract": 1,
+    "transportBudgets": {
+      "incomingTtlSeconds": 45,
+      "statusTtlSeconds": 600,
+      "mediaRevocationBudget": false
+    },
+    "hmacReplayProvenanceAndReservationSecurityPreserved": true,
+    "backgroundAndColdStartTapNavigationImplementedLocal": true,
+    "devicePushDeliveryVerified": false,
+    "backgroundIncomingVerified": false,
+    "killedAppRingingImplemented": false,
+    "callKitTelecomRegistrationChanged": false,
+    "requiredBeforeRealDelivery": [
+      "Verified staging APNs/FCM/Expo destination tuple and notification permission on each device",
+      "Existing signed event dispatcher and Edge key/configuration parity without exposing key values",
+      "M3.1 SQL migration before Edge capability-dependent delivery; both switches default off",
+      "Current JS composition opts in each approved installation after existing push registration",
+      "Call-state maintenance/worker scheduling and safe handling of already queued stale alerts"
+    ],
+    "limitations": [
+      "External queued notifications cannot be recalled by the database",
+      "Standard notifications/taps do not establish VoIP service or reliable background/killed-app ringing",
+      "OS delivery/cold start remains unverified until separately approved physical staging tests"
+    ]
+  },
+  "preMatchReadiness": {
+    "existingGrantAuthorityReused": true,
+    "explicitGrantLaunchAndServerChecksImplementedLocal": true,
+    "intentGrantManagementUiIntegrated": true,
+    "voiceNeverGrantsVideo": true,
+    "senderOfferAndRecipientApprovalSeparate": true,
+    "textAcceptanceNeverApprovesCalling": true,
+    "explicitPreferencesRequired": true,
+    "consentWritesOfflineQueued": false,
+    "videoOfferDecisionImplementedLocal": true,
+    "videoOfferSubmissionRequiresExistingServerVideoGate": true,
+    "videoTransportEnabled": false,
+    "withdrawalUsesExistingDurableTerminalOutbox": true
+  },
+  "futureTestIdentities": {
+    "selected": false,
+    "created": false,
+    "ownerApprovalRequired": true,
+    "slots": [
+      {
+        "label": "M31_A_GALAXY",
+        "device": "Galaxy A17 5G",
+        "authUserId": null,
+        "profileId": null,
+        "initialRole": "matched voice requester; directional Intent requester"
+      },
+      {
+        "label": "M31_B_IPHONE",
+        "device": "iPhone 15 Pro",
+        "authUserId": null,
+        "profileId": null,
+        "initialRole": "voice recipient and explicit media-consent decision maker"
+      }
+    ],
+    "requirements": [
+      "Two owner-approved staging accounts and physical devices",
+      "Server-verified mutual match for the first voice test",
+      "Separate recipient-approved directional voice grant for pre-match",
+      "Negative unrelated/blocked/revoked/wrong-device cases",
+      "No reused experiment approvals or terminal call IDs",
+      "Use isolated non-admin staging accounts; no real-user calls",
+      "Resolve both Auth user and profile identities through approved read-only parity review; never invent UUIDs",
+      "Exactly these two Auth IDs in staging_test_users before any admission gate is enabled",
+      "Agree valid relationship/Intent setup and reset sequence for the isolated pair before hosted mutation",
+      "Bind a new future execution authorization to exact identities, source/manifest hash, window, calls and cleanup ownership"
+    ]
+  },
+  "futureAcceptanceCases": [
+    "Explicit outgoing start; incoming accept/decline; no pre-accept microphone capture",
+    "Real bidirectional voice, mute and supported route changes, with positive media evidence",
+    "Ordinary End and atomic End Call and Block; independent authority/provider/local statuses",
+    "Failed/hung leave, lost backend response, provider pending, duplicate taps and stale callbacks",
+    "Logout/account switch, background/interruption, simultaneous Live ownership and fresh-call-only recovery",
+    "Late missed/cancelled/expired/revoked notifications; no notification-authorized admission",
+    "Video transport and voice-to-video escalation remain disabled",
+    "Recipient explicit voice approval, independent video offer without approval, decline, expiry and withdrawal",
+    "No voice-to-video grant; sender cannot decide recipient approval or initiate in reverse without independent authority",
+    "Duplicate/late incoming/cancel/decline/missed/expired/revoked/blocked events and offline read recovery",
+    "Cold-start Auth hydration, wrong account/generation/version, token reassignment and stale deep link",
+    "Out-of-scope staging pair denied even with a verified match, preference and valid JWT",
+    "Actual OS push delivery and hardware/native behavior require direct device evidence"
+  ],
+  "stopAndRollback": [
+    "Stop on unintended native capture, wrong identity/call binding, stale media restart, ownership crossover or false termination confirmation",
+    "Keep UI/runtime source switches and all real-calling gates off until separately reviewed",
+    "If a later approved test is stopped, preserve durable cleanup obligations and scoped evidence; never reset consumed ledgers or shared policy",
+    "No release advancement from local tests or a provider control ACK",
+    "Fail closed on empty/wrong test-account scope, out-of-scope admission/delivery or malformed push identity",
+    "Disable new admission/notifications and client entry; keep durable end workers/reconciliation available",
+    "Do not remove the staging restriction or delete pending cleanup obligations to recover a test",
+    "Local shutdown, database terminality, provider ACK and remote media enforcement remain separate observations"
+  ],
+  "securityGates": {
+    "CONNECT_REMOTE_REVOCATION_BOUND": "UNVERIFIED",
+    "CONNECT_M2A_SECURITY_GATE": "BLOCKED",
+    "CONNECT_M2B_READY": "BLOCKED",
+    "STAGING_MODIFICATIONS": "NONE",
+    "PRODUCTION_MODIFICATIONS": "NONE",
+    "CONNECT_DEVICE_VALIDATION": "DEFERRED"
+  },
+  "sourceFreeze": {
+    "path": "tmp/connect-product-m3-1/source-freeze.json",
+    "sha256": "184b910ce0bc65ff0cc935f8e17f534ea69b19df099610d36354ca61ca761aba"
+  },
+  "validationEvidence": "tmp/connect-product-m3-1/final-verification.json",
+  "readiness": "READY_FOR_APPROVAL",
+  "readinessApprovalScope": "READ_ONLY_STAGING_PARITY_AND_INSTALLED_BINARY_COMPATIBILITY_REVIEW_FIRST",
+  "executionReady": false,
+  "originalReport42": {
+    "manifest": "docs/betweener-connect/connect-v1-m3-staging-readiness-report-42.json",
+    "sha256": "06993ea9d09d8305819704cd44a7802b2ccd98342779206e5e14f64cf39ec08c",
+    "report": "docs/betweener-connect/42-connect-v1-native-product-integration.md",
+    "validationEvidence": "tmp/connect-native-product-m3/final-verification.json"
+  },
+  "currentReport": "docs/betweener-connect/43-connect-v1-m3-1-product-completion.md",
+  "hostedConfigurationAttested": false,
+  "missingLocalMigrations": [],
+  "hostedMigrationStatus": "UNKNOWN_NO_HOSTED_READ",
+  "migrationRolloutRule": "Compare exact deployed signatures/history first; apply only individually reviewed missing files; never broad-push unrelated pending migrations",
+  "newEdgeEntrypoint": false,
+  "modifiedEdgeEntrypoint": "supabase/functions/push-notifications/index.ts",
+  "newSharedEdgeSource": "supabase/functions/_shared/connect-push-contract.ts",
+  "stagingRestriction": {
+    "configuration": "private.connect_config.staging_test_users",
+    "default": [],
+    "maximumAccounts": 2,
+    "identifies": "AUTH_USER_IDS_NOT_PROFILE_IDS",
+    "enforcement": "Existing private.connect_authorized plus canonical notification validation",
+    "consentChecksUnchanged": true,
+    "localFixtureEnvironmentUnchanged": true,
+    "hostedConfigured": false
+  },
+  "proposedRollout": [
+    {
+      "step": 1,
+      "approval": "READ_ONLY_PARITY_AND_BINARY_INSPECTION",
+      "actions": "Compare hosted migration/function/configuration and installed native binaries; select exact isolated account IDs; no mutations or sensors"
+    },
+    {
+      "step": 2,
+      "approval": "EXACT_MIGRATION_AND_EDGE_DEPLOYMENT",
+      "actions": "Review exact missing migration list and deploy only that list plus required Edge parity, all admission/push/client gates off"
+    },
+    {
+      "step": 3,
+      "approval": "REVIEWED_LOCAL_JS_DELIVERY_TO_EXISTING_STAGING_CLIENTS",
+      "actions": "Only after binary compatibility; new binary/install/OTA/entitlements require separate approval"
+    },
+    {
+      "step": 4,
+      "approval": "NEW_TWO_ACCOUNT_VOICE_AND_PUSH_EXECUTION",
+      "actions": "Bind concrete source/manifest hashes and identities; enable only two-account staging scope; provider policy unchanged; video off; time/call/cleanup budgets approved"
+    },
+    {
+      "step": 5,
+      "approval": "SCOPED_ROLLBACK_AND_CLEANUP",
+      "actions": "Deny new admission and push, stop local media, preserve and service owned end work, retain evidence; no security gate advancement"
+    }
+  ],
+  "validationSummary": {
+    "node": 674,
+    "nodeFiles": 38,
+    "ui": 43,
+    "auth": 20,
+    "newSql": 26,
+    "existingEndBlockSql": 22,
+    "relationshipPrerequisitesPerSqlSuite": 88,
+    "typeScript": "PASS",
+    "lintFiles": 20,
+    "denoContract": "PASS",
+    "liveAndEasIsolation": "PASS",
+    "hardwareOrProviderVerified": false
+  }
+}

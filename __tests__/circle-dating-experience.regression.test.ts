@@ -121,5 +121,5 @@ test('Circle navigation fits compact widths without horizontal scrolling', () =>
   assert.match(circleScreen, /tabButton: \{[\s\S]*flex: 1,[\s\S]*minHeight: 44/);
   assert.match(circleScreen, /accessibilityLabel="Open Circle overview"|Open Circle overview/);
   assert.match(circleScreen, /Discover people in this Circle/);
-  assert.match(circleScreen, /Open Circle Live/);
+  assert.match(circleScreen, /Open Live Gathering/);
 });

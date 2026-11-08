@@ -1,6 +1,16 @@
 import { useAuth } from "@/lib/auth-context";
 import { hasPlanAccess } from "@/lib/premium-access";
 import { supabase } from "@/lib/supabase";
+import type { MembershipTier } from "@/lib/economy/types";
+import {
+  getMembershipBenefits,
+  hasMembershipFeature,
+} from "@/lib/membership/membership-benefits";
+import {
+  MEMBERSHIP_TIER_RANK,
+  resolveEffectiveMembershipTier,
+} from "@/lib/membership/membership-resolver";
+import { logger } from "@/lib/telemetry/logger";
 import {
   PremiumPlan,
   derivePlanFromCustomerInfo,
@@ -29,6 +39,11 @@ const EMPTY_STATE: Required<PremiumStatePayload> = {
   active_boost_ends_at: null,
 };
 
+const toMembershipTier = (plan: PremiumPlan): MembershipTier => plan.toLowerCase() as MembershipTier;
+const toPremiumPlan = (tier: MembershipTier): PremiumPlan => tier.toUpperCase() as PremiumPlan;
+const productionAuthorityCompatibilityEnabled = () =>
+  String(process.env.EXPO_PUBLIC_ENVIRONMENT || "").trim().toLowerCase() === "production";
+
 function normalizePremiumState(payload: unknown) {
   const value = (payload ?? {}) as PremiumStatePayload;
   const plan: PremiumPlan = value.plan === "SILVER" || value.plan === "GOLD" ? value.plan : "FREE";
@@ -42,8 +57,8 @@ function normalizePremiumState(payload: unknown) {
   };
 }
 
-export function usePremiumState() {
-  const { user, profile } = useAuth();
+export function useMembership() {
+  const { user } = useAuth();
   const [serverState, setServerState] = useState(EMPTY_STATE);
   const [customerInfo, setCustomerInfo] = useState<CustomerInfo | null>(null);
   const [offerings, setOfferings] = useState<PurchasesOfferings | null>(null);
@@ -68,24 +83,35 @@ export function usePremiumState() {
     setError(null);
 
     try {
-      const [premiumStateRes, revenueCatState] = await Promise.all([
+      const [premiumStateResult, revenueCatResult] = await Promise.allSettled([
         supabase.rpc("rpc_get_my_premium_state"),
         loadRevenueCatState({
           appUserID: user.id,
-          email: user.email ?? null,
-          displayName: profile?.full_name ?? null,
         }),
       ]);
 
-      if (premiumStateRes.error) {
-        setError(premiumStateRes.error.message);
+      if (premiumStateResult.status === "fulfilled") {
+        if (premiumStateResult.value.error) setError(premiumStateResult.value.error.message);
+        setServerState(normalizePremiumState(premiumStateResult.value.data));
+      } else {
+        setServerState(EMPTY_STATE);
+        setError("Unable to load the membership mirror.");
       }
 
-      setServerState(normalizePremiumState(premiumStateRes.data));
-      setCustomerInfo(revenueCatState.customerInfo);
-      setOfferings(revenueCatState.offerings);
-      setBillingReady(revenueCatState.enabled);
-      setBillingSupported(revenueCatState.canMakePayments);
+      if (revenueCatResult.status === "fulfilled") {
+        const revenueCatState = revenueCatResult.value;
+        setCustomerInfo(revenueCatState.customerInfo);
+        setOfferings(revenueCatState.offerings);
+        setBillingReady(revenueCatState.enabled);
+        setBillingSupported(revenueCatState.canMakePayments);
+      } else {
+        setCustomerInfo(null);
+        setOfferings(null);
+        setBillingReady(false);
+        setBillingSupported(false);
+        setError("Membership purchasing is temporarily unavailable.");
+        logger.warn("economy.config.failed", { area: "membership_offering" });
+      }
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Unable to load premium state.");
       setServerState(EMPTY_STATE);
@@ -96,7 +122,7 @@ export function usePremiumState() {
     } finally {
       setLoading(false);
     }
-  }, [profile?.full_name, user?.email, user?.id]);
+  }, [user?.id]);
 
   useEffect(() => {
     void refresh();
@@ -105,25 +131,65 @@ export function usePremiumState() {
   useEffect(() => subscribeToRevenueCatCustomerInfo(setCustomerInfo), []);
 
   const revenueCatPlan = useMemo(() => derivePlanFromCustomerInfo(customerInfo), [customerInfo]);
+  const authoritativeRevenueCatTier = useMemo(
+    () => toMembershipTier(revenueCatPlan),
+    [revenueCatPlan],
+  );
+  const mirroredSupabaseTier = useMemo(
+    () => toMembershipTier(serverState.plan),
+    [serverState.plan],
+  );
+  const effectiveTier = useMemo<MembershipTier>(() => {
+    return resolveEffectiveMembershipTier({
+      authoritativeRevenueCatTier,
+      mirroredSupabaseTier,
+      preserveProductionMirrorPromotion: productionAuthorityCompatibilityEnabled(),
+    });
+  }, [authoritativeRevenueCatTier, mirroredSupabaseTier]);
   const currentPlan = useMemo(() => {
-    const rank = { FREE: 0, SILVER: 1, GOLD: 2 } as const;
-    return rank[serverState.plan] >= rank[revenueCatPlan] ? serverState.plan : revenueCatPlan;
-  }, [revenueCatPlan, serverState.plan]);
+    return toPremiumPlan(effectiveTier);
+  }, [effectiveTier]);
   const currentPlanEndsAt = useMemo(() => {
     if (currentPlan === "FREE") return null;
-    const rank = { FREE: 0, SILVER: 1, GOLD: 2 } as const;
     const revenueCatPlanEndsAt = getPlanEndsAtFromCustomerInfo(customerInfo, revenueCatPlan);
 
-    if (rank[revenueCatPlan] >= rank[serverState.plan]) {
+    if (!productionAuthorityCompatibilityEnabled()) return revenueCatPlanEndsAt;
+
+    if (MEMBERSHIP_TIER_RANK[authoritativeRevenueCatTier] >= MEMBERSHIP_TIER_RANK[mirroredSupabaseTier]) {
       return revenueCatPlanEndsAt ?? serverState.ends_at;
     }
 
     return serverState.ends_at ?? revenueCatPlanEndsAt;
-  }, [currentPlan, customerInfo, revenueCatPlan, serverState.ends_at, serverState.plan]);
+  }, [authoritativeRevenueCatTier, currentPlan, customerInfo, mirroredSupabaseTier, revenueCatPlan, serverState.ends_at]);
+
+  const mirrorMismatch = authoritativeRevenueCatTier !== mirroredSupabaseTier;
+  const benefits = useMemo(() => getMembershipBenefits(effectiveTier), [effectiveTier]);
+
+  useEffect(() => {
+    if (!user?.id || loading) return;
+    logger.info("membership.resolved", {
+      authoritativeRevenueCatTier,
+      mirroredSupabaseTier,
+      effectiveTier,
+      productionCompatibility: productionAuthorityCompatibilityEnabled(),
+    });
+    if (mirrorMismatch) {
+      logger.warn("membership.mirror_mismatch", {
+        authoritativeRevenueCatTier,
+        mirroredSupabaseTier,
+        effectiveTier,
+      });
+    }
+  }, [authoritativeRevenueCatTier, effectiveTier, loading, mirrorMismatch, mirroredSupabaseTier, user?.id]);
 
   return {
     loading,
     error,
+    authoritativeRevenueCatTier,
+    mirroredSupabaseTier,
+    effectiveTier,
+    mirrorMismatch,
+    benefits,
     serverPlan: serverState.plan,
     revenueCatPlan,
     currentPlan,
@@ -133,10 +199,16 @@ export function usePremiumState() {
     activeBoostEndsAt: serverState.active_boost_ends_at,
     billingReady,
     billingSupported,
-    customerInfo,
+    managementURL: customerInfo?.managementURL ?? null,
     offerings,
+    hasMembershipFeature: (feature: Parameters<typeof hasMembershipFeature>[1]) =>
+      hasMembershipFeature(effectiveTier, feature),
     hasAccess: (requiredPlan: PremiumPlan) => hasPlanAccess(currentPlan, requiredPlan),
     hasServerAccess: (requiredPlan: PremiumPlan) => hasPlanAccess(serverState.plan, requiredPlan),
     refresh,
   };
+}
+
+export function usePremiumState() {
+  return useMembership();
 }

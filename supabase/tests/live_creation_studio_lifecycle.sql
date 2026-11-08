@@ -1,6 +1,8 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
+set local role postgres;
+set search_path = public, extensions, pg_catalog;
 select plan(35);
 
 select has_column('public', 'live_sessions', 'creation_request_id', 'Studio request identity is installed');
@@ -57,6 +59,7 @@ insert into auth.users(id, email) values
   ('7a000000-0000-4000-8000-000000000001', 'studio-host@example.test'),
   ('7a000000-0000-4000-8000-000000000002', 'studio-guest@example.test');
 
+select set_config('request.jwt.claim.role', 'service_role', true);
 select set_config('app.profile_guard_write', 'on', true);
 insert into public.profiles(
   id, user_id, full_name, age, gender, profile_completed, verification_level,

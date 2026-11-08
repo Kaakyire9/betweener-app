@@ -118,6 +118,16 @@ const welcomeItem = {
   ],
 };
 
+const hostNoteItem = {
+  ...promptItem,
+  id: 'pulse-host-note',
+  type: 'host_note',
+  title: 'A note from your host',
+  body: 'Bring curiosity and kindness into this week.',
+  promptId: null,
+  priority: 100,
+};
+
 const welcomeSeatItems = welcomeItem.welcomeProfiles.map((profile, index) => ({
   ...welcomeItem,
   id: `pulse-welcome-${profile.profileId}`,
@@ -172,6 +182,75 @@ describe('CirclePulseBoard', () => {
     expect(onAnswerPrompt).toHaveBeenCalledWith('prompt-1');
   });
 
+  it('lets a member privately request the Love Seat', async () => {
+    const onRequestLoveSeat = jest.fn();
+    const onCancelLoveSeatRequest = jest.fn();
+    const { getByText } = await render(
+      <CirclePulseBoard
+        items={[promptItem]}
+        isMember
+        canManage={false}
+        onRequestLoveSeat={onRequestLoveSeat}
+        onCancelLoveSeatRequest={onCancelLoveSeatRequest}
+      />,
+    );
+
+    await fireEvent.press(getByText('Request privately'));
+    expect(onRequestLoveSeat).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets a member leave the private Love Seat queue', async () => {
+    const onRequestLoveSeat = jest.fn();
+    const onCancelLoveSeatRequest = jest.fn();
+    const { getByText } = await render(
+      <CirclePulseBoard
+        items={[promptItem]}
+        isMember
+        canManage={false}
+        loveSeatRequest={{
+          id: 'request-1',
+          circleId: 'circle-1',
+          status: 'requested',
+          note: null,
+          createdAt: '2026-10-27T10:00:00.000Z',
+          requestExpiresAt: '2026-11-03T10:00:00.000Z',
+        }}
+        onRequestLoveSeat={onRequestLoveSeat}
+        onCancelLoveSeatRequest={onCancelLoveSeatRequest}
+      />,
+    );
+
+    await fireEvent.press(getByText('Leave queue'));
+    expect(onCancelLoveSeatRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the host note as a compact opening and uses a type-aware hero heading', async () => {
+    const { getByText, queryByText } = await render(
+      <CirclePulseBoard
+        items={[hostNoteItem, promptItem]}
+        isMember
+        canManage={false}
+      />,
+    );
+
+    expect(getByText('Bring curiosity and kindness into this week.')).toBeTruthy();
+    expect(getByText('QUESTION OF THE MOMENT')).toBeTruthy();
+    expect(queryByText('RIGHT NOW')).toBeNull();
+  });
+
+  it('disables a missing source instead of exposing a broken primary action', async () => {
+    const { getByText, queryByText } = await render(
+      <CirclePulseBoard
+        items={[{ ...promptItem, sourceAvailable: false }]}
+        isMember
+        canManage={false}
+      />,
+    );
+
+    expect(getByText('This spotlight is no longer available.')).toBeTruthy();
+    expect(queryByText('Answer')).toBeNull();
+  });
+
   it('opens the selected spotlight discussion', async () => {
     const onOpenComments = jest.fn();
     const { getByText } = await render(
@@ -192,7 +271,7 @@ describe('CirclePulseBoard', () => {
     const onOpenFeaturedProfile = jest.fn();
     const onSendSignal = jest.fn();
     const onOpenComments = jest.fn();
-    const { getAllByText, getByText } = await render(
+    const { getAllByText, getByLabelText, getByText } = await render(
       <CirclePulseBoard
         items={[loveSeatItem]}
         isMember
@@ -206,10 +285,13 @@ describe('CirclePulseBoard', () => {
 
     expect(getByText('Akosua, 28')).toBeTruthy();
     expect(getAllByText('Love Seat')).toHaveLength(1);
+    expect(getByLabelText("Open Akosua's profile")).toBeTruthy();
+    await fireEvent.press(getByLabelText("Open Akosua's profile"));
     await fireEvent.press(getByText('Meet Akosua'));
-    await fireEvent.press(getByText('Start conversation'));
+    await fireEvent.press(getByText('Ask Akosua'));
     await fireEvent.press(getByText('Send Signal'));
 
+    expect(onOpenFeaturedProfile).toHaveBeenCalledTimes(2);
     expect(onOpenFeaturedProfile).toHaveBeenCalledWith('profile-2');
     expect(onOpenComments).toHaveBeenCalledWith(loveSeatItem);
     expect(onSendSignal).toHaveBeenCalledWith('profile-2', 'Akosua');
@@ -326,7 +408,7 @@ describe('CirclePulseBoard', () => {
 
     expect(getByText('Gathering image')).toBeTruthy();
     expect(getByText('First date guide')).toBeTruthy();
-    expect(getByText('Moments worth opening')).toBeTruthy();
+    expect(getByText('Watch, save and talk about it')).toBeTruthy();
     expect(queryByLabelText('Next Circle spotlight')).toBeNull();
   });
 

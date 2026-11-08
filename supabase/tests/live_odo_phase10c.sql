@@ -1,6 +1,8 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
+set local role postgres;
+set search_path = public, extensions, pg_catalog;
 select plan(92);
 
 select has_table('public','live_odo_guarded_autopilot_host_allowlist','internal Host allowlist exists');
@@ -96,6 +98,7 @@ insert into auth.users(id,email) values
   ('9a000000-0000-4000-8000-000000000001','guarded-host@example.test'),
   ('9a000000-0000-4000-8000-000000000002','guarded-a@example.test'),
   ('9a000000-0000-4000-8000-000000000003','guarded-b@example.test');
+select set_config('request.jwt.claim.role', 'service_role', true);
 select set_config('app.profile_guard_write','on',true);
 insert into public.profiles(
   id,user_id,full_name,age,gender,profile_completed,verification_level,

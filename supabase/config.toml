@@ -4,6 +4,62 @@
 # working directory name when running `supabase init`.
 project_id = "betweener-app"
 
+[functions.push-notifications]
+verify_jwt = false
+
+# Connect user endpoints retain both gateway JWT validation and handler auth.
+[functions.connect-credentials]
+verify_jwt = true
+
+[functions.connect-revoke-consent]
+verify_jwt = true
+
+# These service handlers verify their dedicated worker secret / Stream HMAC.
+[functions.connect-provider-worker]
+verify_jwt = false
+
+[functions.connect-webhook]
+verify_jwt = false
+
+[functions.revenuecat-webhook]
+# RevenueCat authenticates with the function-owned shared webhook secret.
+verify_jwt = false
+
+[functions.live-program-audio-publisher]
+# The private audio worker authenticates with x-program-audio-worker-token.
+verify_jwt = false
+
+[functions.live-broadcast-orchestrator]
+# The private compositor authenticates with x-broadcast-worker-token.
+verify_jwt = false
+
+[functions.moderation-evidence-retention]
+# Scheduled requests authenticate with x-cron-secret; the database scheduler
+# cannot mint an end-user JWT.
+verify_jwt = false
+
+[functions.profile-media-remediation-v1-2]
+# Scheduled requests authenticate with a function-owned secret.
+verify_jwt = false
+
+[functions.circle-media-lifecycle]
+# Scheduled requests authenticate with x-cron-secret; no end-user JWT exists.
+verify_jwt = false
+
+[functions.circle-media-moderation]
+# Moderation submission is always bound to the uploader's authenticated session.
+verify_jwt = true
+
+[functions.send-verification]
+# Signup phone verification is intentionally callable before a user session exists.
+# The handler rate-limits requests and ignores unverified caller-supplied user IDs.
+verify_jwt = false
+
+[functions.verify-phone]
+# Signup phone verification is intentionally callable before a user session exists.
+# The handler rate-limits requests and ignores unverified caller-supplied user IDs.
+verify_jwt = false
+
 [api]
 enabled = true
 # Port to use for the API URL.
@@ -369,6 +425,9 @@ enabled = false
 authorization_url_path = "/oauth/consent"
 # Allow dynamic client registration
 allow_dynamic_registration = false
+
+[functions.connect-native-device]
+verify_jwt = true
 
 [edge_runtime]
 enabled = true

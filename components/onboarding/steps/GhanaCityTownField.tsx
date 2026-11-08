@@ -57,6 +57,8 @@ export function GhanaCityTownField({
   const [recent, setRecent] = useState<GhanaCityTownSuggestion[]>([]);
   const [defaultLocalities, setDefaultLocalities] = useState<GhanaCityTownSuggestion[]>([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+  const [providerError, setProviderError] = useState("");
+  const [retryNonce, setRetryNonce] = useState(0);
 
   const searchExamples = useMemo(() => {
     if (!pickerVisible) return [];
@@ -119,8 +121,13 @@ export function GhanaCityTownField({
     ])
       .then(([nextRecent, nextDefaults]) => {
         if (!active) return;
+        setProviderError("");
         setRecent(nextRecent);
         setDefaultLocalities(nextDefaults);
+      })
+      .catch(() => {
+        if (!active) return;
+        setProviderError("Places are temporarily unavailable. Check your connection and try again.");
       })
       .finally(() => {
         if (!active || pickerBootRequestIdRef.current !== nextRequestId) return;
@@ -136,7 +143,7 @@ export function GhanaCityTownField({
       active = false;
       setPickerInitializing(false);
     };
-  }, [pickerVisible, region]);
+  }, [pickerVisible, region, retryNonce]);
 
   useEffect(() => {
     if (!region) {
@@ -165,20 +172,28 @@ export function GhanaCityTownField({
     requestIdRef.current = nextRequestId;
     const timeout = setTimeout(async () => {
       setLoadingSuggestions(true);
-      const nextSuggestions = await searchGhanaLocalities({
-        region,
-        query: normalizedQuery,
-        limit: 24,
-      });
-      if (requestIdRef.current !== nextRequestId) return;
-      setResults(nextSuggestions);
-      setLoadingSuggestions(false);
+      try {
+        const nextSuggestions = await searchGhanaLocalities({
+          region,
+          query: normalizedQuery,
+          limit: 24,
+        });
+        if (requestIdRef.current !== nextRequestId) return;
+        setProviderError("");
+        setResults(nextSuggestions);
+      } catch {
+        if (requestIdRef.current !== nextRequestId) return;
+        setResults([]);
+        setProviderError("Places are temporarily unavailable. Check your connection and try again.");
+      } finally {
+        if (requestIdRef.current === nextRequestId) setLoadingSuggestions(false);
+      }
     }, 220);
 
     return () => {
       clearTimeout(timeout);
     };
-  }, [region, search]);
+  }, [region, retryNonce, search]);
 
   const handleSelect = async (selection: GhanaCityTownSuggestion | null) => {
     onSelectLocality(
@@ -300,6 +315,21 @@ export function GhanaCityTownField({
         </Text>
         {loadingSuggestions ? (
           <ActivityIndicator size="small" color={styles.tokens.accent.color} />
+        ) : null}
+        {providerError ? (
+          <View>
+            <Text accessibilityRole="alert" style={styles.errorText}>{providerError}</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Retry loading cities and towns"
+              onPress={() => {
+                setProviderError("");
+                setRetryNonce((value) => value + 1);
+              }}
+            >
+              <Text style={styles.changePhotoText}>Retry places</Text>
+            </Pressable>
+          </View>
         ) : null}
       </View>
 

@@ -1,21 +1,27 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import CirclePulseMediaComposer from './CirclePulseMediaComposer';
+import CircleMediaSubmissionQueue from './CircleMediaSubmissionQueue';
+import CircleLoveSeatDurationPicker from './CircleLoveSeatDurationPicker';
 import {
   archiveCirclePulseItem,
   cancelCircleLoveSeatNomination,
   createCirclePulseEditorialMedia,
   endCircleLoveSeat,
   featureCirclePulseItem,
+  fetchCircleLoveSeatRequestsForHost,
   fetchCircleLoveSeatsForHost,
   nominateCircleLoveSeat,
   reorderCirclePulseItems,
+  selectCircleLoveSeatRequest,
 } from '@/lib/circles/pulse/circle-pulse-service';
 import { logger } from '@/lib/telemetry/logger';
 import type {
   CircleLoveSeatCandidate,
+  CircleLoveSeatDurationHours,
+  CircleLoveSeatHostRequest,
   CircleLoveSeatHostItem,
   CirclePulseGatheringCandidate,
   CirclePulseItem,
@@ -23,6 +29,16 @@ import type {
   CirclePulsePromptCandidate,
 } from '@/lib/circles/pulse/circle-pulse-types';
 import { useCirclePulsePalette, type CirclePulsePalette } from '@/lib/circles/pulse/circle-pulse-theme';
+import {
+  CIRCLE_PULSE_LANES,
+  CIRCLE_PULSE_VISIBLE_ITEM_LIMIT,
+  promoteCirclePulseHero,
+  reorderCirclePulseLane,
+  resolveCirclePulsePresentation,
+  sortCirclePulseItems,
+  type CirclePulseLaneKey,
+} from '@/lib/circles/pulse/circle-pulse-presentation';
+import { useCircleLoveSeatInvalidation } from '@/lib/circles/pulse/use-circle-love-seat-invalidation';
 
 type Props = {
   visible: boolean;
@@ -60,7 +76,10 @@ export default function CirclePulseManagerSheet({
   const [loveSeatTarget, setLoveSeatTarget] = useState<CircleLoveSeatCandidate | null>(null);
   const [loveSeatQuote, setLoveSeatQuote] = useState('');
   const [loveSeatHostItems, setLoveSeatHostItems] = useState<CircleLoveSeatHostItem[]>([]);
+  const [loveSeatRequests, setLoveSeatRequests] = useState<CircleLoveSeatHostRequest[]>([]);
+  const [loveSeatDurationHours, setLoveSeatDurationHours] = useState<CircleLoveSeatDurationHours>(24);
   const [mediaComposerOpen, setMediaComposerOpen] = useState(false);
+  const [mediaUploadProgress, setMediaUploadProgress] = useState<number | null>(null);
   const featured = useMemo(
     () => ({
       hostNote: featuredItems.some((item) => item.type === 'host_note'),
@@ -74,32 +93,111 @@ export default function CirclePulseManagerSheet({
   const pendingLoveSeat = loveSeatHostItems.find((item) => item.status === 'pending_user_approval') ?? null;
   const activeLoveSeat = loveSeatHostItems.find((item) => item.status === 'active') ?? null;
   const hiddenActiveLoveSeat = activeLoveSeat && !featured.loveSeatActive ? activeLoveSeat : null;
+  const activeEditorialCount = featuredItems.filter((item) => item.type !== 'welcome').length;
+  const hasEditorialCapacity = activeEditorialCount < CIRCLE_PULSE_VISIBLE_ITEM_LIMIT;
+  const orderedFeaturedItems = useMemo(() => sortCirclePulseItems(featuredItems), [featuredItems]);
+  const featuredHeroId = useMemo(
+    () => resolveCirclePulsePresentation(orderedFeaturedItems).heroItem?.id ?? null,
+    [orderedFeaturedItems],
+  );
+  const activeLanes = useMemo(() => {
+    const definitions: { key: CirclePulseLaneKey; title: string }[] = [
+      { key: 'host_note', title: 'Opening note' },
+      ...CIRCLE_PULSE_LANES.map((lane) => ({ key: lane.key, title: lane.title })),
+      { key: 'welcome', title: 'New members' },
+    ];
+    return definitions.flatMap((definition) => {
+      const items = orderedFeaturedItems.filter((item) => item.type === definition.key);
+      return items.length > 0 ? [{ ...definition, items }] : [];
+    });
+  }, [orderedFeaturedItems]);
+
+  const loadLoveSeatManagement = useCallback(async () => {
+    if (!circleId || !actorProfileId) return;
+    const [hostItems, requests] = await Promise.all([
+      fetchCircleLoveSeatsForHost(circleId, actorProfileId),
+      fetchCircleLoveSeatRequestsForHost(circleId, actorProfileId),
+    ]);
+    setLoveSeatHostItems(hostItems);
+    setLoveSeatRequests(requests);
+  }, [actorProfileId, circleId]);
 
   useEffect(() => {
     if (!visible || !circleId || !actorProfileId) return;
     let cancelled = false;
-    void fetchCircleLoveSeatsForHost(circleId, actorProfileId)
-      .then((items) => {
-        if (!cancelled) setLoveSeatHostItems(items);
+    void Promise.all([
+      fetchCircleLoveSeatsForHost(circleId, actorProfileId),
+      fetchCircleLoveSeatRequestsForHost(circleId, actorProfileId),
+    ])
+      .then(([hostItems, requests]) => {
+        if (cancelled) return;
+        setLoveSeatHostItems(hostItems);
+        setLoveSeatRequests(requests);
       })
       .catch((error) => {
-        logger.warn('[circles] love_seat_host_items_load_failed', {
+        logger.warn('[circles] love_seat_management_load_failed', {
           circleId,
           actorProfileId,
           error: error instanceof Error ? error.message : String(error),
         });
-        if (!cancelled) setLoveSeatHostItems([]);
+        if (!cancelled) {
+          setLoveSeatHostItems([]);
+          setLoveSeatRequests([]);
+        }
       });
     return () => {
       cancelled = true;
     };
   }, [actorProfileId, circleId, visible]);
 
+  useCircleLoveSeatInvalidation({
+    circleId,
+    enabled: visible && !!actorProfileId,
+    reload: loadLoveSeatManagement,
+  });
+
+  const selectQueuedLoveSeat = async (request: CircleLoveSeatHostRequest) => {
+    if (!actorProfileId || savingKey) return;
+    if (featured.loveSeatActive || activeLoveSeat || pendingLoveSeat) {
+      Alert.alert('Love Seat unavailable', 'Finish the current Love Seat or invitation before selecting the next member.');
+      return;
+    }
+    if (!hasEditorialCapacity) {
+      Alert.alert('Circle Pulse is full', `Archive a spotlight before selecting a Love Seat. Pulse supports up to ${CIRCLE_PULSE_VISIBLE_ITEM_LIMIT} active editorial items.`);
+      return;
+    }
+
+    setSavingKey(`love-seat-request:${request.id}`);
+    try {
+      await selectCircleLoveSeatRequest(request.id, actorProfileId, loveSeatDurationHours);
+      await loadLoveSeatManagement();
+      Alert.alert(
+        'Private invitation sent',
+        `${request.featuredProfileName} has 24 hours to accept the ${loveSeatDurationHours}-hour Love Seat. Nothing appears publicly until they accept.`,
+      );
+    } catch (error) {
+      logger.warn('[circles] love_seat_request_selection_failed', {
+        circleId,
+        actorProfileId,
+        requestId: request.id,
+        durationHours: loveSeatDurationHours,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      Alert.alert('Love Seat', error instanceof Error ? error.message : 'Could not select this request right now.');
+    } finally {
+      setSavingKey(null);
+    }
+  };
+
   const nominateLoveSeat = async () => {
     if (!circleId || !actorProfileId || !loveSeatTarget || savingKey) return;
+    if (!hasEditorialCapacity) {
+      Alert.alert('Circle Pulse is full', `Archive a spotlight before inviting a Love Seat. Pulse supports up to ${CIRCLE_PULSE_VISIBLE_ITEM_LIMIT} active editorial items.`);
+      return;
+    }
     setSavingKey(`love-seat:${loveSeatTarget.profileId}`);
     try {
-      await nominateCircleLoveSeat(circleId, actorProfileId, loveSeatTarget.profileId, loveSeatQuote);
+      await nominateCircleLoveSeat(circleId, actorProfileId, loveSeatTarget.profileId, loveSeatQuote, null, loveSeatDurationHours);
       Alert.alert('Love Seat invitation sent', `${loveSeatTarget.name} must accept before appearing on Circle Pulse.`);
       setLoveSeatTarget(null);
       setLoveSeatQuote('');
@@ -178,11 +276,7 @@ export default function CirclePulseManagerSheet({
 
   const moveSpotlight = async (itemId: string, direction: -1 | 1) => {
     if (!circleId || !actorProfileId || savingKey) return;
-    const currentIndex = featuredItems.findIndex((item) => item.id === itemId);
-    const targetIndex = currentIndex + direction;
-    if (currentIndex < 0 || targetIndex < 0 || targetIndex >= featuredItems.length) return;
-    const reordered = featuredItems.map((item) => item.id);
-    [reordered[currentIndex], reordered[targetIndex]] = [reordered[targetIndex], reordered[currentIndex]];
+    const reordered = reorderCirclePulseLane(featuredItems, itemId, direction);
     setSavingKey(`reorder:${itemId}`);
     try {
       await reorderCirclePulseItems(circleId, actorProfileId, reordered);
@@ -194,8 +288,25 @@ export default function CirclePulseManagerSheet({
     }
   };
 
+  const featureAsHero = async (itemId: string) => {
+    if (!circleId || !actorProfileId || savingKey || itemId === featuredHeroId) return;
+    setSavingKey(`hero:${itemId}`);
+    try {
+      await reorderCirclePulseItems(circleId, actorProfileId, promoteCirclePulseHero(featuredItems, itemId));
+      await onFeatured();
+    } catch (error) {
+      Alert.alert('Circle Pulse', error instanceof Error ? error.message : 'Could not feature this spotlight right now.');
+    } finally {
+      setSavingKey(null);
+    }
+  };
+
   const feature = async (key: string, callback: () => ReturnType<typeof featureCirclePulseItem>) => {
     if (!circleId || !actorProfileId || savingKey) return;
+    if (!hasEditorialCapacity) {
+      Alert.alert('Circle Pulse is full', `Archive a spotlight before adding another. Pulse supports up to ${CIRCLE_PULSE_VISIBLE_ITEM_LIMIT} active editorial items.`);
+      return;
+    }
     setSavingKey(key);
     try {
       await callback();
@@ -211,16 +322,29 @@ export default function CirclePulseManagerSheet({
 
   const publishEditorialMedia = async (input: Parameters<typeof createCirclePulseEditorialMedia>[2]) => {
     if (!circleId || !actorProfileId || savingKey) return;
+    if (!hasEditorialCapacity) {
+      Alert.alert('Circle Pulse is full', `Archive a spotlight before adding another. Pulse supports up to ${CIRCLE_PULSE_VISIBLE_ITEM_LIMIT} active editorial items.`);
+      return;
+    }
     setSavingKey('editorial-media');
+    setMediaUploadProgress(0);
     try {
-      await createCirclePulseEditorialMedia(circleId, actorProfileId, input);
+      const result = await createCirclePulseEditorialMedia(circleId, actorProfileId, input, {
+        onUploadProgress: setMediaUploadProgress,
+      });
       await onFeatured();
-      Alert.alert('Added to Circle Pulse', 'Members will now see this Circle Media spotlight.');
+      Alert.alert(
+        result?.state === 'published' ? 'Added to Circle Pulse' : 'Media is awaiting approval',
+        result?.state === 'published'
+          ? 'Members will now see this Circle Media spotlight.'
+          : 'It will appear after safety review and every named person approves.',
+      );
       setMediaComposerOpen(false);
       onClose();
     } catch (error) {
       Alert.alert('Circle Media', error instanceof Error ? error.message : 'Could not publish this Circle Media right now.');
     } finally {
+      setMediaUploadProgress(null);
       setSavingKey(null);
     }
   };
@@ -275,40 +399,66 @@ export default function CirclePulseManagerSheet({
             <>
               <View style={styles.sectionHeader}>
                 <Text style={styles.sectionTitle}>Current Pulse</Text>
-                <Text style={styles.subtitle}>Keep the board timely. Reorder active spotlights or archive what has passed.</Text>
+                <Text style={styles.subtitle}>Pin one featured story, then arrange items inside the lane members will see.</Text>
               </View>
-              {featuredItems.map((item, index) => (
-                <View key={`active:${item.id}`} style={styles.activeSpotlightRow}>
-                  <View style={styles.activeSpotlightCopy}>
-                    <Text style={styles.activeSpotlightLabel}>{item.type.replace('_', ' ')}</Text>
-                    <Text style={styles.activeSpotlightTitle} numberOfLines={1}>{item.title || 'Circle spotlight'}</Text>
-                  </View>
-                  <Pressable
-                    accessibilityLabel="Move spotlight up"
-                    style={styles.spotlightIconButton}
-                    disabled={index === 0 || !!savingKey}
-                    onPress={() => void moveSpotlight(item.id, -1)}
-                  >
-                    <MaterialCommunityIcons name="arrow-up" size={16} color={index === 0 ? palette.outline : palette.textMuted} />
-                  </Pressable>
-                  <Pressable
-                    accessibilityLabel="Move spotlight down"
-                    style={styles.spotlightIconButton}
-                    disabled={index === featuredItems.length - 1 || !!savingKey}
-                    onPress={() => void moveSpotlight(item.id, 1)}
-                  >
-                    <MaterialCommunityIcons name="arrow-down" size={16} color={index === featuredItems.length - 1 ? palette.outline : palette.textMuted} />
-                  </Pressable>
-                  {item.type !== 'love_seat' ? (
-                    <Pressable
-                      accessibilityLabel="Archive spotlight"
-                      style={styles.spotlightIconButton}
-                      disabled={!!savingKey}
-                      onPress={() => archiveSpotlight(item)}
-                    >
-                      <MaterialCommunityIcons name="archive-outline" size={16} color={palette.danger} />
-                    </Pressable>
-                  ) : null}
+              {activeLanes.map((lane) => (
+                <View key={`lane:${lane.key}`} style={styles.activeLane}>
+                  <Text style={styles.activeLaneTitle}>{lane.title}</Text>
+                  {lane.items.map((item, laneIndex) => {
+                    const canFeature = item.type !== 'host_note' && item.type !== 'welcome';
+                    const isFeaturedHero = item.id === featuredHeroId;
+                    return (
+                      <View key={`active:${item.id}`} style={styles.activeSpotlightRow}>
+                        <View style={styles.activeSpotlightCopy}>
+                          <View style={styles.activeSpotlightMeta}>
+                            <Text style={styles.activeSpotlightLabel}>{item.type.replace('_', ' ')}</Text>
+                            {isFeaturedHero ? <Text style={styles.featuredHeroLabel}>FEATURED</Text> : null}
+                          </View>
+                          <Text style={styles.activeSpotlightTitle} numberOfLines={1}>{item.title || 'Circle spotlight'}</Text>
+                        </View>
+                        {canFeature ? (
+                          <Pressable
+                            accessibilityLabel={isFeaturedHero ? 'Featured spotlight' : `Feature ${item.title || 'spotlight'} first`}
+                            style={[styles.spotlightIconButton, isFeaturedHero && styles.spotlightIconButtonActive]}
+                            disabled={isFeaturedHero || !!savingKey}
+                            onPress={() => void featureAsHero(item.id)}
+                          >
+                            <MaterialCommunityIcons name={isFeaturedHero ? 'star' : 'star-outline'} size={16} color={isFeaturedHero ? palette.teal : palette.textMuted} />
+                          </Pressable>
+                        ) : null}
+                        {lane.items.length > 1 ? (
+                          <>
+                            <Pressable
+                              accessibilityLabel={`Move ${item.title || 'spotlight'} up in ${lane.title}`}
+                              style={styles.spotlightIconButton}
+                              disabled={laneIndex === 0 || !!savingKey}
+                              onPress={() => void moveSpotlight(item.id, -1)}
+                            >
+                              <MaterialCommunityIcons name="arrow-up" size={16} color={laneIndex === 0 ? palette.outline : palette.textMuted} />
+                            </Pressable>
+                            <Pressable
+                              accessibilityLabel={`Move ${item.title || 'spotlight'} down in ${lane.title}`}
+                              style={styles.spotlightIconButton}
+                              disabled={laneIndex === lane.items.length - 1 || !!savingKey}
+                              onPress={() => void moveSpotlight(item.id, 1)}
+                            >
+                              <MaterialCommunityIcons name="arrow-down" size={16} color={laneIndex === lane.items.length - 1 ? palette.outline : palette.textMuted} />
+                            </Pressable>
+                          </>
+                        ) : null}
+                        {item.type !== 'love_seat' ? (
+                          <Pressable
+                            accessibilityLabel={`Archive ${item.title || 'spotlight'}`}
+                            style={styles.spotlightIconButton}
+                            disabled={!!savingKey}
+                            onPress={() => archiveSpotlight(item)}
+                          >
+                            <MaterialCommunityIcons name="archive-outline" size={16} color={palette.danger} />
+                          </Pressable>
+                        ) : null}
+                      </View>
+                    );
+                  })}
                 </View>
               ))}
               <View style={styles.divider} />
@@ -318,6 +468,42 @@ export default function CirclePulseManagerSheet({
             <Text style={styles.sectionTitle}>Love Seat</Text>
             <Text style={styles.subtitle}>Nominate one consenting member for a thoughtful Circle spotlight.</Text>
           </View>
+          {loveSeatRequests.length > 0 ? (
+            <View style={styles.requestQueue}>
+              <View style={styles.requestQueueHeader}>
+                <View style={styles.requestQueueTitleRow}>
+                  <MaterialCommunityIcons name="shield-lock-outline" size={16} color={palette.purple} />
+                  <Text style={styles.requestQueueTitle}>Private request queue</Text>
+                </View>
+                <View style={styles.requestCountBadge}>
+                  <Text style={styles.requestCountText}>{loveSeatRequests.length}</Text>
+                </View>
+              </View>
+              <Text style={styles.subtitle}>Only Circle hosts can see these requests. Selecting a member asks for consent again.</Text>
+              <Text style={styles.durationLabel}>Feature length</Text>
+              <CircleLoveSeatDurationPicker value={loveSeatDurationHours} onChange={setLoveSeatDurationHours} disabled={!!savingKey} />
+              {loveSeatRequests.map((request) => (
+                <View key={request.id} style={styles.requestRow}>
+                  <View style={styles.requestAvatar}>
+                    <MaterialCommunityIcons name="account-heart-outline" size={20} color={palette.purple} />
+                  </View>
+                  <View style={styles.requestCopy}>
+                    <Text style={styles.requestName}>{request.featuredProfileName}</Text>
+                    <Text style={styles.requestNote} numberOfLines={2}>{request.note || 'Ready to be considered for the Love Seat.'}</Text>
+                    <Text style={styles.requestExpiry}>Private request · expires in 7 days</Text>
+                  </View>
+                  <TouchableOpacity
+                    accessibilityLabel={`Select ${request.featuredProfileName} for Love Seat`}
+                    style={styles.selectRequestButton}
+                    disabled={!!savingKey}
+                    onPress={() => void selectQueuedLoveSeat(request)}
+                  >
+                    <Text style={styles.selectRequestText}>{savingKey === `love-seat-request:${request.id}` ? 'Sending' : 'Select & ask'}</Text>
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </View>
+          ) : null}
           {featured.loveSeatActive ? (
             <Text style={styles.activeNote}>A Love Seat feature is already active in this Circle.</Text>
           ) : hiddenActiveLoveSeat ? (
@@ -342,6 +528,8 @@ export default function CirclePulseManagerSheet({
             <View style={styles.loveSeatComposer}>
               <Text style={styles.composerLabel}>Invite {loveSeatTarget.name}</Text>
               <Text style={styles.subtitle}>Add an optional quote for the spotlight. They choose whether to accept.</Text>
+              <Text style={styles.durationLabel}>Feature length</Text>
+              <CircleLoveSeatDurationPicker value={loveSeatDurationHours} onChange={setLoveSeatDurationHours} disabled={!!savingKey} />
               <TextInput
                 value={loveSeatQuote}
                 onChangeText={setLoveSeatQuote}
@@ -426,9 +614,14 @@ export default function CirclePulseManagerSheet({
             <Text style={styles.sectionTitle}>Circle Media</Text>
             <Text style={styles.subtitle}>Share host-curated images, short guides, and Circle promotions with members.</Text>
           </View>
+          {actorProfileId ? (
+            <CircleMediaSubmissionQueue circleId={circleId} actorProfileId={actorProfileId} onChanged={onFeatured} />
+          ) : null}
           {mediaComposerOpen ? (
             <CirclePulseMediaComposer
               saving={savingKey === 'editorial-media'}
+              uploadProgress={mediaUploadProgress}
+              subjectCandidates={loveSeatCandidates}
               onCancel={() => setMediaComposerOpen(false)}
               onPublish={publishEditorialMedia}
             />
@@ -500,7 +693,12 @@ function CandidateRow({
         <Text style={styles.rowTitle} numberOfLines={1}>{title}</Text>
         <Text style={styles.rowBody} numberOfLines={2}>{body}</Text>
       </View>
-      <TouchableOpacity style={[styles.addButton, featured && styles.addButtonFeatured]} disabled={saving || featured} onPress={onPress}>
+      <TouchableOpacity
+        accessibilityLabel={featured ? `${title} is already featured` : `Feature ${title}`}
+        style={[styles.addButton, featured && styles.addButtonFeatured]}
+        disabled={saving || featured}
+        onPress={onPress}
+      >
         <MaterialCommunityIcons name={saving ? 'loading' : featured ? 'check' : 'plus'} size={18} color={featured ? palette.teal : palette.tealInk} />
       </TouchableOpacity>
     </View>
@@ -584,14 +782,39 @@ const createStyles = (bottomInset: number, palette: CirclePulsePalette) =>
     sectionTitle: { color: palette.text, fontSize: 15, fontWeight: '900' },
     composerLabel: { color: palette.purple, fontSize: 11, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 1 },
     activeNote: { color: palette.teal, fontSize: 12, lineHeight: 17, paddingVertical: 10 },
+    activeLane: { gap: 2, paddingTop: 9 },
+    activeLaneTitle: { color: palette.textMuted, fontSize: 10, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 1.1 },
     activeSpotlightRow: { minHeight: 52, flexDirection: 'row', alignItems: 'center', gap: 5, borderBottomWidth: 1, borderBottomColor: palette.outlineSoft },
     activeSpotlightCopy: { flex: 1, gap: 2 },
+    activeSpotlightMeta: { flexDirection: 'row', alignItems: 'center', gap: 7 },
     activeSpotlightLabel: { color: palette.purple, fontSize: 9, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 1 },
+    featuredHeroLabel: { color: palette.teal, fontSize: 8, fontWeight: '900', letterSpacing: 0.9 },
     activeSpotlightTitle: { color: palette.text, fontSize: 12, fontWeight: '800' },
     spotlightIconButton: { width: 30, height: 30, alignItems: 'center', justifyContent: 'center', borderRadius: 15, backgroundColor: palette.surfaceMuted },
+    spotlightIconButtonActive: { borderWidth: 1, borderColor: palette.tealBorder, backgroundColor: palette.tealSoft },
     loveSeatComposer: { gap: 9, paddingVertical: 10 },
     pendingLoveSeat: { gap: 6, paddingVertical: 10 },
     pendingLoveSeatName: { color: palette.text, fontSize: 14, fontWeight: '900' },
+    requestQueue: { gap: 9, marginTop: 8, marginBottom: 7, padding: 12, borderRadius: 18, borderWidth: 1, borderColor: palette.purpleBorder, backgroundColor: palette.purpleSoft },
+    requestQueueHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+    requestQueueTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+    requestQueueTitle: { color: palette.text, fontSize: 13, fontWeight: '900' },
+    requestCountBadge: { minWidth: 25, height: 25, paddingHorizontal: 7, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.purple },
+    requestCountText: { color: palette.tealInk, fontSize: 11, fontWeight: '900' },
+    durationLabel: { marginTop: 2, color: palette.textMuted, fontSize: 9, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 1.1 },
+    durationOptions: { flexDirection: 'row', gap: 7 },
+    durationOption: { minWidth: 54, minHeight: 32, alignItems: 'center', justifyContent: 'center', borderRadius: 16, borderWidth: 1, borderColor: palette.outline, backgroundColor: palette.surfaceMuted },
+    durationOptionSelected: { borderColor: palette.tealBorder, backgroundColor: palette.tealStrong },
+    durationOptionText: { color: palette.textMuted, fontSize: 11, fontWeight: '900' },
+    durationOptionTextSelected: { color: palette.tealInk },
+    requestRow: { flexDirection: 'row', alignItems: 'center', gap: 9, paddingTop: 9, borderTopWidth: 1, borderTopColor: palette.outlineSoft },
+    requestAvatar: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.surfaceMuted },
+    requestCopy: { flex: 1, gap: 2 },
+    requestName: { color: palette.text, fontSize: 12, fontWeight: '900' },
+    requestNote: { color: palette.textSoft, fontSize: 10, lineHeight: 14 },
+    requestExpiry: { color: palette.textMuted, fontSize: 9, fontWeight: '700' },
+    selectRequestButton: { minHeight: 34, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 11, borderRadius: 17, backgroundColor: palette.tealStrong },
+    selectRequestText: { color: palette.tealInk, fontSize: 10, fontWeight: '900' },
     cancelPendingButton: { alignSelf: 'flex-start', minHeight: 34, justifyContent: 'center', paddingHorizontal: 12, marginTop: 2, borderRadius: 17, borderWidth: 1, borderColor: 'rgba(232,138,149,0.38)' },
     cancelPendingText: { color: palette.danger, fontSize: 11, fontWeight: '900' },
     quoteInput: { minHeight: 80, padding: 11, borderRadius: 13, borderWidth: 1, borderColor: palette.outline, color: palette.text, fontSize: 12, lineHeight: 18, textAlignVertical: 'top' },

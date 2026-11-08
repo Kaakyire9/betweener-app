@@ -1,5 +1,12 @@
 import { supabase } from "@/lib/supabase";
 
+type GuardActionResult = {
+  ok?: boolean;
+  code?: string;
+  message?: unknown;
+  restricted_until?: string | null;
+};
+
 export const ChatThreadActionsService = {
   markMessageRead(args: { messageId: string; currentUserId: string }) {
     const { messageId } = args;
@@ -30,13 +37,14 @@ export const ChatThreadActionsService = {
         messageType: 'text',
       },
     });
-    const result = (data ?? {}) as { ok?: boolean; code?: string; message?: unknown };
+    const result = (data ?? {}) as GuardActionResult;
     if (error) return { data: null, error };
     if (result.ok === false) {
       return {
         data: null,
         error: Object.assign(new Error(result.code ?? 'MESSAGE_CONTENT_NOT_ALLOWED'), {
           code: result.code ?? 'MESSAGE_CONTENT_NOT_ALLOWED',
+          restrictedUntil: result.restricted_until ?? null,
         }),
       };
     }

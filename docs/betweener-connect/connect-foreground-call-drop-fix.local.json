@@ -1,0 +1,94 @@
+{
+  "scope": "LOCAL_CONNECT_FOREGROUND_CALL_DROP_REPAIR",
+  "preparedAt": "2026-11-06T07:50:56.448064+00:00",
+  "observations": [
+    {
+      "call": "c-2b0f6b39f06902ed",
+      "platform": "android",
+      "sequence": 54,
+      "event": "native_call_activation",
+      "status": "failed",
+      "reason": "registration_missing",
+      "microphoneSetupCompleted": false
+    },
+    {
+      "call": "c-0c4f6a166e474a6a",
+      "platform": "ios",
+      "priorRecoveryElapsedMs": 58996,
+      "nextInvitationFailureElapsedMs": 89835,
+      "differenceMs": 30839,
+      "reproducedCause": "A previous call recovery clock survives reset and cancels the next ringing invitation."
+    }
+  ],
+  "repair": {
+    "missingAndroidRegistration": "Only a current joined foreground owner may continue with explicit foreground_only status. No new registration or native activation is claimed.",
+    "backgroundAudio": "Denied for foreground_only; backgrounding retires capture even during a native Answer startup permit.",
+    "recoveryClock": "Cleared at hang-up, reset, dismissal and logout. Recovery watchdog applies only to connecting/active/reconnecting phases and fences late completion by generation.",
+    "activeE2eeFailurePathUnchanged": true,
+    "publisherFirstTeardownUnchanged": true
+  },
+  "files": [
+    {
+      "path": "features/connect/media/native-call-activation.ts",
+      "beforeSha256": "7e42a80966990830c887476dd8353887d487dfeef51a5be33697eda3f0d38893",
+      "afterSha256": "7b8d83cd22d64417a8ab50e475ac073fe5bca77360265a0e9666eb86271ba6ed"
+    },
+    {
+      "path": "features/connect/media/native-stream-sdk.ts",
+      "beforeSha256": "2f579d8cdb3d67908d15106bf601009f0dacfb549026d0c9001e8de0c9ab1328",
+      "afterSha256": "17742ede7c6e05a82ce3c8fd6f4ae9625bf63e79126db6508a407ab19c5fc009"
+    },
+    {
+      "path": "features/connect/media/native-owner-types.ts",
+      "beforeSha256": "25e96bbabee26675eaec90aafccbf0209672f1fe93c379556cb9def34863f59c",
+      "afterSha256": "d2fc21c240b3c83a25b26ee03457da0e740c7afb9b3475304def53e5225d65cf"
+    },
+    {
+      "path": "features/connect/media/connect-native-owner.ts",
+      "beforeSha256": "7ecb3214e90daa8186ea2640d692c888120f2096b64e8a1ed91c9ce15620860f",
+      "afterSha256": "0435ecaffa0074408fb473af2b70ac43c61bbeaa535f332e55dbfd9bbb0baba0"
+    },
+    {
+      "path": "features/connect/voice/voice-controller.ts",
+      "beforeSha256": "dab0004b2b3ea786eeab74901d014eefc41d273c7f20089299e6802ed881b18a",
+      "afterSha256": "b2d6c6f2a37cc58444d1359ddcec597007acb63a5edce0dd867189017156169c"
+    },
+    {
+      "path": "features/connect/diagnostics/connect-terminal-logger.ts",
+      "beforeSha256": "fb2861741bb582bdf6d5b61573cdb1e812c36a1235d6636fe0a8833eb8d977a9",
+      "afterSha256": "7cf885dbc42586c7b546d50d646c51dac10a6483ed141f7c08ceb4ea073a3c71"
+    },
+    {
+      "path": "__tests__/connect-native-activation.regression.test.cjs",
+      "beforeSha256": "ab97ca1508e19ea686034a0b0daf6461808778a0d25808d539f2837f154294b0",
+      "afterSha256": "5ec8d2d30d20aa0780918add9bfc173e0c9308d32a283c136dff10f6e3cc8f20"
+    },
+    {
+      "path": "__tests__/connect-terminal-logging.regression.test.cjs",
+      "beforeSha256": "5d9120b307eef0a5fb9747c2f04e8d0a5d3e9c3c515c5db4de024afb14a790ff",
+      "afterSha256": "6436fc9815c4787ce11b45b73066d3fe18d7c0d27eab5b3600b196ca78c949e3"
+    },
+    {
+      "path": "__tests__/connect-voice.regression.test.ts",
+      "beforeSha256": "945925ed3ae27fe16f53f65304203548352aa1a5794633aa6aaaffd81f970044",
+      "afterSha256": "48bb93b0fbdf90ededee451e0624ae708f31dd9a8dcafc154f8b99785f64f360"
+    }
+  ],
+  "validation": {
+    "reproducedFailuresBeforeRepair": 6,
+    "additionalBackgroundSafetyRegressionReproduced": true,
+    "finalRegressionTestsPassed": 395,
+    "finalRegressionTestsFailed": 0,
+    "changedFilesLintPassed": true,
+    "repositoryTypecheckPassed": true,
+    "finalChangedSourceTypecheckPassed": true,
+    "physicalDeviceRetest": "PENDING"
+  },
+  "nativeTelecomRegistration": "UNRESOLVED_FOR_CAPTURED_ANDROID_ATTEMPT",
+  "hostedChanges": 0,
+  "providerCalls": 0,
+  "builds": 0,
+  "otaPublications": 0,
+  "callingGatesChanged": false,
+  "remoteRevocation": "UNVERIFIED"
+}

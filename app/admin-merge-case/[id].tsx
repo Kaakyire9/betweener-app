@@ -1,7 +1,6 @@
 import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
-import { useAuth } from "@/lib/auth-context";
-import { canAccessAdminTools } from "@/lib/internal-tools";
+import { useAdminAccess } from "@/lib/admin/admin-access";
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Redirect, router, useLocalSearchParams } from "expo-router";
@@ -112,8 +111,8 @@ const formatMergeFailureMessage = (summary?: AccountMergeExecutionSummary | null
 
 export default function AdminMergeCaseScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
-  const { user } = useAuth();
-  const isAllowed = canAccessAdminTools(user?.email ?? null);
+  const adminAccess = useAdminAccess();
+  const isAllowed = adminAccess.isAdmin && adminAccess.can('accounts');
   const colorScheme = useColorScheme();
   const resolvedScheme = (colorScheme ?? "light") === "dark" ? "dark" : "light";
   const theme = Colors[resolvedScheme];
@@ -129,6 +128,7 @@ export default function AdminMergeCaseScreen() {
   const [linkedRecoveryRequests, setLinkedRecoveryRequests] = useState<LinkedRecoveryRequestRow[]>([]);
 
   const loadCase = useCallback(async () => {
+    if (adminAccess.loading) return;
     if (!caseId || !isAllowed) {
       setLoading(false);
       return;
@@ -155,7 +155,7 @@ export default function AdminMergeCaseScreen() {
     setLinkedRecoveryRequests((linkedRecoveryRes.data as LinkedRecoveryRequestRow[] | null) ?? []);
     setLoading(false);
     setRefreshing(false);
-  }, [caseId, isAllowed]);
+  }, [adminAccess.loading, caseId, isAllowed]);
 
   useEffect(() => {
     void loadCase();
@@ -238,6 +238,10 @@ export default function AdminMergeCaseScreen() {
     }
     void loadCase();
   }, [loadCase, mergeCase]);
+
+  if (adminAccess.loading) {
+    return <SafeAreaView style={styles.container}><View style={styles.centerState}><ActivityIndicator color={theme.tint} /></View></SafeAreaView>;
+  }
 
   if (!isAllowed) {
     return <Redirect href="/(tabs)/profile" />;

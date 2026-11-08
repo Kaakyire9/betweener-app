@@ -15,10 +15,10 @@ import {
   type LiveComment,
   type LiveJoinNotice,
   type LiveAudiencePulseSnapshot,
-  type LiveReactionKind,
   type LiveSessionRealtimeStatus,
   type LiveSessionSnapshot,
   type LiveParticipantArrivalEvent,
+  type LiveReportReason,
 } from '../application/index.ts';
 
 export type LiveSessionControllerState = 'loading' | 'ready' | 'offline' | 'reconnecting' | 'error';
@@ -434,10 +434,16 @@ export const useLiveSessionController = (sessionId: string, currentUserId: strin
         () => liveRepository.reportComment(sessionId, comment),
         { refreshAfter: false },
       ),
-    createReaction: (reaction: LiveReactionKind) =>
+    reportLive: (reason: LiveReportReason) =>
       runAction(
-        `reaction:${reaction}`,
-        () => liveRepository.createReaction(sessionId, reaction),
+        'report-live',
+        () => liveRepository.reportLive(sessionId, reason),
+        { refreshAfter: false },
+      ),
+    reportParticipant: (targetUserId: string, reason: LiveReportReason) =>
+      runAction(
+        `report-participant:${targetUserId}`,
+        () => liveRepository.reportParticipant(sessionId, targetUserId, reason),
         { refreshAfter: false },
       ),
     openAudiencePoll: (templateKey: string, durationSeconds = 90) =>

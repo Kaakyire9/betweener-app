@@ -141,7 +141,7 @@ test('introduction availability invalidates every host snapshot without exposing
 
 test('host Match Desk is a dedicated full-screen private console', () => {
   assert.match(route, /LiveStudioModal/i);
-  assert.match(route, /Live Studio/i);
+  assert.match(route, /Live Control Room/i);
   assert.match(modal, /presentationStyle="fullScreen"/i);
   assert.match(modal, /PRIVATE HOST CONSOLE/i);
   assert.match(modal, /initialWindowMetrics/i);

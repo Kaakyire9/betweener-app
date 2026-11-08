@@ -6,6 +6,7 @@ import type {
   ProgramState,
   ProgramTargetCanvas,
   ProgramTransition,
+  ScreenFitMode,
   StudioTakeCommand,
 } from './contracts.ts';
 
@@ -15,11 +16,13 @@ export type ProgramPreviewAction =
   | { type: 'assign_source'; slot: ProgramSourceSlot; sourceKey: string | null }
   | { type: 'replace_assignments'; sourceAssignments: ProgramSourceAssignments }
   | { type: 'set_canvas'; canvas: ProgramTargetCanvas }
+  | { type: 'set_screen_fit'; screenFitMode: ScreenFitMode }
   | { type: 'set_transition'; transition: ProgramTransition };
 
 export const previewFromProgram = (program: ProgramState): ProgramPreviewState => ({
   scene: program.scene,
   targetCanvas: program.targetCanvas,
+  screenFitMode: program.screenFitMode ?? 'auto',
   sourceAssignments: { ...program.sourceAssignments },
   transition: program.transition,
   baseProgramVersion: program.programVersion,
@@ -35,6 +38,7 @@ export const reduceProgramPreview = (
     case 'reset': return previewFromProgram(action.program);
     case 'select_scene': return { ...state, scene: action.scene, dirty: true };
     case 'set_canvas': return { ...state, targetCanvas: action.canvas, dirty: true };
+    case 'set_screen_fit': return { ...state, screenFitMode: action.screenFitMode, dirty: true };
     case 'set_transition': return { ...state, transition: action.transition, dirty: true };
     case 'replace_assignments': return {
       ...state, sourceAssignments: { ...action.sourceAssignments }, dirty: true,
@@ -63,6 +67,7 @@ export const buildStudioTakeCommand = (input: {
   expectedProgramVersion: input.preview.baseProgramVersion,
   scene: input.preview.scene,
   targetCanvas: input.preview.targetCanvas,
+  screenFitMode: input.preview.screenFitMode,
   sourceAssignments: { ...input.preview.sourceAssignments },
   transition: input.cut ? 'cut' : input.preview.transition,
 });

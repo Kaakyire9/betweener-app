@@ -9,6 +9,7 @@ import {
   toScheduleLiveStudioInput,
   updateLiveCreationDraft,
 } from '../features/live/creation/live-creation-draft.ts';
+import { toggleLiveAudienceScope } from '../features/live/creation/live-audience-policy.ts';
 
 const now = new Date('2026-09-06T12:00:00.000Z');
 
@@ -54,6 +55,7 @@ test('new Studio drafts have a stable request key and safe room defaults', () =>
   assert.equal(draft.clientRequestId, 'request-1234');
   assert.equal(draft.format, 'hosted_match_night');
   assert.equal(draft.durationMinutes, 90);
+  assert.deepEqual(draft.audienceScopes, ['global']);
   assert.equal(draft.scheduledStart, '2026-09-07T12:00:00.000Z');
 });
 
@@ -78,6 +80,31 @@ test('Studio validation protects story and scheduling boundaries', () => {
   assert.equal(getLiveCreationStepError(tooSoon, 'room', now.getTime()), 'Choose a start at least 10 minutes from now.');
 });
 
+test('Studio validates location and diaspora Reach before scheduling', () => {
+  const draft = updateLiveCreationDraft(
+    createLiveCreationDraft({ clientRequestId: 'request-1234', now }),
+    { audienceScopes: ['local', 'diaspora'] },
+    now,
+  );
+  assert.equal(getLiveCreationStepError(draft, 'audience', now.getTime()), 'Choose the country this Live should reach.');
+  const country = updateLiveCreationDraft(draft, {
+    audienceCountryCode: 'GH',
+    audienceCountryName: 'Ghana',
+  }, now);
+  assert.equal(getLiveCreationStepError(country, 'audience', now.getTime()), 'Choose the city or town this Live should reach.');
+  const local = updateLiveCreationDraft(country, { audienceCity: 'Accra' }, now);
+  assert.equal(getLiveCreationStepError(local, 'audience', now.getTime()), 'Choose at least one diaspora heritage country.');
+  const complete = updateLiveCreationDraft(local, { diasporaOriginCountryCodes: ['gh'] }, now);
+  assert.equal(getLiveCreationStepError(complete, 'audience', now.getTime()), null);
+});
+
+test('Reach selection keeps exclusive scopes safe and allows location plus diaspora', () => {
+  assert.deepEqual(toggleLiveAudienceScope(['global'], 'country'), ['country']);
+  assert.deepEqual(toggleLiveAudienceScope(['country'], 'diaspora'), ['country', 'diaspora']);
+  assert.deepEqual(toggleLiveAudienceScope(['country', 'diaspora'], 'country'), ['diaspora']);
+  assert.deepEqual(toggleLiveAudienceScope(['diaspora'], 'invite_only'), ['invite_only']);
+});
+
 test('publication input is normalized without weakening its idempotency key', () => {
   const draft = updateLiveCreationDraft(
     createLiveCreationDraft({ clientRequestId: 'request-1234', now }),
@@ -94,7 +121,29 @@ test('publication input is normalized without weakening its idempotency key', ()
     chemistryFirstEnabled: false,
     circleId: null,
     minimumParticipants: 2,
+    audienceScopes: ['global'],
+    audienceCountryCode: null,
+    audienceCountryName: null,
+    audienceRegion: null,
+    audienceCity: null,
+    diasporaOriginCountryCodes: [],
+    diasporaDestinationCountryCodes: [],
   });
+});
+
+test('legacy v1 device drafts migrate safely to global Reach', () => {
+  const current = createLiveCreationDraft({ clientRequestId: 'request-1234', now });
+  const legacy = { ...current, schemaVersion: 1 } as unknown as Record<string, unknown>;
+  delete legacy.audienceScopes;
+  delete legacy.audienceCountryCode;
+  delete legacy.audienceCountryName;
+  delete legacy.audienceRegion;
+  delete legacy.audienceCity;
+  delete legacy.diasporaOriginCountryCodes;
+  delete legacy.diasporaDestinationCountryCodes;
+  const parsed = parseLiveCreationDraft(legacy, null);
+  assert.equal(parsed?.schemaVersion, 2);
+  assert.deepEqual(parsed?.audienceScopes, ['global']);
 });
 
 test('creating a copy gets a fresh request key and moves an expired schedule forward', () => {

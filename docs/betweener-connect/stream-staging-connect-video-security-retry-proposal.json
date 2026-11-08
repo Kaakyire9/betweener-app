@@ -1,0 +1,20 @@
+{
+  "status": "PROPOSED_NOT_APPLIED",
+  "target": { "app_id": 1731011, "app_name": "Betweener Staging" },
+  "extends": "stream-staging-connect-video-security-proposal.json",
+  "reason": "The approved first call was hard-deleted after a local media-probe exception. Consent and invitation checks passed; no usable VIDEO publication evidence was returned. The original maximum of one call has been consumed.",
+  "maximum_additional_test_users": 3,
+  "maximum_additional_test_calls": 1,
+  "changes_from_first_attempt": [
+    "Local-only VP9/VP8/Opus offers have passed in headless Chrome without provider requests",
+    "Preserve partial SFU observations and allowlisted failure stages without logging exceptions, SDP or credentials",
+    "Use the same approved call payload, identities, roles, consent and acceptance checks",
+    "Run bounded media diagnostics on this one new call; do not create replacement calls"
+  ],
+  "excluded_changes": [
+    "No provider role or call-type definition updates", "No Live or global settings changes",
+    "No real user or existing call changes", "No shared database changes or deployments", "No app calling feature enablement"
+  ],
+  "cleanup": "End/hard-delete the one exact call and only the three owned fixture users, drop the disposable database/REST container, verify absence and unchanged full call-type digest",
+  "readiness": "VIDEO remains BLOCKED until actual positive transport evidence; M2A/M2B remain BLOCKED by the separately reproduced revocation failure"
+}

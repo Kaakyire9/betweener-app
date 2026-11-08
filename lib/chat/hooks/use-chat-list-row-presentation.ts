@@ -7,6 +7,7 @@ import {
   formatConversationPreview,
   resolveChatListPreview,
 } from "@/lib/chat/chat-list-preview";
+import type { ChatExpressionMediaKind } from '@/lib/chat/expressions/chat-gif-provider';
 
 type MessageType = 'text' | 'voice' | 'image' | 'mood_sticker' | 'video' | 'document' | 'location';
 type LocalStatus = 'deleted' | 'queued' | 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
@@ -38,12 +39,14 @@ export type ChatConversationRowItem = {
     isOnline: boolean;
     lastSeen: Date;
   };
+  callPreview?: { callId: string; text: string; at: Date; media: 'voice' | 'video' };
   lastMessage: {
     id: string;
     text: string;
     timestamp: Date;
     senderId: string;
     type: MessageType;
+    mediaKind?: ChatExpressionMediaKind | null;
     isViewOnce?: boolean;
     isRead: boolean;
     deliveredAt: Date | null;
@@ -113,6 +116,7 @@ const getLastMessagePreview = (lastMessage: ChatConversationRowItem['lastMessage
     getChatMessagePreviewText({
       text: lastMessage.text,
       messageType: lastMessage.type,
+      mediaKind: lastMessage.mediaKind,
       isViewOnce: Boolean(lastMessage.isViewOnce),
       status: lastMessage.localStatus,
     }) || lastMessage.text
@@ -164,7 +168,7 @@ export const useChatListRowPresentation = ({
     const isLeftBetweener = item.peerHasLeft && !isBlocked;
     const isUnread = item.unreadCount > 0;
     const hasActiveMoment = activeMomentPeerUserIds.has(String(item.id));
-    const isMyLastMessage = item.lastMessage.senderId === (userId || '');
+    const isMyLastMessage = !item.callPreview && item.lastMessage.senderId === (userId || '');
     const isLastMessageDeleted =
       item.lastMessage.deletedForAll ||
       item.lastMessage.localStatus === 'deleted';
@@ -195,7 +199,7 @@ export const useChatListRowPresentation = ({
           : null,
       isTyping,
     });
-    const previewText = isTyping
+    const previewText = !isTyping && !isBlocked && item.callPreview ? item.callPreview.text : isTyping
       ? 'Typing...'
       : formatConversationPreview({
           messagePreview: normalPreviewText,
@@ -221,7 +225,7 @@ export const useChatListRowPresentation = ({
       avatarUri,
       shouldUseFallbackAvatar,
       avatarPalette,
-      formattedTime: formatLastMessageTime(
+      formattedTime: item.callPreview ? formatLastMessageTime(item.callPreview.at) : formatLastMessageTime(
         item.latestActivity?.kind === 'reaction' &&
           item.latestActivity.createdAt.getTime() >
             item.lastMessage.timestamp.getTime()

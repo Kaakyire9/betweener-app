@@ -9,11 +9,16 @@ node_modules/
 dist/
 dist-export-android/
 web-build/
+build-artifacts/
 
 # Native
 .kotlin/
 *.orig.*
 *.jks
+*.keystore
+credentials.json
+*.dpapi
+__pycache__/
 *.p8
 *.p12
 *.key
@@ -40,6 +45,9 @@ supabase/.temp/
 
 # typescript
 *.tsbuildinfo
+cdk.out/
+apps/studio/test-results/
+apps/studio/playwright-report/
 
 app-example
 
@@ -49,6 +57,8 @@ app-example
 
 # firebase
 google-services.json
+google-services.*.json
+GoogleService-Info*.plist
 google-play-service-account*.json
 *service-account*.json
 

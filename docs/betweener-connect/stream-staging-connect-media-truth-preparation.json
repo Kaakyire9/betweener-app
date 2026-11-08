@@ -1,0 +1,242 @@
+{
+  "schemaVersion": 1,
+  "experimentId": "connect-m2a-media-truth-21",
+  "stage": "A_OFFLINE_ONLY",
+  "preparedAt": "2026-10-29T12:58:35.430Z",
+  "providerTestPrepared": "PASS",
+  "providerTestExecuted": false,
+  "manifestSha256": "7ba4fb47c2a6008c30a19cd19e5edac35729e7165ba3b406b6d71ff86086f957",
+  "runtime": {
+    "node": "v24.18.0",
+    "chrome": "155.0.8059.86",
+    "playwright": "1.64.1"
+  },
+  "sources": [
+    {
+      "path": "node_modules/@stream-io/video-client/package.json",
+      "sha256": "c781f67013c8d8158a90e0b639d7052704b03cf20c757548e1442ab212db09f7"
+    },
+    {
+      "path": "node_modules/@stream-io/video-client/src/gen/video/sfu/event/events.ts",
+      "sha256": "897bb7f42b5cd7d5f882ae3042c85fb24ee8e81ddeca13328c0e9402c9ae08f3"
+    },
+    {
+      "path": "node_modules/@stream-io/video-client/src/gen/video/sfu/models/models.ts",
+      "sha256": "a571cb88f11bbfe1454a0acbc5ef95f3971200b68d2842f0c2e6062dc0b297bb"
+    },
+    {
+      "path": "node_modules/@stream-io/video-client/src/gen/video/sfu/signal_rpc/signal.client.ts",
+      "sha256": "3525274034570d7268f932d6b9ca76c46e1cc72f41295c6ea5383abf664faa97"
+    },
+    {
+      "path": "node_modules/@stream-io/video-client/src/gen/video/sfu/signal_rpc/signal.ts",
+      "sha256": "59d60eaaeb80bd12e3c322a17af0faecd6ac2c1ab32f72b9ed925fac6ec8a8c9"
+    },
+    {
+      "path": "node_modules/playwright-core/package.json",
+      "sha256": "8aa1c9863fa8dea324e674254158cdc79440f4124ef2d84d38053013541cb7d6"
+    },
+    {
+      "path": "node_modules/playwright/package.json",
+      "sha256": "313d23ce667d93962d3a1ab4be80908cefe840e4d9e48f1cd5863b91f65e8e39"
+    },
+    {
+      "path": "node_modules/typescript/package.json",
+      "sha256": "9332e97c30d3e53ed54910b89207ed657fb444066484df6e5b6965bf130865e9"
+    },
+    {
+      "path": "package-lock.json",
+      "sha256": "41b835c07f1fe42fd29c9c5e7482b637228c651d4dd6f6245ca8660625a53680"
+    },
+    {
+      "path": "package.json",
+      "sha256": "17a8635a595d10980a00c837a2163002d69da3467c324449c9189fcdbfabe195"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/approval.cjs",
+      "sha256": "d4ab4531bc423aa6e7e4e13933cfb6420cd946cfdc036ffccc5dd7c706c71272"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/browser.cjs",
+      "sha256": "ce8bada270f10d8f6578edc01081a41812c4745361af110c09d95a592cd90899"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/codec.cjs",
+      "sha256": "448e15a0c72f975f160d99ab7dc697d875dca628fc6171fc809bb1453901c801"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/deno.json",
+      "sha256": "a997731a653edfcae69852c8eb51c3f2fddfc54e0150134b5ebf2b3a045f22d3"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/evidence.cjs",
+      "sha256": "b6e84dd93d16df4e1ecf12d7cb71a41005ec33a90d3c78d98c7d79f83cb1d742"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/experiment.cjs",
+      "sha256": "a33f2fdc42110944296b2507d5b2f4edcabf069163252ee6c409b273e2462f9a"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/process.cjs",
+      "sha256": "4c6877dc95a99afd57496f4c2117a35d0245bd7da9f8f200c68cca9c5d109753"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/provenance.cjs",
+      "sha256": "31e0053baefb93947220f60f9eb345a8ae79228fc625c467836438bebeb15ed9"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/provider-process.cjs",
+      "sha256": "ef0f802c7e662f1b05be8facf6ec31dca4e56cb423d211a597def308eed238a6"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/provider.mts",
+      "sha256": "3c26a00aa48d97f614f11cc2a4fc5449a3e53a460079a8624497171553d035d3"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/scope.cjs",
+      "sha256": "1209f9e52cab61966f90bf766d340dc86b7dc5403c185982ae273ce337f16fca"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/verdict.cjs",
+      "sha256": "da310d7ef131d7df75cf058f152f3cbcd7b1c5d50554ece8094ba96aa09eba2a"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/watchdog.cjs",
+      "sha256": "d0877edca1272d7cc3591257e75b96764d5f33a56c02ec41e3662bc357f5027f"
+    },
+    {
+      "path": "scripts/lib/connect-stream-audit.ts",
+      "sha256": "28bc784139f60f82bbc1759039634a83c561b9e9b849bb1ebad713bfda5ccf2b"
+    },
+    {
+      "path": "scripts/lib/connect-stream-sfu-probe.cjs",
+      "sha256": "d879de243a041b513c067677264c81da219be0bfd617469331ab47e96e6f62e2"
+    },
+    {
+      "path": "scripts/lib/connect-stream-sfu-protocol.cjs",
+      "sha256": "7eb5fd1c2fbf5239dc3e9bb271a61112fa00edf2e2ad72a194bb383809db63dc"
+    },
+    {
+      "path": "scripts/lib/connect-stream-sfu-session.cjs",
+      "sha256": "69d100aca35fb4e23b856b62b15b3a11324761ed995caf2a183210be7a527752"
+    },
+    {
+      "path": "scripts/test-connect-media-truth-local.cjs",
+      "sha256": "d1934ec86e7123e28312c5efef4e00271f5421f802ee3375f7e0a8305a8f543e"
+    },
+    {
+      "path": "scripts/test-connect-media-truth.cjs",
+      "sha256": "b334b75d898376880ccfcb15a6c10c022e64fb00ebff4d850fef7ba228bbbac4"
+    },
+    {
+      "path": "supabase/functions/_shared/connect-stream-adapter.ts",
+      "sha256": "b5f2766343efac5606e6012cee64e5e3db8d6f26a31f1a941bc4b03e27e8da8c"
+    }
+  ],
+  "validation": {
+    "newTests": 52,
+    "existingTests": 120,
+    "combined": {
+      "passed": 172,
+      "failed": 0
+    },
+    "live": {
+      "passed": 504,
+      "total": 508,
+      "unchangedKnownFailures": 4
+    },
+    "typescript": "PASS",
+    "strictDeno": "PASS_CHECK_ONLY",
+    "eslint": "PASS_ZERO_WARNINGS",
+    "legacyLocalBrowser": "PASS",
+    "localBrowser": {
+      "status": "COMPLETE",
+      "checks": [
+        "bidirectional_blind_opus_calibration",
+        "fresh_post_trigger_nonce_decoded_both_directions",
+        "wrong_nonce_rejected",
+        "previous_audio_during_delivery_delay_rejected",
+        "delayed_fresh_nonce_decoded_both_directions"
+      ],
+      "started": {
+        "mono": 1131.9376,
+        "utc": "2026-10-29T12:35:06.362Z"
+      },
+      "completed": {
+        "mono": 27144.2985,
+        "utc": "2026-10-29T12:35:32.374Z"
+      },
+      "comparisonDecodeFromTriggerMs": 9494.496500000001,
+      "maxSampleBracketMs": 171.49249999999938,
+      "sourcesUnchangedDuringRun": true,
+      "coreSourcesMatchCurrent": true
+    },
+    "localPositiveControlReplay": {
+      "verdict": "FAIL",
+      "reasons": [
+        "fresh_nonce_decoded_by_receiver_1"
+      ],
+      "clockModel": {
+        "intervals": "Parent monotonic milliseconds; UTC is correlation only.",
+        "browserMapping": "Each IPC operation is bracketed by parent monotonic stamps. Browser performance/timeOrigin and AudioContext sample clocks are retained separately.",
+        "uncertainty": "IPC brackets bound observation time; AudioContext scheduling is not an RTP wire timestamp. Provider clock offset is UNKNOWN. No cross-host latency bound is inferred."
+      },
+      "meaning": "Expected fresh delivery in a local simulation; not a Stream verdict"
+    }
+  },
+  "artifacts": [
+    {
+      "path": "tmp/connect-media-truth-preparation/offline-final.log",
+      "sha256": "a3d87cc7504fb977a1d6c93a08da78ff7febeb2afbe1a958cc90358f27911e91"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/live-regressions.log",
+      "sha256": "0ff6a57e2d2da68dc984db4f2fe80db220a4867ca769633d7686933fdde127ac"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/typescript-final.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/provider-typecheck.log",
+      "sha256": "e4877b66fa9e8325faa4a3ee1d2bd7d54ab7a9f813fa8d442e349989d4f94ff8"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/lint-final.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/legacy-browser-control.log",
+      "sha256": "aa3df75487aaa66b6ff95b667f2dc856ef50a0244f4f155c05c6833df0f96b2c"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/local-browser-results.json",
+      "sha256": "0063dbb67c152ac1de2f4b479f7f1d326028ab9bc1328007926d4ceb1ca9fb65"
+    }
+  ],
+  "preservation": {
+    "baselineEntries": 234,
+    "unchangedEntries": 232,
+    "preexistingAbsentEntries": [
+      "supabase/migrations/20261022134658_adaptive_stage_release_telemetry.sql"
+    ],
+    "intentionalExistingChanges": [
+      "scripts/lib/connect-stream-sfu-probe.cjs",
+      "scripts/lib/connect-stream-sfu-session.cjs"
+    ],
+    "originalBoundarySha256": "8c1d82141a5c5140c94ac2b65e2b09dca42ebbe1f0f8c87b852d6dacdffa501d"
+  },
+  "limits": {
+    "providerApiRuntimeVerified": false,
+    "providerClockOffset": "UNKNOWN",
+    "completeDenoTransitiveLockAttested": false,
+    "statsCapture": "CONDITIONAL_PASS",
+    "coordinatorWebSocketObserved": false,
+    "approvalGranted": false,
+    "M2A": "BLOCKED",
+    "M2B": "BLOCKED",
+    "providerWrites": "NONE",
+    "sharedDatabaseModifications": "NONE",
+    "productionModifications": "NONE"
+  }
+}

@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "scope": "LOCAL_CLIENT_REPAIR_NO_HOSTED_DEPLOYMENT",
+  "authorisation": "Owner: Okay! Let us proceed with the next repairs",
+  "frozenPackage": {
+    "path": "docs/betweener-connect/connect-secure-calling.proposal.json",
+    "sha256": "37d133fb060af0eaed44f4526d5d60fe4c08f3065fd3d2ede6d2f63d573f6c72"
+  },
+  "baseLocalChange": {
+    "path": "docs/betweener-connect/connect-encrypted-mute-fix.local.json",
+    "sha256": "c8f2cbf4426fa2dc17348b06615659d5e77e7946ee6ad2451bb0dbe450539044"
+  },
+  "reason": "Explicitly activate the exact admitted and joined Android Telecom registration before capture setup completes, requiring the same-call native active event plus bridge acknowledgement. Preserve first bounded End/Hold/audio-session cause.",
+  "files": [
+    {
+      "path": "features/connect/media/native-stream-sdk.ts",
+      "beforeSha256": "d3b9f90ed5a10429e40fd9d238f665d180903813c638a786b9eac4c7fc1fad07",
+      "beforeSnapshot": "tmp/connect-secure-calling/native-activation-fix/native-stream-sdk.ts.before",
+      "afterSha256": "1a95985a3703ce1fe5f1e94e557cfd568e1e3732efe3b2e6f194f7427f7ca1e9"
+    },
+    {
+      "path": "features/connect/media/native-owner-types.ts",
+      "beforeSha256": "ce504562d6447f423e35fb0a3bb4025075b18ef330bc615d5b5392c4e6095df5",
+      "beforeSnapshot": "tmp/connect-secure-calling/native-activation-fix/native-owner-types.ts.before",
+      "afterSha256": "581a3565134591c8aeea409baa57960ae7270fcfafb92a45e2ac76862064bbb7"
+    },
+    {
+      "path": "features/connect/media/connect-native-owner.ts",
+      "beforeSha256": "5885ff70430777e64c1bce77c088275268de425b4b5f2dd02d88731f558d6a0c",
+      "beforeSnapshot": "tmp/connect-secure-calling/native-activation-fix/connect-native-owner.ts.before",
+      "afterSha256": "e1aac3e4a08b82daebf63a0a6af952374d20ffbbfc07f93e5378ceb6e956d488"
+    },
+    {
+      "path": "features/connect/diagnostics/connect-terminal-logger.ts",
+      "beforeSha256": "43f85b67b3262d0c6b63318e5ecb61e4afd2bfc98bfa180843e740232cb3e703",
+      "beforeSnapshot": "tmp/connect-secure-calling/native-activation-fix/connect-terminal-logger.ts.before",
+      "afterSha256": "4da5b3f16c3104e1705b512e8c18dda4040bf465484ec8d48c56684adc7f4165"
+    },
+    {
+      "path": "features/connect/media/native-call-activation.ts",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "57a7b31b7d5ba8586c4b85a7fa517fe6fd2aa8853c1aa8389cfe3b4f890d752c"
+    }
+  ],
+  "regressions": [
+    "__tests__/connect-native-activation.regression.test.cjs",
+    "__tests__/connect-native-owner.regression.test.cjs",
+    "__tests__/connect-terminal-logging.regression.test.cjs",
+    "__tests__/connect-native-bootstrap.regression.test.cjs",
+    "__tests__/connect-secure-calling-package.regression.test.cjs"
+  ],
+  "limits": {
+    "activationDeadlineMs": 3000,
+    "ownerReleaseDeadlineMs": 8000,
+    "recoveryDeadlineMs": 20000,
+    "attemptsPerCall": 2,
+    "dependencyChanges": 0,
+    "backgroundOptInChanged": false,
+    "nativeActivationCreatesOrAnswersCalls": false,
+    "nativeActivationStartsCapture": false,
+    "nativeActivationAcquiresBackgroundTask": false,
+    "activeEncryptionFaultsRemainFatal": true,
+    "sharedLiveSourcesChanged": 0
+  },
+  "observations": {
+    "reviewPath": "tmp/connect-secure-calling/device-log-reviews/c-b17b41c375b1f34f.json",
+    "reviewSha256": "69e8c8df0e1477f24c8722572e270b09571dbb4b14039a07b0ae43c043f96594",
+    "call": "c-b17b41c375b1f34f",
+    "androidFirstRetirementAfterActiveMs": 117219,
+    "exactNativeDisconnectCause": "NOT_RETAINED_IN_HISTORICAL_TRACE",
+    "watchdogHypothesis": "SOURCE_AND_TIMING_SUPPORTED_NOT_DEVICE_PROVEN",
+    "iosUnencryptedFrame": "REMOTE_AUDIO_IN_SAME_TEARDOWN_WINDOW_PAYLOAD_UNKNOWN"
+  },
+  "hostedChanges": 0,
+  "providerCalls": 0,
+  "newBuildRequired": false,
+  "deviceRetest": "PENDING",
+  "remoteRevocation": "UNVERIFIED",
+  "strictNativeReceive": "UNVERIFIED_REQUIRES_SEPARATE_NATIVE_HARDENING",
+  "productionReadiness": "NOT_ESTABLISHED"
+}

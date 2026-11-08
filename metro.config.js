@@ -2,6 +2,10 @@
 // Safe to keep even when Sentry isn't configured; it will be a no-op unless @sentry/react-native is installed.
 const { getSentryExpoConfig, withSentryConfig } = require("@sentry/react-native/metro");
 const { boundCacheStores } = require("./config/metro/bounded-cache-store");
+const {
+  createWindowsMetroBlockList,
+  mergeMetroBlockList,
+} = require("./config/metro/windows-block-list");
 
 module.exports = (async () => {
   let config;
@@ -17,17 +21,22 @@ module.exports = (async () => {
     config = withSentryConfig(config);
   }
 
-  // Stream Video adds a large native module graph. Expo enables Metro worker
-  // threads by default, and long-running Windows dev servers can retain enough
-  // worker file handles to eventually fail with EMFILE while loading that
-  // graph. Keep transformation in the Metro process on Windows so there is one
-  // owner for file handles and cache entries. Production/EAS bundles run on
-  // Linux and are unaffected by this local-development guard.
+  // Stream Video adds a large native module graph. Keep worker threads off on
+  // Windows, cap the process pool, bound cache I/O, and exclude local tooling
+  // trees that the fallback watcher would otherwise watch directory-by-directory.
+  // Production/EAS bundles run on Linux and are unaffected by this guard.
   if (process.platform === "win32") {
-    config.maxWorkers = 1;
+    config.maxWorkers = 4;
     config.transformer = {
       ...config.transformer,
       unstable_workerThreads: false,
+    };
+    config.resolver = {
+      ...config.resolver,
+      blockList: mergeMetroBlockList(
+        config.resolver?.blockList,
+        createWindowsMetroBlockList(__dirname),
+      ),
     };
     config.cacheStores = boundCacheStores(config.cacheStores ?? [], {
       maxConcurrency: 8,

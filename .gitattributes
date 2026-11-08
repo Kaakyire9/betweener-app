@@ -1,0 +1,20 @@
+# Retained Connect evidence and pinned recovery bytes are hashed as files.
+# Preserve their original line endings across Git checkouts.
+docs/betweener-connect/** -text whitespace=cr-at-eol
+supabase/functions/_shared/cors.ts -text whitespace=cr-at-eol
+
+# Connect source receipts use exact bytes, including source and patch files.
+features/connect/** -text whitespace=cr-at-eol
+native-patches/** -text whitespace=cr-at-eol
+__tests__/connect-* -text whitespace=cr-at-eol
+app/connect/** -text whitespace=cr-at-eol
+supabase/config.toml -text whitespace=cr-at-eol
+supabase/functions/connect-*/** -text whitespace=cr-at-eol
+supabase/functions/_shared/connect-*.ts -text whitespace=cr-at-eol
+supabase/migrations/*connect*.sql -text whitespace=cr-at-eol
+scripts/*connect* -text whitespace=cr-at-eol
+scripts/lib/connect-*.cjs -text whitespace=cr-at-eol
+scripts/lib/connect-*/** -text whitespace=cr-at-eol
+
+# Unified patch context prefixes preserve source tabs and blank lines by format.
+*.patch -text -whitespace

@@ -6,7 +6,7 @@ import { isActiveChatThread } from "@/lib/chat/active-thread";
 import { emitForegroundChatMessage } from "@/lib/chat/chat-foreground-events";
 import { acknowledgeIncomingMessagesDelivered } from "@/lib/chat/delivery-receipts";
 import { ChatRepository, type ChatMessageRow } from "@/lib/chat/local/chat-db";
-import { supabase } from "@/lib/supabase";
+import { subscribeUserChatBroadcast } from "@/lib/realtime/user-chat-broadcast";
 
 type RealtimeMessageRow = {
   id: string;
@@ -121,18 +121,12 @@ export default function ChatRealtimeHydrator() {
 
     catchUpDelivered();
 
-    const channel = supabase
-      .channel(`messages:root:${userId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "messages",
-          filter: `receiver_id=eq.${userId}`,
-        },
-        (payload) => {
-          const row = payload.new as RealtimeMessageRow;
+    const unsubscribe = subscribeUserChatBroadcast(
+      userId,
+      (change) => {
+          if (change.table !== 'messages' || change.eventType !== 'INSERT') return;
+          const row = change.new as RealtimeMessageRow;
+          if (row?.receiver_id !== userId) return;
           persistMessage(row);
           void acknowledgeIncomingMessagesDelivered(userId, row.id, row.sender_id);
           if (
@@ -149,13 +143,15 @@ export default function ChatRealtimeHydrator() {
               is_view_once: row.is_view_once ?? null,
             });
           }
-        },
-      )
-      .subscribe();
+      },
+      (status) => {
+        if (status === 'SUBSCRIBED') catchUpDelivered();
+      },
+    );
 
     return () => {
       appStateSubscription.remove();
-      supabase.removeChannel(channel);
+      unsubscribe();
     };
   }, [canPerformAuthenticatedWrites, isAuthenticated, user?.id]);
 

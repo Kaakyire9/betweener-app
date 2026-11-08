@@ -7,6 +7,7 @@ import * as Haptics from 'expo-haptics';
 import React, { memo, useEffect, useMemo, useRef } from 'react';
 import type { ComponentProps } from 'react';
 import {
+  AccessibilityInfo,
   Animated,
   Easing,
   Platform,
@@ -28,6 +29,7 @@ type PremiumBottomTabBarProps = BottomTabBarConfig & {
   responsive: ResponsiveMetrics;
   theme: ThemeColors;
   badgeCounts?: Partial<Record<string, number>>;
+  liveIndicators?: Partial<Record<string, boolean>>;
 };
 
 const withAlpha = (hex: string | undefined | null, alpha: string) => `${hex ?? '#000000'}${alpha}`;
@@ -46,6 +48,7 @@ type PremiumTabItemProps = {
   responsive: ResponsiveMetrics;
   isDark: boolean;
   badgeCount: number;
+  liveIndicator: boolean;
   onPress: () => void;
   onLongPress: () => void;
 };
@@ -58,11 +61,13 @@ const PremiumTabItem = memo(function PremiumTabItem({
   responsive,
   isDark,
   badgeCount,
+  liveIndicator,
   onPress,
   onLongPress,
 }: PremiumTabItemProps) {
   const pressScale = useRef(new Animated.Value(1)).current;
   const activeProgress = useRef(new Animated.Value(focused ? 1 : 0)).current;
+  const livePulse = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     Animated.timing(activeProgress, {
@@ -72,6 +77,43 @@ const PremiumTabItem = memo(function PremiumTabItem({
       useNativeDriver: true,
     }).start();
   }, [activeProgress, focused]);
+
+  useEffect(() => {
+    let mounted = true;
+    let pulseLoop: Animated.CompositeAnimation | null = null;
+    if (!liveIndicator) {
+      livePulse.setValue(0);
+      return;
+    }
+    void AccessibilityInfo.isReduceMotionEnabled().then((reduceMotion) => {
+      if (!mounted) return;
+      if (reduceMotion) {
+        livePulse.setValue(0.45);
+        return;
+      }
+      pulseLoop = Animated.loop(
+        Animated.sequence([
+          Animated.timing(livePulse, {
+            toValue: 1,
+            duration: 900,
+            easing: Easing.out(Easing.quad),
+            useNativeDriver: true,
+          }),
+          Animated.timing(livePulse, {
+            toValue: 0,
+            duration: 1100,
+            easing: Easing.inOut(Easing.quad),
+            useNativeDriver: true,
+          }),
+        ]),
+      );
+      pulseLoop.start();
+    });
+    return () => {
+      mounted = false;
+      pulseLoop?.stop();
+    };
+  }, [liveIndicator, livePulse]);
 
   const label =
     typeof options.tabBarLabel === 'string'
@@ -89,12 +131,17 @@ const PremiumTabItem = memo(function PremiumTabItem({
   const badgeLabel = badgeCount > 9 ? '9+' : String(badgeCount);
   const accessibilityLabelBase =
     options.tabBarAccessibilityLabel ?? `${typeof label === 'string' ? label : route.name} tab`;
-  const accessibilityLabel =
+  const badgeAccessibility =
     badgeCount > 0
       ? route.name === 'chat'
-        ? `${accessibilityLabelBase}, ${badgeCount > 9 ? '9 plus unread messages' : `${badgeCount} unread ${badgeCount === 1 ? 'message' : 'messages'}`}`
-        : `${accessibilityLabelBase}, ${badgeLabel} unread`
-      : accessibilityLabelBase;
+        ? `${badgeCount > 9 ? '9 plus unread messages' : `${badgeCount} unread ${badgeCount === 1 ? 'message' : 'messages'}`}`
+        : route.name === 'circles'
+          ? `${badgeLabel} pending Circle ${badgeCount === 1 ? 'invitation' : 'invitations'}`
+          : `${badgeLabel} unread`
+      : null;
+  const accessibilityLabel = [accessibilityLabelBase, badgeAccessibility, liveIndicator ? 'Live now' : null]
+    .filter(Boolean)
+    .join(', ');
 
   const icon =
     typeof options.tabBarIcon === 'function'
@@ -305,6 +352,19 @@ const PremiumTabItem = memo(function PremiumTabItem({
                   <Text style={styles.badgeText}>{badgeLabel}</Text>
                 </View>
               ) : null}
+              {liveIndicator ? (
+                <Animated.View
+                  style={[
+                    styles.liveIndicatorHalo,
+                    {
+                      opacity: livePulse.interpolate({ inputRange: [0, 1], outputRange: [0.38, 0.9] }),
+                      transform: [{ scale: livePulse.interpolate({ inputRange: [0, 1], outputRange: [0.82, 1.24] }) }],
+                    },
+                  ]}
+                >
+                  <View style={styles.liveIndicatorDot} />
+                </Animated.View>
+              ) : null}
             </View>
             {Platform.OS === 'android' ? (
               <Text
@@ -344,6 +404,7 @@ export default function PremiumBottomTabBar({
   theme,
   isDark,
   badgeCounts,
+  liveIndicators,
 }: PremiumBottomTabBarProps) {
   const visibleRoutes = useMemo<VisibleRoute[]>(
     () =>
@@ -495,6 +556,7 @@ export default function PremiumBottomTabBar({
               <PremiumTabItem
                 key={route.key}
                 badgeCount={badgeCounts?.[route.name] ?? 0}
+                liveIndicator={liveIndicators?.[route.name] === true}
                 focused={focused}
                 isDark={isDark}
                 onLongPress={onLongPress}
@@ -647,6 +709,23 @@ const styles = StyleSheet.create({
     fontFamily: 'Manrope_800ExtraBold',
     letterSpacing: 0,
     textAlign: 'center',
+  },
+  liveIndicatorHalo: {
+    position: 'absolute',
+    top: -4,
+    left: -4,
+    width: 11,
+    height: 11,
+    borderRadius: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(240,101,122,0.22)',
+  },
+  liveIndicatorDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: '#F0657A',
   },
   itemLabel: {
     fontFamily: 'Manrope_500Medium',

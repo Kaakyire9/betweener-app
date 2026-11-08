@@ -1,5 +1,4 @@
 import * as SQLite from 'expo-sqlite';
-import { Platform } from 'react-native';
 
 import { CHAT_DB_NAME } from '@/lib/chat/local/chat-schema';
 import { runChatMigrations } from '@/lib/chat/local/chat-migrations';
@@ -47,8 +46,13 @@ export const isChatDatabaseLockedError = (error: unknown) => {
 
 const recoverInterruptedChatDbTransaction = async () => {
   const db = chatDbRuntime.dbPromise ? await chatDbRuntime.dbPromise.catch(() => null) : null;
-  if (!db || !(await db.isInTransactionAsync().catch(() => false))) return false;
-  await db.execAsync('ROLLBACK').catch(() => undefined);
+  if (!db) return false;
+  try {
+    if (!db.isInTransactionSync()) return false;
+    db.execSync('ROLLBACK');
+  } catch {
+    return false;
+  }
   if (typeof __DEV__ !== 'undefined' && __DEV__) {
     console.log('[chat][db] interrupted-transaction-recovered');
   }
@@ -62,11 +66,12 @@ const getOperationScheduler = () => {
   // as a one-time barrier so the new scheduler never overlaps that operation.
   const legacyQueueBarrier = chatDbRuntime.operationQueue?.catch(() => undefined);
   const scheduler = createPriorityOperationScheduler();
-  chatDbRuntime.operationScheduler = scheduler;
+  if (!legacyQueueBarrier) {
+    chatDbRuntime.operationScheduler = scheduler;
+    return scheduler;
+  }
 
-  if (!legacyQueueBarrier) return scheduler;
-
-  return {
+  const guardedScheduler: PriorityOperationScheduler = {
     ...scheduler,
     schedule<T>(task: () => Promise<T>, priority?: ChatOperationPriority) {
       return scheduler.schedule(async () => {
@@ -75,6 +80,8 @@ const getOperationScheduler = () => {
       }, priority);
     },
   };
+  chatDbRuntime.operationScheduler = guardedScheduler;
+  return guardedScheduler;
 };
 
 export async function runSerializedChatDbOperation<T>(
@@ -130,10 +137,10 @@ export async function withSerializedChatDbTransaction(
 ): Promise<void> {
   const db = await getChatDb();
   await runSerializedChatDbOperation(async () => {
-    if (Platform.OS === 'ios') {
-      await db.withExclusiveTransactionAsync(task);
-      return;
-    }
+    // The operation scheduler already provides exclusivity. Expo's
+    // withExclusiveTransactionAsync opens a second native connection, which
+    // can contend with the primary connection for SQLite's single writer lock
+    // during statement finalization on iOS.
     await db.withTransactionAsync(async () => {
       await task(db);
     });
@@ -157,7 +164,11 @@ export async function initLocalChatDb(): Promise<SQLite.SQLiteDatabase> {
   chatDbRuntime.dbPromise = (async () => {
     captureMessage('chat_db_init_started');
     try {
-      const db = await SQLite.openDatabaseAsync(CHAT_DB_NAME);
+      // This runtime owns one explicit native connection. All repository work
+      // is serialized through it and sign-out can close it deterministically.
+      const db = await SQLite.openDatabaseAsync(CHAT_DB_NAME, {
+        useNewConnection: true,
+      });
       await db.execAsync(`
         pragma journal_mode = WAL;
         pragma busy_timeout = ${CHAT_DB_BUSY_TIMEOUT_MS};

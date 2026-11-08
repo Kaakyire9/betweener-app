@@ -9,8 +9,11 @@ import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Animated,
+  AppState,
   Easing,
+  Linking,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -20,6 +23,26 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 const WAITING_COPY = "Waiting for email verification";
 const PENDING_EMAIL_KEY = "pending_verification_email";
+
+const getInboxTarget = (email: string) => {
+  const domain = email.split("@")[1]?.toLowerCase() ?? "";
+  if (domain === "gmail.com" || domain === "googlemail.com") {
+    return { label: "Open Gmail inbox", url: "https://mail.google.com/mail/u/0/#inbox" };
+  }
+  if (["outlook.com", "hotmail.com", "live.com", "msn.com"].includes(domain)) {
+    return { label: "Open Outlook inbox", url: "https://outlook.live.com/mail/0/inbox" };
+  }
+  if (domain === "yahoo.com" || domain.startsWith("yahoo.")) {
+    return { label: "Open Yahoo Mail", url: "https://mail.yahoo.com/" };
+  }
+  if (["icloud.com", "me.com", "mac.com"].includes(domain)) {
+    return { label: "Open iCloud Mail", url: "https://www.icloud.com/mail/" };
+  }
+  if (domain === "proton.me" || domain === "protonmail.com") {
+    return { label: "Open Proton Mail", url: "https://mail.proton.me/" };
+  }
+  return { label: "Open email app", url: "mailto:" };
+};
 
 export default function VerifyEmailScreen() {
   const router = useRouter();
@@ -31,10 +54,11 @@ export default function VerifyEmailScreen() {
   const [error, setError] = useState("");
   const [userEmail, setUserEmail] = useState("");
   const [isVerified, setIsVerified] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(isRecoveryEmailFlow ? 0 : 30);
+  const redirectingRef = useRef(false);
 
   const pulse = useRef(new Animated.Value(0)).current;
   const rotate = useRef(new Animated.Value(0)).current;
-  const shimmer = useRef(new Animated.Value(0)).current;
   const dotValues = useRef([
     new Animated.Value(0.28),
     new Animated.Value(0.28),
@@ -55,6 +79,7 @@ export default function VerifyEmailScreen() {
 
   const hasConcreteEmail = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(userEmail);
   const displayEmail = userEmail || "your email";
+  const inboxTarget = getInboxTarget(userEmail);
   const headline = isRecoveryEmailFlow ? "Open the recovery email" : "Verify your email";
   const description = isRecoveryEmailFlow
     ? `We sent a secure sign-in link to ${displayEmail}. Open that inbox and tap the link to return to the older Betweener account.`
@@ -72,17 +97,18 @@ export default function VerifyEmailScreen() {
     inputRange: [0, 1],
     outputRange: ["0deg", "360deg"],
   });
-  const shimmerTranslate = shimmer.interpolate({
-    inputRange: [0, 1],
-    outputRange: [-120, 120],
-  });
-
   useEffect(() => {
     AsyncStorage.getItem(PENDING_EMAIL_KEY).then((email) => {
       if (email) setUserEmail(email);
       else if (typeof routeEmail === "string" && routeEmail.trim()) setUserEmail(routeEmail.trim());
     });
   }, [routeEmail]);
+
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const timer = setTimeout(() => setResendCooldown((current) => Math.max(0, current - 1)), 1000);
+    return () => clearTimeout(timer);
+  }, [resendCooldown]);
 
   useEffect(() => {
     if (verified === "true") {
@@ -116,6 +142,31 @@ export default function VerifyEmailScreen() {
   }, [isRecoveryEmailFlow, userEmail]);
 
   useEffect(() => {
+    const checkAfterReturn = () => {
+      void supabase.auth.getSession().then(({ data }) => {
+        const returnedUser = data.session?.user;
+        if (returnedUser?.email_confirmed_at && !isRecoveryEmailFlow) {
+          void setVerifiedAndRedirect();
+        }
+      });
+    };
+
+    const appStateSubscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState === "active") checkAfterReturn();
+    });
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user?.email_confirmed_at && !isRecoveryEmailFlow) {
+        void setVerifiedAndRedirect();
+      }
+    });
+
+    return () => {
+      appStateSubscription.remove();
+      authListener.subscription.unsubscribe();
+    };
+  }, [isRecoveryEmailFlow]);
+
+  useEffect(() => {
     const pulseLoop = Animated.loop(
       Animated.sequence([
         Animated.timing(pulse, {
@@ -142,15 +193,6 @@ export default function VerifyEmailScreen() {
       }),
     );
 
-    const shimmerLoop = Animated.loop(
-      Animated.timing(shimmer, {
-        toValue: 1,
-        duration: 2200,
-        easing: Easing.inOut(Easing.quad),
-        useNativeDriver: true,
-      }),
-    );
-
     const dotLoops = dotValues.map((value, index) =>
       Animated.loop(
         Animated.sequence([
@@ -173,18 +215,18 @@ export default function VerifyEmailScreen() {
 
     pulseLoop.start();
     rotateLoop.start();
-    shimmerLoop.start();
     dotLoops.forEach((loop) => loop.start());
 
     return () => {
       pulseLoop.stop();
       rotateLoop.stop();
-      shimmerLoop.stop();
       dotLoops.forEach((loop) => loop.stop());
     };
-  }, [dotValues, pulse, rotate, shimmer]);
+  }, [dotValues, pulse, rotate]);
 
   const setVerifiedAndRedirect = async () => {
+    if (redirectingRef.current) return;
+    redirectingRef.current = true;
     setIsVerified(true);
     setMessage(isRecoveryEmailFlow ? "Recovery confirmed. Taking you back in..." : "Email verified. Redirecting...");
     await AsyncStorage.removeItem(PENDING_EMAIL_KEY);
@@ -299,6 +341,7 @@ export default function VerifyEmailScreen() {
         await clearPendingAuthFlow();
         setError(`Failed to resend: ${resendError.message}`);
       } else {
+        setResendCooldown(60);
         setMessage("A fresh verification link is on the way.");
       }
     } catch {
@@ -308,21 +351,39 @@ export default function VerifyEmailScreen() {
     }
   };
 
+  const handleOpenInbox = async () => {
+    setError("");
+    setMessage("");
+    try {
+      await Linking.openURL(inboxTarget.url);
+    } catch {
+      setError("We could not open your inbox automatically. Open your email app and look for the latest Betweener message.");
+    }
+  };
+
   const handleManualCheck = async () => {
     setLoading(true);
     setError("");
     setMessage("");
     try {
-      const { data, error: userError } = await supabase.auth.getUser();
-      if (userError) {
-        setError(`Failed to check verification: ${userError.message}`);
-      } else if (data?.user?.email_confirmed_at) {
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError) {
+        setError("We could not check verification right now. Please try again in a moment.");
+      } else if (sessionData.session?.user?.email_confirmed_at) {
         await setVerifiedAndRedirect();
+      } else if (!sessionData.session) {
+        setMessage(
+          "We have not received the verified sign-in yet. Open the button inside the email on this phone so it can return you to Betweener.",
+        );
       } else {
-        setMessage(isRecoveryEmailFlow ? "We are still waiting for the recovery link to be completed." : "Still waiting for email verification. Please check your inbox.");
+        setMessage(
+          isRecoveryEmailFlow
+            ? "We are still waiting for the recovery link to be completed."
+            : "The email is not verified yet. Open the newest Betweener email and tap its verification button.",
+        );
       }
     } catch {
-      setError("Failed to check verification.");
+      setError("We could not check verification right now. Please try again in a moment.");
     } finally {
       setLoading(false);
     }
@@ -331,7 +392,7 @@ export default function VerifyEmailScreen() {
   const handleBackToLogin = async () => {
     await AsyncStorage.removeItem(PENDING_EMAIL_KEY);
     await clearPendingAuthFlow();
-    router.push("/(auth)/login");
+    router.replace(isRecoveryEmailFlow ? "/(auth)/login" : "/(auth)/signup-options");
   };
 
   return (
@@ -341,211 +402,219 @@ export default function VerifyEmailScreen() {
       end={{ x: 0.92, y: 0.96 }}
       style={styles.gradient}
     >
+      <View style={styles.ambientGlowTop} />
+      <View style={styles.ambientGlowBottom} />
       <SafeAreaView style={styles.safeArea}>
-        <View style={styles.shell}>
-          <View style={styles.panelShadow} />
+        <ScrollView
+          contentContainerStyle={styles.screenContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={styles.brandRow}>
+            <Text style={styles.brand}>Betweener</Text>
+            <Text style={styles.brandGlyph}>*</Text>
+          </View>
+
           <View style={styles.panel}>
-            <LinearGradient
-              colors={["rgba(247, 236, 226, 0.96)", "rgba(243, 229, 216, 0.94)"]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.panelGradient}
-            >
-              <View style={styles.hero}>
-                <View style={styles.eyebrowPill}>
-                  <Ionicons name={isRecoveryEmailFlow ? "shield-checkmark-outline" : "mail-unread-outline"} size={14} color={Colors.light.tint} />
-                  <Text style={styles.eyebrowText}>{isRecoveryEmailFlow ? "Secure recovery" : "Email verification"}</Text>
-                </View>
+            <View style={styles.eyebrowPill}>
+              <Ionicons name={isRecoveryEmailFlow ? "shield-checkmark-outline" : "paper-plane-outline"} size={14} color="#73E2DC" />
+              <Text style={styles.eyebrowText}>{isRecoveryEmailFlow ? "Recovery email sent" : "Verification email sent"}</Text>
+            </View>
 
-                <Text style={styles.title}>{headline}</Text>
-                <Text style={styles.description}>{description}</Text>
+            <Text style={styles.title}>{isRecoveryEmailFlow ? headline : "Check your inbox"}</Text>
+            <Text style={styles.description}>
+              {isRecoveryEmailFlow
+                ? description
+                : "Your account is almost ready. Open the email we sent and tap the verification button inside."}
+            </Text>
 
-                <View style={styles.emailCard}>
-                  <Text style={styles.emailLabel}>{isRecoveryEmailFlow ? "Recovery inbox" : "Inbox to check"}</Text>
-                  <Text style={styles.emailValue}>{displayEmail}</Text>
-                </View>
+            <View style={styles.emailCard}>
+              <View style={styles.emailIconWrap}>
+                <Ionicons name="mail-outline" size={19} color="#73E2DC" />
               </View>
+              <View style={styles.emailCopy}>
+                <Text style={styles.emailLabel}>{isRecoveryEmailFlow ? "Recovery sent to" : "Sent to"}</Text>
+                <Text style={styles.emailValue} numberOfLines={2}>{displayEmail}</Text>
+              </View>
+              <Ionicons name="checkmark-circle" size={21} color="#6FD6B2" />
+            </View>
 
-              {error ? <Text style={styles.errorText}>{error}</Text> : null}
+            {error ? (
+              <View style={[styles.feedbackCard, styles.errorCard]}>
+                <Ionicons name="alert-circle-outline" size={19} color="#FF8C98" />
+                <Text style={styles.errorText}>{error}</Text>
+              </View>
+            ) : null}
 
-              {message ? (
-                <Animated.View
-                  style={[
-                    styles.messageCard,
-                    isVerified ? styles.messageCardSuccess : styles.messageCardInfo,
-                    {
-                      transform: [{ scale: successContainerScale }],
-                      opacity: successOpacity,
-                    },
-                  ]}
-                >
-                  {isVerified && confettiAnimations.map((confetti, index) => (
-                    <Animated.View
-                      key={index}
-                      style={[
-                        styles.confetti,
-                        {
-                          backgroundColor: ["#E8B86D", "#2AD9D4", "#7D5BA6", "#5CBEB6", "#F1C99D", "#9DB5B2", "#C38FD6", "#0F8F8E"][index],
-                          transform: [
-                            { translateX: confetti.translateX },
-                            { translateY: confetti.translateY },
-                            {
-                              rotate: confetti.rotate.interpolate({
-                                inputRange: [0, 360],
-                                outputRange: ["0deg", "360deg"],
-                              }),
-                            },
-                          ],
-                          opacity: confetti.opacity,
-                        },
-                      ]}
-                    />
-                  ))}
+            {message ? (
+              <Animated.View
+                style={[
+                  styles.messageCard,
+                  isVerified ? styles.messageCardSuccess : styles.messageCardInfo,
+                  isVerified
+                    ? { transform: [{ scale: successContainerScale }], opacity: successOpacity }
+                    : { opacity: 1 },
+                ]}
+              >
+                {isVerified && confettiAnimations.map((confetti, index) => (
+                  <Animated.View
+                    key={index}
+                    style={[
+                      styles.confetti,
+                      {
+                        backgroundColor: ["#E8B86D", "#2AD9D4", "#7D5BA6", "#5CBEB6", "#F1C99D", "#9DB5B2", "#C38FD6", "#0F8F8E"][index],
+                        transform: [
+                          { translateX: confetti.translateX },
+                          { translateY: confetti.translateY },
+                          {
+                            rotate: confetti.rotate.interpolate({
+                              inputRange: [0, 360],
+                              outputRange: ["0deg", "360deg"],
+                            }),
+                          },
+                        ],
+                        opacity: confetti.opacity,
+                      },
+                    ]}
+                  />
+                ))}
+                {isVerified ? (
+                  <Animated.View
+                    style={[
+                      styles.successIconWrap,
+                      {
+                        transform: [
+                          { scale: checkmarkScale },
+                          {
+                            rotate: checkmarkRotation.interpolate({
+                              inputRange: [0, 360],
+                              outputRange: ["0deg", "360deg"],
+                            }),
+                          },
+                        ],
+                      },
+                    ]}
+                  >
+                    <Ionicons name="checkmark" size={28} color="#FFFFFF" />
+                  </Animated.View>
+                ) : (
+                  <Ionicons name="information-circle-outline" size={19} color="#73E2DC" />
+                )}
+                <Text style={[styles.messageText, isVerified ? styles.messageTextSuccess : styles.messageTextInfo]}>
+                  {message}
+                </Text>
+              </Animated.View>
+            ) : null}
 
-                  {isVerified ? (
-                    <Animated.View
-                      style={[
-                        styles.successIconWrap,
-                        {
-                          transform: [
-                            { scale: checkmarkScale },
-                            {
-                              rotate: checkmarkRotation.interpolate({
-                                inputRange: [0, 360],
-                                outputRange: ["0deg", "360deg"],
-                              }),
-                            },
-                          ],
-                        },
-                      ]}
-                    >
-                      <Ionicons name="checkmark" size={30} color="#FFFFFF" />
-                    </Animated.View>
-                  ) : null}
-
-                  <Text style={[styles.messageText, isVerified ? styles.messageTextSuccess : styles.messageTextInfo]}>
-                    {message}
-                  </Text>
-                </Animated.View>
-              ) : null}
-
-              {!isVerified ? (
-                <View style={styles.waitingCard}>
-                  <View style={styles.loaderStage}>
-                    <Animated.View
-                      style={[
-                        styles.orbitalRing,
-                        {
-                          transform: [{ scale: ringScale }, { rotate: rotation }],
-                          opacity: ringOpacity,
-                        },
-                      ]}
-                    />
-                    <Animated.View
-                      style={[
-                        styles.orbitalRingInner,
-                        {
-                          transform: [{ rotate: rotation }],
-                        },
-                      ]}
-                    />
-                    <LinearGradient
-                      colors={["#1797B1", "#2AD9D4", "#E8B86D"]}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 1 }}
-                      style={styles.orbCore}
-                    >
-                      <Ionicons name={isRecoveryEmailFlow ? "mail-open-outline" : "mail-outline"} size={24} color="#FFF8F2" />
-                    </LinearGradient>
-                  </View>
-
-                  <View style={styles.loadingCopyWrap}>
-                    <View style={styles.loadingHeadlineRow}>
-                      <Text style={styles.loadingHeadline}>{WAITING_COPY}</Text>
-                      <View style={styles.dotRow}>
-                        {dotValues.map((value, index) => (
-                          <Animated.View
-                            key={index}
-                            style={[
-                              styles.dot,
-                              {
-                                opacity: value,
-                                transform: [
-                                  {
-                                    translateY: value.interpolate({
-                                      inputRange: [0.28, 1],
-                                      outputRange: [0, -3],
-                                    }),
-                                  },
-                                ],
-                              },
-                            ]}
-                          />
-                        ))}
-                      </View>
-                    </View>
-
-                    <View style={styles.shimmerTrack}>
+            {!isVerified ? (
+              <>
+                <View style={styles.instructionsCard}>
+                  <View style={styles.statusHeader}>
+                    <View style={styles.loaderStage}>
                       <Animated.View
                         style={[
-                          styles.shimmerBar,
-                          {
-                            transform: [{ translateX: shimmerTranslate }],
-                          },
+                          styles.orbitalRing,
+                          { transform: [{ scale: ringScale }, { rotate: rotation }], opacity: ringOpacity },
                         ]}
                       />
-                    </View>
-
-                    <Text style={styles.loadingSubtext}>
-                      {isRecoveryEmailFlow
-                        ? "Stay here after opening the recovery link. We will route you back into the right account."
-                        : "Once the link is opened, we will continue automatically."}
-                    </Text>
-                  </View>
-                </View>
-              ) : null}
-
-              {!isVerified ? (
-                <View style={styles.actions}>
-                  {!isRecoveryEmailFlow ? (
-                    <TouchableOpacity
-                      activeOpacity={0.92}
-                      style={[styles.primaryWrap, loading && styles.buttonDisabled]}
-                      onPress={handleResend}
-                      disabled={loading}
-                    >
                       <LinearGradient
-                        colors={loading ? ["#7CB7B3", "#7CB7B3"] : ["#0F8F8E", "#1797B1"]}
+                        colors={["#139C98", "#7659B5", "#E8B86D"]}
                         start={{ x: 0, y: 0 }}
                         end={{ x: 1, y: 1 }}
-                        style={styles.primaryButton}
+                        style={styles.orbCore}
                       >
-                        {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryButtonText}>Send another link</Text>}
+                        <Ionicons name="mail-open-outline" size={22} color="#FFFFFF" />
                       </LinearGradient>
-                    </TouchableOpacity>
-                  ) : null}
+                    </View>
+                    <View style={styles.statusCopy}>
+                      <View style={styles.loadingHeadlineRow}>
+                        <Text style={styles.loadingHeadline}>{WAITING_COPY}</Text>
+                        <View style={styles.dotRow}>
+                          {dotValues.map((value, index) => (
+                            <Animated.View key={index} style={[styles.dot, { opacity: value }]} />
+                          ))}
+                        </View>
+                      </View>
+                      <Text style={styles.loadingSubtext}>We will continue automatically when the link returns you to Betweener.</Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.stepDivider} />
+                  {[
+                    ["1", "Open your inbox", "Look for the newest email from Betweener."],
+                    ["2", "Tap Verify my email", "Use the button inside that email—not this screen."],
+                    ["3", "Return to Betweener", "The app will detect verification and continue."],
+                  ].map(([number, stepTitle, stepBody]) => (
+                    <View key={number} style={styles.stepRow}>
+                      <View style={styles.stepNumber}><Text style={styles.stepNumberText}>{number}</Text></View>
+                      <View style={styles.stepCopy}>
+                        <Text style={styles.stepTitle}>{stepTitle}</Text>
+                        <Text style={styles.stepBody}>{stepBody}</Text>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+
+                <View style={styles.actions}>
+                  <TouchableOpacity activeOpacity={0.9} style={styles.primaryWrap} onPress={handleOpenInbox}>
+                    <LinearGradient
+                      colors={["#13AAA4", "#6E55BE"]}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={styles.primaryButton}
+                    >
+                      <Ionicons name="mail-open-outline" size={20} color="#FFFFFF" />
+                      <Text style={styles.primaryButtonText}>{inboxTarget.label}</Text>
+                      <Ionicons name="arrow-forward" size={19} color="#FFFFFF" />
+                    </LinearGradient>
+                  </TouchableOpacity>
 
                   <TouchableOpacity
-                    activeOpacity={0.92}
+                    activeOpacity={0.9}
                     style={[styles.secondaryButton, loading && styles.buttonDisabled]}
                     onPress={handleManualCheck}
                     disabled={loading}
                   >
-                    <Text style={styles.secondaryButtonText}>{loading ? "Checking..." : isRecoveryEmailFlow ? "I opened the recovery link" : "I've verified my email"}</Text>
+                    {loading ? <ActivityIndicator color="#73E2DC" /> : <Ionicons name="checkmark-circle-outline" size={19} color="#73E2DC" />}
+                    <Text style={styles.secondaryButtonText}>
+                      {loading ? "Checking verification..." : "I tapped the link — continue"}
+                    </Text>
                   </TouchableOpacity>
 
+                  {!isRecoveryEmailFlow ? (
+                    <View style={styles.resendRow}>
+                      <Text style={styles.resendPrompt}>No email after a minute?</Text>
+                      <Pressable onPress={handleResend} disabled={loading || resendCooldown > 0} hitSlop={8}>
+                        <Text style={[styles.resendLink, resendCooldown > 0 && styles.resendLinkDisabled]}>
+                          {loading
+                            ? "Please wait"
+                            : resendCooldown > 0
+                              ? `Send again in ${resendCooldown}s`
+                              : "Send another link"}
+                        </Text>
+                      </Pressable>
+                    </View>
+                  ) : null}
+
+                  <View style={styles.helpCard}>
+                    <Ionicons name="search-outline" size={17} color="#DFC18A" />
+                    <Text style={styles.helpText}>Check Spam or Promotions if it is not in your main inbox. Use only the newest verification email.</Text>
+                  </View>
+
                   <Pressable onPress={handleBackToLogin} style={styles.backLink}>
-                    <Text style={styles.backLinkText}>{isRecoveryEmailFlow ? "Back to sign in" : "Back to login"}</Text>
+                    <Ionicons name="chevron-back" size={16} color="#B8C9C8" />
+                    <Text style={styles.backLinkText}>{isRecoveryEmailFlow ? "Back to sign in" : "Wrong email? Start again"}</Text>
                   </Pressable>
                 </View>
-              ) : (
-                <View style={styles.verifiedFooter}>
-                  <Text style={styles.verifiedFooterText}>Securing your account and preparing the next screen.</Text>
-                </View>
-              )}
-            </LinearGradient>
+              </>
+            ) : (
+              <View style={styles.verifiedFooter}>
+                <ActivityIndicator color="#73E2DC" />
+                <Text style={styles.verifiedFooterText}>Securing your account and preparing the next screen.</Text>
+              </View>
+            )}
           </View>
-        </View>
+        </ScrollView>
       </SafeAreaView>
     </LinearGradient>
   );
@@ -554,143 +623,196 @@ export default function VerifyEmailScreen() {
 const styles = StyleSheet.create({
   gradient: {
     flex: 1,
+    backgroundColor: "#061B1C",
+  },
+  ambientGlowTop: {
+    position: "absolute",
+    top: -90,
+    right: -70,
+    width: 280,
+    height: 280,
+    borderRadius: 999,
+    backgroundColor: "rgba(118, 89, 181, 0.25)",
+  },
+  ambientGlowBottom: {
+    position: "absolute",
+    bottom: -120,
+    left: -90,
+    width: 320,
+    height: 320,
+    borderRadius: 999,
+    backgroundColor: "rgba(19, 170, 164, 0.2)",
   },
   safeArea: {
     flex: 1,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
   },
-  shell: {
-    flex: 1,
+  screenContent: {
+    flexGrow: 1,
     justifyContent: "center",
-    position: "relative",
-  },
-  panelShadow: {
-    position: "absolute",
-    top: 28,
-    left: 14,
-    right: 14,
-    bottom: 18,
-    borderRadius: 34,
-    backgroundColor: "rgba(255,255,255,0.25)",
-    opacity: 0.58,
-  },
-  panel: {
-    borderRadius: 34,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.52)",
-  },
-  panelGradient: {
-    paddingHorizontal: 24,
-    paddingTop: 28,
+    paddingHorizontal: 18,
+    paddingTop: 14,
     paddingBottom: 28,
   },
-  hero: {
-    marginBottom: 18,
+  brandRow: {
+    alignSelf: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 14,
+  },
+  brand: {
+    color: "#FFF8F2",
+    fontFamily: "PlayfairDisplay_700Bold",
+    fontSize: 24,
+    letterSpacing: 0.4,
+  },
+  brandGlyph: {
+    color: "#C7A7FF",
+    fontFamily: "PlayfairDisplay_700Bold",
+    fontSize: 13,
+    marginTop: -6,
+  },
+  panel: {
+    width: "100%",
+    maxWidth: 540,
+    alignSelf: "center",
+    borderRadius: 30,
+    paddingHorizontal: 20,
+    paddingVertical: 22,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.14)",
+    backgroundColor: "rgba(6, 27, 28, 0.91)",
+    shadowColor: "#020B0C",
+    shadowOpacity: 0.42,
+    shadowRadius: 28,
+    shadowOffset: { width: 0, height: 16 },
+    elevation: 12,
   },
   eyebrowPill: {
-    alignSelf: "flex-start",
+    alignSelf: "center",
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 7,
-    marginBottom: 16,
-    backgroundColor: "rgba(0, 128, 128, 0.10)",
+    marginBottom: 14,
+    backgroundColor: "rgba(115, 226, 220, 0.10)",
+    borderWidth: 1,
+    borderColor: "rgba(115, 226, 220, 0.18)",
   },
   eyebrowText: {
-    color: Colors.light.tint,
-    fontSize: 12,
+    color: "#A9EFEB",
+    fontSize: 10.5,
     fontFamily: "Manrope_700Bold",
     textTransform: "uppercase",
-    letterSpacing: 0.35,
+    letterSpacing: 1.1,
   },
   title: {
-    color: Colors.light.text,
-    fontSize: 32,
-    lineHeight: 38,
+    color: "#FFF8F2",
+    fontSize: 34,
+    lineHeight: 40,
     marginBottom: 10,
-    fontFamily: "Archivo_700Bold",
+    fontFamily: "PlayfairDisplay_700Bold",
     letterSpacing: -0.45,
+    textAlign: "center",
   },
   description: {
-    color: Colors.light.textMuted,
+    color: "#B8C9C8",
     fontSize: 15,
     lineHeight: 23,
     fontFamily: "Manrope_500Medium",
+    textAlign: "center",
   },
   emailCard: {
-    marginTop: 18,
-    borderRadius: 22,
-    paddingHorizontal: 16,
-    paddingVertical: 15,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 11,
+    marginTop: 20,
+    marginBottom: 16,
+    borderRadius: 18,
+    paddingHorizontal: 13,
+    paddingVertical: 13,
     borderWidth: 1,
-    borderColor: Colors.light.outline,
-    backgroundColor: "rgba(255,255,255,0.76)",
+    borderColor: "rgba(115, 226, 220, 0.17)",
+    backgroundColor: "rgba(255,255,255,0.065)",
+  },
+  emailIconWrap: {
+    width: 38,
+    height: 38,
+    borderRadius: 13,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(115, 226, 220, 0.11)",
+  },
+  emailCopy: {
+    flex: 1,
   },
   emailLabel: {
-    color: Colors.light.textMuted,
-    fontSize: 11.5,
+    color: "#91A9A7",
+    fontSize: 10.5,
     fontFamily: "Manrope_700Bold",
     textTransform: "uppercase",
     letterSpacing: 0.55,
-    marginBottom: 6,
+    marginBottom: 3,
   },
   emailValue: {
-    color: Colors.light.text,
-    fontSize: 18,
-    lineHeight: 23,
-    fontFamily: "Archivo_700Bold",
+    color: "#FFF8F2",
+    fontSize: 15,
+    lineHeight: 20,
+    fontFamily: "Manrope_700Bold",
   },
   errorText: {
-    color: Colors.light.danger,
+    flex: 1,
+    color: "#FFD7DC",
     fontSize: 13.5,
     lineHeight: 20,
     fontFamily: "Manrope_600SemiBold",
-    marginBottom: 14,
   },
   messageCard: {
     position: "relative",
     overflow: "hidden",
+    flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 24,
-    paddingHorizontal: 18,
-    paddingVertical: 18,
-    marginBottom: 16,
+    gap: 9,
+    borderRadius: 16,
+    paddingHorizontal: 13,
+    paddingVertical: 12,
+    marginBottom: 14,
   },
   messageCardInfo: {
-    backgroundColor: "rgba(23, 151, 177, 0.10)",
+    backgroundColor: "rgba(115, 226, 220, 0.09)",
     borderWidth: 1,
     borderColor: "rgba(23, 151, 177, 0.16)",
   },
   messageCardSuccess: {
-    backgroundColor: "rgba(15, 143, 142, 0.12)",
+    flexDirection: "column",
+    backgroundColor: "rgba(111, 214, 178, 0.12)",
     borderWidth: 1,
     borderColor: "rgba(15, 143, 142, 0.16)",
   },
   messageText: {
+    flex: 1,
     textAlign: "center",
-    fontSize: 17,
-    lineHeight: 24,
-    fontFamily: "Manrope_700Bold",
+    fontSize: 13.5,
+    lineHeight: 19,
+    fontFamily: "Manrope_600SemiBold",
   },
   messageTextInfo: {
-    color: "#155E75",
+    color: "#D2F6F3",
   },
   messageTextSuccess: {
-    color: "#0B6D6A",
+    color: "#CFF6E8",
   },
   successIconWrap: {
-    width: 62,
-    height: 62,
-    borderRadius: 31,
-    backgroundColor: "#0F8F8E",
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: "#0A9E99",
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 12,
+    marginBottom: 8,
   },
   confetti: {
     position: "absolute",
@@ -698,66 +820,63 @@ const styles = StyleSheet.create({
     height: 8,
     borderRadius: 4,
   },
-  waitingCard: {
-    borderRadius: 28,
-    paddingHorizontal: 18,
-    paddingVertical: 22,
-    marginBottom: 22,
+  instructionsCard: {
+    borderRadius: 22,
+    paddingHorizontal: 15,
+    paddingVertical: 16,
+    marginBottom: 16,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.56)",
-    backgroundColor: "rgba(255,255,255,0.62)",
+    borderColor: "rgba(255,255,255,0.11)",
+    backgroundColor: "rgba(255,255,255,0.055)",
+  },
+  statusHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 13,
   },
   loaderStage: {
-    height: 136,
+    width: 64,
+    height: 64,
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 14,
+    flexShrink: 0,
   },
   orbitalRing: {
     position: "absolute",
-    width: 112,
-    height: 112,
-    borderRadius: 56,
+    width: 62,
+    height: 62,
+    borderRadius: 31,
     borderWidth: 1.5,
-    borderColor: "rgba(15, 143, 142, 0.28)",
-    borderTopColor: "rgba(232, 184, 109, 0.64)",
-  },
-  orbitalRingInner: {
-    position: "absolute",
-    width: 84,
-    height: 84,
-    borderRadius: 42,
-    borderWidth: 1,
-    borderColor: "rgba(125, 91, 166, 0.20)",
-    borderBottomColor: "rgba(42, 217, 212, 0.64)",
+    borderColor: "rgba(115, 226, 220, 0.22)",
+    borderTopColor: "rgba(232, 184, 109, 0.78)",
   },
   orbCore: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
+    width: 46,
+    height: 46,
+    borderRadius: 23,
     alignItems: "center",
     justifyContent: "center",
-    shadowColor: "#1797B1",
+    shadowColor: "#7659B5",
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.2,
     shadowRadius: 12,
     elevation: 8,
   },
-  loadingCopyWrap: {
-    alignItems: "center",
+  statusCopy: {
+    flex: 1,
   },
   loadingHeadlineRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 10,
+    marginBottom: 4,
   },
   loadingHeadline: {
-    color: Colors.light.text,
-    fontSize: 19,
-    lineHeight: 24,
-    fontFamily: "Archivo_700Bold",
-    marginRight: 8,
+    flexShrink: 1,
+    color: "#FFF8F2",
+    fontSize: 14,
+    lineHeight: 19,
+    fontFamily: "Manrope_700Bold",
+    marginRight: 7,
   },
   dotRow: {
     flexDirection: "row",
@@ -766,35 +885,60 @@ const styles = StyleSheet.create({
     paddingTop: 2,
   },
   dot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: Colors.light.tint,
-  },
-  shimmerTrack: {
-    width: 120,
-    height: 4,
-    borderRadius: 999,
-    overflow: "hidden",
-    backgroundColor: "rgba(95, 112, 108, 0.12)",
-    marginBottom: 12,
-  },
-  shimmerBar: {
-    width: 46,
-    height: 4,
-    borderRadius: 999,
-    backgroundColor: "rgba(232, 184, 109, 0.95)",
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: "#73E2DC",
   },
   loadingSubtext: {
-    color: Colors.light.textMuted,
-    fontSize: 14,
-    lineHeight: 21,
+    color: "#9FB5B3",
+    fontSize: 12,
+    lineHeight: 17,
     fontFamily: "Manrope_500Medium",
-    textAlign: "center",
-    paddingHorizontal: 6,
+  },
+  stepDivider: {
+    height: 1,
+    marginVertical: 14,
+    backgroundColor: "rgba(255,255,255,0.09)",
+  },
+  stepRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 11,
+    marginBottom: 12,
+  },
+  stepNumber: {
+    width: 25,
+    height: 25,
+    borderRadius: 12.5,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(118, 89, 181, 0.3)",
+    borderWidth: 1,
+    borderColor: "rgba(199, 167, 255, 0.3)",
+  },
+  stepNumberText: {
+    color: "#E3D3FF",
+    fontFamily: "Manrope_700Bold",
+    fontSize: 11,
+  },
+  stepCopy: {
+    flex: 1,
+  },
+  stepTitle: {
+    color: "#FFF8F2",
+    fontFamily: "Manrope_700Bold",
+    fontSize: 13,
+    marginBottom: 2,
+  },
+  stepBody: {
+    color: "#9FB5B3",
+    fontFamily: "Manrope_400Regular",
+    fontSize: 11.5,
+    lineHeight: 16,
   },
   actions: {
-    gap: 12,
+    gap: 11,
   },
   primaryWrap: {
     borderRadius: 18,
@@ -803,9 +947,16 @@ const styles = StyleSheet.create({
   primaryButton: {
     minHeight: 56,
     borderRadius: 18,
+    flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
+    gap: 9,
     paddingHorizontal: 18,
+    shadowColor: "#7659B5",
+    shadowOpacity: 0.32,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 6,
   },
   primaryButtonText: {
     color: "#FFFFFF",
@@ -815,39 +966,100 @@ const styles = StyleSheet.create({
   secondaryButton: {
     minHeight: 54,
     borderRadius: 18,
+    flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
+    gap: 8,
     borderWidth: 1,
-    borderColor: "rgba(95, 112, 108, 0.16)",
-    backgroundColor: "rgba(255,255,255,0.7)",
+    borderColor: "rgba(115, 226, 220, 0.19)",
+    backgroundColor: "rgba(115, 226, 220, 0.07)",
     paddingHorizontal: 18,
   },
   secondaryButtonText: {
-    color: Colors.light.text,
-    fontSize: 15.5,
+    color: "#D9F5F3",
+    fontSize: 14,
     fontFamily: "Manrope_700Bold",
+  },
+  resendRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 3,
+  },
+  resendPrompt: {
+    color: "#91A9A7",
+    fontFamily: "Manrope_400Regular",
+    fontSize: 12.5,
+  },
+  resendLink: {
+    color: "#73E2DC",
+    fontFamily: "Manrope_700Bold",
+    fontSize: 12.5,
+  },
+  resendLinkDisabled: {
+    color: "#718886",
+  },
+  helpCard: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 14,
+    backgroundColor: "rgba(232, 184, 109, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(232, 184, 109, 0.16)",
+  },
+  helpText: {
+    flex: 1,
+    color: "#D5C6AC",
+    fontFamily: "Manrope_400Regular",
+    fontSize: 11.5,
+    lineHeight: 17,
   },
   backLink: {
     alignSelf: "center",
-    paddingTop: 4,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    paddingTop: 5,
   },
   backLinkText: {
-    color: Colors.light.tint,
-    fontSize: 15,
+    color: "#B8C9C8",
+    fontSize: 13,
     fontFamily: "Manrope_600SemiBold",
   },
   buttonDisabled: {
     opacity: 0.72,
   },
   verifiedFooter: {
+    flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
+    gap: 9,
     paddingTop: 6,
   },
   verifiedFooterText: {
-    color: "#0B6D6A",
+    color: "#CFF6E8",
     fontSize: 14,
     lineHeight: 21,
     fontFamily: "Manrope_500Medium",
     textAlign: "center",
+  },
+  feedbackCard: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    borderRadius: 15,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    marginBottom: 14,
+    borderWidth: 1,
+  },
+  errorCard: {
+    backgroundColor: "rgba(255, 92, 110, 0.10)",
+    borderColor: "rgba(255, 140, 152, 0.22)",
   },
 });

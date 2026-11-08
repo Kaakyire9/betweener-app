@@ -1,6 +1,4 @@
-import PremiumSyncNotice from "@/components/profile/PremiumSyncNotice";
 import { Colors } from "@/constants/theme";
-import { MaterialCommunityIcons } from "@expo/vector-icons";
 import React, { useMemo } from "react";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
@@ -11,40 +9,22 @@ type PremiumExpiryReminder = {
   body: string;
 };
 
-type PremiumQueueState = {
-  visible: boolean;
-  title: string;
-  message: string;
-  failedCount: number;
-  pendingCount: number;
-  hasFailed: boolean;
-  retryFailed: () => Promise<unknown>;
-};
-
 type Props = {
   theme: Theme;
   isDark: boolean;
   premiumExpiryReminder: PremiumExpiryReminder | null;
-  premiumQueue: PremiumQueueState;
-  profileSyncPending: boolean;
-  profileSyncFailed: boolean;
   onReviewPremium: () => void;
-  onOpenSyncActivity: () => void;
 };
 
 export default function MeProfileStatusStack({
   theme,
   isDark,
   premiumExpiryReminder,
-  premiumQueue,
-  profileSyncPending,
-  profileSyncFailed,
   onReviewPremium,
-  onOpenSyncActivity,
 }: Props) {
   const styles = useMemo(() => createStyles(theme), [theme]);
 
-  if (!premiumExpiryReminder && !premiumQueue.visible && !profileSyncPending && !profileSyncFailed) {
+  if (!premiumExpiryReminder) {
     return null;
   }
 
@@ -80,46 +60,6 @@ export default function MeProfileStatusStack({
         </View>
       ) : null}
 
-      {premiumQueue.visible ? (
-        <PremiumSyncNotice
-          theme={theme}
-          isDark={isDark}
-          title={premiumQueue.title}
-          message={premiumQueue.message}
-          failedCount={premiumQueue.failedCount}
-          pendingCount={premiumQueue.pendingCount}
-          onPress={() => {
-            if (premiumQueue.hasFailed) {
-              void premiumQueue.retryFailed();
-              return;
-            }
-            onOpenSyncActivity();
-          }}
-        />
-      ) : null}
-
-      {profileSyncPending || profileSyncFailed ? (
-        <View
-          style={[
-            styles.profileSyncBanner,
-            {
-              backgroundColor: profileSyncFailed ? "rgba(239, 68, 68, 0.12)" : "rgba(20, 184, 166, 0.12)",
-              borderColor: profileSyncFailed ? "rgba(239, 68, 68, 0.32)" : "rgba(20, 184, 166, 0.32)",
-            },
-          ]}
-        >
-          <MaterialCommunityIcons
-            name={profileSyncFailed ? "cloud-alert-outline" : "cloud-sync-outline"}
-            size={16}
-            color={profileSyncFailed ? "#F87171" : theme.tint}
-          />
-          <Text style={[styles.profileSyncText, { color: theme.textMuted }]}>
-            {profileSyncFailed
-              ? "Some profile edits need your attention when you're back online."
-              : "Profile edits saved here. Syncing when your connection returns."}
-          </Text>
-        </View>
-      ) : null}
     </>
   );
 }
@@ -159,23 +99,6 @@ function createStyles(_theme: Theme) {
     premiumReminderActionText: {
       fontSize: 11.5,
       fontFamily: "Manrope_700Bold",
-    },
-    profileSyncBanner: {
-      width: "100%",
-      marginTop: 12,
-      borderRadius: 14,
-      borderWidth: StyleSheet.hairlineWidth,
-      paddingHorizontal: 12,
-      paddingVertical: 10,
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 8,
-    },
-    profileSyncText: {
-      flex: 1,
-      fontSize: 12,
-      lineHeight: 17,
-      fontFamily: "Manrope_600SemiBold",
     },
   });
 }

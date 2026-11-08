@@ -17,7 +17,7 @@ test('Circle-backed Live rooms return to the exact Circle surface', () => {
   });
 });
 
-test('global Live rooms return to the Live Studio', () => {
+test('global Live rooms return to the Live Host Dashboard', () => {
   assert.equal(getLiveExitDestination(null), '/live');
   assert.equal(getLiveExitDestination({ returnCircleId: '  ' }), '/live');
 });
@@ -53,4 +53,24 @@ test('transient signaling failures are delegated to transport recovery without L
     console.warn = originalWarn;
   }
   assert.equal(warningCount, 0);
+});
+
+test('a stopped Android keep-alive task cannot flood logs after the next call owns media', () => {
+  const originalWarn = console.warn;
+  const warnings: string[] = [];
+  console.warn = (...values: unknown[]) => { warnings.push(values.join(' ')); };
+  try {
+    streamLiveSdkLogSink(
+      'warn',
+      '[KEEP_CALL_ALIVE_HEADLESS_TASK]: Keep-alive task callCid does not match active call; skipping.',
+    );
+    streamLiveSdkLogSink(
+      'warn',
+      '[KEEP_CALL_ALIVE_HEADLESS_TASK]: No active call instance available for keep-alive task; skipping.',
+    );
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0] ?? '', /No active call instance/);
 });

@@ -2,6 +2,8 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.110.7'
 import { corsHeaders } from '../_shared/cors.ts'
+import { getSupabaseAdminKey } from '../_shared/supabase-admin-key.ts'
+import { getSupabasePublicApiKey } from '../_shared/supabase-public-key.ts'
 
 const json = (status: number, body: Record<string, unknown>) => new Response(JSON.stringify(body), {
   status,
@@ -13,8 +15,8 @@ serve(async (req) => {
   if (req.method !== 'POST') return json(405, { error: 'method_not_allowed' })
   try {
     const url = Deno.env.get('SUPABASE_URL') || ''
-    const anonKey = Deno.env.get('SUPABASE_ANON_KEY') || ''
-    const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
+    const anonKey = getSupabasePublicApiKey()
+    const serviceKey = getSupabaseAdminKey()
     const authHeader = req.headers.get('Authorization') || ''
     if (!url || !anonKey || !serviceKey) return json(500, { error: 'server_configuration_incomplete' })
     const authClient = createClient(url, anonKey, { global: { headers: { Authorization: authHeader } } })

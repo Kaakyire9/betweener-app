@@ -14,7 +14,10 @@ with expected(version, purpose) as (values
   ('20260911100000', 'Host Studio disconnect and five-input capacity'),
   ('20260912080000', 'Host roster and consent-first stage invitations'),
   ('20260912090000', 'Studio screen audio and Programme Music repeat transport'),
-  ('20260912100000', 'Studio media lifecycle and policy-safe recovery')
+  ('20260912100000', 'Studio media lifecycle and policy-safe recovery'),
+  ('20260912110000', 'Global music library and synchronized Stage Atmosphere'),
+  ('20260912180000', 'Single Stream Programme Audio publisher'),
+  ('20260912190000', 'Host-controlled Music Intermission presentation')
 )
 select expected.version, expected.purpose,
   exists (select 1 from supabase_migrations.schema_migrations migration
@@ -29,8 +32,11 @@ select
   configuration.studio_session_discovery_enabled,
   configuration.studio_media_publishing_enabled,
   configuration.screen_share_enabled,
+  configuration.music_enabled,
   configuration.studio_screen_audio_enabled,
   configuration.studio_external_audio_enabled,
+  configuration.program_audio_publisher_enabled,
+  configuration.program_audio_publisher_lease_seconds,
   configuration.studio_closed_beta,
   configuration.studio_controller_lease_seconds,
   configuration.studio_controller_grace_seconds,
@@ -39,8 +45,13 @@ select
     and configuration.studio_session_discovery_enabled
     and configuration.studio_media_publishing_enabled
     and configuration.screen_share_enabled
+    and configuration.music_enabled
     and configuration.studio_screen_audio_enabled
     and configuration.studio_external_audio_enabled
+    and configuration.program_audio_publisher_enabled
+    and configuration.program_audio_publisher_lease_seconds between 15 and 120
+    and configuration.program_audio_publisher_stale_seconds
+      < configuration.program_audio_publisher_lease_seconds
     and configuration.studio_closed_beta
     and configuration.studio_controller_lease_seconds between 90 and 120
     and configuration.studio_controller_grace_seconds between 30 and 60
@@ -63,7 +74,17 @@ with expected(name, signature, authenticated_execute, service_execute) as (value
   ('invite audience member', 'public.rpc_invite_live_stage_member_v1(uuid,uuid,uuid)', true, true),
   ('respond to stage invitation', 'public.rpc_respond_live_stage_invitation_v1(uuid,boolean)', true, true),
   ('music repeat snapshot', 'public.rpc_get_live_music_repeat_mode_v1(uuid)', true, true),
+  ('music catalogue', 'public.rpc_get_live_music_catalogue_v1(uuid)', true, true),
+  ('publish music track', 'public.rpc_admin_publish_live_music_track_v2(uuid,text,text,text,text,integer,boolean,text,timestamp with time zone)', true, true),
+  ('stage atmosphere snapshot', 'public.rpc_get_live_stage_atmosphere_v1(uuid)', true, true),
+  ('host stage atmosphere', 'public.rpc_host_set_live_stage_atmosphere_v1(uuid,text,bigint,uuid)', true, true),
   ('music completion', 'public.rpc_service_complete_live_music_playback_v1(uuid,uuid,bigint)', false, true),
+  ('programme audio discovery', 'public.rpc_service_list_live_program_audio_work_v1(uuid,integer)', false, true),
+  ('programme audio claim', 'public.rpc_service_claim_live_program_audio_v1(uuid,uuid)', false, true),
+  ('programme audio heartbeat', 'public.rpc_service_heartbeat_live_program_audio_v1(uuid,uuid,bigint,bigint,uuid,numeric,text,text)', false, true),
+  ('programme audio completion', 'public.rpc_service_complete_live_program_audio_v1(uuid,uuid,bigint,bigint)', false, true),
+  ('programme audio release', 'public.rpc_service_release_live_program_audio_v1(uuid,uuid,bigint,text)', false, true),
+  ('host Music stage', 'public.rpc_host_set_live_music_stage_v1(uuid,boolean,bigint,uuid)', true, true),
   ('music repeat service', 'public.rpc_service_get_live_music_repeat_mode_v1(uuid)', false, true),
   ('media admission', 'public.rpc_get_live_studio_media_admission_v1(uuid,uuid,text)', true, true),
   ('audience program', 'public.rpc_get_live_program_snapshot_v2(uuid)', true, true),
@@ -84,7 +105,9 @@ from resolved order by name;
 with tables(name) as (values
   ('live_studio_access'), ('live_program_sources'),
   ('live_program_command_events'), ('live_program_source_updates'),
-  ('live_stage_invitations')
+  ('live_stage_invitations'), ('live_stage_atmospheres'),
+  ('live_stage_atmosphere_events'),
+  ('live_program_audio_publishers'), ('live_program_audio_events')
 )
 select tables.name, coalesce(metadata.relrowsecurity, false) rls_enabled,
   not has_table_privilege('authenticated', format('public.%I', tables.name), 'INSERT')
@@ -99,6 +122,9 @@ select
   exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime'
     and schemaname = 'public' and tablename = 'live_program_source_updates')
     as source_updates_realtime_healthy,
+  exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime'
+    and schemaname = 'public' and tablename = 'live_stage_atmospheres')
+    as stage_atmosphere_realtime_healthy,
   exists (select 1 from cron.job where jobname = 'live-maintenance' and active)
     as maintenance_clock_healthy;
 
@@ -142,7 +168,8 @@ with migration_blockers as (
     ('20260910120000'), ('20260910121000'), ('20260910122000'),
     ('20260910123000'), ('20260910124000'), ('20260910125000'),
     ('20260910130000'), ('20260911100000'), ('20260912080000'),
-    ('20260912090000'), ('20260912100000')
+    ('20260912090000'), ('20260912100000'), ('20260912110000'),
+    ('20260912180000'), ('20260912190000')
   ) expected(version)
   where not exists (select 1 from supabase_migrations.schema_migrations migration
     where migration.version = expected.version)
@@ -154,8 +181,13 @@ with migration_blockers as (
       and configuration.studio_session_discovery_enabled
       and configuration.studio_media_publishing_enabled
       and configuration.screen_share_enabled
+      and configuration.music_enabled
       and configuration.studio_screen_audio_enabled
       and configuration.studio_external_audio_enabled
+      and configuration.program_audio_publisher_enabled
+      and configuration.program_audio_publisher_lease_seconds between 15 and 120
+      and configuration.program_audio_publisher_stale_seconds
+        < configuration.program_audio_publisher_lease_seconds
       and configuration.studio_closed_beta
       and configuration.studio_controller_lease_seconds between 90 and 120
       and configuration.studio_controller_grace_seconds between 30 and 60
@@ -180,7 +212,17 @@ with migration_blockers as (
     ('public.rpc_invite_live_stage_member_v1(uuid,uuid,uuid)', true, true),
     ('public.rpc_respond_live_stage_invitation_v1(uuid,boolean)', true, true),
     ('public.rpc_get_live_music_repeat_mode_v1(uuid)', true, true),
+    ('public.rpc_get_live_music_catalogue_v1(uuid)', true, true),
+    ('public.rpc_admin_publish_live_music_track_v2(uuid,text,text,text,text,integer,boolean,text,timestamp with time zone)', true, true),
+    ('public.rpc_get_live_stage_atmosphere_v1(uuid)', true, true),
+    ('public.rpc_host_set_live_stage_atmosphere_v1(uuid,text,bigint,uuid)', true, true),
     ('public.rpc_service_complete_live_music_playback_v1(uuid,uuid,bigint)', false, true),
+    ('public.rpc_service_list_live_program_audio_work_v1(uuid,integer)', false, true),
+    ('public.rpc_service_claim_live_program_audio_v1(uuid,uuid)', false, true),
+    ('public.rpc_service_heartbeat_live_program_audio_v1(uuid,uuid,bigint,bigint,uuid,numeric,text,text)', false, true),
+    ('public.rpc_service_complete_live_program_audio_v1(uuid,uuid,bigint,bigint)', false, true),
+    ('public.rpc_service_release_live_program_audio_v1(uuid,uuid,bigint,text)', false, true),
+    ('public.rpc_host_set_live_music_stage_v1(uuid,boolean,bigint,uuid)', true, true),
     ('public.rpc_service_get_live_music_repeat_mode_v1(uuid)', false, true),
     ('public.rpc_get_live_studio_media_admission_v1(uuid,uuid,text)', true, true),
     ('public.rpc_get_live_program_snapshot_v2(uuid)', true, true),
@@ -195,7 +237,9 @@ with migration_blockers as (
   select count(*)::bigint affected from (values
     ('live_studio_access'), ('live_program_sources'),
     ('live_program_command_events'), ('live_program_source_updates'),
-    ('live_stage_invitations')
+    ('live_stage_invitations'), ('live_stage_atmospheres'),
+    ('live_stage_atmosphere_events'),
+    ('live_program_audio_publishers'), ('live_program_audio_events')
   ) expected(name)
   where not coalesce((select relrowsecurity from pg_class
       where oid = to_regclass(format('public.%I', expected.name))), false)
@@ -206,8 +250,17 @@ with migration_blockers as (
   select case when
     exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime'
       and schemaname = 'public' and tablename = 'live_program_source_updates')
+    and exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime'
+      and schemaname = 'public' and tablename = 'live_stage_atmospheres')
     and exists (select 1 from cron.job where jobname = 'live-maintenance' and active)
     then 0::bigint else 1::bigint end affected
+), catalogue_blockers as (
+  select case when exists (
+    select 1 from public.live_music_tracks track
+    where track.enabled and track.license_status = 'approved'
+      and (track.license_expires_at is null or track.license_expires_at > now())
+      and track.licensed_regions @> array['*']::text[]
+  ) then 0::bigint else 1::bigint end affected
 ), capacity_blockers as (
   select case when
     position('program_visual_capacity_exceeded' in pg_get_functiondef(
@@ -251,6 +304,21 @@ with migration_blockers as (
       and source.source_key = assignment.value
     where source.id is null or source.readiness in ('ended','failed') or source.health = 'lost'
   )
+), program_audio_blockers as (
+  select count(*)::bigint affected
+  from public.live_music_session_state music
+  join public.live_sessions session on session.id = music.session_id
+  left join public.live_program_audio_publishers publisher
+    on publisher.session_id = music.session_id
+  where session.status = 'live'
+    and music.status in ('playing','ducked','fading')
+    and (
+      publisher.worker_instance_id is null
+      or publisher.lease_expires_at <= now()
+      or publisher.status <> 'live'
+      or publisher.observed_music_version <> music.version
+      or publisher.published_track_id is distinct from music.track_id
+    )
 ), totals as (
   select migration_blockers.affected migration_release_blockers,
     configuration_blockers.affected configuration_release_blockers,
@@ -258,24 +326,28 @@ with migration_blockers as (
     boundary_blockers.affected boundary_release_blockers,
     storage_blockers.affected storage_release_blockers,
     protocol_blockers.affected protocol_release_blockers,
+    catalogue_blockers.affected catalogue_release_blockers,
     capacity_blockers.affected capacity_release_blockers,
     stale_controller_blockers.affected stale_controller_release_blockers,
     stale_source_blockers.affected stale_source_release_blockers,
-    unsafe_program_blockers.affected unsafe_program_release_blockers
+    unsafe_program_blockers.affected unsafe_program_release_blockers,
+    program_audio_blockers.affected program_audio_release_blockers
   from migration_blockers, configuration_blockers, allowlist_blockers,
-    boundary_blockers, storage_blockers, protocol_blockers,
+    boundary_blockers, storage_blockers, protocol_blockers, catalogue_blockers,
     capacity_blockers, stale_controller_blockers, stale_source_blockers,
-    unsafe_program_blockers
+    unsafe_program_blockers, program_audio_blockers
 )
 select *,
   migration_release_blockers + configuration_release_blockers
     + allowlist_release_blockers + boundary_release_blockers
     + storage_release_blockers + protocol_release_blockers + capacity_release_blockers
+    + catalogue_release_blockers
     + stale_controller_release_blockers + stale_source_release_blockers
-    + unsafe_program_release_blockers as release_blockers,
+    + unsafe_program_release_blockers + program_audio_release_blockers as release_blockers,
   migration_release_blockers + configuration_release_blockers
     + allowlist_release_blockers + boundary_release_blockers
     + storage_release_blockers + protocol_release_blockers + capacity_release_blockers
+    + catalogue_release_blockers
     + stale_controller_release_blockers + stale_source_release_blockers
-    + unsafe_program_release_blockers = 0 as healthy
+    + unsafe_program_release_blockers + program_audio_release_blockers = 0 as healthy
 from totals;

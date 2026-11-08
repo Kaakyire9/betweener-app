@@ -12,6 +12,11 @@ import {
 } from 'react-native';
 
 import type { LiveQuickConnectPoolMember } from '../application/index.ts';
+import {
+  LIVE_PRIVATE_SPARK_MOTION,
+  type LivePairPortrait,
+} from '../motion/live-private-spark-motion.ts';
+import { LivePairFormationCelebration } from './LivePairFormationCelebration.tsx';
 import { type LiveVisualTheme, useLiveVisualTheme } from './live-visual-tokens.ts';
 
 type PoolLayout = 'stacked' | 'side-by-side';
@@ -31,13 +36,18 @@ export type LiveQuickConnectConstellationProps = {
   canSignal: boolean;
   busyAction: string | null;
   layout: PoolLayout;
+  pairingEventKey: string | null;
+  pairingHaptic: boolean;
+  pairingInitialProgress: number;
+  pairingLabel: string;
   pairingUserIds: readonly string[];
+  pairingPeople: readonly LivePairPortrait[];
   pageMotion: Animated.Value;
   reduceMotion: boolean;
   onSignalInterest: (profileId: string) => void;
 };
 
-const MEMBER_EXIT_MS = 920;
+const MEMBER_EXIT_MS = LIVE_PRIVATE_SPARK_MOTION.formationDurationMs + 80;
 
 const PORTRAIT_ORBIT_SLOTS = [
   { position: { left: '50%', top: '7%', marginLeft: -29 }, centre: { x: 0, y: 66 }, drift: { x: 2, y: 4 } },
@@ -87,7 +97,12 @@ export function LiveQuickConnectConstellation({
   canSignal,
   busyAction,
   layout,
+  pairingEventKey,
+  pairingHaptic,
+  pairingInitialProgress,
+  pairingLabel,
   pairingUserIds,
+  pairingPeople,
   pageMotion,
   reduceMotion,
   onSignalInterest,
@@ -112,7 +127,7 @@ export function LiveQuickConnectConstellation({
         member,
         index,
         phase: 'active',
-        exitKind: 'departure',
+        exitKind: pairingIds.has(member.userId) ? 'pair' : 'departure',
       }));
       const exiting = previous
         .filter((entry) => !desiredIds.has(entry.member.profileId))
@@ -319,12 +334,23 @@ export function LiveQuickConnectConstellation({
             member={entry.member}
             onPress={() => onSignalInterest(entry.member.profileId)}
             pairingActive={pairingActive}
-            paired={pairingIds.has(entry.member.userId)}
+            paired={entry.exitKind === 'pair' || pairingIds.has(entry.member.userId)}
             phase={entry.phase}
             reduceMotion={reduceMotion}
           />
         ))}
       </Animated.View>
+      {pairingActive && pairingPeople.length === 2 ? (
+        <LivePairFormationCelebration
+          key={pairingEventKey ?? pairingKey}
+          compact
+          eyebrow="ODO · PRIVATE SPARK"
+          haptic={pairingHaptic}
+          initialProgress={pairingInitialProgress}
+          label={pairingLabel}
+          pair={pairingPeople as readonly [LivePairPortrait, LivePairPortrait]}
+        />
+      ) : null}
     </View>
   );
 }
@@ -451,8 +477,8 @@ function ConstellationMember({
         }),
         Animated.timing(pairing, {
           toValue: 1,
-          duration: 680,
-          delay: 120,
+          duration: LIVE_PRIVATE_SPARK_MOTION.fusionMomentMs - 420,
+          delay: 180,
           easing: Easing.inOut(Easing.cubic),
           useNativeDriver: true,
         }),
@@ -479,8 +505,10 @@ function ConstellationMember({
     }
     Animated.timing(exit, {
       toValue: 1,
-      duration: exitKind === 'pair' ? 780 : 620,
-      delay: exitKind === 'pair' ? 100 : 0,
+      duration: exitKind === 'pair'
+        ? LIVE_PRIVATE_SPARK_MOTION.formationDurationMs - 420
+        : 620,
+      delay: exitKind === 'pair' ? 320 : 0,
       easing: exitKind === 'pair' ? Easing.inOut(Easing.cubic) : Easing.in(Easing.cubic),
       useNativeDriver: true,
     }).start();
@@ -508,11 +536,15 @@ function ConstellationMember({
   const outwardY = -slot.centre.y * 0.32;
   const departX = exitKind === 'pair' ? 0 : outwardX;
   const departY = exitKind === 'pair' ? 0 : outwardY;
+  const exitOpacity = exit.interpolate({
+    inputRange: exitKind === 'pair' ? [0, 0.66, 1] : [0, 1],
+    outputRange: exitKind === 'pair' ? [1, 1, 0] : [1, 0],
+  });
   const opacity = Animated.multiply(
     entrance,
     Animated.multiply(
       recede.interpolate({ inputRange: [0, 1], outputRange: [1, 0.28] }),
-      exit.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }),
+      exitOpacity,
     ),
   );
 
@@ -560,7 +592,7 @@ function ConstellationMember({
             { scale: pairing.interpolate({ inputRange: [0, 0.26, 1], outputRange: [1, 1.14, 0.74] }) },
             { scale: recede.interpolate({ inputRange: [0, 1], outputRange: [1, 0.91] }) },
             { scale: exit.interpolate({ inputRange: [0, 1], outputRange: [1, 0.78] }) },
-            { rotate: exit.interpolate({ inputRange: [0, 1], outputRange: ['0deg', `${index % 2 === 0 ? -7 : 7}deg`] }) },
+            { rotate: exit.interpolate({ inputRange: [0, 1], outputRange: ['0deg', exitKind === 'pair' ? '0deg' : `${index % 2 === 0 ? -7 : 7}deg`] }) },
           ],
         },
       ]}
@@ -585,7 +617,7 @@ function ConstellationMember({
       <Pressable
         accessibilityLabel={current ? `${firstName}, you` : `Privately prioritise ${firstName}`}
         accessibilityRole="button"
-        disabled={current || busy || !canSignal || phase === 'exiting'}
+        disabled={current || busy || !canSignal || phase === 'exiting' || paired}
         hitSlop={6}
         onPress={onPress}
         onPressIn={() => setPressed(1)}

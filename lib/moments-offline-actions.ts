@@ -1,4 +1,5 @@
 import { fetch as fetchNetInfo } from '@react-native-community/netinfo';
+import * as ExpoCrypto from 'expo-crypto';
 
 import type { MomentMetadata } from '@/lib/moment-text-style';
 import {
@@ -64,8 +65,12 @@ export async function createMomentFromMediaOfflineSafe(
   input: CreateMediaMomentOfflineInput,
 ): Promise<MomentMutationResult> {
   const tempId = buildOfflineMomentId();
+  const clientOperationId = ExpoCrypto.randomUUID();
+  const serverMomentId = ExpoCrypto.randomUUID();
   const basePayload = {
     tempId,
+    clientOperationId,
+    serverMomentId,
     userId: input.userId,
     type: input.type,
     caption: input.caption ?? null,
@@ -94,6 +99,8 @@ export async function createMomentFromMediaOfflineSafe(
       caption: input.caption ?? null,
       visibility: input.visibility ?? 'matches',
       metadata: input.metadata ?? {},
+      clientOperationId,
+      momentId: serverMomentId,
     });
     return { status: 'synced', momentId: result.momentId, mediaPath: result.mediaPath };
   } catch (error) {
@@ -116,8 +123,10 @@ export async function createTextMomentOfflineSafe(
   input: CreateTextMomentOfflineInput,
 ): Promise<MomentMutationResult> {
   const tempId = buildOfflineMomentId();
+  const clientOperationId = ExpoCrypto.randomUUID();
   const payload = {
     tempId,
+    clientOperationId,
     userId: input.userId,
     textBody: input.textBody,
     caption: input.caption ?? null,
@@ -140,6 +149,7 @@ export async function createTextMomentOfflineSafe(
       caption: input.caption ?? null,
       visibility: input.visibility ?? 'matches',
       metadata: input.metadata ?? {},
+      clientOperationId,
     });
     return { status: 'synced', momentId: result.momentId };
   } catch (error) {

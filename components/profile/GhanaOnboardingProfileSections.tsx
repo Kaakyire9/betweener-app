@@ -6,6 +6,7 @@ import {
 import { GHANA_ROOT_OPTIONS, GLOBAL_ROOT_OPTIONS, ROOTS_VISIBILITY_OPTIONS } from '@/lib/profile/roots-options';
 import { formatReligionLabel } from '@/lib/profile/religion';
 import { toFlagEmoji } from '@/lib/location/location-display';
+import type { PublicProfileTextField } from '@/lib/profile-guard/public-profile-fields';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useState, type ReactNode } from 'react';
 import { ActivityIndicator, Text, TextInput, TouchableOpacity, View } from 'react-native';
@@ -24,6 +25,12 @@ type Props = {
   loadingInterests: boolean;
   customOccupation: string;
   setCustomOccupation: (value: string) => void;
+  guardFieldErrors: Partial<Record<PublicProfileTextField, string>>;
+  onGuardedCustomTextChange: (
+    field: PublicProfileTextField,
+    value: string,
+    setter: (next: string) => void,
+  ) => void;
   handleInputChange: (field: string, value: any) => void;
   handleRootToggle: (value: string) => void;
   setShowOccupationPicker: (value: boolean) => void;
@@ -114,6 +121,8 @@ export default function GhanaOnboardingProfileSections({
   loadingInterests,
   customOccupation,
   setCustomOccupation,
+  guardFieldErrors,
+  onGuardedCustomTextChange,
   handleInputChange,
   handleRootToggle,
   setShowOccupationPicker,
@@ -163,19 +172,20 @@ export default function GhanaOnboardingProfileSections({
         </TouchableOpacity>
         {formData.occupation === 'Other' ? (
           <TextInput
-            style={[styles.textInput, { marginTop: 10 }]}
+            style={[styles.textInput, { marginTop: 10 }, guardFieldErrors.occupation && styles.guardedInputError]}
             value={customOccupation}
-            onChangeText={setCustomOccupation}
+            onChangeText={(value) => onGuardedCustomTextChange('occupation', value, setCustomOccupation)}
             placeholder="Enter your occupation"
             maxLength={100}
             onBlur={() => customOccupation.trim() && handleInputChange('occupation', customOccupation.trim())}
           />
         ) : null}
+        {guardFieldErrors.occupation ? <Text style={styles.guardedFieldError}>{guardFieldErrors.occupation}</Text> : null}
       </ProfileChapter>
 
       <ProfileChapter chapterKey="story" icon="text-box-edit-outline" eyebrow="YOUR STORY" title="Say it in your own words" body="A short introduction gives people something real to connect with." summary={formData.bio?.trim() ? `${formData.bio.trim().slice(0, 54)}${formData.bio.trim().length > 54 ? '…' : ''}` : 'Add a short introduction'} complete={Boolean(formData.bio?.trim())} expanded={expandedChapter === 'story'} onToggle={toggleChapter} styles={styles} theme={theme}>
         <TextInput
-          style={[styles.textInput, styles.textArea, styles.ghanaPremiumTextArea]}
+          style={[styles.textInput, styles.textArea, styles.ghanaPremiumTextArea, guardFieldErrors.bio && styles.guardedInputError]}
           value={formData.bio}
           onChangeText={(value) => handleInputChange('bio', value)}
           placeholder="Share the energy, values or details that feel most like you..."
@@ -185,6 +195,7 @@ export default function GhanaOnboardingProfileSections({
           maxLength={500}
         />
         <Text style={styles.characterCount}>{formData.bio.length}/500</Text>
+        {guardFieldErrors.bio ? <Text style={styles.guardedFieldError}>{guardFieldErrors.bio}</Text> : null}
       </ProfileChapter>
 
       <ProfileChapter chapterKey="location" icon="map-marker-radius-outline" eyebrow="LOCATION" title="Where you are" body="Tell us where you live now, then optionally add where your story began." summary={[formData.city, formData.region, formData.current_country].filter(Boolean).join(' · ')} complete={Boolean(formData.current_country && (formData.city || formData.region))} expanded={expandedChapter === 'location'} onToggle={toggleChapter} styles={styles} theme={theme}>
@@ -268,7 +279,8 @@ export default function GhanaOnboardingProfileSections({
             );
           })}
         </View>
-        <TextInput style={[styles.textInput, { marginTop: 12 }]} value={formData.roots_note} onChangeText={(value) => handleInputChange('roots_note', value)} placeholder="Tell us more, if you'd like" maxLength={120} />
+        <TextInput style={[styles.textInput, { marginTop: 12 }, guardFieldErrors.roots_note && styles.guardedInputError]} value={formData.roots_note} onChangeText={(value) => handleInputChange('roots_note', value)} placeholder="Tell us more, if you'd like" maxLength={120} />
+        {guardFieldErrors.roots_note ? <Text style={styles.guardedFieldError}>{guardFieldErrors.roots_note}</Text> : null}
         <View style={styles.ghanaVisibilityRow}>
           {ROOTS_VISIBILITY_OPTIONS.map((option) => {
             const selected = formData.roots_visibility === option.value;

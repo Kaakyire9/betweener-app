@@ -172,7 +172,7 @@ export default function IntentResponseReminder() {
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     hideTimerRef.current = setTimeout(() => {
       void dismiss(false);
-    }, 6200);
+    }, 4200);
   }, [animateVisible, dismiss, profile?.id, shouldSuppress]);
 
   useEffect(() => {
@@ -247,17 +247,14 @@ export default function IntentResponseReminder() {
         />
         <View style={styles.iconShell}>
           {reminder.endingSoonCount > 0 ? (
-            <MaterialCommunityIcons name="timer-alert-outline" size={22} color={theme.accent} />
+            <MaterialCommunityIcons name="timer-alert-outline" size={19} color={theme.accent} />
           ) : (
-            <SignalIcon size={27} color={theme.tint} accentColor={theme.accent} active />
+            <SignalIcon size={22} color={theme.tint} accentColor={theme.accent} active />
           )}
         </View>
         <View style={styles.copy}>
           <Text style={styles.eyebrow}>{reminder.mode === 'brief' ? 'Connection brief' : 'Intent queue'}</Text>
-          <Text style={styles.title}>{title}</Text>
-          <Text style={styles.body} numberOfLines={1}>
-            {body}
-          </Text>
+          <Text style={styles.title} numberOfLines={1}>{title}</Text>
         </View>
         <View style={styles.reviewPill}>
           <Text style={styles.reviewText}>Review</Text>
@@ -289,30 +286,33 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       right: 0,
       zIndex: 200,
       paddingHorizontal: 14,
+      alignItems: 'flex-end',
     },
     card: {
-      minHeight: 76,
+      width: '76%',
+      maxWidth: 330,
+      minHeight: 56,
       overflow: 'hidden',
-      borderRadius: 26,
+      borderRadius: 21,
       borderWidth: 1,
       borderColor: isDark ? 'rgba(244,232,208,0.15)' : 'rgba(15,61,62,0.10)',
       backgroundColor: isDark ? 'rgba(7,30,34,0.94)' : 'rgba(255,250,244,0.96)',
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 11,
-      paddingLeft: 12,
-      paddingRight: 42,
-      paddingVertical: 11,
+      gap: 9,
+      paddingLeft: 9,
+      paddingRight: 34,
+      paddingVertical: 8,
       shadowColor: isDark ? '#13A8A8' : '#0F3D3E',
-      shadowOpacity: isDark ? 0.18 : 0.10,
-      shadowRadius: 24,
-      shadowOffset: { width: 0, height: 12 },
-      elevation: 8,
+      shadowOpacity: isDark ? 0.14 : 0.08,
+      shadowRadius: 18,
+      shadowOffset: { width: 0, height: 8 },
+      elevation: 6,
     },
     iconShell: {
-      width: 44,
-      height: 44,
-      borderRadius: 22,
+      width: 36,
+      height: 36,
+      borderRadius: 18,
       alignItems: 'center',
       justifyContent: 'center',
       borderWidth: 1,
@@ -322,8 +322,8 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     copy: { flex: 1, minWidth: 0 },
     eyebrow: {
       color: theme.tint,
-      fontSize: 9,
-      lineHeight: 12,
+      fontSize: 8,
+      lineHeight: 10,
       fontWeight: '900',
       letterSpacing: 1.1,
       textTransform: 'uppercase',
@@ -331,19 +331,12 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     title: {
       marginTop: 1,
       color: theme.text,
-      fontSize: 15,
-      lineHeight: 19,
+      fontSize: 13,
+      lineHeight: 17,
       fontWeight: '900',
     },
-    body: {
-      marginTop: 2,
-      color: theme.textMuted,
-      fontSize: 11,
-      lineHeight: 15,
-      fontWeight: '700',
-    },
     reviewPill: {
-      minHeight: 34,
+      minHeight: 28,
       borderRadius: 999,
       borderWidth: 1,
       borderColor: isDark ? 'rgba(19,168,168,0.20)' : 'rgba(19,128,128,0.14)',
@@ -351,21 +344,21 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       flexDirection: 'row',
       alignItems: 'center',
       gap: 2,
-      paddingLeft: 10,
-      paddingRight: 8,
+      paddingLeft: 8,
+      paddingRight: 6,
     },
     reviewText: {
       color: theme.tint,
-      fontSize: 11,
+      fontSize: 9,
       fontWeight: '900',
     },
     close: {
       position: 'absolute',
-      right: 10,
-      top: 10,
-      width: 24,
-      height: 24,
-      borderRadius: 12,
+      right: 5,
+      top: 4,
+      width: 22,
+      height: 22,
+      borderRadius: 11,
       alignItems: 'center',
       justifyContent: 'center',
       opacity: 0.72,

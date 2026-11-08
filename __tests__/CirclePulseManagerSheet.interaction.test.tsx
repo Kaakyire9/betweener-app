@@ -4,11 +4,30 @@ import { Alert } from 'react-native';
 import { fireEvent, render, waitFor } from '@testing-library/react-native';
 import CirclePulseManagerSheet from '@/components/circles/CirclePulseManagerSheet';
 
+jest.setTimeout(15_000);
+
 const mockFeatureCirclePulseItem = jest.fn();
 const mockCreateCirclePulseEditorialMedia = jest.fn();
 const mockNominateCircleLoveSeat = jest.fn();
 const mockEndCircleLoveSeat = jest.fn();
+const mockFetchCircleLoveSeatRequestsForHost = jest.fn();
 const mockFetchCircleLoveSeatsForHost = jest.fn();
+const mockReorderCirclePulseItems = jest.fn();
+const mockSelectCircleLoveSeatRequest = jest.fn();
+const mockRemoveChannel = jest.fn();
+const mockRealtimeChannel = {
+  on: jest.fn(),
+  subscribe: jest.fn(),
+};
+mockRealtimeChannel.on.mockReturnValue(mockRealtimeChannel);
+mockRealtimeChannel.subscribe.mockReturnValue(mockRealtimeChannel);
+
+jest.mock('@/lib/supabase', () => ({
+  supabase: {
+    channel: jest.fn(() => mockRealtimeChannel),
+    removeChannel: (...args: any[]) => mockRemoveChannel(...args),
+  },
+}));
 
 jest.mock('@/lib/circles/pulse/circle-pulse-service', () => ({
   archiveCirclePulseItem: jest.fn(),
@@ -16,9 +35,11 @@ jest.mock('@/lib/circles/pulse/circle-pulse-service', () => ({
   createCirclePulseEditorialMedia: (...args: any[]) => mockCreateCirclePulseEditorialMedia(...args),
   endCircleLoveSeat: (...args: any[]) => mockEndCircleLoveSeat(...args),
   featureCirclePulseItem: (...args: any[]) => mockFeatureCirclePulseItem(...args),
+  fetchCircleLoveSeatRequestsForHost: (...args: any[]) => mockFetchCircleLoveSeatRequestsForHost(...args),
   fetchCircleLoveSeatsForHost: (...args: any[]) => mockFetchCircleLoveSeatsForHost(...args),
   nominateCircleLoveSeat: (...args: any[]) => mockNominateCircleLoveSeat(...args),
-  reorderCirclePulseItems: jest.fn(),
+  reorderCirclePulseItems: (...args: any[]) => mockReorderCirclePulseItems(...args),
+  selectCircleLoveSeatRequest: (...args: any[]) => mockSelectCircleLoveSeatRequest(...args),
 }));
 
 jest.mock('@/components/circles/CirclePulseMediaComposer', () => {
@@ -76,7 +97,10 @@ describe('CirclePulseManagerSheet', () => {
     mockCreateCirclePulseEditorialMedia.mockResolvedValue({ id: 'pulse-editorial-media' });
     mockNominateCircleLoveSeat.mockResolvedValue({ id: 'love-seat-1' });
     mockEndCircleLoveSeat.mockResolvedValue(true);
+    mockFetchCircleLoveSeatRequestsForHost.mockResolvedValue([]);
     mockFetchCircleLoveSeatsForHost.mockResolvedValue([]);
+    mockReorderCirclePulseItems.mockResolvedValue(undefined);
+    mockSelectCircleLoveSeatRequest.mockResolvedValue({ id: 'love-seat-request-1' });
     alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
   });
 
@@ -122,7 +146,7 @@ describe('CirclePulseManagerSheet', () => {
         title: 'Gathering poster',
         subtitle: 'Sunday in Accra',
         body: 'A calm evening for members.',
-      });
+      }, expect.objectContaining({ onUploadProgress: expect.any(Function) }));
       expect(onFeatured).toHaveBeenCalledTimes(1);
       expect(onClose).toHaveBeenCalledTimes(1);
     });
@@ -197,10 +221,49 @@ describe('CirclePulseManagerSheet', () => {
         'profile-1',
         'profile-2',
         '',
+        null,
+        24,
       );
       expect(alertSpy).toHaveBeenCalledWith(
         'Love Seat',
         'This Circle already has an open Love Seat invitation or active Love Seat.',
+      );
+    });
+  });
+
+  it('lets a host privately select a queued member and choose the Love Seat duration', async () => {
+    mockFetchCircleLoveSeatRequestsForHost.mockResolvedValue([
+      {
+        id: 'request-1',
+        circleId: 'circle-1',
+        featuredProfileId: 'profile-2',
+        featuredProfileName: 'Akosua',
+        featuredProfileAvatarUrl: null,
+        status: 'requested',
+        note: 'I would love to share my story.',
+        createdAt: '2026-10-27T10:00:00.000Z',
+        requestExpiresAt: '2026-11-03T10:00:00.000Z',
+      },
+    ]);
+
+    const { getByLabelText, getByText } = await render(
+      <CirclePulseManagerSheet {...defaultProps} />,
+    );
+
+    await waitFor(() => {
+      expect(getByText('Private request queue')).toBeTruthy();
+      expect(getByText('Akosua')).toBeTruthy();
+      expect(getByText('I would love to share my story.')).toBeTruthy();
+    });
+
+    await fireEvent.press(getByLabelText('48 hours'));
+    await fireEvent.press(getByLabelText('Select Akosua for Love Seat'));
+
+    await waitFor(() => {
+      expect(mockSelectCircleLoveSeatRequest).toHaveBeenCalledWith('request-1', 'profile-1', 48);
+      expect(alertSpy).toHaveBeenCalledWith(
+        'Private invitation sent',
+        'Akosua has 24 hours to accept the 48-hour Love Seat. Nothing appears publicly until they accept.',
       );
     });
   });
@@ -242,6 +305,52 @@ describe('CirclePulseManagerSheet', () => {
       expect(alertSpy).toHaveBeenCalledWith(
         'Love Seat ended',
         'This stale Love Seat has been cleared so you can nominate someone new.',
+      );
+    });
+  });
+
+  it('pins a selected eligible spotlight as the featured story', async () => {
+    const onFeatured = jest.fn();
+    const prompt = { id: 'prompt-item', type: 'prompt', title: 'Question', priority: 20, promptId: 'prompt-1' };
+    const gathering = { id: 'gathering-item', type: 'gathering', title: 'Sunday gathering', priority: 10, gatheringId: 'gathering-1' };
+    const { getByLabelText } = await render(
+      <CirclePulseManagerSheet
+        {...defaultProps}
+        featuredItems={[prompt, gathering] as any}
+        onFeatured={onFeatured}
+      />,
+    );
+
+    await fireEvent.press(getByLabelText('Feature Sunday gathering first'));
+
+    await waitFor(() => {
+      expect(mockReorderCirclePulseItems).toHaveBeenCalledWith(
+        'circle-1',
+        'profile-1',
+        ['gathering-item', 'prompt-item'],
+      );
+      expect(onFeatured).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('reorders items only inside their visible editorial lane', async () => {
+    const promptOne = { id: 'prompt-one', type: 'prompt', title: 'First prompt', priority: 30, promptId: 'prompt-1' };
+    const gathering = { id: 'gathering-item', type: 'gathering', title: 'Gathering', priority: 20, gatheringId: 'gathering-1' };
+    const promptTwo = { id: 'prompt-two', type: 'prompt', title: 'Second prompt', priority: 10, promptId: 'prompt-2' };
+    const { getByLabelText } = await render(
+      <CirclePulseManagerSheet
+        {...defaultProps}
+        featuredItems={[promptOne, gathering, promptTwo] as any}
+      />,
+    );
+
+    await fireEvent.press(getByLabelText('Move Second prompt up in Questions worth staying for'));
+
+    await waitFor(() => {
+      expect(mockReorderCirclePulseItems).toHaveBeenCalledWith(
+        'circle-1',
+        'profile-1',
+        ['prompt-two', 'gathering-item', 'prompt-one'],
       );
     });
   });

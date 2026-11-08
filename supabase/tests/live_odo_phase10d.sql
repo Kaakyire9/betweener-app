@@ -1,6 +1,11 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
+set local role postgres;
+set search_path = public, extensions, pg_catalog;
+select pg_advisory_xact_lock(
+  hashtextextended('pgtap_live_maintenance_behavior', 0)
+);
 select no_plan();
 
 select has_table('public','live_odo_full_quick_connect_settings',
@@ -84,6 +89,7 @@ select ok((select not full_autopilot_enabled and not music_enabled
 insert into auth.users(id,email) values
   ('da000000-0000-4000-8000-000000000001','full-quick-host@example.test'),
   ('da000000-0000-4000-8000-000000000002','full-quick-member@example.test');
+select set_config('request.jwt.claim.role', 'service_role', true);
 select set_config('app.profile_guard_write','on',true);
 insert into public.profiles(
   id,user_id,full_name,age,gender,profile_completed,verification_level,
@@ -137,9 +143,6 @@ select is(public.rpc_get_live_odo_full_quick_connect_v1(
 select is(public.rpc_get_live_odo_full_quick_connect_v1(
   'dc000000-0000-4000-8000-000000000001')->>'healthState','healthy',
   'pre-flight returns a stable high-level health state');
-select ok(position('rpc_service_reconcile_live_odo_full_quick_connect_v1'
-  in pg_get_functiondef('public.run_live_maintenance()'::regprocedure)) > 0,
-  'the consolidated server maintenance clock can recover a due 10D session');
 select is(public.rpc_enable_live_odo_full_quick_connect_v1(
   'dc000000-0000-4000-8000-000000000001','{}'::jsonb
 )->>'enabled','true','the Host explicitly enables full Quick Connect Autopilot');
@@ -164,16 +167,16 @@ select throws_ok(
 
 select set_config('request.jwt.claim.role','service_role',true);
 select set_config('request.jwt.claim.sub','',true);
+update public.live_odo_full_quick_connect_settings
+set next_wake_at = timezone('utc',now()) - interval '1 second'
+where session_id = 'dc000000-0000-4000-8000-000000000001';
 create temporary table full_quick_open as
-select public.rpc_service_reconcile_live_odo_full_quick_connect_v1(
-  'dc000000-0000-4000-8000-000000000001',
-  'da000000-0000-4000-8000-000000000001',
-  'dd000000-0000-4000-8000-000000000001'
-) payload;
-select is((select payload->>'allowed' from full_quick_open),'true',
-  'the service reconciler accepts a fresh authorized wake');
-select is((select payload->>'actionType' from full_quick_open),'OPEN_POOL',
-  'Odo opens the authorized Quick Connect pool');
+select public.run_live_maintenance() payload;
+select is((select payload #>> '{fullQuickConnect,status}' from full_quick_open),'ok',
+  'the consolidated maintenance clock recovers a due 10D session');
+select cmp_ok((select (payload #>> '{fullQuickConnect,processed}')::integer
+  from full_quick_open),'>=',1,
+  'the maintenance clock executes at least one due full Quick Connect wake');
 select is((select state from public.live_quick_connect_controls
   where session_id = 'dc000000-0000-4000-8000-000000000001'),'open',
   'the existing Quick Connect control is authoritative and open');

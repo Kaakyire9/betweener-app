@@ -35,9 +35,9 @@ import {
   PREMIUM_ONBOARDING_OCCUPATIONS,
 } from '@/lib/onboarding/premium-onboarding.config';
 import {
-  drainOfflineMutationQueue,
   enqueueProfileInterestsUpdateMutation,
   enqueueProfileMediaSyncMutation,
+  syncProfileMediaNow,
 } from '@/lib/offline/mutation-queue';
 import { readMeProfileSnapshot, writeMeProfileSnapshot } from '@/lib/offline/me-store';
 import { cacheOfflineVideo, getOfflineVideoUri } from '@/lib/offline/video-store';
@@ -48,6 +48,8 @@ import {
   normalizeGalleryPhotoList,
   normalizeProfilePhotoUri,
 } from '@/lib/profile/media';
+import { PROFILE_EDUCATION_OPTIONS } from '@/lib/profile/education-options';
+import { replaceProfileInterestsAtomic } from '@/lib/profile/interests';
 import {
   appendGalleryMedia,
   MAX_PROFILE_GALLERY_ITEMS,
@@ -57,6 +59,11 @@ import {
   resolveProfileMediaDraft,
 } from '@/lib/profile/media-studio';
 import {
+  guardAndPublishProfileMediaV1_2,
+  isProfileMediaGuardV1_2Runtime,
+  profileMediaGuardMessageV1_2,
+} from '@/lib/profile/profile-media-guard-v1-2';
+import {
   GHANA_ROOT_OPTIONS,
   GLOBAL_ROOT_OPTIONS,
   ROOTS_VISIBILITY_OPTIONS,
@@ -64,7 +71,13 @@ import {
 import { RELIGION_LABELS, formatReligionLabel, isReligionEnumError, normalizeReligionForProfile } from '@/lib/profile/religion';
 import { getProfileInitials } from '@/lib/profile-placeholders';
 import { buildProfileLocationUpdate } from '@/lib/profile/profile-location-update';
-import { moderatePublicProfileText } from '@/lib/profile-guard';
+import {
+  getPublicProfileFieldError,
+  isPublicProfileTextField,
+  PUBLIC_PROFILE_GUARD_MESSAGE,
+  type PublicProfileTextField,
+  validatePublicProfileFields,
+} from '@/lib/profile-guard/public-profile-fields';
 import { usesGhanaOnboardingExperience } from '@/lib/profile/onboarding-experience';
 import { type ResponsiveMetrics, useResponsiveMetrics } from '@/lib/responsive';
 import { supabase } from '@/lib/supabase';
@@ -74,6 +87,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import * as FileSystem from 'expo-file-system/legacy';
+import * as ExpoCrypto from 'expo-crypto';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Video as VideoCompressor, getRealPath } from 'react-native-compressor';
 import {
@@ -128,12 +142,6 @@ const HEIGHT_OPTIONS = [
 ];
 
 const ONBOARDING_OCCUPATION_OPTIONS = [...PREMIUM_ONBOARDING_OCCUPATIONS, 'Other'];
-
-const EDUCATION_OPTIONS = [
-  "High School", "Some College", "Bachelor's Degree", "Master's Degree", 
-  "PhD", "Trade School", "University of Ghana", "KNUST", "UCC", "UPSA",
-  "Ashesi University", "Central University", "Valley View University", "Other"
-];
 
 const LEGACY_LOOKING_FOR_OPTIONS = [
   'Long-term relationship', 'Short-term dating', 'Friendship', 'Networking',
@@ -426,6 +434,12 @@ interface ProfileEditModalProps {
   onClose: () => void;
   onSave: (updatedProfile: any) => void;
   onOpenVerification?: () => void;
+  mediaSnapshot?: {
+    avatarUrl: string | null;
+    heroImageUrl: string | null;
+    photos: string[];
+    profileVideo: string | null;
+  };
 }
 
 type FieldPickerProps = {
@@ -499,7 +513,13 @@ const FieldPicker = ({
   </Modal>
 );
 
-export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerification }: ProfileEditModalProps) {
+export default function ProfileEditModal({
+  visible,
+  onClose,
+  onSave,
+  onOpenVerification,
+  mediaSnapshot,
+}: ProfileEditModalProps) {
   const { user, profile, updateProfile, refreshProfile } = useAuth();
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
@@ -582,6 +602,21 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
   const [distanceUnit, setDistanceUnit] = useState<DistanceUnit>('auto');
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [statusTone, setStatusTone] = useState<'error' | 'success' | null>(null);
+  const [guardFieldErrors, setGuardFieldErrors] = useState<
+    Partial<Record<PublicProfileTextField, string>>
+  >({});
+  const [aggregateGuardError, setAggregateGuardError] = useState(false);
+
+  useEffect(() => {
+    if (
+      !aggregateGuardError
+      && Object.keys(guardFieldErrors).length === 0
+      && statusMessage === PUBLIC_PROFILE_GUARD_MESSAGE
+    ) {
+      setStatusMessage(null);
+      setStatusTone(null);
+    }
+  }, [aggregateGuardError, guardFieldErrors, statusMessage]);
   
   // Interests states
   const [availableInterests, setAvailableInterests] = useState<string[]>([]);
@@ -974,6 +1009,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       agePreferenceTouchedRef.current = false;
       setStatusMessage(null);
       setStatusTone(null);
+      setGuardFieldErrors({});
+      setAggregateGuardError(false);
       const normalizedLanguages = normalizeLanguages(
         (profile as any).languages_spoken || []
       );
@@ -987,11 +1024,20 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       const filteredLanguages = normalizedLanguages.filter(
         (lang) => languagesOptions.includes(lang) || lang === 'Other'
       );
-      const normalizedAvatarUrl = normalizeProfilePhotoUri(profile.avatar_url);
-      const normalizedPhotos = normalizeGalleryPhotoList((profile as any).photos, normalizedAvatarUrl);
-      const normalizedHeroImageUrl = normalizeProfilePhotoUri((profile as any).hero_image_url);
+      const normalizedAvatarUrl = normalizeProfilePhotoUri(
+        mediaSnapshot ? mediaSnapshot.avatarUrl : profile.avatar_url,
+      );
+      const normalizedPhotos = normalizeGalleryPhotoList(
+        mediaSnapshot ? mediaSnapshot.photos : (profile as any).photos,
+        normalizedAvatarUrl,
+      );
+      const normalizedHeroImageUrl = normalizeProfilePhotoUri(
+        mediaSnapshot ? mediaSnapshot.heroImageUrl : (profile as any).hero_image_url,
+      );
       const normalizedProfileVideoUrl = normalizeLocalMediaUri(
-        (profile as any).profile_video || (profile as any).profileVideo || '',
+        mediaSnapshot
+          ? mediaSnapshot.profileVideo
+          : (profile as any).profile_video || (profile as any).profileVideo || '',
       );
       setFormData({
         full_name: profile.full_name || '',
@@ -1047,10 +1093,14 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       // Set selected languages for multi-select
       setSelectedLanguages(filteredLanguages);
     }
-  }, [closeNestedPickers, visible, profile]);
+  }, [closeNestedPickers, mediaSnapshot, visible, profile]);
 
   useEffect(() => {
     if (!visible) return;
+    // The parent screen owns the current media state while it is mounted.
+    // Its snapshot can intentionally contain an empty gallery after deletion,
+    // so never replace it with an older persisted fallback.
+    if (mediaSnapshot) return;
     const profileId = (profile as any)?.id || user?.id;
     if (!profileId) return;
     let cancelled = false;
@@ -1074,7 +1124,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     return () => {
       cancelled = true;
     };
-  }, [profile, user?.id, visible]);
+  }, [mediaSnapshot, profile, user?.id, visible]);
 
   useEffect(() => {
     let mounted = true;
@@ -1147,10 +1197,46 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     if (field === 'min_age_interest' || field === 'max_age_interest') {
       agePreferenceTouchedRef.current = true;
     }
+    if (isPublicProfileTextField(field)) {
+      setAggregateGuardError(false);
+      const error = getPublicProfileFieldError(field, value);
+      setGuardFieldErrors((current) => {
+        if (error) return { ...current, [field]: error };
+        if (!current[field]) return current;
+        const next = { ...current };
+        delete next[field];
+        return next;
+      });
+      if (error) {
+        setStatusTone('error');
+        setStatusMessage(PUBLIC_PROFILE_GUARD_MESSAGE);
+      }
+    }
     setFormData(prev => ({
       ...prev,
       [field]: value
     }));
+  };
+
+  const handleGuardedCustomTextChange = (
+    field: PublicProfileTextField,
+    value: string,
+    setter: (next: string) => void,
+  ) => {
+    setter(value);
+    setAggregateGuardError(false);
+    const error = getPublicProfileFieldError(field, value);
+    setGuardFieldErrors((current) => {
+      if (error) return { ...current, [field]: error };
+      if (!current[field]) return current;
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
+    if (error) {
+      setStatusTone('error');
+      setStatusMessage(PUBLIC_PROFILE_GUARD_MESSAGE);
+    }
   };
 
   const selectCountry = (country: CountryOption) => {
@@ -1230,8 +1316,81 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     });
   };
 
+  const approveProfileMediaDraft = async (input: {
+    avatarUrl: string | null;
+    heroImageUrl: string | null;
+    photos: string[];
+    localUris: string[];
+  }) => {
+    if (!user?.id) {
+      throw Object.assign(new Error('PROFILE_MEDIA_SCAN_UNAVAILABLE'), {
+        code: 'PROFILE_MEDIA_SCAN_UNAVAILABLE',
+      });
+    }
+
+    const localItems = [...new Set([
+      ...input.localUris,
+      input.avatarUrl,
+      input.heroImageUrl,
+      ...input.photos,
+    ].filter((value): value is string => Boolean(value && isLocalMediaUri(value))))];
+
+    const approved = await guardAndPublishProfileMediaV1_2({
+      userId: user.id,
+      avatarUrl: input.avatarUrl,
+      heroImageUrl: input.heroImageUrl,
+      photos: input.photos,
+      localItems: localItems.map((uri, index) =>
+        inferMediaUploadMeta(uri, `profile-photo-${index + 1}`, 'image/jpeg'),
+      ),
+      clientRequestId: `profile-edit-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+    });
+
+    const nextMedia = {
+      avatar_url: approved.avatarUrl || '',
+      hero_image_url: approved.heroImageUrl || '',
+      photos: normalizeGalleryPhotoList(approved.photos, approved.avatarUrl),
+    };
+    setFormData((current) => ({ ...current, ...nextMedia }));
+    persistDraftSnapshot(nextMedia);
+    setStatusTone('success');
+    setStatusMessage('Photo approved and protected. Tap Save to apply your remaining profile changes.');
+    return approved;
+  };
+
+  const presentProfileMediaError = (error: unknown, mediaLabel?: string) => {
+    const message = profileMediaGuardMessageV1_2(error, mediaLabel);
+    if (!message) return false;
+    setStatusTone('error');
+    setStatusMessage(message);
+    Alert.alert(
+      String((error as any)?.code || '') === 'PROFILE_MEDIA_REPLACE_REQUIRED'
+        ? 'Photo rejected'
+        : 'Photo check unavailable',
+      message,
+    );
+    return true;
+  };
+
   const stageImageOffline = async (uri: string, isAvatar: boolean) => {
     const stableUri = await persistProfileMediaUri(uri, isAvatar ? 'profile-avatar' : 'profile-photo', 'image/jpeg');
+    if (isProfileMediaGuardV1_2Runtime()) {
+      const nextAvatar = isAvatar ? stableUri : (formData.avatar_url || stableUri);
+      const nextPhotos = isAvatar
+        ? normalizeGalleryPhotoList(formData.photos, stableUri)
+        : appendGalleryMedia(
+            formData.photos,
+            formData.avatar_url ? [stableUri] : [],
+            nextAvatar,
+          );
+      await approveProfileMediaDraft({
+        avatarUrl: nextAvatar,
+        heroImageUrl: formData.hero_image_url || null,
+        photos: nextPhotos,
+        localUris: [stableUri],
+      });
+      return;
+    }
     if (isAvatar) {
       setFormData(prev => {
         const nextPhotos = normalizeGalleryPhotoList(prev.photos, stableUri);
@@ -1257,10 +1416,103 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     Alert.alert('Photo staged', 'Photo added here. Tap Save to apply it to your profile.');
   };
 
-  const stageGalleryBatch = async (uris: string[]) => {
+  const stageGalleryBatch = async (assets: ImagePicker.ImagePickerAsset[]) => {
+    const selectedAssets = assets.slice(
+      0,
+      Math.max(0, MAX_PROFILE_GALLERY_ITEMS - formData.photos.length),
+    );
+    if (selectedAssets.length === 0) return;
+
+    if (isProfileMediaGuardV1_2Runtime()) {
+      let currentAvatar = normalizeProfilePhotoUri(formData.avatar_url) || null;
+      let currentHero = normalizeProfilePhotoUri(formData.hero_image_url) || null;
+      let currentPhotos = normalizeGalleryPhotoList(formData.photos, currentAvatar);
+      let approvedCount = 0;
+      let scanInterrupted: string | null = null;
+      const rejected: { label: string; message: string }[] = [];
+
+      for (let index = 0; index < selectedAssets.length; index += 1) {
+        const asset = selectedAssets[index];
+        const fileName = String(asset.fileName || '').trim();
+        const label = fileName ? `Photo ${index + 1} (${fileName})` : `Photo ${index + 1}`;
+
+        try {
+          const stableUri = await persistProfileMediaUri(
+            asset.uri,
+            `profile-photo-${index + 1}`,
+            asset.mimeType || 'image/jpeg',
+          );
+          const shouldSeedAvatar = !currentAvatar;
+          const nextAvatar = shouldSeedAvatar ? stableUri : currentAvatar;
+          const nextPhotos = appendGalleryMedia(
+            currentPhotos,
+            shouldSeedAvatar ? [] : [stableUri],
+            nextAvatar,
+          );
+          const approved = await approveProfileMediaDraft({
+            avatarUrl: nextAvatar,
+            heroImageUrl: currentHero,
+            photos: nextPhotos,
+            localUris: [stableUri],
+          });
+          currentAvatar = approved.avatarUrl;
+          currentHero = approved.heroImageUrl;
+          currentPhotos = normalizeGalleryPhotoList(approved.photos, approved.avatarUrl);
+          approvedCount += 1;
+        } catch (error) {
+          const guardMessage = profileMediaGuardMessageV1_2(error, label);
+          const code = String((error as any)?.code || '');
+          if (code === 'PROFILE_MEDIA_SCAN_UNAVAILABLE') {
+            scanInterrupted = guardMessage
+              || `${label} could not be checked. Your previously approved photos are unchanged.`;
+            break;
+          }
+          rejected.push({
+            label,
+            message: guardMessage || `${label} could not be prepared. Choose another photo and try again.`,
+          });
+        }
+      }
+
+      if (scanInterrupted) {
+        const approvedPrefix = approvedCount > 0
+          ? `${approvedCount} photo${approvedCount === 1 ? ' was' : 's were'} approved before the check paused.\n\n`
+          : '';
+        setStatusTone('error');
+        setStatusMessage(scanInterrupted);
+        Alert.alert('Photo check paused', `${approvedPrefix}${scanInterrupted}`);
+        return;
+      }
+
+      if (rejected.length > 0) {
+        const approvedPrefix = approvedCount > 0
+          ? `${approvedCount} photo${approvedCount === 1 ? ' is' : 's are'} ready. `
+          : '';
+        const rejectionSummary = rejected.map(({ message }) => `• ${message}`).join('\n');
+        const status = `${approvedPrefix}${rejected.length} photo${rejected.length === 1 ? ' was' : 's were'} rejected.`;
+        setStatusTone('error');
+        setStatusMessage(status);
+        Alert.alert(
+          rejected.length === 1 ? 'Photo rejected' : `${rejected.length} photos rejected`,
+          `${approvedPrefix.trim()}${approvedPrefix ? '\n\n' : ''}${rejectionSummary}`,
+        );
+        return;
+      }
+
+      const successMessage = `${approvedCount} approved photo${approvedCount === 1 ? ' is' : 's are'} ready in your profile studio.`;
+      setStatusTone('success');
+      setStatusMessage(successMessage);
+      Alert.alert('Photos approved', successMessage);
+      return;
+    }
+
     const stagedUris = (
       await Promise.all(
-        uris.map((uri) => persistProfileMediaUri(uri, 'profile-photo', 'image/jpeg')),
+        selectedAssets.map((asset) => persistProfileMediaUri(
+          asset.uri,
+          'profile-photo',
+          asset.mimeType || 'image/jpeg',
+        )),
       )
     ).filter(Boolean);
     if (stagedUris.length === 0) return;
@@ -1334,6 +1586,16 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     try {
       setMediaStudioBusy(true);
       const derivedAvatarUrl = await createDerivedSlotMedia(sourceUri, 'avatar', focus);
+      if (isProfileMediaGuardV1_2Runtime()) {
+        await approveProfileMediaDraft({
+          avatarUrl: derivedAvatarUrl,
+          heroImageUrl: formData.hero_image_url || null,
+          photos: normalizeGalleryPhotoList(formData.photos, derivedAvatarUrl),
+          localUris: [derivedAvatarUrl],
+        });
+        Alert.alert('Avatar approved', 'Your refined profile picture passed the safety check and is ready to save.');
+        return;
+      }
       setFormData((prev) => {
         const nextState = {
           ...prev,
@@ -1344,6 +1606,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       });
       Alert.alert('Avatar refined', 'A square avatar crop is staged. Save when it feels right.');
     } catch (error) {
+      if (presentProfileMediaError(error)) return;
       console.error('Error refining avatar media:', error);
       Alert.alert('Refine failed', 'We could not prepare that avatar crop right now.');
     } finally {
@@ -1360,6 +1623,17 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     try {
       setMediaStudioBusy(true);
       const derivedHeroUrl = await createDerivedSlotMedia(sourceUri, 'hero', focus);
+      if (isProfileMediaGuardV1_2Runtime()) {
+        const nextPhotos = promoteGalleryMediaToHero(formData.photos, index);
+        await approveProfileMediaDraft({
+          avatarUrl: formData.avatar_url || null,
+          heroImageUrl: derivedHeroUrl,
+          photos: nextPhotos,
+          localUris: [derivedHeroUrl],
+        });
+        Alert.alert('Hero approved', 'Your refined hero image passed the safety check and is ready to save.');
+        return;
+      }
       setFormData((prev) => {
         const nextPhotos = promoteGalleryMediaToHero(prev.photos, index);
         const nextState = {
@@ -1372,6 +1646,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       });
       Alert.alert('Hero refined', 'A wider hero crop is staged and the source scene is moved to the front.');
     } catch (error) {
+      if (presentProfileMediaError(error)) return;
       console.error('Error refining hero media:', error);
       Alert.alert('Refine failed', 'We could not prepare that hero crop right now.');
     } finally {
@@ -1583,36 +1858,13 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       return { queued: false };
     }
     
+    const clientOperationId = ExpoCrypto.randomUUID();
     try {
-      let profileInterests: { profile_id: string; interest_id: string }[] = [];
-      if (interests.length > 0) {
-        const { data: interestData, error: interestError } = await supabase
-          .from('interests')
-          .select('id, name')
-          .in('name', interests);
-        if (interestError) throw interestError;
-
-        if ((interestData?.length ?? 0) !== interests.length) {
-          throw new Error('The interest catalog is still syncing. Please try again shortly.');
-        }
-        profileInterests = interestData?.map(interest => ({
-          profile_id: pid,
-          interest_id: interest.id,
-        })) || [];
-      }
-
-      const { error: deleteError } = await supabase
-        .from('profile_interests')
-        .delete()
-        .eq('profile_id', pid);
-      if (deleteError) throw deleteError;
-
-      if (profileInterests.length > 0) {
-        const { error: insertError } = await supabase
-          .from('profile_interests')
-          .insert(profileInterests);
-        if (insertError) throw insertError;
-      }
+      await replaceProfileInterestsAtomic({
+        profileId: pid,
+        interests,
+        clientOperationId,
+      });
       return { queued: false };
     } catch (error) {
       if (isLikelyNetworkError(error)) {
@@ -1622,6 +1874,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         await enqueueProfileInterestsUpdateMutation({
           profileId: pid,
           interests,
+          clientOperationId,
         });
         return { queued: true };
       }
@@ -1701,7 +1954,12 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       });
 
       if (!result.canceled && result.assets[0]) {
-        await handleImageUpload(result.assets[0].uri, isAvatar);
+        const asset = result.assets[0];
+        await handleImageUpload(
+          asset.uri,
+          isAvatar,
+          String(asset.fileName || '').trim() || 'Camera photo',
+        );
       }
     } catch (error) {
       console.error('Error opening camera:', error);
@@ -1711,6 +1969,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
 
   const openGallery = async (isAvatar: boolean) => {
     try {
+      setUploading(true);
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: 'images',
         allowsEditing: isAvatar,
@@ -1724,22 +1983,31 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
 
       if (!result.canceled && result.assets.length > 0) {
         if (isAvatar) {
-          await handleImageUpload(result.assets[0].uri, true);
+          const asset = result.assets[0];
+          await handleImageUpload(
+            asset.uri,
+            true,
+            String(asset.fileName || '').trim() || 'Selected photo',
+          );
         } else {
-          await stageGalleryBatch(result.assets.map((asset) => asset.uri).filter(Boolean));
+          await stageGalleryBatch(result.assets);
         }
       }
     } catch (error) {
+      if (presentProfileMediaError(error)) return;
       console.error('Error opening gallery:', error);
       Alert.alert('Error', 'Failed to open gallery');
+    } finally {
+      setUploading(false);
     }
   };
 
-  const handleImageUpload = async (uri: string, isAvatar: boolean) => {
+  const handleImageUpload = async (uri: string, isAvatar: boolean, mediaLabel?: string) => {
     try {
       setUploading(true);
       await stageImageOffline(uri, isAvatar);
     } catch (error) {
+      if (presentProfileMediaError(error, mediaLabel)) return;
       console.error('Error uploading image:', error);
       const errorMessage = error instanceof Error ? error.message : 'Failed to upload image';
       Alert.alert('Error', `Upload failed: ${errorMessage}`);
@@ -1797,6 +2065,13 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
   };
 
   const pickProfileVideo = async () => {
+    if (isProfileMediaGuardV1_2Runtime()) {
+      Alert.alert(
+        'Profile videos are temporarily paused',
+        'New videos will return after frame-by-frame safety checks are ready. You can still remove an existing video.',
+      );
+      return;
+    }
     try {
       Alert.alert(
         'Add intro video',
@@ -2015,21 +2290,18 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         return;
       }
 
-      // Fast feedback only. The same content is authoritatively checked in the
-      // database before it can be published.
-      const publicTextCheck = moderatePublicProfileText([
-        formData.full_name,
-        formData.bio,
-        formData.occupation,
-        formData.education,
-        formData.looking_for,
-        formData.roots_note,
-        formData.future_ghana_plans,
-      ].filter(Boolean).join(' '));
+      // Field-level feedback is immediate; this aggregate preflight also catches
+      // contact details split across multiple public profile fields. The server
+      // remains authoritative before publication.
+      const publicTextCheck = validatePublicProfileFields(formData);
+      setGuardFieldErrors(publicTextCheck.fieldErrors);
+      setAggregateGuardError(Boolean(publicTextCheck.aggregateError));
       if (!publicTextCheck.allowed) {
+        setStatusTone('error');
+        setStatusMessage(PUBLIC_PROFILE_GUARD_MESSAGE);
         Alert.alert(
           'Keep your profile personal',
-          "For your safety, contact details, external links and promotional content can't appear on public profiles. You can exchange contact information privately once you've connected.",
+          `${PUBLIC_PROFILE_GUARD_MESSAGE} You can exchange contact information privately once you've connected.`,
         );
         return;
       }
@@ -2073,12 +2345,14 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       const hasLocalAvatar = isLocalMediaUri(formData.avatar_url);
       const hasLocalHeroImage = isLocalMediaUri(resolvedHeroImageUrl);
       const localPhotos = sanitizedPhotos.filter((photo) => isLocalMediaUri(photo));
+      const hasLocalProfileImage = hasLocalAvatar || hasLocalHeroImage || localPhotos.length > 0;
       const hasLocalVideo = isLocalMediaUri(formData.profile_video);
       const remotePhotos = sanitizedPhotos.filter((photo) => !isLocalMediaUri(photo));
       const mediaSyncPayload =
         user?.id && (hasLocalAvatar || hasLocalHeroImage || localPhotos.length > 0 || hasLocalVideo)
           ? {
               userId: user.id,
+              avatarUrl: formData.avatar_url || null,
               avatar: hasLocalAvatar
                 ? inferMediaUploadMeta(formData.avatar_url, 'profile-avatar', 'image/jpeg')
                 : null,
@@ -2086,7 +2360,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                 ? inferMediaUploadMeta(resolvedHeroImageUrl || '', 'profile-hero', 'image/jpeg')
                 : null,
               heroImageUrl: resolvedHeroImageUrl,
-              photos: localPhotos.length > 0 ? sanitizedPhotos : null,
+              photos: sanitizedPhotos,
               photoItems: localPhotos.map((photo, index) =>
                 inferMediaUploadMeta(photo, `profile-photo-${index + 1}`, 'image/jpeg'),
               ),
@@ -2097,6 +2371,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                   }
                 : null,
               updatedAt: new Date().toISOString(),
+              clientRequestId: `profile-media-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
             }
           : null;
 
@@ -2107,7 +2382,9 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         hero_image_url: hasLocalHeroImage
           ? ((profile as any)?.hero_image_url ?? null)
           : resolvedHeroImageUrl,
-        photos: remotePhotos,
+        photos: hasLocalProfileImage
+          ? normalizeGalleryPhotoList((profile as any)?.photos, (profile as any)?.avatar_url)
+          : remotePhotos,
         profile_video: hasLocalVideo
           ? ((profile as any)?.profile_video ?? null)
           : formData.profile_video && formData.profile_video.trim()
@@ -2428,17 +2705,29 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       // Save interests separately through profile_interests table
       const interestsResult = await saveUserInterests(selectedInterests);
       let mediaSyncPending = false;
+      let publishedMedia: Awaited<ReturnType<typeof syncProfileMediaNow>> | null = null;
       if (mediaSyncPayload) {
-        await enqueueProfileMediaSyncMutation(mediaSyncPayload);
-        if (!(await isOfflineNow())) {
-          try {
-            await drainOfflineMutationQueue();
-            await refreshProfile();
-          } catch {
-            mediaSyncPending = true;
-          }
-        } else {
+        if (await isOfflineNow()) {
+          await enqueueProfileMediaSyncMutation(mediaSyncPayload);
           mediaSyncPending = true;
+        } else {
+          try {
+            publishedMedia = await syncProfileMediaNow(mediaSyncPayload);
+            await refreshProfile();
+          } catch (mediaError) {
+            const guardMessage = profileMediaGuardMessageV1_2(mediaError);
+            if (guardMessage) {
+              setStatusTone('error');
+              setStatusMessage(guardMessage);
+              return;
+            }
+            if (isLikelyNetworkError(mediaError)) {
+              await enqueueProfileMediaSyncMutation(mediaSyncPayload);
+              mediaSyncPending = true;
+            } else {
+              throw mediaError;
+            }
+          }
         }
       }
 
@@ -2448,23 +2737,23 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       const snapshotProfileId = getSnapshotProfileId();
       if (snapshotProfileId) {
         void writeMeProfileSnapshot(snapshotProfileId, {
-          avatarUrl: formData.avatar_url || null,
-          heroImageUrl: resolvedHeroImageUrl,
-          photos: sanitizedPhotos,
+          avatarUrl: publishedMedia?.avatarUrl ?? formData.avatar_url ?? null,
+          heroImageUrl: publishedMedia?.heroImageUrl ?? resolvedHeroImageUrl,
+          photos: publishedMedia?.photos ?? sanitizedPhotos,
           profileVideo: formData.profile_video || null,
         });
       }
       Alert.alert(
         queued ? 'Saved' : 'Success',
         queued
-          ? 'Your profile is updated here. Some media may still finish syncing in the background.'
+          ? 'Your profile is saved and will update automatically when your connection returns.'
           : 'Profile updated successfully!',
       );
       onSave({
         ...updateData,
-        __displayAvatarUrl: formData.avatar_url || null,
-        __displayHeroImageUrl: resolvedHeroImageUrl,
-        __displayPhotos: sanitizedPhotos,
+        __displayAvatarUrl: publishedMedia?.avatarUrl ?? formData.avatar_url ?? null,
+        __displayHeroImageUrl: publishedMedia?.heroImageUrl ?? resolvedHeroImageUrl,
+        __displayPhotos: publishedMedia?.photos ?? sanitizedPhotos,
         __displayProfileVideo: formData.profile_video || null,
         __interests: selectedInterests,
         __offlineQueued: queued,
@@ -2535,6 +2824,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
             profileInitials={avatarInitials}
             uploading={uploading || mediaStudioBusy}
             videoUploading={videoUploading || mediaStudioBusy}
+            videoUploadsEnabled={!isProfileMediaGuardV1_2Runtime()}
             onPickAvatar={() => void pickImage(true)}
             onPickGallery={() => void pickImage(false)}
             onPickVideo={() => void pickProfileVideo()}
@@ -2570,12 +2860,15 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
             <View style={styles.inputContainer}>
               <Text style={styles.inputLabel}>Full Name *</Text>
               <TextInput
-                style={styles.textInput}
+                style={[styles.textInput, guardFieldErrors.full_name && styles.guardedInputError]}
                 value={formData.full_name}
                 onChangeText={(text) => handleInputChange('full_name', text)}
                 placeholder="Enter your full name"
                 maxLength={50}
               />
+              {guardFieldErrors.full_name ? (
+                <Text style={styles.guardedFieldError}>{guardFieldErrors.full_name}</Text>
+              ) : null}
             </View>
 
             {showLegacyCoreFields ? <View style={styles.inputContainer}>
@@ -2653,7 +2946,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                   <TextInput
                     style={[styles.textInput, { marginTop: 8 }]}
                     value={customHeight}
-                    onChangeText={setCustomHeight}
+                    onChangeText={(value) => handleGuardedCustomTextChange('height', value, setCustomHeight)}
                     placeholder="Enter your height"
                     maxLength={10}
                     onBlur={() => {
@@ -2987,6 +3280,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
               loadingInterests={loadingInterests}
               customOccupation={customOccupation}
               setCustomOccupation={setCustomOccupation}
+              guardFieldErrors={guardFieldErrors}
+              onGuardedCustomTextChange={handleGuardedCustomTextChange}
               handleInputChange={handleInputChange}
               handleRootToggle={handleRootToggle}
               setShowOccupationPicker={setShowOccupationPicker}
@@ -3031,7 +3326,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                   style={styles.sectionIcon}
                 />
               </View>
-              <Text style={styles.sectionTitle}>{formIsGhanaProfile ? 'Education' : 'Professional'}</Text>
+              <Text style={styles.sectionTitle}>Education</Text>
             </View>
             
             {showLegacyCoreFields ? <View style={styles.inputContainer}>
@@ -3052,7 +3347,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                 <TextInput
                   style={[styles.textInput, { marginTop: 8 }]}
                   value={customOccupation}
-                  onChangeText={setCustomOccupation}
+                  onChangeText={(value) => handleGuardedCustomTextChange('occupation', value, setCustomOccupation)}
                   placeholder="Enter your occupation"
                   maxLength={100}
                   onBlur={() => {
@@ -3065,7 +3360,10 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
             </View> : null}
 
             <View style={styles.inputContainer}>
-              <Text style={styles.inputLabel}>Education</Text>
+              <Text style={styles.inputLabel}>Education level</Text>
+              <Text style={styles.toggleHelper}>
+                Choose the closest level, or use Other to add a school or qualification.
+              </Text>
               <TouchableOpacity
                 style={styles.selectButton}
                 onPress={() => setShowEducationPicker(true)}
@@ -3073,17 +3371,17 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                 <Text style={[
                   formData.education ? styles.selectButtonText : styles.selectButtonPlaceholder
                 ]}>
-                  {formData.education || 'Select your education'}
+                  {formData.education || 'Select education level'}
                 </Text>
                 <MaterialCommunityIcons name="chevron-down" size={20} color={theme.textMuted} />
               </TouchableOpacity>
               
               {formData.education === 'Other' && (
                 <TextInput
-                  style={[styles.textInput, { marginTop: 8 }]}
+                  style={[styles.textInput, { marginTop: 8 }, guardFieldErrors.education && styles.guardedInputError]}
                   value={customEducation}
-                  onChangeText={setCustomEducation}
-                  placeholder="Enter your education"
+                  onChangeText={(value) => handleGuardedCustomTextChange('education', value, setCustomEducation)}
+                  placeholder="School, institution or qualification"
                   maxLength={100}
                   onBlur={() => {
                     if (customEducation.trim()) {
@@ -3092,6 +3390,9 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                   }}
                 />
               )}
+              {guardFieldErrors.education ? (
+                <Text style={styles.guardedFieldError}>{guardFieldErrors.education}</Text>
+              ) : null}
             </View>
           </View>
 
@@ -3127,7 +3428,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                 <TextInput
                   style={[styles.textInput, { marginTop: 8 }]}
                   value={customLookingFor}
-                  onChangeText={setCustomLookingFor}
+                  onChangeText={(value) => handleGuardedCustomTextChange('looking_for', value, setCustomLookingFor)}
                   placeholder="What are you looking for?"
                   maxLength={100}
                   onBlur={() => {
@@ -3297,7 +3598,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                 <TextInput
                   style={[styles.textInput, { marginTop: 8 }]}
                   value={customExercise}
-                  onChangeText={setCustomExercise}
+                  onChangeText={(value) => handleGuardedCustomTextChange('exercise_frequency', value, setCustomExercise)}
                   placeholder="Enter your exercise frequency"
                   maxLength={50}
                   onBlur={() => {
@@ -3328,7 +3629,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                   <TextInput
                     style={[styles.textInput, { marginTop: 8 }]}
                     value={customSmoking}
-                    onChangeText={setCustomSmoking}
+                    onChangeText={(value) => handleGuardedCustomTextChange('smoking', value, setCustomSmoking)}
                     placeholder="Smoking habits"
                     maxLength={50}
                     onBlur={() => {
@@ -3358,7 +3659,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                   <TextInput
                     style={[styles.textInput, { marginTop: 8 }]}
                     value={customDrinking}
-                    onChangeText={setCustomDrinking}
+                    onChangeText={(value) => handleGuardedCustomTextChange('drinking', value, setCustomDrinking)}
                     placeholder="Drinking habits"
                     maxLength={50}
                     onBlur={() => {
@@ -3405,7 +3706,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                   <TextInput
                     style={[styles.textInput, { marginTop: 8 }]}
                     value={customHasChildren}
-                    onChangeText={setCustomHasChildren}
+                    onChangeText={(value) => handleGuardedCustomTextChange('has_children', value, setCustomHasChildren)}
                     placeholder="Children status"
                     maxLength={50}
                     onBlur={() => {
@@ -3435,7 +3736,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                   <TextInput
                     style={[styles.textInput, { marginTop: 8 }]}
                     value={customWantsChildren}
-                    onChangeText={setCustomWantsChildren}
+                    onChangeText={(value) => handleGuardedCustomTextChange('wants_children', value, setCustomWantsChildren)}
                     placeholder="Future children"
                     maxLength={50}
                     onBlur={() => {
@@ -3472,7 +3773,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                   <TextInput
                     style={[styles.textInput, { marginTop: 8 }]}
                     value={customPersonality}
-                    onChangeText={setCustomPersonality}
+                    onChangeText={(value) => handleGuardedCustomTextChange('personality_type', value, setCustomPersonality)}
                     placeholder="Personality type"
                     maxLength={50}
                     onBlur={() => {
@@ -3502,7 +3803,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                   <TextInput
                     style={[styles.textInput, { marginTop: 8 }]}
                     value={customLoveLanguage}
-                    onChangeText={setCustomLoveLanguage}
+                    onChangeText={(value) => handleGuardedCustomTextChange('love_language', value, setCustomLoveLanguage)}
                     placeholder="Love language"
                     maxLength={50}
                     onBlur={() => {
@@ -3539,7 +3840,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                   <TextInput
                     style={[styles.textInput, { marginTop: 8 }]}
                     value={customLivingSituation}
-                    onChangeText={setCustomLivingSituation}
+                    onChangeText={(value) => handleGuardedCustomTextChange('living_situation', value, setCustomLivingSituation)}
                     placeholder="Living situation"
                     maxLength={50}
                     onBlur={() => {
@@ -3569,7 +3870,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                   <TextInput
                     style={[styles.textInput, { marginTop: 8 }]}
                     value={customPets}
-                    onChangeText={setCustomPets}
+                    onChangeText={(value) => handleGuardedCustomTextChange('pets', value, setCustomPets)}
                     placeholder="Pet preference"
                     maxLength={50}
                     onBlur={() => {
@@ -3605,7 +3906,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                 <TextInput
                   style={[styles.textInput, { marginTop: 8 }]}
                   value={customLanguage}
-                  onChangeText={setCustomLanguage}
+                  onChangeText={(value) => handleGuardedCustomTextChange('languages_spoken', value, setCustomLanguage)}
                   placeholder="Enter other language"
                   maxLength={50}
                   onBlur={() => {
@@ -3739,7 +4040,9 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                           ? ` ${Math.round(videoUploadProgress * 100)}%`
                           : ''
                       }`
-                    : 'Uploading photo...'}
+                    : isProfileMediaGuardV1_2Runtime()
+                      ? 'Checking photo safety...'
+                      : 'Uploading photo...'}
                 </Text>
               </View>
             </View>
@@ -4060,8 +4363,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
 
       {/* Education Picker */}
       <FieldPicker
-        title="Select Education"
-        options={EDUCATION_OPTIONS}
+        title="Select education level"
+        options={[...PROFILE_EDUCATION_OPTIONS]}
         visible={showEducationPicker}
         onClose={() => setShowEducationPicker(false)}
         onSelect={(value) => {
@@ -5262,6 +5565,17 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
     },
     statusBannerTextSuccess: {
       color: theme.tint,
+    },
+    guardedInputError: {
+      borderColor: theme.danger,
+      borderWidth: 1.5,
+    },
+    guardedFieldError: {
+      marginTop: responsive.space(6, { min: 5, max: 8 }),
+      color: theme.danger,
+      fontSize: responsive.font(12, { min: 11, max: 13 }),
+      fontFamily: 'Manrope_500Medium',
+      lineHeight: responsive.font(17, { min: 16, max: 19 }),
     },
     statusDisplay: {
       padding: responsive.space(16, { min: 14, max: 18 }),

@@ -1,0 +1,68 @@
+const assert = require('node:assert/strict');
+const { readFileSync } = require('node:fs');
+const { createHash } = require('node:crypto');
+const test = require('node:test');
+const ts = require('typescript');
+const read = name => readFileSync(name, 'utf8');
+const hash = name => createHash('sha256').update(readFileSync(name)).digest('hex');
+
+test('the actual Intent JSX mounts one preferences panel before its segment toggle', () => {
+  const source = ts.createSourceFile('intent.tsx', read('app/(tabs)/intent.tsx'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  assert.equal(source.parseDiagnostics.length, 0);
+  const panels = [];
+  function visit(node) {
+    if (ts.isJsxSelfClosingElement(node) && node.tagName.getText(source) === 'ConnectCallingPreferences') panels.push(node);
+    ts.forEachChild(node, visit);
+  }
+  visit(source);
+  assert.equal(panels.length, 1, 'The complete Intent screen must contain exactly one preferences panel');
+  const parent = panels[0].parent;
+  assert.ok(ts.isJsxElement(parent));
+  assert.equal(parent.openingElement.tagName.getText(source), 'Animated.View');
+  const toggle = parent.children.find(n => ts.isJsxSelfClosingElement(n) && n.tagName.getText(source) === 'SegmentedToggle');
+  assert.ok(toggle && panels[0].pos < toggle.pos, 'Preferences stay before the existing Intent segment toggle');
+});
+
+test('Connect custom authentication is scoped to worker/webhook, while user JWT gateways remain on', () => {
+  const config = read('supabase/config.toml');
+  for (const [name, expected] of Object.entries({ 'connect-credentials': true, 'connect-revoke-consent': true,
+    'connect-provider-worker': false, 'connect-webhook': false })) {
+    const block = config.match(new RegExp(`\\[functions\\.${name}\\]([^]*?)(?=\\n\\[|$)`))?.[1];
+    assert.ok(block, name);
+    assert.match(block, new RegExp(`verify_jwt\\s*=\\s*${expected}`), name);
+  }
+  assert.match(read('supabase/functions/connect-provider-worker/index.ts'), /x-connect-worker-secret/);
+  assert.match(read('supabase/functions/connect-webhook/index.ts'), /verifyConnectWebhook/);
+  for (const name of ['connect-credentials', 'connect-revoke-consent']) {
+    assert.match(read(`supabase/functions/${name}/index.ts`), /auth\.getUser\(/);
+  }
+});
+
+test('the deployment proposal freezes exactly the six missing migrations and no applied push or Live migration', () => {
+  const p = JSON.parse(read('docs/betweener-connect/connect-v1-m3-3-staging-deployment-package.json'));
+  assert.deepEqual(p.migrations.map(m => m.path.split('/').at(-1)), [
+    '20261028064220_relationship_acceptance_authority.sql', '20261028074908_connect_v1_foundation.sql',
+    '20261028143424_connect_m2a_revocation_cleanup.sql', '20261029081013_connect_forensic_repair_1.sql',
+    '20261031035826_connect_end_block_local_foundation.sql', '20261031191352_connect_m3_1_intent_and_notifications.sql',
+  ]);
+  for (const m of p.migrations) assert.equal(hash(m.path), m.sha256, m.path);
+  assert.equal(p.executionAuthorized, false);
+  assert.equal(p.target.projectRef, 'xsgzxadwuxuziubglvps');
+  assert.equal(p.activation.accountBindingAuthorized, false);
+  assert.deepEqual(p.activation.allowedAuthUsers, []);
+  assert.equal(p.activation.callingEnabled, false);
+  assert.equal(p.activation.videoEnabled, false);
+});
+
+test('Edge source closure is hash-bound and contains the new Connect push contract', () => {
+  const { historicalWebhookSource } = require('../scripts/lib/connect-push-rehearsal/historical-source.cjs');
+  const p = JSON.parse(read('docs/betweener-connect/connect-v1-m3-3-staging-deployment-package.json'));
+  assert.deepEqual(p.edge.map(e => e.name).sort(), ['connect-credentials', 'connect-provider-worker', 'connect-revoke-consent', 'connect-webhook', 'push-notifications']);
+  for (const e of p.edge) for (const f of e.localSources) {
+    const current = hash(f.path);
+    const original = current === f.sha256 ? f.path : historicalWebhookSource(f.path, f.sha256, current);
+    assert.equal(hash(original), f.sha256, f.path);
+  }
+  assert.ok(p.edge.find(e => e.name === 'push-notifications').localSources.some(f => f.path.endsWith('/connect-push-contract.ts')));
+  assert.equal(p.edge.find(e => e.name === 'connect-revoke-consent').requiredForInitialMatchedPilot, false);
+});

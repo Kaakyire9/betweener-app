@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Opening Betweener S…</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, -apple-system, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; background: linear-gradient(160deg, #061f21, #241936); color: #f6eee4; }
+    main { width: min(100%, 480px); padding: 32px; border: 1px solid #315054; border-radius: 28px; background: rgba(11, 41, 43, 0.94); text-align: center; box-shadow: 0 28px 70px rgba(0, 0, 0, 0.3); }
+    .eyebrow { color: #76d4cf; font-size: 11px; font-weight: 800; letter-spacing: 0.18em; }
+    h1 { margin: 12px 0 0; font-family: Georgia, serif; font-size: 32px; }
+    p { color: #b8c5c4; line-height: 1.6; }
+    a { display: none; min-height: 50px; align-items: center; justify-content: center; width: 100%; margin-top: 18px; padding: 0 22px; border-radius: 18px; background: #16b8b4; color: #041719; font-weight: 800; text-decoration: none; }
+    .spinner { width: 30px; height: 30px; margin: 22px auto 0; border: 3px solid rgba(246, 238, 228, 0.14); border-top-color: #f6eee4; border-radius: 999px; animation: spin 0.9s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="eyebrow">BETWEENER S · SECURE CALLBACK</div>
+    <h1 id="title">Opening Betweener S</h1>
+    <p id="subtitle">Returning your staging sign-in securely to the app.</p>
+    <div class="spinner" id="spinner" aria-label="Loading"></div>
+    <a id="open-app" href="betweenerstaging://auth/callback">Open Betweener S</a>
+  </main>
+  <script>
+    (() => {
+      const STAGING_HOST = 'staging.getbetweener.com';
+      const STAGING_SUPABASE = 'https://xsgzxadwuxuziubglvps.supabase.co';
+      const APP_CALLBACK = 'betweenerstaging://auth/callback';
+      const title = document.getElementById('title');
+      const subtitle = document.getElementById('subtitle');
+      const spinner = document.getElementById('spinner');
+      const openApp = document.getElementById('open-app');
+
+      if (window.location.hostname.toLowerCase() !== STAGING_HOST) {
+        title.textContent = 'Staging callback unavailable';
+        subtitle.textContent = 'This callback can only run on the Betweener staging domain.';
+        spinner.style.display = 'none';
+        return;
+      }
+
+      const query = new URLSearchParams(window.location.search || '');
+      const hash = new URLSearchParams((window.location.hash || '').replace(/^#/, ''));
+      const tokenHash = query.get('token_hash');
+      const tokenType = query.get('type');
+      const hasSessionPayload = hash.has('access_token') || hash.has('refresh_token') || query.has('code');
+
+      if (tokenHash && tokenType && !hasSessionPayload) {
+        const verifyUrl = new URL(`${STAGING_SUPABASE}/auth/v1/verify`);
+        verifyUrl.searchParams.set('token_hash', tokenHash);
+        verifyUrl.searchParams.set('type', tokenType);
+        verifyUrl.searchParams.set('redirect_to', `https://${STAGING_HOST}/auth/callback`);
+        window.location.replace(verifyUrl.toString());
+        return;
+      }
+
+      const combined = new URLSearchParams();
+      query.forEach((value, key) => combined.set(key, value));
+      hash.forEach((value, key) => combined.set(key, value));
+      const deepLink = combined.toString()
+        ? `${APP_CALLBACK}?${combined.toString()}`
+        : APP_CALLBACK;
+      openApp.href = deepLink;
+      window.location.replace(deepLink);
+
+      setTimeout(() => {
+        title.textContent = 'Open Betweener S';
+        subtitle.textContent = 'If the staging app did not open automatically, continue below.';
+        spinner.style.display = 'none';
+        openApp.style.display = 'inline-flex';
+      }, 1800);
+    })();
+  </script>
+</body>
+</html>

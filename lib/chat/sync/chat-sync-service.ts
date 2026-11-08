@@ -5,6 +5,7 @@ import { Platform } from "react-native";
 
 import type { RemoteSystemMessageRow, RemoteThreadMessageRow } from "./chat-sync-types";
 import {
+  collectMissingReplyTargetIds,
   isMissingOptionalChatMediaColumnsError,
   resolveThreadSyncCursor,
   shouldFetchThreadIncrementally,
@@ -140,6 +141,47 @@ export const fetchRemoteThreadMessages = async ({
     usedLegacySchemaFallback,
   });
   const rows = ((data || []) as unknown) as RemoteThreadMessageRow[];
+  const missingReplyTargetIds = error
+    ? []
+    : collectMissingReplyTargetIds({ rows, currentMessages });
+  let replyTargetRows: RemoteThreadMessageRow[] = [];
+  if (missingReplyTargetIds.length > 0) {
+    const buildReplyTargetQuery = (fields: string) =>
+      supabase
+        .from('messages')
+        .select(fields)
+        .in('id', missingReplyTargetIds)
+        .or(
+          `and(sender_id.eq.${currentUserId},receiver_id.eq.${peerUserId}),and(sender_id.eq.${peerUserId},receiver_id.eq.${currentUserId})`,
+        );
+    const replyQueryStartedAt = Date.now();
+    let replyResult = await buildReplyTargetQuery(selectFields);
+    if (
+      fallbackSelectFields &&
+      fallbackSelectFields !== selectFields &&
+      isMissingOptionalChatMediaColumnsError(replyResult.error)
+    ) {
+      replyResult = await buildReplyTargetQuery(fallbackSelectFields);
+    }
+    if (replyResult.error) {
+      console.warn('[chat][thread][remote] reply-targets:error', {
+        currentUserId,
+        peerUserId,
+        durationMs: Date.now() - replyQueryStartedAt,
+        requestedCount: missingReplyTargetIds.length,
+        code: replyResult.error.code ?? null,
+      });
+    } else {
+      replyTargetRows = ((replyResult.data || []) as unknown) as RemoteThreadMessageRow[];
+      console.log('[chat][thread][remote] reply-targets:success', {
+        currentUserId,
+        peerUserId,
+        durationMs: Date.now() - replyQueryStartedAt,
+        requestedCount: missingReplyTargetIds.length,
+        resolvedCount: replyTargetRows.length,
+      });
+    }
+  }
   const threadSyncCursor =
     rows.reduce<string | null>((latest, row) => {
       const value = row.created_at;
@@ -152,6 +194,7 @@ export const fetchRemoteThreadMessages = async ({
 
   return {
     data: rows,
+    replyTargetRows,
     error,
     isIncrementalFetch,
     syncCursor,

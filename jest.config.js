@@ -14,13 +14,14 @@ module.exports = {
     "^react-native($|/.*)": `${path.dirname(require.resolve("react-native"))}/$1`,
     "^react-native-vector-icons$": "@expo/vector-icons",
     "^react-native-vector-icons/(.*)": "@expo/vector-icons/$1",
+    "^@giphy/react-native-sdk$": "<rootDir>/test/jest/giphy-react-native-sdk-mock.cjs",
   },
   setupFiles: [require.resolve("@react-native/jest-preset/jest/setup.js")],
   setupFilesAfterEnv: ["<rootDir>/jest.setup.ts"],
   testPathIgnorePatterns: ["/node_modules/"],
   transform: {
     "^.+\\.[jt]sx?$": ["babel-jest", { presets: ["babel-preset-expo"] }],
-    "^.+\\.(bmp|gif|heic|jpg|jpeg|m4v|mov|mp3|mp4|otf|pdf|png|svg|ttf|webp)$":
+    "^.+\\.(bmp|gif|heic|jpg|jpeg|m4v|mov|mp3|mp4|otf|pdf|png|svg|ttf|wav|webp)$":
       "<rootDir>/test/jest/asset-transformer.cjs",
   },
   transformIgnorePatterns: [

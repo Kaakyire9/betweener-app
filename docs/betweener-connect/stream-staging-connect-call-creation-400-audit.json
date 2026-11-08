@@ -1,0 +1,457 @@
+{
+  "schemaVersion": 1,
+  "kind": "OFFLINE_CALL_CREATION_400_AUDIT",
+  "createdAt": "2026-10-29T14:23:07.909Z",
+  "providerCalls": "NONE",
+  "manifestSha256": "7ba4fb47c2a6008c30a19cd19e5edac35729e7165ba3b406b6d71ff86086f957",
+  "requestReconstruction": {
+    "identifiers": "SYNTHETIC_PLACEHOLDERS_ONLY",
+    "method": "POST",
+    "host": "video.stream-io-api.com",
+    "path": "/api/v2/video/call/betweener_connect/<owned-call-id>",
+    "queryValues": "OMITTED",
+    "headers": "OMITTED",
+    "beforeTransport": {
+      "ring": false,
+      "notify": false,
+      "data": {
+        "created_by_id": "fixture_member_a",
+        "members": [
+          {
+            "user_id": "fixture_member_a",
+            "role": "connect_voice"
+          },
+          {
+            "user_id": "fixture_member_b",
+            "role": "connect_voice"
+          }
+        ],
+        "custom": {
+          "connect_media_truth_21": "synthetic_fixture_marker",
+          "media": "voice"
+        },
+        "settings_override": {
+          "limits": {
+            "max_participants": 2,
+            "max_duration_seconds": 60
+          },
+          "audio": {
+            "mic_default_on": false,
+            "default_device": "earpiece",
+            "speaker_default_on": false,
+            "access_request_enabled": false
+          },
+          "video": {
+            "enabled": false,
+            "camera_default_on": false
+          },
+          "screensharing": {
+            "enabled": false
+          },
+          "recording": {
+            "mode": "disabled"
+          },
+          "transcription": {
+            "mode": "disabled",
+            "closed_caption_mode": "disabled"
+          },
+          "broadcasting": {
+            "enabled": false
+          },
+          "ingress": {
+            "enabled": false
+          },
+          "individual_recording": {
+            "mode": "disabled"
+          },
+          "raw_recording": {
+            "mode": "disabled"
+          },
+          "frame_recording": {
+            "mode": "disabled"
+          },
+          "thumbnails": {
+            "enabled": false
+          }
+        }
+      }
+    },
+    "afterSerialization": {
+      "notify": false,
+      "ring": false,
+      "data": {
+        "created_by_id": "fixture_member_a",
+        "members": [
+          {
+            "user_id": "fixture_member_a",
+            "role": "connect_voice"
+          },
+          {
+            "user_id": "fixture_member_b",
+            "role": "connect_voice"
+          }
+        ],
+        "custom": {
+          "connect_media_truth_21": "synthetic_fixture_marker",
+          "media": "voice"
+        },
+        "settings_override": {
+          "limits": {
+            "max_participants": 2,
+            "max_duration_seconds": 60
+          },
+          "audio": {
+            "mic_default_on": false,
+            "default_device": "earpiece",
+            "speaker_default_on": false,
+            "access_request_enabled": false
+          },
+          "video": {
+            "enabled": false,
+            "camera_default_on": false
+          },
+          "screensharing": {
+            "enabled": false
+          },
+          "recording": {
+            "mode": "disabled"
+          },
+          "transcription": {
+            "mode": "disabled",
+            "closed_caption_mode": "disabled"
+          },
+          "broadcasting": {
+            "enabled": false
+          },
+          "ingress": {
+            "enabled": false
+          },
+          "individual_recording": {
+            "mode": "disabled"
+          },
+          "raw_recording": {
+            "mode": "disabled"
+          },
+          "frame_recording": {
+            "mode": "disabled"
+          },
+          "thumbnails": {
+            "enabled": false
+          }
+        }
+      }
+    }
+  },
+  "sdk": {
+    "version": "0.7.63",
+    "cacheRoot": "%LOCALAPPDATA%/deno/npm/registry.npmjs.org/@stream-io/node-sdk/0.7.63",
+    "files": [
+      {
+        "path": "package.json",
+        "sha256": "66b60a508712735c4aa97cace512b72b857b6ac2682b9746ca3c71df4a5bb257"
+      },
+      {
+        "path": "src/gen/video/CallApi.ts",
+        "sha256": "0c39d82bc25f77e4b33a9b022a8915d432a37b5fa6d77e9879694a4f89c3b62b"
+      },
+      {
+        "path": "src/gen/video/VideoApi.ts",
+        "sha256": "7bd0f5c0177ef0d859c5a677da0b1c5f54e8f9be2c458bc26ccd3060ce0966a6"
+      },
+      {
+        "path": "src/ApiClient.ts",
+        "sha256": "b1fb3c2696fab5cc6fb3b5741c31ae3725bc03cc4c2a5e90386a6788f83aa53b"
+      },
+      {
+        "path": "src/types.ts",
+        "sha256": "e437453a3a25d779a6e2e76c084ab466a73c84072a46a473e239b05de56fdec5"
+      },
+      {
+        "path": "src/gen/models/index.ts",
+        "sha256": "6ffd91463f679fce137f6091752610d32b6c9d9013b558a492071896e5362b66"
+      },
+      {
+        "path": "dist/index.d.ts",
+        "sha256": "742d721c90cb7f0a9cbb9cf45873a72ef2648538e53371aeb07197fd95cee5fc"
+      },
+      {
+        "path": "dist/index.es.mjs",
+        "sha256": "2acf8963f85743533079c79cb8e6cd3d1844efb9262c1feea055236e73868235"
+      }
+    ]
+  },
+  "overrideMatrix": [
+    {
+      "path": "data.settings_override.limits.max_participants",
+      "value": 2,
+      "classification": "RULED_OUT_AS_INVALID_PINNED_SDK_FIELD_OR_VALUE"
+    },
+    {
+      "path": "data.settings_override.limits.max_duration_seconds",
+      "value": 60,
+      "classification": "RULED_OUT_AS_INVALID_PINNED_SDK_FIELD_OR_VALUE"
+    },
+    {
+      "path": "data.settings_override.audio.mic_default_on",
+      "value": false,
+      "classification": "RULED_OUT_AS_INVALID_PINNED_SDK_FIELD_OR_VALUE"
+    },
+    {
+      "path": "data.settings_override.audio.default_device",
+      "value": "earpiece",
+      "classification": "RULED_OUT_AS_INVALID_PINNED_SDK_FIELD_OR_VALUE"
+    },
+    {
+      "path": "data.settings_override.audio.speaker_default_on",
+      "value": false,
+      "classification": "RULED_OUT_AS_INVALID_PINNED_SDK_FIELD_OR_VALUE"
+    },
+    {
+      "path": "data.settings_override.audio.access_request_enabled",
+      "value": false,
+      "classification": "RULED_OUT_AS_INVALID_PINNED_SDK_FIELD_OR_VALUE"
+    },
+    {
+      "path": "data.settings_override.video.enabled",
+      "value": false,
+      "classification": "RULED_OUT_AS_INVALID_PINNED_SDK_FIELD_OR_VALUE"
+    },
+    {
+      "path": "data.settings_override.video.camera_default_on",
+      "value": false,
+      "classification": "RULED_OUT_AS_INVALID_PINNED_SDK_FIELD_OR_VALUE"
+    },
+    {
+      "path": "data.settings_override.screensharing.enabled",
+      "value": false,
+      "classification": "RULED_OUT_AS_INVALID_PINNED_SDK_FIELD_OR_VALUE"
+    },
+    {
+      "path": "data.settings_override.recording.mode",
+      "value": "disabled",
+      "classification": "RULED_OUT_AS_INVALID_PINNED_SDK_FIELD_OR_VALUE"
+    },
+    {
+      "path": "data.settings_override.transcription.mode",
+      "value": "disabled",
+      "classification": "RULED_OUT_AS_INVALID_PINNED_SDK_FIELD_OR_VALUE"
+    },
+    {
+      "path": "data.settings_override.transcription.closed_caption_mode",
+      "value": "disabled",
+      "classification": "RULED_OUT_AS_INVALID_PINNED_SDK_FIELD_OR_VALUE"
+    },
+    {
+      "path": "data.settings_override.broadcasting.enabled",
+      "value": false,
+      "classification": "RULED_OUT_AS_INVALID_PINNED_SDK_FIELD_OR_VALUE"
+    },
+    {
+      "path": "data.settings_override.ingress.enabled",
+      "value": false,
+      "classification": "RULED_OUT_AS_INVALID_PINNED_SDK_FIELD_OR_VALUE"
+    },
+    {
+      "path": "data.settings_override.individual_recording.mode",
+      "value": "disabled",
+      "classification": "RULED_OUT_AS_INVALID_PINNED_SDK_FIELD_OR_VALUE"
+    },
+    {
+      "path": "data.settings_override.raw_recording.mode",
+      "value": "disabled",
+      "classification": "RULED_OUT_AS_INVALID_PINNED_SDK_FIELD_OR_VALUE"
+    },
+    {
+      "path": "data.settings_override.frame_recording.mode",
+      "value": "disabled",
+      "classification": "RULED_OUT_AS_INVALID_PINNED_SDK_FIELD_OR_VALUE"
+    },
+    {
+      "path": "data.settings_override.thumbnails.enabled",
+      "value": false,
+      "classification": "RULED_OUT_AS_INVALID_PINNED_SDK_FIELD_OR_VALUE"
+    },
+    {
+      "path": "data.settings_override.frame_recording.capture_interval_in_seconds",
+      "present": false,
+      "classification": "CONFIRMED_PINNED_SDK_CONTRACT_DEFECT",
+      "sdkRequired": true,
+      "documentedMinimum": 2,
+      "documentedMaximum": 60,
+      "actualHistoricalRejectedRuleConfirmed": false
+    }
+  ],
+  "compiler": {
+    "actual": [
+      {
+        "code": 2741,
+        "message": "Property 'capture_interval_in_seconds' is missing in type '{ mode: \"disabled\"; }' but required in type 'FrameRecordingSettingsRequest'."
+      }
+    ],
+    "hypotheticalOneField": [],
+    "earlierFixture": []
+  },
+  "earlierFixture": {
+    "basis": "CURRENT_SOURCE_RECONSTRUCTION_AND_RETAINED_SUCCESS_NOT_AN_ORIGINAL_WIRE_CAPTURE",
+    "request": {
+      "ring": false,
+      "notify": false,
+      "data": {
+        "created_by_id": "fixture_creator_c",
+        "members": [
+          {
+            "user_id": "fixture_member_a",
+            "role": "connect_invited"
+          },
+          {
+            "user_id": "fixture_member_b",
+            "role": "connect_invited"
+          }
+        ],
+        "custom": {
+          "betweener_connect_id": "00000000-0000-4000-8000-000000000001",
+          "media": "voice",
+          "isolated_security_fixture": true
+        },
+        "settings_override": {
+          "limits": {
+            "max_participants": 2,
+            "max_duration_seconds": 60
+          },
+          "video": {
+            "enabled": false,
+            "camera_default_on": false,
+            "target_resolution": {
+              "width": 640,
+              "height": 480,
+              "bitrate": 600000
+            }
+          }
+        }
+      }
+    }
+  },
+  "fakeTransport": {
+    "mode": "OFFLINE_SYNTHETIC_RESPONSE_NOT_PROVIDER_EVIDENCE",
+    "deno": "2.5.4",
+    "serverSdk": "0.7.63",
+    "transportCalls": 1,
+    "actualNetworkCalls": 0,
+    "captured": {
+      "method": "POST",
+      "path": "/api/v2/video/call/betweener_connect/00000000-0000-4000-8000-000000000001",
+      "body": {
+        "notify": false,
+        "ring": false,
+        "data": {
+          "created_by_id": "fixture_member_a",
+          "members": [
+            {
+              "user_id": "fixture_member_a",
+              "role": "connect_voice"
+            },
+            {
+              "user_id": "fixture_member_b",
+              "role": "connect_voice"
+            }
+          ],
+          "custom": {
+            "connect_media_truth_21": "synthetic_fixture_marker",
+            "media": "voice"
+          },
+          "settings_override": {
+            "limits": {
+              "max_participants": 2,
+              "max_duration_seconds": 60
+            },
+            "audio": {
+              "mic_default_on": false,
+              "default_device": "earpiece",
+              "speaker_default_on": false,
+              "access_request_enabled": false
+            },
+            "video": {
+              "enabled": false,
+              "camera_default_on": false
+            },
+            "screensharing": {
+              "enabled": false
+            },
+            "recording": {
+              "mode": "disabled"
+            },
+            "transcription": {
+              "mode": "disabled",
+              "closed_caption_mode": "disabled"
+            },
+            "broadcasting": {
+              "enabled": false
+            },
+            "ingress": {
+              "enabled": false
+            },
+            "individual_recording": {
+              "mode": "disabled"
+            },
+            "raw_recording": {
+              "mode": "disabled"
+            },
+            "frame_recording": {
+              "mode": "disabled"
+            },
+            "thumbnails": {
+              "enabled": false
+            }
+          }
+        }
+      }
+    },
+    "beforeSdk": {
+      "version": 1,
+      "status": 400,
+      "code": 4,
+      "capture": "parsed",
+      "fields": [
+        "data.settings_override.frame_recording.capture_interval_in_seconds"
+      ],
+      "ruleHints": [
+        "required"
+      ],
+      "textOmitted": true
+    },
+    "sdkError": {
+      "diagnostic": {
+        "version": 1,
+        "status": 400,
+        "code": 4,
+        "capture": "parsed",
+        "fields": [
+          "data.settings_override.frame_recording.capture_interval_in_seconds"
+        ],
+        "ruleHints": [
+          "required"
+        ],
+        "textOmitted": true
+      },
+      "descriptiveMessagePreserved": true,
+      "exceptionFieldsPreserved": false
+    }
+  },
+  "rootCause": "HYPOTHESIS",
+  "historicalResponseRecovered": false,
+  "originalProtectedFilesUnchanged": true,
+  "sources": [
+    "https://getstream.io/video/docs/api/call-types/settings/",
+    "https://getstream.io/docs/platform/api-error-codes/",
+    "https://getstream.io/video/docs/api/recording/raw/"
+  ],
+  "validation": {
+    "offlineTests": 193,
+    "offlinePassed": 193,
+    "diagnosticTests": 16,
+    "requestTests": 5,
+    "denoChecks": 2,
+    "eslintWarnings": 0,
+    "providerRuntimeExecuted": false
+  }
+}

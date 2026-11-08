@@ -1,5 +1,6 @@
 import {
   resolveAssignedProgramLayout,
+  resolveProgramScreenPresentationV1,
   type ProgramPreviewState,
   type ProgramSource,
   type ProgramState,
@@ -11,9 +12,25 @@ import {
 } from '@stream-io/video-react-sdk';
 
 import { useStudioMedia } from '../media/studio-media-context.tsx';
+import { screenPresentationFitFlags } from './screen-presentation-fit-flags.ts';
 
-type RenderState = Pick<ProgramState, 'scene' | 'targetCanvas' | 'sourceAssignments'>
-  | Pick<ProgramPreviewState, 'scene' | 'targetCanvas' | 'sourceAssignments'>;
+type RenderState = Pick<ProgramState,
+  'scene' | 'targetCanvas' | 'screenFitMode' | 'sourceAssignments' | 'transition' | 'programVersion'>
+  | Pick<ProgramPreviewState,
+    'scene' | 'targetCanvas' | 'screenFitMode' | 'sourceAssignments' | 'transition' | 'baseProgramVersion'>;
+
+const transitionCue = (state: RenderState, label: string) => {
+  const version = 'programVersion' in state
+    ? state.programVersion
+    : `${state.baseProgramVersion}:${JSON.stringify(state.sourceAssignments)}`;
+  return <div
+    aria-hidden="true"
+    className={`program-transition program-transition-${state.transition}`}
+    key={`${version}:${state.scene}:${state.transition}`}
+  >
+    <span>{label} · {state.scene.replaceAll('_', ' ')}</span>
+  </div>;
+};
 
 const visualCopy = (source: ProgramSource | undefined) => {
   switch (source?.type) {
@@ -30,10 +47,12 @@ function ConnectedProgramRenderer({
   state,
   sources,
   label,
+  emptySourceMessage,
 }: {
   state: RenderState;
   sources: readonly ProgramSource[];
   label: string;
+  emptySourceMessage: string;
 }) {
   const { useParticipants } = useCallStateHooks();
   const participants = useParticipants();
@@ -42,11 +61,9 @@ function ConnectedProgramRenderer({
   );
   const byKey = new Map(sources.map((source) => [source.key, source]));
   const studioParticipants = participants.filter((participant) => participant.userId.startsWith('studio-'));
-  const roomParticipants = participants.filter((participant) => !participant.userId.startsWith('studio-'));
 
   const participantFor = (source: ProgramSource | undefined) =>
-    participants.find((participant) => participant.userId === source?.providerUserId)
-      ?? (source?.type === 'host_camera' ? roomParticipants[0] : undefined);
+    participants.find((participant) => participant.userId === source?.providerUserId);
 
   const renderParticipant = (
     participant: StreamVideoParticipant,
@@ -67,32 +84,35 @@ function ConnectedProgramRenderer({
         const key = state.sourceAssignments[region.slot];
         const source = key ? byKey.get(key) : undefined;
         const participant = participantFor(source);
-        const pool = source?.type === 'quick_connect_pool' || source?.type === 'active_pair'
-          ? roomParticipants.slice(0, source.type === 'active_pair' ? 2 : 4)
-          : [];
         const [eyebrow, title] = visualCopy(source);
+        const screenPresentation = source?.type === 'screen_share' && screenPresentationFitFlags.v1
+          ? resolveProgramScreenPresentationV1(
+            state.screenFitMode ?? 'auto', state.targetCanvas, source,
+          )
+          : null;
         return (
-          <div className={`program-region treatment-${region.treatment}`} key={region.slot}
+          <div className={`program-region treatment-${region.treatment} source-${source?.type ?? 'empty'} ${screenPresentation
+            ? `screen-fit-${screenPresentation.fit} screen-matte-${screenPresentation.matte}` : ''}`}
+            data-screen-fit={screenPresentation?.fit}
+            data-screen-matte={screenPresentation?.matte}
+            key={region.slot}
             style={{
               left: `${region.x * 100}%`, top: `${region.y * 100}%`,
               width: `${region.width * 100}%`, height: `${region.height * 100}%`,
               zIndex: region.zIndex,
             }}>
-            {participant ? renderParticipant(participant, source) : pool.length ? (
-              <div className={`participant-grid participants-${pool.length}`}>
-                {pool.map((member) => renderParticipant(member, source))}
-              </div>
-            ) : (
+            {participant ? renderParticipant(participant, source) : (
               <div className="programme-visual">
                 <span className="programme-orbit" />
                 <p className="eyebrow">{eyebrow}</p>
                 <strong>{title}</strong>
-                <small>{source ? `${source.readiness} · ${source.health}` : 'Choose a source in Preview'}</small>
+                <small>{source ? `${source.readiness} · ${source.health}` : emptySourceMessage}</small>
               </div>
             )}
           </div>
         );
       })}
+      {transitionCue(state, label)}
       <div className="canvas-safe-area" aria-hidden="true" />
       <div className="canvas-badge">{state.targetCanvas.replaceAll('_', ' · ')}</div>
       {studioParticipants.length === 0 ? <div className="monitor-note">Media monitor not connected</div> : null}
@@ -104,13 +124,16 @@ export function ProgramRenderer({
   state,
   sources,
   label,
+  emptySourceMessage = 'Choose a source in Preview',
 }: {
   state: RenderState;
   sources: readonly ProgramSource[];
   label: string;
+  emptySourceMessage?: string;
 }) {
   const { binding } = useStudioMedia();
-  if (binding) return <ConnectedProgramRenderer state={state} sources={sources} label={label} />;
+  if (binding) return <ConnectedProgramRenderer state={state} sources={sources} label={label}
+    emptySourceMessage={emptySourceMessage} />;
   const layout = resolveAssignedProgramLayout(
     state.scene, state.targetCanvas, state.sourceAssignments,
   );
@@ -126,9 +149,10 @@ export function ProgramRenderer({
           zIndex: region.zIndex,
         }}><div className="programme-visual"><span className="programme-orbit" />
           <p className="eyebrow">{eyebrow}</p><strong>{title}</strong>
-          <small>{source ? `${source.readiness} · ${source.health}` : 'Choose a source in Preview'}</small>
+          <small>{source ? `${source.readiness} · ${source.health}` : emptySourceMessage}</small>
         </div></div>;
       })}
+      {transitionCue(state, label)}
       <div className="canvas-safe-area" aria-hidden="true" />
       <div className="monitor-note">Connect media for a live monitor</div>
     </div>

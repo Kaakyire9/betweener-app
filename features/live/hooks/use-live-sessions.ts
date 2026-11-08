@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/lib/auth-context';
 import { liveRepository, type LiveSessionSummary } from '../application/index.ts';
+import { LIVE_PRODUCT_ENABLED } from '../config/live-product-release';
 
-export const useLiveSessions = () => {
+export const useLiveSessions = (enabled = LIVE_PRODUCT_ENABLED) => {
   const {
     authStatus,
     canPerformAuthenticatedWrites,
@@ -18,7 +19,9 @@ export const useLiveSessions = () => {
   const requestIdRef = useRef(0);
   const retrySessionRecoveryRef = useRef(retrySessionRecovery);
   retrySessionRecoveryRef.current = retrySessionRecovery;
-  const authUnavailable = authStatus !== 'authenticated' || !canPerformAuthenticatedWrites;
+  const authUnavailable = !enabled
+    || authStatus !== 'authenticated'
+    || !canPerformAuthenticatedWrites;
 
   const refresh = useCallback(async (options?: { attemptRecovery?: boolean }) => {
     const requestId = ++requestIdRef.current;
@@ -79,6 +82,13 @@ export const useLiveSessions = () => {
     }
     setLoading(true);
     void refresh({ attemptRecovery: false });
+  }, [authUnavailable, refresh]);
+
+  useEffect(() => {
+    if (authUnavailable) return;
+    return liveRepository.subscribeLiveDiscovery(() => {
+      void refresh({ attemptRecovery: false });
+    });
   }, [authUnavailable, refresh]);
 
   return {

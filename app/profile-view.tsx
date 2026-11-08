@@ -13,6 +13,8 @@ import PremiumUpsellModal from '@/components/premium/PremiumUpsellModal';
 import { VerificationBadge } from '@/components/VerificationBadge';
 import { PremiumPlanBadge } from '@/components/PremiumPlanBadge';
 import { showBetweenerAlert } from '@/components/ui/BetweenerAlertHost';
+import { acceptProfileSignal } from '@/lib/relationships/relationship-service';
+import { RelationshipCommandError } from '@/lib/relationships/relationship-commands';
 import {
   createProfileBoostV2,
   formatBoostAudienceLabel,
@@ -57,7 +59,6 @@ import {
   enqueueSwipeSyncMutation,
   getPendingProfileImageReactionMap,
   hasPendingSwipeSyncMutation,
-  retryFailedOfflineMutation,
   subscribeToOfflineMutationEvents,
 } from '@/lib/offline/mutation-queue';
 import { fetchViewedProfile } from '@/lib/profile/fetch-viewed-profile';
@@ -88,6 +89,7 @@ import { recordProfileSignal } from '@/lib/profile-signals';
 import { logVibesEvent } from '@/lib/vibes/events';
 import { isGuessPrompt, isMultipleChoiceGuess } from '@/lib/prompts/guess-prompts';
 import { supabase } from '@/lib/supabase';
+import { isMissingIdempotentRpc } from '@/lib/offline/idempotent-rpc';
 import { logger } from '@/lib/telemetry/logger';
 import { getViewedProfilePremiumCopy } from '@/lib/viewed-profile-premium';
 import type { ProfilePromptAnswer, UserProfile } from '@/types/user-profile';
@@ -99,6 +101,7 @@ import SignalIcon from '@/components/icons/SignalIcon';
 import Notice from '@/components/ui/Notice';
 import { ProfileHeroSkeleton } from '@/components/ui/Skeleton';
 import * as Haptics from 'expo-haptics';
+import * as ExpoCrypto from 'expo-crypto';
 import { LinearGradient } from 'expo-linear-gradient';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -493,16 +496,24 @@ function buildSections(profile: UserProfile, isOwnProfile: boolean): PremiumSect
   return sections;
 }
 
-function buildAutoSectionsIfNeeded(profile: UserProfile, existing: PremiumSection[]): PremiumSection[] {
+function buildAutoSectionsIfNeeded(
+  profile: UserProfile,
+  existing: PremiumSection[],
+  isOwnProfile: boolean,
+): PremiumSection[] {
   if (existing.length > 0) return existing;
   const premiumCopy = getViewedProfilePremiumCopy(profile.name);
 
+  const rootsVisibility = String(profile.rootsVisibility || 'VISIBLE').trim().toUpperCase();
+  const canShowHeritage = isOwnProfile || rootsVisibility === 'VISIBLE';
   const basics = [
     formatDetailLine('Height', profile.height, (value) => String(value || '').trim()),
     formatDetailLine('Work', profile.occupation, (value) => String(value || '').trim()),
     formatDetailLine('Education', profile.education, (value) => String(value || '').trim()),
     formatDetailLine('Faith', profile.religion, formatReligionLabel),
-    formatDetailLine('Heritage', profile.tribe, (value) => String(value || '').trim()),
+    canShowHeritage
+      ? formatDetailLine('Heritage', profile.tribe, (value) => String(value || '').trim())
+      : null,
     formatDetailLine('Personality', profile.personalityType),
   ].filter(Boolean);
 
@@ -947,7 +958,7 @@ export default function ProfileViewPremiumV2Screen() {
 
   const profile: PremiumProfile = useMemo(() => {
     const adapted = adaptToPremiumProfile(resolvedProfile, isOwnProfile);
-    const sections = buildAutoSectionsIfNeeded(resolvedProfile, adapted.sections);
+    const sections = buildAutoSectionsIfNeeded(resolvedProfile, adapted.sections, isOwnProfile);
     return { ...adapted, sections };
   }, [isOwnProfile, resolvedProfile]);
   const viewerPrompts = useMemo(
@@ -1742,47 +1753,12 @@ export default function ProfileViewPremiumV2Screen() {
     };
   }, [currentProfile?.id, isOwnProfile, resolvedProfile.id]);
 
-  const ensureProfileMatch = useCallback(async (actorProfileId: string, recipientProfileId: string) => {
-    const { data, error: lookupError } = await supabase
-      .from('matches')
-      .select('id,status')
-      .or(
-        `and(user1_id.eq.${actorProfileId},user2_id.eq.${recipientProfileId}),and(user1_id.eq.${recipientProfileId},user2_id.eq.${actorProfileId})`,
-      )
-      .limit(1);
-    if (lookupError) throw lookupError;
-
-    if (data && data.length > 0) {
-      const match = data[0];
-      if (match.status !== 'ACCEPTED') {
-        const { error: updateError } = await supabase.from('matches').update({ status: 'ACCEPTED' }).eq('id', match.id);
-        if (updateError) throw updateError;
-      }
-      return match.id;
-    }
-
-    const [user1, user2] = [actorProfileId, recipientProfileId].sort();
-    const { data: inserted, error: insertError } = await supabase
-      .from('matches')
-      .insert({ user1_id: user1, user2_id: user2, status: 'ACCEPTED' })
-      .select('id')
-      .single();
-    if (insertError) throw insertError;
-    return inserted?.id;
-  }, []);
-
   const acceptProfileReminder = useCallback(async () => {
     if (!profileReminder || !currentProfile?.id || !resolvedProfile.id || profileReminderBusy) return;
     setProfileReminderBusy('accept');
     try {
       if (profileReminder.kind === 'signal') {
-        const respondedAt = new Date().toISOString();
-        const { error } = await (supabase as any)
-          .from('profile_signal_gestures')
-          .update({ status: 'responded', responded_at: respondedAt })
-          .eq('id', profileReminder.id);
-        if (error) throw error;
-        await ensureProfileMatch(resolvedProfile.id, currentProfile.id);
+        await acceptProfileSignal(profileReminder.id);
       } else {
         const result = await decideIntentRequestOfflineSafe({
           requestId: profileReminder.id,
@@ -1804,13 +1780,13 @@ export default function ProfileViewPremiumV2Screen() {
       logger.error('[profile-view] accept_profile_reminder_failed', error);
       showBetweenerAlert({
         title: 'Unable to accept',
-        message: (typeof __DEV__ !== 'undefined' && __DEV__) ? String((error as any)?.message || error) : 'Please try again.',
+        message: error instanceof RelationshipCommandError ? error.message : 'Please try again.',
         tone: 'error',
       });
     } finally {
       setProfileReminderBusy(null);
     }
-  }, [currentProfile?.id, ensureProfileMatch, profileReminder, profileReminderBusy, resolvedProfile.id]);
+  }, [currentProfile?.id, currentUserId, profileReminder, profileReminderBusy, resolvedProfile.id]);
 
   const passProfileReminder = useCallback(async () => {
     if (!profileReminder || profileReminderBusy) return;
@@ -4613,16 +4589,16 @@ function FloatingActions({
     },
     [],
   );
-  const showBoostSyncNotice = useCallback(
+  const showMembershipUnavailableNotice = useCallback(
     (requiredPlan: 'SILVER' | 'GOLD') => {
       const syncedPlan = requiredPlan === 'GOLD' ? revenueCatPlan : currentPlan;
       showBoostComposerFeedback({
         tone: 'info',
-        title: 'Membership syncing',
+        title: 'Membership unavailable',
         message:
           syncedPlan === 'FREE'
-            ? 'Your membership has not synced to Betweener yet. Try again shortly.'
-            : `${syncedPlan} is active on this device, but Betweener has not finished syncing it yet. Try again shortly.`,
+            ? 'Betweener could not confirm your membership yet. Try again shortly.'
+            : `${syncedPlan} is active on this device, but could not be confirmed yet. Try again shortly.`,
       });
     },
     [currentPlan, revenueCatPlan, showBoostComposerFeedback],
@@ -4716,8 +4692,8 @@ function FloatingActions({
         if (boostComposerVisible) {
           showBoostComposerFeedback({
             tone: 'success',
-            title: 'Queued boost is live',
-            message: 'Your saved boost finished syncing and is now running.',
+            title: 'Boost active',
+            message: 'Your saved boost is now running.',
           });
         }
         return;
@@ -4726,8 +4702,8 @@ function FloatingActions({
       if (event.type === 'failed' && boostComposerVisible) {
         showBoostComposerFeedback({
           tone: 'error',
-          title: 'Queued boost needs review',
-          message: 'We could not launch your saved boost yet. Retry when the connection is stable.',
+          title: 'Boost not started',
+          message: 'Your saved boost could not be launched. Review it and try again.',
         });
       }
     });
@@ -4739,24 +4715,6 @@ function FloatingActions({
     showBoostComposerFeedback,
     viewerProfileId,
   ]);
-  const handleBoostSyncAction = useCallback(async () => {
-    if (!boostSyncState) return;
-
-    if (boostSyncState.status === 'failed') {
-      const retried = await retryFailedOfflineMutation(boostSyncState.mutationId);
-      if (retried) {
-        await refreshBoostSyncState();
-        showBoostComposerFeedback({
-          tone: 'info',
-          title: 'Boost retry queued',
-          message: 'We will launch this saved boost again as soon as the connection allows it.',
-        });
-      }
-      return;
-    }
-
-    router.push('/sync-activity');
-  }, [boostSyncState, refreshBoostSyncState, showBoostComposerFeedback]);
 
   const openGift = () => {
     if (!canSendToProfile) {
@@ -4908,12 +4866,20 @@ function FloatingActions({
       return;
     }
     const nextGiftType = selectedGift;
+    const clientNonce = ExpoCrypto.randomUUID();
     setGiftSending(true);
-    const { error } = await supabase.rpc('rpc_send_profile_gift' as any, {
+    const giftPayload = {
       p_recipient_profile_id: profileId,
       p_gift_type: nextGiftType,
       p_include_sandbox_preview: typeof __DEV__ !== 'undefined' && __DEV__,
+    };
+    let { error } = await supabase.rpc('rpc_send_profile_gift_v2' as any, {
+      p_client_operation_id: clientNonce,
+      ...giftPayload,
     });
+    if (error && isMissingIdempotentRpc(error)) {
+      ({ error } = await supabase.rpc('rpc_send_profile_gift' as any, giftPayload));
+    }
     setGiftSending(false);
     if (error) {
       const errorMessage = String(error.message || '');
@@ -4938,7 +4904,7 @@ function FloatingActions({
           recipientProfileId: profileId,
           giftType: nextGiftType,
           includeSandboxPreview: typeof __DEV__ !== 'undefined' && __DEV__,
-          clientNonce: `gift:${profileId}:${nextGiftType}:${Date.now()}`,
+          clientNonce,
         });
         await syncSentGiftArchiveSnapshot(nextGiftType);
         setGiftOpen(false);
@@ -4990,7 +4956,7 @@ function FloatingActions({
     setBoostFeedback(null);
     const requiresGoldBoost = isGoldBoostConfig(input);
     if (!canUseServerBoosts && !canUseSandboxSilverPreview) {
-      showBoostSyncNotice('SILVER');
+      showMembershipUnavailableNotice('SILVER');
       return;
     }
     if (requiresGoldBoost && !hasAccess('GOLD')) {
@@ -4998,12 +4964,13 @@ function FloatingActions({
       return;
     }
     if (requiresGoldBoost && !canUseServerGoldBoosts && !canUseSandboxGoldPreview) {
-      showBoostSyncNotice('GOLD');
+      showMembershipUnavailableNotice('GOLD');
       return;
     }
     setBoostSending(true);
+    const clientOperationId = ExpoCrypto.randomUUID();
     try {
-      const created = await createProfileBoostV2(input);
+      const created = await createProfileBoostV2({ ...input, clientOperationId });
       await syncBoostSnapshotActive(created);
       await refreshPremiumState();
       await loadBoostComposer();
@@ -5030,13 +4997,14 @@ function FloatingActions({
           audienceMode: input.audienceMode,
           focusMode: input.focusMode,
           metadata: (input.metadata as Record<string, unknown> | undefined) ?? null,
+          clientOperationId,
         });
         await refreshBoostSyncState();
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
         showBoostComposerFeedback({
           tone: 'info',
-          title: 'Boost queued',
-          message: 'Your boost recipe is saved locally and will launch automatically when the connection returns.',
+          title: 'Boost saved',
+          message: 'Your boost will launch automatically when the connection returns.',
         });
         return;
       }
@@ -5051,11 +5019,11 @@ function FloatingActions({
           revenueCatPlan,
         });
         if (requiresGoldBoost && hasAccess('GOLD') && !canUseServerGoldBoosts && !canUseSandboxGoldPreview) {
-          showBoostSyncNotice('GOLD');
+          showMembershipUnavailableNotice('GOLD');
           return;
         }
         if (canUseBoosts && !canUseServerBoosts && !canUseSandboxSilverPreview) {
-          showBoostSyncNotice('SILVER');
+          showMembershipUnavailableNotice('SILVER');
           return;
         }
         if (requiresGoldBoost) {
@@ -5373,23 +5341,7 @@ function FloatingActions({
         activeBoostEndsAt={activeBoostEndsAt}
         recommendation={boostRecommendation}
         analytics={boostAnalytics}
-        queuedDraft={boostSyncState?.input ?? null}
-        syncState={
-          boostSyncState
-            ? {
-                status: boostSyncState.status,
-                title:
-                  boostSyncState.status === 'failed'
-                    ? 'Saved boost needs attention'
-                    : 'Saved boost is waiting to launch',
-                message:
-                  boostSyncState.status === 'failed'
-                    ? 'The launch did not finish. Retry this saved recipe when your connection is stable.'
-                    : 'This recipe is stored locally and will launch automatically when your connection returns.',
-                actionLabel: boostSyncState.status === 'failed' ? 'Retry now' : 'View sync',
-              }
-            : null
-        }
+        queuedDraft={boostSyncState?.status === 'queued' ? boostSyncState.input : null}
         loading={boostComposerLoading}
         submitting={boostSending}
         feedback={boostFeedback}
@@ -5400,7 +5352,6 @@ function FloatingActions({
           setBoostFeedback(null);
         }}
         onLockedGoldPress={openGoldBoostUpsell}
-        onSyncAction={handleBoostSyncAction}
         onSubmit={sendBoost}
       />
       <ProfileViewGiftModal

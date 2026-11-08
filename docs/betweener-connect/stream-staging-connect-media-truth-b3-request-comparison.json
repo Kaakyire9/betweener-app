@@ -1,0 +1,532 @@
+{
+  "mode": "OFFLINE_REQUEST_COMPARISON_NO_HISTORICAL_WIRE_BODY",
+  "b2ManifestSha256": "96f72e25ccff1e5aa9d630ec3cf597103479aceb5ec7d4e91a7afbb30a9da0f1",
+  "b3ManifestSha256": "1c4a176710972ff9db0baf9473be63ca3662cf7bbaec68cf3ddbfda39f8f3f0f",
+  "requests": {
+    "b3": {
+      "ring": false,
+      "notify": false,
+      "data": {
+        "created_by_id": "mtb3_28_00000000-0000-4000-8000-000000000002_a",
+        "members": [
+          {
+            "user_id": "mtb3_28_00000000-0000-4000-8000-000000000002_a",
+            "role": "connect_voice"
+          },
+          {
+            "user_id": "mtb3_28_00000000-0000-4000-8000-000000000002_b",
+            "role": "connect_voice"
+          }
+        ],
+        "custom": {
+          "connect_media_truth_b3_28": "00000000-0000-4000-8000-000000000002",
+          "media": "voice"
+        },
+        "settings_override": {
+          "limits": {
+            "max_participants": 2,
+            "max_duration_seconds": 60
+          },
+          "audio": {
+            "mic_default_on": false,
+            "default_device": "earpiece",
+            "speaker_default_on": false,
+            "access_request_enabled": false
+          },
+          "video": {
+            "enabled": false,
+            "camera_default_on": false,
+            "target_resolution": {
+              "width": 640,
+              "height": 480,
+              "bitrate": 600000
+            }
+          },
+          "screensharing": {
+            "enabled": false
+          },
+          "recording": {
+            "mode": "disabled"
+          },
+          "transcription": {
+            "mode": "disabled",
+            "closed_caption_mode": "disabled"
+          },
+          "broadcasting": {
+            "enabled": false
+          },
+          "ingress": {
+            "enabled": false
+          },
+          "individual_recording": {
+            "mode": "disabled"
+          },
+          "raw_recording": {
+            "mode": "disabled"
+          },
+          "frame_recording": {
+            "mode": "disabled",
+            "capture_interval_in_seconds": 2
+          },
+          "thumbnails": {
+            "enabled": false
+          }
+        }
+      }
+    },
+    "rejectedB2": {
+      "ring": false,
+      "notify": false,
+      "data": {
+        "created_by_id": "mtb2_24_00000000-0000-4000-8000-000000000002_a",
+        "members": [
+          {
+            "user_id": "mtb2_24_00000000-0000-4000-8000-000000000002_a",
+            "role": "connect_voice"
+          },
+          {
+            "user_id": "mtb2_24_00000000-0000-4000-8000-000000000002_b",
+            "role": "connect_voice"
+          }
+        ],
+        "custom": {
+          "connect_media_truth_b2_24": "00000000-0000-4000-8000-000000000002",
+          "media": "voice"
+        },
+        "settings_override": {
+          "limits": {
+            "max_participants": 2,
+            "max_duration_seconds": 60
+          },
+          "audio": {
+            "mic_default_on": false,
+            "default_device": "earpiece",
+            "speaker_default_on": false,
+            "access_request_enabled": false
+          },
+          "video": {
+            "enabled": false,
+            "camera_default_on": false
+          },
+          "screensharing": {
+            "enabled": false
+          },
+          "recording": {
+            "mode": "disabled"
+          },
+          "transcription": {
+            "mode": "disabled",
+            "closed_caption_mode": "disabled"
+          },
+          "broadcasting": {
+            "enabled": false
+          },
+          "ingress": {
+            "enabled": false
+          },
+          "individual_recording": {
+            "mode": "disabled"
+          },
+          "raw_recording": {
+            "mode": "disabled"
+          },
+          "frame_recording": {
+            "mode": "disabled",
+            "capture_interval_in_seconds": 2
+          },
+          "thumbnails": {
+            "enabled": false
+          }
+        }
+      }
+    },
+    "productionIntended": {
+      "ring": true,
+      "notify": false,
+      "data": {
+        "created_by_id": "betweener-connect-system",
+        "members": [
+          {
+            "user_id": "mtb3_28_00000000-0000-4000-8000-000000000002_a",
+            "role": "connect_invited"
+          },
+          {
+            "user_id": "mtb3_28_00000000-0000-4000-8000-000000000002_b",
+            "role": "connect_invited"
+          }
+        ],
+        "custom": {
+          "betweener_connect_id": "00000000-0000-4000-8000-000000000001",
+          "media": "voice"
+        },
+        "settings_override": {
+          "limits": {
+            "max_participants": 2
+          },
+          "video": {
+            "enabled": false,
+            "camera_default_on": false,
+            "target_resolution": {
+              "width": 640,
+              "height": 480,
+              "bitrate": 600000
+            }
+          }
+        }
+      }
+    },
+    "earlierFixtureSourceReconstruction": {
+      "ring": false,
+      "notify": false,
+      "data": {
+        "created_by_id": "offline_reference_creator",
+        "members": [
+          {
+            "user_id": "mtb3_28_00000000-0000-4000-8000-000000000002_a",
+            "role": "connect_invited"
+          },
+          {
+            "user_id": "mtb3_28_00000000-0000-4000-8000-000000000002_b",
+            "role": "connect_invited"
+          }
+        ],
+        "custom": {
+          "betweener_connect_id": "00000000-0000-4000-8000-000000000001",
+          "media": "voice",
+          "isolated_security_fixture": true
+        },
+        "settings_override": {
+          "limits": {
+            "max_participants": 2,
+            "max_duration_seconds": 60
+          },
+          "video": {
+            "enabled": false,
+            "camera_default_on": false,
+            "target_resolution": {
+              "width": 640,
+              "height": 480,
+              "bitrate": 600000
+            }
+          }
+        }
+      }
+    }
+  },
+  "settingsDifferenceFromB2": [
+    {
+      "operation": "add",
+      "path": "video.target_resolution",
+      "after": {
+        "width": 640,
+        "height": 480,
+        "bitrate": 600000
+      }
+    }
+  ],
+  "fullRequestDifferenceFromB2": [
+    {
+      "operation": "replace",
+      "path": "data.created_by_id",
+      "before": "mtb2_24_00000000-0000-4000-8000-000000000002_a",
+      "after": "mtb3_28_00000000-0000-4000-8000-000000000002_a"
+    },
+    {
+      "operation": "replace",
+      "path": "data.members",
+      "before": [
+        {
+          "user_id": "mtb2_24_00000000-0000-4000-8000-000000000002_a",
+          "role": "connect_voice"
+        },
+        {
+          "user_id": "mtb2_24_00000000-0000-4000-8000-000000000002_b",
+          "role": "connect_voice"
+        }
+      ],
+      "after": [
+        {
+          "user_id": "mtb3_28_00000000-0000-4000-8000-000000000002_a",
+          "role": "connect_voice"
+        },
+        {
+          "user_id": "mtb3_28_00000000-0000-4000-8000-000000000002_b",
+          "role": "connect_voice"
+        }
+      ]
+    },
+    {
+      "operation": "remove",
+      "path": "data.custom.connect_media_truth_b2_24",
+      "before": "00000000-0000-4000-8000-000000000002"
+    },
+    {
+      "operation": "add",
+      "path": "data.custom.connect_media_truth_b3_28",
+      "after": "00000000-0000-4000-8000-000000000002"
+    },
+    {
+      "operation": "add",
+      "path": "data.settings_override.video.target_resolution",
+      "after": {
+        "width": 640,
+        "height": 480,
+        "bitrate": 600000
+      }
+    }
+  ],
+  "differenceFromProduction": [
+    {
+      "operation": "replace",
+      "path": "ring",
+      "before": true,
+      "after": false
+    },
+    {
+      "operation": "replace",
+      "path": "data.created_by_id",
+      "before": "betweener-connect-system",
+      "after": "mtb3_28_00000000-0000-4000-8000-000000000002_a"
+    },
+    {
+      "operation": "replace",
+      "path": "data.members",
+      "before": [
+        {
+          "user_id": "mtb3_28_00000000-0000-4000-8000-000000000002_a",
+          "role": "connect_invited"
+        },
+        {
+          "user_id": "mtb3_28_00000000-0000-4000-8000-000000000002_b",
+          "role": "connect_invited"
+        }
+      ],
+      "after": [
+        {
+          "user_id": "mtb3_28_00000000-0000-4000-8000-000000000002_a",
+          "role": "connect_voice"
+        },
+        {
+          "user_id": "mtb3_28_00000000-0000-4000-8000-000000000002_b",
+          "role": "connect_voice"
+        }
+      ]
+    },
+    {
+      "operation": "remove",
+      "path": "data.custom.betweener_connect_id",
+      "before": "00000000-0000-4000-8000-000000000001"
+    },
+    {
+      "operation": "add",
+      "path": "data.custom.connect_media_truth_b3_28",
+      "after": "00000000-0000-4000-8000-000000000002"
+    },
+    {
+      "operation": "add",
+      "path": "data.settings_override.limits.max_duration_seconds",
+      "after": 60
+    },
+    {
+      "operation": "add",
+      "path": "data.settings_override.audio",
+      "after": {
+        "mic_default_on": false,
+        "default_device": "earpiece",
+        "speaker_default_on": false,
+        "access_request_enabled": false
+      }
+    },
+    {
+      "operation": "add",
+      "path": "data.settings_override.screensharing",
+      "after": {
+        "enabled": false
+      }
+    },
+    {
+      "operation": "add",
+      "path": "data.settings_override.recording",
+      "after": {
+        "mode": "disabled"
+      }
+    },
+    {
+      "operation": "add",
+      "path": "data.settings_override.transcription",
+      "after": {
+        "mode": "disabled",
+        "closed_caption_mode": "disabled"
+      }
+    },
+    {
+      "operation": "add",
+      "path": "data.settings_override.broadcasting",
+      "after": {
+        "enabled": false
+      }
+    },
+    {
+      "operation": "add",
+      "path": "data.settings_override.ingress",
+      "after": {
+        "enabled": false
+      }
+    },
+    {
+      "operation": "add",
+      "path": "data.settings_override.individual_recording",
+      "after": {
+        "mode": "disabled"
+      }
+    },
+    {
+      "operation": "add",
+      "path": "data.settings_override.raw_recording",
+      "after": {
+        "mode": "disabled"
+      }
+    },
+    {
+      "operation": "add",
+      "path": "data.settings_override.frame_recording",
+      "after": {
+        "mode": "disabled",
+        "capture_interval_in_seconds": 2
+      }
+    },
+    {
+      "operation": "add",
+      "path": "data.settings_override.thumbnails",
+      "after": {
+        "enabled": false
+      }
+    }
+  ],
+  "differenceFromEarlierFixture": [
+    {
+      "operation": "replace",
+      "path": "data.created_by_id",
+      "before": "offline_reference_creator",
+      "after": "mtb3_28_00000000-0000-4000-8000-000000000002_a"
+    },
+    {
+      "operation": "replace",
+      "path": "data.members",
+      "before": [
+        {
+          "user_id": "mtb3_28_00000000-0000-4000-8000-000000000002_a",
+          "role": "connect_invited"
+        },
+        {
+          "user_id": "mtb3_28_00000000-0000-4000-8000-000000000002_b",
+          "role": "connect_invited"
+        }
+      ],
+      "after": [
+        {
+          "user_id": "mtb3_28_00000000-0000-4000-8000-000000000002_a",
+          "role": "connect_voice"
+        },
+        {
+          "user_id": "mtb3_28_00000000-0000-4000-8000-000000000002_b",
+          "role": "connect_voice"
+        }
+      ]
+    },
+    {
+      "operation": "remove",
+      "path": "data.custom.betweener_connect_id",
+      "before": "00000000-0000-4000-8000-000000000001"
+    },
+    {
+      "operation": "remove",
+      "path": "data.custom.isolated_security_fixture",
+      "before": true
+    },
+    {
+      "operation": "add",
+      "path": "data.custom.connect_media_truth_b3_28",
+      "after": "00000000-0000-4000-8000-000000000002"
+    },
+    {
+      "operation": "add",
+      "path": "data.settings_override.audio",
+      "after": {
+        "mic_default_on": false,
+        "default_device": "earpiece",
+        "speaker_default_on": false,
+        "access_request_enabled": false
+      }
+    },
+    {
+      "operation": "add",
+      "path": "data.settings_override.screensharing",
+      "after": {
+        "enabled": false
+      }
+    },
+    {
+      "operation": "add",
+      "path": "data.settings_override.recording",
+      "after": {
+        "mode": "disabled"
+      }
+    },
+    {
+      "operation": "add",
+      "path": "data.settings_override.transcription",
+      "after": {
+        "mode": "disabled",
+        "closed_caption_mode": "disabled"
+      }
+    },
+    {
+      "operation": "add",
+      "path": "data.settings_override.broadcasting",
+      "after": {
+        "enabled": false
+      }
+    },
+    {
+      "operation": "add",
+      "path": "data.settings_override.ingress",
+      "after": {
+        "enabled": false
+      }
+    },
+    {
+      "operation": "add",
+      "path": "data.settings_override.individual_recording",
+      "after": {
+        "mode": "disabled"
+      }
+    },
+    {
+      "operation": "add",
+      "path": "data.settings_override.raw_recording",
+      "after": {
+        "mode": "disabled"
+      }
+    },
+    {
+      "operation": "add",
+      "path": "data.settings_override.frame_recording",
+      "after": {
+        "mode": "disabled",
+        "capture_interval_in_seconds": 2
+      }
+    },
+    {
+      "operation": "add",
+      "path": "data.settings_override.thumbnails",
+      "after": {
+        "enabled": false
+      }
+    }
+  ],
+  "limits": [
+    "Synthetic placeholder IDs only; no resources reserved",
+    "Earlier successful fixture has no immutable run-start source or historical HTTP-body capture"
+  ]
+}

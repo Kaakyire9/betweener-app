@@ -175,6 +175,13 @@ with migration_blockers as (
     or has_table_privilege('service_role',format('public.%I',expected.name),'INSERT')
     or has_table_privilege('service_role',format('public.%I',expected.name),'UPDATE')
     or has_table_privilege('service_role',format('public.%I',expected.name),'DELETE')
+), maintenance_protocol as (
+  select coalesce(string_agg(pg_get_functiondef(procedure.oid), E'\n'), '') definition
+  from pg_proc procedure
+  join pg_namespace namespace on namespace.oid = procedure.pronamespace
+  where namespace.nspname = 'public'
+    and procedure.proname like 'run_live_maintenance%'
+    and pg_get_function_identity_arguments(procedure.oid) = ''
 ), protocol_blockers as (
   select case when exists (select 1 from pg_publication_tables
       where pubname = 'supabase_realtime' and schemaname = 'public'
@@ -182,8 +189,9 @@ with migration_blockers as (
     and exists (select 1 from storage.buckets
       where id = 'live-program-music' and not public)
     and position('rpc_service_reconcile_live_odo_show_v1'
-      in pg_get_functiondef('public.run_live_maintenance()'::regprocedure)) > 0
+      in maintenance_protocol.definition) > 0
     then 0::bigint else 1::bigint end affected
+  from maintenance_protocol
 ), catalogue_blockers as (
   select count(*)::bigint affected from public.live_music_tracks track
   where track.enabled and (

@@ -1,0 +1,404 @@
+diff --git a/node_modules/@stream-io/video-react-native-sdk/src/hooks/push/useIosVoipPushEventsSetupEffect.ts b/node_modules/@stream-io/video-react-native-sdk/src/hooks/push/useIosVoipPushEventsSetupEffect.ts
+index f10a2d0..332c1ad 100644
+--- a/node_modules/@stream-io/video-react-native-sdk/src/hooks/push/useIosVoipPushEventsSetupEffect.ts
++++ b/node_modules/@stream-io/video-react-native-sdk/src/hooks/push/useIosVoipPushEventsSetupEffect.ts
+@@ -46,6 +46,7 @@ export const useIosVoipPushEventsSetupEffect = () => {
+ 
+   // this effect is used to send the unsent token to the Stream backend
+   useEffect(() => {
++    if (StreamVideoRN.getConfig().push?.deviceRegistration === 'manual') return;
+     const { pushProviderName } = StreamVideoRN.getConfig().push?.ios || {};
+     //  we need to wait for user to be connected before we can send the push token
+     if (!pushProviderName || !client || !connectedUserId) return;
+@@ -88,6 +89,7 @@ export const useIosVoipPushEventsSetupEffect = () => {
+ 
+   useEffect(() => {
+     const pushConfig = StreamVideoRN.getConfig().push;
++    if (pushConfig?.deviceRegistration === 'manual') return;
+     const pushProviderName = pushConfig?.ios?.pushProviderName;
+     const callingx = getCallingxLibIfAvailable();
+ 
+diff --git a/node_modules/@stream-io/video-react-native-sdk/src/utils/internal/ringingCallLifecycle.ts b/node_modules/@stream-io/video-react-native-sdk/src/utils/internal/ringingCallLifecycle.ts
+index 860cec4..59ef821 100644
+--- a/node_modules/@stream-io/video-react-native-sdk/src/utils/internal/ringingCallLifecycle.ts
++++ b/node_modules/@stream-io/video-react-native-sdk/src/utils/internal/ringingCallLifecycle.ts
+@@ -146,3 +146,8 @@ export const onLeave = (call: Call): void => {
+   }
+   requestRelease(call);
+ };
++
++export const dispatchNativeCallAction = async (event: { cid: string; action: 'incoming' | 'answer' | 'end'; onAnswerReady?(): void }) => {
++  try { return await hooks?.onNativeCallAction?.(event); }
++  catch { return event.cid.startsWith('betweener_connect:') ? { handled: true, success: false } : undefined; }
++};
+diff --git a/node_modules/@stream-io/video-react-native-sdk/src/utils/push/android.ts b/node_modules/@stream-io/video-react-native-sdk/src/utils/push/android.ts
+index 31cbc68..654560c 100644
+--- a/node_modules/@stream-io/video-react-native-sdk/src/utils/push/android.ts
++++ b/node_modules/@stream-io/video-react-native-sdk/src/utils/push/android.ts
+@@ -14,7 +14,7 @@ export async function initAndroidPushToken(
+   pushConfig: PushConfig,
+   setUnsubscribeListener: (unsubscribe: () => void) => void,
+ ) {
+-  if (Platform.OS !== 'android' || !pushConfig.android?.pushProviderName) {
++  if (pushConfig.deviceRegistration === 'manual' || Platform.OS !== 'android' || !pushConfig.android?.pushProviderName) {
+     return;
+   }
+   const logger = videoLoggerSystem.getLogger('initAndroidPushToken');
+diff --git a/node_modules/@stream-io/video-react-native-sdk/src/utils/StreamVideoRN/types.ts b/node_modules/@stream-io/video-react-native-sdk/src/utils/StreamVideoRN/types.ts
+index a7e2f42..89a1b04 100644
+--- a/node_modules/@stream-io/video-react-native-sdk/src/utils/StreamVideoRN/types.ts
++++ b/node_modules/@stream-io/video-react-native-sdk/src/utils/StreamVideoRN/types.ts
+@@ -38,6 +38,8 @@ export type NonRingingPushEvent =
+  * from a killed state - so registering them from inside React is too late.
+  */
+ export type RingingCallLifecycleHooks = {
++  /** App-owned native actions; handled actions never enter the SDK auto-join path. */
++  onNativeCallAction?: (event: { cid: string; action: 'incoming' | 'answer' | 'end'; onAnswerReady?(): void }) => Promise<{ handled: boolean; success: boolean }>;
+   /**
+    * Awaited by `Call.join()` for a ringing call, before any peer connection exists.
+    * **Throwing aborts the join** and the call is not entered.
+@@ -94,6 +96,8 @@ export type StreamVideoConfig = {
+    * @default undefined
+    */
+   push?: {
++    /** App-managed authenticated device enrollment; SDK defaults are unchanged. */
++    deviceRegistration?: 'sdk' | 'manual';
+     /**
+      * @deprecated Expo is auto-detected; this value is ignored and the property will be removed in a future major version.
+      */
+diff --git a/node_modules/@stream-io/video-react-native-sdk/dist/commonjs/hooks/push/useIosVoipPushEventsSetupEffect.js b/node_modules/@stream-io/video-react-native-sdk/dist/commonjs/hooks/push/useIosVoipPushEventsSetupEffect.js
+index 91ac865..f71b7d6 100644
+--- a/node_modules/@stream-io/video-react-native-sdk/dist/commonjs/hooks/push/useIosVoipPushEventsSetupEffect.js
++++ b/node_modules/@stream-io/video-react-native-sdk/dist/commonjs/hooks/push/useIosVoipPushEventsSetupEffect.js
+@@ -51,6 +51,7 @@ const useIosVoipPushEventsSetupEffect = () => {
+ 
+   // this effect is used to send the unsent token to the Stream backend
+   (0, _react.useEffect)(() => {
++    if (_utils.StreamVideoRN.getConfig().push?.deviceRegistration === 'manual') return;
+     const {
+       pushProviderName
+     } = _utils.StreamVideoRN.getConfig().push?.ios || {};
+@@ -83,6 +84,7 @@ const useIosVoipPushEventsSetupEffect = () => {
+   }, [client, connectedUserId, unsentToken]);
+   (0, _react.useEffect)(() => {
+     const pushConfig = _utils.StreamVideoRN.getConfig().push;
++    if (pushConfig?.deviceRegistration === 'manual') return;
+     const pushProviderName = pushConfig?.ios?.pushProviderName;
+     const callingx = (0, _libs.getCallingxLibIfAvailable)();
+     if (_reactNative.Platform.OS !== 'ios' || !client || !pushProviderName || !callingx) {
+@@ -147,4 +149,4 @@ const useIosVoipPushEventsSetupEffect = () => {
+   }, [client]);
+ };
+ exports.useIosVoipPushEventsSetupEffect = useIosVoipPushEventsSetupEffect;
+-//# sourceMappingURL=useIosVoipPushEventsSetupEffect.js.map
+\ No newline at end of file
++//# sourceMappingURL=useIosVoipPushEventsSetupEffect.js.map
+diff --git a/node_modules/@stream-io/video-react-native-sdk/dist/commonjs/utils/internal/ringingCallLifecycle.js b/node_modules/@stream-io/video-react-native-sdk/dist/commonjs/utils/internal/ringingCallLifecycle.js
+index 99bc012..4359c61 100644
+--- a/node_modules/@stream-io/video-react-native-sdk/dist/commonjs/utils/internal/ringingCallLifecycle.js
++++ b/node_modules/@stream-io/video-react-native-sdk/dist/commonjs/utils/internal/ringingCallLifecycle.js
+@@ -139,4 +139,9 @@ const onLeave = call => {
+   requestRelease(call);
+ };
+ exports.onLeave = onLeave;
+-//# sourceMappingURL=ringingCallLifecycle.js.map
+\ No newline at end of file
++//# sourceMappingURL=ringingCallLifecycle.js.map
++const dispatchNativeCallAction = async (event) => {
++  try { return await hooks?.onNativeCallAction?.(event); }
++  catch { return event.cid.startsWith('betweener_connect:') ? { handled: true, success: false } : undefined; }
++};
++exports.dispatchNativeCallAction = dispatchNativeCallAction;
+diff --git a/node_modules/@stream-io/video-react-native-sdk/dist/commonjs/utils/push/android.js b/node_modules/@stream-io/video-react-native-sdk/dist/commonjs/utils/push/android.js
+index c818cb8..04f594b 100644
+--- a/node_modules/@stream-io/video-react-native-sdk/dist/commonjs/utils/push/android.js
++++ b/node_modules/@stream-io/video-react-native-sdk/dist/commonjs/utils/push/android.js
+@@ -16,7 +16,7 @@ let lastFirebaseToken = {
+ 
+ /** Send token to stream  */
+ async function initAndroidPushToken(client, pushConfig, setUnsubscribeListener) {
+-  if (_reactNative.Platform.OS !== 'android' || !pushConfig.android?.pushProviderName) {
++  if (pushConfig.deviceRegistration === 'manual' || _reactNative.Platform.OS !== 'android' || !pushConfig.android?.pushProviderName) {
+     return;
+   }
+   const logger = _videoClient.videoLoggerSystem.getLogger('initAndroidPushToken');
+@@ -70,4 +70,4 @@ const firebaseDataHandler = async data => {
+   }
+ };
+ exports.firebaseDataHandler = firebaseDataHandler;
+-//# sourceMappingURL=android.js.map
+\ No newline at end of file
++//# sourceMappingURL=android.js.map
+diff --git a/node_modules/@stream-io/video-react-native-sdk/dist/module/hooks/push/useIosVoipPushEventsSetupEffect.js b/node_modules/@stream-io/video-react-native-sdk/dist/module/hooks/push/useIosVoipPushEventsSetupEffect.js
+index 0db7f7e..420e689 100644
+--- a/node_modules/@stream-io/video-react-native-sdk/dist/module/hooks/push/useIosVoipPushEventsSetupEffect.js
++++ b/node_modules/@stream-io/video-react-native-sdk/dist/module/hooks/push/useIosVoipPushEventsSetupEffect.js
+@@ -47,6 +47,7 @@ export const useIosVoipPushEventsSetupEffect = () => {
+ 
+   // this effect is used to send the unsent token to the Stream backend
+   useEffect(() => {
++    if (StreamVideoRN.getConfig().push?.deviceRegistration === 'manual') return;
+     const {
+       pushProviderName
+     } = StreamVideoRN.getConfig().push?.ios || {};
+@@ -79,6 +80,7 @@ export const useIosVoipPushEventsSetupEffect = () => {
+   }, [client, connectedUserId, unsentToken]);
+   useEffect(() => {
+     const pushConfig = StreamVideoRN.getConfig().push;
++    if (pushConfig?.deviceRegistration === 'manual') return;
+     const pushProviderName = pushConfig?.ios?.pushProviderName;
+     const callingx = getCallingxLibIfAvailable();
+     if (Platform.OS !== 'ios' || !client || !pushProviderName || !callingx) {
+@@ -142,4 +144,4 @@ export const useIosVoipPushEventsSetupEffect = () => {
+     };
+   }, [client]);
+ };
+-//# sourceMappingURL=useIosVoipPushEventsSetupEffect.js.map
+\ No newline at end of file
++//# sourceMappingURL=useIosVoipPushEventsSetupEffect.js.map
+diff --git a/node_modules/@stream-io/video-react-native-sdk/dist/module/utils/internal/ringingCallLifecycle.js b/node_modules/@stream-io/video-react-native-sdk/dist/module/utils/internal/ringingCallLifecycle.js
+index 63cdec0..51c9e38 100644
+--- a/node_modules/@stream-io/video-react-native-sdk/dist/module/utils/internal/ringingCallLifecycle.js
++++ b/node_modules/@stream-io/video-react-native-sdk/dist/module/utils/internal/ringingCallLifecycle.js
+@@ -131,4 +131,8 @@ export const onLeave = call => {
+   }
+   requestRelease(call);
+ };
+-//# sourceMappingURL=ringingCallLifecycle.js.map
+\ No newline at end of file
++//# sourceMappingURL=ringingCallLifecycle.js.map
++export const dispatchNativeCallAction = async (event) => {
++  try { return await hooks?.onNativeCallAction?.(event); }
++  catch { return event.cid.startsWith('betweener_connect:') ? { handled: true, success: false } : undefined; }
++};
+diff --git a/node_modules/@stream-io/video-react-native-sdk/dist/module/utils/push/android.js b/node_modules/@stream-io/video-react-native-sdk/dist/module/utils/push/android.js
+index e2380fa..627251d 100644
+--- a/node_modules/@stream-io/video-react-native-sdk/dist/module/utils/push/android.js
++++ b/node_modules/@stream-io/video-react-native-sdk/dist/module/utils/push/android.js
+@@ -11,7 +11,7 @@ let lastFirebaseToken = {
+ 
+ /** Send token to stream  */
+ export async function initAndroidPushToken(client, pushConfig, setUnsubscribeListener) {
+-  if (Platform.OS !== 'android' || !pushConfig.android?.pushProviderName) {
++  if (pushConfig.deviceRegistration === 'manual' || Platform.OS !== 'android' || !pushConfig.android?.pushProviderName) {
+     return;
+   }
+   const logger = videoLoggerSystem.getLogger('initAndroidPushToken');
+@@ -64,4 +64,4 @@ export const firebaseDataHandler = async data => {
+     console.warn('[@stream-io/video-react-native-sdk] `firebaseDataHandler` is deprecated. Ring notifications are now handled by the SDK internally — you can remove calls to it from your Firebase messaging handlers.');
+   }
+ };
+-//# sourceMappingURL=android.js.map
+\ No newline at end of file
++//# sourceMappingURL=android.js.map
+diff --git a/node_modules/@stream-io/video-react-native-sdk/dist/typescript/utils/StreamVideoRN/types.d.ts b/node_modules/@stream-io/video-react-native-sdk/dist/typescript/utils/StreamVideoRN/types.d.ts
+index f266258..1c1d02d 100644
+--- a/node_modules/@stream-io/video-react-native-sdk/dist/typescript/utils/StreamVideoRN/types.d.ts
++++ b/node_modules/@stream-io/video-react-native-sdk/dist/typescript/utils/StreamVideoRN/types.d.ts
+@@ -29,6 +29,8 @@ export type NonRingingPushEvent = 'call.live_started' | 'call.notification' | 'c
+  * from a killed state - so registering them from inside React is too late.
+  */
+ export type RingingCallLifecycleHooks = {
++  /** App-owned native actions; handled actions never enter the SDK auto-join path. */
++  onNativeCallAction?: (event: { cid: string; action: 'incoming' | 'answer' | 'end'; onAnswerReady?(): void }) => Promise<{ handled: boolean; success: boolean }>;
+     /**
+      * Awaited by `Call.join()` for a ringing call, before any peer connection exists.
+      * **Throwing aborts the join** and the call is not entered.
+@@ -84,6 +86,8 @@ export type StreamVideoConfig = {
+      * @default undefined
+      */
+     push?: {
++        /** App-managed authenticated device enrollment; SDK defaults are unchanged. */
++        deviceRegistration?: 'sdk' | 'manual';
+         /**
+          * @deprecated Expo is auto-detected; this value is ignored and the property will be removed in a future major version.
+          */
+@@ -239,4 +243,4 @@ export type StreamVideoConfig = {
+         };
+     };
+ };
+-//# sourceMappingURL=types.d.ts.map
+\ No newline at end of file
++//# sourceMappingURL=types.d.ts.map
+diff --git a/node_modules/@stream-io/video-react-native-sdk/src/utils/push/internal/android.ts b/node_modules/@stream-io/video-react-native-sdk/src/utils/push/internal/android.ts
+index 33b6de0..dbaa898 100644
+--- a/node_modules/@stream-io/video-react-native-sdk/src/utils/push/internal/android.ts
++++ b/node_modules/@stream-io/video-react-native-sdk/src/utils/push/internal/android.ts
+@@ -1,3 +1,4 @@
++import { dispatchNativeCallAction } from '../../internal/ringingCallLifecycle';
+ import {
+   AllCallEvents,
+   AllClientEventTypes,
+@@ -68,6 +69,8 @@ export const onRingNotificationReceived = async (
+     return;
+   }
+ 
++  const ownedAction = await dispatchNativeCallAction({ cid: call_cid, action: 'incoming' });
++  if (ownedAction?.handled) return;
+   const asForegroundService = canListenToWS();
+   const backgroundTaskOwner = `push:${call_cid}`;
+   nativeLog(
+diff --git a/node_modules/@stream-io/video-react-native-sdk/src/utils/push/internal/ios.ts b/node_modules/@stream-io/video-react-native-sdk/src/utils/push/internal/ios.ts
+index baab874..39d584d 100644
+--- a/node_modules/@stream-io/video-react-native-sdk/src/utils/push/internal/ios.ts
++++ b/node_modules/@stream-io/video-react-native-sdk/src/utils/push/internal/ios.ts
+@@ -1,3 +1,4 @@
++import { dispatchNativeCallAction } from '../../internal/ringingCallLifecycle';
+ import { videoLoggerSystem } from '@stream-io/video-client';
+ import { Platform } from 'react-native';
+ import { StreamVideoConfig } from '../../StreamVideoRN/types';
+@@ -55,6 +56,8 @@ export const onVoipNotificationReceived = async (
+     return;
+   }
+ 
++  const ownedAction = await dispatchNativeCallAction({ cid: call_cid, action: 'incoming' });
++  if (ownedAction?.handled) return;
+   const client = await pushConfig.createStreamVideoClient();
+   if (!client) {
+     logger.debug(
+diff --git a/node_modules/@stream-io/video-react-native-sdk/src/utils/push/internal/utils.ts b/node_modules/@stream-io/video-react-native-sdk/src/utils/push/internal/utils.ts
+index 435adf6..8614108 100644
+--- a/node_modules/@stream-io/video-react-native-sdk/src/utils/push/internal/utils.ts
++++ b/node_modules/@stream-io/video-react-native-sdk/src/utils/push/internal/utils.ts
+@@ -1,3 +1,4 @@
++import { dispatchNativeCallAction } from '../../internal/ringingCallLifecycle';
+ import {
+   Call,
+   CallingState,
+@@ -75,6 +76,10 @@ export const processCallFromPushInBackground = async (
+    */
+   onIOSActionCanBeFulfilled: (didFail: boolean) => void,
+ ) => {
++  let nativeAnswerFulfilled = false;
++  const onAnswerReady = () => { if (!nativeAnswerFulfilled) { nativeAnswerFulfilled = true; onIOSActionCanBeFulfilled(false); } };
++  const ownedAction = await dispatchNativeCallAction({ cid: call_cid, action: action === 'accept' ? 'answer' : action === 'decline' ? 'end' : 'incoming', onAnswerReady });
++  if (ownedAction?.handled) { if (!nativeAnswerFulfilled) onIOSActionCanBeFulfilled(!ownedAction.success); return; }
+   let videoClient: StreamVideoClient | undefined;
+ 
+   try {
+diff --git a/node_modules/@stream-io/video-react-native-sdk/dist/commonjs/utils/push/internal/android.js b/node_modules/@stream-io/video-react-native-sdk/dist/commonjs/utils/push/internal/android.js
+index 9c8b704..94b5532 100644
+--- a/node_modules/@stream-io/video-react-native-sdk/dist/commonjs/utils/push/internal/android.js
++++ b/node_modules/@stream-io/video-react-native-sdk/dist/commonjs/utils/push/internal/android.js
+@@ -1,3 +1,4 @@
++const connectNativeActions = require("../../internal/ringingCallLifecycle");
+ "use strict";
+ 
+ Object.defineProperty(exports, "__esModule", {
+@@ -43,6 +44,8 @@ const onRingNotificationReceived = async data => {
+     nativeLog(`call_cid ${call_cid} is already being watched, skipping the duplicate call.ring notification`);
+     return;
+   }
++  const ownedAction = await connectNativeActions.dispatchNativeCallAction({ cid: call_cid, action: 'incoming' });
++  if (ownedAction?.handled) return;
+   const asForegroundService = (0, _utils.canListenToWS)();
+   const backgroundTaskOwner = `push:${call_cid}`;
+   nativeLog(`call.ring for callCid: ${call_cid} asForegroundService=${asForegroundService}`);
+diff --git a/node_modules/@stream-io/video-react-native-sdk/dist/commonjs/utils/push/internal/ios.js b/node_modules/@stream-io/video-react-native-sdk/dist/commonjs/utils/push/internal/ios.js
+index a3b7b1b..b9f4a8a 100644
+--- a/node_modules/@stream-io/video-react-native-sdk/dist/commonjs/utils/push/internal/ios.js
++++ b/node_modules/@stream-io/video-react-native-sdk/dist/commonjs/utils/push/internal/ios.js
+@@ -1,3 +1,4 @@
++const connectNativeActions = require("../../internal/ringingCallLifecycle");
+ "use strict";
+ 
+ Object.defineProperty(exports, "__esModule", {
+@@ -48,6 +49,8 @@ const onVoipNotificationReceived = async (notification, pushConfig) => {
+     logger.debug(`the same call_cid ${call_cid} is already being watched, skipping the call.ring notification`);
+     return;
+   }
++  const ownedAction = await connectNativeActions.dispatchNativeCallAction({ cid: call_cid, action: 'incoming' });
++  if (ownedAction?.handled) return;
+   const client = await pushConfig.createStreamVideoClient();
+   if (!client) {
+     logger.debug('client not found, not processing call.ring voip push notification');
+diff --git a/node_modules/@stream-io/video-react-native-sdk/dist/commonjs/utils/push/internal/utils.js b/node_modules/@stream-io/video-react-native-sdk/dist/commonjs/utils/push/internal/utils.js
+index a997b8e..9fe2b89 100644
+--- a/node_modules/@stream-io/video-react-native-sdk/dist/commonjs/utils/push/internal/utils.js
++++ b/node_modules/@stream-io/video-react-native-sdk/dist/commonjs/utils/push/internal/utils.js
+@@ -1,3 +1,4 @@
++const connectNativeActions = require("../../internal/ringingCallLifecycle");
+ "use strict";
+ 
+ Object.defineProperty(exports, "__esModule", {
+@@ -53,6 +54,10 @@ const shouldCallBeEnded = (callFromPush, created_by_id, receiver_id) => {
+ */
+ exports.shouldCallBeEnded = shouldCallBeEnded;
+ const processCallFromPushInBackground = async (pushConfig, call_cid, action, onIOSActionCanBeFulfilled) => {
++  let nativeAnswerFulfilled = false;
++  const onAnswerReady = () => { if (!nativeAnswerFulfilled) { nativeAnswerFulfilled = true; onIOSActionCanBeFulfilled(false); } };
++  const ownedAction = await connectNativeActions.dispatchNativeCallAction({ cid: call_cid, action: action === 'accept' ? 'answer' : action === 'decline' ? 'end' : 'incoming', onAnswerReady });
++  if (ownedAction?.handled) { if (!nativeAnswerFulfilled) onIOSActionCanBeFulfilled(!ownedAction.success); return; }
+   let videoClient;
+   try {
+     videoClient = await pushConfig.createStreamVideoClient();
+@@ -163,4 +168,4 @@ const shouldCallBeClosed = (call, pushData) => {
+   };
+ };
+ exports.shouldCallBeClosed = shouldCallBeClosed;
+-//# sourceMappingURL=utils.js.map
+\ No newline at end of file
++//# sourceMappingURL=utils.js.map
+diff --git a/node_modules/@stream-io/video-react-native-sdk/dist/module/utils/push/internal/android.js b/node_modules/@stream-io/video-react-native-sdk/dist/module/utils/push/internal/android.js
+index 8e48b16..6d0792a 100644
+--- a/node_modules/@stream-io/video-react-native-sdk/dist/module/utils/push/internal/android.js
++++ b/node_modules/@stream-io/video-react-native-sdk/dist/module/utils/push/internal/android.js
+@@ -1,3 +1,4 @@
++import { dispatchNativeCallAction } from '../../internal/ringingCallLifecycle';
+ "use strict";
+ 
+ import { CallingState } from '@stream-io/video-client';
+@@ -40,6 +41,8 @@ export const onRingNotificationReceived = async data => {
+     nativeLog(`call_cid ${call_cid} is already being watched, skipping the duplicate call.ring notification`);
+     return;
+   }
++  const ownedAction = await dispatchNativeCallAction({ cid: call_cid, action: 'incoming' });
++  if (ownedAction?.handled) return;
+   const asForegroundService = canListenToWS();
+   const backgroundTaskOwner = `push:${call_cid}`;
+   nativeLog(`call.ring for callCid: ${call_cid} asForegroundService=${asForegroundService}`);
+diff --git a/node_modules/@stream-io/video-react-native-sdk/dist/module/utils/push/internal/ios.js b/node_modules/@stream-io/video-react-native-sdk/dist/module/utils/push/internal/ios.js
+index af9545c..7f340a4 100644
+--- a/node_modules/@stream-io/video-react-native-sdk/dist/module/utils/push/internal/ios.js
++++ b/node_modules/@stream-io/video-react-native-sdk/dist/module/utils/push/internal/ios.js
+@@ -1,3 +1,4 @@
++import { dispatchNativeCallAction } from '../../internal/ringingCallLifecycle';
+ "use strict";
+ 
+ import { videoLoggerSystem } from '@stream-io/video-client';
+@@ -44,6 +45,8 @@ export const onVoipNotificationReceived = async (notification, pushConfig) => {
+     logger.debug(`the same call_cid ${call_cid} is already being watched, skipping the call.ring notification`);
+     return;
+   }
++  const ownedAction = await dispatchNativeCallAction({ cid: call_cid, action: 'incoming' });
++  if (ownedAction?.handled) return;
+   const client = await pushConfig.createStreamVideoClient();
+   if (!client) {
+     logger.debug('client not found, not processing call.ring voip push notification');
+diff --git a/node_modules/@stream-io/video-react-native-sdk/dist/module/utils/push/internal/utils.js b/node_modules/@stream-io/video-react-native-sdk/dist/module/utils/push/internal/utils.js
+index 4d69ef8..e8a3860 100644
+--- a/node_modules/@stream-io/video-react-native-sdk/dist/module/utils/push/internal/utils.js
++++ b/node_modules/@stream-io/video-react-native-sdk/dist/module/utils/push/internal/utils.js
+@@ -1,3 +1,4 @@
++import { dispatchNativeCallAction } from '../../internal/ringingCallLifecycle';
+ "use strict";
+ 
+ import { CallingState, videoLoggerSystem } from '@stream-io/video-client';
+@@ -48,6 +49,10 @@ export const shouldCallBeEnded = (callFromPush, created_by_id, receiver_id) => {
+   2. this is because the app is in background state and we don't have a client to get the call and do an action
+ */
+ export const processCallFromPushInBackground = async (pushConfig, call_cid, action, onIOSActionCanBeFulfilled) => {
++  let nativeAnswerFulfilled = false;
++  const onAnswerReady = () => { if (!nativeAnswerFulfilled) { nativeAnswerFulfilled = true; onIOSActionCanBeFulfilled(false); } };
++  const ownedAction = await dispatchNativeCallAction({ cid: call_cid, action: action === 'accept' ? 'answer' : action === 'decline' ? 'end' : 'incoming', onAnswerReady });
++  if (ownedAction?.handled) { if (!nativeAnswerFulfilled) onIOSActionCanBeFulfilled(!ownedAction.success); return; }
+   let videoClient;
+   try {
+     videoClient = await pushConfig.createStreamVideoClient();
+@@ -154,4 +159,4 @@ export const shouldCallBeClosed = (call, pushData) => {
+     endCallReason
+   };
+ };
+-//# sourceMappingURL=utils.js.map
+\ No newline at end of file
++//# sourceMappingURL=utils.js.map

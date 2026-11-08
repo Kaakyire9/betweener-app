@@ -1,0 +1,90 @@
+{
+  "status": "APPROVED_EXECUTED_PARTIAL_CLEANED",
+  "target": {
+    "app_id": 1731011,
+    "app_name": "Betweener Staging",
+    "call_type": "betweener_connect"
+  },
+  "purpose": "Verify normal ended-call denial, server timer enforcement during a locally failed backend end operation, and delayed-first-join/empty-session deadline reset behavior. This is not approval of a release duration or bounded-risk security policy.",
+  "maximum_test_users": 3,
+  "owned_user_ids": [
+    "f0110000-0000-4000-8000-000000000007",
+    "f0110000-0000-4000-8000-000000000008",
+    "f0110000-0000-4000-8000-000000000009"
+  ],
+  "maximum_test_calls": 3,
+  "call_id_source": "Three fresh UUIDs returned by authenticated creation RPCs in a disposable local schema-only database; persisted before provider mutation. Never replace an unsuccessful call with another ID.",
+  "calls": [
+    {
+      "name": "normal_end",
+      "media": "synthetic_audio_only",
+      "settings_override_change": null,
+      "end": "Actual authenticated end RPC, durable worker, Stream end acknowledgement"
+    },
+    {
+      "name": "active_timer_with_end_failure",
+      "media": "synthetic_audio_only",
+      "settings_override": {
+        "limits": {
+          "max_participants": 2,
+          "max_duration_seconds": 60
+        }
+      },
+      "end": "Local end-port exception before HTTP; observe provider timer before recovering end worker"
+    },
+    {
+      "name": "delayed_join_empty_session_restart",
+      "media": "synthetic_audio_only",
+      "first_join_delay_seconds": 10,
+      "settings_override": {
+        "limits": {
+          "max_participants": 2,
+          "max_duration_seconds": 60
+        }
+      },
+      "end": "Local end-port exception before HTTP; close both media peers, observe inactivity, try held-token rejoin and compare original and new deadlines; recover worker"
+    }
+  ],
+  "per_call_duration_overrides": 2,
+  "inherit_existing_policy": [
+    "VOICE consent and acceptance required in disposable DB",
+    "Two call members only",
+    "Ordinary app users; connect_voice role",
+    "No video, screen sharing, recording, transcription or broadcasting",
+    "No join-ended-call permission"
+  ],
+  "permitted_fixture_operations": [
+    "Preflight exact app identity, authentication/permission checks and approved call-type grants",
+    "Abort if any of the three named provider identities already exists; upsert only those absent identities",
+    "Create/get/update members of only the three owned calls using the existing actual worker and adapter",
+    "Set ring=false and notify=false on fixture call creation",
+    "Generate ordinary short-lived user JWTs for these owned participants only; retain credentials inside the Deno process",
+    "Join known fixture calls, publish/subscribe synthetic audio, record signaling and sender/receiver RTP counters",
+    "Using ordinary JWTs, attempt extension to 120 seconds, timer disabling with 0, and recreation of the same ended ID; all must be denied or leave the call ended. These are adversarial permission checks, not server-authorized timer extensions",
+    "After end, compare held-token validity with separately minted valid ordinary JWTs; this does not authorize the application to issue credentials to revoked users",
+    "Feed a previously observed session through the real reconcile RPC in the disposable DB to test late ACTIVE evidence",
+    "Recover actual end jobs, then end/hard-delete the three exact calls and hard-delete only the three owned identities"
+  ],
+  "bounded_diagnostics": "At most three media attempts on the same call if subscriber diagnostics require a local correction. No replacement calls, extra identities, call-type writes or server-authorized timer extensions. Persist partial evidence and clean up on failure.",
+  "failure_injection": "Only the adapter's end operation throws before the SDK/HTTP request. Other provider reads, ordinary joins, SFU signaling and media remain live. This is not a real Stream outage or network firewall test.",
+  "cleanup_verification": "Zero owned users; each owned call returns 404/code 16; full call-type digest equals the read-only baseline; remove disposable database and REST container",
+  "baseline_call_types_sha256": "12e74f5fca79a1dea2b48a8c950bbc3a2189a3ffdf9e04ccb43d28c4e4533a7e",
+  "execution": "node scripts/test-connect-revocation-boundary.cjs --run-approved-boundary-tests",
+  "exclusions": [
+    "No role or call-type definition writes",
+    "No global or Live settings writes",
+    "No existing user or call mutations",
+    "No shared database writes",
+    "No deployments, builds or OTA updates",
+    "No real calling or M2B/M3 enablement"
+  ],
+  "readiness": "M2A and M2B stay BLOCKED pending explicit acceptance and independent verification of any revised security policy",
+  "approved_on": "2026-10-29",
+  "approval_consumed": true,
+  "actual_fixture_users": 3,
+  "actual_fixture_calls": 3,
+  "actual_duration_overrides": 2,
+  "cleanup_verified": true,
+  "execution_outcome": "Normal end/rejoin control completed; active timer marked ended but audio delivery continued; empty-session SFU reconnect failed and remaining restart checks are inconclusive",
+  "evidence": "stream-staging-connect-revocation-boundary-evidence.json"
+}

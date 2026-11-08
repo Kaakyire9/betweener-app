@@ -1,0 +1,301 @@
+{
+  "schemaVersion": 1,
+  "scope": "LOCAL_PROPOSAL_ONLY_NOT_AUTHORISED",
+  "target": {
+    "name": "betweener-staging",
+    "reference": "xsgzxadwuxuziubglvps",
+    "region": "eu-north-1"
+  },
+  "historicalPackages": [
+    {
+      "path": "docs/betweener-connect/connect-staging-operations-package.json",
+      "sha256": "ce84c688bdb91f9b2d394f6d35f0669b631748db57d9b11341f3f36e7487ead7"
+    },
+    {
+      "path": "docs/betweener-connect/connect-v1-m3-3-staging-deployment-package.json",
+      "sha256": "4769fc763db17990a3d37018e69a4150458b0ef89e87aa5ba14fb2cd13582ed3"
+    }
+  ],
+  "functions": [
+    {
+      "name": "connect-provider-worker",
+      "verifyJwt": false,
+      "authentication": "dedicated x-connect-worker-secret before privileged work",
+      "deploymentArguments": [
+        "functions",
+        "deploy",
+        "connect-provider-worker",
+        "--project-ref",
+        "xsgzxadwuxuziubglvps",
+        "--use-api",
+        "--no-verify-jwt"
+      ],
+      "forward": {
+        "root": "tmp/connect-provider-update/forward",
+        "files": [
+          {
+            "path": "supabase/functions/_shared/connect-edge.ts",
+            "sha256": "708101e75f9c3bfe5afe30edb9978c232fd1cbbb2ddeab7617382b290c354ff5"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-environment.ts",
+            "sha256": "6c8b72a88c5ebd2a93a5d0d3bef378d340a0653bb6f2b73714b495d196cdf523"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-provider-batch.ts",
+            "sha256": "e0999e1266ab1c9e1247d32edded917eed2ea27d846a13f03f14f65a46c944e8"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-provider-end.ts",
+            "sha256": "8d26cec70d4e0eadc60389684e7bf0997a47a666c78905861446ef1260d788ed"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-provider-worker.ts",
+            "sha256": "8e3aeb685ba165cc64b85be4a6db3feef3717d167b9eefac0757aa561c443791"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-stream-adapter.ts",
+            "sha256": "b915afd82fc730328e7dec906091c0d0a6db7b0b99e2d3cb61f93aab3c0c5c59"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-webhook.ts",
+            "sha256": "c63ff22a6bc80307628e403335f7f7466546b023e62750905a7f44f12e1b4998"
+          },
+          {
+            "path": "supabase/functions/_shared/cors.ts",
+            "sha256": "2b7f755ddc2f0e3a17f70694541f1760b43513f133a0bef2cbc9db6938e2bc2b"
+          },
+          {
+            "path": "supabase/functions/_shared/supabase-admin-key.ts",
+            "sha256": "326dfe3df009483cc38828b48902fe4fc074262760a68d813c60b49edeaebacc"
+          },
+          {
+            "path": "supabase/functions/_shared/supabase-public-key.ts",
+            "sha256": "9ce797d773cc4a552679ab1201de67ea1a1f8ada8079a0c143c406b939048b85"
+          },
+          {
+            "path": "supabase/functions/connect-provider-worker/index.ts",
+            "sha256": "ccb7a4ac79e1de97c598dd1917621716e3f322ebba459bf41a1320f78dc92d1d"
+          },
+          {
+            "path": "supabase/functions/connect-provider-worker/deno.json",
+            "sha256": "926e31574d93ff0885ef4f296ed3d5bce1458056256efb2d47343c8914003f68"
+          }
+        ],
+        "external": [
+          "npm:@stream-io/node-sdk@0.7.63",
+          "npm:@supabase/supabase-js@2.110.7"
+        ]
+      },
+      "rollbackCandidate": {
+        "root": "tmp/connect-provider-update/rollbackCandidate",
+        "files": [
+          {
+            "path": "supabase/functions/_shared/connect-edge.ts",
+            "sha256": "708101e75f9c3bfe5afe30edb9978c232fd1cbbb2ddeab7617382b290c354ff5"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-environment.ts",
+            "sha256": "6c8b72a88c5ebd2a93a5d0d3bef378d340a0653bb6f2b73714b495d196cdf523"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-provider-end.ts",
+            "sha256": "5b7ec7409bfe12c07277b373617ea3dfcfb2cf562c092869ee3b1871e046b695"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-provider-worker.ts",
+            "sha256": "91c3791ff1cae470b7e9b4305ea5fce069d2fbc1161c35ca77f91df54f3d6aed"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-stream-adapter.ts",
+            "sha256": "4cfc00c772d845b005ced0499897c7327a405ed67a489a120d2126f9cfc53357"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-webhook.ts",
+            "sha256": "c63ff22a6bc80307628e403335f7f7466546b023e62750905a7f44f12e1b4998"
+          },
+          {
+            "path": "supabase/functions/_shared/cors.ts",
+            "sha256": "2b7f755ddc2f0e3a17f70694541f1760b43513f133a0bef2cbc9db6938e2bc2b"
+          },
+          {
+            "path": "supabase/functions/_shared/supabase-admin-key.ts",
+            "sha256": "326dfe3df009483cc38828b48902fe4fc074262760a68d813c60b49edeaebacc"
+          },
+          {
+            "path": "supabase/functions/_shared/supabase-public-key.ts",
+            "sha256": "9ce797d773cc4a552679ab1201de67ea1a1f8ada8079a0c143c406b939048b85"
+          },
+          {
+            "path": "supabase/functions/connect-provider-worker/index.ts",
+            "sha256": "d9f66367c43884d4d1d3c5ef18fba8240406bf3d899ad54e4de92c75d2d61950"
+          },
+          {
+            "path": "supabase/functions/connect-provider-worker/deno.json",
+            "sha256": "926e31574d93ff0885ef4f296ed3d5bce1458056256efb2d47343c8914003f68"
+          }
+        ],
+        "external": [
+          "npm:@stream-io/node-sdk@0.7.63",
+          "npm:@supabase/supabase-js@2.110.7"
+        ]
+      }
+    },
+    {
+      "name": "connect-revoke-consent",
+      "verifyJwt": true,
+      "authentication": "gateway JWT + auth.getUser + authoritative RPC",
+      "deploymentArguments": [
+        "functions",
+        "deploy",
+        "connect-revoke-consent",
+        "--project-ref",
+        "xsgzxadwuxuziubglvps",
+        "--use-api"
+      ],
+      "forward": {
+        "root": "tmp/connect-provider-update/forward",
+        "files": [
+          {
+            "path": "supabase/functions/_shared/connect-consent-revocation.ts",
+            "sha256": "7feb9b2f3b0868cca978100320a7d828a289cc783818edf016b5c578022ca82e"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-edge.ts",
+            "sha256": "708101e75f9c3bfe5afe30edb9978c232fd1cbbb2ddeab7617382b290c354ff5"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-environment.ts",
+            "sha256": "6c8b72a88c5ebd2a93a5d0d3bef378d340a0653bb6f2b73714b495d196cdf523"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-provider-end.ts",
+            "sha256": "8d26cec70d4e0eadc60389684e7bf0997a47a666c78905861446ef1260d788ed"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-provider-worker.ts",
+            "sha256": "8e3aeb685ba165cc64b85be4a6db3feef3717d167b9eefac0757aa561c443791"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-stream-adapter.ts",
+            "sha256": "b915afd82fc730328e7dec906091c0d0a6db7b0b99e2d3cb61f93aab3c0c5c59"
+          },
+          {
+            "path": "supabase/functions/_shared/cors.ts",
+            "sha256": "2b7f755ddc2f0e3a17f70694541f1760b43513f133a0bef2cbc9db6938e2bc2b"
+          },
+          {
+            "path": "supabase/functions/_shared/supabase-admin-key.ts",
+            "sha256": "326dfe3df009483cc38828b48902fe4fc074262760a68d813c60b49edeaebacc"
+          },
+          {
+            "path": "supabase/functions/_shared/supabase-public-key.ts",
+            "sha256": "9ce797d773cc4a552679ab1201de67ea1a1f8ada8079a0c143c406b939048b85"
+          },
+          {
+            "path": "supabase/functions/connect-revoke-consent/index.ts",
+            "sha256": "e4d628882da93292e91a1b5375817f3f9448cbf1ef20c2311fffeb00569bc051"
+          },
+          {
+            "path": "supabase/functions/connect-revoke-consent/deno.json",
+            "sha256": "926e31574d93ff0885ef4f296ed3d5bce1458056256efb2d47343c8914003f68"
+          }
+        ],
+        "external": [
+          "npm:@stream-io/node-sdk@0.7.63",
+          "npm:@supabase/supabase-js@2.110.7"
+        ]
+      },
+      "rollbackCandidate": {
+        "root": "tmp/connect-provider-update/rollbackCandidate",
+        "files": [
+          {
+            "path": "supabase/functions/_shared/connect-consent-revocation.ts",
+            "sha256": "7feb9b2f3b0868cca978100320a7d828a289cc783818edf016b5c578022ca82e"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-edge.ts",
+            "sha256": "708101e75f9c3bfe5afe30edb9978c232fd1cbbb2ddeab7617382b290c354ff5"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-environment.ts",
+            "sha256": "6c8b72a88c5ebd2a93a5d0d3bef378d340a0653bb6f2b73714b495d196cdf523"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-provider-end.ts",
+            "sha256": "5b7ec7409bfe12c07277b373617ea3dfcfb2cf562c092869ee3b1871e046b695"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-provider-worker.ts",
+            "sha256": "91c3791ff1cae470b7e9b4305ea5fce069d2fbc1161c35ca77f91df54f3d6aed"
+          },
+          {
+            "path": "supabase/functions/_shared/connect-stream-adapter.ts",
+            "sha256": "4cfc00c772d845b005ced0499897c7327a405ed67a489a120d2126f9cfc53357"
+          },
+          {
+            "path": "supabase/functions/_shared/cors.ts",
+            "sha256": "2b7f755ddc2f0e3a17f70694541f1760b43513f133a0bef2cbc9db6938e2bc2b"
+          },
+          {
+            "path": "supabase/functions/_shared/supabase-admin-key.ts",
+            "sha256": "326dfe3df009483cc38828b48902fe4fc074262760a68d813c60b49edeaebacc"
+          },
+          {
+            "path": "supabase/functions/_shared/supabase-public-key.ts",
+            "sha256": "9ce797d773cc4a552679ab1201de67ea1a1f8ada8079a0c143c406b939048b85"
+          },
+          {
+            "path": "supabase/functions/connect-revoke-consent/index.ts",
+            "sha256": "e4d628882da93292e91a1b5375817f3f9448cbf1ef20c2311fffeb00569bc051"
+          },
+          {
+            "path": "supabase/functions/connect-revoke-consent/deno.json",
+            "sha256": "926e31574d93ff0885ef4f296ed3d5bce1458056256efb2d47343c8914003f68"
+          }
+        ],
+        "external": [
+          "npm:@stream-io/node-sdk@0.7.63",
+          "npm:@supabase/supabase-js@2.110.7"
+        ]
+      }
+    }
+  ],
+  "changes": [
+    "fresh scoped provider End readback",
+    "bounded sequential worker batch",
+    "single completion write on ambiguous database ACK"
+  ],
+  "migrations": [],
+  "secretChanges": [],
+  "schedulerChanges": [],
+  "providerPolicyChanges": [],
+  "callingGateChanges": [],
+  "accountChanges": [],
+  "budgetChanges": [],
+  "sharedPushChanges": [],
+  "liveChanges": [],
+  "preflight": [
+    "exact staging identity and fresh deployed source/gateway readback",
+    "verify every snapshot hash",
+    "names-only configuration presence",
+    "preserve authenticated cleanup and pending jobs",
+    "verify retained rollback candidate matches actually deployed source or stop"
+  ],
+  "rollback": {
+    "candidateCommit": "12efef7a3af11ecf12d680a34780492cf1ddefe9",
+    "hostedParity": "NOT_READ_THIS_TURN",
+    "automatic": false,
+    "instructions": "Review exact previous deployed closures before replacement. Preserve all SQL, jobs, leases and authenticated cleanup. Stop new admission separately if needed; do not delete work or imply that flags stop existing media."
+  },
+  "dependencyLimit": "Direct SDK imports are version-pinned; full transitive hosted bundle reproducibility is not attested by local source hashes.",
+  "activation": {
+    "endCallAndBlock": "SEPARATE_APPROVAL_FOR_CLIENT_AND_STAGING_DB_GATE",
+    "recovery": "LOCAL_DEFAULT_OFF_PENDING_DEVICE_APPROVAL",
+    "nativeIncoming": "UNMOUNTED_NATIVE_PUSH_AND_BINARY_WORK_REQUIRED",
+    "e2ee": "UNMOUNTED_AUTHENTICATED_KEY_DISTRIBUTION_REQUIRED"
+  },
+  "M2A": "BLOCKED",
+  "M2B": "BLOCKED",
+  "remoteRevocation": "UNVERIFIED"
+}

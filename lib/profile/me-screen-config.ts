@@ -124,7 +124,7 @@ export const SETTINGS_MENU_ITEMS: SettingsMenuItem[] = [
   },
   {
     id: 'admin',
-    title: 'Admin Dashboard',
+    title: 'Betweener Operations',
     icon: 'shield-account',
     color: '#FF9800',
     adminOnly: true,

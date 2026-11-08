@@ -1,12 +1,18 @@
 import { supabase } from '@/lib/supabase';
+import * as FileSystem from 'expo-file-system/legacy';
 import { cacheOfflineImage, resolveOfflineImageUri } from '@/lib/offline/image-store';
-import { cacheOfflineVideo } from '@/lib/offline/video-store';
+import { isMissingIdempotentRpc } from '@/lib/offline/idempotent-rpc';
 import {
   createSignedCirclePulseMediaUrl,
+  CIRCLE_PULSE_IMAGE_MAX_BYTES,
+  CIRCLE_PULSE_VIDEO_MAX_BYTES,
+  CIRCLE_PULSE_VIDEO_MAX_DURATION_MS,
+  inferCirclePulseContentType,
   removeCirclePulseMedia,
   uploadCirclePulseMedia,
   type CirclePulseEditorialMediaType,
 } from './circle-pulse-media';
+import { generateCirclePulseVideoPoster } from './circle-pulse-video-poster';
 import type {
   CircleGatheringPresentationMode,
   CircleGatheringSeatContext,
@@ -19,6 +25,9 @@ import type {
   CirclePulseItemType,
   CircleLoveSeatNomination,
   CircleLoveSeatHostItem,
+  CircleLoveSeatHostRequest,
+  CircleLoveSeatRequest,
+  CircleLoveSeatDurationHours,
   CirclePulseCommentReport,
   CirclePulseCommentReportAction,
   CirclePulseDiscussionReadState,
@@ -91,6 +100,8 @@ type CircleLoveSeatNominationRpcRow = {
   quote?: string | null;
   reason?: string | null;
   status: 'pending_user_approval';
+  duration_hours?: number | null;
+  invitation_expires_at?: string | null;
   created_at: string;
 };
 
@@ -104,6 +115,21 @@ type CircleLoveSeatHostRpcRow = {
   status: 'pending_user_approval' | 'active';
   created_at: string;
   responded_at?: string | null;
+};
+
+type CircleLoveSeatRequestRpcRow = {
+  id: string;
+  circle_id: string;
+  status: 'requested';
+  note?: string | null;
+  created_at: string;
+  request_expires_at: string;
+};
+
+type CircleLoveSeatHostRequestRpcRow = CircleLoveSeatRequestRpcRow & {
+  featured_profile_id: string;
+  featured_profile_name?: string | null;
+  featured_profile_avatar_url?: string | null;
 };
 
 type CirclePulseCommentRpcRow = {
@@ -239,6 +265,22 @@ const toLoveSeatServiceError = (error: unknown, fallbackMessage: string) => {
     return new Error('Love Seat notes must be 500 characters or fewer.');
   }
 
+  if (normalized.includes('love_seat_request_exists')) {
+    return new Error('You already have an active Love Seat request or invitation in this Circle.');
+  }
+
+  if (normalized.includes('love_seat_request_not_found')) {
+    return new Error('This private Love Seat request is no longer available.');
+  }
+
+  if (normalized.includes('love_seat_duration_invalid')) {
+    return new Error('Choose a 12, 24, or 48-hour Love Seat.');
+  }
+
+  if (normalized.includes('love_seat_invitation_expired')) {
+    return new Error('This Love Seat invitation has expired.');
+  }
+
   if (normalized.includes('network') || normalized.includes('offline') || normalized.includes('fetch')) {
     return new Error('Network issue. Reconnect and try the Love Seat invitation again.');
   }
@@ -299,6 +341,8 @@ const toLoveSeatNomination = (row: CircleLoveSeatNominationRpcRow): CircleLoveSe
   quote: row.quote ?? null,
   reason: row.reason ?? null,
   status: row.status,
+  durationHours: row.duration_hours === 12 || row.duration_hours === 48 ? row.duration_hours : 24,
+  invitationExpiresAt: row.invitation_expires_at ?? row.created_at,
   createdAt: row.created_at,
 });
 
@@ -312,6 +356,22 @@ const toLoveSeatHostItem = (row: CircleLoveSeatHostRpcRow): CircleLoveSeatHostIt
   status: row.status,
   createdAt: row.created_at,
   respondedAt: row.responded_at ?? null,
+});
+
+const toLoveSeatRequest = (row: CircleLoveSeatRequestRpcRow): CircleLoveSeatRequest => ({
+  id: String(row.id),
+  circleId: String(row.circle_id),
+  status: 'requested',
+  note: row.note ?? null,
+  createdAt: row.created_at,
+  requestExpiresAt: row.request_expires_at,
+});
+
+const toLoveSeatHostRequest = (row: CircleLoveSeatHostRequestRpcRow): CircleLoveSeatHostRequest => ({
+  ...toLoveSeatRequest(row),
+  featuredProfileId: String(row.featured_profile_id),
+  featuredProfileName: row.featured_profile_name?.trim() || 'Circle member',
+  featuredProfileAvatarUrl: row.featured_profile_avatar_url ?? null,
 });
 
 const toReactionSummary = (value: unknown): CirclePulseCommentReactionSummary[] => {
@@ -449,16 +509,6 @@ const cacheCirclePulseItemMedia = async (item: CirclePulseItem): Promise<CircleP
     }
   }
 
-  if (item.mediaType === 'video' && item.mediaUrl?.startsWith('http')) {
-    const cachedVideo = await cacheOfflineVideo(
-      buildCirclePulseMediaCacheKey(item, 'video'),
-      item.mediaUrl,
-    );
-    if (cachedVideo) {
-      nextItem = { ...nextItem, mediaUrl: cachedVideo };
-    }
-  }
-
   return nextItem;
 };
 
@@ -472,6 +522,15 @@ export async function fetchCirclePulseItems(circleId: string) {
   const hydratedItems = await Promise.all(
     items.map(async (item) => {
       if (item.type !== 'media' || item.momentId || !item.mediaUrl) return item;
+      if (item.mediaType === 'video') {
+        const signedPosterUrl = item.imageUrl
+          ? await createSignedCirclePulseMediaUrl(item.imageUrl)
+          : null;
+        return {
+          ...item,
+          imageUrl: signedPosterUrl ?? null,
+        };
+      }
       const signedMediaUrl = await createSignedCirclePulseMediaUrl(item.mediaUrl);
       const signedImageUrl =
         item.imageUrl && item.imageUrl !== item.mediaUrl
@@ -487,6 +546,14 @@ export async function fetchCirclePulseItems(circleId: string) {
     }),
   );
   return await Promise.all(hydratedItems.map(cacheCirclePulseItemMedia));
+}
+
+export async function resolveCirclePulseMediaPlaybackUrl(item: CirclePulseItem) {
+  if (!item.mediaUrl) return null;
+  if (item.momentId || /^https?:\/\//i.test(item.mediaUrl) || item.mediaUrl.startsWith('file:')) {
+    return item.mediaUrl;
+  }
+  return await createSignedCirclePulseMediaUrl(item.mediaUrl, 15 * 60);
 }
 
 export async function fetchCirclePulseWelcomeViewStates(
@@ -535,6 +602,13 @@ export async function fetchCirclePulseItemSnapshot(itemId: string) {
   if (!row) return null;
   let item = toItem(row as CirclePulseRpcRow);
   if (item.type === 'media' && !item.momentId && item.mediaUrl) {
+    if (item.mediaType === 'video') {
+      const signedPosterUrl = item.imageUrl
+        ? await createSignedCirclePulseMediaUrl(item.imageUrl)
+        : null;
+      item = { ...item, imageUrl: signedPosterUrl ?? null };
+      return await cacheCirclePulseItemMedia(item);
+    }
     const signedMediaUrl = await createSignedCirclePulseMediaUrl(item.mediaUrl);
     const signedImageUrl =
       item.imageUrl && item.imageUrl !== item.mediaUrl
@@ -556,6 +630,9 @@ export async function featureCirclePulseItem(
   actorProfileId: string,
   input: CirclePulseFeatureInput,
 ) {
+  if (input.type === 'media' && !input.momentId && (input.mediaUrl || input.imageUrl)) {
+    throw new Error('Direct Circle Media must be published through the verified asset workflow.');
+  }
   const payload = {
     p_circle_id: circleId,
     p_actor_profile_id: actorProfileId,
@@ -583,26 +660,297 @@ export async function createCirclePulseEditorialMedia(
   input: {
     uri: string;
     mediaType: CirclePulseEditorialMediaType;
+    mimeType?: string | null;
+    fileSize?: number | null;
+    width?: number | null;
+    height?: number | null;
+    durationMs?: number | null;
     title: string;
     subtitle?: string | null;
     body?: string | null;
+    provenanceType: 'original' | 'licensed' | 'member_submitted';
+    rightsAttested: boolean;
+    subjectProfileIds?: string[];
+  },
+  options?: {
+    onUploadProgress?: (fraction: number) => void;
+    delivery?: 'publish' | 'submission';
   },
 ) {
-  const mediaPath = await uploadCirclePulseMedia(circleId, input.uri, input.mediaType);
-  try {
-    return await featureCirclePulseItem(circleId, actorProfileId, {
-      type: 'media',
-      title: input.title,
-      subtitle: input.subtitle ?? null,
-      body: input.body ?? null,
-      imageUrl: input.mediaType === 'image' ? mediaPath : null,
-      mediaUrl: mediaPath,
-      mediaType: input.mediaType,
-    });
-  } catch (error) {
-    await removeCirclePulseMedia(mediaPath).catch(() => undefined);
-    throw error;
+  const contentType = inferCirclePulseContentType(input.uri, input.mediaType, input.mimeType);
+  const sourceInfo = await FileSystem.getInfoAsync(input.uri);
+  const sourceByteSize = sourceInfo.exists && 'size' in sourceInfo && typeof sourceInfo.size === 'number'
+    ? sourceInfo.size
+    : input.fileSize ?? null;
+  const maxBytes = input.mediaType === 'video' ? CIRCLE_PULSE_VIDEO_MAX_BYTES : CIRCLE_PULSE_IMAGE_MAX_BYTES;
+  if (sourceByteSize == null || sourceByteSize <= 0) {
+    throw new Error('The selected media file is no longer available.');
   }
+  if (sourceByteSize > maxBytes) {
+    throw new Error(input.mediaType === 'video' ? 'Choose a video under 25 MB.' : 'Choose an image under 8 MB.');
+  }
+  if (input.mediaType === 'video' && (input.durationMs ?? 0) > CIRCLE_PULSE_VIDEO_MAX_DURATION_MS) {
+    throw new Error('Choose a video that is 60 seconds or shorter.');
+  }
+
+  const poster = input.mediaType === 'video'
+    ? await generateCirclePulseVideoPoster(input.uri)
+    : null;
+  const posterInfo = poster ? await FileSystem.getInfoAsync(poster.uri) : null;
+  const posterByteSize = posterInfo?.exists && 'size' in posterInfo && typeof posterInfo.size === 'number'
+    ? posterInfo.size
+    : null;
+
+  const { data: draftData, error: draftError } = await db.rpc('rpc_create_circle_media_asset_draft', {
+    p_circle_id: circleId,
+    p_actor_profile_id: actorProfileId,
+    p_media_type: input.mediaType,
+    p_mime_type: contentType,
+    p_expected_byte_size: sourceByteSize,
+    p_width: input.width ?? null,
+    p_height: input.height ?? null,
+    p_duration_ms: input.durationMs ?? null,
+  });
+  if (draftError) {
+    if (poster) await FileSystem.deleteAsync(poster.uri, { idempotent: true }).catch(() => undefined);
+    throw toServiceError(draftError, 'Circle Media could not be prepared.');
+  }
+  const draft = Array.isArray(draftData) ? draftData[0] : draftData;
+  const assetId = String(draft?.asset_id ?? '');
+  const mediaPath = String(draft?.object_path ?? '');
+  const posterPath = typeof draft?.poster_object_path === 'string' ? draft.poster_object_path : null;
+  if (!assetId || !mediaPath) {
+    if (poster) await FileSystem.deleteAsync(poster.uri, { idempotent: true }).catch(() => undefined);
+    throw new Error('Circle Media could not be prepared.');
+  }
+
+  let retainQuarantinedAsset = false;
+  try {
+    await uploadCirclePulseMedia(mediaPath, input.uri, contentType, sourceByteSize, ({ fraction }) => {
+      options?.onUploadProgress?.(poster ? fraction * 0.9 : fraction);
+    });
+    if (poster) {
+      if (!posterPath || !posterByteSize) throw new Error('Circle Media poster could not be prepared.');
+      await uploadCirclePulseMedia(posterPath, poster.uri, 'image/jpeg', posterByteSize, ({ fraction }) => {
+        options?.onUploadProgress?.(0.9 + fraction * 0.1);
+      });
+    }
+    const { error: finalizeError } = await db.rpc('rpc_finalize_circle_media_asset', {
+      p_asset_id: assetId,
+    });
+    if (finalizeError) {
+      throw toServiceError(finalizeError, 'Circle Media upload could not be verified.');
+    }
+    retainQuarantinedAsset = true;
+    const { error: submitError } = await db.rpc('rpc_submit_circle_media_asset_for_moderation', {
+      p_asset_id: assetId,
+      p_provenance_type: input.provenanceType,
+      p_rights_attested: input.rightsAttested,
+      p_subject_profile_ids: input.subjectProfileIds ?? [],
+      p_title: input.title,
+      p_subtitle: input.subtitle ?? null,
+      p_body: input.body ?? null,
+    });
+    if (submitError) {
+      throw toServiceError(submitError, 'Circle Media consent details could not be saved.');
+    }
+    if (options?.delivery === 'submission') {
+      const { error: queueError } = await db.rpc('rpc_submit_circle_media_asset_to_queue', {
+        p_asset_id: assetId,
+        p_actor_profile_id: actorProfileId,
+        p_title: input.title,
+        p_subtitle: input.subtitle ?? null,
+        p_body: input.body ?? null,
+      });
+      if (queueError) throw toServiceError(queueError, 'Circle Media could not enter the host review queue.');
+    }
+    const { data: moderationData, error: moderationError } = await supabase.functions.invoke('circle-media-moderation', {
+      body: { assetId },
+    });
+    if (moderationError) {
+      if (options?.delivery !== 'submission') {
+        await db.rpc('rpc_submit_circle_media_asset_to_queue', {
+          p_asset_id: assetId,
+          p_actor_profile_id: actorProfileId,
+          p_title: input.title,
+          p_subtitle: input.subtitle ?? null,
+          p_body: input.body ?? null,
+        }).catch(() => undefined);
+      }
+      throw new Error('Circle Media is safely quarantined, but its automated review could not finish. Try again later.');
+    }
+    if (moderationData?.moderationStatus === 'rejected') {
+      throw new Error('This media did not pass the Circle safety review and will not be published.');
+    }
+    if (options?.delivery === 'submission') {
+      return {
+        state: 'submitted' as const,
+        assetId,
+        moderationStatus: moderationData?.moderationStatus ?? 'review',
+      };
+    }
+    if (moderationData?.status !== 'ready') {
+      const { error: queueError } = await db.rpc('rpc_submit_circle_media_asset_to_queue', {
+        p_asset_id: assetId,
+        p_actor_profile_id: actorProfileId,
+        p_title: input.title,
+        p_subtitle: input.subtitle ?? null,
+        p_body: input.body ?? null,
+      });
+      if (queueError) throw toServiceError(queueError, 'Circle Media could not enter the approval queue.');
+      return {
+        state: 'pending_approval' as const,
+        assetId,
+        moderationStatus: moderationData?.moderationStatus ?? 'review',
+      };
+    }
+    const { data, error: publishError } = await db.rpc('rpc_publish_circle_media_asset', {
+      p_asset_id: assetId,
+      p_actor_profile_id: actorProfileId,
+      p_title: input.title,
+      p_subtitle: input.subtitle ?? null,
+      p_body: input.body ?? null,
+      p_priority: 0,
+      p_starts_at: null,
+      p_expires_at: null,
+    });
+    if (publishError) {
+      throw toServiceError(publishError, 'Circle Media could not be published.');
+    }
+    return { state: 'published' as const, assetId, item: data };
+  } catch (error) {
+    if (!retainQuarantinedAsset) {
+      await removeCirclePulseMedia(mediaPath).catch(() => undefined);
+      if (posterPath) await removeCirclePulseMedia(posterPath).catch(() => undefined);
+      await db.rpc('rpc_abandon_circle_media_asset', { p_asset_id: assetId }).catch(() => undefined);
+    }
+    throw error;
+  } finally {
+    if (poster) await FileSystem.deleteAsync(poster.uri, { idempotent: true }).catch(() => undefined);
+  }
+}
+
+export async function fetchSavedCircleMediaIds(circleId: string, actorProfileId: string) {
+  const { data, error } = await db.rpc('rpc_get_my_circle_media_saved', {
+    p_circle_id: circleId,
+    p_actor_profile_id: actorProfileId,
+  });
+  if (error) throw toServiceError(error, 'Saved Circle Media could not load.');
+  return new Set<string>((data ?? []).map((row: { pulse_item_id?: string }) => String(row.pulse_item_id ?? '')).filter(Boolean));
+}
+
+export async function toggleSavedCircleMedia(itemId: string, actorProfileId: string) {
+  const { data, error } = await db.rpc('rpc_toggle_circle_media_saved', {
+    p_pulse_item_id: itemId,
+    p_actor_profile_id: actorProfileId,
+  });
+  if (error) throw toServiceError(error, 'Saved media could not be updated.');
+  return data === true;
+}
+
+export async function toggleCircleMediaReaction(
+  itemId: string,
+  actorProfileId: string,
+  reaction: 'love' | 'spark' | 'laugh' | 'useful',
+) {
+  const { data, error } = await db.rpc('rpc_toggle_circle_media_reaction', {
+    p_pulse_item_id: itemId,
+    p_actor_profile_id: actorProfileId,
+    p_reaction: reaction,
+  });
+  if (error) throw toServiceError(error, 'Reaction could not be updated.');
+  return typeof data === 'string' ? data : null;
+}
+
+export async function fetchCircleMediaReactionSummaries(circleId: string, actorProfileId: string) {
+  const { data, error } = await db.rpc('rpc_get_circle_media_reaction_summaries', {
+    p_circle_id: circleId,
+    p_actor_profile_id: actorProfileId,
+  });
+  if (error) throw toServiceError(error, 'Media reactions could not load.');
+  return (data ?? []) as { pulse_item_id: string; reaction: 'love' | 'spark' | 'laugh' | 'useful'; reaction_count: number; my_reaction: boolean }[];
+}
+
+export async function recordCircleMediaAggregateEvent(
+  itemId: string,
+  event: 'open' | 'play_start' | 'complete' | 'discussion_open' | 'save' | 'reaction',
+) {
+  await db.rpc('rpc_record_circle_media_aggregate_event', {
+    p_pulse_item_id: itemId,
+    p_event: event,
+  });
+}
+
+export type CircleMediaSubmissionQueueItem = {
+  submissionId: string;
+  assetId: string;
+  title: string;
+  subtitle: string | null;
+  body: string | null;
+  status: 'pending_moderation' | 'pending_host_review';
+  submitterProfileId: string | null;
+  submitterName: string;
+  mediaType: 'image' | 'video';
+  posterObjectPath: string | null;
+  createdAt: string;
+};
+
+export async function fetchCircleMediaSubmissionQueue(circleId: string): Promise<CircleMediaSubmissionQueueItem[]> {
+  const { data, error } = await db.rpc('rpc_get_circle_media_submission_queue', { p_circle_id: circleId });
+  if (error) throw toServiceError(error, 'Media submissions could not load.');
+  return (data ?? []).map((row: any) => ({
+    submissionId: String(row.submission_id),
+    assetId: String(row.asset_id),
+    title: String(row.title ?? ''),
+    subtitle: row.subtitle == null ? null : String(row.subtitle),
+    body: row.body == null ? null : String(row.body),
+    status: row.status,
+    submitterProfileId: row.submitter_profile_id == null ? null : String(row.submitter_profile_id),
+    submitterName: String(row.submitter_name ?? 'Circle member'),
+    mediaType: row.media_type,
+    posterObjectPath: row.poster_object_path == null ? null : String(row.poster_object_path),
+    createdAt: String(row.created_at),
+  }));
+}
+
+export async function reviewCircleMediaSubmission(submissionId: string, actorProfileId: string, approve: boolean) {
+  const { error } = await db.rpc('rpc_review_circle_media_submission', {
+    p_submission_id: submissionId,
+    p_actor_profile_id: actorProfileId,
+    p_approve: approve,
+  });
+  if (error) throw toServiceError(error, approve ? 'Media could not be published.' : 'Media could not be declined.');
+}
+
+export type CircleMediaSubjectApproval = {
+  assetId: string;
+  circleId: string;
+  title: string;
+  mediaType: 'image' | 'video';
+  uploaderName: string;
+  requestedAt: string;
+};
+
+export async function fetchMyCircleMediaSubjectApprovals(actorProfileId: string): Promise<CircleMediaSubjectApproval[]> {
+  const { data, error } = await db.rpc('rpc_get_my_circle_media_subject_approvals', { p_actor_profile_id: actorProfileId });
+  if (error) throw toServiceError(error, 'Media approval requests could not load.');
+  return (data ?? []).map((row: any) => ({
+    assetId: String(row.asset_id),
+    circleId: String(row.circle_id),
+    title: String(row.title ?? 'Circle media'),
+    mediaType: row.media_type,
+    uploaderName: String(row.uploader_name ?? 'A Circle member'),
+    requestedAt: String(row.requested_at),
+  }));
+}
+
+export async function respondToCircleMediaSubjectApproval(assetId: string, actorProfileId: string, approve: boolean) {
+  const { error } = await db.rpc('rpc_respond_circle_media_subject_approval', {
+    p_asset_id: assetId,
+    p_actor_profile_id: actorProfileId,
+    p_approve: approve,
+  });
+  if (error) throw toServiceError(error, 'Your media consent choice could not be saved.');
 }
 
 export async function fetchCirclePulseComments(itemId: string) {
@@ -663,13 +1011,23 @@ export async function createCirclePulseComment(
   actorProfileId: string,
   body: string,
   parentCommentId?: string | null,
+  clientOperationId?: string | null,
 ) {
-  const { data, error } = await db.rpc('rpc_create_circle_pulse_comment', {
+  const rpcPayload = {
     p_pulse_item_id: itemId,
     p_profile_id: actorProfileId,
     p_body: body,
     p_parent_comment_id: parentCommentId ?? null,
-  });
+  };
+  let { data, error } = clientOperationId
+    ? await db.rpc('rpc_create_circle_pulse_comment_v2', {
+        p_client_operation_id: clientOperationId,
+        ...rpcPayload,
+      })
+    : await db.rpc('rpc_create_circle_pulse_comment', rpcPayload);
+  if (clientOperationId && error && isMissingIdempotentRpc(error)) {
+    ({ data, error } = await db.rpc('rpc_create_circle_pulse_comment', rpcPayload));
+  }
   if (error) throw toServiceError(error, 'Comment could not be saved.');
   const row = Array.isArray(data) ? data[0] : data;
   if (!row) throw new Error('Comment could not be saved.');
@@ -784,23 +1142,57 @@ export async function nominateCircleLoveSeat(
   featuredProfileId: string,
   quote?: string | null,
   originLiveSessionId?: string | null,
+  durationHours: CircleLoveSeatDurationHours = 24,
 ) {
   const { data, error } = await db.rpc(
-    originLiveSessionId ? 'rpc_nominate_circle_love_seat_from_live' : 'rpc_nominate_circle_love_seat',
+    originLiveSessionId ? 'rpc_nominate_circle_love_seat_from_live' : 'rpc_nominate_circle_love_seat_v2',
     {
     p_circle_id: circleId,
     p_actor_profile_id: actorProfileId,
     p_featured_profile_id: featuredProfileId,
     p_quote: quote?.trim() || null,
     ...(originLiveSessionId ? { p_live_session_id: originLiveSessionId } : {}),
+    ...(!originLiveSessionId ? { p_duration_hours: durationHours } : {}),
     },
   );
   if (error) throw toLoveSeatServiceError(error, 'Could not send this Love Seat invitation right now.');
   return data;
 }
 
+export async function requestCircleLoveSeat(
+  circleId: string,
+  actorProfileId: string,
+  note?: string | null,
+) {
+  const { data, error } = await db.rpc('rpc_request_circle_love_seat', {
+    p_circle_id: circleId,
+    p_profile_id: actorProfileId,
+    p_note: note?.trim() || null,
+  });
+  if (error) throw toLoveSeatServiceError(error, 'Could not join the private Love Seat queue.');
+  return data;
+}
+
+export async function fetchMyCircleLoveSeatRequest(circleId: string, actorProfileId: string) {
+  const { data, error } = await db.rpc('rpc_get_my_circle_love_seat_request', {
+    p_circle_id: circleId,
+    p_profile_id: actorProfileId,
+  });
+  if (error) throw toLoveSeatServiceError(error, 'Could not load your Love Seat request.');
+  const row = Array.isArray(data) ? data[0] : data;
+  return row ? toLoveSeatRequest(row as CircleLoveSeatRequestRpcRow) : null;
+}
+
+export async function cancelCircleLoveSeatRequest(requestId: string, actorProfileId: string) {
+  const { error } = await db.rpc('rpc_cancel_circle_love_seat_request', {
+    p_request_id: requestId,
+    p_profile_id: actorProfileId,
+  });
+  if (error) throw toLoveSeatServiceError(error, 'Could not leave the private Love Seat queue.');
+}
+
 export async function fetchMyCircleLoveSeatNominations(actorProfileId: string, circleId: string) {
-  const { data, error } = await db.rpc('rpc_get_my_circle_love_seat_nominations', {
+  const { data, error } = await db.rpc('rpc_get_my_circle_love_seat_invitations_v2', {
     p_profile_id: actorProfileId,
     p_circle_id: circleId,
   });
@@ -830,6 +1222,33 @@ export async function endCircleLoveSeat(loveSeatId: string, actorProfileId: stri
   if (error) throw toLoveSeatServiceError(error, 'Could not end this Love Seat right now.');
 }
 
+export async function getCircleLoveSeatArrivalAcknowledged(
+  circleId: string,
+  loveSeatId: string,
+  viewerProfileId: string,
+) {
+  const { data, error } = await db.rpc('rpc_get_circle_love_seat_arrival_acknowledged_v1', {
+    p_circle_id: circleId,
+    p_love_seat_id: loveSeatId,
+    p_viewer_profile_id: viewerProfileId,
+  });
+  if (error) throw toLoveSeatServiceError(error, 'Could not check the Love Seat welcome state.');
+  return data === true;
+}
+
+export async function acknowledgeCircleLoveSeatArrival(
+  circleId: string,
+  loveSeatId: string,
+  viewerProfileId: string,
+) {
+  const { error } = await db.rpc('rpc_acknowledge_circle_love_seat_arrival_v1', {
+    p_circle_id: circleId,
+    p_love_seat_id: loveSeatId,
+    p_viewer_profile_id: viewerProfileId,
+  });
+  if (error) throw toLoveSeatServiceError(error, 'Could not save the Love Seat welcome state.');
+}
+
 export async function fetchCircleLoveSeatsForHost(circleId: string, actorProfileId: string) {
   const { data, error } = await db.rpc('rpc_list_circle_love_seats_for_host', {
     p_circle_id: circleId,
@@ -837,6 +1256,31 @@ export async function fetchCircleLoveSeatsForHost(circleId: string, actorProfile
   });
   if (error) throw toLoveSeatServiceError(error, 'Could not load Love Seat invitations.');
   return ((data ?? []) as CircleLoveSeatHostRpcRow[]).map(toLoveSeatHostItem);
+}
+
+export async function fetchCircleLoveSeatRequestsForHost(circleId: string, actorProfileId: string) {
+  const { data, error } = await db.rpc('rpc_list_circle_love_seat_requests_for_host', {
+    p_circle_id: circleId,
+    p_actor_profile_id: actorProfileId,
+  });
+  if (error) throw toLoveSeatServiceError(error, 'Could not load the private Love Seat queue.');
+  return ((data ?? []) as CircleLoveSeatHostRequestRpcRow[]).map(toLoveSeatHostRequest);
+}
+
+export async function selectCircleLoveSeatRequest(
+  requestId: string,
+  actorProfileId: string,
+  durationHours: CircleLoveSeatDurationHours,
+  quote?: string | null,
+) {
+  const { data, error } = await db.rpc('rpc_select_circle_love_seat_request', {
+    p_request_id: requestId,
+    p_actor_profile_id: actorProfileId,
+    p_duration_hours: durationHours,
+    p_quote: quote?.trim() || null,
+  });
+  if (error) throw toLoveSeatServiceError(error, 'Could not select this Love Seat request.');
+  return data;
 }
 
 export async function cancelCircleLoveSeatNomination(loveSeatId: string, actorProfileId: string) {

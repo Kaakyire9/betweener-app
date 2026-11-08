@@ -26,8 +26,8 @@ export function StudioSessionPicker({
       {error ? <p className="error-banner" role="alert">{error}</p> : null}
       {loading ? <div className="loading-panel">Loading Studio sessions…</div> : null}
       {!loading && sessions.length === 0 ? (
-        <div className="empty-panel"><strong>No Studio sessions available</strong>
-          <p>Studio must be enabled and your closed-beta access must include View.</p></div>
+        <div className="empty-panel"><strong>No programmes assigned to this account</strong>
+          <p>A Live administrator must assign you as a Viewer, Producer or Moderator for a specific programme. Signing in and verifying your authenticator does not grant programme access.</p></div>
       ) : (
         <div className="session-grid">
           {sessions.map((session) => <article className="session-card" key={session.id}>

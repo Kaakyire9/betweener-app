@@ -35,7 +35,7 @@ const getHelperText = (itemId: string) => {
     case "help":
       return "Support, answers, and product guidance.";
     case "admin":
-      return "Internal moderation and operations tools.";
+      return "Community, safety, Live, account, and commerce tools.";
     case "logout":
       return "Sign out of this account on this device.";
     default:

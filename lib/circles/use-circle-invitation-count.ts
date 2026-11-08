@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AppState } from 'react-native';
 import { getMyCircleInvitationCount } from '@/lib/circles/circle-invitations';
+import { createEphemeralRealtimeTopic } from '@/lib/realtime/realtime-channel-topic';
 import { supabase } from '@/lib/supabase';
 
 export function useCircleInvitationCount(profileId: string | null | undefined) {
@@ -24,7 +25,7 @@ export function useCircleInvitationCount(profileId: string | null | undefined) {
     if (!profileId) return;
 
     const channel = supabase
-      .channel(`circle-invitations:${profileId}`)
+      .channel(createEphemeralRealtimeTopic(`circle-invitations:${profileId}`))
       .on(
         'postgres_changes',
         {
@@ -44,7 +45,7 @@ export function useCircleInvitationCount(profileId: string | null | undefined) {
     });
 
     return () => {
-      supabase.removeChannel(channel);
+      void supabase.removeChannel(channel);
       subscription.remove();
     };
   }, [reload]);

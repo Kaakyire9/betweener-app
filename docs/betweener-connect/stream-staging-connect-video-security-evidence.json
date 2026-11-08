@@ -1,0 +1,1666 @@
+{
+  "firstAttempt": {
+    "date": "2026-10-28T15:48:33.535Z",
+    "scope": "APPROVED_ONE_VIDEO_CALL_STREAM_1731011",
+    "proposal": "stream-staging-connect-video-security-proposal.json",
+    "providerPolicyWrites": 0,
+    "sharedDatabaseModified": false,
+    "checks": [
+      "voice-only grant cannot create VIDEO, using authenticated authority",
+      "members remain invited and credential issuance is denied before acceptance"
+    ],
+    "result": "BLOCKED",
+    "identity": {
+      "app": {
+        "id": 1731011,
+        "name": "Betweener Staging",
+        "disable_auth_checks": false,
+        "disable_permissions_checks": false
+      },
+      "users": 3
+    },
+    "call": {
+      "id": "0492e59c-fb57-4335-8ba7-1df6424e29be",
+      "media": "video",
+      "serverGenerated": true,
+      "ring": false,
+      "notify": false
+    },
+    "invitedPolicy": {
+      "settings": {
+        "audio": {
+          "access_request_enabled": false,
+          "opus_dtx_enabled": false,
+          "redundant_coding_enabled": false,
+          "mic_default_on": false,
+          "speaker_default_on": false,
+          "default_device": "earpiece",
+          "noise_cancellation": {
+            "mode": "auto-on"
+          },
+          "hifi_audio_enabled": false
+        },
+        "backstage": {
+          "enabled": false
+        },
+        "broadcasting": {
+          "enabled": false,
+          "hls": {
+            "auto_on": false,
+            "enabled": false,
+            "quality_tracks": [
+              "720p"
+            ],
+            "layout": {
+              "name": "spotlight",
+              "external_app_url": "",
+              "external_css_url": "",
+              "detect_orientation": false
+            }
+          },
+          "rtmp": {
+            "enabled": false,
+            "quality": "720p",
+            "layout": {
+              "name": "spotlight",
+              "external_app_url": "",
+              "external_css_url": "",
+              "detect_orientation": false
+            }
+          }
+        },
+        "geofencing": {
+          "names": []
+        },
+        "recording": {
+          "audio_only": true,
+          "mode": "disabled",
+          "quality": "720p",
+          "layout": {
+            "name": "spotlight",
+            "external_app_url": "",
+            "external_css_url": "",
+            "detect_orientation": false
+          }
+        },
+        "individual_recording": {
+          "mode": "disabled"
+        },
+        "raw_recording": {
+          "mode": "disabled"
+        },
+        "frame_recording": {
+          "mode": "disabled",
+          "quality": "720p",
+          "capture_interval_in_seconds": 3
+        },
+        "ring": {
+          "incoming_call_timeout_ms": 45000,
+          "auto_cancel_timeout_ms": 45000,
+          "missed_call_timeout_ms": 45000
+        },
+        "screensharing": {
+          "enabled": false,
+          "access_request_enabled": false,
+          "target_resolution": null
+        },
+        "transcription": {
+          "mode": "disabled",
+          "closed_caption_mode": "disabled",
+          "languages": [],
+          "language": "",
+          "translation": {
+            "enabled": false,
+            "languages": [
+              "en"
+            ]
+          },
+          "speech_segment_config": {
+            "max_speech_caption_ms": 9000,
+            "silence_duration_ms": 700
+          }
+        },
+        "video": {
+          "enabled": true,
+          "access_request_enabled": false,
+          "target_resolution": {
+            "width": 640,
+            "height": 480,
+            "bitrate": 600000
+          },
+          "camera_default_on": false,
+          "camera_facing": ""
+        },
+        "thumbnails": {
+          "enabled": false
+        },
+        "limits": {
+          "max_participants": 2,
+          "max_participants_exclude_roles": [],
+          "max_duration_seconds": null
+        },
+        "session": {
+          "inactivity_timeout_seconds": 30
+        },
+        "ingress": {
+          "enabled": false,
+          "video_encoding_options": {
+            "1280x720x30": {
+              "source": {
+                "width": 1280,
+                "height": 720,
+                "fps": 30
+              },
+              "layers": [
+                {
+                  "codec": "h264",
+                  "bitrate": 3000000,
+                  "min_dimension": 720,
+                  "max_dimension": 1280,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 1800000,
+                  "min_dimension": 600,
+                  "max_dimension": 800,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 700000,
+                  "min_dimension": 360,
+                  "max_dimension": 640,
+                  "frame_rate_limit": 30
+                }
+              ]
+            },
+            "1920x1080x30": {
+              "source": {
+                "width": 1920,
+                "height": 1080,
+                "fps": 30
+              },
+              "layers": [
+                {
+                  "codec": "h264",
+                  "bitrate": 6000000,
+                  "min_dimension": 1080,
+                  "max_dimension": 1920,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 3000000,
+                  "min_dimension": 720,
+                  "max_dimension": 1280,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 1600000,
+                  "min_dimension": 600,
+                  "max_dimension": 800,
+                  "frame_rate_limit": 30
+                }
+              ]
+            },
+            "2560x1440x30": {
+              "source": {
+                "width": 2560,
+                "height": 1440,
+                "fps": 30
+              },
+              "layers": [
+                {
+                  "codec": "h264",
+                  "bitrate": 9000000,
+                  "min_dimension": 1440,
+                  "max_dimension": 2560,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 6000000,
+                  "min_dimension": 1080,
+                  "max_dimension": 1920,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 2500000,
+                  "min_dimension": 720,
+                  "max_dimension": 1280,
+                  "frame_rate_limit": 30
+                }
+              ]
+            },
+            "3840x2160x30": {
+              "source": {
+                "width": 3840,
+                "height": 2160,
+                "fps": 30
+              },
+              "layers": [
+                {
+                  "codec": "h264",
+                  "bitrate": 18000000,
+                  "min_dimension": 2160,
+                  "max_dimension": 3840,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 8000000,
+                  "min_dimension": 1080,
+                  "max_dimension": 1920,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 2500000,
+                  "min_dimension": 720,
+                  "max_dimension": 1280,
+                  "frame_rate_limit": 30
+                }
+              ]
+            }
+          }
+        },
+        "encryption": {
+          "mode": "disabled"
+        },
+        "lifecycle": {
+          "mode": "reusable"
+        }
+      },
+      "custom": {
+        "media": "video",
+        "betweener_connect_id": "0492e59c-fb57-4335-8ba7-1df6424e29be",
+        "isolated_security_fixture": true
+      },
+      "members": [
+        {
+          "user": "f0110000-0000-4000-8000-000000000007",
+          "role": "connect_invited"
+        },
+        {
+          "user": "f0110000-0000-4000-8000-000000000008",
+          "role": "connect_invited"
+        }
+      ],
+      "userRoles": [
+        {
+          "id": "f0110000-0000-4000-8000-000000000009",
+          "role": "user"
+        },
+        {
+          "id": "f0110000-0000-4000-8000-000000000008",
+          "role": "user"
+        },
+        {
+          "id": "f0110000-0000-4000-8000-000000000007",
+          "role": "user"
+        }
+      ]
+    },
+    "consent": {
+      "independentRecipientVideo": true,
+      "voiceGrantDenied": true,
+      "state": "ACCEPTED"
+    },
+    "joins": [
+      {
+        "status": 201,
+        "code": null,
+        "capabilities": [
+          "join-call",
+          "read-call",
+          "send-audio",
+          "send-video"
+        ]
+      }
+    ],
+    "sessions": [
+      {
+        "failure": "sfu_probe_unavailable"
+      }
+    ],
+    "error": "Expected values to be strictly equal:\n+ actual - expected\n\n+ undefined\n- true\n",
+    "cleanup": {
+      "usersRemaining": 0,
+      "calls": [
+        {
+          "status": 404,
+          "code": 16
+        }
+      ],
+      "unchangedCallTypes": true,
+      "callTypesBefore": "12e74f5fca79a1dea2b48a8c950bbc3a2189a3ffdf9e04ccb43d28c4e4533a7e",
+      "callTypesAfter": "12e74f5fca79a1dea2b48a8c950bbc3a2189a3ffdf9e04ccb43d28c4e4533a7e",
+      "app": {
+        "id": 1731011,
+        "name": "Betweener Staging",
+        "disable_auth_checks": false,
+        "disable_permissions_checks": false
+      },
+      "cleaned": true
+    }
+  },
+  "status": "APPROVED_VERIFICATION_PASSED_AND_CLEANED",
+  "approval": "Approve isolated VIDEO security test",
+  "localDiagnostics": {
+    "scope": "LOCAL_PEERS_ONLY_NOT_PROVIDER",
+    "singleCodecTransport": true,
+    "simultaneousAudioVideo": true,
+    "rejectedOfferRollback": true,
+    "rejectedVideoAndScreenThenAudio": true,
+    "formerPublisherReplacementFailureReproduced": true,
+    "correctedProbeProviderRevalidation": "PASS"
+  },
+  "localVerification": {
+    "connectRegressionTests": {
+      "passed": 80,
+      "total": 80
+    },
+    "rnTests": {
+      "passed": 7,
+      "total": 7
+    },
+    "typeScript": "PASS",
+    "targetedLint": "PASS",
+    "sharedConnectAbsent": true,
+    "sharedProofAbsent": true,
+    "sharedRevocationRpcAbsent": true,
+    "remainingDisposableDatabases": 0,
+    "remainingDisposableRestContainers": 0,
+    "denoFixtureCheck": "PASS",
+    "result": "PASS",
+    "integratedChecks": 4
+  },
+  "diagnosticApproval": "Approve one additional isolated VIDEO diagnostic call",
+  "diagnosticRetry": {
+    "date": "2026-10-28T16:01:58.437Z",
+    "scope": "APPROVED_ONE_VIDEO_CALL_STREAM_1731011",
+    "proposal": "stream-staging-connect-video-security-retry-proposal.json",
+    "providerPolicyWrites": 0,
+    "sharedDatabaseModified": false,
+    "checks": [
+      "voice-only grant cannot create VIDEO, using authenticated authority",
+      "members remain invited and credential issuance is denied before acceptance"
+    ],
+    "result": "BLOCKED",
+    "identity": {
+      "app": {
+        "id": 1731011,
+        "name": "Betweener Staging",
+        "disable_auth_checks": false,
+        "disable_permissions_checks": false
+      },
+      "users": 3
+    },
+    "call": {
+      "id": "cacc7ba3-db1b-4cde-8982-79caa2179d2a",
+      "media": "video",
+      "serverGenerated": true,
+      "ring": false,
+      "notify": false
+    },
+    "invitedPolicy": {
+      "settings": {
+        "audio": {
+          "access_request_enabled": false,
+          "opus_dtx_enabled": false,
+          "redundant_coding_enabled": false,
+          "mic_default_on": false,
+          "speaker_default_on": false,
+          "default_device": "earpiece",
+          "noise_cancellation": {
+            "mode": "auto-on"
+          },
+          "hifi_audio_enabled": false
+        },
+        "backstage": {
+          "enabled": false
+        },
+        "broadcasting": {
+          "enabled": false,
+          "hls": {
+            "auto_on": false,
+            "enabled": false,
+            "quality_tracks": [
+              "720p"
+            ],
+            "layout": {
+              "name": "spotlight",
+              "external_app_url": "",
+              "external_css_url": "",
+              "detect_orientation": false
+            }
+          },
+          "rtmp": {
+            "enabled": false,
+            "quality": "720p",
+            "layout": {
+              "name": "spotlight",
+              "external_app_url": "",
+              "external_css_url": "",
+              "detect_orientation": false
+            }
+          }
+        },
+        "geofencing": {
+          "names": []
+        },
+        "recording": {
+          "audio_only": true,
+          "mode": "disabled",
+          "quality": "720p",
+          "layout": {
+            "name": "spotlight",
+            "external_app_url": "",
+            "external_css_url": "",
+            "detect_orientation": false
+          }
+        },
+        "individual_recording": {
+          "mode": "disabled"
+        },
+        "raw_recording": {
+          "mode": "disabled"
+        },
+        "frame_recording": {
+          "mode": "disabled",
+          "quality": "720p",
+          "capture_interval_in_seconds": 3
+        },
+        "ring": {
+          "incoming_call_timeout_ms": 45000,
+          "auto_cancel_timeout_ms": 45000,
+          "missed_call_timeout_ms": 45000
+        },
+        "screensharing": {
+          "enabled": false,
+          "access_request_enabled": false,
+          "target_resolution": null
+        },
+        "transcription": {
+          "mode": "disabled",
+          "closed_caption_mode": "disabled",
+          "languages": [],
+          "language": "",
+          "translation": {
+            "enabled": false,
+            "languages": [
+              "en"
+            ]
+          },
+          "speech_segment_config": {
+            "max_speech_caption_ms": 9000,
+            "silence_duration_ms": 700
+          }
+        },
+        "video": {
+          "enabled": true,
+          "access_request_enabled": false,
+          "target_resolution": {
+            "width": 640,
+            "height": 480,
+            "bitrate": 600000
+          },
+          "camera_default_on": false,
+          "camera_facing": ""
+        },
+        "thumbnails": {
+          "enabled": false
+        },
+        "limits": {
+          "max_participants": 2,
+          "max_participants_exclude_roles": [],
+          "max_duration_seconds": null
+        },
+        "session": {
+          "inactivity_timeout_seconds": 30
+        },
+        "ingress": {
+          "enabled": false,
+          "video_encoding_options": {
+            "3840x2160x30": {
+              "source": {
+                "width": 3840,
+                "height": 2160,
+                "fps": 30
+              },
+              "layers": [
+                {
+                  "codec": "h264",
+                  "bitrate": 18000000,
+                  "min_dimension": 2160,
+                  "max_dimension": 3840,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 8000000,
+                  "min_dimension": 1080,
+                  "max_dimension": 1920,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 2500000,
+                  "min_dimension": 720,
+                  "max_dimension": 1280,
+                  "frame_rate_limit": 30
+                }
+              ]
+            },
+            "1280x720x30": {
+              "source": {
+                "width": 1280,
+                "height": 720,
+                "fps": 30
+              },
+              "layers": [
+                {
+                  "codec": "h264",
+                  "bitrate": 3000000,
+                  "min_dimension": 720,
+                  "max_dimension": 1280,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 1800000,
+                  "min_dimension": 600,
+                  "max_dimension": 800,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 700000,
+                  "min_dimension": 360,
+                  "max_dimension": 640,
+                  "frame_rate_limit": 30
+                }
+              ]
+            },
+            "1920x1080x30": {
+              "source": {
+                "width": 1920,
+                "height": 1080,
+                "fps": 30
+              },
+              "layers": [
+                {
+                  "codec": "h264",
+                  "bitrate": 6000000,
+                  "min_dimension": 1080,
+                  "max_dimension": 1920,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 3000000,
+                  "min_dimension": 720,
+                  "max_dimension": 1280,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 1600000,
+                  "min_dimension": 600,
+                  "max_dimension": 800,
+                  "frame_rate_limit": 30
+                }
+              ]
+            },
+            "2560x1440x30": {
+              "source": {
+                "width": 2560,
+                "height": 1440,
+                "fps": 30
+              },
+              "layers": [
+                {
+                  "codec": "h264",
+                  "bitrate": 9000000,
+                  "min_dimension": 1440,
+                  "max_dimension": 2560,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 6000000,
+                  "min_dimension": 1080,
+                  "max_dimension": 1920,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 2500000,
+                  "min_dimension": 720,
+                  "max_dimension": 1280,
+                  "frame_rate_limit": 30
+                }
+              ]
+            }
+          }
+        },
+        "encryption": {
+          "mode": "disabled"
+        },
+        "lifecycle": {
+          "mode": "reusable"
+        }
+      },
+      "custom": {
+        "betweener_connect_id": "cacc7ba3-db1b-4cde-8982-79caa2179d2a",
+        "isolated_security_fixture": true,
+        "media": "video"
+      },
+      "members": [
+        {
+          "user": "f0110000-0000-4000-8000-000000000007",
+          "role": "connect_invited"
+        },
+        {
+          "user": "f0110000-0000-4000-8000-000000000008",
+          "role": "connect_invited"
+        }
+      ],
+      "userRoles": [
+        {
+          "id": "f0110000-0000-4000-8000-000000000009",
+          "role": "user"
+        },
+        {
+          "id": "f0110000-0000-4000-8000-000000000008",
+          "role": "user"
+        },
+        {
+          "id": "f0110000-0000-4000-8000-000000000007",
+          "role": "user"
+        }
+      ]
+    },
+    "consent": {
+      "independentRecipientVideo": true,
+      "voiceGrantDenied": true,
+      "state": "ACCEPTED"
+    },
+    "joins": [
+      {
+        "status": 201,
+        "code": null,
+        "capabilities": [
+          "join-call",
+          "read-call",
+          "send-audio",
+          "send-video"
+        ]
+      }
+    ],
+    "sessions": [],
+    "attempts": [
+      {
+        "participant": 7,
+        "media": {
+          "kind": "SFU_PUBLISH_BOUNDARY",
+          "results": [
+            {
+              "track": "video",
+              "status": 200,
+              "code": null,
+              "message": null,
+              "answerReceived": true,
+              "optionMatched": true
+            },
+            {
+              "track": "screenshare",
+              "status": 200,
+              "code": "ERROR_CODE_PERMISSION_DENIED",
+              "message": "participant f0110000-0000-4000-8000-000000000007 is not authorized to publish track TRACK_TYPE_SCREEN_SHARE",
+              "answerReceived": false,
+              "optionMatched": true
+            },
+            {
+              "track": "audio",
+              "status": 200,
+              "code": null,
+              "message": null,
+              "answerReceived": true,
+              "optionMatched": true
+            }
+          ],
+          "callEndedObserved": false,
+          "joinAcknowledged": true,
+          "publishOptions": [
+            {
+              "id": 0,
+              "trackType": 1,
+              "codec": "Opus",
+              "videoDimension": {
+                "width": 0,
+                "height": 0
+              }
+            },
+            {
+              "id": 0,
+              "trackType": 2,
+              "codec": "VP9",
+              "videoDimension": {
+                "width": 640,
+                "height": 480
+              }
+            },
+            {
+              "id": 0,
+              "trackType": 3,
+              "codec": "VP8",
+              "videoDimension": {
+                "width": 2560,
+                "height": 1440
+              }
+            },
+            {
+              "id": 0,
+              "trackType": 4,
+              "codec": "Opus",
+              "videoDimension": {
+                "width": 0,
+                "height": 0
+              }
+            }
+          ],
+          "videoStats": {
+            "connectionState": "connected",
+            "bytesSent": 146385,
+            "packetsSent": 228,
+            "framesEncoded": 175,
+            "remoteReportsReceived": 0,
+            "codec": "video/VP9"
+          },
+          "failure": "sfu_probe_unavailable",
+          "failedStage": "audio_remote_answer",
+          "errorType": "Error"
+        }
+      }
+    ],
+    "error": "{\"status\":null,\"code\":null,\"reason\":\"local_rpc_rejected\"}",
+    "cleanup": {
+      "usersRemaining": 0,
+      "calls": [
+        {
+          "status": 404,
+          "code": 16
+        }
+      ],
+      "unchangedCallTypes": true,
+      "callTypesBefore": "12e74f5fca79a1dea2b48a8c950bbc3a2189a3ffdf9e04ccb43d28c4e4533a7e",
+      "callTypesAfter": "12e74f5fca79a1dea2b48a8c950bbc3a2189a3ffdf9e04ccb43d28c4e4533a7e",
+      "app": {
+        "id": 1731011,
+        "name": "Betweener Staging",
+        "disable_auth_checks": false,
+        "disable_permissions_checks": false
+      },
+      "cleaned": true
+    }
+  },
+  "verificationProposal": "stream-staging-connect-video-security-verification-proposal.json",
+  "providerVideoGate": "PASS",
+  "verificationApproval": "Approve one additional VIDEO verification call",
+  "verification": {
+    "date": "2026-10-28T16:17:16.927Z",
+    "scope": "APPROVED_ONE_VIDEO_CALL_STREAM_1731011",
+    "proposal": "stream-staging-connect-video-security-verification-proposal.json",
+    "providerPolicyWrites": 0,
+    "sharedDatabaseModified": false,
+    "checks": [
+      "voice-only grant cannot create VIDEO, using authenticated authority",
+      "members remain invited and credential issuance is denied before acceptance",
+      "ordinary VIDEO identities cannot add members, escalate permissions/settings, end, record, transcribe or broadcast",
+      "both consenting VIDEO identities publish real synthetic video/audio RTP; SFU explicitly denies screen sharing; actual worker reconciles ACTIVE"
+    ],
+    "result": "PASS",
+    "identity": {
+      "app": {
+        "id": 1731011,
+        "name": "Betweener Staging",
+        "disable_auth_checks": false,
+        "disable_permissions_checks": false
+      },
+      "users": 3
+    },
+    "call": {
+      "id": "06c99bd3-ab27-4dd7-a7c7-21a1545af83d",
+      "media": "video",
+      "serverGenerated": true,
+      "ring": false,
+      "notify": false
+    },
+    "invitedPolicy": {
+      "settings": {
+        "audio": {
+          "access_request_enabled": false,
+          "opus_dtx_enabled": false,
+          "redundant_coding_enabled": false,
+          "mic_default_on": false,
+          "speaker_default_on": false,
+          "default_device": "earpiece",
+          "noise_cancellation": {
+            "mode": "auto-on"
+          },
+          "hifi_audio_enabled": false
+        },
+        "backstage": {
+          "enabled": false
+        },
+        "broadcasting": {
+          "enabled": false,
+          "hls": {
+            "auto_on": false,
+            "enabled": false,
+            "quality_tracks": [
+              "720p"
+            ],
+            "layout": {
+              "name": "spotlight",
+              "external_app_url": "",
+              "external_css_url": "",
+              "detect_orientation": false
+            }
+          },
+          "rtmp": {
+            "enabled": false,
+            "quality": "720p",
+            "layout": {
+              "name": "spotlight",
+              "external_app_url": "",
+              "external_css_url": "",
+              "detect_orientation": false
+            }
+          }
+        },
+        "geofencing": {
+          "names": []
+        },
+        "recording": {
+          "audio_only": true,
+          "mode": "disabled",
+          "quality": "720p",
+          "layout": {
+            "name": "spotlight",
+            "external_app_url": "",
+            "external_css_url": "",
+            "detect_orientation": false
+          }
+        },
+        "individual_recording": {
+          "mode": "disabled"
+        },
+        "raw_recording": {
+          "mode": "disabled"
+        },
+        "frame_recording": {
+          "mode": "disabled",
+          "quality": "720p",
+          "capture_interval_in_seconds": 3
+        },
+        "ring": {
+          "incoming_call_timeout_ms": 45000,
+          "auto_cancel_timeout_ms": 45000,
+          "missed_call_timeout_ms": 45000
+        },
+        "screensharing": {
+          "enabled": false,
+          "access_request_enabled": false,
+          "target_resolution": null
+        },
+        "transcription": {
+          "mode": "disabled",
+          "closed_caption_mode": "disabled",
+          "languages": [],
+          "language": "",
+          "translation": {
+            "enabled": false,
+            "languages": [
+              "en"
+            ]
+          },
+          "speech_segment_config": {
+            "max_speech_caption_ms": 9000,
+            "silence_duration_ms": 700
+          }
+        },
+        "video": {
+          "enabled": true,
+          "access_request_enabled": false,
+          "target_resolution": {
+            "width": 640,
+            "height": 480,
+            "bitrate": 600000
+          },
+          "camera_default_on": false,
+          "camera_facing": ""
+        },
+        "thumbnails": {
+          "enabled": false
+        },
+        "limits": {
+          "max_participants": 2,
+          "max_participants_exclude_roles": [],
+          "max_duration_seconds": null
+        },
+        "session": {
+          "inactivity_timeout_seconds": 30
+        },
+        "ingress": {
+          "enabled": false,
+          "video_encoding_options": {
+            "2560x1440x30": {
+              "source": {
+                "width": 2560,
+                "height": 1440,
+                "fps": 30
+              },
+              "layers": [
+                {
+                  "codec": "h264",
+                  "bitrate": 9000000,
+                  "min_dimension": 1440,
+                  "max_dimension": 2560,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 6000000,
+                  "min_dimension": 1080,
+                  "max_dimension": 1920,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 2500000,
+                  "min_dimension": 720,
+                  "max_dimension": 1280,
+                  "frame_rate_limit": 30
+                }
+              ]
+            },
+            "3840x2160x30": {
+              "source": {
+                "width": 3840,
+                "height": 2160,
+                "fps": 30
+              },
+              "layers": [
+                {
+                  "codec": "h264",
+                  "bitrate": 18000000,
+                  "min_dimension": 2160,
+                  "max_dimension": 3840,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 8000000,
+                  "min_dimension": 1080,
+                  "max_dimension": 1920,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 2500000,
+                  "min_dimension": 720,
+                  "max_dimension": 1280,
+                  "frame_rate_limit": 30
+                }
+              ]
+            },
+            "1280x720x30": {
+              "source": {
+                "width": 1280,
+                "height": 720,
+                "fps": 30
+              },
+              "layers": [
+                {
+                  "codec": "h264",
+                  "bitrate": 3000000,
+                  "min_dimension": 720,
+                  "max_dimension": 1280,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 1800000,
+                  "min_dimension": 600,
+                  "max_dimension": 800,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 700000,
+                  "min_dimension": 360,
+                  "max_dimension": 640,
+                  "frame_rate_limit": 30
+                }
+              ]
+            },
+            "1920x1080x30": {
+              "source": {
+                "width": 1920,
+                "height": 1080,
+                "fps": 30
+              },
+              "layers": [
+                {
+                  "codec": "h264",
+                  "bitrate": 6000000,
+                  "min_dimension": 1080,
+                  "max_dimension": 1920,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 3000000,
+                  "min_dimension": 720,
+                  "max_dimension": 1280,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 1600000,
+                  "min_dimension": 600,
+                  "max_dimension": 800,
+                  "frame_rate_limit": 30
+                }
+              ]
+            }
+          }
+        },
+        "encryption": {
+          "mode": "disabled"
+        },
+        "lifecycle": {
+          "mode": "reusable"
+        }
+      },
+      "custom": {
+        "isolated_security_fixture": true,
+        "media": "video",
+        "betweener_connect_id": "06c99bd3-ab27-4dd7-a7c7-21a1545af83d"
+      },
+      "members": [
+        {
+          "user": "f0110000-0000-4000-8000-000000000007",
+          "role": "connect_invited"
+        },
+        {
+          "user": "f0110000-0000-4000-8000-000000000008",
+          "role": "connect_invited"
+        }
+      ],
+      "userRoles": [
+        {
+          "id": "f0110000-0000-4000-8000-000000000009",
+          "role": "user"
+        },
+        {
+          "id": "f0110000-0000-4000-8000-000000000008",
+          "role": "user"
+        },
+        {
+          "id": "f0110000-0000-4000-8000-000000000007",
+          "role": "user"
+        }
+      ]
+    },
+    "consent": {
+      "independentRecipientVideo": true,
+      "voiceGrantDenied": true,
+      "state": "ACCEPTED"
+    },
+    "joins": [
+      {
+        "status": 201,
+        "code": null,
+        "capabilities": [
+          "join-call",
+          "read-call",
+          "send-audio",
+          "send-video"
+        ]
+      },
+      {
+        "status": 201,
+        "code": null,
+        "capabilities": [
+          "join-call",
+          "read-call",
+          "send-audio",
+          "send-video"
+        ]
+      }
+    ],
+    "privileges": [
+      {
+        "name": "add_third_member",
+        "status": 403,
+        "code": 17
+      },
+      {
+        "name": "self_admin_role",
+        "status": 403,
+        "code": 17
+      },
+      {
+        "name": "grant_screenshare",
+        "status": 403,
+        "code": 17
+      },
+      {
+        "name": "enable_screenshare",
+        "status": 403,
+        "code": 17
+      },
+      {
+        "name": "start_recording",
+        "status": 403,
+        "code": 17
+      },
+      {
+        "name": "start_transcription",
+        "status": 403,
+        "code": 17
+      },
+      {
+        "name": "start_broadcasting",
+        "status": 403,
+        "code": 17
+      },
+      {
+        "name": "end_call",
+        "status": 403,
+        "code": 17
+      },
+      {
+        "name": "capabilities_after_attempts",
+        "status": 200,
+        "code": null,
+        "capabilities": [
+          "join-call",
+          "read-call",
+          "send-audio",
+          "send-video"
+        ]
+      }
+    ],
+    "acceptedPolicy": {
+      "settings": {
+        "audio": {
+          "access_request_enabled": false,
+          "opus_dtx_enabled": false,
+          "redundant_coding_enabled": false,
+          "mic_default_on": false,
+          "speaker_default_on": false,
+          "default_device": "earpiece",
+          "noise_cancellation": {
+            "mode": "auto-on"
+          },
+          "hifi_audio_enabled": false
+        },
+        "backstage": {
+          "enabled": false
+        },
+        "broadcasting": {
+          "enabled": false,
+          "hls": {
+            "auto_on": false,
+            "enabled": false,
+            "quality_tracks": [
+              "720p"
+            ],
+            "layout": {
+              "name": "spotlight",
+              "external_app_url": "",
+              "external_css_url": "",
+              "detect_orientation": false
+            }
+          },
+          "rtmp": {
+            "enabled": false,
+            "quality": "720p",
+            "layout": {
+              "name": "spotlight",
+              "external_app_url": "",
+              "external_css_url": "",
+              "detect_orientation": false
+            }
+          }
+        },
+        "geofencing": {
+          "names": []
+        },
+        "recording": {
+          "audio_only": true,
+          "mode": "disabled",
+          "quality": "720p",
+          "layout": {
+            "name": "spotlight",
+            "external_app_url": "",
+            "external_css_url": "",
+            "detect_orientation": false
+          }
+        },
+        "individual_recording": {
+          "mode": "disabled"
+        },
+        "raw_recording": {
+          "mode": "disabled"
+        },
+        "frame_recording": {
+          "mode": "disabled",
+          "quality": "720p",
+          "capture_interval_in_seconds": 3
+        },
+        "ring": {
+          "incoming_call_timeout_ms": 45000,
+          "auto_cancel_timeout_ms": 45000,
+          "missed_call_timeout_ms": 45000
+        },
+        "screensharing": {
+          "enabled": false,
+          "access_request_enabled": false,
+          "target_resolution": null
+        },
+        "transcription": {
+          "mode": "disabled",
+          "closed_caption_mode": "disabled",
+          "languages": [],
+          "language": "",
+          "translation": {
+            "enabled": false,
+            "languages": [
+              "en"
+            ]
+          },
+          "speech_segment_config": {
+            "max_speech_caption_ms": 9000,
+            "silence_duration_ms": 700
+          }
+        },
+        "video": {
+          "enabled": true,
+          "access_request_enabled": false,
+          "target_resolution": {
+            "width": 640,
+            "height": 480,
+            "bitrate": 600000
+          },
+          "camera_default_on": false,
+          "camera_facing": ""
+        },
+        "thumbnails": {
+          "enabled": false
+        },
+        "limits": {
+          "max_participants": 2,
+          "max_participants_exclude_roles": [],
+          "max_duration_seconds": null
+        },
+        "session": {
+          "inactivity_timeout_seconds": 30
+        },
+        "ingress": {
+          "enabled": false,
+          "video_encoding_options": {
+            "1920x1080x30": {
+              "source": {
+                "width": 1920,
+                "height": 1080,
+                "fps": 30
+              },
+              "layers": [
+                {
+                  "codec": "h264",
+                  "bitrate": 6000000,
+                  "min_dimension": 1080,
+                  "max_dimension": 1920,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 3000000,
+                  "min_dimension": 720,
+                  "max_dimension": 1280,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 1600000,
+                  "min_dimension": 600,
+                  "max_dimension": 800,
+                  "frame_rate_limit": 30
+                }
+              ]
+            },
+            "2560x1440x30": {
+              "source": {
+                "width": 2560,
+                "height": 1440,
+                "fps": 30
+              },
+              "layers": [
+                {
+                  "codec": "h264",
+                  "bitrate": 9000000,
+                  "min_dimension": 1440,
+                  "max_dimension": 2560,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 6000000,
+                  "min_dimension": 1080,
+                  "max_dimension": 1920,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 2500000,
+                  "min_dimension": 720,
+                  "max_dimension": 1280,
+                  "frame_rate_limit": 30
+                }
+              ]
+            },
+            "3840x2160x30": {
+              "source": {
+                "width": 3840,
+                "height": 2160,
+                "fps": 30
+              },
+              "layers": [
+                {
+                  "codec": "h264",
+                  "bitrate": 18000000,
+                  "min_dimension": 2160,
+                  "max_dimension": 3840,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 8000000,
+                  "min_dimension": 1080,
+                  "max_dimension": 1920,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 2500000,
+                  "min_dimension": 720,
+                  "max_dimension": 1280,
+                  "frame_rate_limit": 30
+                }
+              ]
+            },
+            "1280x720x30": {
+              "source": {
+                "width": 1280,
+                "height": 720,
+                "fps": 30
+              },
+              "layers": [
+                {
+                  "codec": "h264",
+                  "bitrate": 3000000,
+                  "min_dimension": 720,
+                  "max_dimension": 1280,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 1800000,
+                  "min_dimension": 600,
+                  "max_dimension": 800,
+                  "frame_rate_limit": 30
+                },
+                {
+                  "codec": "h264",
+                  "bitrate": 700000,
+                  "min_dimension": 360,
+                  "max_dimension": 640,
+                  "frame_rate_limit": 30
+                }
+              ]
+            }
+          }
+        },
+        "encryption": {
+          "mode": "disabled"
+        },
+        "lifecycle": {
+          "mode": "reusable"
+        }
+      },
+      "custom": {
+        "betweener_connect_id": "06c99bd3-ab27-4dd7-a7c7-21a1545af83d",
+        "isolated_security_fixture": true,
+        "media": "video"
+      },
+      "members": [
+        {
+          "user": "f0110000-0000-4000-8000-000000000007",
+          "role": "connect_video"
+        },
+        {
+          "user": "f0110000-0000-4000-8000-000000000008",
+          "role": "connect_video"
+        }
+      ],
+      "userRoles": [
+        {
+          "id": "f0110000-0000-4000-8000-000000000009",
+          "role": "user"
+        },
+        {
+          "id": "f0110000-0000-4000-8000-000000000008",
+          "role": "user"
+        },
+        {
+          "id": "f0110000-0000-4000-8000-000000000007",
+          "role": "user"
+        }
+      ]
+    },
+    "sessions": [
+      {
+        "kind": "SFU_PUBLISH_BOUNDARY",
+        "results": [
+          {
+            "track": "video",
+            "status": 200,
+            "code": null,
+            "message": null,
+            "answerReceived": true,
+            "optionMatched": true
+          },
+          {
+            "track": "screenshare",
+            "status": 200,
+            "code": "ERROR_CODE_PERMISSION_DENIED",
+            "message": "participant f0110000-0000-4000-8000-000000000007 is not authorized to publish track TRACK_TYPE_SCREEN_SHARE",
+            "answerReceived": false,
+            "optionMatched": true
+          },
+          {
+            "track": "audio",
+            "status": 200,
+            "code": null,
+            "message": null,
+            "answerReceived": true,
+            "optionMatched": true
+          }
+        ],
+        "callEndedObserved": false,
+        "joinAcknowledged": true,
+        "publishOptions": [
+          {
+            "id": 0,
+            "trackType": 1,
+            "codec": "Opus",
+            "videoDimension": {
+              "width": 0,
+              "height": 0
+            }
+          },
+          {
+            "id": 0,
+            "trackType": 2,
+            "codec": "VP9",
+            "videoDimension": {
+              "width": 640,
+              "height": 480
+            }
+          },
+          {
+            "id": 0,
+            "trackType": 3,
+            "codec": "VP8",
+            "videoDimension": {
+              "width": 2560,
+              "height": 1440
+            }
+          },
+          {
+            "id": 0,
+            "trackType": 4,
+            "codec": "Opus",
+            "videoDimension": {
+              "width": 0,
+              "height": 0
+            }
+          }
+        ],
+        "videoStats": {
+          "connectionState": "connected",
+          "bytesSent": 131340,
+          "packetsSent": 225,
+          "framesEncoded": 175,
+          "remoteReportsReceived": 0,
+          "codec": "video/VP9"
+        },
+        "audioStats": {
+          "connectionState": "connected",
+          "bytesSent": 886,
+          "packetsSent": 13
+        }
+      },
+      {
+        "kind": "SFU_PUBLISH_BOUNDARY",
+        "results": [
+          {
+            "track": "video",
+            "status": 200,
+            "code": null,
+            "message": null,
+            "answerReceived": true,
+            "optionMatched": true
+          },
+          {
+            "track": "screenshare",
+            "status": 200,
+            "code": "ERROR_CODE_PERMISSION_DENIED",
+            "message": "participant f0110000-0000-4000-8000-000000000008 is not authorized to publish track TRACK_TYPE_SCREEN_SHARE",
+            "answerReceived": false,
+            "optionMatched": true
+          },
+          {
+            "track": "audio",
+            "status": 200,
+            "code": null,
+            "message": null,
+            "answerReceived": true,
+            "optionMatched": true
+          }
+        ],
+        "callEndedObserved": false,
+        "joinAcknowledged": true,
+        "publishOptions": [
+          {
+            "id": 0,
+            "trackType": 1,
+            "codec": "Opus",
+            "videoDimension": {
+              "width": 0,
+              "height": 0
+            }
+          },
+          {
+            "id": 0,
+            "trackType": 2,
+            "codec": "VP9",
+            "videoDimension": {
+              "width": 640,
+              "height": 480
+            }
+          },
+          {
+            "id": 0,
+            "trackType": 3,
+            "codec": "VP8",
+            "videoDimension": {
+              "width": 2560,
+              "height": 1440
+            }
+          },
+          {
+            "id": 0,
+            "trackType": 4,
+            "codec": "Opus",
+            "videoDimension": {
+              "width": 0,
+              "height": 0
+            }
+          }
+        ],
+        "videoStats": {
+          "connectionState": "connected",
+          "bytesSent": 130654,
+          "packetsSent": 224,
+          "framesEncoded": 175,
+          "remoteReportsReceived": 0,
+          "codec": "video/VP9"
+        },
+        "audioStats": {
+          "connectionState": "connected",
+          "bytesSent": 867,
+          "packetsSent": 13
+        }
+      }
+    ],
+    "reconciledState": "ACTIVE",
+    "cleanup": {
+      "usersRemaining": 0,
+      "calls": [
+        {
+          "status": 404,
+          "code": 16
+        }
+      ],
+      "unchangedCallTypes": true,
+      "callTypesBefore": "12e74f5fca79a1dea2b48a8c950bbc3a2189a3ffdf9e04ccb43d28c4e4533a7e",
+      "callTypesAfter": "12e74f5fca79a1dea2b48a8c950bbc3a2189a3ffdf9e04ccb43d28c4e4533a7e",
+      "app": {
+        "id": 1731011,
+        "name": "Betweener Staging",
+        "disable_auth_checks": false,
+        "disable_permissions_checks": false
+      },
+      "cleaned": true
+    }
+  }
+}

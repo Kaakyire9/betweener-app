@@ -1,0 +1,148 @@
+{
+  "schemaVersion": 1,
+  "scope": "CONNECT_M3_LOCAL_PRODUCT_PREPARATION_ONLY",
+  "executionAuthorized": false,
+  "providerFixtureAllocated": false,
+  "deviceValidation": "DEFERRED",
+  "target": {
+    "applicationId": "com.aduboffour.betweener.staging",
+    "scheme": "betweenerstaging",
+    "supabaseProjectRef": "xsgzxadwuxuziubglvps",
+    "streamApplicationId": "1731011",
+    "streamIdentityAttestation": "HISTORICAL_ONLY_REQUIRES_APPROVED_FRESH_VERIFICATION",
+    "devices": [
+      "Galaxy A17 5G",
+      "iPhone 15 Pro"
+    ]
+  },
+  "checkedInSwitches": {
+    "productUi": false,
+    "nativeRuntime": false,
+    "nativeSafetyOwner": false,
+    "endCallAndBlock": false,
+    "videoTransport": false
+  },
+  "newNativeDependency": false,
+  "newMigration": false,
+  "migrationParityRequired": [
+    "supabase/migrations/20261028064220_relationship_acceptance_authority.sql",
+    "supabase/migrations/20261028074908_connect_v1_foundation.sql",
+    "supabase/migrations/20261028143424_connect_m2a_revocation_cleanup.sql",
+    "supabase/migrations/20261029081013_connect_forensic_repair_1.sql",
+    "supabase/migrations/20261031035826_connect_end_block_local_foundation.sql"
+  ],
+  "edgeParityRequired": [
+    "connect-credentials",
+    "connect-revoke-consent",
+    "connect-provider-worker",
+    "connect-webhook"
+  ],
+  "serverContractsRequired": [
+    "Authenticated pair availability, current mutual-match proof or approved directional voice grant",
+    "Exact call generation, selected accepting device, terminality and idempotency",
+    "Two affirmative credential admission fences",
+    "Existing public.blocks authority and atomic call-bound block/end/outbox transaction",
+    "Strict provider accepted/verified-absence acknowledgements; unconfirmed work stays pending",
+    "End-prioritized worker scheduling, leases, durable retry, webhook authentication and reconciliation"
+  ],
+  "configurationParityRequired": {
+    "databaseEnvironment": "staging",
+    "flagsRequireSeparateReview": [
+      "enabled",
+      "voice_enabled",
+      "provider_ready",
+      "pre_match_enabled",
+      "end_block_enabled"
+    ],
+    "videoMustRemainDisabled": true,
+    "edgeConfigurationNamesOnly": [
+      "CONNECT_ENVIRONMENT",
+      "CONNECT_STREAM_API_KEY",
+      "CONNECT_STREAM_API_SECRET",
+      "CONNECT_STREAM_APP_ID",
+      "SUPABASE_URL"
+    ],
+    "providerType": "betweener_connect",
+    "providerPolicy": "Existing exact roles, pair membership, disabled capture/egress capabilities and effective settings; never copy Live grants",
+    "sharedProviderConfigurationChangesAuthorized": false
+  },
+  "installedJsSdkVersions": {
+    "streamReactNative": "1.46.3",
+    "streamVideoClient": "1.62.0",
+    "streamWebRtc": "145.4.1",
+    "callingx": "0.11.5",
+    "expo": "57.0.30",
+    "reactNative": "0.86.3",
+    "supabaseJs": "2.118.0"
+  },
+  "retainedBuilds": {
+    "android": "https://expo.dev/accounts/kaakyire9/projects/betweener-staging/builds/a3d480e9-38f9-4e75-beb6-55038e91bc00",
+    "ios": "https://expo.dev/accounts/kaakyire9/projects/betweener-staging/builds/43e33173-cd96-41b1-8e9e-9df6834930a8",
+    "metadataPath": "tmp/connect-device-preflight-41/expo-build-metadata-reviewed.json",
+    "newLookupPerformed": false,
+    "integratedCompatibilityVerified": false,
+    "knownReviewPoint": "Retained Stream RN native build metadata 1.46.0 versus current JS SDK 1.46.3; app/runtime version alone is insufficient"
+  },
+  "nativeCompatibilityRequired": [
+    "Verify the actually installed binary and native application ID on each physical device",
+    "Verify WebRTC, Callingx, microphone permissions, SDK media-engine/factory lifecycle and audio-route API compatibility",
+    "Verify exclusive Live/Connect ownership and Connect-only refresh on the real SDK",
+    "Verify stream-before-track native disposal, leave failure/quarantine, no stale restart and independent hardware/OS evidence",
+    "Do not build/install/publish without a separately approved need"
+  ],
+  "pushReadiness": {
+    "foregroundCanonicalDiscoveryImplementedLocal": true,
+    "callIdNavigationContractsImplementedLocal": true,
+    "canonicalConnectPushProducerDeployed": false,
+    "backgroundIncomingVerified": false,
+    "callKitTelecomRegistrationChanged": false,
+    "remaining": [
+      "Canonical notification event producer and delivery validation",
+      "Push expiry/cancel/revoke behavior",
+      "Entitlement/build review for any future OS calling service"
+    ]
+  },
+  "preMatchReadiness": {
+    "existingGrantAuthorityReused": true,
+    "explicitGrantLaunchAndServerChecksImplementedLocal": true,
+    "intentGrantManagementUiIntegrated": false,
+    "voiceNeverGrantsVideo": true
+  },
+  "futureTestIdentities": {
+    "selected": false,
+    "requirements": [
+      "Two owner-approved staging accounts and physical devices",
+      "Server-verified mutual match for the first voice test",
+      "Separate recipient-approved directional voice grant for pre-match",
+      "Negative unrelated/blocked/revoked/wrong-device cases",
+      "No reused experiment approvals or terminal call IDs"
+    ]
+  },
+  "futureAcceptanceCases": [
+    "Explicit outgoing start; incoming accept/decline; no pre-accept microphone capture",
+    "Real bidirectional voice, mute and supported route changes, with positive media evidence",
+    "Ordinary End and atomic End Call and Block; independent authority/provider/local statuses",
+    "Failed/hung leave, lost backend response, provider pending, duplicate taps and stale callbacks",
+    "Logout/account switch, background/interruption, simultaneous Live ownership and fresh-call-only recovery",
+    "Late missed/cancelled/expired/revoked notifications; no notification-authorized admission",
+    "Video transport and voice-to-video escalation remain disabled"
+  ],
+  "stopAndRollback": [
+    "Stop on unintended native capture, wrong identity/call binding, stale media restart, ownership crossover or false termination confirmation",
+    "Keep UI/runtime source switches and all real-calling gates off until separately reviewed",
+    "If a later approved test is stopped, preserve durable cleanup obligations and scoped evidence; never reset consumed ledgers or shared policy",
+    "No release advancement from local tests or a provider control ACK"
+  ],
+  "securityGates": {
+    "CONNECT_REMOTE_REVOCATION_BOUND": "UNVERIFIED",
+    "CONNECT_M2A_SECURITY_GATE": "BLOCKED",
+    "CONNECT_M2B_READY": "BLOCKED",
+    "STAGING_MODIFICATIONS": "NONE",
+    "PRODUCTION_MODIFICATIONS": "NONE"
+  },
+  "sourceFreeze": {
+    "path": "tmp/connect-native-product-m3/source-freeze.json",
+    "sha256": "a7a1279e98d2dbf4dcbc013babbaab237d4ce94eeb4b3b89b0aa08c06e90a075"
+  },
+  "validationEvidence": "tmp/connect-native-product-m3/final-verification.json"
+}

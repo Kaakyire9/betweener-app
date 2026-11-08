@@ -54,6 +54,23 @@ export const buildVisibleRelationshipGistPerspectives = (
   return available.slice(0, 1);
 };
 
+export const buildExplicitRelationshipGistPerspectives = (available: string[]) => {
+  const supported = new Set<string>(RELATIONSHIP_GIST_PERSPECTIVES);
+  const normalized = Array.from(new Set(
+    available.map((item) => String(item ?? '').trim().toLowerCase()),
+  )).filter((item) => supported.has(item));
+  return RELATIONSHIP_GIST_PERSPECTIVES.filter((item) => normalized.includes(item));
+};
+
+export const buildExplicitRelationshipGistSelectionOrder = (
+  selectedPerspective: string,
+  available: string[],
+) => Array.from(new Set([
+  selectedPerspective,
+  'general',
+  ...buildExplicitRelationshipGistPerspectives(available),
+]));
+
 export const buildRelationshipGistSelectionOrder = (
   selectedPerspective: string,
   religion?: string | null,
@@ -136,4 +153,82 @@ export const calculateRelationshipGistProgress = ({
   if (contentHeight <= viewportHeight + 1) return 1;
   const maxOffset = contentHeight - viewportHeight;
   return Math.max(0, Math.min(1, offsetY / maxOffset));
+};
+
+export type RelationshipGistProgressSignal = {
+  progress: number;
+  scrollCompleted: boolean;
+  needsReadAcknowledgement: boolean;
+};
+
+export const calculateRelationshipGistReaderProgress = ({
+  offsetY,
+  contentHeight,
+  viewportHeight,
+  previousProgress = 0,
+  layoutReady,
+  readAcknowledged = false,
+}: {
+  offsetY: number;
+  contentHeight: number;
+  viewportHeight: number;
+  previousProgress?: number;
+  layoutReady: boolean;
+  readAcknowledged?: boolean;
+}): RelationshipGistProgressSignal => {
+  const previous = Math.max(0, Math.min(1, previousProgress));
+  if (!layoutReady || contentHeight <= 0 || viewportHeight <= 0) {
+    return { progress: previous, scrollCompleted: false, needsReadAcknowledgement: false };
+  }
+  if (readAcknowledged) {
+    return { progress: 1, scrollCompleted: false, needsReadAcknowledgement: false };
+  }
+  if (contentHeight <= viewportHeight + 1) {
+    return {
+      progress: Math.min(previous, 0.99),
+      scrollCompleted: false,
+      needsReadAcknowledgement: true,
+    };
+  }
+
+  const maxOffset = contentHeight - viewportHeight;
+  const progress = Math.max(previous, Math.max(0, Math.min(1, offsetY / maxOffset)));
+  const scrollCompleted = progress >= 0.995;
+  return {
+    progress: scrollCompleted ? 1 : progress,
+    scrollCompleted,
+    needsReadAcknowledgement: false,
+  };
+};
+
+export const findRelationshipGistReadingAnchor = (
+  offsetY: number,
+  sectionOffsets: Record<string, number>,
+) => Object.entries(sectionOffsets)
+  .filter(([, top]) => Number.isFinite(top) && top <= offsetY + 24)
+  .sort((left, right) => right[1] - left[1])[0] ?? null;
+
+export const resolveRelationshipGistResumeOffset = ({
+  anchor,
+  anchorOffset,
+  progress,
+  sectionOffsets,
+  contentHeight,
+  viewportHeight,
+}: {
+  anchor: string | null;
+  anchorOffset: number | null;
+  progress: number;
+  sectionOffsets: Record<string, number>;
+  contentHeight: number;
+  viewportHeight: number;
+}) => {
+  if (contentHeight <= 0 || viewportHeight <= 0) return null;
+  const maxOffset = Math.max(0, contentHeight - viewportHeight);
+  if (anchor) {
+    const anchorTop = sectionOffsets[anchor];
+    if (!Number.isFinite(anchorTop)) return null;
+    return Math.max(0, Math.min(maxOffset, anchorTop + Math.max(0, anchorOffset ?? 0)));
+  }
+  return maxOffset * Math.max(0, Math.min(1, progress));
 };

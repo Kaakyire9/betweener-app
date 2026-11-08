@@ -37,6 +37,18 @@ export const getJwtExpirySeconds = (accessToken?: string | null) => {
   }
 };
 
+/** Identity/expiry for local fencing only. The backend verifies the actual JWT. */
+export const getJwtSessionBinding = (accessToken?: string | null) => {
+  try {
+    const parts = accessToken?.split('.');
+    if (parts?.length !== 3) return null;
+    const value = JSON.parse(decodeBase64Url(parts[1]));
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (!uuid.test(value.sub) || !uuid.test(value.session_id) || typeof value.exp !== 'number' || !Number.isFinite(value.exp)) return null;
+    return { userId: value.sub as string, sessionId: value.session_id as string, expiresAt: value.exp * 1000 };
+  } catch { return null; }
+};
+
 export const isSupabaseAccessTokenUsable = (
   accessToken?: string | null,
   nowMs: number = Date.now(),

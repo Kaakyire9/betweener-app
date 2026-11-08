@@ -11,7 +11,7 @@ const path = require('node:path');
 
 const pkg = {
   name: 'with-betweener-live-webrtc',
-  version: '1.1.1',
+  version: '1.1.2',
 };
 
 const moduleName = 'BetweenerLivePictureInPicture';
@@ -33,7 +33,7 @@ import android.app.RemoteAction
 import android.content.Intent
 import android.graphics.drawable.Icon
 import android.os.Build
-import android.util.Rational
+import android.util.Log
 import ${androidPackage}.R
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
@@ -43,6 +43,8 @@ import com.facebook.react.bridge.UiThreadUtil
 class BetweenerLivePictureInPictureModule(
   reactContext: ReactApplicationContext,
 ) : ReactContextBaseJavaModule(reactContext) {
+  @Volatile private var lastActionSignature: String? = null
+
   override fun getName() = "${moduleName}"
 
   @ReactMethod
@@ -62,11 +64,12 @@ class BetweenerLivePictureInPictureModule(
           title = if (cameraEnabled) "Camera off" else "Camera on",
         ),
       ),
+      "actions:\$microphoneEnabled:\$cameraEnabled",
     )
   }
 
   @ReactMethod
-  fun clearActions() = updateActions(emptyList())
+  fun clearActions() = updateActions(emptyList(), "clear")
 
   @ReactMethod
   fun addListener(eventName: String) = Unit
@@ -98,17 +101,22 @@ class BetweenerLivePictureInPictureModule(
     )
   }
 
-  private fun updateActions(actions: List<RemoteAction>) {
+  private fun updateActions(actions: List<RemoteAction>, signature: String) {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
     UiThreadUtil.runOnUiThread {
+      if (lastActionSignature == signature) return@runOnUiThread
       val activity = reactApplicationContext.currentActivity ?: return@runOnUiThread
-      val builder = PictureInPictureParams.Builder().apply {
-        val metrics = activity.resources.displayMetrics
-        if (metrics.widthPixels > 0 && metrics.heightPixels > 0) {
-          setAspectRatio(Rational(metrics.widthPixels, metrics.heightPixels))
-        }
+      try {
+        // Stream owns the video aspect ratio. This module only supplies
+        // RemoteActions; repeatedly writing a ratio can trip Android's PiP
+        // aspect-ratio rate limiter and terminate the Activity.
+        activity.setPictureInPictureParams(
+          PictureInPictureParams.Builder().setActions(actions).build(),
+        )
+        lastActionSignature = signature
+      } catch (error: IllegalStateException) {
+        Log.w("BetweenerLivePiP", "Android rejected a transient PiP action update", error)
       }
-      activity.setPictureInPictureParams(builder.setActions(actions).build())
     }
   }
 }

@@ -18,6 +18,10 @@ const circleDetail = readFileSync(
   new URL('../app/circles/[id].tsx', import.meta.url),
   'utf8',
 );
+const retentionMigration = readFileSync(
+  new URL('../supabase/migrations/20260914120000_live_operational_event_retention.sql', import.meta.url),
+  'utf8',
+);
 
 test('Live presence leases are private, indexed, disposable and independent of Realtime', () => {
   assert.match(migration, /create unlogged table if not exists public\.live_presence_leases/i);
@@ -37,6 +41,17 @@ test('Live maintenance is serialized, failure-isolated and consolidated into one
   assert.match(migration, /exception when others/i);
   assert.match(migration, /where jobname in \([\s\S]+live-presence-cleanup[\s\S]+live-private-spark-cleanup/i);
   assert.match(migration, /'live-maintenance','\* \* \* \* \*'/i);
+});
+
+test('operational event retention is bounded and preserves active safety investigations', () => {
+  assert.match(retentionMigration, /cleanup_live_operational_events_v1/);
+  assert.match(retentionMigration, /interval '30 days'/i);
+  assert.match(retentionMigration, /interval '365 days'/i);
+  assert.match(retentionMigration, /report\.status in \('open', 'reviewing'\)/i);
+  assert.match(retentionMigration, /limit p_batch_size[\s\S]*for update skip locked/i);
+  assert.match(retentionMigration, /'live-operational-event-retention'/i);
+  assert.match(retentionMigration, /'17 \* \* \* \*'/i);
+  assert.match(retentionMigration, /revoke all on function[\s\S]*authenticated/i);
 });
 
 test('Healthy Realtime avoids fallback reads until the bounded consistency window expires', () => {

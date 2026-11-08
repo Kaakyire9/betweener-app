@@ -4,6 +4,7 @@ export type ForegroundChatMessageEvent = {
   receiver_id: string;
   text: string | null;
   message_type: string | null;
+  media_kind?: string | null;
   is_view_once: boolean | null;
 };
 

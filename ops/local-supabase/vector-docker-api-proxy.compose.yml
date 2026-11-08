@@ -1,0 +1,71 @@
+services:
+  docker-api-proxy:
+    image: haproxy:3.2.26-alpine@sha256:51f173c6825753d9e3a888b1004a1c2cb730936cc9178730a5c555246bd161a2
+    pull_policy: never
+    container_name: betweener-vector-docker-api-proxy
+    command:
+      - haproxy
+      - -W
+      - -db
+      - -f
+      - /usr/local/etc/haproxy/haproxy.cfg
+    environment:
+      DOCKER_BACKEND: /var/run/docker.sock
+    user: "99:99"
+    group_add:
+      - "0"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 64m
+    cpus: 0.25
+    restart: unless-stopped
+    stop_grace_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    volumes:
+      - type: bind
+        source: ./haproxy-vector-readonly.cfg
+        target: /usr/local/etc/haproxy/haproxy.cfg
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - -q
+        - -O
+        - /dev/null
+        - http://127.0.0.1:2375/_ping
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 3s
+    labels:
+      com.betweener.local-supabase.repair: vector-docker-api-proxy
+      com.betweener.local-supabase.project: betweener-app
+    networks:
+      vector_docker_api:
+        aliases:
+          - host.docker.internal
+
+networks:
+  vector_docker_api:
+    name: betweener_vector_docker_api
+    internal: true
+    labels:
+      com.betweener.local-supabase.repair: vector-docker-api-proxy
+      com.betweener.local-supabase.project: betweener-app

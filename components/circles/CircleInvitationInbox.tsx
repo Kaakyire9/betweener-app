@@ -11,6 +11,7 @@ import {
   type MyCircleInvitation,
 } from '@/lib/circles/circle-invitations';
 import { supabase } from '@/lib/supabase';
+import { createEphemeralRealtimeTopic } from '@/lib/realtime/realtime-channel-topic';
 
 type Props = {
   profileId: string | null;
@@ -49,7 +50,7 @@ export default function CircleInvitationInbox({ profileId, onChanged }: Props) {
       }, 250);
     };
     const channel = supabase
-      .channel(`circle-invitations:inbox:${profileId}`)
+      .channel(createEphemeralRealtimeTopic(`circle-invitations:inbox:${profileId}`))
       .on(
         'postgres_changes',
         {
@@ -72,7 +73,7 @@ export default function CircleInvitationInbox({ profileId, onChanged }: Props) {
     return () => {
       if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
       appStateSubscription.remove();
-      supabase.removeChannel(channel);
+      void supabase.removeChannel(channel);
     };
   }, [load, profileId]);
 

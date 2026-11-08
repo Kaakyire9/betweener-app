@@ -152,6 +152,23 @@ export type CircleLoveSeatCandidate = {
   location: string | null;
 };
 
+export type CircleLoveSeatDurationHours = 12 | 24 | 48;
+
+export type CircleLoveSeatRequest = {
+  id: string;
+  circleId: string;
+  status: 'requested';
+  note: string | null;
+  createdAt: string;
+  requestExpiresAt: string;
+};
+
+export type CircleLoveSeatHostRequest = CircleLoveSeatRequest & {
+  featuredProfileId: string;
+  featuredProfileName: string;
+  featuredProfileAvatarUrl: string | null;
+};
+
 export type CircleLoveSeatNomination = {
   id: string;
   circleId: string;
@@ -162,6 +179,8 @@ export type CircleLoveSeatNomination = {
   quote: string | null;
   reason: string | null;
   status: 'pending_user_approval';
+  durationHours: CircleLoveSeatDurationHours;
+  invitationExpiresAt: string;
   createdAt: string;
 };
 

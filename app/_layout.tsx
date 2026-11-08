@@ -19,10 +19,10 @@ import { scheduleIdleTask } from "@/lib/scheduling/idle-task";
 import AccountRecoveryNotice from "@/components/AccountRecoveryNotice";
 import RecoveryMergeSuggestionNotice from "@/components/RecoveryMergeSuggestionNotice";
 import InAppToasts from "@/components/InAppToasts";
+import { ConnectProductProvider } from '@/features/connect/components/ConnectProductProvider';
+import { ConnectionJournalProvider } from '@/features/connect/journal/ConnectionJournalProvider';
 import IntentResponseReminder from "@/components/IntentResponseReminder";
 import NetworkStatusBanner from "@/components/NetworkStatusBanner";
-import OfflineSyncHistoryHydrator from "@/components/OfflineSyncHistoryHydrator";
-import OfflineSyncStatusPill from "@/components/OfflineSyncStatusPill";
 import AppVersionGateHost from "@/components/updates/AppVersionGateHost";
 import BetweenerAlertHost from "@/components/ui/BetweenerAlertHost";
 import ScreenAwakeSafetyGuard from "@/components/system/ScreenAwakeSafetyGuard";
@@ -40,6 +40,7 @@ import { captureException, initSentry, wrapWithSentry } from "@/lib/telemetry/se
 import { logger } from "@/lib/telemetry/logger";
 import { recoverSupabaseConnectivity, SUPABASE_IS_CONFIGURED } from "@/lib/supabase";
 import { initPushNotificationUX } from "@/lib/notifications/push";
+import { SparkWalletProvider } from "@/lib/economy/wallet/use-spark-wallet";
 import {
   buildNotificationRoute,
   clearPendingNotificationRoute,
@@ -65,6 +66,7 @@ initSentry();
 
 function PendingNotificationRouteHydrator() {
   const { isLoading, canAccessApp } = useAuthGuard();
+  const { nativeSessionOwner } = useAuth();
   const pathname = usePathname();
   const segments = useSegments();
   const router = useRouter();
@@ -111,6 +113,15 @@ function PendingNotificationRouteHydrator() {
     try {
       const target = await peekPendingNotificationRoute();
       if (!target) return;
+      if (target.pathname === '/connect/voice') {
+        const { connectNotificationAccountAllowed } = await import('@/features/connect/domain/notification-binding');
+        if (!connectNotificationAccountAllowed(target.pathname, target.params, nativeSessionOwner.snapshot()?.userId ?? null)) {
+          await clearPendingNotificationRoute(); return;
+        }
+        // Each notification selects a specific call even when /connect/voice is open.
+        await clearPendingNotificationRoute();
+        router.replace(target as any); return;
+      }
 
       debugNotificationHydrator("target", {
         reason,
@@ -150,7 +161,7 @@ function PendingNotificationRouteHydrator() {
     } finally {
       inFlightRef.current = false;
     }
-  }, [canAccessApp, debugNotificationHydrator, isLoading, router]);
+  }, [canAccessApp, debugNotificationHydrator, isLoading, nativeSessionOwner, router]);
 
   useEffect(() => {
     void hydratePendingRoute("pending_route_changed");
@@ -478,6 +489,11 @@ function RootLayout() {
           if (!target) {
             return;
           }
+          if (target.pathname === '/connect/voice') {
+            lastHandledNotificationKeyRef.current = responseKey;
+            await persistPendingNotificationRoute(target);
+            return;
+          }
 
           if (
             typeof target.params?.openPulseItemId === "string" ||
@@ -784,11 +800,13 @@ function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <AuthProvider>
-        <View style={{ flex: 1, backgroundColor: Colors[colorScheme].background }}>
+        <ConnectionJournalProvider>
+        <ConnectProductProvider>
+        <SparkWalletProvider>
+          <View style={{ flex: 1, backgroundColor: Colors[colorScheme].background }}>
           <OfflineMutationQueueHydrator />
           <VibesTelemetryQueueHydrator />
           <ChatOutboxHydrator />
-          <OfflineSyncHistoryHydrator />
           <NetworkRecoveryHydrator />
           <ScreenAwakeSafetyGuard />
           <ChatRealtimeHydrator />
@@ -798,7 +816,6 @@ function RootLayout() {
           <InAppToasts />
           <IntentResponseReminder />
           <NetworkStatusBanner />
-          <OfflineSyncStatusPill />
           <AccountRecoveryNotice />
           <RecoveryMergeSuggestionNotice />
           <AppVersionGateHost />
@@ -978,7 +995,10 @@ function RootLayout() {
               </Animated.View>
             </View>
           )}
-        </View>
+          </View>
+        </SparkWalletProvider>
+        </ConnectProductProvider>
+        </ConnectionJournalProvider>
       </AuthProvider>
     </GestureHandlerRootView>
   );

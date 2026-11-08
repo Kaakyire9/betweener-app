@@ -27,6 +27,25 @@ export const isRecentlyActive = (lastActive?: string | null) => {
   }
 };
 
+export const isActiveWithinWindow = (lastActive: string | null | undefined, windowMinutes: number) => {
+  if (!lastActive) return false;
+  const timestamp = new Date(lastActive).getTime();
+  if (!Number.isFinite(timestamp)) return false;
+  const boundedWindow = Math.max(1, Math.min(180, Math.round(windowMinutes || 15)));
+  const elapsed = Date.now() - timestamp;
+  return elapsed >= 0 && elapsed <= boundedWindow * 60 * 1000;
+};
+
+export const isAgeWithinRange = (
+  age: number | string | null | undefined,
+  minAge: number,
+  maxAge: number,
+) => {
+  if (age == null || String(age).trim() === '') return false;
+  const numericAge = Number(age);
+  return Number.isFinite(numericAge) && numericAge >= minAge && numericAge <= maxAge;
+};
+
 export const buildLocationSearchText = (match: Match) =>
   String(
     (match as any).city ||

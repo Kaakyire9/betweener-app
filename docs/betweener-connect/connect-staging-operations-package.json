@@ -1,0 +1,170 @@
+{
+  "schemaVersion": 1,
+  "scope": "LOCAL_PROPOSAL_ONLY",
+  "executionAuthorised": false,
+  "target": {
+    "name": "betweener-staging",
+    "reference": "xsgzxadwuxuziubglvps",
+    "region": "eu-north-1"
+  },
+  "scheduler": {
+    "job": "connect-staging-provider-worker",
+    "cadence": "5 seconds",
+    "vaultReference": "connect_staging_worker_secret",
+    "copyExistingSecretOnly": true,
+    "hostedInstalled": false,
+    "sql": [
+      {
+        "path": "docs/betweener-connect/operations/staging-worker-support.proposed.sql",
+        "sha256": "84e858157bb3803ad6bb07568209ee3f5da46a4075930261bbcddef5711ffa28"
+      },
+      {
+        "path": "docs/betweener-connect/operations/staging-worker-schedule.proposed.sql",
+        "sha256": "1018ff654064ba59ffb44dbbada67cd0c4a7177d70c57f9390acb1fa298e9297"
+      },
+      {
+        "path": "docs/betweener-connect/operations/staging-worker-monitor.sql",
+        "sha256": "2e268e68c07d7e135bf1e2daa82f7ae19dfdd0842a194e1cdcd26bac62bf504b"
+      }
+    ]
+  },
+  "webhook": {
+    "expectedExistingRevision": 1,
+    "verifyJwt": false,
+    "databaseMigrationRequired": false,
+    "roots": {
+      "forward": "tmp/connect-operational-readiness/webhook-forward",
+      "rollback": "tmp/connect-operational-readiness/webhook-rollback"
+    },
+    "sources": {
+      "forward": [
+        {
+          "path": "supabase/functions/_shared/connect-edge.ts",
+          "sha256": "708101e75f9c3bfe5afe30edb9978c232fd1cbbb2ddeab7617382b290c354ff5"
+        },
+        {
+          "path": "supabase/functions/_shared/connect-environment.ts",
+          "sha256": "6c8b72a88c5ebd2a93a5d0d3bef378d340a0653bb6f2b73714b495d196cdf523"
+        },
+        {
+          "path": "supabase/functions/_shared/connect-provider-end.ts",
+          "sha256": "5b7ec7409bfe12c07277b373617ea3dfcfb2cf562c092869ee3b1871e046b695"
+        },
+        {
+          "path": "supabase/functions/_shared/connect-stream-adapter.ts",
+          "sha256": "4cfc00c772d845b005ced0499897c7327a405ed67a489a120d2126f9cfc53357"
+        },
+        {
+          "path": "supabase/functions/_shared/connect-webhook.ts",
+          "sha256": "c63ff22a6bc80307628e403335f7f7466546b023e62750905a7f44f12e1b4998"
+        },
+        {
+          "path": "supabase/functions/_shared/cors.ts",
+          "sha256": "2b7f755ddc2f0e3a17f70694541f1760b43513f133a0bef2cbc9db6938e2bc2b"
+        },
+        {
+          "path": "supabase/functions/_shared/supabase-admin-key.ts",
+          "sha256": "326dfe3df009483cc38828b48902fe4fc074262760a68d813c60b49edeaebacc"
+        },
+        {
+          "path": "supabase/functions/_shared/supabase-public-key.ts",
+          "sha256": "9ce797d773cc4a552679ab1201de67ea1a1f8ada8079a0c143c406b939048b85"
+        },
+        {
+          "path": "supabase/functions/connect-webhook/deno.json",
+          "sha256": "926e31574d93ff0885ef4f296ed3d5bce1458056256efb2d47343c8914003f68"
+        },
+        {
+          "path": "supabase/functions/connect-webhook/index.ts",
+          "sha256": "7dcf2113fcb277c8e97316d0d6ce93728e83b9a7206b543952ac5c1ec400849c"
+        },
+        {
+          "path": "supabase/config.toml",
+          "sha256": "2bc3d41280d3c96dcbeb9c457693c07deee42f81882a7004cc5532407e851b41"
+        }
+      ],
+      "rollback": [
+        {
+          "path": "supabase/functions/_shared/connect-edge.ts",
+          "sha256": "708101e75f9c3bfe5afe30edb9978c232fd1cbbb2ddeab7617382b290c354ff5"
+        },
+        {
+          "path": "supabase/functions/_shared/connect-environment.ts",
+          "sha256": "6c8b72a88c5ebd2a93a5d0d3bef378d340a0653bb6f2b73714b495d196cdf523"
+        },
+        {
+          "path": "supabase/functions/_shared/connect-provider-end.ts",
+          "sha256": "5b7ec7409bfe12c07277b373617ea3dfcfb2cf562c092869ee3b1871e046b695"
+        },
+        {
+          "path": "supabase/functions/_shared/connect-stream-adapter.ts",
+          "sha256": "4cfc00c772d845b005ced0499897c7327a405ed67a489a120d2126f9cfc53357"
+        },
+        {
+          "path": "supabase/functions/_shared/connect-webhook.ts",
+          "sha256": "98ea4173eebc465ffd336b2e8bb938dc961529e63b3a16d2b57ef4d080ffa981"
+        },
+        {
+          "path": "supabase/functions/_shared/cors.ts",
+          "sha256": "2b7f755ddc2f0e3a17f70694541f1760b43513f133a0bef2cbc9db6938e2bc2b"
+        },
+        {
+          "path": "supabase/functions/_shared/supabase-admin-key.ts",
+          "sha256": "326dfe3df009483cc38828b48902fe4fc074262760a68d813c60b49edeaebacc"
+        },
+        {
+          "path": "supabase/functions/_shared/supabase-public-key.ts",
+          "sha256": "9ce797d773cc4a552679ab1201de67ea1a1f8ada8079a0c143c406b939048b85"
+        },
+        {
+          "path": "supabase/functions/connect-webhook/deno.json",
+          "sha256": "926e31574d93ff0885ef4f296ed3d5bce1458056256efb2d47343c8914003f68"
+        },
+        {
+          "path": "supabase/functions/connect-webhook/index.ts",
+          "sha256": "de8ae199206068721a2b10dcc58bb5ac6163c32881396be92f32d4255e6d1369"
+        },
+        {
+          "path": "supabase/config.toml",
+          "sha256": "2bc3d41280d3c96dcbeb9c457693c07deee42f81882a7004cc5532407e851b41"
+        }
+      ]
+    },
+    "sourceDeltas": [
+      {
+        "path": "supabase/functions/_shared/connect-webhook.ts",
+        "before": "98ea4173eebc465ffd336b2e8bb938dc961529e63b3a16d2b57ef4d080ffa981",
+        "after": "c63ff22a6bc80307628e403335f7f7466546b023e62750905a7f44f12e1b4998"
+      },
+      {
+        "path": "supabase/functions/connect-webhook/index.ts",
+        "before": "de8ae199206068721a2b10dcc58bb5ac6163c32881396be92f32d4255e6d1369",
+        "after": "7dcf2113fcb277c8e97316d0d6ce93728e83b9a7206b543952ac5c1ec400849c"
+      }
+    ],
+    "deployArguments": [
+      "functions",
+      "deploy",
+      "connect-webhook",
+      "--project-ref",
+      "xsgzxadwuxuziubglvps",
+      "--workdir",
+      "C:\\Projects\\betweener-app\\tmp\\connect-operational-readiness\\webhook-forward",
+      "--use-api",
+      "--no-verify-jwt",
+      "--profile",
+      "supabase",
+      "--yes"
+    ],
+    "rollback": "Same single-function staging command using pinned rollback workdir; no SQL downgrade, shared push or worker deployment.",
+    "completeTransitiveNpmLock": false
+  },
+  "requiredCurrentState": {
+    "allCallingGates": false,
+    "staging_open_testing": false,
+    "staging_calls_remaining": 0,
+    "authorisedAccounts": []
+  },
+  "pilot": "SEPARATE_APPROVAL_REQUIRED",
+  "productionAccess": false
+}

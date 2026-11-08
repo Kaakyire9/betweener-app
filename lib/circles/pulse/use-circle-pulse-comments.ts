@@ -14,6 +14,7 @@ import {
   subscribeToOfflineMutationEvents,
 } from '@/lib/offline/mutation-queue';
 import { supabase } from '@/lib/supabase';
+import { createEphemeralRealtimeTopic } from '@/lib/realtime/realtime-channel-topic';
 import {
   readCirclePulseCommentsSnapshotState,
   readCirclePulseDiscussionReadState,
@@ -412,7 +413,7 @@ export function useCirclePulseComments({
     if (!enabled || !itemId) return;
 
     const channel = supabase
-      .channel(`circle-pulse-comments:${itemId}:${actorProfileId ?? 'viewer'}`)
+      .channel(createEphemeralRealtimeTopic(`circle-pulse-comments:${itemId}:${actorProfileId ?? 'viewer'}`))
       .on(
         'postgres_changes',
         {
@@ -468,7 +469,7 @@ export function useCirclePulseComments({
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      void supabase.removeChannel(channel);
     };
   }, [actorProfileId, enabled, hydrateRealtimeCommentSnapshot, itemId, removeCommentInPlace]);
 

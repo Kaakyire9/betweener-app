@@ -6,11 +6,14 @@ import { upsertChatPref } from '@/lib/chat/chat-list-actions-service';
 import { ChatOutboxService } from '@/lib/chat/outbox/chat-outbox-service';
 import { getStickerReactionTarget, parseStickerPreview } from '@/lib/chat-sticker-preview';
 import { getChatMessagePreviewText, getDatePlanPreviewText, parseDatePlanPreviewMeta } from '@/lib/message-preview';
+import { getLoveSeatNotificationDestination } from '@/lib/notifications/notification-routing';
 import { getSafeRemoteImageUri, getUserFacingDisplayName } from '@/lib/profile/display-name';
+import { subscribeUserChatBroadcast } from '@/lib/realtime/user-chat-broadcast';
 import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Image as ExpoImage } from 'expo-image';
 import * as Notifications from 'expo-notifications';
+import { LIVE_PRODUCT_ENABLED } from '@/features/live/config/live-product-release';
 import { LinearGradient } from 'expo-linear-gradient';
 import { createVideoPlayer } from 'expo-video';
 import { usePathname, useRouter } from 'expo-router';
@@ -65,6 +68,8 @@ type NotificationPrefs = {
   gifts: boolean;
   boosts: boolean;
   verification: boolean;
+  live_reminders: boolean;
+  live_started: boolean;
   quiet_hours_enabled: boolean;
   quiet_hours_start: string | null;
   quiet_hours_end: string | null;
@@ -77,6 +82,7 @@ type MessageToastRow = {
   receiver_id: string;
   text: string | null;
   message_type: string | null;
+  media_kind?: string | null;
   is_view_once?: boolean | null;
 };
 
@@ -508,7 +514,7 @@ export default function InAppToasts() {
       const { data, error } = await supabase
         .from('notification_prefs')
         .select(
-          'inapp_enabled,preview_text,messages,message_reactions,profile_interest,reactions,circle_discussions,likes,superlikes,matches,moments,gifts,boosts,verification,quiet_hours_enabled,quiet_hours_start,quiet_hours_end,quiet_hours_tz',
+          'inapp_enabled,preview_text,messages,message_reactions,profile_interest,reactions,circle_discussions,likes,superlikes,matches,moments,gifts,boosts,verification,live_reminders,live_started,quiet_hours_enabled,quiet_hours_start,quiet_hours_end,quiet_hours_tz',
         )
         .eq('user_id', user.id)
         .maybeSingle();
@@ -534,6 +540,8 @@ export default function InAppToasts() {
           gifts: Boolean(data.gifts),
           boosts: Boolean(data.boosts),
           verification: Boolean((data as any).verification),
+          live_reminders: (data as any).live_reminders !== false,
+          live_started: (data as any).live_started !== false,
           quiet_hours_enabled: Boolean(data.quiet_hours_enabled),
           quiet_hours_start: data.quiet_hours_start ?? null,
           quiet_hours_end: data.quiet_hours_end ?? null,
@@ -575,6 +583,8 @@ export default function InAppToasts() {
             gifts: Boolean(row.gifts),
             boosts: Boolean(row.boosts),
             verification: Boolean(row.verification),
+            live_reminders: row.live_reminders !== false,
+            live_started: row.live_started !== false,
             quiet_hours_enabled: Boolean(row.quiet_hours_enabled),
             quiet_hours_start: row.quiet_hours_start ?? null,
             quiet_hours_end: row.quiet_hours_end ?? null,
@@ -663,6 +673,12 @@ export default function InAppToasts() {
   }
 
   function systemMessagePreview(row: any, peerName: string) {
+    if (row?.event_type === 'database_capacity_alert') {
+      return {
+        title: 'Database capacity',
+        body: row?.text ?? 'Database connection capacity changed.',
+      };
+    }
     if (row?.event_type === 'admin_queue_item') {
       return {
         title: 'Admin queue',
@@ -756,20 +772,20 @@ export default function InAppToasts() {
       eventType === 'date_plan_concierge_cancelled' ||
       eventType === 'account_recovery_reviewing' ||
       eventType === 'account_recovery_resolved' ||
-      eventType === 'account_recovery_closed'
+      eventType === 'account_recovery_closed' ||
+      eventType === 'database_capacity_alert'
     );
   }
 
   useEffect(() => {
     if (!user?.id) return;
 
-    const channel = supabase
-      .channel(`inapp_system_messages:${user.id}`)
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'system_messages', filter: `user_id=eq.${user.id}` },
-        (payload) => {
-          const row = payload.new as any;
+    const unsubscribe = subscribeUserChatBroadcast(
+      user.id,
+      (change) => {
+          if (change.table !== 'system_messages' || change.eventType !== 'INSERT') return;
+          const row = change.new as any;
+          if (row?.user_id !== user.id) return;
           if (!row) return;
           const officialSystemMessage = isOfficialSystemMessage(row);
           const notificationKind =
@@ -837,12 +853,11 @@ export default function InAppToasts() {
                   : undefined,
             });
           })();
-        },
-      )
-      .subscribe();
+      },
+    );
 
     return () => {
-      supabase.removeChannel(channel);
+      unsubscribe();
     };
   }, [canInAppNotify, getProfileLite, pushToast, user?.id]);
 
@@ -901,6 +916,7 @@ export default function InAppToasts() {
       getChatMessagePreviewText({
         text: row?.text,
         messageType: row?.message_type,
+        mediaKind: row?.media_kind,
         isViewOnce: Boolean(row?.is_view_once),
       }) || 'New message'
     );
@@ -1640,6 +1656,35 @@ export default function InAppToasts() {
   }, [queueIncomingMessageToast, user?.id]);
 
   useEffect(() => {
+    if (!LIVE_PRODUCT_ENABLED || !user?.id) return;
+    const channel = supabase
+      .channel(`inapp_live_announcements:${user.id}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'live_in_app_announcements' },
+        (payload) => {
+          const row = payload.new as Record<string, unknown>;
+          const sessionId = typeof row.session_id === 'string' ? row.session_id : '';
+          const kind = row.kind === 'starting_soon' ? 'starting_soon' : row.kind === 'live_now' ? 'live_now' : null;
+          if (!sessionId || !kind) return;
+          if (!canInAppNotify(kind === 'starting_soon' ? 'live_reminders' : 'live_started')) return;
+          if (shouldSuppressToast(`live_${kind}:${sessionId}`, 60_000)) return;
+          pushToast({
+            id: `live-announcement-${String(row.id)}`,
+            title: typeof row.title === 'string' ? row.title : kind === 'live_now' ? 'Betweener Live is open' : 'Live starts soon',
+            body: typeof row.body === 'string' ? row.body : 'A Betweener Live room is ready for you.',
+            kind: 'system',
+            groupKey: `live:${sessionId}`,
+            route: kind === 'live_now' ? '/live/[sessionId]' : '/live/event/[sessionId]',
+            routeParams: { sessionId },
+          }, { durationMs: 7_500 });
+        },
+      )
+      .subscribe();
+    return () => { void supabase.removeChannel(channel); };
+  }, [canInAppNotify, pushToast, shouldSuppressToast, user?.id]);
+
+  useEffect(() => {
     if (!user?.id) return;
 
     const channel = supabase
@@ -1666,7 +1711,7 @@ export default function InAppToasts() {
             try {
               const { data: messageRow } = await supabase
                 .from('messages')
-                .select('sender_id,receiver_id,text,message_type,is_view_once')
+                .select('sender_id,receiver_id,text,message_type,media_kind,is_view_once')
                 .eq('id', row.message_id)
                 .maybeSingle();
               if (!messageRow?.sender_id || !messageRow?.receiver_id) return;
@@ -2009,6 +2054,26 @@ export default function InAppToasts() {
     const subscription = Notifications.addNotificationReceivedListener((notification) => {
       const data = notification.request.content.data as Record<string, any> | undefined;
       const pushType = typeof data?.type === 'string' ? data.type : '';
+      if (pushType === 'live_host_assigned' || pushType === 'live_host_revoked'
+        || pushType === 'live_starting_soon' || pushType === 'live_now') {
+        if (!LIVE_PRODUCT_ENABLED) return;
+        const preference = pushType === 'live_starting_soon' ? 'live_reminders' : 'live_started';
+        if (!canInAppNotify(preference)) return;
+        const sessionId = data?.session_id ? String(data.session_id) : '';
+        if (!sessionId || shouldSuppressToast(`${pushType}:${sessionId}`, 60_000)) return;
+        const isLiveNow = pushType === 'live_now';
+        const isRevoked = pushType === 'live_host_revoked';
+        pushToast({
+          id: `live-${pushType}-${sessionId}`,
+          title: notification.request.content.title || (isLiveNow ? 'Betweener Live is open' : 'Live update'),
+          body: notification.request.content.body || (isLiveNow ? 'Step into the room now.' : 'Your Live has an update.'),
+          kind: 'system',
+          groupKey: `live:${sessionId}`,
+          route: isRevoked ? '/live' : isLiveNow ? '/live/[sessionId]' : '/live/event/[sessionId]',
+          routeParams: isRevoked ? undefined : { sessionId },
+        }, { durationMs: 7_500 });
+        return;
+      }
       if (pushType === 'message') {
         if (!user?.id) return;
         if (!canInAppNotify('messages')) return;
@@ -2020,7 +2085,7 @@ export default function InAppToasts() {
         void (async () => {
           const { data: messageRow } = await supabase
             .from('messages')
-            .select('id,sender_id,receiver_id,text,message_type,is_view_once')
+            .select('id,sender_id,receiver_id,text,message_type,media_kind,is_view_once')
             .eq('id', messageId)
             .maybeSingle();
           const resolvedRow = messageRow as MessageToastRow | null;
@@ -2065,7 +2130,7 @@ export default function InAppToasts() {
           if (messageId) {
             const { data: messageRow } = await supabase
               .from('messages')
-              .select('sender_id,receiver_id,text,message_type,is_view_once')
+              .select('sender_id,receiver_id,text,message_type,media_kind,is_view_once')
               .eq('id', messageId)
               .maybeSingle();
             if (messageRow) {
@@ -2336,13 +2401,19 @@ export default function InAppToasts() {
       if (pushType === 'circle_love_seat' && data?.circle_id) {
         if ((prefs && !prefs.inapp_enabled) || isQuietHours) return;
         pushToast({
-          id: `circle-love-seat-${data?.love_seat_id ? String(data.love_seat_id) : notification.request.identifier}-${data?.event_type || 'update'}`,
+          id: data?.event_id
+            ? `circle-love-seat-${String(data.event_id)}`
+            : `circle-love-seat-${data?.love_seat_id ? String(data.love_seat_id) : notification.request.identifier}-${data?.event_type || 'update'}`,
           title: notification.request.content.title || 'Circle Love Seat',
           body: notification.request.content.body || 'There is a new Love Seat update in your Circle.',
           kind: 'generic',
           route: '/circles/[id]',
           routeParams: {
             id: String(data.circle_id),
+            ...(data?.love_seat_id ? { openLoveSeatId: String(data.love_seat_id) } : {}),
+            openLoveSeatEvent: typeof data?.event_type === 'string' ? data.event_type : 'status',
+            openLoveSeatDestination: getLoveSeatNotificationDestination(data?.event_type),
+            openLoveSeatRouteNonce: notification.request.identifier,
           },
         });
         return;

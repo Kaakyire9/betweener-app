@@ -7,6 +7,11 @@ export type Json =
   | Json[]
 
 export type Database = {
+  // Allows to automatically instantiate createClient with right options
+  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
+  __InternalSupabase: {
+    PostgrestVersion: "14.17"
+  }
   public: {
     Tables: {
       account_deletion_requests: {
@@ -531,6 +536,30 @@ export type Database = {
         }
         Relationships: []
       }
+      app_mutation_receipts: {
+        Row: {
+          created_at: string
+          mutation_kind: string
+          operation_id: string
+          result: Json
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          mutation_kind: string
+          operation_id: string
+          result?: Json
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          mutation_kind?: string
+          operation_id?: string
+          result?: Json
+          user_id?: string
+        }
+        Relationships: []
+      }
       app_version_history: {
         Row: {
           build_number: number
@@ -627,6 +656,75 @@ export type Database = {
           updated_at?: string
           whats_new_items?: Json
           whats_new_title?: string | null
+        }
+        Relationships: []
+      }
+      approved_chat_media_objects: {
+        Row: {
+          approved_at: string
+          attachment_id: string
+          byte_size: number
+          client_message_id: string
+          mime_type: string
+          object_path: string
+          receiver_id: string
+          sender_id: string
+          sha256: string
+          variant: string
+        }
+        Insert: {
+          approved_at?: string
+          attachment_id: string
+          byte_size: number
+          client_message_id: string
+          mime_type: string
+          object_path: string
+          receiver_id: string
+          sender_id: string
+          sha256: string
+          variant: string
+        }
+        Update: {
+          approved_at?: string
+          attachment_id?: string
+          byte_size?: number
+          client_message_id?: string
+          mime_type?: string
+          object_path?: string
+          receiver_id?: string
+          sender_id?: string
+          sha256?: string
+          variant?: string
+        }
+        Relationships: []
+      }
+      approved_profile_media_objects: {
+        Row: {
+          approved_at: string
+          byte_size: number
+          mime_type: string
+          object_path: string
+          public_url: string
+          sha256: string
+          user_id: string
+        }
+        Insert: {
+          approved_at?: string
+          byte_size: number
+          mime_type: string
+          object_path: string
+          public_url: string
+          sha256: string
+          user_id: string
+        }
+        Update: {
+          approved_at?: string
+          byte_size?: number
+          mime_type?: string
+          object_path?: string
+          public_url?: string
+          sha256?: string
+          user_id?: string
         }
         Relationships: []
       }
@@ -1054,6 +1152,54 @@ export type Database = {
           },
         ]
       }
+      chat_image_moderation_receipts: {
+        Row: {
+          attachment_id: string
+          categories: string[]
+          client_message_id: string
+          created_at: string
+          decision: string
+          expires_at: string
+          mime_type: string
+          policy_version: string
+          provider: string
+          provider_model: string
+          risk_score: number
+          sender_user_id: string
+          sha256: string
+        }
+        Insert: {
+          attachment_id: string
+          categories?: string[]
+          client_message_id: string
+          created_at?: string
+          decision: string
+          expires_at?: string
+          mime_type: string
+          policy_version: string
+          provider: string
+          provider_model: string
+          risk_score?: number
+          sender_user_id: string
+          sha256: string
+        }
+        Update: {
+          attachment_id?: string
+          categories?: string[]
+          client_message_id?: string
+          created_at?: string
+          decision?: string
+          expires_at?: string
+          mime_type?: string
+          policy_version?: string
+          provider?: string
+          provider_model?: string
+          risk_score?: number
+          sender_user_id?: string
+          sha256?: string
+        }
+        Relationships: []
+      }
       chat_media_album_item_cancellations: {
         Row: {
           attachment_id: string
@@ -1122,6 +1268,62 @@ export type Database = {
           peer_user_id?: string
           typing_until?: string | null
           updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      child_safety_evidence_transitions: {
+        Row: {
+          actor_user_id: string | null
+          created_at: string
+          event_id: string
+          from_state: string | null
+          id: number
+          reason: string
+          to_state: string
+        }
+        Insert: {
+          actor_user_id?: string | null
+          created_at?: string
+          event_id: string
+          from_state?: string | null
+          id?: never
+          reason: string
+          to_state: string
+        }
+        Update: {
+          actor_user_id?: string | null
+          created_at?: string
+          event_id?: string
+          from_state?: string | null
+          id?: never
+          reason?: string
+          to_state?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "child_safety_evidence_transitions_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "content_moderation_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      child_safety_reviewers: {
+        Row: {
+          granted_at: string
+          granted_by: string | null
+          user_id: string
+        }
+        Insert: {
+          granted_at?: string
+          granted_by?: string | null
+          user_id: string
+        }
+        Update: {
+          granted_at?: string
+          granted_by?: string | null
           user_id?: string
         }
         Relationships: []
@@ -1581,6 +1783,51 @@ export type Database = {
           },
         ]
       }
+      circle_member_notification_preferences: {
+        Row: {
+          circle_id: string
+          discussion_activity: boolean
+          gathering_reminders: boolean
+          live_notifications: boolean
+          notification_level: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          circle_id: string
+          discussion_activity?: boolean
+          gathering_reminders?: boolean
+          live_notifications?: boolean
+          notification_level?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          circle_id?: string
+          discussion_activity?: boolean
+          gathering_reminders?: boolean
+          live_notifications?: boolean
+          notification_level?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circle_member_notification_preferences_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circle_location_features"
+            referencedColumns: ["circle_id"]
+          },
+          {
+            foreignKeyName: "circle_member_notification_preferences_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       circle_members: {
         Row: {
           circle_id: string
@@ -1648,6 +1895,150 @@ export type Database = {
             columns: ["profile_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      circle_notification_campaigns: {
+        Row: {
+          actor_user_id: string | null
+          body: string
+          circle_id: string
+          completed_at: string | null
+          created_at: string
+          data: Json
+          gathering_id: string | null
+          id: string
+          kind: string
+          revision: number
+          session_id: string | null
+          status: string
+          title: string
+        }
+        Insert: {
+          actor_user_id?: string | null
+          body: string
+          circle_id: string
+          completed_at?: string | null
+          created_at?: string
+          data?: Json
+          gathering_id?: string | null
+          id?: string
+          kind: string
+          revision?: number
+          session_id?: string | null
+          status?: string
+          title: string
+        }
+        Update: {
+          actor_user_id?: string | null
+          body?: string
+          circle_id?: string
+          completed_at?: string | null
+          created_at?: string
+          data?: Json
+          gathering_id?: string | null
+          id?: string
+          kind?: string
+          revision?: number
+          session_id?: string | null
+          status?: string
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circle_notification_campaigns_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circle_location_features"
+            referencedColumns: ["circle_id"]
+          },
+          {
+            foreignKeyName: "circle_notification_campaigns_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_notification_campaigns_gathering_id_fkey"
+            columns: ["gathering_id"]
+            isOneToOne: false
+            referencedRelation: "gatherings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_notification_campaigns_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      circle_notification_deliveries: {
+        Row: {
+          attempt_count: number
+          campaign_id: string
+          circle_id: string
+          created_at: string
+          dispatched_at: string | null
+          failure_reason: string | null
+          id: string
+          next_attempt_at: string
+          recipient_user_id: string
+          seen_at: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          attempt_count?: number
+          campaign_id: string
+          circle_id: string
+          created_at?: string
+          dispatched_at?: string | null
+          failure_reason?: string | null
+          id?: string
+          next_attempt_at?: string
+          recipient_user_id: string
+          seen_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          attempt_count?: number
+          campaign_id?: string
+          circle_id?: string
+          created_at?: string
+          dispatched_at?: string | null
+          failure_reason?: string | null
+          id?: string
+          next_attempt_at?: string
+          recipient_user_id?: string
+          seen_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circle_notification_deliveries_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "circle_notification_campaigns"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_notification_deliveries_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circle_location_features"
+            referencedColumns: ["circle_id"]
+          },
+          {
+            foreignKeyName: "circle_notification_deliveries_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circles"
             referencedColumns: ["id"]
           },
         ]
@@ -2772,6 +3163,7 @@ export type Database = {
       }
       circles: {
         Row: {
+          access_policy: string
           active_this_week_count: number
           approved_at: string | null
           approved_by_admin_id: string | null
@@ -2788,6 +3180,8 @@ export type Database = {
           created_by_user_id: string | null
           culture_tags: string[]
           description: string | null
+          diaspora_destination_country_codes: string[]
+          diaspora_origin_country_codes: string[]
           diaspora_tags: string[]
           faith_tags: string[]
           gathering_count: number
@@ -2803,9 +3197,13 @@ export type Database = {
           is_official: boolean
           is_partner: boolean
           latitude: number | null
+          live_discovery_policy: string
           longitude: number | null
           member_count: number
+          membership_eligibility_policy: string
           name: string
+          reach_scope: string
+          reach_scopes: string[]
           region: string | null
           rejected_reason: string | null
           report_count: number
@@ -2820,6 +3218,7 @@ export type Database = {
           visibility_scope: string
         }
         Insert: {
+          access_policy?: string
           active_this_week_count?: number
           approved_at?: string | null
           approved_by_admin_id?: string | null
@@ -2836,6 +3235,8 @@ export type Database = {
           created_by_user_id?: string | null
           culture_tags?: string[]
           description?: string | null
+          diaspora_destination_country_codes?: string[]
+          diaspora_origin_country_codes?: string[]
           diaspora_tags?: string[]
           faith_tags?: string[]
           gathering_count?: number
@@ -2851,9 +3252,13 @@ export type Database = {
           is_official?: boolean
           is_partner?: boolean
           latitude?: number | null
+          live_discovery_policy?: string
           longitude?: number | null
           member_count?: number
+          membership_eligibility_policy?: string
           name: string
+          reach_scope?: string
+          reach_scopes?: string[]
           region?: string | null
           rejected_reason?: string | null
           report_count?: number
@@ -2868,6 +3273,7 @@ export type Database = {
           visibility_scope?: string
         }
         Update: {
+          access_policy?: string
           active_this_week_count?: number
           approved_at?: string | null
           approved_by_admin_id?: string | null
@@ -2884,6 +3290,8 @@ export type Database = {
           created_by_user_id?: string | null
           culture_tags?: string[]
           description?: string | null
+          diaspora_destination_country_codes?: string[]
+          diaspora_origin_country_codes?: string[]
           diaspora_tags?: string[]
           faith_tags?: string[]
           gathering_count?: number
@@ -2899,9 +3307,13 @@ export type Database = {
           is_official?: boolean
           is_partner?: boolean
           latitude?: number | null
+          live_discovery_policy?: string
           longitude?: number | null
           member_count?: number
+          membership_eligibility_policy?: string
           name?: string
+          reach_scope?: string
+          reach_scopes?: string[]
           region?: string | null
           rejected_reason?: string | null
           report_count?: number
@@ -3004,11 +3416,21 @@ export type Database = {
           created_at: string
           decision: string
           detector_version: string
+          evidence_hold: boolean
           evidence_redacted_at: string | null
+          evidence_resolution_reason: string | null
+          evidence_resolved_at: string | null
+          evidence_resolved_by: string | null
+          evidence_retention_attempts: number
+          evidence_retention_claim_id: string | null
+          evidence_retention_claimed_at: string | null
+          evidence_retention_failure: string | null
           evidence_snapshot: Json
+          evidence_state: string
           extracted_text: string | null
           failure_reason: string | null
           id: string
+          legal_hold: boolean
           provider: string
           provider_model: string
           provider_request_id: string | null
@@ -3031,11 +3453,21 @@ export type Database = {
           created_at?: string
           decision: string
           detector_version?: string
+          evidence_hold?: boolean
           evidence_redacted_at?: string | null
+          evidence_resolution_reason?: string | null
+          evidence_resolved_at?: string | null
+          evidence_resolved_by?: string | null
+          evidence_retention_attempts?: number
+          evidence_retention_claim_id?: string | null
+          evidence_retention_claimed_at?: string | null
+          evidence_retention_failure?: string | null
           evidence_snapshot?: Json
+          evidence_state?: string
           extracted_text?: string | null
           failure_reason?: string | null
           id?: string
+          legal_hold?: boolean
           provider: string
           provider_model: string
           provider_request_id?: string | null
@@ -3058,11 +3490,21 @@ export type Database = {
           created_at?: string
           decision?: string
           detector_version?: string
+          evidence_hold?: boolean
           evidence_redacted_at?: string | null
+          evidence_resolution_reason?: string | null
+          evidence_resolved_at?: string | null
+          evidence_resolved_by?: string | null
+          evidence_retention_attempts?: number
+          evidence_retention_claim_id?: string | null
+          evidence_retention_claimed_at?: string | null
+          evidence_retention_failure?: string | null
           evidence_snapshot?: Json
+          evidence_state?: string
           extracted_text?: string | null
           failure_reason?: string | null
           id?: string
+          legal_hold?: boolean
           provider?: string
           provider_model?: string
           provider_request_id?: string | null
@@ -3081,6 +3523,9 @@ export type Database = {
       content_safety_actor_state: {
         Row: {
           blocked_attempts: number
+          enforcement_points_30d: number
+          enforcement_recalculated_at: string | null
+          enforcement_tier: string
           last_incident_at: string | null
           restricted_until: string | null
           review_attempts: number
@@ -3089,6 +3534,9 @@ export type Database = {
         }
         Insert: {
           blocked_attempts?: number
+          enforcement_points_30d?: number
+          enforcement_recalculated_at?: string | null
+          enforcement_tier?: string
           last_incident_at?: string | null
           restricted_until?: string | null
           review_attempts?: number
@@ -3097,11 +3545,68 @@ export type Database = {
         }
         Update: {
           blocked_attempts?: number
+          enforcement_points_30d?: number
+          enforcement_recalculated_at?: string | null
+          enforcement_tier?: string
           last_incident_at?: string | null
           restricted_until?: string | null
           review_attempts?: number
           updated_at?: string
           user_id?: string
+        }
+        Relationships: []
+      }
+      database_capacity_alerts: {
+        Row: {
+          connections: number
+          created_at: string
+          id: number
+          level: string
+          usable_connections: number
+          utilization_percent: number
+        }
+        Insert: {
+          connections: number
+          created_at?: string
+          id?: number
+          level: string
+          usable_connections: number
+          utilization_percent: number
+        }
+        Update: {
+          connections?: number
+          created_at?: string
+          id?: number
+          level?: string
+          usable_connections?: number
+          utilization_percent?: number
+        }
+        Relationships: []
+      }
+      database_capacity_samples: {
+        Row: {
+          by_application: Json
+          connections: number
+          level: string
+          sampled_at: string
+          usable_connections: number
+          utilization_percent: number
+        }
+        Insert: {
+          by_application?: Json
+          connections: number
+          level: string
+          sampled_at?: string
+          usable_connections: number
+          utilization_percent: number
+        }
+        Update: {
+          by_application?: Json
+          connections?: number
+          level?: string
+          sampled_at?: string
+          usable_connections?: number
+          utilization_percent?: number
         }
         Relationships: []
       }
@@ -3390,6 +3895,215 @@ export type Database = {
           method?: string
           user1_id?: string
           user2_id?: string
+        }
+        Relationships: []
+      }
+      economic_risk_events: {
+        Row: {
+          created_at: string
+          disposition: string
+          environment: string
+          id: string
+          metadata: Json
+          resolved_at: string | null
+          risk_code: string
+          severity: string
+          spend_intent_id: string | null
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          disposition?: string
+          environment: string
+          id?: string
+          metadata?: Json
+          resolved_at?: string | null
+          risk_code: string
+          severity: string
+          spend_intent_id?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          disposition?: string
+          environment?: string
+          id?: string
+          metadata?: Json
+          resolved_at?: string | null
+          risk_code?: string
+          severity?: string
+          spend_intent_id?: string | null
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "economic_risk_events_spend_intent_id_fkey"
+            columns: ["spend_intent_id"]
+            isOneToOne: false
+            referencedRelation: "spark_spend_intents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      economy_action_rules: {
+        Row: {
+          action_code: string
+          active: boolean
+          created_at: string
+          effective_at: string
+          environment: string
+          expires_at: string | null
+          id: string
+          included: boolean
+          membership_tier: string
+          price_sparks: number
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          action_code: string
+          active?: boolean
+          created_at?: string
+          effective_at?: string
+          environment: string
+          expires_at?: string | null
+          id?: string
+          included?: boolean
+          membership_tier: string
+          price_sparks: number
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          action_code?: string
+          active?: boolean
+          created_at?: string
+          effective_at?: string
+          environment?: string
+          expires_at?: string | null
+          id?: string
+          included?: boolean
+          membership_tier?: string
+          price_sparks?: number
+          updated_at?: string
+          version?: number
+        }
+        Relationships: []
+      }
+      economy_feature_flags: {
+        Row: {
+          created_at: string
+          enabled: boolean
+          environment: string
+          flag_key: string
+          reason: string | null
+          updated_at: string
+          updated_by_user_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          enabled?: boolean
+          environment: string
+          flag_key: string
+          reason?: string | null
+          updated_at?: string
+          updated_by_user_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          enabled?: boolean
+          environment?: string
+          flag_key?: string
+          reason?: string | null
+          updated_at?: string
+          updated_by_user_id?: string | null
+        }
+        Relationships: []
+      }
+      economy_passes: {
+        Row: {
+          consumed_at: string | null
+          consumed_for_resource_id: string | null
+          created_at: string
+          environment: string
+          expires_at: string | null
+          id: string
+          idempotency_key: string
+          pass_code: string
+          source: string
+          user_id: string
+          valid_from: string
+        }
+        Insert: {
+          consumed_at?: string | null
+          consumed_for_resource_id?: string | null
+          created_at?: string
+          environment: string
+          expires_at?: string | null
+          id?: string
+          idempotency_key: string
+          pass_code: string
+          source: string
+          user_id: string
+          valid_from?: string
+        }
+        Update: {
+          consumed_at?: string | null
+          consumed_for_resource_id?: string | null
+          created_at?: string
+          environment?: string
+          expires_at?: string | null
+          id?: string
+          idempotency_key?: string
+          pass_code?: string
+          source?: string
+          user_id?: string
+          valid_from?: string
+        }
+        Relationships: []
+      }
+      economy_reconciliation_runs: {
+        Row: {
+          completed_at: string | null
+          created_at: string
+          cursor_value: string | null
+          environment: string
+          error_code: string | null
+          id: string
+          matched_count: number
+          mismatch_count: number
+          repaired_count: number
+          scanned_count: number
+          started_at: string
+          status: string
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string
+          cursor_value?: string | null
+          environment: string
+          error_code?: string | null
+          id?: string
+          matched_count?: number
+          mismatch_count?: number
+          repaired_count?: number
+          scanned_count?: number
+          started_at?: string
+          status?: string
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string
+          cursor_value?: string | null
+          environment?: string
+          error_code?: string | null
+          id?: string
+          matched_count?: number
+          mismatch_count?: number
+          repaired_count?: number
+          scanned_count?: number
+          started_at?: string
+          status?: string
         }
         Relationships: []
       }
@@ -4045,6 +4759,33 @@ export type Database = {
         }
         Relationships: []
       }
+      legal_acceptances: {
+        Row: {
+          accepted_at: string
+          app_version: string | null
+          privacy_version: string
+          source: string
+          terms_version: string
+          user_id: string
+        }
+        Insert: {
+          accepted_at?: string
+          app_version?: string | null
+          privacy_version: string
+          source?: string
+          terms_version: string
+          user_id: string
+        }
+        Update: {
+          accepted_at?: string
+          app_version?: string | null
+          privacy_version?: string
+          source?: string
+          terms_version?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       live_audience_poll_options: {
         Row: {
           id: string
@@ -4226,6 +4967,178 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "live_audience_poll_templates"
             referencedColumns: ["template_key"]
+          },
+        ]
+      }
+      live_broadcast_artifacts: {
+        Row: {
+          available_at: string | null
+          consent_snapshot_hash: string
+          created_at: string
+          duration_milliseconds: number | null
+          expires_at: string | null
+          id: string
+          kind: string
+          object_key: string
+          safe_metadata: Json
+          session_id: string
+          source_artifact_id: string | null
+          status: string
+          storage_provider: string
+          updated_at: string
+          visibility: string
+        }
+        Insert: {
+          available_at?: string | null
+          consent_snapshot_hash: string
+          created_at?: string
+          duration_milliseconds?: number | null
+          expires_at?: string | null
+          id?: string
+          kind: string
+          object_key: string
+          safe_metadata?: Json
+          session_id: string
+          source_artifact_id?: string | null
+          status?: string
+          storage_provider: string
+          updated_at?: string
+          visibility?: string
+        }
+        Update: {
+          available_at?: string | null
+          consent_snapshot_hash?: string
+          created_at?: string
+          duration_milliseconds?: number | null
+          expires_at?: string | null
+          id?: string
+          kind?: string
+          object_key?: string
+          safe_metadata?: Json
+          session_id?: string
+          source_artifact_id?: string | null
+          status?: string
+          storage_provider?: string
+          updated_at?: string
+          visibility?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_broadcast_artifacts_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_broadcast_artifacts_source_artifact_id_fkey"
+            columns: ["source_artifact_id"]
+            isOneToOne: false
+            referencedRelation: "live_broadcast_artifacts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_broadcast_runtime_events: {
+        Row: {
+          created_at: string
+          event_type: string
+          id: number
+          lease_generation: number
+          program_version: number | null
+          reason_code: string
+          session_id: string
+          worker_instance_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          event_type: string
+          id?: never
+          lease_generation: number
+          program_version?: number | null
+          reason_code: string
+          session_id: string
+          worker_instance_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          event_type?: string
+          id?: never
+          lease_generation?: number
+          program_version?: number | null
+          reason_code?: string
+          session_id?: string
+          worker_instance_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_broadcast_runtime_events_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_broadcast_runtimes: {
+        Row: {
+          captions_status: string
+          compositor_status: string
+          created_at: string
+          failure_reason_code: string | null
+          hls_playlist_url: string | null
+          hls_status: string
+          last_heartbeat_at: string | null
+          lease_expires_at: string | null
+          lease_generation: number
+          observed_program_version: number | null
+          output_provider_user_id: string
+          recording_status: string
+          session_id: string
+          updated_at: string
+          worker_instance_id: string | null
+        }
+        Insert: {
+          captions_status?: string
+          compositor_status?: string
+          created_at?: string
+          failure_reason_code?: string | null
+          hls_playlist_url?: string | null
+          hls_status?: string
+          last_heartbeat_at?: string | null
+          lease_expires_at?: string | null
+          lease_generation?: number
+          observed_program_version?: number | null
+          output_provider_user_id: string
+          recording_status?: string
+          session_id: string
+          updated_at?: string
+          worker_instance_id?: string | null
+        }
+        Update: {
+          captions_status?: string
+          compositor_status?: string
+          created_at?: string
+          failure_reason_code?: string | null
+          hls_playlist_url?: string | null
+          hls_status?: string
+          last_heartbeat_at?: string | null
+          lease_expires_at?: string | null
+          lease_generation?: number
+          observed_program_version?: number | null
+          output_provider_user_id?: string
+          recording_status?: string
+          session_id?: string
+          updated_at?: string
+          worker_instance_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_broadcast_runtimes_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: true
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
           },
         ]
       }
@@ -4644,6 +5557,69 @@ export type Database = {
           },
         ]
       }
+      live_discovery_updates: {
+        Row: {
+          active_live_count: number
+          id: boolean
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          active_live_count?: number
+          id?: boolean
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          active_live_count?: number
+          id?: boolean
+          updated_at?: string
+          version?: number
+        }
+        Relationships: []
+      }
+      live_in_app_announcements: {
+        Row: {
+          body: string
+          created_at: string
+          id: string
+          kind: string
+          session_id: string
+          title: string
+        }
+        Insert: {
+          body: string
+          created_at?: string
+          id: string
+          kind: string
+          session_id: string
+          title: string
+        }
+        Update: {
+          body?: string
+          created_at?: string
+          id?: string
+          kind?: string
+          session_id?: string
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_in_app_announcements_id_fkey"
+            columns: ["id"]
+            isOneToOne: true
+            referencedRelation: "live_notification_campaigns"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_in_app_announcements_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       live_maintenance_failures: {
         Row: {
           error_message: string
@@ -5022,6 +5998,7 @@ export type Database = {
           playback_offset_seconds: number
           playlist_id: string | null
           program_started_at: string | null
+          repeat_mode: string
           requested_volume: number
           session_id: string
           status: string
@@ -5038,6 +6015,7 @@ export type Database = {
           playback_offset_seconds?: number
           playlist_id?: string | null
           program_started_at?: string | null
+          repeat_mode?: string
           requested_volume?: number
           session_id: string
           status?: string
@@ -5054,6 +6032,7 @@ export type Database = {
           playback_offset_seconds?: number
           playlist_id?: string | null
           program_started_at?: string | null
+          repeat_mode?: string
           requested_volume?: number
           session_id?: string
           status?: string
@@ -5141,6 +6120,103 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      live_notification_campaign_recipients: {
+        Row: {
+          campaign_id: string
+          created_at: string
+          recipient_role: string
+          recipient_user_id: string
+        }
+        Insert: {
+          campaign_id: string
+          created_at?: string
+          recipient_role: string
+          recipient_user_id: string
+        }
+        Update: {
+          campaign_id?: string
+          created_at?: string
+          recipient_role?: string
+          recipient_user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_notification_campaign_recipients_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "live_notification_campaigns"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_notification_campaigns: {
+        Row: {
+          accepted_ticket_count: number
+          attempt_count: number
+          body: string
+          claimed_at: string | null
+          completed_at: string | null
+          created_at: string
+          data: Json
+          failure_reason: string | null
+          id: string
+          kind: string
+          next_attempt_at: string
+          recipient_count: number
+          schedule_revision: number
+          session_id: string
+          status: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          accepted_ticket_count?: number
+          attempt_count?: number
+          body: string
+          claimed_at?: string | null
+          completed_at?: string | null
+          created_at?: string
+          data?: Json
+          failure_reason?: string | null
+          id?: string
+          kind: string
+          next_attempt_at?: string
+          recipient_count?: number
+          schedule_revision?: number
+          session_id: string
+          status?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          accepted_ticket_count?: number
+          attempt_count?: number
+          body?: string
+          claimed_at?: string | null
+          completed_at?: string | null
+          created_at?: string
+          data?: Json
+          failure_reason?: string | null
+          id?: string
+          kind?: string
+          next_attempt_at?: string
+          recipient_count?: number
+          schedule_revision?: number
+          session_id?: string
+          status?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_notification_campaigns_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       live_odo_action_attempts: {
         Row: {
@@ -5309,6 +6385,207 @@ export type Database = {
           },
         ]
       }
+      live_odo_always_on_access: {
+        Row: {
+          allowed: boolean
+          created_at: string
+          expires_at: string | null
+          granted_by_user_id: string | null
+          note: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          allowed?: boolean
+          created_at?: string
+          expires_at?: string | null
+          granted_by_user_id?: string | null
+          note?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          allowed?: boolean
+          created_at?: string
+          expires_at?: string | null
+          granted_by_user_id?: string | null
+          note?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      live_odo_always_on_configuration: {
+        Row: {
+          allowed_markets: string[]
+          automatic_ending_enabled: boolean
+          availability_durations_minutes: number[]
+          availability_enabled: boolean
+          candidate_scan_limit: number
+          circuit_breaker_open: boolean
+          default_availability_minutes: number
+          edge_scan_limit: number
+          empty_room_seconds: number
+          id: boolean
+          internal_only: boolean
+          invitation_cooldown_minutes: number
+          invitation_ttl_seconds: number
+          invitations_enabled: boolean
+          low_liquidity_seconds: number
+          maximum_cohort_size: number
+          maximum_invitations_per_day: number
+          maximum_session_runtime_minutes: number
+          minimum_cohort_size: number
+          music_enabled: boolean
+          not_tonight_hours: number
+          odo_start_enabled: boolean
+          opportunity_ttl_seconds: number
+          post_session_cooldown_minutes: number
+          presence_freshness_seconds: number
+          safety_coverage_mode: string
+          shadow_detection_enabled: boolean
+          system_session_creation_enabled: boolean
+          updated_at: string
+          verified_users_only: boolean
+          worker_lease_seconds: number
+        }
+        Insert: {
+          allowed_markets?: string[]
+          automatic_ending_enabled?: boolean
+          availability_durations_minutes?: number[]
+          availability_enabled?: boolean
+          candidate_scan_limit?: number
+          circuit_breaker_open?: boolean
+          default_availability_minutes?: number
+          edge_scan_limit?: number
+          empty_room_seconds?: number
+          id?: boolean
+          internal_only?: boolean
+          invitation_cooldown_minutes?: number
+          invitation_ttl_seconds?: number
+          invitations_enabled?: boolean
+          low_liquidity_seconds?: number
+          maximum_cohort_size?: number
+          maximum_invitations_per_day?: number
+          maximum_session_runtime_minutes?: number
+          minimum_cohort_size?: number
+          music_enabled?: boolean
+          not_tonight_hours?: number
+          odo_start_enabled?: boolean
+          opportunity_ttl_seconds?: number
+          post_session_cooldown_minutes?: number
+          presence_freshness_seconds?: number
+          safety_coverage_mode?: string
+          shadow_detection_enabled?: boolean
+          system_session_creation_enabled?: boolean
+          updated_at?: string
+          verified_users_only?: boolean
+          worker_lease_seconds?: number
+        }
+        Update: {
+          allowed_markets?: string[]
+          automatic_ending_enabled?: boolean
+          availability_durations_minutes?: number[]
+          availability_enabled?: boolean
+          candidate_scan_limit?: number
+          circuit_breaker_open?: boolean
+          default_availability_minutes?: number
+          edge_scan_limit?: number
+          empty_room_seconds?: number
+          id?: boolean
+          internal_only?: boolean
+          invitation_cooldown_minutes?: number
+          invitation_ttl_seconds?: number
+          invitations_enabled?: boolean
+          low_liquidity_seconds?: number
+          maximum_cohort_size?: number
+          maximum_invitations_per_day?: number
+          maximum_session_runtime_minutes?: number
+          minimum_cohort_size?: number
+          music_enabled?: boolean
+          not_tonight_hours?: number
+          odo_start_enabled?: boolean
+          opportunity_ttl_seconds?: number
+          post_session_cooldown_minutes?: number
+          presence_freshness_seconds?: number
+          safety_coverage_mode?: string
+          shadow_detection_enabled?: boolean
+          system_session_creation_enabled?: boolean
+          updated_at?: string
+          verified_users_only?: boolean
+          worker_lease_seconds?: number
+        }
+        Relationships: []
+      }
+      live_odo_always_on_sessions: {
+        Row: {
+          created_at: string
+          empty_since: string | null
+          end_reason_code: string | null
+          lease_expires_at: string | null
+          lease_owner: string | null
+          lifecycle_state: string
+          low_liquidity_since: string | null
+          maximum_runtime_ends_at: string
+          opportunity_id: string
+          session_id: string
+          stream_cleanup_attempts: number
+          stream_resource_ended_at: string | null
+          stream_resource_ready_at: string | null
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          created_at?: string
+          empty_since?: string | null
+          end_reason_code?: string | null
+          lease_expires_at?: string | null
+          lease_owner?: string | null
+          lifecycle_state?: string
+          low_liquidity_since?: string | null
+          maximum_runtime_ends_at: string
+          opportunity_id: string
+          session_id: string
+          stream_cleanup_attempts?: number
+          stream_resource_ended_at?: string | null
+          stream_resource_ready_at?: string | null
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          created_at?: string
+          empty_since?: string | null
+          end_reason_code?: string | null
+          lease_expires_at?: string | null
+          lease_owner?: string | null
+          lifecycle_state?: string
+          low_liquidity_since?: string | null
+          maximum_runtime_ends_at?: string
+          opportunity_id?: string
+          session_id?: string
+          stream_cleanup_attempts?: number
+          stream_resource_ended_at?: string | null
+          stream_resource_ready_at?: string | null
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_odo_always_on_sessions_opportunity_id_fkey"
+            columns: ["opportunity_id"]
+            isOneToOne: true
+            referencedRelation: "live_quick_connect_opportunities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_odo_always_on_sessions_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: true
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       live_odo_budget_windows: {
         Row: {
           call_count: number
@@ -5361,6 +6638,15 @@ export type Database = {
           autopilot_enabled: boolean
           betweener_studio_control_enabled: boolean
           betweener_studio_enabled: boolean
+          broadcast_captions_enabled: boolean
+          broadcast_clips_enabled: boolean
+          broadcast_compositor_enabled: boolean
+          broadcast_compositor_lease_seconds: number
+          broadcast_compositor_stale_seconds: number
+          broadcast_highlights_enabled: boolean
+          broadcast_hls_enabled: boolean
+          broadcast_recording_enabled: boolean
+          broadcast_translation_enabled: boolean
           circuit_breaker_open: boolean
           conversation_spark_enabled: boolean
           copilot_enabled: boolean
@@ -5394,6 +6680,9 @@ export type Database = {
           odo_voice_enabled: boolean
           pair_narration_enabled: boolean
           pricing_version: string
+          program_audio_publisher_enabled: boolean
+          program_audio_publisher_lease_seconds: number
+          program_audio_publisher_stale_seconds: number
           provider_timeout_ms: number
           scene_suggestions_enabled: boolean
           screen_share_enabled: boolean
@@ -5406,6 +6695,13 @@ export type Database = {
           show_intermission_every_rounds: number
           show_reconcile_seconds: number
           show_scene_minimum_dwell_seconds: number
+          studio_closed_beta: boolean
+          studio_controller_grace_seconds: number
+          studio_controller_lease_seconds: number
+          studio_external_audio_enabled: boolean
+          studio_media_publishing_enabled: boolean
+          studio_screen_audio_enabled: boolean
+          studio_session_discovery_enabled: boolean
           task_call_limits_per_minute: Json
           transition_copy_enabled: boolean
           updated_at: string
@@ -5427,6 +6723,15 @@ export type Database = {
           autopilot_enabled?: boolean
           betweener_studio_control_enabled?: boolean
           betweener_studio_enabled?: boolean
+          broadcast_captions_enabled?: boolean
+          broadcast_clips_enabled?: boolean
+          broadcast_compositor_enabled?: boolean
+          broadcast_compositor_lease_seconds?: number
+          broadcast_compositor_stale_seconds?: number
+          broadcast_highlights_enabled?: boolean
+          broadcast_hls_enabled?: boolean
+          broadcast_recording_enabled?: boolean
+          broadcast_translation_enabled?: boolean
           circuit_breaker_open?: boolean
           conversation_spark_enabled?: boolean
           copilot_enabled?: boolean
@@ -5460,6 +6765,9 @@ export type Database = {
           odo_voice_enabled?: boolean
           pair_narration_enabled?: boolean
           pricing_version?: string
+          program_audio_publisher_enabled?: boolean
+          program_audio_publisher_lease_seconds?: number
+          program_audio_publisher_stale_seconds?: number
           provider_timeout_ms?: number
           scene_suggestions_enabled?: boolean
           screen_share_enabled?: boolean
@@ -5472,6 +6780,13 @@ export type Database = {
           show_intermission_every_rounds?: number
           show_reconcile_seconds?: number
           show_scene_minimum_dwell_seconds?: number
+          studio_closed_beta?: boolean
+          studio_controller_grace_seconds?: number
+          studio_controller_lease_seconds?: number
+          studio_external_audio_enabled?: boolean
+          studio_media_publishing_enabled?: boolean
+          studio_screen_audio_enabled?: boolean
+          studio_session_discovery_enabled?: boolean
           task_call_limits_per_minute?: Json
           transition_copy_enabled?: boolean
           updated_at?: string
@@ -5493,6 +6808,15 @@ export type Database = {
           autopilot_enabled?: boolean
           betweener_studio_control_enabled?: boolean
           betweener_studio_enabled?: boolean
+          broadcast_captions_enabled?: boolean
+          broadcast_clips_enabled?: boolean
+          broadcast_compositor_enabled?: boolean
+          broadcast_compositor_lease_seconds?: number
+          broadcast_compositor_stale_seconds?: number
+          broadcast_highlights_enabled?: boolean
+          broadcast_hls_enabled?: boolean
+          broadcast_recording_enabled?: boolean
+          broadcast_translation_enabled?: boolean
           circuit_breaker_open?: boolean
           conversation_spark_enabled?: boolean
           copilot_enabled?: boolean
@@ -5526,6 +6850,9 @@ export type Database = {
           odo_voice_enabled?: boolean
           pair_narration_enabled?: boolean
           pricing_version?: string
+          program_audio_publisher_enabled?: boolean
+          program_audio_publisher_lease_seconds?: number
+          program_audio_publisher_stale_seconds?: number
           provider_timeout_ms?: number
           scene_suggestions_enabled?: boolean
           screen_share_enabled?: boolean
@@ -5538,6 +6865,13 @@ export type Database = {
           show_intermission_every_rounds?: number
           show_reconcile_seconds?: number
           show_scene_minimum_dwell_seconds?: number
+          studio_closed_beta?: boolean
+          studio_controller_grace_seconds?: number
+          studio_controller_lease_seconds?: number
+          studio_external_audio_enabled?: boolean
+          studio_media_publishing_enabled?: boolean
+          studio_screen_audio_enabled?: boolean
+          studio_session_discovery_enabled?: boolean
           task_call_limits_per_minute?: Json
           transition_copy_enabled?: boolean
           updated_at?: string
@@ -6241,23 +7575,35 @@ export type Database = {
           control_lease_expires_at: string | null
           control_source: string
           control_user_id: string | null
+          controller_acquired_at: string | null
+          controller_generation: number
+          controller_instance_id: string | null
           created_at: string
           current_priority: number
           current_scene: string
           enabled: boolean
           enabled_by_user_id: string | null
           energy_mode: string
+          fallback_scene: string
           host_suppression_ends_at: string | null
           last_intermission_round: number
           last_pairing_id: string | null
+          last_program_command_id: string | null
           last_reason_code: string | null
+          music_stage_return_state: Json
           next_wake_at: string | null
           paused_by_host: boolean
+          previous_program_state: Json
+          program_output_source: string
           program_source: string
+          program_transition: string
+          program_version: number
           scene_entered_at: string
           scene_history: Json
           session_id: string
           show_state: string
+          source_assignments: Json
+          target_canvas: string
           updated_at: string
           version: number
         }
@@ -6266,23 +7612,35 @@ export type Database = {
           control_lease_expires_at?: string | null
           control_source?: string
           control_user_id?: string | null
+          controller_acquired_at?: string | null
+          controller_generation?: number
+          controller_instance_id?: string | null
           created_at?: string
           current_priority?: number
           current_scene?: string
           enabled?: boolean
           enabled_by_user_id?: string | null
           energy_mode?: string
+          fallback_scene?: string
           host_suppression_ends_at?: string | null
           last_intermission_round?: number
           last_pairing_id?: string | null
+          last_program_command_id?: string | null
           last_reason_code?: string | null
+          music_stage_return_state?: Json
           next_wake_at?: string | null
           paused_by_host?: boolean
+          previous_program_state?: Json
+          program_output_source?: string
           program_source?: string
+          program_transition?: string
+          program_version?: number
           scene_entered_at?: string
           scene_history?: Json
           session_id: string
           show_state?: string
+          source_assignments?: Json
+          target_canvas?: string
           updated_at?: string
           version?: number
         }
@@ -6291,23 +7649,35 @@ export type Database = {
           control_lease_expires_at?: string | null
           control_source?: string
           control_user_id?: string | null
+          controller_acquired_at?: string | null
+          controller_generation?: number
+          controller_instance_id?: string | null
           created_at?: string
           current_priority?: number
           current_scene?: string
           enabled?: boolean
           enabled_by_user_id?: string | null
           energy_mode?: string
+          fallback_scene?: string
           host_suppression_ends_at?: string | null
           last_intermission_round?: number
           last_pairing_id?: string | null
+          last_program_command_id?: string | null
           last_reason_code?: string | null
+          music_stage_return_state?: Json
           next_wake_at?: string | null
           paused_by_host?: boolean
+          previous_program_state?: Json
+          program_output_source?: string
           program_source?: string
+          program_transition?: string
+          program_version?: number
           scene_entered_at?: string
           scene_history?: Json
           session_id?: string
           show_state?: string
+          source_assignments?: Json
+          target_canvas?: string
           updated_at?: string
           version?: number
         }
@@ -6485,6 +7855,7 @@ export type Database = {
           connection_quality_state: string
           created_at: string
           id: string
+          introduction_preference_decided_at: string | null
           invited_at: string
           joined_at: string | null
           last_connection_change_at: string | null
@@ -6510,6 +7881,7 @@ export type Database = {
           connection_quality_state?: string
           created_at?: string
           id?: string
+          introduction_preference_decided_at?: string | null
           invited_at?: string
           joined_at?: string | null
           last_connection_change_at?: string | null
@@ -6535,6 +7907,7 @@ export type Database = {
           connection_quality_state?: string
           created_at?: string
           id?: string
+          introduction_preference_decided_at?: string | null
           invited_at?: string
           joined_at?: string | null
           last_connection_change_at?: string | null
@@ -6961,6 +8334,285 @@ export type Database = {
           },
         ]
       }
+      live_program_audio_events: {
+        Row: {
+          created_at: string
+          event_type: string
+          id: string
+          lease_generation: number
+          music_version: number | null
+          reason_code: string
+          session_id: string
+          track_id: string | null
+          volume: number | null
+          worker_instance_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          event_type: string
+          id?: string
+          lease_generation: number
+          music_version?: number | null
+          reason_code: string
+          session_id: string
+          track_id?: string | null
+          volume?: number | null
+          worker_instance_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          event_type?: string
+          id?: string
+          lease_generation?: number
+          music_version?: number | null
+          reason_code?: string
+          session_id?: string
+          track_id?: string | null
+          volume?: number | null
+          worker_instance_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_program_audio_events_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_program_audio_events_track_id_fkey"
+            columns: ["track_id"]
+            isOneToOne: false
+            referencedRelation: "live_music_tracks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_program_audio_publishers: {
+        Row: {
+          consecutive_failures: number
+          created_at: string
+          failure_reason_code: string | null
+          last_heartbeat_at: string | null
+          lease_expires_at: string | null
+          lease_generation: number
+          observed_music_version: number | null
+          provider_user_id: string
+          published_track_id: string | null
+          published_volume: number
+          session_id: string
+          status: string
+          updated_at: string
+          worker_instance_id: string | null
+        }
+        Insert: {
+          consecutive_failures?: number
+          created_at?: string
+          failure_reason_code?: string | null
+          last_heartbeat_at?: string | null
+          lease_expires_at?: string | null
+          lease_generation?: number
+          observed_music_version?: number | null
+          provider_user_id: string
+          published_track_id?: string | null
+          published_volume?: number
+          session_id: string
+          status?: string
+          updated_at?: string
+          worker_instance_id?: string | null
+        }
+        Update: {
+          consecutive_failures?: number
+          created_at?: string
+          failure_reason_code?: string | null
+          last_heartbeat_at?: string | null
+          lease_expires_at?: string | null
+          lease_generation?: number
+          observed_music_version?: number | null
+          provider_user_id?: string
+          published_track_id?: string | null
+          published_volume?: number
+          session_id?: string
+          status?: string
+          updated_at?: string
+          worker_instance_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_program_audio_publishers_published_track_id_fkey"
+            columns: ["published_track_id"]
+            isOneToOne: false
+            referencedRelation: "live_music_tracks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_program_audio_publishers_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: true
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_program_command_events: {
+        Row: {
+          actor_user_id: string | null
+          command_id: string
+          command_type: string
+          controller_instance_id: string | null
+          created_at: string
+          expected_controller_generation: number | null
+          expected_program_version: number | null
+          id: string
+          reason_code: string
+          resulting_controller_generation: number
+          resulting_program_version: number
+          session_id: string
+          source: string
+          status: string
+        }
+        Insert: {
+          actor_user_id?: string | null
+          command_id: string
+          command_type: string
+          controller_instance_id?: string | null
+          created_at?: string
+          expected_controller_generation?: number | null
+          expected_program_version?: number | null
+          id?: string
+          reason_code: string
+          resulting_controller_generation: number
+          resulting_program_version: number
+          session_id: string
+          source: string
+          status: string
+        }
+        Update: {
+          actor_user_id?: string | null
+          command_id?: string
+          command_type?: string
+          controller_instance_id?: string | null
+          created_at?: string
+          expected_controller_generation?: number | null
+          expected_program_version?: number | null
+          id?: string
+          reason_code?: string
+          resulting_controller_generation?: number
+          resulting_program_version?: number
+          session_id?: string
+          source?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_program_command_events_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_program_source_updates: {
+        Row: {
+          session_id: string
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          session_id: string
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          session_id?: string
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_program_source_updates_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: true
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_program_sources: {
+        Row: {
+          created_at: string
+          failure_reason_code: string | null
+          generation: number
+          has_audio: boolean
+          has_video: boolean
+          health: string
+          id: string
+          last_seen_at: string | null
+          muted: boolean
+          owner_user_id: string | null
+          provider_user_id: string | null
+          readiness: string
+          safe_metadata: Json
+          session_id: string
+          source_key: string
+          source_role: string
+          source_type: string
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          created_at?: string
+          failure_reason_code?: string | null
+          generation?: number
+          has_audio?: boolean
+          has_video?: boolean
+          health?: string
+          id?: string
+          last_seen_at?: string | null
+          muted?: boolean
+          owner_user_id?: string | null
+          provider_user_id?: string | null
+          readiness?: string
+          safe_metadata?: Json
+          session_id: string
+          source_key: string
+          source_role: string
+          source_type: string
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          created_at?: string
+          failure_reason_code?: string | null
+          generation?: number
+          has_audio?: boolean
+          has_video?: boolean
+          health?: string
+          id?: string
+          last_seen_at?: string | null
+          muted?: boolean
+          owner_user_id?: string | null
+          provider_user_id?: string | null
+          readiness?: string
+          safe_metadata?: Json
+          session_id?: string
+          source_key?: string
+          source_role?: string
+          source_type?: string
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_program_sources_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       live_provider_control_jobs: {
         Row: {
           action: string
@@ -7053,6 +8705,161 @@ export type Database = {
           status?: string
         }
         Relationships: []
+      }
+      live_public_media_consents: {
+        Row: {
+          created_at: string
+          decided_at: string
+          granted: boolean
+          policy_version: string
+          purpose: string
+          revoked_at: string | null
+          session_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          decided_at?: string
+          granted: boolean
+          policy_version: string
+          purpose: string
+          revoked_at?: string | null
+          session_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          decided_at?: string
+          granted?: boolean
+          policy_version?: string
+          purpose?: string
+          revoked_at?: string | null
+          session_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_public_media_consents_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_publication_commands: {
+        Row: {
+          actor_user_id: string
+          command_id: string
+          command_type: string
+          created_at: string
+          result_status: string
+          result_version: number
+          session_id: string
+        }
+        Insert: {
+          actor_user_id: string
+          command_id: string
+          command_type: string
+          created_at?: string
+          result_status: string
+          result_version: number
+          session_id: string
+        }
+        Update: {
+          actor_user_id?: string
+          command_id?: string
+          command_type?: string
+          created_at?: string
+          result_status?: string
+          result_version?: number
+          session_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_publication_commands_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_quick_connect_availability: {
+        Row: {
+          available_from: string
+          cooldown_until: string | null
+          created_at: string
+          expires_at: string
+          last_invited_at: string | null
+          market_context: string
+          not_tonight_until: string | null
+          profile_id: string
+          reserved_opportunity_id: string | null
+          source: string
+          status: string
+          updated_at: string
+          user_id: string
+          version: number
+        }
+        Insert: {
+          available_from?: string
+          cooldown_until?: string | null
+          created_at?: string
+          expires_at: string
+          last_invited_at?: string | null
+          market_context: string
+          not_tonight_until?: string | null
+          profile_id: string
+          reserved_opportunity_id?: string | null
+          source: string
+          status?: string
+          updated_at?: string
+          user_id: string
+          version?: number
+        }
+        Update: {
+          available_from?: string
+          cooldown_until?: string | null
+          created_at?: string
+          expires_at?: string
+          last_invited_at?: string | null
+          market_context?: string
+          not_tonight_until?: string | null
+          profile_id?: string
+          reserved_opportunity_id?: string | null
+          source?: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_quick_connect_availability_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "live_quick_connect_availability_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_quick_connect_availability_reservation_fk"
+            columns: ["reserved_opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "live_quick_connect_opportunities"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       live_quick_connect_controls: {
         Row: {
@@ -7207,6 +9014,244 @@ export type Database = {
           },
         ]
       }
+      live_quick_connect_opportunities: {
+        Row: {
+          accepted_count: number
+          accepted_pair_edge_count: number
+          candidate_count: number
+          created_at: string
+          ended_reason_code: string | null
+          expires_at: string
+          formation_bucket: string
+          id: string
+          isolated_count: number
+          last_reason_code: string | null
+          lease_expires_at: string | null
+          lease_generation: number
+          lease_owner: string | null
+          live_session_id: string | null
+          market_context: string
+          pair_edge_count: number
+          shadow_only: boolean
+          start_attempts: number
+          state: string
+          updated_at: string
+        }
+        Insert: {
+          accepted_count?: number
+          accepted_pair_edge_count?: number
+          candidate_count?: number
+          created_at?: string
+          ended_reason_code?: string | null
+          expires_at: string
+          formation_bucket: string
+          id?: string
+          isolated_count?: number
+          last_reason_code?: string | null
+          lease_expires_at?: string | null
+          lease_generation?: number
+          lease_owner?: string | null
+          live_session_id?: string | null
+          market_context: string
+          pair_edge_count?: number
+          shadow_only?: boolean
+          start_attempts?: number
+          state?: string
+          updated_at?: string
+        }
+        Update: {
+          accepted_count?: number
+          accepted_pair_edge_count?: number
+          candidate_count?: number
+          created_at?: string
+          ended_reason_code?: string | null
+          expires_at?: string
+          formation_bucket?: string
+          id?: string
+          isolated_count?: number
+          last_reason_code?: string | null
+          lease_expires_at?: string | null
+          lease_generation?: number
+          lease_owner?: string | null
+          live_session_id?: string | null
+          market_context?: string
+          pair_edge_count?: number
+          shadow_only?: boolean
+          start_attempts?: number
+          state?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_quick_connect_opportunities_live_session_id_fkey"
+            columns: ["live_session_id"]
+            isOneToOne: true
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_quick_connect_opportunity_events: {
+        Row: {
+          accepted_count: number | null
+          candidate_count: number | null
+          created_at: string
+          duration_ms: number | null
+          event_type: string
+          id: number
+          metadata: Json
+          opportunity_id: string | null
+          pair_edge_count: number | null
+          reason_code: string
+        }
+        Insert: {
+          accepted_count?: number | null
+          candidate_count?: number | null
+          created_at?: string
+          duration_ms?: number | null
+          event_type: string
+          id?: never
+          metadata?: Json
+          opportunity_id?: string | null
+          pair_edge_count?: number | null
+          reason_code: string
+        }
+        Update: {
+          accepted_count?: number | null
+          candidate_count?: number | null
+          created_at?: string
+          duration_ms?: number | null
+          event_type?: string
+          id?: never
+          metadata?: Json
+          opportunity_id?: string | null
+          pair_edge_count?: number | null
+          reason_code?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_quick_connect_opportunity_events_opportunity_id_fkey"
+            columns: ["opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "live_quick_connect_opportunities"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_quick_connect_opportunity_members: {
+        Row: {
+          created_at: string
+          invitation_expires_at: string | null
+          invitation_sent_at: string | null
+          opportunity_id: string
+          profile_id: string
+          responded_at: string | null
+          response_reason_code: string | null
+          state: string
+          updated_at: string
+          user_id: string
+          version: number
+        }
+        Insert: {
+          created_at?: string
+          invitation_expires_at?: string | null
+          invitation_sent_at?: string | null
+          opportunity_id: string
+          profile_id: string
+          responded_at?: string | null
+          response_reason_code?: string | null
+          state?: string
+          updated_at?: string
+          user_id: string
+          version?: number
+        }
+        Update: {
+          created_at?: string
+          invitation_expires_at?: string | null
+          invitation_sent_at?: string | null
+          opportunity_id?: string
+          profile_id?: string
+          responded_at?: string | null
+          response_reason_code?: string | null
+          state?: string
+          updated_at?: string
+          user_id?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_quick_connect_opportunity_members_opportunity_id_fkey"
+            columns: ["opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "live_quick_connect_opportunities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_quick_connect_opportunity_members_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "live_quick_connect_opportunity_members_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_quick_connect_opportunity_reservations: {
+        Row: {
+          availability_version: number
+          expires_at: string
+          opportunity_id: string
+          reserved_at: string
+          user_id: string
+        }
+        Insert: {
+          availability_version: number
+          expires_at: string
+          opportunity_id: string
+          reserved_at?: string
+          user_id: string
+        }
+        Update: {
+          availability_version?: number
+          expires_at?: string
+          opportunity_id?: string
+          reserved_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_quick_connect_opportunity_reservations_opportunity_id_fkey"
+            columns: ["opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "live_quick_connect_opportunities"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_quick_connect_opportunity_updates: {
+        Row: {
+          updated_at: string
+          user_id: string
+          version: number
+        }
+        Insert: {
+          updated_at?: string
+          user_id: string
+          version?: number
+        }
+        Update: {
+          updated_at?: string
+          user_id?: string
+          version?: number
+        }
+        Relationships: []
+      }
       live_quick_connect_pairings: {
         Row: {
           attempt_number: number
@@ -7225,6 +9270,7 @@ export type Database = {
           provider: string
           provider_call_id: string
           provider_call_type: string
+          public_formation_starts_at: string | null
           reconnect_deadline: string | null
           round_id: string
           session_id: string
@@ -7251,6 +9297,7 @@ export type Database = {
           provider?: string
           provider_call_id: string
           provider_call_type?: string
+          public_formation_starts_at?: string | null
           reconnect_deadline?: string | null
           round_id: string
           session_id: string
@@ -7277,6 +9324,7 @@ export type Database = {
           provider?: string
           provider_call_id?: string
           provider_call_type?: string
+          public_formation_starts_at?: string | null
           reconnect_deadline?: string | null
           round_id?: string
           session_id?: string
@@ -7634,6 +9682,59 @@ export type Database = {
           },
         ]
       }
+      live_reaction_totals: {
+        Row: {
+          applause_count: number
+          celebrate_count: number
+          heart_count: number
+          insight_count: number
+          joy_count: number
+          session_id: string
+          spark_count: number
+          support_count: number
+          total_count: number
+          updated_at: string
+          version: number
+          wow_count: number
+        }
+        Insert: {
+          applause_count?: number
+          celebrate_count?: number
+          heart_count?: number
+          insight_count?: number
+          joy_count?: number
+          session_id: string
+          spark_count?: number
+          support_count?: number
+          total_count?: number
+          updated_at?: string
+          version?: number
+          wow_count?: number
+        }
+        Update: {
+          applause_count?: number
+          celebrate_count?: number
+          heart_count?: number
+          insight_count?: number
+          joy_count?: number
+          session_id?: string
+          spark_count?: number
+          support_count?: number
+          total_count?: number
+          updated_at?: string
+          version?: number
+          wow_count?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_reaction_totals_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: true
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       live_reactions: {
         Row: {
           client_event_id: string
@@ -7815,6 +9916,56 @@ export type Database = {
           },
         ]
       }
+      live_session_audience_policies: {
+        Row: {
+          city: string | null
+          country_code: string | null
+          country_name: string | null
+          created_at: string
+          diaspora_destination_country_codes: string[]
+          diaspora_origin_country_codes: string[]
+          policy_mode: string
+          reach_scopes: string[]
+          region: string | null
+          session_id: string
+          updated_at: string
+        }
+        Insert: {
+          city?: string | null
+          country_code?: string | null
+          country_name?: string | null
+          created_at?: string
+          diaspora_destination_country_codes?: string[]
+          diaspora_origin_country_codes?: string[]
+          policy_mode?: string
+          reach_scopes?: string[]
+          region?: string | null
+          session_id: string
+          updated_at?: string
+        }
+        Update: {
+          city?: string | null
+          country_code?: string | null
+          country_name?: string | null
+          created_at?: string
+          diaspora_destination_country_codes?: string[]
+          diaspora_origin_country_codes?: string[]
+          policy_mode?: string
+          reach_scopes?: string[]
+          region?: string | null
+          session_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_session_audience_policies_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: true
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       live_session_capability_assignments: {
         Row: {
           assigned_by_user_id: string
@@ -7887,6 +10038,137 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "live_session_events_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_session_host_assignments: {
+        Row: {
+          assigned_at: string
+          assigned_by_user_id: string
+          expired_at: string | null
+          id: string
+          previous_host_user_id: string | null
+          profile_id: string
+          revoked_at: string | null
+          session_id: string
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          assigned_at?: string
+          assigned_by_user_id: string
+          expired_at?: string | null
+          id?: string
+          previous_host_user_id?: string | null
+          profile_id: string
+          revoked_at?: string | null
+          session_id: string
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          assigned_at?: string
+          assigned_by_user_id?: string
+          expired_at?: string | null
+          id?: string
+          previous_host_user_id?: string | null
+          profile_id?: string
+          revoked_at?: string | null
+          session_id?: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_session_host_assignments_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "live_session_host_assignments_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_session_host_assignments_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_session_on_air_hosts: {
+        Row: {
+          assigned_at: string
+          assigned_by_user_id: string
+          expires_at: string
+          id: string
+          note: string | null
+          profile_id: string
+          revoked_at: string | null
+          revoked_by_user_id: string | null
+          session_id: string
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          assigned_at?: string
+          assigned_by_user_id: string
+          expires_at: string
+          id?: string
+          note?: string | null
+          profile_id: string
+          revoked_at?: string | null
+          revoked_by_user_id?: string | null
+          session_id: string
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          assigned_at?: string
+          assigned_by_user_id?: string
+          expires_at?: string
+          id?: string
+          note?: string | null
+          profile_id?: string
+          revoked_at?: string | null
+          revoked_by_user_id?: string | null
+          session_id?: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_session_on_air_hosts_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "live_session_on_air_hosts_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_session_on_air_hosts_session_id_fkey"
             columns: ["session_id"]
             isOneToOne: false
             referencedRelation: "live_sessions"
@@ -8113,8 +10395,14 @@ export type Database = {
         Row: {
           archived_at: string | null
           backstage_opened_at: string | null
+          broadcast_authority: string
+          broadcast_authority_set_at: string | null
+          broadcast_authority_set_by_user_id: string | null
+          broadcast_delivery_mode: string
           cancellation_reason: string | null
           cancelled_at: string | null
+          caption_source_language: string | null
+          caption_translation_languages: string[]
           captions_enabled: boolean
           chemistry_first_enabled: boolean
           circle_id: string | null
@@ -8122,10 +10410,11 @@ export type Database = {
           context_id: string | null
           context_type: string
           created_at: string
-          created_by_profile_id: string
-          created_by_user_id: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
           creation_request_id: string | null
           description: string | null
+          end_policy: string
           ended_at: string | null
           format: string
           gathering_id: string | null
@@ -8133,6 +10422,9 @@ export type Database = {
           maximum_participants: number
           maximum_publishers: number
           minimum_participants: number
+          ownership_type: string
+          produced_by_profile_id: string | null
+          produced_by_user_id: string | null
           provider: string
           provider_call_id: string
           provider_call_type: string
@@ -8141,6 +10433,9 @@ export type Database = {
           quorum_required_pairs: number
           recording_enabled: boolean
           rescheduled_at: string | null
+          runtime_end_at: string | null
+          runtime_extended_at: string | null
+          runtime_extended_by_user_id: string | null
           schedule_revision: number
           scheduled_duration_minutes: number
           scheduled_end: string | null
@@ -8149,6 +10444,7 @@ export type Database = {
           stage_requests_open: boolean
           started_at: string | null
           status: string
+          system_session_kind: string | null
           title: string
           updated_at: string
           version: number
@@ -8156,8 +10452,14 @@ export type Database = {
         Insert: {
           archived_at?: string | null
           backstage_opened_at?: string | null
+          broadcast_authority?: string
+          broadcast_authority_set_at?: string | null
+          broadcast_authority_set_by_user_id?: string | null
+          broadcast_delivery_mode?: string
           cancellation_reason?: string | null
           cancelled_at?: string | null
+          caption_source_language?: string | null
+          caption_translation_languages?: string[]
           captions_enabled?: boolean
           chemistry_first_enabled?: boolean
           circle_id?: string | null
@@ -8165,10 +10467,11 @@ export type Database = {
           context_id?: string | null
           context_type?: string
           created_at?: string
-          created_by_profile_id: string
-          created_by_user_id: string
+          created_by_profile_id?: string | null
+          created_by_user_id?: string | null
           creation_request_id?: string | null
           description?: string | null
+          end_policy?: string
           ended_at?: string | null
           format?: string
           gathering_id?: string | null
@@ -8176,6 +10479,9 @@ export type Database = {
           maximum_participants?: number
           maximum_publishers?: number
           minimum_participants?: number
+          ownership_type?: string
+          produced_by_profile_id?: string | null
+          produced_by_user_id?: string | null
           provider?: string
           provider_call_id: string
           provider_call_type?: string
@@ -8184,6 +10490,9 @@ export type Database = {
           quorum_required_pairs?: number
           recording_enabled?: boolean
           rescheduled_at?: string | null
+          runtime_end_at?: string | null
+          runtime_extended_at?: string | null
+          runtime_extended_by_user_id?: string | null
           schedule_revision?: number
           scheduled_duration_minutes?: number
           scheduled_end?: string | null
@@ -8192,6 +10501,7 @@ export type Database = {
           stage_requests_open?: boolean
           started_at?: string | null
           status?: string
+          system_session_kind?: string | null
           title: string
           updated_at?: string
           version?: number
@@ -8199,8 +10509,14 @@ export type Database = {
         Update: {
           archived_at?: string | null
           backstage_opened_at?: string | null
+          broadcast_authority?: string
+          broadcast_authority_set_at?: string | null
+          broadcast_authority_set_by_user_id?: string | null
+          broadcast_delivery_mode?: string
           cancellation_reason?: string | null
           cancelled_at?: string | null
+          caption_source_language?: string | null
+          caption_translation_languages?: string[]
           captions_enabled?: boolean
           chemistry_first_enabled?: boolean
           circle_id?: string | null
@@ -8208,10 +10524,11 @@ export type Database = {
           context_id?: string | null
           context_type?: string
           created_at?: string
-          created_by_profile_id?: string
-          created_by_user_id?: string
+          created_by_profile_id?: string | null
+          created_by_user_id?: string | null
           creation_request_id?: string | null
           description?: string | null
+          end_policy?: string
           ended_at?: string | null
           format?: string
           gathering_id?: string | null
@@ -8219,6 +10536,9 @@ export type Database = {
           maximum_participants?: number
           maximum_publishers?: number
           minimum_participants?: number
+          ownership_type?: string
+          produced_by_profile_id?: string | null
+          produced_by_user_id?: string | null
           provider?: string
           provider_call_id?: string
           provider_call_type?: string
@@ -8227,6 +10547,9 @@ export type Database = {
           quorum_required_pairs?: number
           recording_enabled?: boolean
           rescheduled_at?: string | null
+          runtime_end_at?: string | null
+          runtime_extended_at?: string | null
+          runtime_extended_by_user_id?: string | null
           schedule_revision?: number
           scheduled_duration_minutes?: number
           scheduled_end?: string | null
@@ -8235,6 +10558,7 @@ export type Database = {
           stage_requests_open?: boolean
           started_at?: string | null
           status?: string
+          system_session_kind?: string | null
           title?: string
           updated_at?: string
           version?: number
@@ -8273,6 +10597,445 @@ export type Database = {
             columns: ["gathering_id"]
             isOneToOne: false
             referencedRelation: "gatherings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_sessions_produced_by_profile_id_fkey"
+            columns: ["produced_by_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "live_sessions_produced_by_profile_id_fkey"
+            columns: ["produced_by_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_stage_atmosphere_events: {
+        Row: {
+          actor_user_id: string
+          created_at: string
+          id: string
+          preset: string
+          request_id: string
+          session_id: string
+          state_version: number
+        }
+        Insert: {
+          actor_user_id: string
+          created_at?: string
+          id?: string
+          preset: string
+          request_id: string
+          session_id: string
+          state_version: number
+        }
+        Update: {
+          actor_user_id?: string
+          created_at?: string
+          id?: string
+          preset?: string
+          request_id?: string
+          session_id?: string
+          state_version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_stage_atmosphere_events_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_stage_atmospheres: {
+        Row: {
+          preset: string
+          session_id: string
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          preset?: string
+          session_id: string
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          preset?: string
+          session_id?: string
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_stage_atmospheres_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: true
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_stage_invitations: {
+        Row: {
+          expires_at: string
+          id: string
+          invited_at: string
+          invited_by_user_id: string
+          profile_id: string
+          responded_at: string | null
+          session_id: string
+          status: string
+          user_id: string
+        }
+        Insert: {
+          expires_at: string
+          id: string
+          invited_at?: string
+          invited_by_user_id: string
+          profile_id: string
+          responded_at?: string | null
+          session_id: string
+          status?: string
+          user_id: string
+        }
+        Update: {
+          expires_at?: string
+          id?: string
+          invited_at?: string
+          invited_by_user_id?: string
+          profile_id?: string
+          responded_at?: string | null
+          session_id?: string
+          status?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_stage_invitations_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "live_stage_invitations_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_stage_invitations_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_studio_access: {
+        Row: {
+          allowed: boolean
+          can_control: boolean
+          can_moderate: boolean
+          can_publish: boolean
+          can_screen_share: boolean
+          can_use_external_audio: boolean
+          can_view: boolean
+          created_at: string
+          created_by_user_id: string | null
+          expires_at: string | null
+          note: string | null
+          operator_role: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          allowed?: boolean
+          can_control?: boolean
+          can_moderate?: boolean
+          can_publish?: boolean
+          can_screen_share?: boolean
+          can_use_external_audio?: boolean
+          can_view?: boolean
+          created_at?: string
+          created_by_user_id?: string | null
+          expires_at?: string | null
+          note?: string | null
+          operator_role?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          allowed?: boolean
+          can_control?: boolean
+          can_moderate?: boolean
+          can_publish?: boolean
+          can_screen_share?: boolean
+          can_use_external_audio?: boolean
+          can_view?: boolean
+          created_at?: string
+          created_by_user_id?: string | null
+          expires_at?: string | null
+          note?: string | null
+          operator_role?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      live_studio_operational_events: {
+        Row: {
+          acknowledged_at: string | null
+          acknowledged_by_user_id: string | null
+          actor_user_id: string | null
+          created_at: string
+          details: Json
+          event_type: string
+          id: number
+          requires_acknowledgement: boolean
+          session_id: string
+          severity: string
+        }
+        Insert: {
+          acknowledged_at?: string | null
+          acknowledged_by_user_id?: string | null
+          actor_user_id?: string | null
+          created_at?: string
+          details?: Json
+          event_type: string
+          id?: never
+          requires_acknowledgement?: boolean
+          session_id: string
+          severity?: string
+        }
+        Update: {
+          acknowledged_at?: string | null
+          acknowledged_by_user_id?: string | null
+          actor_user_id?: string | null
+          created_at?: string
+          details?: Json
+          event_type?: string
+          id?: never
+          requires_acknowledgement?: boolean
+          session_id?: string
+          severity?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_studio_operational_events_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_studio_operator_presence: {
+        Row: {
+          controller_instance_id: string
+          created_at: string
+          last_seen_at: string
+          operator_role: string
+          readiness: string
+          session_id: string
+          user_id: string
+        }
+        Insert: {
+          controller_instance_id: string
+          created_at?: string
+          last_seen_at?: string
+          operator_role: string
+          readiness?: string
+          session_id: string
+          user_id: string
+        }
+        Update: {
+          controller_instance_id?: string
+          created_at?: string
+          last_seen_at?: string
+          operator_role?: string
+          readiness?: string
+          session_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_studio_operator_presence_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_studio_private_messages: {
+        Row: {
+          audience: string
+          body: string
+          created_at: string
+          id: number
+          sender_user_id: string
+          session_id: string
+        }
+        Insert: {
+          audience: string
+          body: string
+          created_at?: string
+          id?: never
+          sender_user_id: string
+          session_id: string
+        }
+        Update: {
+          audience?: string
+          body?: string
+          created_at?: string
+          id?: never
+          sender_user_id?: string
+          session_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_studio_private_messages_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_studio_run_cues: {
+        Row: {
+          created_at: string
+          created_by_user_id: string
+          cue_type: string
+          expected_at: string | null
+          id: string
+          notes: string | null
+          position: number
+          session_id: string
+          status: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by_user_id: string
+          cue_type?: string
+          expected_at?: string | null
+          id?: string
+          notes?: string | null
+          position: number
+          session_id: string
+          status?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by_user_id?: string
+          cue_type?: string
+          expected_at?: string | null
+          id?: string
+          notes?: string | null
+          position?: number
+          session_id?: string
+          status?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_studio_run_cues_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_studio_session_operators: {
+        Row: {
+          assigned_at: string
+          assigned_by_user_id: string
+          expires_at: string
+          id: string
+          note: string | null
+          operator_role: string
+          revoked_at: string | null
+          revoked_by_user_id: string | null
+          session_id: string
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          assigned_at?: string
+          assigned_by_user_id: string
+          expires_at: string
+          id?: string
+          note?: string | null
+          operator_role: string
+          revoked_at?: string | null
+          revoked_by_user_id?: string | null
+          session_id: string
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          assigned_at?: string
+          assigned_by_user_id?: string
+          expires_at?: string
+          id?: string
+          note?: string | null
+          operator_role?: string
+          revoked_at?: string | null
+          revoked_by_user_id?: string | null
+          session_id?: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_studio_session_operators_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_studio_team_updates: {
+        Row: {
+          revision: number
+          session_id: string
+          updated_at: string
+        }
+        Insert: {
+          revision?: number
+          session_id: string
+          updated_at?: string
+        }
+        Update: {
+          revision?: number
+          session_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_studio_team_updates_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: true
+            referencedRelation: "live_sessions"
             referencedColumns: ["id"]
           },
         ]
@@ -8440,6 +11203,51 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      media_hash_provider_capabilities: {
+        Row: {
+          enabled: boolean
+          exact_hash_matching: boolean
+          external_provider_connected: boolean
+          feed_version: string | null
+          last_successful_sync: string | null
+          perceptual_matching: boolean
+          provider_id: string
+          provider_kind: string
+          provider_status: string
+          stale_after: string | null
+          updated_at: string
+          video_matching: boolean
+        }
+        Insert: {
+          enabled?: boolean
+          exact_hash_matching?: boolean
+          external_provider_connected?: boolean
+          feed_version?: string | null
+          last_successful_sync?: string | null
+          perceptual_matching?: boolean
+          provider_id: string
+          provider_kind: string
+          provider_status: string
+          stale_after?: string | null
+          updated_at?: string
+          video_matching?: boolean
+        }
+        Update: {
+          enabled?: boolean
+          exact_hash_matching?: boolean
+          external_provider_connected?: boolean
+          feed_version?: string | null
+          last_successful_sync?: string | null
+          perceptual_matching?: boolean
+          provider_id?: string
+          provider_kind?: string
+          provider_status?: string
+          stale_after?: string | null
+          updated_at?: string
+          video_matching?: boolean
+        }
+        Relationships: []
       }
       merged_accounts: {
         Row: {
@@ -8882,6 +11690,7 @@ export type Database = {
           media_items: Json
           media_kind: string | null
           message_type: string
+          provider_media: Json | null
           read_at: string | null
           receiver_id: string
           reply_to_message_id: string | null
@@ -8927,6 +11736,7 @@ export type Database = {
           media_items?: Json
           media_kind?: string | null
           message_type?: string
+          provider_media?: Json | null
           read_at?: string | null
           receiver_id: string
           reply_to_message_id?: string | null
@@ -8972,6 +11782,7 @@ export type Database = {
           media_items?: Json
           media_kind?: string | null
           message_type?: string
+          provider_media?: Json | null
           read_at?: string | null
           receiver_id?: string
           reply_to_message_id?: string | null
@@ -8992,6 +11803,69 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      moderation_evidence_retention_config: {
+        Row: {
+          cron_secret: string
+          enabled: boolean
+          endpoint: string
+          singleton: boolean
+          updated_at: string
+        }
+        Insert: {
+          cron_secret: string
+          enabled?: boolean
+          endpoint: string
+          singleton?: boolean
+          updated_at?: string
+        }
+        Update: {
+          cron_secret?: string
+          enabled?: boolean
+          endpoint?: string
+          singleton?: boolean
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      moderation_evidence_retention_runs: {
+        Row: {
+          completed_at: string | null
+          content_claimed: number
+          dead_letter_count: number
+          error: string | null
+          failed_count: number
+          id: string
+          profile_claimed: number
+          redacted_count: number
+          started_at: string
+          status: string
+        }
+        Insert: {
+          completed_at?: string | null
+          content_claimed?: number
+          dead_letter_count?: number
+          error?: string | null
+          failed_count?: number
+          id?: string
+          profile_claimed?: number
+          redacted_count?: number
+          started_at?: string
+          status?: string
+        }
+        Update: {
+          completed_at?: string | null
+          content_claimed?: number
+          dead_letter_count?: number
+          error?: string | null
+          failed_count?: number
+          id?: string
+          profile_claimed?: number
+          redacted_count?: number
+          started_at?: string
+          status?: string
+        }
+        Relationships: []
       }
       moment_comment_reactions: {
         Row: {
@@ -9196,6 +12070,7 @@ export type Database = {
           id: string
           inapp_enabled: boolean
           likes: boolean
+          live_always_on_invitations: boolean
           live_invitations: boolean
           live_pool_offers: boolean
           live_reminders: boolean
@@ -9227,6 +12102,7 @@ export type Database = {
           id?: string
           inapp_enabled?: boolean
           likes?: boolean
+          live_always_on_invitations?: boolean
           live_invitations?: boolean
           live_pool_offers?: boolean
           live_reminders?: boolean
@@ -9258,6 +12134,7 @@ export type Database = {
           id?: string
           inapp_enabled?: boolean
           likes?: boolean
+          live_always_on_invitations?: boolean
           live_invitations?: boolean
           live_pool_offers?: boolean
           live_reminders?: boolean
@@ -9928,6 +12805,174 @@ export type Database = {
           },
         ]
       }
+      profile_media_guard_events_v1_2: {
+        Row: {
+          byte_size: number | null
+          categories: string[]
+          client_request_id: string
+          created_at: string
+          decision: string
+          failure_reason: string | null
+          id: string
+          item_index: number
+          metadata: Json
+          mime_type: string | null
+          provider: string
+          provider_model: string
+          provider_request_id: string | null
+          reason_code: string
+          risk_score: number
+          sha256: string | null
+          slot: string
+          user_id: string
+        }
+        Insert: {
+          byte_size?: number | null
+          categories?: string[]
+          client_request_id: string
+          created_at?: string
+          decision: string
+          failure_reason?: string | null
+          id?: string
+          item_index?: number
+          metadata?: Json
+          mime_type?: string | null
+          provider?: string
+          provider_model?: string
+          provider_request_id?: string | null
+          reason_code: string
+          risk_score?: number
+          sha256?: string | null
+          slot: string
+          user_id: string
+        }
+        Update: {
+          byte_size?: number | null
+          categories?: string[]
+          client_request_id?: string
+          created_at?: string
+          decision?: string
+          failure_reason?: string | null
+          id?: string
+          item_index?: number
+          metadata?: Json
+          mime_type?: string | null
+          provider?: string
+          provider_model?: string
+          provider_request_id?: string | null
+          reason_code?: string
+          risk_score?: number
+          sha256?: string | null
+          slot?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      profile_media_remediation_config: {
+        Row: {
+          cron_secret: string
+          enabled: boolean
+          endpoint: string
+          singleton: boolean
+          updated_at: string
+        }
+        Insert: {
+          cron_secret: string
+          enabled?: boolean
+          endpoint: string
+          singleton?: boolean
+          updated_at?: string
+        }
+        Update: {
+          cron_secret?: string
+          enabled?: boolean
+          endpoint?: string
+          singleton?: boolean
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      profile_media_remediation_jobs: {
+        Row: {
+          attempt_count: number
+          claim_token: string | null
+          claimed_at: string | null
+          completed_at: string | null
+          created_at: string
+          decision_categories: string[]
+          field_name: string
+          id: string
+          item_index: number
+          last_error: string | null
+          needs_source_cleanup: boolean
+          next_retry_at: string | null
+          priority: number
+          profile_id: string
+          sha256: string | null
+          source_url: string
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          attempt_count?: number
+          claim_token?: string | null
+          claimed_at?: string | null
+          completed_at?: string | null
+          created_at?: string
+          decision_categories?: string[]
+          field_name: string
+          id?: string
+          item_index?: number
+          last_error?: string | null
+          needs_source_cleanup?: boolean
+          next_retry_at?: string | null
+          priority?: number
+          profile_id: string
+          sha256?: string | null
+          source_url: string
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          attempt_count?: number
+          claim_token?: string | null
+          claimed_at?: string | null
+          completed_at?: string | null
+          created_at?: string
+          decision_categories?: string[]
+          field_name?: string
+          id?: string
+          item_index?: number
+          last_error?: string | null
+          needs_source_cleanup?: boolean
+          next_retry_at?: string | null
+          priority?: number
+          profile_id?: string
+          sha256?: string | null
+          source_url?: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "profile_media_remediation_jobs_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "profile_media_remediation_jobs_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profile_moderation_events: {
         Row: {
           categories: string[]
@@ -9935,6 +12980,10 @@ export type Database = {
           decision: string
           detector_version: string
           evidence_redacted_at: string | null
+          evidence_retention_attempts: number
+          evidence_retention_claim_id: string | null
+          evidence_retention_claimed_at: string | null
+          evidence_retention_failure: string | null
           evidence_snapshot: Json
           field_names: string[]
           id: string
@@ -9954,6 +13003,10 @@ export type Database = {
           decision: string
           detector_version: string
           evidence_redacted_at?: string | null
+          evidence_retention_attempts?: number
+          evidence_retention_claim_id?: string | null
+          evidence_retention_claimed_at?: string | null
+          evidence_retention_failure?: string | null
           evidence_snapshot?: Json
           field_names?: string[]
           id?: string
@@ -9973,6 +13026,10 @@ export type Database = {
           decision?: string
           detector_version?: string
           evidence_redacted_at?: string | null
+          evidence_retention_attempts?: number
+          evidence_retention_claim_id?: string | null
+          evidence_retention_claimed_at?: string | null
+          evidence_retention_failure?: string | null
           evidence_snapshot?: Json
           field_names?: string[]
           id?: string
@@ -10035,6 +13092,48 @@ export type Database = {
           },
           {
             foreignKeyName: "profile_notes_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      profile_onboarding_completion_receipts_v2: {
+        Row: {
+          committed_at: string
+          completion_request_id: string
+          interest_ids: string[]
+          onboarding_variant: string
+          profile_id: string
+          user_id: string
+        }
+        Insert: {
+          committed_at?: string
+          completion_request_id: string
+          interest_ids: string[]
+          onboarding_variant: string
+          profile_id: string
+          user_id: string
+        }
+        Update: {
+          committed_at?: string
+          completion_request_id?: string
+          interest_ids?: string[]
+          onboarding_variant?: string
+          profile_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "profile_onboarding_completion_receipts_v2_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "profile_onboarding_completion_receipts_v2_profile_id_fkey"
             columns: ["profile_id"]
             isOneToOne: false
             referencedRelation: "profiles"
@@ -11010,37 +14109,61 @@ export type Database = {
       }
       push_tokens: {
         Row: {
+          app_environment: string | null
           app_version: string | null
+          application_id: string | null
           created_at: string
           device_id: string | null
+          expo_project_id: string | null
           id: string
+          installation_id: string | null
           last_seen_at: string
           platform: string
+          provenance_status: string
+          quarantine_reason: string | null
+          quarantined_at: string | null
           token: string
           updated_at: string
           user_id: string
+          verified_at: string | null
         }
         Insert: {
+          app_environment?: string | null
           app_version?: string | null
+          application_id?: string | null
           created_at?: string
           device_id?: string | null
+          expo_project_id?: string | null
           id?: string
+          installation_id?: string | null
           last_seen_at?: string
           platform: string
+          provenance_status?: string
+          quarantine_reason?: string | null
+          quarantined_at?: string | null
           token: string
           updated_at?: string
           user_id: string
+          verified_at?: string | null
         }
         Update: {
+          app_environment?: string | null
           app_version?: string | null
+          application_id?: string | null
           created_at?: string
           device_id?: string | null
+          expo_project_id?: string | null
           id?: string
+          installation_id?: string | null
           last_seen_at?: string
           platform?: string
+          provenance_status?: string
+          quarantine_reason?: string | null
+          quarantined_at?: string | null
           token?: string
           updated_at?: string
           user_id?: string
+          verified_at?: string | null
         }
         Relationships: []
       }
@@ -11116,35 +14239,1238 @@ export type Database = {
           },
         ]
       }
+      relationship_gist_ai_draft_metadata: {
+        Row: {
+          claims_verified_at: string | null
+          claims_verified_by_user_id: string | null
+          created_at: string
+          discussion_prompt: string
+          generation_job_id: string
+          human_edited: boolean
+          model: string
+          prompt_version: string
+          provider: string
+          revision_id: string
+          safety_level: string
+          safety_rationale: string
+          schema_version: string
+          sensitive_topics: string[]
+          takeaway: string
+        }
+        Insert: {
+          claims_verified_at?: string | null
+          claims_verified_by_user_id?: string | null
+          created_at?: string
+          discussion_prompt: string
+          generation_job_id: string
+          human_edited?: boolean
+          model: string
+          prompt_version: string
+          provider: string
+          revision_id: string
+          safety_level: string
+          safety_rationale: string
+          schema_version: string
+          sensitive_topics?: string[]
+          takeaway: string
+        }
+        Update: {
+          claims_verified_at?: string | null
+          claims_verified_by_user_id?: string | null
+          created_at?: string
+          discussion_prompt?: string
+          generation_job_id?: string
+          human_edited?: boolean
+          model?: string
+          prompt_version?: string
+          provider?: string
+          revision_id?: string
+          safety_level?: string
+          safety_rationale?: string
+          schema_version?: string
+          sensitive_topics?: string[]
+          takeaway?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "relationship_gist_ai_draft_metadata_generation_job_id_fkey"
+            columns: ["generation_job_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_ai_generation_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "relationship_gist_ai_draft_metadata_revision_id_fkey"
+            columns: ["revision_id"]
+            isOneToOne: true
+            referencedRelation: "relationship_gist_revisions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      relationship_gist_ai_environment_policies: {
+        Row: {
+          cached_input_microusd_per_million: number | null
+          configured_by_user_id: string | null
+          daily_image_job_budget: number
+          daily_job_budget: number
+          daily_token_budget: number
+          enabled: boolean
+          environment: string
+          image_enabled: boolean
+          image_model: string
+          image_output_microusd_per_million: number | null
+          image_quality: string
+          image_size: string
+          image_text_input_microusd_per_million: number | null
+          input_microusd_per_million: number | null
+          is_current: boolean
+          max_attempts: number
+          max_output_tokens: number
+          model: string
+          output_microusd_per_million: number | null
+          provider: string
+          updated_at: string
+        }
+        Insert: {
+          cached_input_microusd_per_million?: number | null
+          configured_by_user_id?: string | null
+          daily_image_job_budget?: number
+          daily_job_budget?: number
+          daily_token_budget?: number
+          enabled?: boolean
+          environment: string
+          image_enabled?: boolean
+          image_model?: string
+          image_output_microusd_per_million?: number | null
+          image_quality?: string
+          image_size?: string
+          image_text_input_microusd_per_million?: number | null
+          input_microusd_per_million?: number | null
+          is_current?: boolean
+          max_attempts?: number
+          max_output_tokens?: number
+          model: string
+          output_microusd_per_million?: number | null
+          provider?: string
+          updated_at?: string
+        }
+        Update: {
+          cached_input_microusd_per_million?: number | null
+          configured_by_user_id?: string | null
+          daily_image_job_budget?: number
+          daily_job_budget?: number
+          daily_token_budget?: number
+          enabled?: boolean
+          environment?: string
+          image_enabled?: boolean
+          image_model?: string
+          image_output_microusd_per_million?: number | null
+          image_quality?: string
+          image_size?: string
+          image_text_input_microusd_per_million?: number | null
+          input_microusd_per_million?: number | null
+          is_current?: boolean
+          max_attempts?: number
+          max_output_tokens?: number
+          model?: string
+          output_microusd_per_million?: number | null
+          provider?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      relationship_gist_ai_generation_jobs: {
+        Row: {
+          attempt_count: number
+          cached_input_tokens: number | null
+          claimed_at: string | null
+          completed_at: string | null
+          cost_estimate_status: string
+          created_at: string
+          environment: string
+          estimated_cost_microusd: number | null
+          failed_at: string | null
+          failure_code: string | null
+          generated_revision_id: string | null
+          id: string
+          idempotency_key: string
+          input_tokens: number | null
+          model: string
+          output_tokens: number | null
+          prompt_version: string
+          provider: string
+          provider_request_id: string | null
+          requested_by_user_id: string
+          retryable: boolean
+          schema_version: string
+          status: string
+          topic_id: string
+          updated_at: string
+        }
+        Insert: {
+          attempt_count?: number
+          cached_input_tokens?: number | null
+          claimed_at?: string | null
+          completed_at?: string | null
+          cost_estimate_status?: string
+          created_at?: string
+          environment: string
+          estimated_cost_microusd?: number | null
+          failed_at?: string | null
+          failure_code?: string | null
+          generated_revision_id?: string | null
+          id?: string
+          idempotency_key: string
+          input_tokens?: number | null
+          model: string
+          output_tokens?: number | null
+          prompt_version: string
+          provider: string
+          provider_request_id?: string | null
+          requested_by_user_id: string
+          retryable?: boolean
+          schema_version: string
+          status?: string
+          topic_id: string
+          updated_at?: string
+        }
+        Update: {
+          attempt_count?: number
+          cached_input_tokens?: number | null
+          claimed_at?: string | null
+          completed_at?: string | null
+          cost_estimate_status?: string
+          created_at?: string
+          environment?: string
+          estimated_cost_microusd?: number | null
+          failed_at?: string | null
+          failure_code?: string | null
+          generated_revision_id?: string | null
+          id?: string
+          idempotency_key?: string
+          input_tokens?: number | null
+          model?: string
+          output_tokens?: number | null
+          prompt_version?: string
+          provider?: string
+          provider_request_id?: string | null
+          requested_by_user_id?: string
+          retryable?: boolean
+          schema_version?: string
+          status?: string
+          topic_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "relationship_gist_ai_generation_jobs_environment_fkey"
+            columns: ["environment"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_ai_environment_policies"
+            referencedColumns: ["environment"]
+          },
+          {
+            foreignKeyName: "relationship_gist_ai_generation_jobs_generated_revision_id_fkey"
+            columns: ["generated_revision_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_revisions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "relationship_gist_ai_generation_jobs_topic_id_fkey"
+            columns: ["topic_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_ai_topic_calendar"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      relationship_gist_ai_image_jobs: {
+        Row: {
+          attempt_count: number
+          claimed_at: string | null
+          completed_at: string | null
+          created_at: string
+          environment: string
+          estimated_cost_microusd: number | null
+          failed_at: string | null
+          failure_code: string | null
+          id: string
+          idempotency_key: string
+          image_output_tokens: number | null
+          image_size: string
+          model: string
+          perspective: string
+          prompt_version: string
+          provider: string
+          provider_request_id: string | null
+          quality: string
+          requested_by_user_id: string
+          retryable: boolean
+          revision_id: string
+          status: string
+          text_input_tokens: number | null
+          updated_at: string
+        }
+        Insert: {
+          attempt_count?: number
+          claimed_at?: string | null
+          completed_at?: string | null
+          created_at?: string
+          environment: string
+          estimated_cost_microusd?: number | null
+          failed_at?: string | null
+          failure_code?: string | null
+          id?: string
+          idempotency_key: string
+          image_output_tokens?: number | null
+          image_size: string
+          model: string
+          perspective: string
+          prompt_version?: string
+          provider?: string
+          provider_request_id?: string | null
+          quality: string
+          requested_by_user_id: string
+          retryable?: boolean
+          revision_id: string
+          status?: string
+          text_input_tokens?: number | null
+          updated_at?: string
+        }
+        Update: {
+          attempt_count?: number
+          claimed_at?: string | null
+          completed_at?: string | null
+          created_at?: string
+          environment?: string
+          estimated_cost_microusd?: number | null
+          failed_at?: string | null
+          failure_code?: string | null
+          id?: string
+          idempotency_key?: string
+          image_output_tokens?: number | null
+          image_size?: string
+          model?: string
+          perspective?: string
+          prompt_version?: string
+          provider?: string
+          provider_request_id?: string | null
+          quality?: string
+          requested_by_user_id?: string
+          retryable?: boolean
+          revision_id?: string
+          status?: string
+          text_input_tokens?: number | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "relationship_gist_ai_image_jobs_environment_fkey"
+            columns: ["environment"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_ai_environment_policies"
+            referencedColumns: ["environment"]
+          },
+          {
+            foreignKeyName: "relationship_gist_ai_image_jobs_revision_id_fkey"
+            columns: ["revision_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_revisions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      relationship_gist_ai_job_events: {
+        Row: {
+          actor_user_id: string | null
+          environment: string
+          event_type: string
+          failure_code: string | null
+          from_status: string | null
+          id: number
+          job_id: string
+          metadata: Json
+          occurred_at: string
+          to_status: string | null
+        }
+        Insert: {
+          actor_user_id?: string | null
+          environment: string
+          event_type: string
+          failure_code?: string | null
+          from_status?: string | null
+          id?: never
+          job_id: string
+          metadata?: Json
+          occurred_at?: string
+          to_status?: string | null
+        }
+        Update: {
+          actor_user_id?: string | null
+          environment?: string
+          event_type?: string
+          failure_code?: string | null
+          from_status?: string | null
+          id?: never
+          job_id?: string
+          metadata?: Json
+          occurred_at?: string
+          to_status?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "relationship_gist_ai_job_events_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_ai_generation_jobs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      relationship_gist_ai_owner_review_events: {
+        Row: {
+          action: string
+          actor_user_id: string
+          environment: string
+          id: number
+          image_id: string | null
+          metadata: Json
+          occurred_at: string
+          revision_id: string | null
+          topic_id: string | null
+        }
+        Insert: {
+          action: string
+          actor_user_id: string
+          environment: string
+          id?: never
+          image_id?: string | null
+          metadata?: Json
+          occurred_at?: string
+          revision_id?: string | null
+          topic_id?: string | null
+        }
+        Update: {
+          action?: string
+          actor_user_id?: string
+          environment?: string
+          id?: never
+          image_id?: string | null
+          metadata?: Json
+          occurred_at?: string
+          revision_id?: string | null
+          topic_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "relationship_gist_ai_owner_review_events_image_id_fkey"
+            columns: ["image_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_revision_images"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "relationship_gist_ai_owner_review_events_revision_id_fkey"
+            columns: ["revision_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_revisions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "relationship_gist_ai_owner_review_events_topic_id_fkey"
+            columns: ["topic_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_ai_topic_calendar"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      relationship_gist_ai_source_suggestions: {
+        Row: {
+          created_at: string
+          id: string
+          publisher: string
+          review_note: string | null
+          reviewed_at: string | null
+          reviewed_by_user_id: string | null
+          revision_id: string
+          title: string
+          url: string
+          verification_status: string
+          why_suggested: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          publisher: string
+          review_note?: string | null
+          reviewed_at?: string | null
+          reviewed_by_user_id?: string | null
+          revision_id: string
+          title: string
+          url: string
+          verification_status?: string
+          why_suggested: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          publisher?: string
+          review_note?: string | null
+          reviewed_at?: string | null
+          reviewed_by_user_id?: string | null
+          revision_id?: string
+          title?: string
+          url?: string
+          verification_status?: string
+          why_suggested?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "relationship_gist_ai_source_suggestions_revision_id_fkey"
+            columns: ["revision_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_revisions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      relationship_gist_ai_topic_calendar: {
+        Row: {
+          approved_at: string | null
+          approved_by_user_id: string | null
+          cancelled_at: string | null
+          consumed_at: string | null
+          created_at: string
+          created_by_user_id: string
+          environment: string
+          id: string
+          planned_for: string
+          requested_perspective: string
+          revision_instruction: string | null
+          source_revision_id: string | null
+          status: string
+          topic_brief: string
+          topic_fingerprint: string
+          topic_key: string
+          topic_title: string
+          updated_at: string
+        }
+        Insert: {
+          approved_at?: string | null
+          approved_by_user_id?: string | null
+          cancelled_at?: string | null
+          consumed_at?: string | null
+          created_at?: string
+          created_by_user_id: string
+          environment: string
+          id?: string
+          planned_for: string
+          requested_perspective: string
+          revision_instruction?: string | null
+          source_revision_id?: string | null
+          status?: string
+          topic_brief: string
+          topic_fingerprint: string
+          topic_key: string
+          topic_title: string
+          updated_at?: string
+        }
+        Update: {
+          approved_at?: string | null
+          approved_by_user_id?: string | null
+          cancelled_at?: string | null
+          consumed_at?: string | null
+          created_at?: string
+          created_by_user_id?: string
+          environment?: string
+          id?: string
+          planned_for?: string
+          requested_perspective?: string
+          revision_instruction?: string | null
+          source_revision_id?: string | null
+          status?: string
+          topic_brief?: string
+          topic_fingerprint?: string
+          topic_key?: string
+          topic_title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "relationship_gist_ai_topic_calendar_environment_fkey"
+            columns: ["environment"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_ai_environment_policies"
+            referencedColumns: ["environment"]
+          },
+          {
+            foreignKeyName: "relationship_gist_ai_topic_calendar_source_revision_id_fkey"
+            columns: ["source_revision_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_revisions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      relationship_gist_editions: {
+        Row: {
+          created_at: string
+          current_revision_id: string | null
+          id: string
+          legacy_gist_id: string
+          lifecycle_status: string
+          lock_version: number
+          published_revision_id: string | null
+          targeting_enforced: boolean
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          current_revision_id?: string | null
+          id?: string
+          legacy_gist_id: string
+          lifecycle_status?: string
+          lock_version?: number
+          published_revision_id?: string | null
+          targeting_enforced?: boolean
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          current_revision_id?: string | null
+          id?: string
+          legacy_gist_id?: string
+          lifecycle_status?: string
+          lock_version?: number
+          published_revision_id?: string | null
+          targeting_enforced?: boolean
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "relationship_gist_editions_current_revision_fk"
+            columns: ["current_revision_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_revisions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "relationship_gist_editions_legacy_gist_id_fkey"
+            columns: ["legacy_gist_id"]
+            isOneToOne: true
+            referencedRelation: "relationship_gists"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "relationship_gist_editions_published_revision_fk"
+            columns: ["published_revision_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_revisions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      relationship_gist_editorial_audit_events: {
+        Row: {
+          action: string
+          actor_user_id: string | null
+          edition_id: string
+          from_status: string | null
+          id: number
+          metadata: Json
+          occurred_at: string
+          reason: string | null
+          revision_id: string | null
+          to_status: string | null
+        }
+        Insert: {
+          action: string
+          actor_user_id?: string | null
+          edition_id: string
+          from_status?: string | null
+          id?: never
+          metadata?: Json
+          occurred_at?: string
+          reason?: string | null
+          revision_id?: string | null
+          to_status?: string | null
+        }
+        Update: {
+          action?: string
+          actor_user_id?: string | null
+          edition_id?: string
+          from_status?: string | null
+          id?: never
+          metadata?: Json
+          occurred_at?: string
+          reason?: string | null
+          revision_id?: string | null
+          to_status?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "relationship_gist_editorial_audit_events_edition_id_fkey"
+            columns: ["edition_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_editions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "relationship_gist_editorial_audit_events_revision_id_fkey"
+            columns: ["revision_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_revisions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      relationship_gist_engagement_rate_limits: {
+        Row: {
+          action: string
+          request_count: number
+          updated_at: string
+          user_id: string
+          window_started_at: string
+        }
+        Insert: {
+          action: string
+          request_count?: number
+          updated_at?: string
+          user_id: string
+          window_started_at?: string
+        }
+        Update: {
+          action?: string
+          request_count?: number
+          updated_at?: string
+          user_id?: string
+          window_started_at?: string
+        }
+        Relationships: []
+      }
+      relationship_gist_engagement_receipts: {
+        Row: {
+          created_at: string
+          operation_id: string
+          operation_kind: string
+          result: Json
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          operation_id: string
+          operation_kind: string
+          result?: Json
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          operation_id?: string
+          operation_kind?: string
+          result?: Json
+          user_id?: string
+        }
+        Relationships: []
+      }
+      relationship_gist_reactions: {
+        Row: {
+          created_at: string
+          edition_id: string
+          reaction: string
+          revision_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          edition_id: string
+          reaction: string
+          revision_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          edition_id?: string
+          reaction?: string
+          revision_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "relationship_gist_reactions_edition_id_fkey"
+            columns: ["edition_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_editions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "relationship_gist_reactions_revision_id_fkey"
+            columns: ["revision_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_revisions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      relationship_gist_reader_events: {
+        Row: {
+          client_event_id: string
+          edition_id: string
+          event_type: string
+          id: number
+          occurred_at: string
+          progress_bucket: number | null
+          revision_id: string
+          session_id: string | null
+          source: string
+          user_id: string
+        }
+        Insert: {
+          client_event_id: string
+          edition_id: string
+          event_type: string
+          id?: never
+          occurred_at?: string
+          progress_bucket?: number | null
+          revision_id: string
+          session_id?: string | null
+          source: string
+          user_id: string
+        }
+        Update: {
+          client_event_id?: string
+          edition_id?: string
+          event_type?: string
+          id?: never
+          occurred_at?: string
+          progress_bucket?: number | null
+          revision_id?: string
+          session_id?: string | null
+          source?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "relationship_gist_reader_events_edition_id_fkey"
+            columns: ["edition_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_editions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "relationship_gist_reader_events_revision_id_fkey"
+            columns: ["revision_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_revisions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      relationship_gist_reflections: {
+        Row: {
+          body: string
+          created_at: string
+          edition_id: string
+          revision_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          body: string
+          created_at?: string
+          edition_id: string
+          revision_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          body?: string
+          created_at?: string
+          edition_id?: string
+          revision_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "relationship_gist_reflections_edition_id_fkey"
+            columns: ["edition_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_editions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "relationship_gist_reflections_revision_id_fkey"
+            columns: ["revision_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_revisions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      relationship_gist_revision_images: {
+        Row: {
+          alt_text: string
+          approved_at: string | null
+          approved_by_user_id: string | null
+          created_at: string
+          generated_by_user_id: string
+          generation_job_id: string | null
+          height: number
+          id: string
+          mime_type: string
+          perspective: string
+          prompt: string
+          rejected_at: string | null
+          rejected_by_user_id: string | null
+          revision_id: string
+          sha256: string
+          source: string
+          status: string
+          storage_path: string
+          updated_at: string
+          width: number
+        }
+        Insert: {
+          alt_text: string
+          approved_at?: string | null
+          approved_by_user_id?: string | null
+          created_at?: string
+          generated_by_user_id: string
+          generation_job_id?: string | null
+          height: number
+          id?: string
+          mime_type?: string
+          perspective: string
+          prompt: string
+          rejected_at?: string | null
+          rejected_by_user_id?: string | null
+          revision_id: string
+          sha256: string
+          source?: string
+          status?: string
+          storage_path: string
+          updated_at?: string
+          width: number
+        }
+        Update: {
+          alt_text?: string
+          approved_at?: string | null
+          approved_by_user_id?: string | null
+          created_at?: string
+          generated_by_user_id?: string
+          generation_job_id?: string | null
+          height?: number
+          id?: string
+          mime_type?: string
+          perspective?: string
+          prompt?: string
+          rejected_at?: string | null
+          rejected_by_user_id?: string | null
+          revision_id?: string
+          sha256?: string
+          source?: string
+          status?: string
+          storage_path?: string
+          updated_at?: string
+          width?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "relationship_gist_revision_images_generation_job_id_fkey"
+            columns: ["generation_job_id"]
+            isOneToOne: true
+            referencedRelation: "relationship_gist_ai_image_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "relationship_gist_revision_images_revision_id_fkey"
+            columns: ["revision_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_revisions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      relationship_gist_revision_variants: {
+        Row: {
+          body: string
+          created_at: string
+          perspective: string
+          revision_id: string
+          short_body: string | null
+          title: string
+        }
+        Insert: {
+          body: string
+          created_at?: string
+          perspective: string
+          revision_id: string
+          short_body?: string | null
+          title: string
+        }
+        Update: {
+          body?: string
+          created_at?: string
+          perspective?: string
+          revision_id?: string
+          short_body?: string | null
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "relationship_gist_revision_variants_revision_id_fkey"
+            columns: ["revision_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_revisions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      relationship_gist_revisions: {
+        Row: {
+          archived_at: string | null
+          audience_rules: Json
+          authored_by_user_id: string | null
+          created_at: string
+          edition_id: string
+          id: string
+          primary_perspective: string
+          published_at: string | null
+          quality_approved_at: string | null
+          quality_approved_by_user_id: string | null
+          requires_safety_review: boolean
+          revision_number: number
+          safety_approved_at: string | null
+          safety_approved_by_user_id: string | null
+          scheduled_for: string | null
+          source_revision_id: string | null
+          status: string
+          superseded_at: string | null
+          transition_reason: string | null
+          unpublished_at: string | null
+          updated_at: string
+        }
+        Insert: {
+          archived_at?: string | null
+          audience_rules?: Json
+          authored_by_user_id?: string | null
+          created_at?: string
+          edition_id: string
+          id?: string
+          primary_perspective?: string
+          published_at?: string | null
+          quality_approved_at?: string | null
+          quality_approved_by_user_id?: string | null
+          requires_safety_review?: boolean
+          revision_number: number
+          safety_approved_at?: string | null
+          safety_approved_by_user_id?: string | null
+          scheduled_for?: string | null
+          source_revision_id?: string | null
+          status?: string
+          superseded_at?: string | null
+          transition_reason?: string | null
+          unpublished_at?: string | null
+          updated_at?: string
+        }
+        Update: {
+          archived_at?: string | null
+          audience_rules?: Json
+          authored_by_user_id?: string | null
+          created_at?: string
+          edition_id?: string
+          id?: string
+          primary_perspective?: string
+          published_at?: string | null
+          quality_approved_at?: string | null
+          quality_approved_by_user_id?: string | null
+          requires_safety_review?: boolean
+          revision_number?: number
+          safety_approved_at?: string | null
+          safety_approved_by_user_id?: string | null
+          scheduled_for?: string | null
+          source_revision_id?: string | null
+          status?: string
+          superseded_at?: string | null
+          transition_reason?: string | null
+          unpublished_at?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "relationship_gist_revisions_edition_id_fkey"
+            columns: ["edition_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_editions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "relationship_gist_revisions_source_revision_id_fkey"
+            columns: ["source_revision_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_revisions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      relationship_gist_specialist_assignments: {
+        Row: {
+          active: boolean
+          assigned_by_user_id: string | null
+          created_at: string
+          review_type: string
+          user_id: string
+        }
+        Insert: {
+          active?: boolean
+          assigned_by_user_id?: string | null
+          created_at?: string
+          review_type: string
+          user_id: string
+        }
+        Update: {
+          active?: boolean
+          assigned_by_user_id?: string | null
+          created_at?: string
+          review_type?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      relationship_gist_specialist_reviews: {
+        Row: {
+          approved_at: string | null
+          approved_by_user_id: string | null
+          created_at: string
+          note: string | null
+          review_type: string
+          revision_id: string
+        }
+        Insert: {
+          approved_at?: string | null
+          approved_by_user_id?: string | null
+          created_at?: string
+          note?: string | null
+          review_type: string
+          revision_id: string
+        }
+        Update: {
+          approved_at?: string | null
+          approved_by_user_id?: string | null
+          created_at?: string
+          note?: string | null
+          review_type?: string
+          revision_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "relationship_gist_specialist_reviews_revision_id_fkey"
+            columns: ["revision_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gist_revisions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      relationship_gist_state_mutation_receipts: {
+        Row: {
+          created_at: string
+          gist_id: string
+          operation_id: string
+          profile_id: string
+          result: Json
+        }
+        Insert: {
+          created_at?: string
+          gist_id: string
+          operation_id: string
+          profile_id: string
+          result: Json
+        }
+        Update: {
+          created_at?: string
+          gist_id?: string
+          operation_id?: string
+          profile_id?: string
+          result?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "relationship_gist_state_mutation_receipts_gist_id_fkey"
+            columns: ["gist_id"]
+            isOneToOne: false
+            referencedRelation: "relationship_gists"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "relationship_gist_state_mutation_receipts_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profile_location_features"
+            referencedColumns: ["profile_id"]
+          },
+          {
+            foreignKeyName: "relationship_gist_state_mutation_receipts_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       relationship_gist_user_states: {
         Row: {
           gist_id: string
+          last_anchor: string | null
+          last_anchor_offset: number | null
           last_opened_at: string | null
           last_perspective: string | null
           last_read_at: string | null
           profile_id: string
           progress: number
+          read_acknowledged_at: string | null
+          reading_duration_ms: number
           saved: boolean
+          saved_version: number
+          scroll_completed_at: string | null
           updated_at: string
         }
         Insert: {
           gist_id: string
+          last_anchor?: string | null
+          last_anchor_offset?: number | null
           last_opened_at?: string | null
           last_perspective?: string | null
           last_read_at?: string | null
           profile_id: string
           progress?: number
+          read_acknowledged_at?: string | null
+          reading_duration_ms?: number
           saved?: boolean
+          saved_version?: number
+          scroll_completed_at?: string | null
           updated_at?: string
         }
         Update: {
           gist_id?: string
+          last_anchor?: string | null
+          last_anchor_offset?: number | null
           last_opened_at?: string | null
           last_perspective?: string | null
           last_read_at?: string | null
           profile_id?: string
           progress?: number
+          read_acknowledged_at?: string | null
+          reading_duration_ms?: number
           saved?: boolean
+          saved_version?: number
+          scroll_completed_at?: string | null
           updated_at?: string
         }
         Relationships: [
@@ -11379,6 +15705,75 @@ export type Database = {
         }
         Relationships: []
       }
+      revenuecat_webhook_inbox: {
+        Row: {
+          app_user_id: string | null
+          attempt_count: number
+          delivery_count: number
+          environment: string | null
+          environment_source: string
+          error: string | null
+          event_type: string
+          id: string
+          last_error_code: string | null
+          last_received_at: string
+          next_retry_at: string | null
+          payload: Json
+          payload_sha256: string
+          processed_at: string | null
+          processing_started_at: string | null
+          processing_state: string
+          received_at: string
+          retry_count: number
+          revenuecat_event_id: string
+          updated_at: string
+        }
+        Insert: {
+          app_user_id?: string | null
+          attempt_count?: number
+          delivery_count?: number
+          environment?: string | null
+          environment_source?: string
+          error?: string | null
+          event_type: string
+          id?: string
+          last_error_code?: string | null
+          last_received_at?: string
+          next_retry_at?: string | null
+          payload: Json
+          payload_sha256: string
+          processed_at?: string | null
+          processing_started_at?: string | null
+          processing_state?: string
+          received_at?: string
+          retry_count?: number
+          revenuecat_event_id: string
+          updated_at?: string
+        }
+        Update: {
+          app_user_id?: string | null
+          attempt_count?: number
+          delivery_count?: number
+          environment?: string | null
+          environment_source?: string
+          error?: string | null
+          event_type?: string
+          id?: string
+          last_error_code?: string | null
+          last_received_at?: string
+          next_retry_at?: string | null
+          payload?: Json
+          payload_sha256?: string
+          processed_at?: string | null
+          processing_started_at?: string | null
+          processing_state?: string
+          received_at?: string
+          retry_count?: number
+          revenuecat_event_id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       settings: {
         Row: {
           created_at: string
@@ -11486,6 +15881,133 @@ export type Database = {
           user_id?: string | null
         }
         Relationships: []
+      }
+      spark_ledger_events: {
+        Row: {
+          created_at: string
+          delta_sparks: number
+          environment: string
+          id: string
+          idempotency_key: string
+          observed_at: string | null
+          observed_balance_after: number | null
+          provider_transaction_id: string | null
+          reason: string
+          source: string
+          spend_intent_id: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          delta_sparks: number
+          environment: string
+          id?: string
+          idempotency_key: string
+          observed_at?: string | null
+          observed_balance_after?: number | null
+          provider_transaction_id?: string | null
+          reason: string
+          source: string
+          spend_intent_id?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          delta_sparks?: number
+          environment?: string
+          id?: string
+          idempotency_key?: string
+          observed_at?: string | null
+          observed_balance_after?: number | null
+          provider_transaction_id?: string | null
+          reason?: string
+          source?: string
+          spend_intent_id?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "spark_ledger_events_spend_intent_id_fkey"
+            columns: ["spend_intent_id"]
+            isOneToOne: false
+            referencedRelation: "spark_spend_intents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      spark_spend_intents: {
+        Row: {
+          action_code: string
+          created_at: string
+          environment: string
+          expires_at: string
+          failure_code: string | null
+          fulfilled_at: string | null
+          id: string
+          idempotency_key: string
+          included: boolean
+          membership_tier: string
+          provider_transaction_id: string | null
+          quoted_price_sparks: number
+          resource_id: string | null
+          resource_type: string | null
+          rule_id: string
+          rule_version: number
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          action_code: string
+          created_at?: string
+          environment: string
+          expires_at: string
+          failure_code?: string | null
+          fulfilled_at?: string | null
+          id?: string
+          idempotency_key: string
+          included?: boolean
+          membership_tier: string
+          provider_transaction_id?: string | null
+          quoted_price_sparks: number
+          resource_id?: string | null
+          resource_type?: string | null
+          rule_id: string
+          rule_version: number
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          action_code?: string
+          created_at?: string
+          environment?: string
+          expires_at?: string
+          failure_code?: string | null
+          fulfilled_at?: string | null
+          id?: string
+          idempotency_key?: string
+          included?: boolean
+          membership_tier?: string
+          provider_transaction_id?: string | null
+          quoted_price_sparks?: number
+          resource_id?: string | null
+          resource_type?: string | null
+          rule_id?: string
+          rule_version?: number
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "spark_spend_intents_rule_id_fkey"
+            columns: ["rule_id"]
+            isOneToOne: false
+            referencedRelation: "economy_action_rules"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       spatial_ref_sys: {
         Row: {
@@ -11860,6 +16382,36 @@ export type Database = {
           start_date?: string | null
           travel_mode?: string
           user_id?: string
+        }
+        Relationships: []
+      }
+      unsafe_media_hash_blocklist: {
+        Row: {
+          category: string
+          created_at: string
+          disabled_at: string | null
+          enabled: boolean
+          sha256: string
+          source: string
+          source_reference: string | null
+        }
+        Insert: {
+          category: string
+          created_at?: string
+          disabled_at?: string | null
+          enabled?: boolean
+          sha256: string
+          source: string
+          source_reference?: string | null
+        }
+        Update: {
+          category?: string
+          created_at?: string
+          disabled_at?: string | null
+          enabled?: boolean
+          sha256?: string
+          source?: string
+          source_reference?: string | null
         }
         Relationships: []
       }
@@ -13412,6 +17964,10 @@ export type Database = {
         Args: { p_profile_id: string }
         Returns: boolean
       }
+      can_receive_live_reaction_broadcast: {
+        Args: { p_topic: string; p_user_id?: string }
+        Returns: boolean
+      }
       can_users_chat: {
         Args: { p_receiver_user_id: string; p_sender_user_id: string }
         Returns: boolean
@@ -13421,13 +17977,30 @@ export type Database = {
         Returns: boolean
       }
       can_view_moment: { Args: { p_moment_id: string }; Returns: boolean }
+      chat_message_semantic_preview: {
+        Args: {
+          p_media_kind: string
+          p_message_type: string
+          p_private?: boolean
+          p_text: string
+        }
+        Returns: string
+      }
       circle_pulse_comment_reaction_summary_json: {
         Args: { p_comment_id: string }
         Returns: Json
       }
       clean_expired_distance_cache: { Args: never; Returns: number }
+      cleanup_app_mutation_receipts_v1: {
+        Args: { p_limit?: number }
+        Returns: number
+      }
       cleanup_live_ephemeral_activity: { Args: never; Returns: Json }
       cleanup_live_match_rounds: { Args: never; Returns: number }
+      cleanup_live_operational_events_v1: {
+        Args: { p_batch_size?: number }
+        Returns: Json
+      }
       cleanup_live_private_sparks: { Args: never; Returns: number }
       cleanup_live_stale_participants: { Args: never; Returns: Json }
       cleanup_phone_verifications_orphans: { Args: never; Returns: undefined }
@@ -13458,9 +18031,26 @@ export type Database = {
         Args: { p_cron_secret: string; p_endpoint: string }
         Returns: boolean
       }
+      configure_moderation_evidence_retention_worker: {
+        Args: { p_cron_secret: string; p_endpoint: string }
+        Returns: boolean
+      }
+      configure_profile_media_remediation_worker: {
+        Args: { p_cron_secret: string; p_endpoint: string }
+        Returns: boolean
+      }
       content_safety_assess_private_message: {
         Args: { p_text: string }
         Returns: Json
+      }
+      content_safety_event_weight: {
+        Args: {
+          p_categories: string[]
+          p_decision: string
+          p_failure_reason: string
+          p_status: string
+        }
+        Returns: number
       }
       decrement_superlike: { Args: { p_profile_id: string }; Returns: number }
       detect_travel_for_user: {
@@ -13471,6 +18061,14 @@ export type Database = {
           is_traveling: boolean
           travel_mode: string
         }[]
+      }
+      disable_moderation_evidence_retention_worker: {
+        Args: never
+        Returns: boolean
+      }
+      disable_profile_media_remediation_worker: {
+        Args: never
+        Returns: boolean
       }
       disablelongtransactions: { Args: never; Returns: string }
       dropgeometrycolumn:
@@ -13503,6 +18101,7 @@ export type Database = {
           }
         | { Args: { schema_name: string; table_name: string }; Returns: string }
         | { Args: { table_name: string }; Returns: string }
+      economy_is_service_role: { Args: never; Returns: boolean }
       edit_message: {
         Args: { message_id: string; new_text: string }
         Returns: {
@@ -13539,6 +18138,7 @@ export type Database = {
           media_items: Json
           media_kind: string | null
           message_type: string
+          provider_media: Json | null
           read_at: string | null
           receiver_id: string
           reply_to_message_id: string | null
@@ -13558,6 +18158,10 @@ export type Database = {
         }
       }
       enablelongtransactions: { Args: never; Returns: string }
+      enqueue_circle_live_notification_campaigns_v1: {
+        Args: never
+        Returns: number
+      }
       enqueue_circle_pulse_push: {
         Args: {
           p_actor_user_id: string
@@ -13569,6 +18173,7 @@ export type Database = {
         }
         Returns: boolean
       }
+      enqueue_live_notification_campaigns_v1: { Args: never; Returns: number }
       enqueue_vibes_v4_metric_refresh: {
         Args: {
           p_profile_id: string
@@ -14134,6 +18739,45 @@ export type Database = {
           verified: boolean
         }[]
       }
+      get_vibes_recommendations_v5_3_unfiltered: {
+        Args: {
+          p_active_window_minutes?: number
+          p_client_session_id?: string
+          p_limit?: number
+          p_refresh_ordinal?: number
+          p_request_id?: string
+          p_segment?: string
+          p_user_id: string
+        }
+        Returns: {
+          age: number
+          ai_score: number
+          avatar_url: string
+          bio: string
+          city: string
+          current_country: string
+          current_country_code: string
+          distance_km: number
+          full_name: string
+          id: string
+          is_active: boolean
+          last_active: string
+          latitude: number
+          location: string
+          location_precision: string
+          longitude: number
+          online: boolean
+          personality_type: string
+          profile_video: string
+          recommendation_reasons: Json
+          region: string
+          religion: string
+          tribe: string
+          user_id: string
+          verification_level: number
+          verified: boolean
+        }[]
+      }
       get_viewed_profile_prompts: {
         Args: { p_profile_id: string; p_viewer_profile_id?: string }
         Returns: {
@@ -14161,6 +18805,10 @@ export type Database = {
         Args: { p_capability: string; p_session_id: string; p_user_id?: string }
         Returns: boolean
       }
+      has_relationship_gist_editorial_capability: {
+        Args: { p_action: string; p_user_id?: string }
+        Returns: boolean
+      }
       has_usable_vibes_coordinates: {
         Args: { p_latitude: number; p_longitude: number }
         Returns: boolean
@@ -14178,6 +18826,11 @@ export type Database = {
         }[]
       }
       invoke_chat_attachment_retention_worker: { Args: never; Returns: number }
+      invoke_moderation_evidence_retention_worker: {
+        Args: never
+        Returns: number
+      }
+      invoke_profile_media_remediation_worker: { Args: never; Returns: number }
       is_admin_user: { Args: { p_user_id?: string }; Returns: boolean }
       is_chat_attachment_object_mutable: {
         Args: {
@@ -14185,6 +18838,10 @@ export type Database = {
           p_sender_id: string
           p_storage_path: string
         }
+        Returns: boolean
+      }
+      is_child_safety_reviewer: {
+        Args: { p_user_id: string }
         Returns: boolean
       }
       is_circle_host: {
@@ -14213,6 +18870,10 @@ export type Database = {
       }
       is_trusted_boost_viewer: {
         Args: { p_target_profile_id?: string; p_viewer_profile_id: string }
+        Returns: boolean
+      }
+      is_valid_chat_provider_media: {
+        Args: { p_media_kind?: string; p_provider_media: Json }
         Returns: boolean
       }
       live_active_profile: {
@@ -14335,9 +18996,25 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      live_assert_publication_command_v1: {
+        Args: {
+          p_command_id: string
+          p_command_type: string
+          p_session_id: string
+        }
+        Returns: boolean
+      }
+      live_audience_policy_matches_user_v1: {
+        Args: { p_purpose?: string; p_session_id: string; p_user_id?: string }
+        Returns: boolean
+      }
       live_audience_poll_json: {
         Args: { p_poll_id: string; p_user_id?: string }
         Returns: Json
+      }
+      live_broadcast_artifact_metadata_safe_v1: {
+        Args: { p_metadata: Json }
+        Returns: boolean
       }
       live_build_connection_signals: {
         Args: { p_profile_a: string; p_profile_b: string }
@@ -14355,6 +19032,10 @@ export type Database = {
         Args: { p_profile_id: string }
         Returns: Json
       }
+      live_circle_reach_matches_user_v1: {
+        Args: { p_circle_id: string; p_user_id?: string }
+        Returns: boolean
+      }
       live_cross_session_pair_is_eligible: {
         Args: {
           p_geography_mode?: string
@@ -14367,12 +19048,52 @@ export type Database = {
         Returns: boolean
       }
       live_evaluate_quorum: { Args: { p_session_id: string }; Returns: Json }
+      live_get_music_playback_without_program_audio_v1: {
+        Args: { p_session_id: string; p_user_id: string }
+        Returns: Json
+      }
       live_hosted_matching_snapshot: {
         Args: { p_session_id: string }
         Returns: Json
       }
+      live_is_odo_always_on_session_v1: {
+        Args: { p_session_id: string }
+        Returns: boolean
+      }
       live_match_pair_is_eligible: {
         Args: { p_session_id: string; p_user_a: string; p_user_b: string }
+        Returns: boolean
+      }
+      live_odo_always_on_bump_user_v1: {
+        Args: { p_user_id: string }
+        Returns: undefined
+      }
+      live_odo_always_on_has_active_experience_v1: {
+        Args: { p_excluded_session_id?: string; p_user_id: string }
+        Returns: boolean
+      }
+      live_odo_always_on_market_v1: {
+        Args: { p_user_id: string }
+        Returns: string
+      }
+      live_odo_always_on_music_allowed_v1: {
+        Args: { p_session_id: string }
+        Returns: boolean
+      }
+      live_odo_always_on_pair_is_eligible_v1: {
+        Args: { p_user_a: string; p_user_b: string }
+        Returns: boolean
+      }
+      live_odo_always_on_safety_preflight_v1: {
+        Args: { p_opportunity_id: string }
+        Returns: boolean
+      }
+      live_odo_always_on_service_witness_v1: {
+        Args: { p_session_id: string; p_user_id: string }
+        Returns: boolean
+      }
+      live_odo_always_on_user_allowed_v1: {
+        Args: { p_user_id: string }
         Returns: boolean
       }
       live_odo_append_director_event_v1: {
@@ -14570,6 +19291,15 @@ export type Database = {
         Args: { p_task: string }
         Returns: number
       }
+      live_odo_finalize_always_on_session_base_10f_v1: {
+        Args: {
+          p_failure_reason_code?: string
+          p_opportunity_id: string
+          p_stream_ready: boolean
+          p_worker_id: string
+        }
+        Returns: Json
+      }
       live_odo_full_quick_eligible_pairs_v1: {
         Args: { p_session_id: string }
         Returns: number
@@ -14593,6 +19323,10 @@ export type Database = {
       }
       live_odo_full_quick_snapshot_v1: {
         Args: { p_actor_user_id: string; p_session_id: string }
+        Returns: Json
+      }
+      live_odo_get_music_playback_base_10f_v1: {
+        Args: { p_session_id: string; p_user_id: string }
         Returns: Json
       }
       live_odo_guarded_action_allowed_v1: {
@@ -14644,10 +19378,38 @@ export type Database = {
         Args: { p_user_id: string }
         Returns: boolean
       }
+      live_odo_host_music_control_base_10f_v1: {
+        Args: {
+          p_action: string
+          p_idempotency_key?: string
+          p_mood?: string
+          p_playlist_id?: string
+          p_session_id: string
+          p_track_id?: string
+          p_volume?: number
+        }
+        Returns: Json
+      }
       live_odo_is_service_role: { Args: never; Returns: boolean }
       live_odo_jsonb_has_exact_keys_v1: {
         Args: { p_optional?: string[]; p_required: string[]; p_value: Json }
         Returns: boolean
+      }
+      live_odo_maintain_opportunities_base_10f_v1: {
+        Args: never
+        Returns: Json
+      }
+      live_odo_prepare_always_on_session_base_10f_v1: {
+        Args: { p_opportunity_id: string; p_worker_id: string }
+        Returns: Json
+      }
+      live_odo_reconcile_show_base_10f_v1: {
+        Args: {
+          p_lease_owner: string
+          p_requested_by_user_id: string
+          p_session_id: string
+        }
+        Returns: Json
       }
       live_odo_show_host_allowed_v1: {
         Args: { p_session_id: string; p_user_id: string }
@@ -14685,6 +19447,48 @@ export type Database = {
         Args: { p_profile: Database["public"]["Tables"]["profiles"]["Row"] }
         Returns: string
       }
+      live_program_assignment_error_v1: {
+        Args: { p_assignments: Json; p_scene: string; p_session_id: string }
+        Returns: string
+      }
+      live_program_command_result_v1: {
+        Args: {
+          p_applied: boolean
+          p_reason_code: string
+          p_session_id: string
+        }
+        Returns: Json
+      }
+      live_program_ensure_logical_sources_v1: {
+        Args: { p_session_id: string }
+        Returns: undefined
+      }
+      live_program_ensure_session_v1: {
+        Args: { p_session_id: string }
+        Returns: undefined
+      }
+      live_program_restore_music_stage_v1: {
+        Args: {
+          p_actor_user_id: string
+          p_command_id: string
+          p_reason: string
+          p_session_id: string
+          p_source: string
+        }
+        Returns: Json
+      }
+      live_program_safe_fallback_v1: {
+        Args: { p_preferred_scene: string; p_session_id: string }
+        Returns: Json
+      }
+      live_public_media_consent_ready_v1: {
+        Args: { p_purpose: string; p_session_id: string }
+        Returns: boolean
+      }
+      live_publication_control_snapshot_v1: {
+        Args: { p_session_id: string; p_user_id: string }
+        Returns: Json
+      }
       live_quick_connect_has_active_safety_hold: {
         Args: { p_user_id: string }
         Returns: boolean
@@ -14717,8 +19521,51 @@ export type Database = {
         Args: { p_session_id: string }
         Returns: Json
       }
+      live_reaction_summary_payload: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      live_record_publication_command_v1: {
+        Args: {
+          p_command_id: string
+          p_command_type: string
+          p_result_status: string
+          p_result_version: number
+          p_session_id: string
+        }
+        Returns: undefined
+      }
       live_role_capabilities: { Args: { p_role: string }; Returns: string[] }
+      live_session_has_active_delegated_host_v1: {
+        Args: { p_session_id: string; p_user_id: string }
+        Returns: boolean
+      }
+      live_session_has_active_on_air_host_v1: {
+        Args: { p_session_id: string; p_user_id: string }
+        Returns: boolean
+      }
+      live_stage_atmosphere_snapshot_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      live_studio_has_aal2_v1: { Args: never; Returns: boolean }
+      live_studio_is_authorized_v1: {
+        Args: { p_capability?: string; p_session_id: string; p_user_id: string }
+        Returns: boolean
+      }
+      live_studio_operator_role_v1: {
+        Args: { p_session_id: string; p_user_id: string }
+        Returns: string
+      }
+      live_studio_session_operator_role_v1: {
+        Args: { p_session_id: string; p_user_id: string }
+        Returns: string
+      }
       longtransactionsenabled: { Args: never; Returns: boolean }
+      normalize_circle_reach_scopes: {
+        Args: { p_fallback?: string; p_reach_scopes: string[] }
+        Returns: string[]
+      }
       normalize_live_quick_connect_intent: {
         Args: { p_value: string }
         Returns: string
@@ -14840,6 +19687,14 @@ export type Database = {
         }
         Returns: number
       }
+      profile_media_reference_is_approved: {
+        Args: { p_url: string; p_user_id: string }
+        Returns: boolean
+      }
+      recalculate_content_safety_actor_state: {
+        Args: { p_user_id: string }
+        Returns: undefined
+      }
       record_profile_country_verification_observation: {
         Args: {
           p_accuracy_meters: number
@@ -14888,6 +19743,71 @@ export type Database = {
         Args: { p_target_profile_ids?: string[]; p_viewer_profile_id: string }
         Returns: number
       }
+      relationship_gist_ai_is_owner_editor: {
+        Args: { p_user_id?: string }
+        Returns: boolean
+      }
+      relationship_gist_ai_normalize_topic: {
+        Args: { p_value: string }
+        Returns: string
+      }
+      relationship_gist_ai_record_event: {
+        Args: {
+          p_actor_user_id: string
+          p_event_type: string
+          p_failure_code?: string
+          p_from_status: string
+          p_job_id: string
+          p_metadata?: Json
+          p_to_status: string
+        }
+        Returns: undefined
+      }
+      relationship_gist_ai_similarity: {
+        Args: { p_left: string; p_right: string }
+        Returns: number
+      }
+      relationship_gist_can_cleanup_manual_cover: {
+        Args: { p_storage_path: string }
+        Returns: boolean
+      }
+      relationship_gist_can_read_cover: {
+        Args: { p_storage_path: string }
+        Returns: boolean
+      }
+      relationship_gist_can_upload_manual_cover: {
+        Args: { p_storage_path: string }
+        Returns: boolean
+      }
+      relationship_gist_engagement_consume_rate_limit: {
+        Args: {
+          p_action: string
+          p_limit: number
+          p_user_id: string
+          p_window: string
+        }
+        Returns: undefined
+      }
+      relationship_gist_engagement_resolve: {
+        Args: { p_gist_id: string; p_revision_id?: string }
+        Returns: {
+          edition_id: string
+          revision_id: string
+        }[]
+      }
+      relationship_gist_v2_record_audit: {
+        Args: {
+          p_action: string
+          p_actor_user_id: string
+          p_edition_id: string
+          p_from_status: string
+          p_metadata?: Json
+          p_reason?: string
+          p_revision_id: string
+          p_to_status: string
+        }
+        Returns: undefined
+      }
       reset_daily_superlikes: { Args: never; Returns: undefined }
       resolve_live_capabilities: {
         Args: { p_session_id: string; p_user_id?: string }
@@ -14925,6 +19845,30 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_add_relationship_gist_revision_variant: {
+        Args: {
+          p_body: string
+          p_perspective: string
+          p_revision_id: string
+          p_short_body: string
+          p_title: string
+        }
+        Returns: Json
+      }
+      rpc_admin_assign_live_on_air_host_v1: {
+        Args: { p_email: string; p_note?: string; p_session_id: string }
+        Returns: Json
+      }
+      rpc_admin_assign_live_studio_operator_v1: {
+        Args: {
+          p_email: string
+          p_expires_at?: string
+          p_note?: string
+          p_operator_role: string
+          p_session_id: string
+        }
+        Returns: Json
+      }
       rpc_admin_clear_verification_refresh: {
         Args: { p_profile_id: string }
         Returns: boolean
@@ -14944,6 +19888,10 @@ export type Database = {
         Returns: string
       }
       rpc_admin_dashboard_overview: { Args: never; Returns: Json }
+      rpc_admin_delegate_live_host_v1: {
+        Args: { p_session_id: string; p_username: string }
+        Returns: Json
+      }
       rpc_admin_execute_account_merge_case: {
         Args: { p_case_id: string }
         Returns: Json
@@ -15104,6 +20052,7 @@ export type Database = {
       rpc_admin_get_circles_queue: {
         Args: never
         Returns: {
+          access_policy: string
           active_this_week_count: number
           approved_at: string | null
           approved_by_admin_id: string | null
@@ -15120,6 +20069,8 @@ export type Database = {
           created_by_user_id: string | null
           culture_tags: string[]
           description: string | null
+          diaspora_destination_country_codes: string[]
+          diaspora_origin_country_codes: string[]
           diaspora_tags: string[]
           faith_tags: string[]
           gathering_count: number
@@ -15135,9 +20086,13 @@ export type Database = {
           is_official: boolean
           is_partner: boolean
           latitude: number | null
+          live_discovery_policy: string
           longitude: number | null
           member_count: number
+          membership_eligibility_policy: string
           name: string
+          reach_scope: string
+          reach_scopes: string[]
           region: string | null
           rejected_reason: string | null
           report_count: number
@@ -15185,6 +20140,17 @@ export type Database = {
           storage_path: string
           target_name: string
           target_user_id: string
+        }[]
+      }
+      rpc_admin_get_database_capacity_v1: {
+        Args: { p_limit?: number }
+        Returns: {
+          by_application: Json
+          connections: number
+          level: string
+          sampled_at: string
+          usable_connections: number
+          utilization_percent: number
         }[]
       }
       rpc_admin_get_date_plan_concierge_queue: {
@@ -15314,6 +20280,55 @@ export type Database = {
           user_id: string
         }[]
       }
+      rpc_admin_get_relationship_gist_editions: {
+        Args: never
+        Returns: {
+          authored_by_user_id: string
+          body: string
+          edition_id: string
+          legacy_gist_id: string
+          lock_version: number
+          perspective: string
+          perspectives: string[]
+          published_at: string
+          quality_approved_at: string
+          requires_safety_review: boolean
+          revision_id: string
+          revision_number: number
+          safety_approved_at: string
+          scheduled_for: string
+          short_body: string
+          status: string
+          targeting_enforced: boolean
+          title: string
+          updated_at: string
+        }[]
+      }
+      rpc_admin_get_relationship_gist_editions_v2: {
+        Args: never
+        Returns: {
+          ai_generated: boolean
+          authored_by_user_id: string
+          body: string
+          edition_id: string
+          legacy_gist_id: string
+          lock_version: number
+          perspective: string
+          perspectives: string[]
+          published_at: string
+          quality_approved_at: string
+          requires_safety_review: boolean
+          revision_id: string
+          revision_number: number
+          safety_approved_at: string
+          scheduled_for: string
+          short_body: string
+          status: string
+          targeting_enforced: boolean
+          title: string
+          updated_at: string
+        }[]
+      }
       rpc_admin_get_relationship_gists: {
         Args: never
         Returns: {
@@ -15421,6 +20436,20 @@ export type Database = {
         Args: { p_case_id: string }
         Returns: Json
       }
+      rpc_admin_publish_live_music_track_v2: {
+        Args: {
+          p_artist: string
+          p_contains_vocals: boolean
+          p_duration_seconds: number
+          p_license_expires_at?: string
+          p_license_reference: string
+          p_mood: string
+          p_storage_path: string
+          p_title: string
+          p_track_id: string
+        }
+        Returns: Json
+      }
       rpc_admin_request_verification_refresh: {
         Args: {
           p_profile_id: string
@@ -15442,12 +20471,58 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_admin_reverse_content_moderation_event: {
+        Args: { p_event_id: string; p_reason: string }
+        Returns: Json
+      }
       rpc_admin_review_verification_request: {
         Args: { p_decision: string; p_notes?: string; p_request_id: string }
         Returns: boolean
       }
+      rpc_admin_revoke_live_host_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      rpc_admin_revoke_live_on_air_host_v1: {
+        Args: { p_session_id: string; p_user_id: string }
+        Returns: Json
+      }
+      rpc_admin_revoke_live_studio_operator_v1: {
+        Args: { p_session_id: string; p_user_id: string }
+        Returns: Json
+      }
+      rpc_admin_set_live_odo_always_on_access_v1: {
+        Args: {
+          p_allowed: boolean
+          p_expires_at?: string
+          p_note?: string
+          p_user_id: string
+        }
+        Returns: Json
+      }
       rpc_admin_set_live_odo_guarded_host_access_v1: {
         Args: { p_allowed: boolean; p_note?: string; p_user_id: string }
+        Returns: Json
+      }
+      rpc_admin_set_live_studio_access_v1: {
+        Args: {
+          p_allowed: boolean
+          p_capabilities?: Json
+          p_expires_at?: string
+          p_note?: string
+          p_user_id: string
+        }
+        Returns: Json
+      }
+      rpc_admin_set_live_studio_access_v2: {
+        Args: {
+          p_allowed: boolean
+          p_capabilities?: Json
+          p_expires_at?: string
+          p_note?: string
+          p_operator_role: string
+          p_user_id: string
+        }
         Returns: Json
       }
       rpc_admin_update_account_merge_case: {
@@ -15468,6 +20543,10 @@ export type Database = {
         }
         Returns: boolean
       }
+      rpc_admin_update_live_odo_always_on_v1: {
+        Args: { p_patch: Json }
+        Returns: Json
+      }
       rpc_admin_update_live_odo_configuration_v1: {
         Args: { p_patch: Json }
         Returns: Json
@@ -15481,6 +20560,10 @@ export type Database = {
         Returns: Json
       }
       rpc_admin_update_live_odo_show_v1: {
+        Args: { p_patch: Json }
+        Returns: Json
+      }
+      rpc_admin_update_live_studio_configuration_v1: {
         Args: { p_patch: Json }
         Returns: Json
       }
@@ -15575,6 +20658,7 @@ export type Database = {
           media_items: Json
           media_kind: string | null
           message_type: string
+          provider_media: Json | null
           read_at: string | null
           receiver_id: string
           reply_to_message_id: string | null
@@ -15611,9 +20695,29 @@ export type Database = {
             }
             Returns: undefined
           }
+      rpc_apply_relationship_gist_state_mutation_v2: {
+        Args: {
+          p_expected_saved_version?: number
+          p_gist_id: string
+          p_last_anchor?: string
+          p_last_anchor_offset?: number
+          p_last_perspective?: string
+          p_last_read_at?: string
+          p_mark_opened?: boolean
+          p_operation_id: string
+          p_owner_user_id: string
+          p_progress?: number
+          p_read_acknowledged?: boolean
+          p_reading_duration_delta_ms?: number
+          p_saved?: boolean
+          p_scroll_completed?: boolean
+        }
+        Returns: Json
+      }
       rpc_approve_circle: {
         Args: { p_circle_id: string }
         Returns: {
+          access_policy: string
           active_this_week_count: number
           approved_at: string | null
           approved_by_admin_id: string | null
@@ -15630,6 +20734,8 @@ export type Database = {
           created_by_user_id: string | null
           culture_tags: string[]
           description: string | null
+          diaspora_destination_country_codes: string[]
+          diaspora_origin_country_codes: string[]
           diaspora_tags: string[]
           faith_tags: string[]
           gathering_count: number
@@ -15645,9 +20751,13 @@ export type Database = {
           is_official: boolean
           is_partner: boolean
           latitude: number | null
+          live_discovery_policy: string
           longitude: number | null
           member_count: number
+          membership_eligibility_policy: string
           name: string
+          reach_scope: string
+          reach_scopes: string[]
           region: string | null
           rejected_reason: string | null
           report_count: number
@@ -15725,6 +20835,14 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      rpc_approve_relationship_gist_ai_topic: {
+        Args: { p_topic_id: string }
+        Returns: Json
+      }
+      rpc_approve_relationship_gist_specialist_review: {
+        Args: { p_note?: string; p_review_type: string; p_revision_id: string }
+        Returns: Json
+      }
       rpc_archive_circle_pulse_item: {
         Args: { p_actor_profile_id: string; p_item_id: string }
         Returns: boolean
@@ -15734,8 +20852,14 @@ export type Database = {
         Returns: {
           archived_at: string | null
           backstage_opened_at: string | null
+          broadcast_authority: string
+          broadcast_authority_set_at: string | null
+          broadcast_authority_set_by_user_id: string | null
+          broadcast_delivery_mode: string
           cancellation_reason: string | null
           cancelled_at: string | null
+          caption_source_language: string | null
+          caption_translation_languages: string[]
           captions_enabled: boolean
           chemistry_first_enabled: boolean
           circle_id: string | null
@@ -15743,10 +20867,11 @@ export type Database = {
           context_id: string | null
           context_type: string
           created_at: string
-          created_by_profile_id: string
-          created_by_user_id: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
           creation_request_id: string | null
           description: string | null
+          end_policy: string
           ended_at: string | null
           format: string
           gathering_id: string | null
@@ -15754,6 +20879,9 @@ export type Database = {
           maximum_participants: number
           maximum_publishers: number
           minimum_participants: number
+          ownership_type: string
+          produced_by_profile_id: string | null
+          produced_by_user_id: string | null
           provider: string
           provider_call_id: string
           provider_call_type: string
@@ -15762,6 +20890,9 @@ export type Database = {
           quorum_required_pairs: number
           recording_enabled: boolean
           rescheduled_at: string | null
+          runtime_end_at: string | null
+          runtime_extended_at: string | null
+          runtime_extended_by_user_id: string | null
           schedule_revision: number
           scheduled_duration_minutes: number
           scheduled_end: string | null
@@ -15770,6 +20901,7 @@ export type Database = {
           stage_requests_open: boolean
           started_at: string | null
           status: string
+          system_session_kind: string | null
           title: string
           updated_at: string
           version: number
@@ -15813,6 +20945,10 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      rpc_attest_relationship_gist_ai_claims: {
+        Args: { p_revision_id: string }
+        Returns: Json
       }
       rpc_backfill_profile_contact_guard: {
         Args: {
@@ -15913,8 +21049,14 @@ export type Database = {
         Returns: {
           archived_at: string | null
           backstage_opened_at: string | null
+          broadcast_authority: string
+          broadcast_authority_set_at: string | null
+          broadcast_authority_set_by_user_id: string | null
+          broadcast_delivery_mode: string
           cancellation_reason: string | null
           cancelled_at: string | null
+          caption_source_language: string | null
+          caption_translation_languages: string[]
           captions_enabled: boolean
           chemistry_first_enabled: boolean
           circle_id: string | null
@@ -15922,10 +21064,11 @@ export type Database = {
           context_id: string | null
           context_type: string
           created_at: string
-          created_by_profile_id: string
-          created_by_user_id: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
           creation_request_id: string | null
           description: string | null
+          end_policy: string
           ended_at: string | null
           format: string
           gathering_id: string | null
@@ -15933,6 +21076,9 @@ export type Database = {
           maximum_participants: number
           maximum_publishers: number
           minimum_participants: number
+          ownership_type: string
+          produced_by_profile_id: string | null
+          produced_by_user_id: string | null
           provider: string
           provider_call_id: string
           provider_call_type: string
@@ -15941,6 +21087,9 @@ export type Database = {
           quorum_required_pairs: number
           recording_enabled: boolean
           rescheduled_at: string | null
+          runtime_end_at: string | null
+          runtime_extended_at: string | null
+          runtime_extended_by_user_id: string | null
           schedule_revision: number
           scheduled_duration_minutes: number
           scheduled_end: string | null
@@ -15949,6 +21098,7 @@ export type Database = {
           stage_requests_open: boolean
           started_at: string | null
           status: string
+          system_session_kind: string | null
           title: string
           updated_at: string
           version: number
@@ -15967,6 +21117,14 @@ export type Database = {
       rpc_cancel_signal: { Args: { p_signal_id: string }; Returns: string }
       rpc_check_profile_username_availability: {
         Args: { p_username: string }
+        Returns: Json
+      }
+      rpc_child_safety_resolve_evidence: {
+        Args: {
+          p_event_id: string
+          p_reason: string
+          p_release_legal_hold?: boolean
+        }
         Returns: Json
       }
       rpc_claim_chat_attachment_cleanup: {
@@ -16150,6 +21308,16 @@ export type Database = {
           updated_at: string
         }[]
       }
+      rpc_create_circle_pulse_comment_v2: {
+        Args: {
+          p_body: string
+          p_client_operation_id: string
+          p_parent_comment_id?: string
+          p_profile_id: string
+          p_pulse_item_id: string
+        }
+        Returns: Json
+      }
       rpc_create_circle_relationship_gist: {
         Args: {
           p_actor_profile_id: string
@@ -16207,6 +21375,7 @@ export type Database = {
           p_visibility_scope?: string
         }
         Returns: {
+          access_policy: string
           active_this_week_count: number
           approved_at: string | null
           approved_by_admin_id: string | null
@@ -16223,6 +21392,8 @@ export type Database = {
           created_by_user_id: string | null
           culture_tags: string[]
           description: string | null
+          diaspora_destination_country_codes: string[]
+          diaspora_origin_country_codes: string[]
           diaspora_tags: string[]
           faith_tags: string[]
           gathering_count: number
@@ -16238,9 +21409,182 @@ export type Database = {
           is_official: boolean
           is_partner: boolean
           latitude: number | null
+          live_discovery_policy: string
           longitude: number | null
           member_count: number
+          membership_eligibility_policy: string
           name: string
+          reach_scope: string
+          reach_scopes: string[]
+          region: string | null
+          rejected_reason: string | null
+          report_count: number
+          requires_join_approval: boolean
+          rules: string | null
+          safety_note: string | null
+          short_description: string | null
+          slug: string | null
+          status: string
+          updated_at: string
+          visibility: string
+          visibility_scope: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "circles"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      rpc_create_circle_request_v2: {
+        Args: {
+          p_access_policy?: string
+          p_audience_tags?: string[]
+          p_circle_type?: string
+          p_city?: string
+          p_country_code?: string
+          p_country_name?: string
+          p_culture_tags?: string[]
+          p_description?: string
+          p_diaspora_destination_country_codes?: string[]
+          p_diaspora_origin_country_codes?: string[]
+          p_faith_tags?: string[]
+          p_interest_tags?: string[]
+          p_live_discovery_policy?: string
+          p_membership_eligibility_policy?: string
+          p_name: string
+          p_reach_scope?: string
+          p_region?: string
+          p_rules?: string
+          p_short_description?: string
+        }
+        Returns: {
+          access_policy: string
+          active_this_week_count: number
+          approved_at: string | null
+          approved_by_admin_id: string | null
+          archived_at: string | null
+          audience_tags: string[]
+          category: string | null
+          circle_type: string
+          city: string | null
+          country_code: string | null
+          country_name: string | null
+          cover_image_url: string | null
+          created_at: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
+          culture_tags: string[]
+          description: string | null
+          diaspora_destination_country_codes: string[]
+          diaspora_origin_country_codes: string[]
+          diaspora_tags: string[]
+          faith_tags: string[]
+          gathering_count: number
+          host_note: string | null
+          host_note_updated_at: string | null
+          host_note_updated_by_profile_id: string | null
+          icon_url: string | null
+          id: string
+          image_path: string | null
+          image_updated_at: string | null
+          interest_tags: string[]
+          is_featured: boolean
+          is_official: boolean
+          is_partner: boolean
+          latitude: number | null
+          live_discovery_policy: string
+          longitude: number | null
+          member_count: number
+          membership_eligibility_policy: string
+          name: string
+          reach_scope: string
+          reach_scopes: string[]
+          region: string | null
+          rejected_reason: string | null
+          report_count: number
+          requires_join_approval: boolean
+          rules: string | null
+          safety_note: string | null
+          short_description: string | null
+          slug: string | null
+          status: string
+          updated_at: string
+          visibility: string
+          visibility_scope: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "circles"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      rpc_create_circle_request_v3: {
+        Args: {
+          p_access_policy?: string
+          p_audience_tags?: string[]
+          p_circle_type?: string
+          p_city?: string
+          p_country_code?: string
+          p_country_name?: string
+          p_culture_tags?: string[]
+          p_description?: string
+          p_diaspora_destination_country_codes?: string[]
+          p_diaspora_origin_country_codes?: string[]
+          p_faith_tags?: string[]
+          p_interest_tags?: string[]
+          p_live_discovery_policy?: string
+          p_membership_eligibility_policy?: string
+          p_name: string
+          p_reach_scope?: string
+          p_reach_scopes?: string[]
+          p_region?: string
+          p_rules?: string
+          p_short_description?: string
+        }
+        Returns: {
+          access_policy: string
+          active_this_week_count: number
+          approved_at: string | null
+          approved_by_admin_id: string | null
+          archived_at: string | null
+          audience_tags: string[]
+          category: string | null
+          circle_type: string
+          city: string | null
+          country_code: string | null
+          country_name: string | null
+          cover_image_url: string | null
+          created_at: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
+          culture_tags: string[]
+          description: string | null
+          diaspora_destination_country_codes: string[]
+          diaspora_origin_country_codes: string[]
+          diaspora_tags: string[]
+          faith_tags: string[]
+          gathering_count: number
+          host_note: string | null
+          host_note_updated_at: string | null
+          host_note_updated_by_profile_id: string | null
+          icon_url: string | null
+          id: string
+          image_path: string | null
+          image_updated_at: string | null
+          interest_tags: string[]
+          is_featured: boolean
+          is_official: boolean
+          is_partner: boolean
+          latitude: number | null
+          live_discovery_policy: string
+          longitude: number | null
+          member_count: number
+          membership_eligibility_policy: string
+          name: string
+          reach_scope: string
+          reach_scopes: string[]
           region: string | null
           rejected_reason: string | null
           report_count: number
@@ -16391,21 +21735,7 @@ export type Database = {
           p_reaction: string
           p_session_id: string
         }
-        Returns: {
-          client_event_id: string
-          created_at: string
-          id: number
-          profile_id: string
-          reaction: string
-          session_id: string
-          user_id: string
-        }
-        SetofOptions: {
-          from: "*"
-          to: "live_reactions"
-          isOneToOne: true
-          isSetofReturn: false
-        }
+        Returns: Json
       }
       rpc_create_live_session: {
         Args: {
@@ -16420,8 +21750,14 @@ export type Database = {
         Returns: {
           archived_at: string | null
           backstage_opened_at: string | null
+          broadcast_authority: string
+          broadcast_authority_set_at: string | null
+          broadcast_authority_set_by_user_id: string | null
+          broadcast_delivery_mode: string
           cancellation_reason: string | null
           cancelled_at: string | null
+          caption_source_language: string | null
+          caption_translation_languages: string[]
           captions_enabled: boolean
           chemistry_first_enabled: boolean
           circle_id: string | null
@@ -16429,10 +21765,11 @@ export type Database = {
           context_id: string | null
           context_type: string
           created_at: string
-          created_by_profile_id: string
-          created_by_user_id: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
           creation_request_id: string | null
           description: string | null
+          end_policy: string
           ended_at: string | null
           format: string
           gathering_id: string | null
@@ -16440,6 +21777,9 @@ export type Database = {
           maximum_participants: number
           maximum_publishers: number
           minimum_participants: number
+          ownership_type: string
+          produced_by_profile_id: string | null
+          produced_by_user_id: string | null
           provider: string
           provider_call_id: string
           provider_call_type: string
@@ -16448,6 +21788,9 @@ export type Database = {
           quorum_required_pairs: number
           recording_enabled: boolean
           rescheduled_at: string | null
+          runtime_end_at: string | null
+          runtime_extended_at: string | null
+          runtime_extended_by_user_id: string | null
           schedule_revision: number
           scheduled_duration_minutes: number
           scheduled_end: string | null
@@ -16456,6 +21799,7 @@ export type Database = {
           stage_requests_open: boolean
           started_at: string | null
           status: string
+          system_session_kind: string | null
           title: string
           updated_at: string
           version: number
@@ -16478,6 +21822,18 @@ export type Database = {
       rpc_create_media_moment: {
         Args: {
           p_caption?: string
+          p_media_url: string
+          p_metadata?: Json
+          p_moment_id: string
+          p_type: string
+          p_visibility?: string
+        }
+        Returns: string
+      }
+      rpc_create_media_moment_v2: {
+        Args: {
+          p_caption?: string
+          p_client_operation_id: string
           p_media_url: string
           p_metadata?: Json
           p_moment_id: string
@@ -16537,6 +21893,15 @@ export type Database = {
               isSetofReturn: false
             }
           }
+      rpc_create_moment_comment_v2: {
+        Args: {
+          p_body: string
+          p_client_operation_id: string
+          p_moment_id: string
+          p_parent_comment_id?: string
+        }
+        Returns: Json
+      }
       rpc_create_profile_boost: { Args: never; Returns: Json }
       rpc_create_profile_boost_v2: {
         Args: {
@@ -16546,6 +21911,61 @@ export type Database = {
           p_metadata?: Json
         }
         Returns: Json
+      }
+      rpc_create_profile_boost_v3: {
+        Args: {
+          p_audience_mode?: string
+          p_boost_type?: string
+          p_client_operation_id: string
+          p_focus_mode?: string
+          p_metadata?: Json
+        }
+        Returns: Json
+      }
+      rpc_create_relationship_gist_ai_revision_topic: {
+        Args: { p_instruction: string; p_source_revision_id: string }
+        Returns: Json
+      }
+      rpc_create_relationship_gist_ai_topic: {
+        Args: {
+          p_planned_for: string
+          p_requested_perspective: string
+          p_topic_brief: string
+          p_topic_key: string
+          p_topic_title: string
+        }
+        Returns: Json
+      }
+      rpc_create_relationship_gist_revision: {
+        Args: {
+          p_body?: string
+          p_edition_id?: string
+          p_legacy_gist_id?: string
+          p_perspective?: string
+          p_requires_safety_review?: boolean
+          p_short_body?: string
+          p_source_revision_id?: string
+          p_title?: string
+        }
+        Returns: Json
+      }
+      rpc_create_relationship_gist_rollback_revision: {
+        Args: {
+          p_edition_id: string
+          p_reason: string
+          p_source_revision_id: string
+        }
+        Returns: Json
+      }
+      rpc_create_text_moment_v2: {
+        Args: {
+          p_caption?: string
+          p_client_operation_id: string
+          p_metadata?: Json
+          p_text_body: string
+          p_visibility?: string
+        }
+        Returns: string
       }
       rpc_create_warm_introduction: {
         Args: {
@@ -16647,6 +22067,16 @@ export type Database = {
         Args: { p_actor_profile_id: string; p_circle_id: string }
         Returns: boolean
       }
+      rpc_delete_relationship_gist_reflection: {
+        Args: {
+          p_gist_id: string
+          p_operation_id: string
+          p_owner_user_id: string
+          p_revision_id: string
+          p_source?: string
+        }
+        Returns: Json
+      }
       rpc_enable_live_odo_full_quick_connect_v1: {
         Args: { p_session_id: string; p_settings?: Json }
         Returns: Json
@@ -16667,12 +22097,25 @@ export type Database = {
         Args: { p_private_spark_id: string; p_reason?: string }
         Returns: Json
       }
-      rpc_end_live_session_v1: {
-        Args: { p_session_id: string }
+      rpc_end_live_session_v1: { Args: { p_session_id: string }; Returns: Json }
+      rpc_end_live_session_v2: {
+        Args: {
+          p_command_id: string
+          p_expected_version: number
+          p_session_id: string
+        }
         Returns: Json
       }
       rpc_enforce_profile_contact_guard: {
         Args: { p_profile_id: string }
+        Returns: Json
+      }
+      rpc_extend_live_session_v1: {
+        Args: {
+          p_extension_minutes?: number
+          p_keep_open?: boolean
+          p_session_id: string
+        }
         Returns: Json
       }
       rpc_fail_chat_attachment_cleanup: {
@@ -16741,6 +22184,7 @@ export type Database = {
           media_items: Json
           media_kind: string | null
           message_type: string
+          provider_media: Json | null
           read_at: string | null
           receiver_id: string
           reply_to_message_id: string | null
@@ -16804,6 +22248,7 @@ export type Database = {
           media_items: Json
           media_kind: string | null
           message_type: string
+          provider_media: Json | null
           read_at: string | null
           receiver_id: string
           reply_to_message_id: string | null
@@ -16868,6 +22313,73 @@ export type Database = {
           media_items: Json
           media_kind: string | null
           message_type: string
+          provider_media: Json | null
+          read_at: string | null
+          receiver_id: string
+          reply_to_message_id: string | null
+          sender_id: string
+          status: string
+          storage_path: string | null
+          text: string
+          view_once: boolean
+          viewed_at: string | null
+          viewed_by: string | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "messages"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      rpc_finalize_chat_attachment_batch_v4: {
+        Args: {
+          p_attachment_type: string
+          p_attachments: Json
+          p_caption: string
+          p_client_message_id: string
+          p_expected_count: number
+          p_media_kind: string
+          p_receiver_id: string
+          p_reply_to_message_id: string
+          p_request_payload: Json
+          p_sender_id: string
+        }
+        Returns: {
+          attachment_set_hash: string | null
+          attachment_state: string
+          attachment_state_version: number
+          audio_duration: number | null
+          audio_path: string | null
+          audio_waveform: Json | null
+          client_message_id: string | null
+          created_at: string
+          deleted_at: string | null
+          deleted_by: string | null
+          deleted_for_all: boolean
+          delivered_at: string | null
+          e2ee: boolean
+          edited_at: string | null
+          enc: Json | null
+          encrypted_key_nonce: string | null
+          encrypted_key_receiver: string | null
+          encrypted_key_sender: string | null
+          encrypted_media: boolean
+          encrypted_media_alg: string | null
+          encrypted_media_mime: string | null
+          encrypted_media_nonce: string | null
+          encrypted_media_path: string | null
+          encrypted_media_size: number | null
+          id: string
+          is_read: boolean
+          is_view_once: boolean
+          media_caption: string | null
+          media_expected_count: number | null
+          media_group_id: string | null
+          media_items: Json
+          media_kind: string | null
+          message_type: string
+          provider_media: Json | null
           read_at: string | null
           receiver_id: string
           reply_to_message_id: string | null
@@ -16949,6 +22461,7 @@ export type Database = {
           media_items: Json
           media_kind: string | null
           message_type: string
+          provider_media: Json | null
           read_at: string | null
           receiver_id: string
           reply_to_message_id: string | null
@@ -17013,6 +22526,7 @@ export type Database = {
           media_items: Json
           media_kind: string | null
           message_type: string
+          provider_media: Json | null
           read_at: string | null
           receiver_id: string
           reply_to_message_id: string | null
@@ -17030,6 +22544,18 @@ export type Database = {
           isOneToOne: false
           isSetofReturn: true
         }
+      }
+      rpc_finalize_relationship_gist_manual_cover: {
+        Args: {
+          p_alt_text: string
+          p_height: number
+          p_perspective: string
+          p_revision_id: string
+          p_sha256: string
+          p_storage_path: string
+          p_width: number
+        }
+        Returns: Json
       }
       rpc_finish_live_odo_quick_connect_v1: {
         Args: { p_session_id: string }
@@ -17061,6 +22587,7 @@ export type Database = {
           last_message_id: string
           last_message_is_read: boolean
           last_message_is_view_once: boolean
+          last_message_media_kind: string
           last_message_reaction_created_at: string
           last_message_reaction_emoji: string
           last_message_reaction_target_type: string
@@ -17445,6 +22972,10 @@ export type Database = {
         Args: { p_intent_request_id: string }
         Returns: string[]
       }
+      rpc_get_live_audience_delivery_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
       rpc_get_live_audience_pulse: {
         Args: { p_session_id: string }
         Returns: Json
@@ -17465,8 +22996,20 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_get_live_hosting_management_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
       rpc_get_live_member_summary: {
         Args: { p_profile_id: string; p_session_id: string }
+        Returns: Json
+      }
+      rpc_get_live_music_catalogue_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      rpc_get_live_music_repeat_mode_v1: {
+        Args: { p_session_id: string }
         Returns: Json
       }
       rpc_get_live_odo_admin_trace_v1: {
@@ -17501,6 +23044,14 @@ export type Database = {
         Args: { p_session_id: string }
         Returns: Json
       }
+      rpc_get_live_odo_system_program_snapshot_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      rpc_get_live_private_activity_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
       rpc_get_live_private_spark: {
         Args: { p_spark_id: string }
         Returns: Json
@@ -17532,10 +23083,19 @@ export type Database = {
         Args: { p_session_id: string }
         Returns: Json
       }
+      rpc_get_live_program_snapshot_v2: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      rpc_get_live_publication_control_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
       rpc_get_live_quick_connect: {
         Args: { p_session_id: string }
         Returns: Json
       }
+      rpc_get_live_quick_connect_availability_v1: { Args: never; Returns: Json }
       rpc_get_live_quick_connect_host_control: {
         Args: { p_session_id: string }
         Returns: Json
@@ -17575,6 +23135,10 @@ export type Database = {
         Args: { p_session_id: string }
         Returns: Json
       }
+      rpc_get_live_reaction_summary: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
       rpc_get_live_room_pulse: { Args: { p_session_id: string }; Returns: Json }
       rpc_get_live_rtc_admission: {
         Args: { p_session_id: string }
@@ -17609,15 +23173,52 @@ export type Database = {
           user_id: string
         }[]
       }
-      rpc_get_live_session_snapshot: {
-        Args: { p_session_id: string }
-        Returns: Json
-      }
       rpc_get_live_session_recap_v1: {
         Args: { p_session_id: string }
         Returns: Json
       }
+      rpc_get_live_session_snapshot: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      rpc_get_live_stage_atmosphere_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      rpc_get_live_studio_media_admission_v1: {
+        Args: {
+          p_controller_instance_id: string
+          p_session_id: string
+          p_source_kind: string
+        }
+        Returns: Json
+      }
+      rpc_get_live_studio_media_admission_v2: {
+        Args: {
+          p_controller_instance_id: string
+          p_session_id: string
+          p_source_kind: string
+        }
+        Returns: Json
+      }
+      rpc_get_live_studio_operator_console_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      rpc_get_live_studio_session_operators_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      rpc_get_live_studio_snapshot_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      rpc_get_live_studio_team_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
       rpc_get_merged_account_redirect: { Args: never; Returns: Json }
+      rpc_get_my_admin_context: { Args: never; Returns: Json }
       rpc_get_my_circle_dating_preference: {
         Args: { p_circle_id: string }
         Returns: Json
@@ -17690,6 +23291,17 @@ export type Database = {
       rpc_get_my_profile_handle_state: { Args: never; Returns: Json }
       rpc_get_my_profile_interest: { Args: never; Returns: Json }
       rpc_get_my_recent_boost_analytics: { Args: never; Returns: Json }
+      rpc_get_my_relationship_gist_editorial_permissions: {
+        Args: never
+        Returns: {
+          can_archive: boolean
+          can_draft: boolean
+          can_publish: boolean
+          can_quality_approve: boolean
+          can_read: boolean
+          can_safety_review: boolean
+        }[]
+      }
       rpc_get_my_saved_profiles:
         | {
             Args: never
@@ -17723,6 +23335,27 @@ export type Database = {
               saved_at: string
             }[]
           }
+      rpc_get_my_saved_relationship_gists: {
+        Args: { p_perspective?: string }
+        Returns: {
+          availability: string
+          body: string
+          edition_id: string
+          gist_id: string
+          last_anchor: string
+          last_anchor_offset: number
+          last_opened_at: string
+          last_read_at: string
+          progress: number
+          read_acknowledged_at: string
+          revision_id: string
+          saved_at: string
+          selected_perspective: string
+          short_body: string
+          title: string
+          unavailable_reason: string
+        }[]
+      }
       rpc_get_phone_verification_status: { Args: never; Returns: Json }
       rpc_get_profile_boost_recommendations: { Args: never; Returns: Json }
       rpc_get_profile_card_context: {
@@ -17760,6 +23393,17 @@ export type Database = {
           verification_level: number
           wants_children: string
         }[]
+      }
+      rpc_get_relationship_gist_ai_image_studio: { Args: never; Returns: Json }
+      rpc_get_relationship_gist_ai_review_queue: { Args: never; Returns: Json }
+      rpc_get_relationship_gist_ai_studio: { Args: never; Returns: Json }
+      rpc_get_relationship_gist_cover: {
+        Args: { p_gist_id: string; p_perspective?: string }
+        Returns: Json
+      }
+      rpc_get_relationship_gist_engagement: {
+        Args: { p_gist_id: string }
+        Returns: Json
       }
       rpc_get_romantic_eligibility: {
         Args: {
@@ -17836,6 +23480,7 @@ export type Database = {
           connection_quality_state: string
           created_at: string
           id: string
+          introduction_preference_decided_at: string | null
           invited_at: string
           joined_at: string | null
           last_connection_change_at: string | null
@@ -17876,6 +23521,19 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_host_disconnect_live_studio_v1: {
+        Args: { p_command_id: string; p_session_id: string }
+        Returns: Json
+      }
+      rpc_host_set_live_music_stage_v1: {
+        Args: {
+          p_expected_version: number
+          p_request_id?: string
+          p_session_id: string
+          p_visible: boolean
+        }
+        Returns: Json
+      }
       rpc_host_set_live_show_scene_v1: {
         Args: {
           p_expected_version: number
@@ -17884,9 +23542,26 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_host_set_live_stage_atmosphere_v1: {
+        Args: {
+          p_expected_version: number
+          p_preset: string
+          p_request_id?: string
+          p_session_id: string
+        }
+        Returns: Json
+      }
       rpc_insert_request_acceptance_system_messages: {
         Args: { p_request_id: string }
         Returns: undefined
+      }
+      rpc_invite_live_stage_member_v1: {
+        Args: {
+          p_invitation_id: string
+          p_session_id: string
+          p_target_user_id: string
+        }
+        Returns: Json
       }
       rpc_invite_profile_to_circle: {
         Args: {
@@ -17955,6 +23630,7 @@ export type Database = {
           connection_quality_state: string
           created_at: string
           id: string
+          introduction_preference_decided_at: string | null
           invited_at: string
           joined_at: string | null
           last_connection_change_at: string | null
@@ -17997,6 +23673,7 @@ export type Database = {
           connection_quality_state: string
           created_at: string
           id: string
+          introduction_preference_decided_at: string | null
           invited_at: string
           joined_at: string | null
           last_connection_change_at: string | null
@@ -18031,6 +23708,7 @@ export type Database = {
           connection_quality_state: string
           created_at: string
           id: string
+          introduction_preference_decided_at: string | null
           invited_at: string
           joined_at: string | null
           last_connection_change_at: string | null
@@ -18077,6 +23755,15 @@ export type Database = {
           status: string
         }[]
       }
+      rpc_list_circle_member_previews_v1: {
+        Args: { p_circle_ids: string[]; p_per_circle_limit?: number }
+        Returns: {
+          avatar_url: string
+          circle_id: string
+          full_name: string
+          profile_id: string
+        }[]
+      }
       rpc_list_circle_pulse_comment_reports: {
         Args: { p_actor_profile_id: string; p_circle_id: string }
         Returns: {
@@ -18108,6 +23795,28 @@ export type Database = {
           reason: string
           reporter_profile_id: string
           status: string
+        }[]
+      }
+      rpc_list_discoverable_circle_live_previews: {
+        Args: { p_limit?: number }
+        Returns: {
+          access_policy: string
+          circle_id: string
+          circle_name: string
+          circle_slug: string
+          city: string
+          country_code: string
+          country_name: string
+          live_description: string
+          live_status: string
+          live_title: string
+          member_count: number
+          poster_path: string
+          reach_scope: string
+          region: string
+          scheduled_start: string
+          session_id: string
+          viewer_membership_status: string
         }[]
       }
       rpc_list_live_comments: {
@@ -18146,6 +23855,10 @@ export type Database = {
           status: string
           title: string
         }[]
+      }
+      rpc_list_live_studio_control_sessions_v1: {
+        Args: { p_limit?: number }
+        Returns: Json
       }
       rpc_list_live_studio_sessions: {
         Args: { p_before?: string; p_limit?: number }
@@ -18225,6 +23938,21 @@ export type Database = {
           invitation_id: string
           inviter_name: string
           message: string
+        }[]
+      }
+      rpc_list_my_circle_notifications_v1: {
+        Args: { p_limit?: number }
+        Returns: {
+          body: string
+          circle_id: string
+          circle_name: string
+          created_at: string
+          data: Json
+          delivery_id: string
+          dispatched_at: string
+          kind: string
+          seen_at: string
+          title: string
         }[]
       }
       rpc_list_sent_circle_invitations: {
@@ -18313,6 +24041,10 @@ export type Database = {
         Args: { p_peer_user_id: string }
         Returns: number
       }
+      rpc_mark_circle_notification_seen_v1: {
+        Args: { p_delivery_id: string }
+        Returns: boolean
+      }
       rpc_mark_circle_pulse_discussion_seen: {
         Args: {
           p_last_seen_at?: string
@@ -18375,6 +24107,7 @@ export type Database = {
           connection_quality_state: string
           created_at: string
           id: string
+          introduction_preference_decided_at: string | null
           invited_at: string
           joined_at: string | null
           last_connection_change_at: string | null
@@ -18479,6 +24212,30 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_open_live_backstage_v1: {
+        Args: {
+          p_command_id: string
+          p_expected_version: number
+          p_session_id: string
+        }
+        Returns: Json
+      }
+      rpc_owner_acknowledge_relationship_gist_ai_specialist_review: {
+        Args: { p_note?: string; p_review_type: string; p_revision_id: string }
+        Returns: Json
+      }
+      rpc_owner_attest_relationship_gist_ai_claims: {
+        Args: { p_revision_id: string }
+        Returns: Json
+      }
+      rpc_owner_review_relationship_gist_ai_image: {
+        Args: { p_alt_text: string; p_decision: string; p_image_id: string }
+        Returns: Json
+      }
+      rpc_owner_review_relationship_gist_ai_source: {
+        Args: { p_note?: string; p_source_id: string; p_status: string }
+        Returns: Json
+      }
       rpc_pass_circle_dating_candidate: {
         Args: { p_circle_id: string; p_target_profile_id: string }
         Returns: undefined
@@ -18486,6 +24243,10 @@ export type Database = {
       rpc_pin_circle_pulse_comment: {
         Args: { p_comment_id: string; p_pinned?: boolean; p_profile_id: string }
         Returns: boolean
+      }
+      rpc_prepare_relationship_gist_ai_owner_topic: {
+        Args: { p_topic_id: string }
+        Returns: Json
       }
       rpc_prepare_view_once_attachment: {
         Args: { p_message_id: string }
@@ -18568,6 +24329,18 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      rpc_publish_relationship_gist_ai_owner_review: {
+        Args: { p_confirmation: string; p_revision_id: string }
+        Returns: Json
+      }
+      rpc_publish_relationship_gist_owner_review: {
+        Args: {
+          p_confirmation: string
+          p_revision_id: string
+          p_safety_acknowledged?: boolean
+        }
+        Returns: Json
+      }
       rpc_record_circle_pulse_welcome_event: {
         Args: {
           p_circle_id: string
@@ -18577,9 +24350,30 @@ export type Database = {
         }
         Returns: number
       }
+      rpc_record_current_legal_acceptance_v1: {
+        Args: {
+          p_app_version?: string
+          p_privacy_version: string
+          p_terms_version: string
+        }
+        Returns: boolean
+      }
       rpc_record_profile_guard_semantic_observation: {
         Args: { p_decision: string; p_reason_code: string; p_user_id: string }
         Returns: undefined
+      }
+      rpc_record_relationship_gist_reader_event: {
+        Args: {
+          p_client_event_id: string
+          p_event_type: string
+          p_gist_id: string
+          p_owner_user_id: string
+          p_progress_bucket?: number
+          p_revision_id: string
+          p_session_id?: string
+          p_source?: string
+        }
+        Returns: Json
       }
       rpc_refund_undone_superlike: {
         Args: {
@@ -18592,6 +24386,7 @@ export type Database = {
       rpc_reject_circle: {
         Args: { p_circle_id: string; p_reason: string }
         Returns: {
+          access_policy: string
           active_this_week_count: number
           approved_at: string | null
           approved_by_admin_id: string | null
@@ -18608,6 +24403,8 @@ export type Database = {
           created_by_user_id: string | null
           culture_tags: string[]
           description: string | null
+          diaspora_destination_country_codes: string[]
+          diaspora_origin_country_codes: string[]
           diaspora_tags: string[]
           faith_tags: string[]
           gathering_count: number
@@ -18623,9 +24420,13 @@ export type Database = {
           is_official: boolean
           is_partner: boolean
           latitude: number | null
+          live_discovery_policy: string
           longitude: number | null
           member_count: number
+          membership_eligibility_policy: string
           name: string
+          reach_scope: string
+          reach_scopes: string[]
           region: string | null
           rejected_reason: string | null
           report_count: number
@@ -18699,6 +24500,10 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      rpc_reject_relationship_gist_ai_draft: {
+        Args: { p_reason: string; p_revision_id: string }
+        Returns: Json
+      }
       rpc_release_live_quick_connect_safety_hold: {
         Args: { p_user_id: string }
         Returns: undefined
@@ -18718,6 +24523,14 @@ export type Database = {
           p_item_ids: string[]
         }
         Returns: number
+      }
+      rpc_replace_profile_interests_v2: {
+        Args: {
+          p_client_operation_id: string
+          p_interest_names: string[]
+          p_profile_id: string
+        }
+        Returns: string[]
       }
       rpc_report_circle_pulse_comment: {
         Args: { p_comment_id: string; p_profile_id: string; p_reason?: string }
@@ -18820,12 +24633,25 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      rpc_request_relationship_gist_ai_generation: {
+        Args: { p_idempotency_key: string; p_topic_id: string }
+        Returns: Json
+      }
+      rpc_request_relationship_gist_ai_image_generation: {
+        Args: {
+          p_idempotency_key: string
+          p_perspective: string
+          p_revision_id: string
+        }
+        Returns: Json
+      }
       rpc_resolve_live_seat_request: {
         Args: { p_approve: boolean; p_request_id: string }
         Returns: {
           connection_quality_state: string
           created_at: string
           id: string
+          introduction_preference_decided_at: string | null
           invited_at: string
           joined_at: string | null
           last_connection_change_at: string | null
@@ -18905,6 +24731,18 @@ export type Database = {
       }
       rpc_respond_live_private_spark: {
         Args: { p_accept: boolean; p_private_spark_id: string }
+        Returns: Json
+      }
+      rpc_respond_live_quick_connect_opportunity_v1: {
+        Args: {
+          p_expected_version?: number
+          p_opportunity_id: string
+          p_response: string
+        }
+        Returns: Json
+      }
+      rpc_respond_live_stage_invitation_v1: {
+        Args: { p_accept: boolean; p_invitation_id: string }
         Returns: Json
       }
       rpc_respond_warm_introduction: {
@@ -19006,6 +24844,14 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      rpc_review_relationship_gist_ai_image: {
+        Args: { p_alt_text: string; p_decision: string; p_image_id: string }
+        Returns: Json
+      }
+      rpc_review_relationship_gist_ai_source: {
+        Args: { p_note?: string; p_source_id: string; p_status: string }
+        Returns: Json
+      }
       rpc_rsvp_live_session: {
         Args: {
           p_attending: boolean
@@ -19016,6 +24862,7 @@ export type Database = {
           connection_quality_state: string
           created_at: string
           id: string
+          introduction_preference_decided_at: string | null
           invited_at: string
           joined_at: string | null
           last_connection_change_at: string | null
@@ -19065,8 +24912,14 @@ export type Database = {
         Returns: {
           archived_at: string | null
           backstage_opened_at: string | null
+          broadcast_authority: string
+          broadcast_authority_set_at: string | null
+          broadcast_authority_set_by_user_id: string | null
+          broadcast_delivery_mode: string
           cancellation_reason: string | null
           cancelled_at: string | null
+          caption_source_language: string | null
+          caption_translation_languages: string[]
           captions_enabled: boolean
           chemistry_first_enabled: boolean
           circle_id: string | null
@@ -19074,10 +24927,11 @@ export type Database = {
           context_id: string | null
           context_type: string
           created_at: string
-          created_by_profile_id: string
-          created_by_user_id: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
           creation_request_id: string | null
           description: string | null
+          end_policy: string
           ended_at: string | null
           format: string
           gathering_id: string | null
@@ -19085,6 +24939,9 @@ export type Database = {
           maximum_participants: number
           maximum_publishers: number
           minimum_participants: number
+          ownership_type: string
+          produced_by_profile_id: string | null
+          produced_by_user_id: string | null
           provider: string
           provider_call_id: string
           provider_call_type: string
@@ -19093,6 +24950,9 @@ export type Database = {
           quorum_required_pairs: number
           recording_enabled: boolean
           rescheduled_at: string | null
+          runtime_end_at: string | null
+          runtime_extended_at: string | null
+          runtime_extended_by_user_id: string | null
           schedule_revision: number
           scheduled_duration_minutes: number
           scheduled_end: string | null
@@ -19101,6 +24961,7 @@ export type Database = {
           stage_requests_open: boolean
           started_at: string | null
           status: string
+          system_session_kind: string | null
           title: string
           updated_at: string
           version: number
@@ -19121,8 +24982,14 @@ export type Database = {
         Returns: {
           archived_at: string | null
           backstage_opened_at: string | null
+          broadcast_authority: string
+          broadcast_authority_set_at: string | null
+          broadcast_authority_set_by_user_id: string | null
+          broadcast_delivery_mode: string
           cancellation_reason: string | null
           cancelled_at: string | null
+          caption_source_language: string | null
+          caption_translation_languages: string[]
           captions_enabled: boolean
           chemistry_first_enabled: boolean
           circle_id: string | null
@@ -19130,10 +24997,11 @@ export type Database = {
           context_id: string | null
           context_type: string
           created_at: string
-          created_by_profile_id: string
-          created_by_user_id: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
           creation_request_id: string | null
           description: string | null
+          end_policy: string
           ended_at: string | null
           format: string
           gathering_id: string | null
@@ -19141,6 +25009,9 @@ export type Database = {
           maximum_participants: number
           maximum_publishers: number
           minimum_participants: number
+          ownership_type: string
+          produced_by_profile_id: string | null
+          produced_by_user_id: string | null
           provider: string
           provider_call_id: string
           provider_call_type: string
@@ -19149,6 +25020,9 @@ export type Database = {
           quorum_required_pairs: number
           recording_enabled: boolean
           rescheduled_at: string | null
+          runtime_end_at: string | null
+          runtime_extended_at: string | null
+          runtime_extended_by_user_id: string | null
           schedule_revision: number
           scheduled_duration_minutes: number
           scheduled_end: string | null
@@ -19157,6 +25031,7 @@ export type Database = {
           stage_requests_open: boolean
           started_at: string | null
           status: string
+          system_session_kind: string | null
           title: string
           updated_at: string
           version: number
@@ -19179,8 +25054,14 @@ export type Database = {
         Returns: {
           archived_at: string | null
           backstage_opened_at: string | null
+          broadcast_authority: string
+          broadcast_authority_set_at: string | null
+          broadcast_authority_set_by_user_id: string | null
+          broadcast_delivery_mode: string
           cancellation_reason: string | null
           cancelled_at: string | null
+          caption_source_language: string | null
+          caption_translation_languages: string[]
           captions_enabled: boolean
           chemistry_first_enabled: boolean
           circle_id: string | null
@@ -19188,10 +25069,11 @@ export type Database = {
           context_id: string | null
           context_type: string
           created_at: string
-          created_by_profile_id: string
-          created_by_user_id: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
           creation_request_id: string | null
           description: string | null
+          end_policy: string
           ended_at: string | null
           format: string
           gathering_id: string | null
@@ -19199,6 +25081,9 @@ export type Database = {
           maximum_participants: number
           maximum_publishers: number
           minimum_participants: number
+          ownership_type: string
+          produced_by_profile_id: string | null
+          produced_by_user_id: string | null
           provider: string
           provider_call_id: string
           provider_call_type: string
@@ -19207,6 +25092,9 @@ export type Database = {
           quorum_required_pairs: number
           recording_enabled: boolean
           rescheduled_at: string | null
+          runtime_end_at: string | null
+          runtime_extended_at: string | null
+          runtime_extended_by_user_id: string | null
           schedule_revision: number
           scheduled_duration_minutes: number
           scheduled_end: string | null
@@ -19215,6 +25103,7 @@ export type Database = {
           stage_requests_open: boolean
           started_at: string | null
           status: string
+          system_session_kind: string | null
           title: string
           updated_at: string
           version: number
@@ -19241,8 +25130,14 @@ export type Database = {
         Returns: {
           archived_at: string | null
           backstage_opened_at: string | null
+          broadcast_authority: string
+          broadcast_authority_set_at: string | null
+          broadcast_authority_set_by_user_id: string | null
+          broadcast_delivery_mode: string
           cancellation_reason: string | null
           cancelled_at: string | null
+          caption_source_language: string | null
+          caption_translation_languages: string[]
           captions_enabled: boolean
           chemistry_first_enabled: boolean
           circle_id: string | null
@@ -19250,10 +25145,11 @@ export type Database = {
           context_id: string | null
           context_type: string
           created_at: string
-          created_by_profile_id: string
-          created_by_user_id: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
           creation_request_id: string | null
           description: string | null
+          end_policy: string
           ended_at: string | null
           format: string
           gathering_id: string | null
@@ -19261,6 +25157,9 @@ export type Database = {
           maximum_participants: number
           maximum_publishers: number
           minimum_participants: number
+          ownership_type: string
+          produced_by_profile_id: string | null
+          produced_by_user_id: string | null
           provider: string
           provider_call_id: string
           provider_call_type: string
@@ -19269,6 +25168,9 @@ export type Database = {
           quorum_required_pairs: number
           recording_enabled: boolean
           rescheduled_at: string | null
+          runtime_end_at: string | null
+          runtime_extended_at: string | null
+          runtime_extended_by_user_id: string | null
           schedule_revision: number
           scheduled_duration_minutes: number
           scheduled_end: string | null
@@ -19277,6 +25179,90 @@ export type Database = {
           stage_requests_open: boolean
           started_at: string | null
           status: string
+          system_session_kind: string | null
+          title: string
+          updated_at: string
+          version: number
+        }
+        SetofOptions: {
+          from: "*"
+          to: "live_sessions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      rpc_schedule_live_studio_session_v2: {
+        Args: {
+          p_audience_scopes?: string[]
+          p_chemistry_first_enabled?: boolean
+          p_circle_id?: string
+          p_city?: string
+          p_client_request_id: string
+          p_country_code?: string
+          p_country_name?: string
+          p_description: string
+          p_diaspora_destination_country_codes?: string[]
+          p_diaspora_origin_country_codes?: string[]
+          p_duration_minutes: number
+          p_format?: string
+          p_minimum_participants?: number
+          p_region?: string
+          p_scheduled_start: string
+          p_title: string
+        }
+        Returns: {
+          archived_at: string | null
+          backstage_opened_at: string | null
+          broadcast_authority: string
+          broadcast_authority_set_at: string | null
+          broadcast_authority_set_by_user_id: string | null
+          broadcast_delivery_mode: string
+          cancellation_reason: string | null
+          cancelled_at: string | null
+          caption_source_language: string | null
+          caption_translation_languages: string[]
+          captions_enabled: boolean
+          chemistry_first_enabled: boolean
+          circle_id: string | null
+          configuration: Json
+          context_id: string | null
+          context_type: string
+          created_at: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
+          creation_request_id: string | null
+          description: string | null
+          end_policy: string
+          ended_at: string | null
+          format: string
+          gathering_id: string | null
+          id: string
+          maximum_participants: number
+          maximum_publishers: number
+          minimum_participants: number
+          ownership_type: string
+          produced_by_profile_id: string | null
+          produced_by_user_id: string | null
+          provider: string
+          provider_call_id: string
+          provider_call_type: string
+          quorum_pairability_required: boolean
+          quorum_reached_at: string | null
+          quorum_required_pairs: number
+          recording_enabled: boolean
+          rescheduled_at: string | null
+          runtime_end_at: string | null
+          runtime_extended_at: string | null
+          runtime_extended_by_user_id: string | null
+          schedule_revision: number
+          scheduled_duration_minutes: number
+          scheduled_end: string | null
+          scheduled_start: string | null
+          stage_request_capacity: number
+          stage_requests_open: boolean
+          started_at: string | null
+          status: string
+          system_session_kind: string | null
           title: string
           updated_at: string
           version: number
@@ -19388,6 +25374,15 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_send_profile_gift_v2: {
+        Args: {
+          p_client_operation_id: string
+          p_gift_type: string
+          p_include_sandbox_preview?: boolean
+          p_recipient_profile_id: string
+        }
+        Returns: Json
+      }
       rpc_send_signal: {
         Args: {
           p_note?: string
@@ -19397,6 +25392,20 @@ export type Database = {
           p_source_moment_id?: string
         }
         Returns: Json
+      }
+      rpc_service_apply_profile_media_v1_2: {
+        Args: {
+          p_avatar_url: string
+          p_client_request_id: string
+          p_hero_image_url: string
+          p_photos: string[]
+          p_user_id: string
+        }
+        Returns: Json
+      }
+      rpc_service_assert_economy_feature_enabled_v1: {
+        Args: { p_environment: string; p_flag_key: string }
+        Returns: undefined
       }
       rpc_service_begin_live_odo_call_v1: {
         Args: {
@@ -19427,6 +25436,14 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_service_claim_live_broadcast_v1: {
+        Args: { p_session_id: string; p_worker_instance_id: string }
+        Returns: Json
+      }
+      rpc_service_claim_live_notification_campaign_v1: {
+        Args: { p_campaign_id: string }
+        Returns: Json
+      }
       rpc_service_claim_live_odo_guarded_event_v1: {
         Args: {
           p_lease_owner: string
@@ -19437,12 +25454,84 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_service_claim_live_program_audio_v1: {
+        Args: { p_session_id: string; p_worker_instance_id: string }
+        Returns: Json
+      }
+      rpc_service_claim_moderation_evidence_retention: {
+        Args: { p_limit?: number; p_retention?: string }
+        Returns: Json
+      }
+      rpc_service_claim_profile_media_remediation: {
+        Args: { p_limit?: number }
+        Returns: {
+          attempt_count: number
+          claim_token: string
+          field_name: string
+          id: string
+          item_index: number
+          needs_source_cleanup: boolean
+          profile_id: string
+          source_url: string
+          user_id: string
+        }[]
+      }
+      rpc_service_claim_push_notification_event_v1: {
+        Args: { p_event_id: string }
+        Returns: Json
+      }
+      rpc_service_claim_relationship_gist_ai_image_job: {
+        Args: { p_environment: string; p_job_id: string }
+        Returns: Json
+      }
+      rpc_service_claim_relationship_gist_ai_job: {
+        Args: { p_environment: string; p_job_id: string }
+        Returns: Json
+      }
+      rpc_service_claim_revenuecat_webhook_event_v1: {
+        Args: {
+          p_app_user_id: string
+          p_environment: string
+          p_environment_source: string
+          p_event_type: string
+          p_payload: Json
+          p_payload_sha256: string
+          p_revenuecat_event_id: string
+        }
+        Returns: Json
+      }
       rpc_service_clear_live_odo_policy_pause_v1: {
         Args: { p_reason_code: string; p_session_id: string }
         Returns: Json
       }
       rpc_service_clear_live_odo_policy_pause_without_full_quick_v1: {
         Args: { p_reason_code: string; p_session_id: string }
+        Returns: Json
+      }
+      rpc_service_complete_live_music_playback_v1: {
+        Args: {
+          p_expected_state_version: number
+          p_session_id: string
+          p_user_id: string
+        }
+        Returns: Json
+      }
+      rpc_service_complete_live_notification_campaign_v1: {
+        Args: {
+          p_accepted_ticket_count?: number
+          p_campaign_id: string
+          p_failure_reason?: string
+          p_recipient_count?: number
+          p_succeeded: boolean
+        }
+        Returns: undefined
+      }
+      rpc_service_complete_live_odo_always_on_cleanup_v1: {
+        Args: {
+          p_reason_code?: string
+          p_session_id: string
+          p_succeeded: boolean
+        }
         Returns: Json
       }
       rpc_service_complete_live_odo_copilot_call_v1: {
@@ -19479,6 +25568,26 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_service_complete_live_program_audio_v1: {
+        Args: {
+          p_expected_music_version: number
+          p_lease_generation: number
+          p_session_id: string
+          p_worker_instance_id: string
+        }
+        Returns: Json
+      }
+      rpc_service_complete_profile_onboarding_v2: {
+        Args: {
+          p_completion_request_id: string
+          p_evidence_snapshot?: Json
+          p_expected_updated_at: string
+          p_interest_names: string[]
+          p_updates: Json
+          p_user_id: string
+        }
+        Returns: Json
+      }
       rpc_service_complete_profile_onboarding_with_guard_v1: {
         Args: {
           p_evidence_snapshot?: Json
@@ -19488,12 +25597,60 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_service_complete_push_notification_event_v1: {
+        Args: {
+          p_accepted_ticket_count?: number
+          p_event_id: string
+          p_outcome?: string
+          p_recipient_count?: number
+          p_succeeded: boolean
+        }
+        Returns: boolean
+      }
+      rpc_service_complete_relationship_gist_ai_image_job: {
+        Args: {
+          p_alt_text: string
+          p_environment: string
+          p_estimated_cost_microusd: number
+          p_height: number
+          p_image_output_tokens: number
+          p_job_id: string
+          p_prompt: string
+          p_provider_request_id: string
+          p_sha256: string
+          p_storage_path: string
+          p_text_input_tokens: number
+          p_width: number
+        }
+        Returns: Json
+      }
+      rpc_service_complete_relationship_gist_ai_job: {
+        Args: {
+          p_cached_input_tokens: number
+          p_environment: string
+          p_estimated_cost_microusd: number
+          p_input_tokens: number
+          p_job_id: string
+          p_output: Json
+          p_output_tokens: number
+          p_provider_request_id: string
+        }
+        Returns: Json
+      }
+      rpc_service_configure_test_hash_provider: {
+        Args: { p_enabled: boolean; p_environment: string }
+        Returns: boolean
+      }
       rpc_service_consume_content_guard_rate_limit: {
         Args: { p_scope: string; p_user_id: string }
         Returns: Json
       }
       rpc_service_consume_profile_guard_rate_limit: {
         Args: { p_user_id: string }
+        Returns: Json
+      }
+      rpc_service_detect_live_quick_connect_opportunity_v1: {
+        Args: { p_market_context: string; p_worker_id: string }
         Returns: Json
       }
       rpc_service_edit_moderated_private_message: {
@@ -19546,12 +25703,104 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_service_fail_relationship_gist_ai_image_job: {
+        Args: {
+          p_environment: string
+          p_failure_code: string
+          p_job_id: string
+          p_provider_request_id?: string
+          p_retryable: boolean
+          p_status: string
+        }
+        Returns: Json
+      }
+      rpc_service_fail_relationship_gist_ai_job: {
+        Args: {
+          p_cached_input_tokens?: number
+          p_environment: string
+          p_estimated_cost_microusd?: number
+          p_failure_code: string
+          p_input_tokens?: number
+          p_job_id: string
+          p_output_tokens?: number
+          p_provider_request_id?: string
+          p_retryable: boolean
+          p_status: string
+        }
+        Returns: Json
+      }
+      rpc_service_finalize_live_quick_connect_opportunity_session_v1: {
+        Args: {
+          p_failure_reason_code?: string
+          p_opportunity_id: string
+          p_stream_ready: boolean
+          p_worker_id: string
+        }
+        Returns: Json
+      }
       rpc_service_finalize_profile_onboarding: {
         Args: { p_user_id: string }
         Returns: Json
       }
+      rpc_service_get_economy_rule_v1: {
+        Args: {
+          p_action_code: string
+          p_environment: string
+          p_membership_tier: string
+        }
+        Returns: Json
+      }
+      rpc_service_get_live_broadcast_snapshot_v1: {
+        Args: {
+          p_lease_generation: number
+          p_session_id: string
+          p_worker_instance_id: string
+        }
+        Returns: Json
+      }
       rpc_service_get_live_music_playback_v1: {
         Args: { p_session_id: string; p_user_id: string }
+        Returns: Json
+      }
+      rpc_service_get_live_music_repeat_mode_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      rpc_service_get_live_odo_always_on_cleanup_work_v1: {
+        Args: { p_limit?: number }
+        Returns: Json
+      }
+      rpc_service_get_live_quick_connect_opportunity_work_v1: {
+        Args: { p_limit?: number }
+        Returns: Json
+      }
+      rpc_service_get_media_hash_capabilities: { Args: never; Returns: Json }
+      rpc_service_heartbeat_live_broadcast_v1: {
+        Args: {
+          p_captions_status: string
+          p_compositor_status: string
+          p_failure_reason_code?: string
+          p_hls_playlist_url: string
+          p_hls_status: string
+          p_lease_generation: number
+          p_program_version: number
+          p_recording_status: string
+          p_session_id: string
+          p_worker_instance_id: string
+        }
+        Returns: Json
+      }
+      rpc_service_heartbeat_live_program_audio_v1: {
+        Args: {
+          p_failure_reason_code?: string
+          p_lease_generation: number
+          p_music_version: number
+          p_session_id: string
+          p_status: string
+          p_track_id: string
+          p_volume: number
+          p_worker_instance_id: string
+        }
         Returns: Json
       }
       rpc_service_insert_profile_prompt_with_guard: {
@@ -19599,15 +25848,74 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_service_list_live_broadcast_work_v1: {
+        Args: { p_limit?: number; p_worker_instance_id: string }
+        Returns: Json
+      }
+      rpc_service_list_live_campaign_tokens_v1: {
+        Args: {
+          p_after_token_id?: string
+          p_campaign_id: string
+          p_limit?: number
+        }
+        Returns: {
+          app_environment: string
+          app_version: string
+          application_id: string
+          expo_project_id: string
+          id: string
+          installation_id: string
+          provenance_status: string
+          quarantined_at: string
+          token: string
+          user_id: string
+        }[]
+      }
+      rpc_service_list_live_program_audio_work_v1: {
+        Args: { p_limit?: number; p_worker_instance_id: string }
+        Returns: Json
+      }
       rpc_service_list_stale_view_once_moderation_objects: {
         Args: { p_limit?: number }
         Returns: {
           storage_path: string
         }[]
       }
+      rpc_service_maintain_live_broadcast_v1: {
+        Args: { p_limit?: number }
+        Returns: Json
+      }
+      rpc_service_maintain_live_odo_always_on_sessions_v1: {
+        Args: never
+        Returns: Json
+      }
+      rpc_service_maintain_live_program_audio_v1: {
+        Args: { p_limit?: number }
+        Returns: Json
+      }
+      rpc_service_maintain_live_quick_connect_opportunities_v1: {
+        Args: never
+        Returns: Json
+      }
+      rpc_service_maintain_live_studio_program_v1: {
+        Args: { p_limit?: number }
+        Returns: Json
+      }
+      rpc_service_match_unsafe_media_hash: {
+        Args: { p_sha256: string }
+        Returns: Json
+      }
       rpc_service_pause_live_odo_policy_v1: {
         Args: { p_reason_code: string; p_session_id: string }
         Returns: Json
+      }
+      rpc_service_prepare_live_quick_connect_opportunity_session_v1: {
+        Args: { p_opportunity_id: string; p_worker_id: string }
+        Returns: Json
+      }
+      rpc_service_purge_expired_chat_image_moderation_receipts: {
+        Args: { p_limit?: number }
+        Returns: number
       }
       rpc_service_reconcile_live_odo_full_quick_connect_v1: {
         Args: {
@@ -19646,6 +25954,49 @@ export type Database = {
         }
         Returns: string
       }
+      rpc_service_register_approved_chat_media: {
+        Args: {
+          p_attachment_id: string
+          p_byte_size: number
+          p_client_message_id: string
+          p_mime_type: string
+          p_object_path: string
+          p_receiver_id: string
+          p_sender_id: string
+          p_sha256: string
+          p_variant: string
+        }
+        Returns: boolean
+      }
+      rpc_service_register_approved_profile_media: {
+        Args: {
+          p_byte_size: number
+          p_mime_type: string
+          p_object_path: string
+          p_public_url: string
+          p_sha256: string
+          p_user_id: string
+        }
+        Returns: boolean
+      }
+      rpc_service_release_live_broadcast_v1: {
+        Args: {
+          p_lease_generation: number
+          p_reason_code?: string
+          p_session_id: string
+          p_worker_instance_id: string
+        }
+        Returns: Json
+      }
+      rpc_service_release_live_program_audio_v1: {
+        Args: {
+          p_lease_generation: number
+          p_reason_code?: string
+          p_session_id: string
+          p_worker_instance_id: string
+        }
+        Returns: Json
+      }
       rpc_service_renew_live_odo_lease_v1: {
         Args: {
           p_call_id: string
@@ -19653,6 +26004,36 @@ export type Database = {
           p_lease_owner: string
         }
         Returns: Json
+      }
+      rpc_service_reserve_push_notification_deliveries_v1: {
+        Args: { p_event_id: string; p_token_ids: string[] }
+        Returns: {
+          reserved_token_id: string
+        }[]
+      }
+      rpc_service_resolve_profile_media_remediation: {
+        Args: {
+          p_categories?: string[]
+          p_claim_token: string
+          p_error?: string
+          p_job_id: string
+          p_outcome: string
+          p_sha256?: string
+        }
+        Returns: Json
+      }
+      rpc_service_resolve_push_destinations_v1: {
+        Args: { p_user_id?: string }
+        Returns: {
+          app_environment: string
+          application_id: string
+          decision: string
+          expo_project_id: string
+          reason: string
+          token_hash_prefix: string
+          token_id: string
+          user_id: string
+        }[]
       }
       rpc_service_send_moderated_private_message: {
         Args: {
@@ -19670,6 +26051,17 @@ export type Database = {
           p_sender_user_id: string
           p_storage_path?: string
           p_text: string
+        }
+        Returns: Json
+      }
+      rpc_service_send_provider_expression: {
+        Args: {
+          p_client_message_id: string
+          p_media_kind: string
+          p_provider_media: Json
+          p_receiver_user_id: string
+          p_reply_to_message_id?: string
+          p_sender_user_id: string
         }
         Returns: Json
       }
@@ -19705,6 +26097,7 @@ export type Database = {
       rpc_set_circle_host_note: {
         Args: { p_circle_id: string; p_note?: string; p_profile_id: string }
         Returns: {
+          access_policy: string
           active_this_week_count: number
           approved_at: string | null
           approved_by_admin_id: string | null
@@ -19721,6 +26114,8 @@ export type Database = {
           created_by_user_id: string | null
           culture_tags: string[]
           description: string | null
+          diaspora_destination_country_codes: string[]
+          diaspora_origin_country_codes: string[]
           diaspora_tags: string[]
           faith_tags: string[]
           gathering_count: number
@@ -19736,9 +26131,13 @@ export type Database = {
           is_official: boolean
           is_partner: boolean
           latitude: number | null
+          live_discovery_policy: string
           longitude: number | null
           member_count: number
+          membership_eligibility_policy: string
           name: string
+          reach_scope: string
+          reach_scopes: string[]
           region: string | null
           rejected_reason: string | null
           report_count: number
@@ -19768,6 +26167,15 @@ export type Database = {
         }
         Returns: boolean
       }
+      rpc_set_live_broadcast_authority_v1: {
+        Args: {
+          p_broadcast_authority: string
+          p_command_id: string
+          p_expected_version: number
+          p_session_id: string
+        }
+        Returns: Json
+      }
       rpc_set_live_chemistry_ready: {
         Args: { p_conversation_id: string }
         Returns: Json
@@ -19778,6 +26186,7 @@ export type Database = {
           connection_quality_state: string
           created_at: string
           id: string
+          introduction_preference_decided_at: string | null
           invited_at: string
           joined_at: string | null
           last_connection_change_at: string | null
@@ -19810,9 +26219,54 @@ export type Database = {
         Args: { p_allowed: boolean }
         Returns: boolean
       }
+      rpc_set_live_public_media_consent_v1: {
+        Args: {
+          p_granted: boolean
+          p_policy_version: string
+          p_purpose: string
+          p_session_id: string
+        }
+        Returns: Json
+      }
+      rpc_set_live_quick_connect_availability_v1: {
+        Args: { p_duration_minutes: number; p_source?: string }
+        Returns: Json
+      }
       rpc_set_live_quick_connect_stage_layout: {
         Args: { p_session_id: string; p_stage_layout: string }
         Returns: Json
+      }
+      rpc_set_live_session_audience_policy_v1: {
+        Args: {
+          p_city?: string
+          p_country_code?: string
+          p_country_name?: string
+          p_diaspora_destination_country_codes?: string[]
+          p_diaspora_origin_country_codes?: string[]
+          p_expected_version: number
+          p_reach_scopes: string[]
+          p_region?: string
+          p_session_id: string
+        }
+        Returns: {
+          city: string | null
+          country_code: string | null
+          country_name: string | null
+          created_at: string
+          diaspora_destination_country_codes: string[]
+          diaspora_origin_country_codes: string[]
+          policy_mode: string
+          reach_scopes: string[]
+          region: string | null
+          session_id: string
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "live_session_audience_policies"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       rpc_set_live_stage_participant: {
         Args: {
@@ -19824,6 +26278,7 @@ export type Database = {
           connection_quality_state: string
           created_at: string
           id: string
+          introduction_preference_decided_at: string | null
           invited_at: string
           joined_at: string | null
           last_connection_change_at: string | null
@@ -19857,8 +26312,14 @@ export type Database = {
         Returns: {
           archived_at: string | null
           backstage_opened_at: string | null
+          broadcast_authority: string
+          broadcast_authority_set_at: string | null
+          broadcast_authority_set_by_user_id: string | null
+          broadcast_delivery_mode: string
           cancellation_reason: string | null
           cancelled_at: string | null
+          caption_source_language: string | null
+          caption_translation_languages: string[]
           captions_enabled: boolean
           chemistry_first_enabled: boolean
           circle_id: string | null
@@ -19866,10 +26327,11 @@ export type Database = {
           context_id: string | null
           context_type: string
           created_at: string
-          created_by_profile_id: string
-          created_by_user_id: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
           creation_request_id: string | null
           description: string | null
+          end_policy: string
           ended_at: string | null
           format: string
           gathering_id: string | null
@@ -19877,6 +26339,9 @@ export type Database = {
           maximum_participants: number
           maximum_publishers: number
           minimum_participants: number
+          ownership_type: string
+          produced_by_profile_id: string | null
+          produced_by_user_id: string | null
           provider: string
           provider_call_id: string
           provider_call_type: string
@@ -19885,6 +26350,9 @@ export type Database = {
           quorum_required_pairs: number
           recording_enabled: boolean
           rescheduled_at: string | null
+          runtime_end_at: string | null
+          runtime_extended_at: string | null
+          runtime_extended_by_user_id: string | null
           schedule_revision: number
           scheduled_duration_minutes: number
           scheduled_end: string | null
@@ -19893,6 +26361,7 @@ export type Database = {
           stage_requests_open: boolean
           started_at: string | null
           status: string
+          system_session_kind: string | null
           title: string
           updated_at: string
           version: number
@@ -19909,8 +26378,14 @@ export type Database = {
         Returns: {
           archived_at: string | null
           backstage_opened_at: string | null
+          broadcast_authority: string
+          broadcast_authority_set_at: string | null
+          broadcast_authority_set_by_user_id: string | null
+          broadcast_delivery_mode: string
           cancellation_reason: string | null
           cancelled_at: string | null
+          caption_source_language: string | null
+          caption_translation_languages: string[]
           captions_enabled: boolean
           chemistry_first_enabled: boolean
           circle_id: string | null
@@ -19918,10 +26393,11 @@ export type Database = {
           context_id: string | null
           context_type: string
           created_at: string
-          created_by_profile_id: string
-          created_by_user_id: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
           creation_request_id: string | null
           description: string | null
+          end_policy: string
           ended_at: string | null
           format: string
           gathering_id: string | null
@@ -19929,6 +26405,9 @@ export type Database = {
           maximum_participants: number
           maximum_publishers: number
           minimum_participants: number
+          ownership_type: string
+          produced_by_profile_id: string | null
+          produced_by_user_id: string | null
           provider: string
           provider_call_id: string
           provider_call_type: string
@@ -19937,6 +26416,9 @@ export type Database = {
           quorum_required_pairs: number
           recording_enabled: boolean
           rescheduled_at: string | null
+          runtime_end_at: string | null
+          runtime_extended_at: string | null
+          runtime_extended_by_user_id: string | null
           schedule_revision: number
           scheduled_duration_minutes: number
           scheduled_end: string | null
@@ -19945,6 +26427,7 @@ export type Database = {
           stage_requests_open: boolean
           started_at: string | null
           status: string
+          system_session_kind: string | null
           title: string
           updated_at: string
           version: number
@@ -19981,6 +26464,17 @@ export type Database = {
         }
         Returns: boolean
       }
+      rpc_set_relationship_gist_reaction: {
+        Args: {
+          p_gist_id: string
+          p_operation_id: string
+          p_owner_user_id: string
+          p_reaction?: string
+          p_revision_id: string
+          p_source?: string
+        }
+        Returns: Json
+      }
       rpc_set_user_presence: { Args: { p_online: boolean }; Returns: number }
       rpc_signal_live_odo_autopilot_clock_v1: {
         Args: { p_session_id: string }
@@ -19989,6 +26483,144 @@ export type Database = {
       rpc_signal_live_quick_connect_interest: {
         Args: { p_session_id: string; p_target_profile_id: string }
         Returns: Json
+      }
+      rpc_start_live_session_v2: {
+        Args: {
+          p_command_id: string
+          p_expected_version: number
+          p_session_id: string
+        }
+        Returns: Json
+      }
+      rpc_studio_acknowledge_alert_v1: {
+        Args: { p_event_id: number; p_session_id: string }
+        Returns: boolean
+      }
+      rpc_studio_emergency_safe_scene_v1: {
+        Args: { p_reason?: string; p_session_id: string }
+        Returns: Json
+      }
+      rpc_studio_end_live_program_source_v1: {
+        Args: {
+          p_reason_code?: string
+          p_session_id: string
+          p_source_key: string
+        }
+        Returns: Json
+      }
+      rpc_studio_end_live_session_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      rpc_studio_operator_heartbeat_v1: {
+        Args: {
+          p_controller_instance_id: string
+          p_readiness?: string
+          p_session_id: string
+        }
+        Returns: Json
+      }
+      rpc_studio_post_private_message_v1: {
+        Args: { p_audience: string; p_body: string; p_session_id: string }
+        Returns: number
+      }
+      rpc_studio_record_operational_event_v1: {
+        Args: {
+          p_details?: Json
+          p_event_type: string
+          p_requires_acknowledgement?: boolean
+          p_session_id: string
+          p_severity?: string
+        }
+        Returns: number
+      }
+      rpc_studio_renew_live_program_control_v1: {
+        Args: {
+          p_controller_instance_id: string
+          p_expected_controller_generation: number
+          p_session_id: string
+        }
+        Returns: Json
+      }
+      rpc_studio_resume_live_odo_v1: {
+        Args: {
+          p_command_id: string
+          p_controller_instance_id: string
+          p_expected_controller_generation: number
+          p_session_id: string
+        }
+        Returns: Json
+      }
+      rpc_studio_start_live_session_v1: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      rpc_studio_take_live_program_control_v1: {
+        Args: {
+          p_command_id: string
+          p_controller_instance_id: string
+          p_expected_controller_generation: number
+          p_expected_program_version: number
+          p_session_id: string
+        }
+        Returns: Json
+      }
+      rpc_studio_take_live_program_v1: {
+        Args: {
+          p_command_id: string
+          p_controller_instance_id: string
+          p_expected_controller_generation: number
+          p_expected_program_version: number
+          p_scene: string
+          p_session_id: string
+          p_source_assignments: Json
+          p_target_canvas: string
+          p_transition?: string
+        }
+        Returns: Json
+      }
+      rpc_studio_take_live_program_v2: {
+        Args: {
+          p_command_id: string
+          p_controller_instance_id: string
+          p_expected_controller_generation: number
+          p_expected_program_version: number
+          p_scene: string
+          p_session_id: string
+          p_source_assignments: Json
+          p_target_canvas: string
+          p_transition?: string
+        }
+        Returns: Json
+      }
+      rpc_studio_upsert_live_program_source_v1: {
+        Args: {
+          p_failure_reason_code?: string
+          p_has_audio: boolean
+          p_has_video: boolean
+          p_health: string
+          p_muted?: boolean
+          p_provider_user_id: string
+          p_readiness: string
+          p_session_id: string
+          p_source_key: string
+          p_source_role: string
+          p_source_type: string
+        }
+        Returns: Json
+      }
+      rpc_studio_upsert_run_cue_v1: {
+        Args: {
+          p_cue_id: string
+          p_cue_type?: string
+          p_expected_at?: string
+          p_notes?: string
+          p_position: number
+          p_session_id: string
+          p_status?: string
+          p_title: string
+        }
+        Returns: string
       }
       rpc_submit_live_private_spark_exit: {
         Args: { p_decision: string; p_private_spark_id: string }
@@ -20064,6 +26696,15 @@ export type Database = {
           status: string
         }[]
       }
+      rpc_submit_ugc_content_report_v1: {
+        Args: {
+          p_client_evidence?: Json
+          p_content_id: string
+          p_content_type: string
+          p_reason: string
+        }
+        Returns: string
+      }
       rpc_sync_moment_comment_reaction: {
         Args: { p_comment_id: string; p_reaction?: string }
         Returns: boolean
@@ -20109,8 +26750,14 @@ export type Database = {
         Returns: {
           archived_at: string | null
           backstage_opened_at: string | null
+          broadcast_authority: string
+          broadcast_authority_set_at: string | null
+          broadcast_authority_set_by_user_id: string | null
+          broadcast_delivery_mode: string
           cancellation_reason: string | null
           cancelled_at: string | null
+          caption_source_language: string | null
+          caption_translation_languages: string[]
           captions_enabled: boolean
           chemistry_first_enabled: boolean
           circle_id: string | null
@@ -20118,10 +26765,11 @@ export type Database = {
           context_id: string | null
           context_type: string
           created_at: string
-          created_by_profile_id: string
-          created_by_user_id: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
           creation_request_id: string | null
           description: string | null
+          end_policy: string
           ended_at: string | null
           format: string
           gathering_id: string | null
@@ -20129,6 +26777,9 @@ export type Database = {
           maximum_participants: number
           maximum_publishers: number
           minimum_participants: number
+          ownership_type: string
+          produced_by_profile_id: string | null
+          produced_by_user_id: string | null
           provider: string
           provider_call_id: string
           provider_call_type: string
@@ -20137,6 +26788,9 @@ export type Database = {
           quorum_required_pairs: number
           recording_enabled: boolean
           rescheduled_at: string | null
+          runtime_end_at: string | null
+          runtime_extended_at: string | null
+          runtime_extended_by_user_id: string | null
           schedule_revision: number
           scheduled_duration_minutes: number
           scheduled_end: string | null
@@ -20145,6 +26799,7 @@ export type Database = {
           stage_requests_open: boolean
           started_at: string | null
           status: string
+          system_session_kind: string | null
           title: string
           updated_at: string
           version: number
@@ -20156,6 +26811,15 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      rpc_transition_relationship_gist_revision: {
+        Args: {
+          p_action: string
+          p_reason?: string
+          p_revision_id: string
+          p_scheduled_for?: string
+        }
+        Returns: Json
+      }
       rpc_update_circle_image: {
         Args: {
           p_actor_profile_id: string
@@ -20163,6 +26827,7 @@ export type Database = {
           p_image_path: string
         }
         Returns: {
+          access_policy: string
           active_this_week_count: number
           approved_at: string | null
           approved_by_admin_id: string | null
@@ -20179,6 +26844,8 @@ export type Database = {
           created_by_user_id: string | null
           culture_tags: string[]
           description: string | null
+          diaspora_destination_country_codes: string[]
+          diaspora_origin_country_codes: string[]
           diaspora_tags: string[]
           faith_tags: string[]
           gathering_count: number
@@ -20194,9 +26861,13 @@ export type Database = {
           is_official: boolean
           is_partner: boolean
           latitude: number | null
+          live_discovery_policy: string
           longitude: number | null
           member_count: number
+          membership_eligibility_policy: string
           name: string
+          reach_scope: string
+          reach_scopes: string[]
           region: string | null
           rejected_reason: string | null
           report_count: number
@@ -20224,6 +26895,7 @@ export type Database = {
           p_name: string
         }
         Returns: {
+          access_policy: string
           active_this_week_count: number
           approved_at: string | null
           approved_by_admin_id: string | null
@@ -20240,6 +26912,8 @@ export type Database = {
           created_by_user_id: string | null
           culture_tags: string[]
           description: string | null
+          diaspora_destination_country_codes: string[]
+          diaspora_origin_country_codes: string[]
           diaspora_tags: string[]
           faith_tags: string[]
           gathering_count: number
@@ -20255,9 +26929,13 @@ export type Database = {
           is_official: boolean
           is_partner: boolean
           latitude: number | null
+          live_discovery_policy: string
           longitude: number | null
           member_count: number
+          membership_eligibility_policy: string
           name: string
+          reach_scope: string
+          reach_scopes: string[]
           region: string | null
           rejected_reason: string | null
           report_count: number
@@ -20395,6 +27073,7 @@ export type Database = {
           p_visibility_scope?: string
         }
         Returns: {
+          access_policy: string
           active_this_week_count: number
           approved_at: string | null
           approved_by_admin_id: string | null
@@ -20411,6 +27090,8 @@ export type Database = {
           created_by_user_id: string | null
           culture_tags: string[]
           description: string | null
+          diaspora_destination_country_codes: string[]
+          diaspora_origin_country_codes: string[]
           diaspora_tags: string[]
           faith_tags: string[]
           gathering_count: number
@@ -20426,9 +27107,184 @@ export type Database = {
           is_official: boolean
           is_partner: boolean
           latitude: number | null
+          live_discovery_policy: string
           longitude: number | null
           member_count: number
+          membership_eligibility_policy: string
           name: string
+          reach_scope: string
+          reach_scopes: string[]
+          region: string | null
+          rejected_reason: string | null
+          report_count: number
+          requires_join_approval: boolean
+          rules: string | null
+          safety_note: string | null
+          short_description: string | null
+          slug: string | null
+          status: string
+          updated_at: string
+          visibility: string
+          visibility_scope: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "circles"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      rpc_update_circle_request_v2: {
+        Args: {
+          p_access_policy?: string
+          p_audience_tags?: string[]
+          p_circle_id: string
+          p_circle_type?: string
+          p_city?: string
+          p_country_code?: string
+          p_country_name?: string
+          p_culture_tags?: string[]
+          p_description?: string
+          p_diaspora_destination_country_codes?: string[]
+          p_diaspora_origin_country_codes?: string[]
+          p_faith_tags?: string[]
+          p_interest_tags?: string[]
+          p_live_discovery_policy?: string
+          p_membership_eligibility_policy?: string
+          p_name: string
+          p_reach_scope?: string
+          p_region?: string
+          p_rules?: string
+          p_short_description?: string
+        }
+        Returns: {
+          access_policy: string
+          active_this_week_count: number
+          approved_at: string | null
+          approved_by_admin_id: string | null
+          archived_at: string | null
+          audience_tags: string[]
+          category: string | null
+          circle_type: string
+          city: string | null
+          country_code: string | null
+          country_name: string | null
+          cover_image_url: string | null
+          created_at: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
+          culture_tags: string[]
+          description: string | null
+          diaspora_destination_country_codes: string[]
+          diaspora_origin_country_codes: string[]
+          diaspora_tags: string[]
+          faith_tags: string[]
+          gathering_count: number
+          host_note: string | null
+          host_note_updated_at: string | null
+          host_note_updated_by_profile_id: string | null
+          icon_url: string | null
+          id: string
+          image_path: string | null
+          image_updated_at: string | null
+          interest_tags: string[]
+          is_featured: boolean
+          is_official: boolean
+          is_partner: boolean
+          latitude: number | null
+          live_discovery_policy: string
+          longitude: number | null
+          member_count: number
+          membership_eligibility_policy: string
+          name: string
+          reach_scope: string
+          reach_scopes: string[]
+          region: string | null
+          rejected_reason: string | null
+          report_count: number
+          requires_join_approval: boolean
+          rules: string | null
+          safety_note: string | null
+          short_description: string | null
+          slug: string | null
+          status: string
+          updated_at: string
+          visibility: string
+          visibility_scope: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "circles"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      rpc_update_circle_request_v3: {
+        Args: {
+          p_access_policy?: string
+          p_audience_tags?: string[]
+          p_circle_id: string
+          p_circle_type?: string
+          p_city?: string
+          p_country_code?: string
+          p_country_name?: string
+          p_culture_tags?: string[]
+          p_description?: string
+          p_diaspora_destination_country_codes?: string[]
+          p_diaspora_origin_country_codes?: string[]
+          p_faith_tags?: string[]
+          p_interest_tags?: string[]
+          p_live_discovery_policy?: string
+          p_membership_eligibility_policy?: string
+          p_name: string
+          p_reach_scope?: string
+          p_reach_scopes?: string[]
+          p_region?: string
+          p_rules?: string
+          p_short_description?: string
+        }
+        Returns: {
+          access_policy: string
+          active_this_week_count: number
+          approved_at: string | null
+          approved_by_admin_id: string | null
+          archived_at: string | null
+          audience_tags: string[]
+          category: string | null
+          circle_type: string
+          city: string | null
+          country_code: string | null
+          country_name: string | null
+          cover_image_url: string | null
+          created_at: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
+          culture_tags: string[]
+          description: string | null
+          diaspora_destination_country_codes: string[]
+          diaspora_origin_country_codes: string[]
+          diaspora_tags: string[]
+          faith_tags: string[]
+          gathering_count: number
+          host_note: string | null
+          host_note_updated_at: string | null
+          host_note_updated_by_profile_id: string | null
+          icon_url: string | null
+          id: string
+          image_path: string | null
+          image_updated_at: string | null
+          interest_tags: string[]
+          is_featured: boolean
+          is_official: boolean
+          is_partner: boolean
+          latitude: number | null
+          live_discovery_policy: string
+          longitude: number | null
+          member_count: number
+          membership_eligibility_policy: string
+          name: string
+          reach_scope: string
+          reach_scopes: string[]
           region: string | null
           rejected_reason: string | null
           report_count: number
@@ -20538,8 +27394,14 @@ export type Database = {
         Returns: {
           archived_at: string | null
           backstage_opened_at: string | null
+          broadcast_authority: string
+          broadcast_authority_set_at: string | null
+          broadcast_authority_set_by_user_id: string | null
+          broadcast_delivery_mode: string
           cancellation_reason: string | null
           cancelled_at: string | null
+          caption_source_language: string | null
+          caption_translation_languages: string[]
           captions_enabled: boolean
           chemistry_first_enabled: boolean
           circle_id: string | null
@@ -20547,10 +27409,11 @@ export type Database = {
           context_id: string | null
           context_type: string
           created_at: string
-          created_by_profile_id: string
-          created_by_user_id: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
           creation_request_id: string | null
           description: string | null
+          end_policy: string
           ended_at: string | null
           format: string
           gathering_id: string | null
@@ -20558,6 +27421,9 @@ export type Database = {
           maximum_participants: number
           maximum_publishers: number
           minimum_participants: number
+          ownership_type: string
+          produced_by_profile_id: string | null
+          produced_by_user_id: string | null
           provider: string
           provider_call_id: string
           provider_call_type: string
@@ -20566,6 +27432,9 @@ export type Database = {
           quorum_required_pairs: number
           recording_enabled: boolean
           rescheduled_at: string | null
+          runtime_end_at: string | null
+          runtime_extended_at: string | null
+          runtime_extended_by_user_id: string | null
           schedule_revision: number
           scheduled_duration_minutes: number
           scheduled_end: string | null
@@ -20574,6 +27443,7 @@ export type Database = {
           stage_requests_open: boolean
           started_at: string | null
           status: string
+          system_session_kind: string | null
           title: string
           updated_at: string
           version: number
@@ -20599,8 +27469,14 @@ export type Database = {
         Returns: {
           archived_at: string | null
           backstage_opened_at: string | null
+          broadcast_authority: string
+          broadcast_authority_set_at: string | null
+          broadcast_authority_set_by_user_id: string | null
+          broadcast_delivery_mode: string
           cancellation_reason: string | null
           cancelled_at: string | null
+          caption_source_language: string | null
+          caption_translation_languages: string[]
           captions_enabled: boolean
           chemistry_first_enabled: boolean
           circle_id: string | null
@@ -20608,10 +27484,11 @@ export type Database = {
           context_id: string | null
           context_type: string
           created_at: string
-          created_by_profile_id: string
-          created_by_user_id: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
           creation_request_id: string | null
           description: string | null
+          end_policy: string
           ended_at: string | null
           format: string
           gathering_id: string | null
@@ -20619,6 +27496,9 @@ export type Database = {
           maximum_participants: number
           maximum_publishers: number
           minimum_participants: number
+          ownership_type: string
+          produced_by_profile_id: string | null
+          produced_by_user_id: string | null
           provider: string
           provider_call_id: string
           provider_call_type: string
@@ -20627,6 +27507,9 @@ export type Database = {
           quorum_required_pairs: number
           recording_enabled: boolean
           rescheduled_at: string | null
+          runtime_end_at: string | null
+          runtime_extended_at: string | null
+          runtime_extended_by_user_id: string | null
           schedule_revision: number
           scheduled_duration_minutes: number
           scheduled_end: string | null
@@ -20635,6 +27518,7 @@ export type Database = {
           stage_requests_open: boolean
           started_at: string | null
           status: string
+          system_session_kind: string | null
           title: string
           updated_at: string
           version: number
@@ -20791,6 +27675,17 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      rpc_upsert_relationship_gist_reflection: {
+        Args: {
+          p_body: string
+          p_gist_id: string
+          p_operation_id: string
+          p_owner_user_id: string
+          p_revision_id: string
+          p_source?: string
+        }
+        Returns: Json
+      }
       rpc_upsert_relationship_gist_user_state: {
         Args: {
           p_gist_id: string
@@ -20802,12 +27697,18 @@ export type Database = {
         }
         Returns: {
           gist_id: string
+          last_anchor: string | null
+          last_anchor_offset: number | null
           last_opened_at: string | null
           last_perspective: string | null
           last_read_at: string | null
           profile_id: string
           progress: number
+          read_acknowledged_at: string | null
+          reading_duration_ms: number
           saved: boolean
+          saved_version: number
+          scroll_completed_at: string | null
           updated_at: string
         }
         SetofOptions: {
@@ -20849,11 +27750,24 @@ export type Database = {
         }
       }
       run_live_maintenance: { Args: never; Returns: Json }
+      run_live_maintenance_without_always_on_10f_v1: {
+        Args: never
+        Returns: Json
+      }
+      run_live_maintenance_without_broadcast_phase_c_v1: {
+        Args: never
+        Returns: Json
+      }
       run_live_maintenance_without_full_quick_v1: { Args: never; Returns: Json }
+      run_live_maintenance_without_program_audio_v1: {
+        Args: never
+        Returns: Json
+      }
       run_live_maintenance_without_show_director_v1: {
         Args: never
         Returns: Json
       }
+      run_live_maintenance_without_studio_10g_v1: { Args: never; Returns: Json }
       search_ghana_localities: {
         Args: { p_limit?: number; p_query?: string; p_region?: string }
         Returns: {
@@ -21536,6 +28450,20 @@ export type Database = {
         }
         Returns: undefined
       }
+      upsert_push_token_v2: {
+        Args: {
+          p_app_environment: string
+          p_app_version: string
+          p_application_id: string
+          p_device_id: string
+          p_expo_project_id: string
+          p_installation_id: string
+          p_platform: string
+          p_token: string
+          p_user_id: string
+        }
+        Returns: undefined
+      }
       vibes_real_distance_km: {
         Args: { p_lat1: number; p_lat2: number; p_lon1: number; p_lon2: number }
         Returns: number
@@ -21580,12 +28508,12 @@ export type Tables<
   DefaultSchemaTableNameOrOptions extends
     | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
         DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -21609,11 +28537,11 @@ export type TablesInsert<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -21634,11 +28562,11 @@ export type TablesUpdate<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -21659,11 +28587,11 @@ export type Enums<
   DefaultSchemaEnumNameOrOptions extends
     | keyof DefaultSchema["Enums"]
     | { schema: keyof DatabaseWithoutInternals },
-  EnumName extends DefaultSchemaEnumNameOrOptions extends {
+  EnumName extends (DefaultSchemaEnumNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaEnumNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -21676,11 +28604,11 @@ export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
     | keyof DefaultSchema["CompositeTypes"]
     | { schema: keyof DatabaseWithoutInternals },
-  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
+  CompositeTypeName extends (PublicCompositeTypeNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
-    : never = never,
+    : never) = never,
 > = PublicCompositeTypeNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }

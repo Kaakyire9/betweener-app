@@ -1,438 +1,92 @@
-// @ts-nocheck
-// Supabase Edge Function - runs in Deno runtime
-// TypeScript errors are expected in VS Code Node.js environment
+// @ts-nocheck -- Supabase Edge runtime supplies Deno and remote imports.
+import { createPhoneAdmin, phoneJson, phonePreflight } from '../_shared/phone-verification-runtime.ts';
+import {
+  getPhoneVerifyConfig, isApprovedPhoneCheck, isVerificationSid, normalizeVerificationInput,
+  phoneVerificationRateAllowed, resolveVerificationCaller,
+} from '../_shared/phone-verification-boundary.ts';
 
-// @deno-types="https://esm.sh/@supabase/functions-js/src/edge-runtime.d.ts"
-
-import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { corsHeaders } from '../_shared/cors.ts'
-
-const twilioAccountSid = Deno.env.get('TWILIO_ACCOUNT_SID')!
-const twilioAuthToken = Deno.env.get('TWILIO_AUTH_TOKEN')!
-const twilioVerifyServiceSid = Deno.env.get('TWILIO_VERIFY_SERVICE_SID')!
-
-interface VerifyPhoneRequest {
-  phoneNumber: string
-  verificationCode: string
-  userId?: string | null
-  signupSessionId?: string
+function phoneCheckResult(result: { state?: string; confidence_score?: number; recovery_token?: string }, phone: string) {
+  if (result?.state === 'verified') {
+    return phoneJson({ success: true, verified: true, valid: true, status: 'approved', confidenceScore: result.confidence_score });
+  }
+  if (result?.state === 'conflict' && result.recovery_token) {
+    return phoneJson({
+      error: 'This number already belongs to an older Betweener account.',
+      code: 'phone_belongs_to_existing_account', phoneNumber: phone, recoveryToken: result.recovery_token,
+    }, 409);
+  }
+  if (result?.state === 'pending') {
+    return phoneJson({ success: false, verified: false, valid: false, status: 'pending' });
+  }
+  if (result?.state === 'busy') {
+    return phoneJson({ error: 'A verification is already in progress. Please wait and try again.' }, 429);
+  }
+  if (result?.state === 'account_unavailable') {
+    return phoneJson({ error: 'Phone verification cannot be changed for this account.' }, 409);
+  }
+  return phoneJson({ error: 'This verification attempt has expired. Request a new code.', code: 'challenge_expired' }, 409);
 }
 
-const findExistingVerifiedPhoneOwner = async (
-  supabase: any,
-  phoneNumber: string,
-  currentUserId: string | null,
-) => {
-  const { data, error } = await supabase
-    .from('profiles')
-    .select('id, user_id, phone_number, phone_verified')
-    .eq('phone_number', phoneNumber)
-    .eq('phone_verified', true)
-    .limit(1)
-    .maybeSingle()
-
-  if (error) {
-    console.error('Existing verified phone lookup error:', error)
-    return null
-  }
-
-  if (!data?.user_id) return null
-  if (currentUserId && data.user_id === currentUserId) return null
-
-  return data
-}
-
-const createRecoverySession = async (
-  supabase: any,
-  args: {
-    requesterUserId: string
-    phoneNumber: string
-    ownerUserId: string
-    ownerProfileId?: string | null
-  },
-) => {
-  const { data, error } = await supabase
-    .from('account_recovery_sessions')
-    .insert({
-      requester_user_id: args.requesterUserId,
-      conflicting_phone_number: args.phoneNumber,
-      owner_user_id: args.ownerUserId,
-      owner_profile_id: args.ownerProfileId ?? null,
-      metadata: {
-        source: 'verified_phone_conflict',
-      },
-    })
-    .select('recovery_token')
-    .single()
-
-  if (error) {
-    console.error('Recovery session insert error:', error)
-    return null
-  }
-
-  return data?.recovery_token ?? null
-}
-
-interface TwilioVerifyCheckResponse {
-  sid: string
-  status: 'approved' | 'pending' | 'canceled'
-  valid: boolean
-}
-
-const getClientIp = (req: Request) => {
-  const forwarded = req.headers.get('x-forwarded-for')
-  if (forwarded) {
-    return forwarded.split(',')[0]?.trim()
-  }
-  return req.headers.get('cf-connecting-ip') || req.headers.get('x-real-ip') || null
-}
-
-const enforceRateLimit = async (
-  supabase: any,
-  key: string,
-  windowSeconds: number,
-  limit: number
-) => {
-  const { data, error } = await supabase.rpc('bump_rate_limit', {
-    p_key: key,
-    p_window_seconds: windowSeconds,
-    p_limit: limit
-  })
-  if (error) {
-    console.error('Rate limit error:', error)
-    return { allowed: false }
-  }
-  const row = Array.isArray(data) ? data[0] : data
-  return {
-    allowed: !!row?.allowed,
-    count: row?.current_count ?? 0,
-    windowBucket: row?.window_bucket_out ?? row?.window_bucket ?? null,
-  }
-}
-
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders })
-  }
+Deno.serve(async (req: Request) => {
+  if (req.method === 'OPTIONS') return phonePreflight();
+  if (req.method !== 'POST') return phoneJson({ error: 'Method not allowed' }, 405);
 
   try {
-    const { phoneNumber, verificationCode, userId, signupSessionId }: VerifyPhoneRequest = await req.json()
-    
-    if (!phoneNumber || !verificationCode || !signupSessionId) {
-      return new Response(
-        JSON.stringify({ error: 'Phone number, verification code, and signup session ID are required' }),
-        { 
-          status: 400, 
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
-        }
-      )
+    const body = await req.json().catch(() => null);
+    const input = body && normalizeVerificationInput(body);
+    const code = typeof body?.verificationCode === 'string' ? body.verificationCode.trim() : '';
+    if (!input || !/^\d{4,10}$/.test(code)) {
+      return phoneJson({ error: 'A valid phone number, signup attempt, and code are required.' }, 400);
     }
 
-    // Create Supabase client
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-    const supabase = createClient(supabaseUrl, supabaseServiceKey)
-
-    // Only trust userId when the caller is authenticated as that user.
-    // This function is callable anonymously (verify_jwt=false), so do not accept arbitrary user IDs.
-    const authHeader = req.headers.get('Authorization') ?? ''
-    const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null
-    let authedUserId: string | null = null
-    if (bearer) {
-      try {
-        const { data: authData, error: authError } = await supabase.auth.getUser(bearer)
-        authedUserId = !authError && authData?.user?.id ? authData.user.id : null
-      } catch {
-        authedUserId = null
-      }
+    const admin = createPhoneAdmin();
+    const caller = await resolveVerificationCaller(req, token => admin.auth.getUser(token), body.userId);
+    if (caller.status !== 200) {
+      return phoneJson({ error: 'Sign in to verify your phone.', code: 'sign_in_required' }, caller.status);
     }
-    if (userId && authedUserId && userId !== authedUserId) {
-      return new Response(
-        JSON.stringify({ error: 'User mismatch' }),
-        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
-    }
-    const effectiveUserId = authedUserId
-
-    // Rate limits (defaults)
-    const clientIp = getClientIp(req) || 'unknown'
-    const environment = Deno.env.get('ENVIRONMENT') || 'production'
-    const rateChecks = [
-      { name: 'ip_10min', key: `ip:${clientIp}`, windowSeconds: 600, limit: 10 },
-      { name: 'phone_10min', key: `phone:${phoneNumber}`, windowSeconds: 600, limit: 5 },
-      { name: 'signup_10min', key: `signup:${signupSessionId}`, windowSeconds: 600, limit: 5 },
-    ]
-    if (environment !== 'development') {
-      rateChecks.splice(2, 0, { name: 'phone_day', key: `phone:${phoneNumber}:day`, windowSeconds: 86400, limit: 5 })
-    }
-    const rateResults = await Promise.all(
-      rateChecks.map(async (rule) => {
-        const res = await enforceRateLimit(supabase, rule.key, rule.windowSeconds, rule.limit)
-        return { ...rule, ...res }
-      })
-    )
-    const blocked = rateResults.find((r) => !r.allowed)
-    if (blocked) {
-      const errorMessage =
-        blocked.name === 'phone_day'
-          ? 'Too many attempts. Please wait and try again after 24 hours.'
-          : 'Too many attempts. Please wait and try again.'
-      return new Response(
-        JSON.stringify({
-          error: errorMessage,
-          limit: {
-            name: blocked.name,
-            key: blocked.key,
-            windowSeconds: blocked.windowSeconds,
-            limit: blocked.limit,
-            count: blocked.count ?? null,
-            windowBucket: blocked.windowBucket ?? null,
-          },
-          clientIp,
-          serverTime: new Date().toISOString(),
-        }),
-        { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+    const daily = Deno.env.get('ENVIRONMENT') !== 'development';
+    if (!await phoneVerificationRateAllowed(admin.rpc.bind(admin), req, 'check', caller.userId, input.phone, daily)) {
+      return phoneJson({ error: 'Too many attempts. Please wait and try again.' }, 429);
     }
 
-    // Verify code with Twilio
-    const twilioUrl = `https://verify.twilio.com/v2/Services/${twilioVerifyServiceSid}/VerificationCheck`
-    const twilioAuth = btoa(`${twilioAccountSid}:${twilioAuthToken}`)
-    
-    const formData = new URLSearchParams()
-    formData.append('To', phoneNumber)
-    formData.append('Code', verificationCode)
-    
-    const twilioResponse = await fetch(twilioUrl, {
+    const twilio = getPhoneVerifyConfig(name => Deno.env.get(name));
+    if (!twilio) return phoneJson({ error: 'Phone verification is temporarily unavailable.' }, 503);
+    const { data: challenge, error } = await admin.rpc('rpc_begin_phone_check_v1', {
+      p_user_id: caller.userId, p_signup_session_id: input.signupSessionId, p_phone: input.phone,
+    });
+    if (error) return phoneJson({ error: 'Unable to read verification status.' }, 503);
+    if (challenge?.state !== 'check' || !isVerificationSid(challenge.verification_sid)) {
+      return phoneCheckResult(challenge, input.phone);
+    }
+
+    const response = await fetch(twilio.base + '/VerificationCheck', {
       method: 'POST',
-      headers: {
-        'Authorization': `Basic ${twilioAuth}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: formData
-    })
-
-    if (!twilioResponse.ok) {
-      const error = await twilioResponse.text()
-      console.error('Twilio verification error:', error)
-      return new Response(
-        JSON.stringify({ error: 'Failed to verify code' }),
-        { 
-          status: 500, 
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
-        }
-      )
+      headers: { Authorization: twilio.authorization, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ VerificationSid: challenge.verification_sid, Code: code }),
+      signal: AbortSignal.timeout(12000),
+    });
+    if (response.status === 404) {
+      const { error: expireError } = await admin.rpc('rpc_expire_phone_challenge_v1', {
+        p_user_id: caller.userId, p_id: challenge.id, p_check_id: challenge.check_id,
+        p_sid: challenge.verification_sid,
+      });
+      if (expireError) return phoneJson({ error: 'Unable to restart this verification attempt.' }, 503);
+      return phoneCheckResult({ state: 'missing' }, input.phone);
     }
+    const provider = await response.json().catch(() => null);
+    const approved = response.ok && !!provider &&
+      isApprovedPhoneCheck(provider, challenge.verification_sid, input.phone);
 
-    const twilioData: TwilioVerifyCheckResponse = await twilioResponse.json()
-    
-    // Update verification record in database
-    const { data: latestRecord } = await supabase
-      .from('phone_verifications')
-      .select('attempts, confidence_score')
-      .eq('signup_session_id', signupSessionId)
-      .eq('phone_number', phoneNumber)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-
-    const attempts = (latestRecord?.attempts ?? 0) + 1
-    const confidenceScore = latestRecord?.confidence_score ?? 0
-
-    const approved = twilioData.status === 'approved'
-    const nowIso = new Date().toISOString()
-
-    if (approved) {
-      const existingOwner = await findExistingVerifiedPhoneOwner(supabase, phoneNumber, effectiveUserId)
-      if (existingOwner) {
-        const recoveryToken =
-          effectiveUserId
-            ? await createRecoverySession(supabase, {
-                requesterUserId: effectiveUserId,
-                phoneNumber,
-                ownerUserId: existingOwner.user_id,
-                ownerProfileId: existingOwner.id ?? null,
-              })
-            : null
-
-        return new Response(
-          JSON.stringify({
-            error: 'This number already belongs to an older Betweener account.',
-            code: 'phone_belongs_to_existing_account',
-            phoneNumber,
-            recoveryToken,
-          }),
-          {
-            status: 409,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          }
-        )
-      }
+    const { data: result, error: finishError } = await admin.rpc('rpc_finish_phone_check_v1', {
+      p_user_id: caller.userId, p_id: challenge.id, p_check_id: challenge.check_id,
+      p_sid: challenge.verification_sid, p_approved: approved,
+    });
+    if (finishError) return phoneJson({ error: 'Unable to save the verification result.' }, 503);
+    if (!response.ok && result?.state === 'pending') {
+      return phoneJson({ error: 'Unable to verify the code. Please try again.' }, 502);
     }
-
-    const updateDataBase: any = {
-      status: approved ? 'verified' : 'failed',
-      verified_at: approved ? nowIso : null,
-      attempts,
-      // If the user is already authenticated, bind this verification row to the account.
-      // This prevents "verified but unlinked" dead-ends on first sign-in.
-      ...(approved && effectiveUserId ? { user_id: effectiveUserId } : {}),
-    }
-
-    // Prefer setting is_verified explicitly (some deployments rely on it), but gracefully fall back
-    // for older schemas where the column might not exist yet.
-    const updateDataPreferred: any = { ...updateDataBase, is_verified: approved }
-
-    // Update all rows for this signup session + phone number (idempotent).
-    // We intentionally do NOT constrain by status='pending' because some flows can retry
-    // after a partial success; we still want to bind user_id and touch verified_at.
-    let { error: updateError } = await supabase
-      .from('phone_verifications')
-      .update(updateDataPreferred)
-      .eq('signup_session_id', signupSessionId)
-      .eq('phone_number', phoneNumber)
-
-    if (
-      updateError &&
-      (updateError.code === '42703' || String(updateError.message || '').toLowerCase().includes('is_verified'))
-    ) {
-      // Retry without is_verified when the schema hasn't been migrated yet.
-      const retry = await supabase
-        .from('phone_verifications')
-        .update(updateDataBase)
-        .eq('signup_session_id', signupSessionId)
-        .eq('phone_number', phoneNumber)
-      updateError = retry.error
-    }
-
-    if (updateError) {
-      console.error('Database update error:', updateError)
-      return new Response(
-        JSON.stringify({ error: 'Failed to update verification status' }),
-        { 
-          status: 500, 
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
-        }
-      )
-    }
-
-    // If verification successful, update signup session metadata and (if possible) profile flags.
-    if (approved) {
-      const { data: verifiedRecord } = await supabase
-        .from('phone_verifications')
-        .select('id')
-        .eq('signup_session_id', signupSessionId)
-        .eq('phone_number', phoneNumber)
-        .eq('status', 'verified')
-        .order('verified_at', { ascending: false, nullsFirst: false })
-        .limit(1)
-        .maybeSingle()
-
-      if (!verifiedRecord?.id) {
-        const insertRowBase = {
-          signup_session_id: signupSessionId,
-          user_id: effectiveUserId,
-          phone_number: phoneNumber,
-          status: 'verified',
-          verified_at: nowIso,
-          attempts,
-          confidence_score: confidenceScore,
-          request_ip: clientIp,
-          request_user_agent: req.headers.get('user-agent'),
-        }
-
-        let { error: insertError } = await supabase
-          .from('phone_verifications')
-          .insert({
-            ...insertRowBase,
-            is_verified: true,
-          })
-
-        if (
-          insertError &&
-          (insertError.code === '42703' || String(insertError.message || '').toLowerCase().includes('is_verified'))
-        ) {
-          const retry = await supabase
-            .from('phone_verifications')
-            .insert(insertRowBase)
-          insertError = retry.error
-        }
-
-        if (insertError) {
-          console.error('Phone verification audit insert error:', insertError)
-          return new Response(
-            JSON.stringify({ error: 'Failed to persist verified phone state' }),
-            {
-              status: 500,
-              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-            }
-          )
-        }
-      }
-
-      // Upsert so we never end up in a "verified but no signup_events row" state.
-      const { error: signupError } = await supabase
-        .from('signup_events')
-        .upsert(
-          {
-            signup_session_id: signupSessionId,
-            user_id: effectiveUserId ?? null,
-            phone_number: phoneNumber,
-            phone_verified: true,
-            phone_verification_score: confidenceScore,
-            updated_at: nowIso,
-          },
-          { onConflict: 'signup_session_id' }
-        )
-
-      if (signupError) {
-        console.error('Signup event update error:', signupError)
-      }
-
-      // Best-effort: persist verified flags on profile when userId is present.
-      // This is safe under Phase-2 because profiles can be minimal.
-      if (effectiveUserId) {
-        try {
-          await supabase
-            .from('profiles')
-            .upsert(
-              {
-                user_id: effectiveUserId,
-                phone_verified: true,
-                phone_number: phoneNumber,
-                updated_at: nowIso,
-              },
-              { onConflict: 'user_id' }
-            )
-        } catch (error) {
-          console.error('Profile upsert error:', error)
-        }
-      }
-    }
-
-    return new Response(
-      JSON.stringify({
-        success: twilioData.status === 'approved',
-        status: twilioData.status,
-        valid: twilioData.valid,
-        verified: twilioData.status === 'approved',
-        confidenceScore
-      }),
-      { 
-        status: 200, 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
-      }
-    )
-
-  } catch (error) {
-    console.error('Function error:', error)
-    return new Response(
-      JSON.stringify({ error: 'Internal server error' }),
-      { 
-        status: 500, 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
-      }
-    )
+    return phoneCheckResult(result, input.phone);
+  } catch {
+    return phoneJson({ error: 'Phone verification is temporarily unavailable.' }, 503);
   }
-})
+});

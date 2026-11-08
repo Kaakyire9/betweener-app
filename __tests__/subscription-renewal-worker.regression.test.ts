@@ -9,6 +9,13 @@ const migration = readFileSync(
   ),
   'utf8',
 );
+const pushSecurityMigration = readFileSync(
+  new URL(
+    '../supabase/migrations/20260914123000_push_notification_event_security.sql',
+    import.meta.url,
+  ),
+  'utf8',
+);
 
 const workerBody =
   migration.match(
@@ -58,6 +65,16 @@ test('push queue failures are not swallowed after a reminder is reserved', () =>
   assert.doesNotMatch(enqueueBody, /exception\s+when others/i);
   assert.match(workerBody, /private\.enqueue_subscription_renewal_push/i);
   assert.doesNotMatch(workerBody, /private\.send_push_webhook/i);
+});
+
+test('renewal push delivery is upgraded to the canonical signed outbox', () => {
+  const enqueueBody =
+    pushSecurityMigration.match(
+      /create or replace function private\.enqueue_subscription_renewal_push[\s\S]+?\n\$\$;/i,
+    )?.[0] ?? '';
+
+  assert.match(enqueueBody, /private\.send_push_webhook\(p_payload\)/i);
+  assert.doesNotMatch(enqueueBody, /net\.http_post|x-push-secret|webhook_secret/i);
 });
 
 test('cron invokes the database directly and no longer calls pg_net or the Edge Function', () => {

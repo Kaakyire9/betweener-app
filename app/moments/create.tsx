@@ -570,9 +570,9 @@ export default function MomentCreateScreen() {
                   <View style={styles.successHeroGlow} />
                   <View style={styles.successBadge}>
                     <MaterialCommunityIcons name="check-decagram" size={18} color={theme.tint} />
-                    <Text style={styles.successBadgeText}>{momentQueued ? 'Queued offline' : 'Live now'}</Text>
+                    <Text style={styles.successBadgeText}>{momentQueued ? 'Saved' : 'Live now'}</Text>
                   </View>
-                  <Text style={styles.successTitle}>{momentQueued ? 'Moment queued' : 'Moment posted'}</Text>
+                  <Text style={styles.successTitle}>{momentQueued ? 'Moment saved' : 'Moment posted'}</Text>
                   <Text style={styles.successSubtitle}>
                     {momentQueued
                       ? 'It will go live as soon as you are back online.'
@@ -580,7 +580,7 @@ export default function MomentCreateScreen() {
                   </Text>
                   <Text style={styles.successSupportCopy}>
                     {momentQueued
-                      ? 'Your draft is stored locally and will sync through the offline queue.'
+                      ? 'Your draft is safely stored and will publish automatically.'
                       : 'People will catch it in the rail, not lose it in the feed.'}
                   </Text>
                 </LinearGradientSafe>

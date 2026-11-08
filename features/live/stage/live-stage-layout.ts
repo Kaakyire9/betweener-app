@@ -30,10 +30,25 @@ export type LiveStageTilePlacement =
   | 'trio-lead'
   | 'trio-bottom-left'
   | 'trio-bottom-right'
+  | 'trio-lead-left'
+  | 'trio-top-right'
+  | 'trio-bottom-right-portrait'
   | 'quad-top-left'
   | 'quad-top-right'
   | 'quad-bottom-left'
-  | 'quad-bottom-right';
+  | 'quad-bottom-right'
+  | 'six-landscape-1'
+  | 'six-landscape-2'
+  | 'six-landscape-3'
+  | 'six-landscape-4'
+  | 'six-landscape-5'
+  | 'six-landscape-6'
+  | 'six-portrait-1'
+  | 'six-portrait-2'
+  | 'six-portrait-3'
+  | 'six-portrait-4'
+  | 'six-portrait-5'
+  | 'six-portrait-6';
 
 const mediaScore = <T>(candidate: LiveStageCandidate<T>): number => (
   (candidate.isLocalParticipant ? 16 : 0)
@@ -87,8 +102,16 @@ export const countConnectedLiveParticipants = <T>(
  */
 export const selectLivePictureInPictureCandidate = <T>(
   candidates: readonly LiveStageCandidate<T>[],
+  options: { preferRemote?: boolean } = {},
 ): LiveStageCandidate<T> | null => {
   const score = (candidate: LiveStageCandidate<T>): number => {
+    if (options.preferRemote) {
+      if (!candidate.isLocalParticipant && candidate.hasVideo) return 0;
+      if (!candidate.isLocalParticipant && candidate.isSpeaking) return 1;
+      if (!candidate.isLocalParticipant) return 2;
+      if (candidate.hasVideo) return 3;
+      return 4;
+    }
     if (candidate.hasVideo && candidate.isSpeaking) return 0;
     if (!candidate.isLocalParticipant && candidate.hasVideo) return 1;
     if (candidate.isLocalParticipant && candidate.hasVideo) return 2;
@@ -236,6 +259,13 @@ export const liveStageTilePlacement = (
     if (index === 0) return 'trio-lead';
     return index === 1 ? 'trio-bottom-left' : 'trio-bottom-right';
   }
+  if (participantCount >= 5) {
+    const placements: readonly LiveStageTilePlacement[] = [
+      'six-landscape-1', 'six-landscape-2', 'six-landscape-3',
+      'six-landscape-4', 'six-landscape-5', 'six-landscape-6',
+    ];
+    return placements[Math.min(Math.max(index, 0), placements.length - 1)];
+  }
   const placements: readonly LiveStageTilePlacement[] = [
     'quad-top-left',
     'quad-top-right',
@@ -243,4 +273,30 @@ export const liveStageTilePlacement = (
     'quad-bottom-right',
   ];
   return placements[Math.min(Math.max(index, 0), placements.length - 1)];
+};
+
+/**
+ * Keeps three portrait cameras useful inside a tall mobile Stage. The legacy
+ * top/bottom arrangement remains preferable when the Stage itself is wide.
+ */
+export const liveStageTilePlacementForViewport = (
+  participantCount: number,
+  index: number,
+  viewportWidth: number,
+  viewportHeight: number,
+): LiveStageTilePlacement => {
+  const supportsPortraitEditorialTrio = viewportWidth > 0
+    && viewportHeight >= viewportWidth * 0.72;
+  if (participantCount !== 3 || !supportsPortraitEditorialTrio) {
+    if (participantCount < 5 || !supportsPortraitEditorialTrio) {
+      return liveStageTilePlacement(participantCount, index);
+    }
+    const placements: readonly LiveStageTilePlacement[] = [
+      'six-portrait-1', 'six-portrait-2', 'six-portrait-3',
+      'six-portrait-4', 'six-portrait-5', 'six-portrait-6',
+    ];
+    return placements[Math.min(Math.max(index, 0), placements.length - 1)];
+  }
+  if (index === 0) return 'trio-lead-left';
+  return index === 1 ? 'trio-top-right' : 'trio-bottom-right-portrait';
 };

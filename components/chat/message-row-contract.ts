@@ -29,6 +29,7 @@ export type MessageRowItemProps = {
     nativeCacheUri?: string | null,
   ) => void;
   onRetryMedia: (message: MessageType) => void;
+  onOpenLink: (url: string) => void;
   onOpenLocation: (message: MessageType) => void; onStopLiveShare: (messageId: string) => void;
   onOpenViewOnce: (message: MessageType) => void; onAcceptDatePlan: (planId: string) => void;
   onSuggestAnotherTime: (invite: MessageType['dateInvite']) => void;

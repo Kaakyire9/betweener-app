@@ -10,14 +10,16 @@ import {
 import type { CircleLoveSeatNomination } from '@/lib/circles/pulse/circle-pulse-types';
 import { useCirclePulsePalette, type CirclePulsePalette } from '@/lib/circles/pulse/circle-pulse-theme';
 import { useCirclePulseRefresh } from '@/lib/circles/pulse/use-circle-pulse-refresh';
+import { useCircleLoveSeatInvalidation } from '@/lib/circles/pulse/use-circle-love-seat-invalidation';
 
 type Props = {
   circleId: string;
   actorProfileId: string | null;
+  requestedLoveSeatId?: string | null;
   onResponded: () => void | Promise<void>;
 };
 
-export default function CircleLoveSeatConsentSheet({ circleId, actorProfileId, onResponded }: Props) {
+export default function CircleLoveSeatConsentSheet({ circleId, actorProfileId, requestedLoveSeatId, onResponded }: Props) {
   const insets = useSafeAreaInsets();
   const palette = useCirclePulsePalette();
   const styles = useMemo(() => createStyles(insets.bottom, palette), [insets.bottom, palette]);
@@ -31,17 +33,27 @@ export default function CircleLoveSeatConsentSheet({ circleId, actorProfileId, o
     }
     try {
       const nominations = await fetchMyCircleLoveSeatNominations(actorProfileId, circleId);
-      setNomination(nominations[0] ?? null);
+      setNomination(
+        (requestedLoveSeatId ? nominations.find((item) => item.id === requestedLoveSeatId) : null)
+        ?? nominations[0]
+        ?? null,
+      );
     } catch {
       setNomination(null);
     }
-  }, [actorProfileId, circleId]);
+  }, [actorProfileId, circleId, requestedLoveSeatId]);
 
   useEffect(() => {
     void reload();
   }, [reload]);
 
   useCirclePulseRefresh({
+    enabled: !!circleId && !!actorProfileId,
+    reload,
+  });
+
+  useCircleLoveSeatInvalidation({
+    circleId,
     enabled: !!circleId && !!actorProfileId,
     reload,
   });
@@ -54,7 +66,7 @@ export default function CircleLoveSeatConsentSheet({ circleId, actorProfileId, o
       setNomination(null);
       await onResponded();
       if (accept) {
-        Alert.alert('Welcome to the Love Seat', 'You are now featured in this Circle. You can leave anytime.');
+        Alert.alert('Welcome to the Love Seat', `You are featured for ${nomination.durationHours || 24} hours. You can leave anytime.`);
       }
     } catch (error) {
       Alert.alert('Love Seat', error instanceof Error ? error.message : 'Could not update this invitation right now.');
@@ -77,7 +89,11 @@ export default function CircleLoveSeatConsentSheet({ circleId, actorProfileId, o
           </Text>
           <SignatureSystemBubble system="love_seat" compact />
           {nomination?.quote ? <Text style={styles.quote}>&quot;{nomination.quote}&quot;</Text> : null}
-          <Text style={styles.note}>This is opt-in. You can leave the Love Seat anytime.</Text>
+          <View style={styles.durationBadge}>
+            <MaterialCommunityIcons name="timer-sand" size={14} color={palette.teal} />
+            <Text style={styles.durationText}>{nomination?.durationHours || 24} hours</Text>
+          </View>
+          <Text style={styles.note}>This is private and opt-in. Nothing appears publicly unless you accept, and you can leave anytime.</Text>
           <View style={styles.actions}>
             <TouchableOpacity style={styles.secondaryButton} disabled={submitting} onPress={() => void respond(false)}>
               <Text style={styles.secondaryText}>Not now</Text>
@@ -119,6 +135,8 @@ const createStyles = (bottomInset: number, palette: CirclePulsePalette) =>
     title: { color: palette.text, fontSize: 24, fontFamily: 'PlayfairDisplay_700Bold' },
     body: { color: palette.textSoft, fontSize: 13, lineHeight: 19 },
     quote: { color: palette.teal, fontSize: 13, lineHeight: 19, fontStyle: 'italic' },
+    durationBadge: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, minHeight: 30, borderRadius: 15, borderWidth: 1, borderColor: palette.tealBorder, backgroundColor: palette.tealSoft },
+    durationText: { color: palette.teal, fontSize: 11, fontWeight: '900' },
     note: { color: palette.textMuted, fontSize: 11, lineHeight: 16 },
     actions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 9, marginTop: 4 },
     secondaryButton: { minHeight: 40, justifyContent: 'center', paddingHorizontal: 16, borderRadius: 20, borderWidth: 1, borderColor: palette.outline },

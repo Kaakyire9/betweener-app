@@ -35,13 +35,6 @@ export type BoostComposerFeedback = {
   message: string;
 };
 
-type BoostComposerSyncState = {
-  status: 'queued' | 'failed';
-  title: string;
-  message: string;
-  actionLabel?: string | null;
-};
-
 type Props = {
   visible: boolean;
   plan: PremiumPlan;
@@ -49,7 +42,6 @@ type Props = {
   recommendation: BoostRecommendation | null;
   analytics: BoostAnalytics | null;
   queuedDraft?: CreateBoostInput | null;
-  syncState?: BoostComposerSyncState | null;
   loading: boolean;
   submitting: boolean;
   theme: {
@@ -65,7 +57,6 @@ type Props = {
   feedback?: BoostComposerFeedback | null;
   onClose: () => void;
   onLockedGoldPress?: (context: 'boost_type' | 'audience_mode' | 'focus', optionId?: string) => void;
-  onSyncAction?: () => void;
   onSubmit: (input: CreateBoostInput) => void;
 };
 
@@ -125,7 +116,6 @@ export default function BoostComposerModal({
   recommendation,
   analytics,
   queuedDraft,
-  syncState,
   loading,
   submitting,
   theme,
@@ -133,7 +123,6 @@ export default function BoostComposerModal({
   feedback,
   onClose,
   onLockedGoldPress,
-  onSyncAction,
   onSubmit,
 }: Props) {
   const { width } = useWindowDimensions();
@@ -445,8 +434,8 @@ export default function BoostComposerModal({
     };
   }, [activeBoostProgress, analytics?.boost?.is_active, analytics?.metrics]);
 
-  const hasSyncBlock = syncState?.status === 'queued' || syncState?.status === 'failed';
-  const canSubmit = !submitting && !hasSyncBlock && !(recommendation?.has_active_boost || resolvedActiveBoostEndsAt);
+  const hasPendingLaunch = Boolean(queuedDraft);
+  const canSubmit = !submitting && !hasPendingLaunch && !(recommendation?.has_active_boost || resolvedActiveBoostEndsAt);
   const countdownLabel = formatCountdown(remainingMs);
   const feedbackAccent = useMemo(() => {
     switch (feedback?.tone) {
@@ -579,56 +568,6 @@ export default function BoostComposerModal({
                   </View>
                 </LinearGradient>
               </Animated.View>
-            ) : null}
-
-            {syncState ? (
-              <View style={styles.syncStateWrap}>
-                <LinearGradient
-                  colors={[
-                    syncState.status === 'failed' ? 'rgba(255,124,142,0.16)' : 'rgba(46,214,194,0.14)',
-                    isDark ? 'rgba(9,16,18,0.92)' : 'rgba(255,255,255,0.94)',
-                  ]}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={[
-                    styles.syncStateCard,
-                    {
-                      borderColor:
-                        syncState.status === 'failed' ? 'rgba(255,124,142,0.4)' : 'rgba(46,214,194,0.32)',
-                    },
-                  ]}
-                >
-                  <View
-                    style={[
-                      styles.syncStateIconWrap,
-                      {
-                        backgroundColor:
-                          syncState.status === 'failed' ? 'rgba(255,124,142,0.14)' : 'rgba(46,214,194,0.12)',
-                        borderColor:
-                          syncState.status === 'failed' ? 'rgba(255,124,142,0.28)' : 'rgba(46,214,194,0.2)',
-                      },
-                    ]}
-                  >
-                    <MaterialCommunityIcons
-                      name={syncState.status === 'failed' ? 'alert-circle-outline' : 'cloud-upload-outline'}
-                      size={16}
-                      color={syncState.status === 'failed' ? '#FF7C8E' : theme.tint}
-                    />
-                  </View>
-                  <View style={styles.syncStateCopy}>
-                    <Text style={[styles.syncStateTitle, { color: theme.text }]}>{syncState.title}</Text>
-                    <Text style={[styles.syncStateBody, { color: theme.textMuted }]}>{syncState.message}</Text>
-                  </View>
-                  {syncState.actionLabel && onSyncAction ? (
-                    <Pressable
-                      onPress={onSyncAction}
-                      style={[styles.syncStateAction, { borderColor: theme.outline, backgroundColor: theme.background }]}
-                    >
-                      <Text style={[styles.syncStateActionText, { color: theme.tint }]}>{syncState.actionLabel}</Text>
-                    </Pressable>
-                  ) : null}
-                </LinearGradient>
-              </View>
             ) : null}
 
             <ScrollView contentContainerStyle={[styles.content, isCompactWidth ? styles.contentCompact : null]} showsVerticalScrollIndicator={false}>
@@ -1255,10 +1194,8 @@ export default function BoostComposerModal({
                   <Text style={[styles.primaryCtaText, isCompactWidth ? styles.primaryCtaTextCompact : null]}>
                     {submitting
                       ? 'Launching boost...'
-                      : syncState?.status === 'queued'
-                        ? 'Boost queued for launch'
-                        : syncState?.status === 'failed'
-                          ? 'Resolve queued boost first'
+                      : hasPendingLaunch
+                        ? 'Boost will start automatically'
                       : isGold && boostType === 'smart'
                         ? 'Start precision boost'
                         : 'Start 30-minute boost'}
@@ -1524,49 +1461,6 @@ const styles = StyleSheet.create({
   feedbackBody: {
     fontSize: 12,
     lineHeight: 17,
-  },
-  syncStateWrap: {
-    paddingHorizontal: 18,
-    paddingBottom: 2,
-  },
-  syncStateCard: {
-    borderWidth: 1,
-    borderRadius: 18,
-    paddingHorizontal: 12,
-    paddingVertical: 11,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  syncStateIconWrap: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  syncStateCopy: {
-    flex: 1,
-    gap: 2,
-  },
-  syncStateTitle: {
-    fontSize: 13,
-    fontWeight: '800',
-  },
-  syncStateBody: {
-    fontSize: 12,
-    lineHeight: 17,
-  },
-  syncStateAction: {
-    borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-  },
-  syncStateActionText: {
-    fontSize: 11.5,
-    fontWeight: '800',
   },
   callout: {
     borderWidth: 1,

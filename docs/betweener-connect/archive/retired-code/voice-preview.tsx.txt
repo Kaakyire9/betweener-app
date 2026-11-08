@@ -1,0 +1,46 @@
+import { Redirect } from 'expo-router';
+import React, { useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
+import { AppState, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Colors } from '@/constants/theme';
+import { VoiceCallScreen } from '@/features/connect/components/VoiceCallScreen';
+import { createVoicePreview } from '@/features/connect/voice/voice-preview';
+
+function Preview() {
+  const preview = useMemo(createVoicePreview, []); const controller = preview.controller;
+  const owners = useRef(new Map<typeof controller, number>());
+  const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
+  useEffect(() => {
+    const leases = owners.current; leases.set(controller, (leases.get(controller) ?? 0) + 1);
+    const interval = setInterval(() => { void controller.tick(); }, 1000);
+    const subscription = AppState.addEventListener('change', (next) => { void controller.setForeground(next === 'active'); });
+    return () => {
+      clearInterval(interval); subscription.remove(); leases.set(controller, (leases.get(controller) ?? 1) - 1);
+      // React development effect replay reacquires ownership before teardown.
+      queueMicrotask(() => { if (leases.get(controller) === 0) { leases.delete(controller); void controller.dispose(); } });
+    };
+  }, [controller]);
+  const actions = [
+    ['Start outgoing', preview.start], ['Incoming invitation', preview.incoming], ['Peer answers', preview.answerPeer],
+    ['Media connected', preview.connect], ['Network interruption', preview.reconnect], ['Recovery', preview.connect],
+    ['Remote hang-up', preview.remoteEnd], ['Deny permission', () => preview.setPermission('denied')],
+    ['Block permission', () => preview.setPermission('blocked')], ['Allow permission', () => preview.setPermission('granted')],
+  ] as const;
+  return <View style={styles.root}>
+    <VoiceCallScreen state={state} onAccept={() => { void controller.accept(); }} onDecline={() => { void controller.decline(); }}
+      onHangup={() => { void controller.hangup(); }} onMute={() => { void controller.toggleMute(); }}
+      onRoute={(route) => { void controller.selectRoute(route); }} onDone={() => controller.reset()} onOpenSettings={() => { void Linking.openSettings(); }} />
+    <View style={styles.lab}>
+      <Text style={styles.caption}>Development preview · No provider connection or microphone capture</Text>
+      <ScrollView horizontal contentContainerStyle={styles.actions}>
+        {actions.map(([label, run]) => <Pressable key={label} accessibilityRole="button" onPress={() => { void run(); }} style={styles.button}><Text style={styles.text}>{label}</Text></Pressable>)}
+      </ScrollView>
+    </View>
+  </View>;
+}
+export default function VoicePreviewRoute() { return __DEV__ ? <Preview /> : <Redirect href="/" />; }
+const styles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: Colors.dark.background }, lab: { paddingVertical: 12, borderTopWidth: 1, borderTopColor: Colors.dark.outline },
+  caption: { color: Colors.dark.textMuted, textAlign: 'center', fontSize: 11, paddingHorizontal: 10, marginBottom: 8 },
+  actions: { gap: 8, paddingHorizontal: 12 }, button: { minHeight: 48, padding: 14, borderRadius: 14, backgroundColor: Colors.dark.backgroundSubtle },
+  text: { color: Colors.dark.text, fontSize: 12 },
+});

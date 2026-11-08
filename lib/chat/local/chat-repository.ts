@@ -8,7 +8,6 @@ import type {
 } from '@/lib/chat/local/chat-schema';
 import { resolveThreadUnreadCount } from '@/lib/chat/active-thread';
 import { CHAT_DB_NAME, CHAT_SCHEMA_VERSION } from '@/lib/chat/local/chat-schema';
-import { getChatMessagePreviewText } from '@/lib/message-preview';
 import {
   buildCanonicalMessageCleanupPredicates,
   buildChatMessageValueGroups,
@@ -20,9 +19,30 @@ import {
   buildPendingOutboxDueQueryParams,
   CHAT_PENDING_OUTBOX_DUE_QUERY,
 } from '@/lib/chat/local/chat-outbox-query';
-import { CHAT_DB_DURABLE_ENQUEUE_LOCK_RETRY_DELAYS } from '@/lib/chat/local/chat-db-lock-policy';
+import {
+  CHAT_DB_DURABLE_ENQUEUE_LOCK_RETRY_DELAYS,
+  shouldUseSynchronousChatTransaction,
+} from '@/lib/chat/local/chat-db-lock-policy';
+import {
+  createChatReceiptWriteBuffer,
+  type ChatReceiptWrite,
+} from '@/lib/chat/local/chat-receipt-write-buffer';
 import { shouldPersistThreadReadState } from '@/lib/chat/read-state/thread-read-persistence-policy';
 import { buildThreadPresenceBatchWrite } from '@/lib/chat/local/chat-presence-write';
+import {
+  CHAT_MESSAGE_INSERT_COLUMNS,
+  CHAT_MESSAGE_UPSERT_CLAUSE,
+  buildSyncStateId,
+  mapOutboxStatusToMessageStatus,
+  toMessageParams,
+  toOutboxParams,
+  toSyncStateParams,
+  toThreadParams,
+} from '@/lib/chat/local/chat-repository-mappers';
+import {
+  refreshThreadSummaryFromMessages,
+  refreshThreadSummaryFromMessagesSync,
+} from '@/lib/chat/local/chat-thread-summary-repository';
 import {
   type ChatDbOperationOptions,
   getChatDb,
@@ -209,10 +229,15 @@ const withBoundedSerializedTransaction = <T>(
   options: ChatTransactionOptions,
 ) =>
   runSerializedWrite(async () => {
-    if (Platform.OS === 'ios' && !options.preferSynchronous) {
+    // Expo SQLite's async statement finalizer can retain the iOS writer lock
+    // after a transaction appears to have completed. Every bounded repository
+    // transaction already supplies an equivalent synchronous implementation,
+    // so use that implementation by default on iOS. Callers may explicitly
+    // opt out if a future transaction cannot safely run synchronously.
+    if (!shouldUseSynchronousChatTransaction(Platform.OS, options.preferSynchronous)) {
       let result!: T;
-      await db.withExclusiveTransactionAsync(async (transactionDb) => {
-        result = await asyncFallbackTask(transactionDb);
+      await db.withTransactionAsync(async () => {
+        result = await asyncFallbackTask(db);
       });
       return result;
     }
@@ -251,474 +276,131 @@ const withSerializedTransaction = async (
   });
 };
 
-const toThreadParams = (thread: ChatThreadRow) => [
-  thread.id,
-  thread.owner_user_id,
-  thread.peer_user_id,
-  thread.peer_profile_id,
-  thread.peer_name,
-  thread.peer_avatar_url,
-  thread.peer_verified,
-  thread.peer_presence_status,
-  thread.peer_last_active,
-  thread.title,
-  thread.thread_type,
-  thread.last_message_id,
-  thread.last_message_preview,
-  thread.last_message_sender_id,
-  thread.last_message_status,
-  thread.last_message_edited_at,
-  thread.last_message_reaction_emoji,
-  thread.last_message_reaction_user_id,
-  thread.last_message_reaction_created_at,
-  thread.last_message_reaction_target_type,
-  thread.last_activity_kind,
-  thread.last_activity_message_id,
-  thread.last_activity_preview,
-  thread.last_activity_at,
-  thread.last_message_at,
-  thread.unread_count,
-  thread.is_muted,
-  thread.is_pinned,
-  thread.is_archived,
-  thread.local_status,
-  thread.remote_updated_at,
-  thread.local_updated_at,
-  thread.created_at,
-];
-
-const toMessageParams = (message: ChatMessageRow) => [
-  message.id,
-  message.local_id,
-  message.thread_id,
-  message.owner_user_id,
-  message.sender_user_id,
-  message.receiver_user_id,
-  message.body,
-  message.message_type,
-  message.status,
-  message.direction,
-  message.created_at,
-  message.server_created_at,
-  message.edited_at,
-  message.deleted_at,
-  message.reply_to_message_id,
-  message.is_view_once,
-  message.local_only,
-  message.error_code,
-  message.metadata_json,
-  message.remote_updated_at,
-  message.local_updated_at,
-];
-
-const CHAT_MESSAGE_INSERT_COLUMNS = `
-  id, local_id, thread_id, owner_user_id, sender_user_id, receiver_user_id, body,
-  message_type, status, direction, created_at, server_created_at, edited_at,
-  deleted_at, reply_to_message_id, is_view_once, local_only, error_code,
-  metadata_json, remote_updated_at, local_updated_at
-`;
-
-const CHAT_MESSAGE_UPSERT_CLAUSE = `
-  on conflict(owner_user_id, id) do update set
-    local_id = excluded.local_id,
-    thread_id = excluded.thread_id,
-    owner_user_id = excluded.owner_user_id,
-    sender_user_id = excluded.sender_user_id,
-    receiver_user_id = excluded.receiver_user_id,
-    body = excluded.body,
-    message_type = excluded.message_type,
-    status = case
-      when chat_messages.status = 'deleted' then chat_messages.status
-      when excluded.status = 'deleted' then excluded.status
-      when (
-        case excluded.status
-          when 'read' then 6
-          when 'delivered' then 5
-          when 'sent' then 4
-          when 'sending' then 3
-          when 'pending' then 2
-          when 'failed' then 1
-          else 0
-        end
-      ) >= (
-        case chat_messages.status
-          when 'read' then 6
-          when 'delivered' then 5
-          when 'sent' then 4
-          when 'sending' then 3
-          when 'pending' then 2
-          when 'failed' then 1
-          else 0
-        end
-      ) then excluded.status
-      else chat_messages.status
-    end,
-    direction = excluded.direction,
-    created_at = excluded.created_at,
-    server_created_at = excluded.server_created_at,
-    edited_at = excluded.edited_at,
-    deleted_at = excluded.deleted_at,
-    reply_to_message_id = excluded.reply_to_message_id,
-    is_view_once = excluded.is_view_once,
-    local_only = excluded.local_only,
-    error_code = excluded.error_code,
-    metadata_json = excluded.metadata_json,
-    remote_updated_at = excluded.remote_updated_at,
-    local_updated_at = excluded.local_updated_at
-`;
-
-const toOutboxParams = (item: ChatPendingOutboxRow) => [
-  item.id,
-  item.local_message_id,
-  item.thread_id,
-  item.owner_user_id,
-  item.payload_json,
-  item.attempt_count,
-  item.max_attempts,
-  item.next_retry_at,
-  item.status,
-  item.error_code,
-  item.error_message,
-  item.created_at,
-  item.updated_at,
-];
-
-const buildSyncStateId = (ownerUserId: string, scope: ChatSyncScope, threadId?: string | null) =>
-  `${ownerUserId}:${scope}:${threadId ?? 'global'}`;
-
-const toSyncStateParams = (state: ChatSyncStateRow) => [
-  state.id,
-  state.owner_user_id,
-  state.scope,
-  state.thread_id,
-  state.last_cursor,
-  state.last_synced_at,
-  state.last_error,
-  state.updated_at,
-];
-
-const mapOutboxStatusToMessageStatus = (
-  status: ChatPendingOutboxRow['status'],
-): ChatMessageRow['status'] | null => {
-  switch (status) {
-    case 'queued':
-      return 'pending';
-    case 'sending':
-      return 'sending';
-    case 'failed':
-      return 'failed';
-    case 'sent':
-      return 'sent';
-    case 'cancelled':
-      return 'failed';
-    default:
-      return null;
-  }
+const CHAT_MESSAGE_RECEIPT_STATUS_RANK: Record<ChatMessageRow['status'], number> = {
+  deleted: 7,
+  read: 6,
+  delivered: 5,
+  sent: 4,
+  sending: 3,
+  pending: 2,
+  failed: 1,
 };
 
-type ChatThreadSummaryMessage = Pick<
-  ChatMessageRow,
-  | 'id'
-  | 'body'
-  | 'sender_user_id'
-  | 'message_type'
-  | 'status'
-  | 'is_view_once'
-  | 'edited_at'
-  | 'created_at'
-  | 'remote_updated_at'
-  | 'local_updated_at'
->;
+const CHAT_MESSAGE_RECEIPT_UPDATE_QUERY = `
+  update chat_messages
+  set status = case
+        when status = 'deleted' then status
+        when (
+          case ?
+            when 'read' then 6
+            when 'delivered' then 5
+            when 'sent' then 4
+            when 'sending' then 3
+            when 'pending' then 2
+            when 'failed' then 1
+            else 0
+          end
+        ) >= (
+          case status
+            when 'read' then 6
+            when 'delivered' then 5
+            when 'sent' then 4
+            when 'sending' then 3
+            when 'pending' then 2
+            when 'failed' then 1
+            else 0
+          end
+        ) then ?
+        else status
+      end,
+      local_updated_at = ?
+  where owner_user_id = ?
+    and thread_id = ?
+    and id = ?
+    and direction = 'outgoing'
+    and status <> 'deleted'
+`;
 
-const getThreadMessagePreview = (message: ChatThreadSummaryMessage) => {
-  return (
-    getChatMessagePreviewText({
-      text: message.body,
-      messageType: message.message_type,
-      isViewOnce: message.is_view_once === 1,
-      status: message.status,
-    }) || message.body || ''
-  );
-};
-
-const refreshThreadSummaryFromMessages = async (
-  db: Awaited<ReturnType<typeof getChatDb>>,
-  ownerUserId: string,
-  threadId: string,
+const persistMessageReceiptBatch = async (
+  writes: ChatReceiptWrite<ChatMessageRow['status']>[],
 ) => {
-  const latest = await db.getFirstAsync<ChatThreadSummaryMessage>(
-    `
-      select id, body, sender_user_id, message_type, status, is_view_once, edited_at, created_at, remote_updated_at, local_updated_at
-      from chat_messages
-      where owner_user_id = ?
-        and thread_id = ?
-        and status <> 'deleted'
-      order by created_at desc, local_updated_at desc
-      limit 1
-    `,
-    ownerUserId,
-    threadId,
+  if (writes.length === 0) return;
+  const db = await getChatDb();
+  const updatedAt = nowIso();
+  const affectedThreads = Array.from(
+    new Map(
+      writes.map((write) => [
+        threadMessageKey(write.ownerUserId, write.threadId),
+        { ownerUserId: write.ownerUserId, threadId: write.threadId },
+      ]),
+    ).values(),
   );
 
-  const unread = await db.getFirstAsync<{ unread_count: number }>(
-    `
-      select count(*) as unread_count
-      from chat_messages
-      where owner_user_id = ?
-        and thread_id = ?
-        and direction = 'incoming'
-        and status not in ('read', 'deleted')
-    `,
-    ownerUserId,
-    threadId,
-  );
-
-  const now = nowIso();
-  if (!latest) {
-    await db.runAsync(
-      `
-        update chat_threads
-        set last_message_id = null,
-            last_message_preview = '',
-            last_message_sender_id = null,
-            last_message_status = null,
-            last_message_edited_at = null,
-            last_message_reaction_emoji = null,
-            last_message_reaction_user_id = null,
-            last_message_reaction_created_at = null,
-            last_message_reaction_target_type = null,
-            last_activity_kind = null,
-            last_activity_message_id = null,
-            last_activity_preview = null,
-            last_activity_at = null,
-            last_message_at = null,
-            unread_count = ?,
-            local_updated_at = ?
-        where owner_user_id = ?
-          and id = ?
-      `,
-      unread?.unread_count ?? 0,
-      now,
-      ownerUserId,
-      threadId,
+  try {
+    await withBoundedSerializedTransaction(
+      db,
+      (txn) => {
+        for (const write of writes) {
+          txn.runSync(
+            CHAT_MESSAGE_RECEIPT_UPDATE_QUERY,
+            write.status,
+            write.status,
+            updatedAt,
+            write.ownerUserId,
+            write.threadId,
+            write.messageId,
+          );
+        }
+        for (const thread of affectedThreads) {
+          refreshThreadSummaryFromMessagesSync(txn, thread.ownerUserId, thread.threadId);
+        }
+      },
+      async (txn) => {
+        for (const write of writes) {
+          await txn.runAsync(
+            CHAT_MESSAGE_RECEIPT_UPDATE_QUERY,
+            write.status,
+            write.status,
+            updatedAt,
+            write.ownerUserId,
+            write.threadId,
+            write.messageId,
+          );
+        }
+        for (const thread of affectedThreads) {
+          await refreshThreadSummaryFromMessages(txn, thread.ownerUserId, thread.threadId);
+        }
+      },
+      {
+        priority: 'background',
+        label: 'persist-message-receipt-batch',
+        lockRetryDelays: [],
+      },
     );
+  } catch (error) {
+    if (!isChatDatabaseLockedError(error)) throw error;
+    // Receipt state is an authoritative server value and will be hydrated on
+    // the next sync. Never let this best-effort cache write block the outbox.
+    if (typeof __DEV__ !== 'undefined' && __DEV__) {
+      console.log('[chat][db] receipt-cache-write-skipped', {
+        count: writes.length,
+      });
+    }
     return;
   }
 
-  await db.runAsync(
-    `
-      insert into chat_threads (
-        id, owner_user_id, peer_user_id, peer_profile_id, peer_name, peer_avatar_url,
-        peer_verified, peer_presence_status, peer_last_active, title, thread_type, last_message_id,
-        last_message_preview, last_message_sender_id, last_message_status, last_message_edited_at,
-        last_message_reaction_emoji, last_message_reaction_user_id, last_message_reaction_created_at,
-        last_message_reaction_target_type, last_activity_kind, last_activity_message_id,
-        last_activity_preview, last_activity_at, last_message_at, unread_count,
-        is_muted, is_pinned, is_archived, local_status, remote_updated_at,
-        local_updated_at, created_at
-      )
-      values (?, ?, ?, null, null, null, 0, null, null, null, 'direct', ?, ?, ?, ?, ?, null, null, null, null, null, null, null, null, ?, ?, 0, 0, 0, 'active', ?, ?, ?)
-      on conflict(owner_user_id, id) do update set
-        last_message_id = excluded.last_message_id,
-        last_message_preview = excluded.last_message_preview,
-        last_message_sender_id = excluded.last_message_sender_id,
-        last_message_status = excluded.last_message_status,
-        last_message_edited_at = excluded.last_message_edited_at,
-        last_message_reaction_emoji = case
-          when chat_threads.last_message_id = excluded.last_message_id then chat_threads.last_message_reaction_emoji
-          else null
-        end,
-        last_message_reaction_user_id = case
-          when chat_threads.last_message_id = excluded.last_message_id then chat_threads.last_message_reaction_user_id
-          else null
-        end,
-        last_message_reaction_created_at = case
-          when chat_threads.last_message_id = excluded.last_message_id then chat_threads.last_message_reaction_created_at
-          else null
-        end,
-        last_message_reaction_target_type = case
-          when chat_threads.last_message_id = excluded.last_message_id then chat_threads.last_message_reaction_target_type
-          else null
-        end,
-        last_activity_kind = case
-          when datetime(chat_threads.last_activity_at) > datetime(excluded.last_message_at)
-          then chat_threads.last_activity_kind
-          else null
-        end,
-        last_activity_message_id = case
-          when datetime(chat_threads.last_activity_at) > datetime(excluded.last_message_at)
-          then chat_threads.last_activity_message_id
-          else null
-        end,
-        last_activity_preview = case
-          when datetime(chat_threads.last_activity_at) > datetime(excluded.last_message_at)
-          then chat_threads.last_activity_preview
-          else null
-        end,
-        last_activity_at = case
-          when datetime(chat_threads.last_activity_at) > datetime(excluded.last_message_at)
-          then chat_threads.last_activity_at
-          else null
-        end,
-        last_message_at = excluded.last_message_at,
-        unread_count = excluded.unread_count,
-        remote_updated_at = coalesce(excluded.remote_updated_at, chat_threads.remote_updated_at),
-        local_updated_at = excluded.local_updated_at
-    `,
-    threadId,
-    ownerUserId,
-    threadId,
-    latest.id,
-    getThreadMessagePreview(latest),
-    latest.sender_user_id,
-    latest.status,
-    latest.edited_at,
-    latest.created_at,
-    unread?.unread_count ?? 0,
-    latest.remote_updated_at,
-    now,
-    latest.created_at,
-  );
-};
-
-const refreshThreadSummaryFromMessagesSync = (
-  db: ChatDb,
-  ownerUserId: string,
-  threadId: string,
-) => {
-  const latest = db.getFirstSync<ChatThreadSummaryMessage>(
-    `
-      select id, body, sender_user_id, message_type, status, is_view_once, edited_at, created_at, remote_updated_at, local_updated_at
-      from chat_messages
-      where owner_user_id = ?
-        and thread_id = ?
-        and status <> 'deleted'
-      order by created_at desc, local_updated_at desc
-      limit 1
-    `,
-    ownerUserId,
-    threadId,
-  );
-  const unread = db.getFirstSync<{ unread_count: number }>(
-    `
-      select count(*) as unread_count
-      from chat_messages
-      where owner_user_id = ?
-        and thread_id = ?
-        and direction = 'incoming'
-        and status not in ('read', 'deleted')
-    `,
-    ownerUserId,
-    threadId,
-  );
-
-  const now = nowIso();
-  if (!latest) {
-    db.runSync(
-      `
-        update chat_threads
-        set last_message_id = null,
-            last_message_preview = '',
-            last_message_sender_id = null,
-            last_message_status = null,
-            last_message_edited_at = null,
-            last_message_reaction_emoji = null,
-            last_message_reaction_user_id = null,
-            last_message_reaction_created_at = null,
-            last_message_reaction_target_type = null,
-            last_activity_kind = null,
-            last_activity_message_id = null,
-            last_activity_preview = null,
-            last_activity_at = null,
-            last_message_at = null,
-            unread_count = ?,
-            local_updated_at = ?
-        where owner_user_id = ?
-          and id = ?
-      `,
-      unread?.unread_count ?? 0,
-      now,
-      ownerUserId,
-      threadId,
-    );
-    return;
+  for (const thread of affectedThreads) {
+    notify(threadListeners, thread.ownerUserId);
+    notify(messageListeners, threadMessageKey(thread.ownerUserId, thread.threadId));
   }
-
-  db.runSync(
-    `
-      insert into chat_threads (
-        id, owner_user_id, peer_user_id, peer_profile_id, peer_name, peer_avatar_url,
-        peer_verified, peer_presence_status, peer_last_active, title, thread_type, last_message_id,
-        last_message_preview, last_message_sender_id, last_message_status, last_message_edited_at,
-        last_message_reaction_emoji, last_message_reaction_user_id, last_message_reaction_created_at,
-        last_message_reaction_target_type, last_activity_kind, last_activity_message_id,
-        last_activity_preview, last_activity_at, last_message_at, unread_count,
-        is_muted, is_pinned, is_archived, local_status, remote_updated_at,
-        local_updated_at, created_at
-      )
-      values (?, ?, ?, null, null, null, 0, null, null, null, 'direct', ?, ?, ?, ?, ?, null, null, null, null, null, null, null, null, ?, ?, 0, 0, 0, 'active', ?, ?, ?)
-      on conflict(owner_user_id, id) do update set
-        last_message_id = excluded.last_message_id,
-        last_message_preview = excluded.last_message_preview,
-        last_message_sender_id = excluded.last_message_sender_id,
-        last_message_status = excluded.last_message_status,
-        last_message_edited_at = excluded.last_message_edited_at,
-        last_message_reaction_emoji = case
-          when chat_threads.last_message_id = excluded.last_message_id then chat_threads.last_message_reaction_emoji
-          else null
-        end,
-        last_message_reaction_user_id = case
-          when chat_threads.last_message_id = excluded.last_message_id then chat_threads.last_message_reaction_user_id
-          else null
-        end,
-        last_message_reaction_created_at = case
-          when chat_threads.last_message_id = excluded.last_message_id then chat_threads.last_message_reaction_created_at
-          else null
-        end,
-        last_message_reaction_target_type = case
-          when chat_threads.last_message_id = excluded.last_message_id then chat_threads.last_message_reaction_target_type
-          else null
-        end,
-        last_activity_kind = case
-          when datetime(chat_threads.last_activity_at) > datetime(excluded.last_message_at)
-          then chat_threads.last_activity_kind
-          else null
-        end,
-        last_activity_message_id = case
-          when datetime(chat_threads.last_activity_at) > datetime(excluded.last_message_at)
-          then chat_threads.last_activity_message_id
-          else null
-        end,
-        last_activity_preview = case
-          when datetime(chat_threads.last_activity_at) > datetime(excluded.last_message_at)
-          then chat_threads.last_activity_preview
-          else null
-        end,
-        last_activity_at = case
-          when datetime(chat_threads.last_activity_at) > datetime(excluded.last_message_at)
-          then chat_threads.last_activity_at
-          else null
-        end,
-        last_message_at = excluded.last_message_at,
-        unread_count = excluded.unread_count,
-        remote_updated_at = coalesce(excluded.remote_updated_at, chat_threads.remote_updated_at),
-        local_updated_at = excluded.local_updated_at
-    `,
-    threadId,
-    ownerUserId,
-    threadId,
-    latest.id,
-    getThreadMessagePreview(latest),
-    latest.sender_user_id,
-    latest.status,
-    latest.edited_at,
-    latest.created_at,
-    unread?.unread_count ?? 0,
-    latest.remote_updated_at,
-    now,
-    latest.created_at,
-  );
 };
+
+const messageReceiptWriteBuffer = createChatReceiptWriteBuffer<ChatMessageRow['status']>({
+  persist: persistMessageReceiptBatch,
+  getStatusRank: (status) => CHAT_MESSAGE_RECEIPT_STATUS_RANK[status],
+});
+
+
 
 export const ChatRepository = {
   async init() {
@@ -1046,14 +728,15 @@ export const ChatRepository = {
             insert into chat_threads (
               id, owner_user_id, peer_user_id, peer_profile_id, peer_name, peer_avatar_url,
               peer_verified, peer_presence_status, peer_last_active, title, thread_type, last_message_id,
-              last_message_preview, last_message_sender_id, last_message_status, last_message_edited_at,
+              last_message_preview, last_message_sender_id, last_message_status, last_message_media_kind,
+              last_message_edited_at,
               last_message_reaction_emoji, last_message_reaction_user_id, last_message_reaction_created_at,
               last_message_reaction_target_type, last_activity_kind, last_activity_message_id,
               last_activity_preview, last_activity_at, last_message_at, unread_count,
               is_muted, is_pinned, is_archived, local_status, remote_updated_at,
               local_updated_at, created_at
             )
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             on conflict(owner_user_id, id) do update set
               owner_user_id = excluded.owner_user_id,
               peer_user_id = excluded.peer_user_id,
@@ -1069,6 +752,7 @@ export const ChatRepository = {
               last_message_preview = excluded.last_message_preview,
               last_message_sender_id = excluded.last_message_sender_id,
               last_message_status = excluded.last_message_status,
+              last_message_media_kind = excluded.last_message_media_kind,
               last_message_edited_at = excluded.last_message_edited_at,
               last_message_reaction_emoji = excluded.last_message_reaction_emoji,
               last_message_reaction_user_id = excluded.last_message_reaction_user_id,
@@ -1102,7 +786,14 @@ export const ChatRepository = {
         db,
         (txn) => persistThreadBatchSync(txn, threadBatch),
         async (txn) => persistThreadBatchSync(txn, threadBatch),
-        { ...operationOptions, label: 'upsert-thread-cache-chunk' },
+        {
+          ...operationOptions,
+          label: 'upsert-thread-cache-chunk',
+          // This writer only executes synchronous statements. Keeping its iOS
+          // transaction synchronous avoids Expo SQLite's async finalize race,
+          // which can briefly retain the writer lock ahead of a message send.
+          preferSynchronous: true,
+        },
       );
     }
     notify(threadListeners, ownerUserId);
@@ -1467,6 +1158,25 @@ export const ChatRepository = {
     );
   },
 
+  async getFailedOutboxItems(ownerUserId: string): Promise<ChatPendingOutboxRow[]> {
+    const db = await getChatDb();
+    return runBoundedSerializedRead(
+      () => db.getAllSync<ChatPendingOutboxRow>(
+        `select * from chat_pending_outbox
+         where owner_user_id = ? and status = 'failed'
+         order by updated_at asc`,
+        ownerUserId,
+      ),
+      () => db.getAllAsync<ChatPendingOutboxRow>(
+        `select * from chat_pending_outbox
+         where owner_user_id = ? and status = 'failed'
+         order by updated_at asc`,
+        ownerUserId,
+      ),
+      { priority: 'background', label: 'get-failed-outbox-items' },
+    );
+  },
+
   async getOutboxItem(
     ownerUserId: string,
     localMessageId: string,
@@ -1570,9 +1280,11 @@ export const ChatRepository = {
 
   async updateAlbumTransferSnapshot(
     ownerUserId: string,
+    threadId: string,
     localMessageId: string,
     payloadJson: string,
     mediaItemsJson: string,
+    expectedCompositionRevision = 0,
   ): Promise<boolean> {
     const db = await getChatDb();
     const updatedAt = nowIso();
@@ -1582,8 +1294,9 @@ export const ChatRepository = {
         const outbox = txn.runSync(
           `update chat_pending_outbox set payload_json = ?, updated_at = ?
            where owner_user_id = ? and local_message_id = ?
-             and status not in ('sent', 'cancelled')`,
-          payloadJson, updatedAt, ownerUserId, localMessageId,
+             and status not in ('sent', 'cancelled')
+             and coalesce(json_extract(payload_json, '$.compositionRevision'), 0) = ?`,
+          payloadJson, updatedAt, ownerUserId, localMessageId, expectedCompositionRevision,
         );
         if (outbox.changes > 0) {
           txn.runSync(
@@ -1600,8 +1313,9 @@ export const ChatRepository = {
         const outbox = await txn.runAsync(
           `update chat_pending_outbox set payload_json = ?, updated_at = ?
            where owner_user_id = ? and local_message_id = ?
-             and status not in ('sent', 'cancelled')`,
-          payloadJson, updatedAt, ownerUserId, localMessageId,
+             and status not in ('sent', 'cancelled')
+             and coalesce(json_extract(payload_json, '$.compositionRevision'), 0) = ?`,
+          payloadJson, updatedAt, ownerUserId, localMessageId, expectedCompositionRevision,
         );
         if (outbox.changes > 0) {
           await txn.runAsync(
@@ -1616,15 +1330,77 @@ export const ChatRepository = {
       },
       { label: 'update-album-transfer-snapshot' },
     );
+    if (outcome) {
+      notify(threadListeners, ownerUserId);
+      notify(messageListeners, threadMessageKey(ownerUserId, threadId));
+    }
+    return outcome;
+  },
+
+  async updateQueuedAlbumCaption(
+    ownerUserId: string,
+    threadId: string,
+    localMessageId: string,
+    payloadJson: string,
+    caption: string | null,
+  ): Promise<boolean> {
+    const db = await getChatDb();
+    const updatedAt = nowIso();
+    const outcome = await withBoundedSerializedTransaction(
+      db,
+      (txn) => {
+        const outbox = txn.runSync(
+          `update chat_pending_outbox set payload_json = ?, updated_at = ?
+           where owner_user_id = ? and local_message_id = ?
+             and status not in ('sent', 'cancelled')`,
+          payloadJson, updatedAt, ownerUserId, localMessageId,
+        );
+        if (outbox.changes > 0) {
+          txn.runSync(
+            `update chat_messages
+             set metadata_json = json_set(coalesce(metadata_json, '{}'), '$.mediaCaption', json(?)),
+                 local_updated_at = ?
+             where owner_user_id = ? and (local_id = ? or id = ?)`,
+            JSON.stringify(caption), updatedAt, ownerUserId, localMessageId, localMessageId,
+          );
+        }
+        return outbox.changes > 0;
+      },
+      async (txn) => {
+        const outbox = await txn.runAsync(
+          `update chat_pending_outbox set payload_json = ?, updated_at = ?
+           where owner_user_id = ? and local_message_id = ?
+             and status not in ('sent', 'cancelled')`,
+          payloadJson, updatedAt, ownerUserId, localMessageId,
+        );
+        if (outbox.changes > 0) {
+          await txn.runAsync(
+            `update chat_messages
+             set metadata_json = json_set(coalesce(metadata_json, '{}'), '$.mediaCaption', json(?)),
+                 local_updated_at = ?
+             where owner_user_id = ? and (local_id = ? or id = ?)`,
+            JSON.stringify(caption), updatedAt, ownerUserId, localMessageId, localMessageId,
+          );
+        }
+        return outbox.changes > 0;
+      },
+      { priority: 'user-blocking', label: 'update-album-caption' },
+    );
+    if (outcome) {
+      notify(threadListeners, ownerUserId);
+      notify(messageListeners, threadMessageKey(ownerUserId, threadId));
+    }
     return outcome;
   },
 
   async updateQueuedAlbumComposition(
     ownerUserId: string,
+    threadId: string,
     localMessageId: string,
     payloadJson: string,
     mediaItemsJson: string,
     expectedCount: number,
+    expectedCompositionRevision = 0,
   ): Promise<boolean> {
     const db = await getChatDb();
     const updatedAt = nowIso();
@@ -1636,8 +1412,9 @@ export const ChatRepository = {
            set payload_json = ?, status = 'queued', next_retry_at = null,
                error_code = null, error_message = null, updated_at = ?
            where owner_user_id = ? and local_message_id = ?
-             and status in ('queued', 'failed')`,
-          payloadJson, updatedAt, ownerUserId, localMessageId,
+             and status in ('queued', 'sending', 'failed')
+             and coalesce(json_extract(payload_json, '$.compositionRevision'), 0) = ?`,
+          payloadJson, updatedAt, ownerUserId, localMessageId, expectedCompositionRevision,
         );
         if (outbox.changes > 0) {
           txn.runSync(
@@ -1658,8 +1435,9 @@ export const ChatRepository = {
            set payload_json = ?, status = 'queued', next_retry_at = null,
                error_code = null, error_message = null, updated_at = ?
            where owner_user_id = ? and local_message_id = ?
-             and status in ('queued', 'failed')`,
-          payloadJson, updatedAt, ownerUserId, localMessageId,
+             and status in ('queued', 'sending', 'failed')
+             and coalesce(json_extract(payload_json, '$.compositionRevision'), 0) = ?`,
+          payloadJson, updatedAt, ownerUserId, localMessageId, expectedCompositionRevision,
         );
         if (outbox.changes > 0) {
           await txn.runAsync(
@@ -1676,7 +1454,10 @@ export const ChatRepository = {
       },
       { label: 'update-queued-album-composition' },
     );
-    if (outcome) notify(threadListeners, ownerUserId);
+    if (outcome) {
+      notify(threadListeners, ownerUserId);
+      notify(messageListeners, threadMessageKey(ownerUserId, threadId));
+    }
     return outcome;
   },
 
@@ -1697,6 +1478,73 @@ export const ChatRepository = {
       { priority: 'background', label: 'purge-terminal-outbox-items' },
     );
     return result.changes;
+  },
+
+  async discardRejectedOutboxMessage(
+    ownerUserId: string,
+    threadId: string,
+    localMessageId: string,
+  ): Promise<void> {
+    const db = await getChatDb();
+    const updatedAt = nowIso();
+    const cancelOutboxQuery =
+      `update chat_pending_outbox
+       set status = 'cancelled', next_retry_at = null,
+           error_code = null, error_message = null, updated_at = ?
+       where owner_user_id = ? and local_message_id = ?`;
+    const deleteMediaQuery =
+      `delete from chat_message_media
+       where owner_user_id = ? and thread_id = ? and message_id in (
+         select id from chat_messages
+         where owner_user_id = ? and thread_id = ?
+           and (id = ? or local_id = ?)
+       )`;
+    const deleteViewOnceQuery =
+      `delete from chat_view_once_status
+       where owner_user_id = ? and thread_id = ? and message_id in (
+         select id from chat_messages
+         where owner_user_id = ? and thread_id = ?
+           and (id = ? or local_id = ?)
+       )`;
+    const deleteMessageQuery =
+      `delete from chat_messages
+       where owner_user_id = ? and thread_id = ?
+         and (id = ? or local_id = ?)`;
+    const relatedMessageParams = [
+      ownerUserId,
+      threadId,
+      ownerUserId,
+      threadId,
+      localMessageId,
+      localMessageId,
+    ] as const;
+    const deleteMessageParams = [
+      ownerUserId,
+      threadId,
+      localMessageId,
+      localMessageId,
+    ] as const;
+
+    await withBoundedSerializedTransaction(
+      db,
+      (txn) => {
+        txn.runSync(cancelOutboxQuery, updatedAt, ownerUserId, localMessageId);
+        txn.runSync(deleteMediaQuery, ...relatedMessageParams);
+        txn.runSync(deleteViewOnceQuery, ...relatedMessageParams);
+        txn.runSync(deleteMessageQuery, ...deleteMessageParams);
+        refreshThreadSummaryFromMessagesSync(txn, ownerUserId, threadId);
+      },
+      async (txn) => {
+        await txn.runAsync(cancelOutboxQuery, updatedAt, ownerUserId, localMessageId);
+        await txn.runAsync(deleteMediaQuery, ...relatedMessageParams);
+        await txn.runAsync(deleteViewOnceQuery, ...relatedMessageParams);
+        await txn.runAsync(deleteMessageQuery, ...deleteMessageParams);
+        await refreshThreadSummaryFromMessages(txn, ownerUserId, threadId);
+      },
+      { priority: 'user-blocking', label: 'discard-rejected-outbox-message' },
+    );
+    notify(threadListeners, ownerUserId);
+    notify(messageListeners, threadMessageKey(ownerUserId, threadId));
   },
 
   async markOutboxItemStatus(
@@ -2177,66 +2025,12 @@ export const ChatRepository = {
     status: ChatMessageRow['status'],
   ): Promise<void> {
     if (!messageId) return;
-    const db = await getChatDb();
-    const query = `
-      update chat_messages
-      set status = case
-            when status = 'deleted' then status
-            when (
-              case ?
-                when 'read' then 6
-                when 'delivered' then 5
-                when 'sent' then 4
-                when 'sending' then 3
-                when 'pending' then 2
-                when 'failed' then 1
-                else 0
-              end
-            ) >= (
-              case status
-                when 'read' then 6
-                when 'delivered' then 5
-                when 'sent' then 4
-                when 'sending' then 3
-                when 'pending' then 2
-                when 'failed' then 1
-                else 0
-              end
-            ) then ?
-            else status
-          end,
-          local_updated_at = ?
-      where owner_user_id = ?
-        and thread_id = ?
-        and id = ?
-        and direction = 'outgoing'
-        and status <> 'deleted'
-    `;
-    const params = [
-      status,
-      status,
-      nowIso(),
+    await messageReceiptWriteBuffer.enqueue({
       ownerUserId,
       threadId,
       messageId,
-    ] as const;
-    await withBoundedSerializedTransaction(
-      db,
-      (txn) => {
-        txn.runSync(query, ...params);
-        refreshThreadSummaryFromMessagesSync(txn, ownerUserId, threadId);
-      },
-      async (txn) => {
-      await txn.runAsync(
-        query,
-        ...params,
-      );
-      await refreshThreadSummaryFromMessages(txn, ownerUserId, threadId);
-      },
-      { priority: 'normal', label: 'mark-message-receipt-state' },
-    );
-    notify(threadListeners, ownerUserId);
-    notify(messageListeners, threadMessageKey(ownerUserId, threadId));
+      status,
+    });
   },
 
   async deleteMessages(ownerUserId: string, threadId: string, messageIds: string[]): Promise<void> {
@@ -2339,6 +2133,7 @@ export const ChatRepository = {
               last_message_preview = '',
               last_message_sender_id = null,
               last_message_status = null,
+              last_message_media_kind = null,
               last_message_edited_at = null,
               last_message_reaction_emoji = null,
               last_message_reaction_user_id = null,
@@ -2533,34 +2328,35 @@ export const ChatRepository = {
 
   async getStorageDiagnostics(ownerUserId?: string | null): Promise<ChatStorageDiagnosticsSnapshot> {
     const db = await getChatDb();
-    const ownerClause = ownerUserId ? 'where owner_user_id = ?' : '';
-    const ownerParams = ownerUserId ? [ownerUserId] : [];
-    const countForTable = async (table: string) => {
-      const row = await db.getFirstAsync<ChatDiagnosticsCountRow>(
-        `select count(*) as count from ${table} ${ownerClause}`,
-        ...ownerParams,
+    return runSerializedRead(async () => {
+      const ownerClause = ownerUserId ? 'where owner_user_id = ?' : '';
+      const ownerParams = ownerUserId ? [ownerUserId] : [];
+      const countForTable = async (table: string) => {
+        const row = await db.getFirstAsync<ChatDiagnosticsCountRow>(
+          `select count(*) as count from ${table} ${ownerClause}`,
+          ...ownerParams,
+        );
+        return Number(row?.count ?? 0);
+      };
+
+      const schemaRow = await db.getFirstAsync<{ value: string }>(
+        `
+          select value
+          from local_schema_meta
+          where key = 'chat_schema_version'
+          limit 1
+        `,
       );
-      return Number(row?.count ?? 0);
-    };
 
-    const schemaRow = await db.getFirstAsync<{ value: string }>(
-      `
-        select value
-        from local_schema_meta
-        where key = 'chat_schema_version'
-        limit 1
-      `,
-    );
-
-    const [threads, participants, messages, media, readStates, pendingOutbox, syncStates] = await Promise.all([
-      countForTable('chat_threads'),
-      countForTable('chat_participants'),
-      countForTable('chat_messages'),
-      countForTable('chat_message_media'),
-      countForTable('chat_read_states'),
-      countForTable('chat_pending_outbox'),
-      countForTable('chat_sync_state'),
-    ]);
+      // Keep diagnostics on the same serialized connection too. Parallel
+      // native statements can otherwise reintroduce finalizer contention.
+      const threads = await countForTable('chat_threads');
+      const participants = await countForTable('chat_participants');
+      const messages = await countForTable('chat_messages');
+      const media = await countForTable('chat_message_media');
+      const readStates = await countForTable('chat_read_states');
+      const pendingOutbox = await countForTable('chat_pending_outbox');
+      const syncStates = await countForTable('chat_sync_state');
 
     const messageStatusCounts = await db.getAllAsync<ChatDiagnosticsStatusCountRow>(
       `
@@ -2642,32 +2438,33 @@ export const ChatRepository = {
       ...ownerParams,
     );
 
-    return {
-      dbName: CHAT_DB_NAME,
-      targetSchemaVersion: CHAT_SCHEMA_VERSION,
-      actualSchemaVersion: Number(schemaRow?.value ?? 0) || 0,
-      ownerUserId: ownerUserId ?? null,
-      generatedAt: nowIso(),
-      counts: {
-        threads,
-        participants,
-        messages,
-        media,
-        readStates,
-        pendingOutbox,
-        syncStates,
-      },
-      messageStatusCounts: messageStatusCounts.map((row) => ({
-        status: row.status,
-        count: Number(row.count ?? 0),
-      })),
-      outboxStatusCounts: outboxStatusCounts.map((row) => ({
-        status: row.status,
-        count: Number(row.count ?? 0),
-      })),
-      recentThreads,
-      pendingOutboxItems,
-      syncStates: syncStateRows,
-    };
+      return {
+        dbName: CHAT_DB_NAME,
+        targetSchemaVersion: CHAT_SCHEMA_VERSION,
+        actualSchemaVersion: Number(schemaRow?.value ?? 0) || 0,
+        ownerUserId: ownerUserId ?? null,
+        generatedAt: nowIso(),
+        counts: {
+          threads,
+          participants,
+          messages,
+          media,
+          readStates,
+          pendingOutbox,
+          syncStates,
+        },
+        messageStatusCounts: messageStatusCounts.map((row) => ({
+          status: row.status,
+          count: Number(row.count ?? 0),
+        })),
+        outboxStatusCounts: outboxStatusCounts.map((row) => ({
+          status: row.status,
+          count: Number(row.count ?? 0),
+        })),
+        recentThreads,
+        pendingOutboxItems,
+        syncStates: syncStateRows,
+      };
+    }, { priority: 'background', label: 'get-storage-diagnostics' });
   },
 };

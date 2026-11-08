@@ -1,0 +1,171 @@
+{
+  "schemaVersion": 1,
+  "status": "PROPOSED_NOT_AUTHORISED",
+  "target": {
+    "name": "betweener-staging",
+    "reference": "xsgzxadwuxuziubglvps",
+    "region": "eu-north-1"
+  },
+  "originalProposal": {
+    "path": "docs/betweener-connect/connect-provider-update.proposal.json",
+    "sha256": "4a2fb86d7c477cb78cb29326be0073f32ada6a63e8899dcec07db8e9cdd015e3",
+    "unchanged": true
+  },
+  "forwardSourcesUnchanged": true,
+  "rollbackCorrection": {
+    "function": "connect-provider-worker",
+    "path": "supabase/functions/_shared/connect-webhook.ts",
+    "previousCandidateSha256": "c63ff22a6bc80307628e403335f7f7466546b023e62750905a7f44f12e1b4998",
+    "verifiedDeployedSha256": "98ea4173eebc465ffd336b2e8bb938dc961529e63b3a16d2b57ef4d080ffa981",
+    "reason": "Worker revision 1 retains the older shared helper. Its authentication is unchanged; the actual baseline must be recovered byte-for-byte."
+  },
+  "rollbackSources": [
+    {
+      "name": "connect-provider-worker",
+      "version": 1,
+      "verifyJwt": false,
+      "bundleSha256": "64e5273c1aec7f46a1b3fd963b1daae7190d08ca886e7967833af004e28f8824",
+      "root": "tmp/connect-provider-install/verified-rollback",
+      "files": [
+        {
+          "path": "supabase/functions/connect-provider-worker/index.ts",
+          "sha256": "d9f66367c43884d4d1d3c5ef18fba8240406bf3d899ad54e4de92c75d2d61950"
+        },
+        {
+          "path": "supabase/functions/_shared/connect-edge.ts",
+          "sha256": "708101e75f9c3bfe5afe30edb9978c232fd1cbbb2ddeab7617382b290c354ff5"
+        },
+        {
+          "path": "supabase/functions/_shared/supabase-public-key.ts",
+          "sha256": "9ce797d773cc4a552679ab1201de67ea1a1f8ada8079a0c143c406b939048b85"
+        },
+        {
+          "path": "supabase/functions/_shared/supabase-admin-key.ts",
+          "sha256": "326dfe3df009483cc38828b48902fe4fc074262760a68d813c60b49edeaebacc"
+        },
+        {
+          "path": "supabase/functions/_shared/cors.ts",
+          "sha256": "2b7f755ddc2f0e3a17f70694541f1760b43513f133a0bef2cbc9db6938e2bc2b"
+        },
+        {
+          "path": "supabase/functions/_shared/connect-stream-adapter.ts",
+          "sha256": "4cfc00c772d845b005ced0499897c7327a405ed67a489a120d2126f9cfc53357"
+        },
+        {
+          "path": "supabase/functions/_shared/connect-provider-end.ts",
+          "sha256": "5b7ec7409bfe12c07277b373617ea3dfcfb2cf562c092869ee3b1871e046b695"
+        },
+        {
+          "path": "supabase/functions/_shared/connect-environment.ts",
+          "sha256": "6c8b72a88c5ebd2a93a5d0d3bef378d340a0653bb6f2b73714b495d196cdf523"
+        },
+        {
+          "path": "supabase/functions/_shared/connect-provider-worker.ts",
+          "sha256": "91c3791ff1cae470b7e9b4305ea5fce069d2fbc1161c35ca77f91df54f3d6aed"
+        },
+        {
+          "path": "supabase/functions/_shared/connect-webhook.ts",
+          "sha256": "98ea4173eebc465ffd336b2e8bb938dc961529e63b3a16d2b57ef4d080ffa981"
+        },
+        {
+          "path": "supabase/functions/connect-provider-worker/deno.json",
+          "sha256": "926e31574d93ff0885ef4f296ed3d5bce1458056256efb2d47343c8914003f68"
+        }
+      ]
+    },
+    {
+      "name": "connect-revoke-consent",
+      "version": 1,
+      "verifyJwt": true,
+      "bundleSha256": "4a495acc5822fbed7a4a1455da10e19aecd004bb881d4032cfbb34205f3f4417",
+      "root": "tmp/connect-provider-install/verified-rollback",
+      "files": [
+        {
+          "path": "supabase/functions/connect-revoke-consent/index.ts",
+          "sha256": "e4d628882da93292e91a1b5375817f3f9448cbf1ef20c2311fffeb00569bc051"
+        },
+        {
+          "path": "supabase/functions/_shared/connect-edge.ts",
+          "sha256": "708101e75f9c3bfe5afe30edb9978c232fd1cbbb2ddeab7617382b290c354ff5"
+        },
+        {
+          "path": "supabase/functions/_shared/supabase-public-key.ts",
+          "sha256": "9ce797d773cc4a552679ab1201de67ea1a1f8ada8079a0c143c406b939048b85"
+        },
+        {
+          "path": "supabase/functions/_shared/supabase-admin-key.ts",
+          "sha256": "326dfe3df009483cc38828b48902fe4fc074262760a68d813c60b49edeaebacc"
+        },
+        {
+          "path": "supabase/functions/_shared/cors.ts",
+          "sha256": "2b7f755ddc2f0e3a17f70694541f1760b43513f133a0bef2cbc9db6938e2bc2b"
+        },
+        {
+          "path": "supabase/functions/_shared/connect-stream-adapter.ts",
+          "sha256": "4cfc00c772d845b005ced0499897c7327a405ed67a489a120d2126f9cfc53357"
+        },
+        {
+          "path": "supabase/functions/_shared/connect-provider-end.ts",
+          "sha256": "5b7ec7409bfe12c07277b373617ea3dfcfb2cf562c092869ee3b1871e046b695"
+        },
+        {
+          "path": "supabase/functions/_shared/connect-environment.ts",
+          "sha256": "6c8b72a88c5ebd2a93a5d0d3bef378d340a0653bb6f2b73714b495d196cdf523"
+        },
+        {
+          "path": "supabase/functions/_shared/connect-consent-revocation.ts",
+          "sha256": "7feb9b2f3b0868cca978100320a7d828a289cc783818edf016b5c578022ca82e"
+        },
+        {
+          "path": "supabase/functions/_shared/connect-provider-worker.ts",
+          "sha256": "91c3791ff1cae470b7e9b4305ea5fce069d2fbc1161c35ca77f91df54f3d6aed"
+        },
+        {
+          "path": "supabase/functions/connect-revoke-consent/deno.json",
+          "sha256": "926e31574d93ff0885ef4f296ed3d5bce1458056256efb2d47343c8914003f68"
+        }
+      ]
+    }
+  ],
+  "proposedDeploymentTransport": {
+    "method": "authenticated Supabase connector with explicit project_id",
+    "reason": "The approved staging CLI wrapper cannot decrypt its local DPAPI PAT. Do not rotate or expose credentials.",
+    "sameTwoFunctions": true,
+    "exactFrozenForwardFiles": true,
+    "preserveGatewaySettings": true
+  },
+  "configurationEvidence": {
+    "safeSecretNameInventory": "UNAVAILABLE_WITH_CURRENT_CLI_AUTH",
+    "requiredRuntimeNames": [
+      "CONNECT_ENVIRONMENT",
+      "CONNECT_STREAM_APP_ID",
+      "CONNECT_STREAM_API_KEY",
+      "CONNECT_STREAM_API_SECRET",
+      "CONNECT_WORKER_SECRET"
+    ],
+    "currentScheduled200NoopsResolveAllFive": true,
+    "secretValuesRetrieved": false,
+    "remainingDecision": "Accept the current exact deployed-code and scheduled-success evidence for presence, or supply a fresh names-only Dashboard attestation before deployment."
+  },
+  "activationScopeUnchanged": {
+    "sequence": "after both function deployments are verified",
+    "stagingEndBlockEnabled": true,
+    "stagingClientEndCallAndBlock": true,
+    "stagingClientConnectionRecovery": true,
+    "noAccountBudgetConsentOrProviderPolicyChanges": true
+  },
+  "preflight": {
+    "identity": "VERIFIED",
+    "activeCalls": 0,
+    "pendingJobs": 0,
+    "schedule": "5 seconds authenticated HTTP 200 processed:false",
+    "pushVersion": 28,
+    "webhookVersion": 2
+  },
+  "hostedWrites": 0,
+  "providerCalls": 0,
+  "productionAccess": false,
+  "M2A": "BLOCKED",
+  "M2B": "BLOCKED",
+  "remoteRevocation": "UNVERIFIED"
+}

@@ -5,6 +5,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
+import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
+import { getSupabasePublicApiKey } from "../_shared/supabase-public-key.ts";
 
 const ALLOWED_REASON_KEYS = new Set([
   "not_enough_matches",
@@ -43,6 +45,10 @@ const STORAGE_BUCKETS_TO_CLEAN = [
   "chat-media",
   "verification-docs",
   "circle-images",
+  "moderated-profile-media",
+  "profile-media-staging-v1-2",
+  "chat-attachment-staging-v1-2",
+  "view-once-moderation",
 ] as const;
 
 const normalizeStoragePrefix = (prefix: string) => {
@@ -138,8 +144,8 @@ serve(async (req) => {
     }
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
-    const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
-    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+    const anonKey = getSupabasePublicApiKey();
+    const serviceRoleKey = getSupabaseAdminKey();
     const authHeader = req.headers.get("Authorization") || "";
 
     if (!supabaseUrl || !anonKey || !serviceRoleKey) {
@@ -197,73 +203,15 @@ serve(async (req) => {
 
     requestId = insertedRequest.id;
 
-    await cleanupOwnedStorage(service, [user.id, profileRow?.id ?? ""]);
-
-    const nowIso = new Date().toISOString();
-
-    const { error: profileUpdateError } = await service
-      .from("profiles")
-      .update({
-        deleted_at: nowIso,
-        discoverable_in_vibes: false,
-        is_active: false,
-        online: false,
-        account_state: "deleted",
-        paused_at: null,
-        pause_reason: "account_deleted",
-        account_state_updated_at: nowIso,
-        profile_completed: false,
-        updated_at: nowIso,
-        ai_score: null,
-        ai_score_updated_at: null,
-        avatar_url: null,
-        bio: null,
-        city: null,
-        current_country: null,
-        current_country_code: null,
-        education: null,
-        full_name: null,
-        future_ghana_plans: null,
-        gender: null,
-        has_children: null,
-        height: null,
-        languages_spoken: null,
-        last_active: null,
-        last_ghana_visit: null,
-        latitude: null,
-        living_situation: null,
-        location: null,
-        location_updated_at: null,
-        longitude: null,
-        looking_for: null,
-        love_language: null,
-        matchmaking_mode: false,
-        max_age_interest: null,
-        min_age_interest: null,
-        occupation: null,
-        personality_type: null,
-        pets: null,
-        phone_number: null,
-        phone_verification_score: null,
-        phone_verified: false,
-        photos: [],
-        profile_video: null,
-        public_key: null,
-        region: null,
-        religion: null,
-        search_name: null,
-        smoking: null,
-        tribe: null,
-        username: null,
-        verification_level: 0,
-        wants_children: null,
-        years_in_diaspora: null,
-      })
-      .eq("user_id", user.id);
-
-    if (profileUpdateError) {
-      throw new Error(`Unable to hide profile during deletion: ${profileUpdateError.message}`);
+    const { data: deletionProfileId, error: profileMaskError } = await service.rpc(
+      "rpc_mask_account_deletion_profile",
+      { p_request_id: requestId },
+    );
+    if (profileMaskError) {
+      throw new Error(`Unable to hide profile during deletion: ${profileMaskError.message}`);
     }
+
+    await cleanupOwnedStorage(service, [user.id, deletionProfileId ?? ""]);
 
     const { error: momentsUpdateError } = await service
       .from("moments")
@@ -275,11 +223,11 @@ serve(async (req) => {
       throw new Error(`Unable to hide moments during deletion: ${momentsUpdateError.message}`);
     }
 
-    if (profileRow?.id) {
+    if (deletionProfileId) {
       const { error: deleteSwipesError } = await service
         .from("swipes")
         .delete()
-        .or(`swiper_id.eq.${profileRow.id},target_id.eq.${profileRow.id}`);
+        .or(`swiper_id.eq.${deletionProfileId},target_id.eq.${deletionProfileId}`);
 
       if (deleteSwipesError) {
         throw new Error(`Unable to remove swipes during deletion: ${deleteSwipesError.message}`);
@@ -288,7 +236,7 @@ serve(async (req) => {
       const { error: deleteMatchesError } = await service
         .from("matches")
         .delete()
-        .or(`user1_id.eq.${profileRow.id},user2_id.eq.${profileRow.id}`);
+        .or(`user1_id.eq.${deletionProfileId},user2_id.eq.${deletionProfileId}`);
 
       if (deleteMatchesError) {
         throw new Error(`Unable to remove matches during deletion: ${deleteMatchesError.message}`);
@@ -297,7 +245,7 @@ serve(async (req) => {
       const { error: deleteIntentRequestsError } = await service
         .from("intent_requests")
         .delete()
-        .or(`actor_id.eq.${profileRow.id},recipient_id.eq.${profileRow.id}`);
+        .or(`actor_id.eq.${deletionProfileId},recipient_id.eq.${deletionProfileId}`);
 
       if (deleteIntentRequestsError) {
         throw new Error(`Unable to remove intent requests during deletion: ${deleteIntentRequestsError.message}`);
@@ -306,7 +254,7 @@ serve(async (req) => {
       const { error: deleteOwnedCirclesError } = await service
         .from("circles")
         .delete()
-        .eq("created_by_profile_id", profileRow.id);
+        .eq("created_by_profile_id", deletionProfileId);
 
       if (deleteOwnedCirclesError) {
         throw new Error(`Unable to remove owned circles during deletion: ${deleteOwnedCirclesError.message}`);
@@ -315,7 +263,7 @@ serve(async (req) => {
       const { error: deleteCircleMembershipsError } = await service
         .from("circle_members")
         .delete()
-        .eq("profile_id", profileRow.id);
+        .eq("profile_id", deletionProfileId);
 
       if (deleteCircleMembershipsError) {
         throw new Error(`Unable to remove circle memberships during deletion: ${deleteCircleMembershipsError.message}`);
@@ -331,7 +279,7 @@ serve(async (req) => {
       .from("account_deletion_requests")
       .update({
         status: "completed",
-        completed_at: nowIso,
+        completed_at: new Date().toISOString(),
         failure_reason: null,
       })
       .eq("id", requestId);

@@ -1,0 +1,1760 @@
+{
+  "schemaVersion": 1,
+  "scope": "OFFLINE_FORENSIC_REVIEW_AND_SEPARATE_PROPOSAL_ONLY",
+  "recordedAt": "2026-10-30T18:25:54.827Z",
+  "providerRequests": 0,
+  "inputs": [
+    {
+      "path": "docs/betweener-connect/18-connect-v1-revocation-boundary-decision.md",
+      "sha256": "a78fa00f8f8431bb71dbfd56cad19df276d197b12f149c785924d3b259b01f7d"
+    },
+    {
+      "path": "docs/betweener-connect/19-connect-v1-independent-forensic-audit.md",
+      "sha256": "9cc5e35d58cbad743cd03852ac398b7c5427a804ea5f07df91610811466f7bf2"
+    },
+    {
+      "path": "docs/betweener-connect/21-connect-v1-media-truth-preparation.md",
+      "sha256": "075d3731072792e9db44617f0011e757e0bf39104f324a8ac94a50a47341189a"
+    },
+    {
+      "path": "docs/betweener-connect/28-connect-v1-media-truth-b3-preparation.md",
+      "sha256": "46e4f8f90665c58119a06a8e38eea117cb4da3957431a096fba4acaad2359d8a"
+    },
+    {
+      "path": "docs/betweener-connect/29-connect-v1-media-truth-b3-execution-results.md",
+      "sha256": "bfa7f220b22d8ee63887a4d90189a8978ef9a51a197b7272e7388ebc317c7513"
+    },
+    {
+      "path": "tmp/connect-boundary/provider-results.json",
+      "sha256": "8c1d82141a5c5140c94ac2b65e2b09dca42ebbe1f0f8c87b852d6dacdffa501d"
+    },
+    {
+      "path": "tmp/connect-media-truth-b3-execution/approval-media-truth-b3-28-9057a98a-af85-4f30-bf3a-c0ac8671017c.json.evidence.json",
+      "sha256": "0dcb9e021be24ae8cebf105938c11155a859013f619892f1663209149d077b55"
+    },
+    {
+      "path": "docs/betweener-connect/stream-staging-connect-media-truth-b3-evidence.json",
+      "sha256": "ef7dd20af2b379003132d4ab4d3a2743cbd914a6525db6ef3f13a64425ce11f9"
+    },
+    {
+      "path": "docs/betweener-connect/stream-staging-connect-revocation-boundary-evidence.json",
+      "sha256": "b7ee15e52d422351fe397835759a8ba2ce8cfddb537f09c910682a58682ec3ed"
+    },
+    {
+      "path": "tmp/connect-media-truth-preparation/local-browser-results.json",
+      "sha256": "0063dbb67c152ac1de2f4b479f7f1d326028ab9bc1328007926d4ceb1ca9fb65"
+    },
+    {
+      "path": "tmp/connect-media-truth-b3-preparation/local-control-1/local-browser-results.json",
+      "sha256": "4502c2ded2ab7a01f08ade3185c31e87a66e7440cca838a1e832ae997bf613d8"
+    },
+    {
+      "path": "node_modules/@stream-io/video-client/src/events/call.ts",
+      "sha256": "668371850280c8a465faf6a971b80d8be56e3bafc77ec125983529430c8d9adb"
+    }
+  ],
+  "preparedSources": [
+    {
+      "path": "C:/Users/HP/AppData/Local/deno/npm/registry.npmjs.org/@stream-io/node-sdk/0.7.63/dist/index.d.ts",
+      "sha256": "742d721c90cb7f0a9cbb9cf45873a72ef2648538e53371aeb07197fd95cee5fc"
+    },
+    {
+      "path": "C:/Users/HP/AppData/Local/deno/npm/registry.npmjs.org/@stream-io/node-sdk/0.7.63/dist/index.es.mjs",
+      "sha256": "2acf8963f85743533079c79cb8e6cd3d1844efb9262c1feea055236e73868235"
+    },
+    {
+      "path": "C:/Users/HP/AppData/Local/deno/npm/registry.npmjs.org/@stream-io/node-sdk/0.7.63/package.json",
+      "sha256": "66b60a508712735c4aa97cace512b72b857b6ac2682b9746ca3c71df4a5bb257"
+    },
+    {
+      "path": "C:/Users/HP/AppData/Local/deno/npm/registry.npmjs.org/@stream-io/node-sdk/0.7.63/src/ApiClient.ts",
+      "sha256": "b1fb3c2696fab5cc6fb3b5741c31ae3725bc03cc4c2a5e90386a6788f83aa53b"
+    },
+    {
+      "path": "C:/Users/HP/AppData/Local/deno/npm/registry.npmjs.org/@stream-io/node-sdk/0.7.63/src/StreamClient.ts",
+      "sha256": "e94327186537435fd784a41559042bb83afafd0e2e21c7249d284eb3c859799e"
+    },
+    {
+      "path": "C:/Users/HP/AppData/Local/deno/npm/registry.npmjs.org/@stream-io/node-sdk/0.7.63/src/gen/models/index.ts",
+      "sha256": "6ffd91463f679fce137f6091752610d32b6c9d9013b558a492071896e5362b66"
+    },
+    {
+      "path": "C:/Users/HP/AppData/Local/deno/npm/registry.npmjs.org/@stream-io/node-sdk/0.7.63/src/gen/video/CallApi.ts",
+      "sha256": "0c39d82bc25f77e4b33a9b022a8915d432a37b5fa6d77e9879694a4f89c3b62b"
+    },
+    {
+      "path": "C:/Users/HP/AppData/Local/deno/npm/registry.npmjs.org/@stream-io/node-sdk/0.7.63/src/gen/video/VideoApi.ts",
+      "sha256": "7bd0f5c0177ef0d859c5a677da0b1c5f54e8f9be2c458bc26ccd3060ce0966a6"
+    },
+    {
+      "path": "C:/Users/HP/AppData/Local/deno/npm/registry.npmjs.org/@stream-io/node-sdk/0.7.63/src/types.ts",
+      "sha256": "e437453a3a25d779a6e2e76c084ab466a73c84072a46a473e239b05de56fdec5"
+    },
+    {
+      "path": "C:\\Projects\\betweener-app\\docs\\betweener-connect\\stream-staging-connect-media-truth-b2-proposal.json",
+      "sha256": "96f72e25ccff1e5aa9d630ec3cf597103479aceb5ec7d4e91a7afbb30a9da0f1"
+    },
+    {
+      "path": "C:\\Projects\\betweener-app\\docs\\betweener-connect\\stream-staging-connect-media-truth-b3-proposal.json",
+      "sha256": "1c4a176710972ff9db0baf9473be63ca3662cf7bbaec68cf3ddbfda39f8f3f0f"
+    },
+    {
+      "path": "C:\\Projects\\betweener-app\\docs\\betweener-connect\\stream-staging-connect-media-truth-proposal.json",
+      "sha256": "7ba4fb47c2a6008c30a19cd19e5edac35729e7165ba3b406b6d71ff86086f957"
+    },
+    {
+      "path": "__tests__/connect-call-creation-400.regression.test.cjs",
+      "sha256": "ab5c8653d149c7083bd088e38d79c9dbf83f0b060e32c7544fd62f8637fdbf07"
+    },
+    {
+      "path": "__tests__/connect-consent-revocation.regression.test.ts",
+      "sha256": "1d4488d1b61fe14c49b6789179f1660b77bc5f4ebff8f125982bc7a5035b25e0"
+    },
+    {
+      "path": "__tests__/connect-credential-issuance.regression.test.ts",
+      "sha256": "87c75c41310b9db4843a3955ca733a2d91d9f5c0cc62452a2667f6436b269869"
+    },
+    {
+      "path": "__tests__/connect-foundation.regression.test.ts",
+      "sha256": "6c2e84bb984b316b41da0e0a75823d72d647ffc897c5ccb3906c3c4b1d39360b"
+    },
+    {
+      "path": "__tests__/connect-live-architecture.regression.test.cjs",
+      "sha256": "e05a42c1bb06ad031162237ec8c9af2e382febcbe3959b6b543799718152154c"
+    },
+    {
+      "path": "__tests__/connect-media-truth-b2.regression.test.cjs",
+      "sha256": "99c9a1c24f1f6c4da780cbf2192d6049fc627df9b933b00a17e71e0a7f867ed5"
+    },
+    {
+      "path": "__tests__/connect-media-truth-b3.regression.test.cjs",
+      "sha256": "e90923b07a783223a729c2a1a51089b281f276bf3a73463eac251c2c2f2ece7a"
+    },
+    {
+      "path": "__tests__/connect-media-truth-runner.regression.test.cjs",
+      "sha256": "cc4199f84f39d24647f8d82f1d9695e522f19908a6da422b2f13b390f7e96696"
+    },
+    {
+      "path": "__tests__/connect-media-truth.regression.test.cjs",
+      "sha256": "476993f5c9f9e8f5d55e5828da261b0e438fc4d4816b7ef28725ded4f31dc780"
+    },
+    {
+      "path": "__tests__/connect-provider-diagnostics.regression.test.cjs",
+      "sha256": "003f51b99bd1d9f73140cc93fc33ad3d162bd25066ed452ad07dbf53eed6192e"
+    },
+    {
+      "path": "__tests__/connect-provider-observation.regression.test.ts",
+      "sha256": "e294e573a8720a2074eab0927b28fd84437f32eef0ab7043844ceaf96240cfde"
+    },
+    {
+      "path": "__tests__/connect-revocation-boundary.regression.test.cjs",
+      "sha256": "8f6d65552670c673d91e4530f6840b14d97bc0a1f3d0f5f334f74a8762dbde93"
+    },
+    {
+      "path": "__tests__/connect-security-closure.regression.test.ts",
+      "sha256": "ccdf5e32483128aa04e27b0e64632a35e2e745561a0266c094e8dce5c2cae953"
+    },
+    {
+      "path": "__tests__/connect-stream-evidence.regression.test.ts",
+      "sha256": "eba13502720a166b7e28c47e1c398ddb3263db9233ab731bfad8a9ba4852afbd"
+    },
+    {
+      "path": "__tests__/connect-video-resolution.regression.test.cjs",
+      "sha256": "6c1448a26941507db77fccc7723b9e6d29872675c55fd3b15855a4dae366ea57"
+    },
+    {
+      "path": "__tests__/connect-voice.regression.test.ts",
+      "sha256": "e09cbaec83ad6753e30fcb939c0a21a64fcf66866cd7517b4b346148903b5854"
+    },
+    {
+      "path": "__tests__/fixtures/connect-b3-sdk-offline.mts",
+      "sha256": "21603a20a12a64176c1d8cf2140f5a9ee1dc0c1a61040c493a1f1b2d42bd698f"
+    },
+    {
+      "path": "__tests__/fixtures/connect-call-creation-sdk-offline.mts",
+      "sha256": "03c89ab6bcd2fa8f6d4b7b0273f127588bccb5b65dcf5836dfc183a1b4ac83bb"
+    },
+    {
+      "path": "__tests__/fixtures/connect-live-contract-sdk-offline.mts",
+      "sha256": "d58bd9d41f4fc10983b4a1d17b24d1d575a2ecf0a1ff8c861187d1ed6a537bc2"
+    },
+    {
+      "path": "__tests__/fixtures/connect-video-resolution-sdk-offline.mts",
+      "sha256": "71027d205c19669d0cddf628e59d99d9d140f3d3de6ccd1c758a280bacfdc814"
+    },
+    {
+      "path": "__tests__/relationship-commands.regression.test.ts",
+      "sha256": "bc2c5d0a6f41df3aaffd62713fef93dbb9928fdc8aab5e11688cb86050e95887"
+    },
+    {
+      "path": "node_modules/@stream-io/video-client/package.json",
+      "sha256": "c781f67013c8d8158a90e0b639d7052704b03cf20c757548e1442ab212db09f7"
+    },
+    {
+      "path": "node_modules/@stream-io/video-client/src/gen/video/sfu/event/events.ts",
+      "sha256": "897bb7f42b5cd7d5f882ae3042c85fb24ee8e81ddeca13328c0e9402c9ae08f3"
+    },
+    {
+      "path": "node_modules/@stream-io/video-client/src/gen/video/sfu/models/models.ts",
+      "sha256": "a571cb88f11bbfe1454a0acbc5ef95f3971200b68d2842f0c2e6062dc0b297bb"
+    },
+    {
+      "path": "node_modules/@stream-io/video-client/src/gen/video/sfu/signal_rpc/signal.client.ts",
+      "sha256": "3525274034570d7268f932d6b9ca76c46e1cc72f41295c6ea5383abf664faa97"
+    },
+    {
+      "path": "node_modules/@stream-io/video-client/src/gen/video/sfu/signal_rpc/signal.ts",
+      "sha256": "59d60eaaeb80bd12e3c322a17af0faecd6ac2c1ab32f72b9ed925fac6ec8a8c9"
+    },
+    {
+      "path": "node_modules/playwright-core/package.json",
+      "sha256": "8aa1c9863fa8dea324e674254158cdc79440f4124ef2d84d38053013541cb7d6"
+    },
+    {
+      "path": "node_modules/playwright/package.json",
+      "sha256": "313d23ce667d93962d3a1ab4be80908cefe840e4d9e48f1cd5863b91f65e8e39"
+    },
+    {
+      "path": "node_modules/typescript/package.json",
+      "sha256": "9332e97c30d3e53ed54910b89207ed657fb444066484df6e5b6965bf130865e9"
+    },
+    {
+      "path": "package-lock.json",
+      "sha256": "41b835c07f1fe42fd29c9c5e7482b637228c651d4dd6f6245ca8660625a53680"
+    },
+    {
+      "path": "package.json",
+      "sha256": "17a8635a595d10980a00c837a2163002d69da3467c324449c9189fcdbfabe195"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/approval.cjs",
+      "sha256": "ab26b5c7ef79bc328fac578a968dacf6c29c3f1f993accfe21422fbd7f933726"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/browser.cjs",
+      "sha256": "ce8bada270f10d8f6578edc01081a41812c4745361af110c09d95a592cd90899"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/codec.cjs",
+      "sha256": "448e15a0c72f975f160d99ab7dc697d875dca628fc6171fc809bb1453901c801"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/deno.json",
+      "sha256": "a997731a653edfcae69852c8eb51c3f2fddfc54e0150134b5ebf2b3a045f22d3"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/evidence.cjs",
+      "sha256": "b6e84dd93d16df4e1ecf12d7cb71a41005ec33a90d3c78d98c7d79f83cb1d742"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/experiment.cjs",
+      "sha256": "a33f2fdc42110944296b2507d5b2f4edcabf069163252ee6c409b273e2462f9a"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/process.cjs",
+      "sha256": "732bce2ab0100f7441a9571f0a3128f5620d5ce0ab76c4a90a7ddd05a7611ebe"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/profiles.cjs",
+      "sha256": "38f9ae6f8cb950fe0e8cd9cc9269c95efbc7afeb3cb440b03604a6738a706a92"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/provenance.cjs",
+      "sha256": "137405266545758d3c0275ea10c4cdd8cad5b5fa6622ee7df90ce7c917305982"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/provider-diagnostics.cjs",
+      "sha256": "e74f4b88efe920432e2460ce3a54de771e5eeb68985aa17f283e5f75c1009dcf"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/provider-process.cjs",
+      "sha256": "a653da75e27b5b43bf7f73d2f1b00bcb969260218bfb94127393f74485675888"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/provider.mts",
+      "sha256": "345418bd1ff293b7b69e11d29a2970a7aab192d9662ab81cd2366950d1db07c9"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/request-comparison.cjs",
+      "sha256": "ee66ba563be6b46d95ac114b17ecdbbd93c16d45542ac1ec92551a012cc51680"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/request.cjs",
+      "sha256": "62e1aca3fef0abc86de110e7c14123ae77ba69a04f08de30bc8f713979a04308"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/scope.cjs",
+      "sha256": "01d02c4d12745c56cfca987cab50d46cd0a987b49a9c2558956d845cdeaee986"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/sdk-contract.cjs",
+      "sha256": "4a889938c94092a9e9b5fd9d643310cbefab840f06dc913484902bfc917e3c99"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/verdict.cjs",
+      "sha256": "da310d7ef131d7df75cf058f152f3cbcd7b1c5d50554ece8094ba96aa09eba2a"
+    },
+    {
+      "path": "scripts/lib/connect-media-truth/watchdog.cjs",
+      "sha256": "0d376989dff420d748c24ce90c9f88a52d72191d34107ea377e126179eeb253b"
+    },
+    {
+      "path": "scripts/lib/connect-stream-audit.ts",
+      "sha256": "28bc784139f60f82bbc1759039634a83c561b9e9b849bb1ebad713bfda5ccf2b"
+    },
+    {
+      "path": "scripts/lib/connect-stream-closure-worker.ts",
+      "sha256": "d3aa496fc43469fc9d120d26d85ba6857964c4da1eb9f91f91a3b3fcdfdebc67"
+    },
+    {
+      "path": "scripts/lib/connect-stream-sfu-probe.cjs",
+      "sha256": "d879de243a041b513c067677264c81da219be0bfd617469331ab47e96e6f62e2"
+    },
+    {
+      "path": "scripts/lib/connect-stream-sfu-protocol.cjs",
+      "sha256": "7eb5fd1c2fbf5239dc3e9bb271a61112fa00edf2e2ad72a194bb383809db63dc"
+    },
+    {
+      "path": "scripts/lib/connect-stream-sfu-session.cjs",
+      "sha256": "69d100aca35fb4e23b856b62b15b3a11324761ed995caf2a183210be7a527752"
+    },
+    {
+      "path": "scripts/test-connect-media-truth-b2.cjs",
+      "sha256": "837d0ef407e5e3060ec455de52555c0de942490dd77cc23adea8f217aecea2f7"
+    },
+    {
+      "path": "scripts/test-connect-media-truth-b3.cjs",
+      "sha256": "a297d975f129849362bf134f7abe14ef898b3219889c1ab5d61d28c4abb5ac81"
+    },
+    {
+      "path": "scripts/test-connect-media-truth-local.cjs",
+      "sha256": "1d821d405442b72498bab9b28ac3780750a43f88777e55230b049fc1318eb6f6"
+    },
+    {
+      "path": "scripts/test-connect-media-truth.cjs",
+      "sha256": "0c36e1fd9c63fdc059c249128016ffaa09a4cc8527d47b5147678bf7ccda7ed4"
+    },
+    {
+      "path": "scripts/validate-connect-media-truth-b2.cjs",
+      "sha256": "7ee89f1607362a49fc057a19715e70c58fe98ca3b7a2c2c0d29f3d5574fb6e4b"
+    },
+    {
+      "path": "scripts/validate-connect-media-truth-b3.cjs",
+      "sha256": "e1e09bef0d2e1ea15a0949a985e213317db1079d2b6c29c6c67eeb60b604cff2"
+    },
+    {
+      "path": "supabase/functions/_shared/connect-stream-adapter.ts",
+      "sha256": "b5f2766343efac5606e6012cee64e5e3db8d6f26a31f1a941bc4b03e27e8da8c"
+    }
+  ],
+  "canonicalOriginalEquality": {
+    "b3": true,
+    "boundaryExcludingOnlyOpaqueHandles": true
+  },
+  "timer": {
+    "providerSession": {
+      "id": "d31c081c-6e79-4203-8d1c-6c00a73320da",
+      "startedAt": "2026-10-30T14:30:34.078Z",
+      "endedAt": null,
+      "timerEndsAt": "2026-10-30T14:31:34.078Z"
+    },
+    "endedAt": "2026-10-30T14:31:34.828Z",
+    "firstEndedGet": {
+      "kind": "timer-ended-get",
+      "ended": true,
+      "before": {
+        "mono": 78884.5716,
+        "utc": "2026-10-30T14:31:35.801Z"
+      },
+      "completed": {
+        "mono": 78930.5353,
+        "utc": "2026-10-30T14:31:35.847Z"
+      },
+      "provider": {
+        "callId": "92e5a845-e3ea-4456-8571-3e2e6e133d57",
+        "cid": "betweener_connect:92e5a845-e3ea-4456-8571-3e2e6e133d57",
+        "ended": true,
+        "endedAt": "2026-10-30T14:31:34.828Z",
+        "session": null,
+        "users": [],
+        "diagnosticTiming": {
+          "started": {
+            "mono": 73900.0352,
+            "utc": "2026-10-30T14:31:35.802Z",
+            "timeOrigin": 1793370621902.5005
+          },
+          "decodedResponseCompleted": {
+            "mono": 73945.0161,
+            "utc": "2026-10-30T14:31:35.847Z",
+            "timeOrigin": 1793370621902.5005
+          },
+          "requests": [
+            {
+              "service": "video.stream-io-api.com",
+              "route": "owned_call",
+              "method": "GET",
+              "started": {
+                "mono": 73903.1901,
+                "utc": "2026-10-30T14:31:35.805Z",
+                "timeOrigin": 1793370621902.5005
+              },
+              "responseHeaders": {
+                "mono": 73944.2553,
+                "utc": "2026-10-30T14:31:35.846Z",
+                "timeOrigin": 1793370621902.5005
+              },
+              "status": 200
+            }
+          ],
+          "truncated": false
+        }
+      }
+    },
+    "lastNotEndedGet": {
+      "before": {
+        "mono": 78591.1319,
+        "utc": "2026-10-30T14:31:35.508Z"
+      },
+      "completed": {
+        "mono": 78632.3869,
+        "utc": "2026-10-30T14:31:35.549Z"
+      },
+      "callId": "92e5a845-e3ea-4456-8571-3e2e6e133d57",
+      "cid": "betweener_connect:92e5a845-e3ea-4456-8571-3e2e6e133d57",
+      "ended": false,
+      "endedAt": null,
+      "session": {
+        "id": "d31c081c-6e79-4203-8d1c-6c00a73320da",
+        "startedAt": "2026-10-30T14:30:34.078Z",
+        "endedAt": null,
+        "timerEndsAt": "2026-10-30T14:31:34.078Z"
+      },
+      "users": [
+        "mtb3_28_858c8e68-d777-40b5-85b0-9a9985c9bbd6_b",
+        "mtb3_28_858c8e68-d777-40b5-85b0-9a9985c9bbd6_a"
+      ],
+      "diagnosticTiming": {
+        "started": {
+          "mono": 73606.6193,
+          "utc": "2026-10-30T14:31:35.509Z",
+          "timeOrigin": 1793370621902.5005
+        },
+        "decodedResponseCompleted": {
+          "mono": 73646.9155,
+          "utc": "2026-10-30T14:31:35.549Z",
+          "timeOrigin": 1793370621902.5005
+        },
+        "requests": [
+          {
+            "service": "video.stream-io-api.com",
+            "route": "owned_call",
+            "method": "GET",
+            "started": {
+              "mono": 73609.4502,
+              "utc": "2026-10-30T14:31:35.511Z",
+              "timeOrigin": 1793370621902.5005
+            },
+            "responseHeaders": {
+              "mono": 73646.1457,
+              "utc": "2026-10-30T14:31:35.548Z",
+              "timeOrigin": 1793370621902.5005
+            },
+            "status": 200
+          }
+        ],
+        "truncated": false
+      }
+    },
+    "peerTimeline": {
+      "peers": [
+        {
+          "peer": 1,
+          "first": {
+            "before": {
+              "mono": 79055.7652,
+              "utc": "2026-10-30T14:31:35.973Z"
+            },
+            "completed": {
+              "mono": 79082.7935,
+              "utc": "2026-10-30T14:31:36.000Z"
+            },
+            "rtp": {
+              "id": "IT01A2254939872",
+              "type": "inbound-rtp",
+              "ssrc": 2254939872,
+              "trackIdentifier": "3afc3793-c6ef-4288-9931-9dbb06da7343",
+              "timestamp": 1793370695978.53,
+              "lastPacketReceivedTimestamp": 1793370695812.625,
+              "bytesReceived": 744192,
+              "packetsReceived": 3008,
+              "bytesSent": null,
+              "packetsSent": null,
+              "jitterBufferDelay": 166665.6,
+              "jitterBufferEmittedCount": 2889600,
+              "audioLevel": 0.27271340067751093,
+              "totalAudioEnergy": 4.05467262328638,
+              "totalSamplesReceived": 2894880,
+              "concealedSamples": 4704
+            }
+          },
+          "last": {
+            "before": {
+              "mono": 137938.7727,
+              "utc": "2026-10-30T14:32:34.856Z"
+            },
+            "completed": {
+              "mono": 137960.4149,
+              "utc": "2026-10-30T14:32:34.877Z"
+            },
+            "rtp": {
+              "id": "IT01A2254939872",
+              "type": "inbound-rtp",
+              "ssrc": 2254939872,
+              "trackIdentifier": "3afc3793-c6ef-4288-9931-9dbb06da7343",
+              "timestamp": 1793370754861.773,
+              "lastPacketReceivedTimestamp": 1793370695812.625,
+              "bytesReceived": 744192,
+              "packetsReceived": 3008,
+              "bytesSent": null,
+              "packetsSent": null,
+              "jitterBufferDelay": 166665.6,
+              "jitterBufferEmittedCount": 2889600,
+              "audioLevel": 0,
+              "totalAudioEnergy": 4.064913136057905,
+              "totalSamplesReceived": 5721120,
+              "concealedSamples": 2831520
+            }
+          },
+          "events": [
+            {
+              "type": "callEnded",
+              "at": {
+                "mono": 68645.2489,
+                "utc": "2026-10-30T14:31:35.813Z"
+              }
+            },
+            {
+              "type": "websocket-close",
+              "at": {
+                "mono": 69649.5227,
+                "utc": "2026-10-30T14:31:36.817Z"
+              },
+              "code": 1000,
+              "reason": "[redacted]",
+              "reasonSha256": "6f9a48800d2f3095e8a310a4317e009a5dc222e11c45b34ec8d5544feebb8277",
+              "clean": true
+            }
+          ],
+          "firstEventCapture": {
+            "mono": 79082.7935,
+            "utc": "2026-10-30T14:31:36.000Z"
+          },
+          "states": [
+            {
+              "kind": "sub",
+              "lastConnected": {
+                "before": {
+                  "mono": 86269.4845,
+                  "utc": "2026-10-30T14:31:43.186Z"
+                },
+                "completed": {
+                  "mono": 86289.0322,
+                  "utc": "2026-10-30T14:31:43.206Z"
+                }
+              },
+              "firstNotConnected": {
+                "before": {
+                  "mono": 86539.4161,
+                  "utc": "2026-10-30T14:31:43.456Z"
+                },
+                "completed": {
+                  "mono": 86557.0788,
+                  "utc": "2026-10-30T14:31:43.474Z"
+                },
+                "state": "disconnected"
+              },
+              "firstFailed": {
+                "before": {
+                  "mono": 96422.9748,
+                  "utc": "2026-10-30T14:31:53.340Z"
+                },
+                "completed": {
+                  "mono": 96446.5758,
+                  "utc": "2026-10-30T14:31:53.363Z"
+                }
+              }
+            },
+            {
+              "kind": "publisher",
+              "lastConnected": {
+                "before": {
+                  "mono": 85997.3916,
+                  "utc": "2026-10-30T14:31:42.914Z"
+                },
+                "completed": {
+                  "mono": 86017.8671,
+                  "utc": "2026-10-30T14:31:42.935Z"
+                }
+              },
+              "firstNotConnected": {
+                "before": {
+                  "mono": 86269.4845,
+                  "utc": "2026-10-30T14:31:43.186Z"
+                },
+                "completed": {
+                  "mono": 86289.0322,
+                  "utc": "2026-10-30T14:31:43.206Z"
+                },
+                "state": "disconnected"
+              },
+              "firstFailed": {
+                "before": {
+                  "mono": 96151.4285,
+                  "utc": "2026-10-30T14:31:53.068Z"
+                },
+                "completed": {
+                  "mono": 96171.2765,
+                  "utc": "2026-10-30T14:31:53.088Z"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "peer": 2,
+          "first": {
+            "before": {
+              "mono": 79055.7652,
+              "utc": "2026-10-30T14:31:35.973Z"
+            },
+            "completed": {
+              "mono": 79082.7935,
+              "utc": "2026-10-30T14:31:36.000Z"
+            },
+            "rtp": {
+              "id": "IT01A1150319763",
+              "type": "inbound-rtp",
+              "ssrc": 1150319763,
+              "trackIdentifier": "20f09eb6-9e4c-4daa-90b7-1ba55f8a862b",
+              "timestamp": 1793370695978.531,
+              "lastPacketReceivedTimestamp": 1793370695975.032,
+              "bytesReceived": 745579,
+              "packetsReceived": 3020,
+              "bytesSent": null,
+              "packetsSent": null,
+              "jitterBufferDelay": 156019.2,
+              "jitterBufferEmittedCount": 2895360,
+              "audioLevel": 0.27619251075777457,
+              "totalAudioEnergy": 4.163394359666089,
+              "totalSamplesReceived": 2896800,
+              "concealedSamples": 2029
+            }
+          },
+          "last": {
+            "before": {
+              "mono": 137938.7727,
+              "utc": "2026-10-30T14:32:34.856Z"
+            },
+            "completed": {
+              "mono": 137960.4149,
+              "utc": "2026-10-30T14:32:34.877Z"
+            },
+            "rtp": {
+              "id": "IT01A1150319763",
+              "type": "inbound-rtp",
+              "ssrc": 1150319763,
+              "trackIdentifier": "20f09eb6-9e4c-4daa-90b7-1ba55f8a862b",
+              "timestamp": 1793370754861.774,
+              "lastPacketReceivedTimestamp": 1793370695994.378,
+              "bytesReceived": 745660,
+              "packetsReceived": 3021,
+              "bytesSent": null,
+              "packetsSent": null,
+              "jitterBufferDelay": 156643.2,
+              "jitterBufferEmittedCount": 2901120,
+              "audioLevel": 0,
+              "totalAudioEnergy": 4.167004735316297,
+              "totalSamplesReceived": 5723040,
+              "concealedSamples": 2821805
+            }
+          },
+          "events": [
+            {
+              "type": "callEnded",
+              "at": {
+                "mono": 68628.7368,
+                "utc": "2026-10-30T14:31:35.814Z"
+              }
+            },
+            {
+              "type": "websocket-close",
+              "at": {
+                "mono": 69632.4842,
+                "utc": "2026-10-30T14:31:36.817Z"
+              },
+              "code": 1000,
+              "reason": "[redacted]",
+              "reasonSha256": "6f9a48800d2f3095e8a310a4317e009a5dc222e11c45b34ec8d5544feebb8277",
+              "clean": true
+            }
+          ],
+          "firstEventCapture": {
+            "mono": 79082.7935,
+            "utc": "2026-10-30T14:31:36.000Z"
+          },
+          "states": [
+            {
+              "kind": "sub",
+              "lastConnected": {
+                "before": {
+                  "mono": 85724.5711,
+                  "utc": "2026-10-30T14:31:42.641Z"
+                },
+                "completed": {
+                  "mono": 85744.9576,
+                  "utc": "2026-10-30T14:31:42.662Z"
+                }
+              },
+              "firstNotConnected": {
+                "before": {
+                  "mono": 85997.3916,
+                  "utc": "2026-10-30T14:31:42.914Z"
+                },
+                "completed": {
+                  "mono": 86017.8671,
+                  "utc": "2026-10-30T14:31:42.935Z"
+                },
+                "state": "disconnected"
+              },
+              "firstFailed": {
+                "before": {
+                  "mono": 95878.4287,
+                  "utc": "2026-10-30T14:31:52.795Z"
+                },
+                "completed": {
+                  "mono": 95900.763,
+                  "utc": "2026-10-30T14:31:52.818Z"
+                }
+              }
+            },
+            {
+              "kind": "publisher",
+              "lastConnected": {
+                "before": {
+                  "mono": 85449.1814,
+                  "utc": "2026-10-30T14:31:42.366Z"
+                },
+                "completed": {
+                  "mono": 85473.8784,
+                  "utc": "2026-10-30T14:31:42.391Z"
+                }
+              },
+              "firstNotConnected": {
+                "before": {
+                  "mono": 85724.5711,
+                  "utc": "2026-10-30T14:31:42.641Z"
+                },
+                "completed": {
+                  "mono": 85744.9576,
+                  "utc": "2026-10-30T14:31:42.662Z"
+                },
+                "state": "disconnected"
+              },
+              "firstFailed": {
+                "before": {
+                  "mono": 95597.7193,
+                  "utc": "2026-10-30T14:31:52.515Z"
+                },
+                "completed": {
+                  "mono": 95626.0755,
+                  "utc": "2026-10-30T14:31:52.543Z"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "lastBothConnected": {
+        "mono": 85473.8784,
+        "utc": "2026-10-30T14:31:42.391Z"
+      }
+    },
+    "dtls": [
+      {
+        "peer": 1,
+        "firstClosed": [
+          {
+            "kind": "sub",
+            "before": {
+              "mono": 79055.7652,
+              "utc": "2026-10-30T14:31:35.973Z"
+            },
+            "completed": {
+              "mono": 79082.7935,
+              "utc": "2026-10-30T14:31:36.000Z"
+            },
+            "pcState": "connected",
+            "dtlsState": "closed"
+          },
+          {
+            "kind": "publisher",
+            "before": {
+              "mono": 79055.7652,
+              "utc": "2026-10-30T14:31:35.973Z"
+            },
+            "completed": {
+              "mono": 79082.7935,
+              "utc": "2026-10-30T14:31:36.000Z"
+            },
+            "pcState": "connected",
+            "dtlsState": "closed"
+          }
+        ]
+      },
+      {
+        "peer": 2,
+        "firstClosed": [
+          {
+            "kind": "sub",
+            "before": {
+              "mono": 79332.9144,
+              "utc": "2026-10-30T14:31:36.250Z"
+            },
+            "completed": {
+              "mono": 79359.4749,
+              "utc": "2026-10-30T14:31:36.276Z"
+            },
+            "pcState": "connected",
+            "dtlsState": "closed"
+          },
+          {
+            "kind": "publisher",
+            "before": {
+              "mono": 79055.7652,
+              "utc": "2026-10-30T14:31:35.973Z"
+            },
+            "completed": {
+              "mono": 79082.7935,
+              "utc": "2026-10-30T14:31:36.000Z"
+            },
+            "pcState": "connected",
+            "dtlsState": "closed"
+          }
+        ]
+      }
+    ],
+    "localCleanupStarted": {
+      "mono": 147563.6365,
+      "utc": "2026-10-30T14:32:44.481Z"
+    },
+    "explicitEndOperation": {
+      "op": "end",
+      "started": {
+        "mono": 138133.2242,
+        "utc": "2026-10-30T14:32:35.050Z"
+      },
+      "completed": {
+        "mono": 138232.1592,
+        "utc": "2026-10-30T14:32:35.149Z"
+      },
+      "success": true,
+      "providerTiming": {
+        "started": {
+          "mono": 133148.6576,
+          "utc": "2026-10-30T14:32:35.050Z",
+          "timeOrigin": 1793370621902.5005
+        },
+        "decodedResponseCompleted": {
+          "mono": 133246.7725,
+          "utc": "2026-10-30T14:32:35.148Z",
+          "timeOrigin": 1793370621902.5005
+        },
+        "requests": [
+          {
+            "service": "video.stream-io-api.com",
+            "route": "owned_call",
+            "method": "GET",
+            "started": {
+              "mono": 133151.4621,
+              "utc": "2026-10-30T14:32:35.053Z",
+              "timeOrigin": 1793370621902.5005
+            },
+            "responseHeaders": {
+              "mono": 133189.182,
+              "utc": "2026-10-30T14:32:35.090Z",
+              "timeOrigin": 1793370621902.5005
+            },
+            "status": 200
+          },
+          {
+            "service": "video.stream-io-api.com",
+            "route": "mark_ended",
+            "method": "POST",
+            "started": {
+              "mono": 133190.7311,
+              "utc": "2026-10-30T14:32:35.092Z",
+              "timeOrigin": 1793370621902.5005
+            },
+            "responseHeaders": {
+              "mono": 133246.5505,
+              "utc": "2026-10-30T14:32:35.148Z",
+              "timeOrigin": 1793370621902.5005
+            },
+            "status": 201
+          }
+        ],
+        "truncated": false
+      }
+    }
+  },
+  "phaseStats": [
+    {
+      "phase": 1,
+      "trigger": {
+        "kind": "timer-ended-get",
+        "ended": true,
+        "before": {
+          "mono": 78884.5716,
+          "utc": "2026-10-30T14:31:35.801Z"
+        },
+        "completed": {
+          "mono": 78930.5353,
+          "utc": "2026-10-30T14:31:35.847Z"
+        },
+        "provider": {
+          "callId": "92e5a845-e3ea-4456-8571-3e2e6e133d57",
+          "cid": "betweener_connect:92e5a845-e3ea-4456-8571-3e2e6e133d57",
+          "ended": true,
+          "endedAt": "2026-10-30T14:31:34.828Z",
+          "session": null,
+          "users": [],
+          "diagnosticTiming": {
+            "started": {
+              "mono": 73900.0352,
+              "utc": "2026-10-30T14:31:35.802Z",
+              "timeOrigin": 1793370621902.5005
+            },
+            "decodedResponseCompleted": {
+              "mono": 73945.0161,
+              "utc": "2026-10-30T14:31:35.847Z",
+              "timeOrigin": 1793370621902.5005
+            },
+            "requests": [
+              {
+                "service": "video.stream-io-api.com",
+                "route": "owned_call",
+                "method": "GET",
+                "started": {
+                  "mono": 73903.1901,
+                  "utc": "2026-10-30T14:31:35.805Z",
+                  "timeOrigin": 1793370621902.5005
+                },
+                "responseHeaders": {
+                  "mono": 73944.2553,
+                  "utc": "2026-10-30T14:31:35.846Z",
+                  "timeOrigin": 1793370621902.5005
+                },
+                "status": 200
+              }
+            ],
+            "truncated": false
+          }
+        }
+      },
+      "windowComplete": true,
+      "samples": 217,
+      "durationMs": 59029.8796,
+      "maxBracketMs": 58.176699999996345,
+      "targets": [
+        {
+          "nonce": "1c6ef03870398c07d56f8fd5910e7994",
+          "phase": 1,
+          "sender": 1,
+          "generated": {
+            "mono": 78931.156,
+            "utc": "2026-10-30T14:31:35.848Z"
+          },
+          "triggerCompleted": {
+            "mono": 78930.5353,
+            "utc": "2026-10-30T14:31:35.847Z"
+          }
+        },
+        {
+          "nonce": "3013828da30101cca5428fccc6543721",
+          "phase": 1,
+          "sender": 2,
+          "generated": {
+            "mono": 78931.4974,
+            "utc": "2026-10-30T14:31:35.848Z"
+          },
+          "triggerCompleted": {
+            "mono": 78930.5353,
+            "utc": "2026-10-30T14:31:35.847Z"
+          }
+        }
+      ],
+      "transmissions": [
+        {
+          "before": {
+            "mono": 78931.722,
+            "utc": "2026-10-30T14:31:35.849Z"
+          },
+          "completed": {
+            "mono": 79041.7359,
+            "utc": "2026-10-30T14:31:35.959Z"
+          },
+          "transmission": {
+            "nonce": "1c6ef03870398c07d56f8fd5910e7994",
+            "phase": 1,
+            "sender": 1,
+            "before": {
+              "mono": 62779.19999998808,
+              "utc": "2026-10-30T14:31:35.861Z",
+              "timeOrigin": 1793370633082.3,
+              "audioSeconds": 62.16
+            },
+            "scheduledAudioSeconds": 62.26,
+            "renderClockPassed": {
+              "mono": 62875.09999996424,
+              "utc": "2026-10-30T14:31:35.957Z",
+              "timeOrigin": 1793370633082.3,
+              "audioSeconds": 62.26133333333333
+            },
+            "meaning": "Scheduled synthetic source; render clock passed start. Not a packet transmission timestamp."
+          }
+        },
+        {
+          "before": {
+            "mono": 78931.7472,
+            "utc": "2026-10-30T14:31:35.849Z"
+          },
+          "completed": {
+            "mono": 79055.7107,
+            "utc": "2026-10-30T14:31:35.973Z"
+          },
+          "transmission": {
+            "nonce": "3013828da30101cca5428fccc6543721",
+            "phase": 1,
+            "sender": 2,
+            "before": {
+              "mono": 62579.5,
+              "utc": "2026-10-30T14:31:35.861Z",
+              "timeOrigin": 1793370633282.3,
+              "audioSeconds": 62.141333333333336
+            },
+            "scheduledAudioSeconds": 62.24133333333334,
+            "renderClockPassed": {
+              "mono": 62687.299999952316,
+              "utc": "2026-10-30T14:31:35.969Z",
+              "timeOrigin": 1793370633282.3,
+              "audioSeconds": 62.25066666666667
+            },
+            "meaning": "Scheduled synthetic source; render clock passed start. Not a packet transmission timestamp."
+          }
+        }
+      ],
+      "firstSampleBracket": {
+        "before": {
+          "mono": 79055.7652,
+          "utc": "2026-10-30T14:31:35.973Z"
+        },
+        "completed": {
+          "mono": 79082.7935,
+          "utc": "2026-10-30T14:31:36.000Z"
+        }
+      },
+      "lastSampleBracket": {
+        "before": {
+          "mono": 137938.7727,
+          "utc": "2026-10-30T14:32:34.856Z"
+        },
+        "completed": {
+          "mono": 137960.4149,
+          "utc": "2026-10-30T14:32:34.877Z"
+        }
+      },
+      "receivers": [
+        {
+          "receiver": 1,
+          "first": {
+            "id": "IT01A2254939872",
+            "type": "inbound-rtp",
+            "ssrc": 2254939872,
+            "trackIdentifier": "3afc3793-c6ef-4288-9931-9dbb06da7343",
+            "timestamp": 1793370695978.53,
+            "lastPacketReceivedTimestamp": 1793370695812.625,
+            "bytesReceived": 744192,
+            "packetsReceived": 3008,
+            "bytesSent": null,
+            "packetsSent": null,
+            "jitterBufferDelay": 166665.6,
+            "jitterBufferEmittedCount": 2889600,
+            "audioLevel": 0.27271340067751093,
+            "totalAudioEnergy": 4.05467262328638,
+            "totalSamplesReceived": 2894880,
+            "concealedSamples": 4704
+          },
+          "last": {
+            "id": "IT01A2254939872",
+            "type": "inbound-rtp",
+            "ssrc": 2254939872,
+            "trackIdentifier": "3afc3793-c6ef-4288-9931-9dbb06da7343",
+            "timestamp": 1793370754861.773,
+            "lastPacketReceivedTimestamp": 1793370695812.625,
+            "bytesReceived": 744192,
+            "packetsReceived": 3008,
+            "bytesSent": null,
+            "packetsSent": null,
+            "jitterBufferDelay": 166665.6,
+            "jitterBufferEmittedCount": 2889600,
+            "audioLevel": 0,
+            "totalAudioEnergy": 4.064913136057905,
+            "totalSamplesReceived": 5721120,
+            "concealedSamples": 2831520
+          },
+          "targetFrames": 0,
+          "firstDecoder": [
+            {
+              "trackId": "3afc3793-c6ef-4288-9931-9dbb06da7343",
+              "chunks": 1420,
+              "samples": 2908160
+            }
+          ],
+          "lastDecoder": [
+            {
+              "trackId": "3afc3793-c6ef-4288-9931-9dbb06da7343",
+              "chunks": 2800,
+              "samples": 5734400
+            }
+          ]
+        },
+        {
+          "receiver": 2,
+          "first": {
+            "id": "IT01A1150319763",
+            "type": "inbound-rtp",
+            "ssrc": 1150319763,
+            "trackIdentifier": "20f09eb6-9e4c-4daa-90b7-1ba55f8a862b",
+            "timestamp": 1793370695978.531,
+            "lastPacketReceivedTimestamp": 1793370695975.032,
+            "bytesReceived": 745579,
+            "packetsReceived": 3020,
+            "bytesSent": null,
+            "packetsSent": null,
+            "jitterBufferDelay": 156019.2,
+            "jitterBufferEmittedCount": 2895360,
+            "audioLevel": 0.27619251075777457,
+            "totalAudioEnergy": 4.163394359666089,
+            "totalSamplesReceived": 2896800,
+            "concealedSamples": 2029
+          },
+          "last": {
+            "id": "IT01A1150319763",
+            "type": "inbound-rtp",
+            "ssrc": 1150319763,
+            "trackIdentifier": "20f09eb6-9e4c-4daa-90b7-1ba55f8a862b",
+            "timestamp": 1793370754861.774,
+            "lastPacketReceivedTimestamp": 1793370695994.378,
+            "bytesReceived": 745660,
+            "packetsReceived": 3021,
+            "bytesSent": null,
+            "packetsSent": null,
+            "jitterBufferDelay": 156643.2,
+            "jitterBufferEmittedCount": 2901120,
+            "audioLevel": 0,
+            "totalAudioEnergy": 4.167004735316297,
+            "totalSamplesReceived": 5723040,
+            "concealedSamples": 2821805
+          },
+          "targetFrames": 0,
+          "firstDecoder": [
+            {
+              "trackId": "20f09eb6-9e4c-4daa-90b7-1ba55f8a862b",
+              "chunks": 1420,
+              "samples": 2908160
+            }
+          ],
+          "lastDecoder": [
+            {
+              "trackId": "20f09eb6-9e4c-4daa-90b7-1ba55f8a862b",
+              "chunks": 2800,
+              "samples": 5734400
+            }
+          ]
+        }
+      ],
+      "historicalVerdict": {
+        "verdict": "INCONCLUSIVE",
+        "reasons": [
+          "transport_closed_or_unavailable",
+          "transport_closed_or_unavailable"
+        ],
+        "clockModel": {
+          "intervals": "Parent monotonic milliseconds; UTC is correlation only.",
+          "browserMapping": "Each IPC operation is bracketed by parent monotonic stamps. Browser performance/timeOrigin and AudioContext sample clocks are retained separately.",
+          "uncertainty": "IPC brackets bound observation time; AudioContext scheduling is not an RTP wire timestamp. Provider clock offset is UNKNOWN. No cross-host latency bound is inferred."
+        }
+      }
+    },
+    {
+      "phase": 2,
+      "trigger": {
+        "kind": "backend-end-ack",
+        "ack": true,
+        "before": {
+          "mono": 138133.1915,
+          "utc": "2026-10-30T14:32:35.050Z"
+        },
+        "completed": {
+          "mono": 138232.1883,
+          "utc": "2026-10-30T14:32:35.149Z"
+        }
+      },
+      "windowComplete": true,
+      "samples": 34,
+      "durationMs": 9142.8897,
+      "maxBracketMs": 32.6756999999925,
+      "targets": [
+        {
+          "nonce": "f04798b8755c927f4ca2d07b3c121fab",
+          "phase": 2,
+          "sender": 1,
+          "generated": {
+            "mono": 138232.2508,
+            "utc": "2026-10-30T14:32:35.149Z"
+          },
+          "triggerCompleted": {
+            "mono": 138232.1883,
+            "utc": "2026-10-30T14:32:35.149Z"
+          }
+        },
+        {
+          "nonce": "0ad6075fb39344b72c48bd4993c8eb98",
+          "phase": 2,
+          "sender": 2,
+          "generated": {
+            "mono": 138232.3575,
+            "utc": "2026-10-30T14:32:35.149Z"
+          },
+          "triggerCompleted": {
+            "mono": 138232.1883,
+            "utc": "2026-10-30T14:32:35.149Z"
+          }
+        }
+      ],
+      "transmissions": [
+        {
+          "before": {
+            "mono": 138232.4056,
+            "utc": "2026-10-30T14:32:35.149Z"
+          },
+          "completed": {
+            "mono": 138366.5377,
+            "utc": "2026-10-30T14:32:35.283Z"
+          },
+          "transmission": {
+            "nonce": "f04798b8755c927f4ca2d07b3c121fab",
+            "phase": 2,
+            "sender": 1,
+            "before": {
+              "mono": 122086.19999998808,
+              "utc": "2026-10-30T14:32:35.168Z",
+              "timeOrigin": 1793370633082.3,
+              "audioSeconds": 121.472
+            },
+            "scheduledAudioSeconds": 121.57199999999999,
+            "renderClockPassed": {
+              "mono": 122200,
+              "utc": "2026-10-30T14:32:35.282Z",
+              "timeOrigin": 1793370633082.3,
+              "audioSeconds": 121.58133333333333
+            },
+            "meaning": "Scheduled synthetic source; render clock passed start. Not a packet transmission timestamp."
+          }
+        },
+        {
+          "before": {
+            "mono": 138232.4225,
+            "utc": "2026-10-30T14:32:35.149Z"
+          },
+          "completed": {
+            "mono": 138353.4692,
+            "utc": "2026-10-30T14:32:35.270Z"
+          },
+          "transmission": {
+            "nonce": "0ad6075fb39344b72c48bd4993c8eb98",
+            "phase": 2,
+            "sender": 2,
+            "before": {
+              "mono": 121886.29999995232,
+              "utc": "2026-10-30T14:32:35.168Z",
+              "timeOrigin": 1793370633282.3,
+              "audioSeconds": 121.45066666666666
+            },
+            "scheduledAudioSeconds": 121.55066666666666,
+            "renderClockPassed": {
+              "mono": 121987,
+              "utc": "2026-10-30T14:32:35.269Z",
+              "timeOrigin": 1793370633282.3,
+              "audioSeconds": 121.552
+            },
+            "meaning": "Scheduled synthetic source; render clock passed start. Not a packet transmission timestamp."
+          }
+        }
+      ],
+      "firstSampleBracket": {
+        "before": {
+          "mono": 138366.5917,
+          "utc": "2026-10-30T14:32:35.283Z"
+        },
+        "completed": {
+          "mono": 138392.1573,
+          "utc": "2026-10-30T14:32:35.309Z"
+        }
+      },
+      "lastSampleBracket": {
+        "before": {
+          "mono": 147353.1149,
+          "utc": "2026-10-30T14:32:44.270Z"
+        },
+        "completed": {
+          "mono": 147375.078,
+          "utc": "2026-10-30T14:32:44.292Z"
+        }
+      },
+      "receivers": [
+        {
+          "receiver": 1,
+          "first": {
+            "id": "IT01A2254939872",
+            "type": "inbound-rtp",
+            "ssrc": 2254939872,
+            "trackIdentifier": "3afc3793-c6ef-4288-9931-9dbb06da7343",
+            "timestamp": 1793370755289.479,
+            "lastPacketReceivedTimestamp": 1793370695812.625,
+            "bytesReceived": 744192,
+            "packetsReceived": 3008,
+            "bytesSent": null,
+            "packetsSent": null,
+            "jitterBufferDelay": 166665.6,
+            "jitterBufferEmittedCount": 2889600,
+            "audioLevel": 0,
+            "totalAudioEnergy": 4.064913136057905,
+            "totalSamplesReceived": 5741760,
+            "concealedSamples": 2852160
+          },
+          "last": {
+            "id": "IT01A2254939872",
+            "type": "inbound-rtp",
+            "ssrc": 2254939872,
+            "trackIdentifier": "3afc3793-c6ef-4288-9931-9dbb06da7343",
+            "timestamp": 1793370764275.585,
+            "lastPacketReceivedTimestamp": 1793370695812.625,
+            "bytesReceived": 744192,
+            "packetsReceived": 3008,
+            "bytesSent": null,
+            "packetsSent": null,
+            "jitterBufferDelay": 166665.6,
+            "jitterBufferEmittedCount": 2889600,
+            "audioLevel": 0,
+            "totalAudioEnergy": 4.064913136057905,
+            "totalSamplesReceived": 6172800,
+            "concealedSamples": 3283200
+          },
+          "targetFrames": 0,
+          "firstDecoder": [
+            {
+              "trackId": "3afc3793-c6ef-4288-9931-9dbb06da7343",
+              "chunks": 2810,
+              "samples": 5754880
+            }
+          ],
+          "lastDecoder": [
+            {
+              "trackId": "3afc3793-c6ef-4288-9931-9dbb06da7343",
+              "chunks": 3021,
+              "samples": 6187008
+            }
+          ]
+        },
+        {
+          "receiver": 2,
+          "first": {
+            "id": "IT01A1150319763",
+            "type": "inbound-rtp",
+            "ssrc": 1150319763,
+            "trackIdentifier": "20f09eb6-9e4c-4daa-90b7-1ba55f8a862b",
+            "timestamp": 1793370755290.199,
+            "lastPacketReceivedTimestamp": 1793370695994.378,
+            "bytesReceived": 745660,
+            "packetsReceived": 3021,
+            "bytesSent": null,
+            "packetsSent": null,
+            "jitterBufferDelay": 156643.2,
+            "jitterBufferEmittedCount": 2901120,
+            "audioLevel": 0,
+            "totalAudioEnergy": 4.167004735316297,
+            "totalSamplesReceived": 5743680,
+            "concealedSamples": 2842445
+          },
+          "last": {
+            "id": "IT01A1150319763",
+            "type": "inbound-rtp",
+            "ssrc": 1150319763,
+            "trackIdentifier": "20f09eb6-9e4c-4daa-90b7-1ba55f8a862b",
+            "timestamp": 1793370764275.878,
+            "lastPacketReceivedTimestamp": 1793370695994.378,
+            "bytesReceived": 745660,
+            "packetsReceived": 3021,
+            "bytesSent": null,
+            "packetsSent": null,
+            "jitterBufferDelay": 156643.2,
+            "jitterBufferEmittedCount": 2901120,
+            "audioLevel": 0,
+            "totalAudioEnergy": 4.167004735316297,
+            "totalSamplesReceived": 6174720,
+            "concealedSamples": 3273485
+          },
+          "targetFrames": 0,
+          "firstDecoder": [
+            {
+              "trackId": "20f09eb6-9e4c-4daa-90b7-1ba55f8a862b",
+              "chunks": 2810,
+              "samples": 5754880
+            }
+          ],
+          "lastDecoder": [
+            {
+              "trackId": "20f09eb6-9e4c-4daa-90b7-1ba55f8a862b",
+              "chunks": 3021,
+              "samples": 6187008
+            }
+          ]
+        }
+      ],
+      "historicalVerdict": {
+        "verdict": "INCONCLUSIVE",
+        "reasons": [
+          "transport_closed_or_unavailable",
+          "transport_closed_or_unavailable"
+        ],
+        "clockModel": {
+          "intervals": "Parent monotonic milliseconds; UTC is correlation only.",
+          "browserMapping": "Each IPC operation is bracketed by parent monotonic stamps. Browser performance/timeOrigin and AudioContext sample clocks are retained separately.",
+          "uncertainty": "IPC brackets bound observation time; AudioContext scheduling is not an RTP wire timestamp. Provider clock offset is UNKNOWN. No cross-host latency bound is inferred."
+        }
+      }
+    }
+  ],
+  "proposedContext": {
+    "authenticatedSessionPath": true,
+    "nonCooperativeHarness": true,
+    "processHealthy": true,
+    "localCleanupStarted": {
+      "mono": 147563.6365,
+      "utc": "2026-10-30T14:32:44.481Z"
+    },
+    "meaning": "Source-reviewed authenticated TLS/SFU session path and no local event-triggered cleanup; not a cryptographically signed event attestation"
+  },
+  "proposedAnalyses": [
+    {
+      "proposalOnly": true,
+      "historical": {
+        "verdict": "INCONCLUSIVE",
+        "reasons": [
+          "transport_closed_or_unavailable",
+          "transport_closed_or_unavailable"
+        ],
+        "clockModel": {
+          "intervals": "Parent monotonic milliseconds; UTC is correlation only.",
+          "browserMapping": "Each IPC operation is bracketed by parent monotonic stamps. Browser performance/timeOrigin and AudioContext sample clocks are retained separately.",
+          "uncertainty": "IPC brackets bound observation time; AudioContext scheduling is not an RTP wire timestamp. Provider clock offset is UNKNOWN. No cross-host latency bound is inferred."
+        }
+      },
+      "signaling": "OBSERVED_SFU_TERMINATION",
+      "media": "OBSERVED_RECEIVER_RTP_QUIESCENCE",
+      "transport": "SFU_SIGNALED_TERMINATION_WITH_TRANSPORT_LOSS",
+      "freshProof": [],
+      "signals": [
+        {
+          "peer": 1,
+          "event": {
+            "type": "callEnded",
+            "at": {
+              "mono": 68645.2489,
+              "utc": "2026-10-30T14:31:35.813Z"
+            }
+          },
+          "close": {
+            "type": "websocket-close",
+            "at": {
+              "mono": 69649.5227,
+              "utc": "2026-10-30T14:31:36.817Z"
+            },
+            "code": 1000,
+            "reason": "[redacted]",
+            "reasonSha256": "6f9a48800d2f3095e8a310a4317e009a5dc222e11c45b34ec8d5544feebb8277",
+            "clean": true
+          },
+          "firstParentCapture": {
+            "mono": 79082.7935,
+            "utc": "2026-10-30T14:31:36.000Z"
+          },
+          "authenticatedSessionPath": true,
+          "eventBeforeObservedAggregatePcLoss": true,
+          "cleanCloseBeforeObservedAggregatePcLoss": true,
+          "ordered": true
+        },
+        {
+          "peer": 2,
+          "event": {
+            "type": "callEnded",
+            "at": {
+              "mono": 68628.7368,
+              "utc": "2026-10-30T14:31:35.814Z"
+            }
+          },
+          "close": {
+            "type": "websocket-close",
+            "at": {
+              "mono": 69632.4842,
+              "utc": "2026-10-30T14:31:36.817Z"
+            },
+            "code": 1000,
+            "reason": "[redacted]",
+            "reasonSha256": "6f9a48800d2f3095e8a310a4317e009a5dc222e11c45b34ec8d5544feebb8277",
+            "clean": true
+          },
+          "firstParentCapture": {
+            "mono": 79082.7935,
+            "utc": "2026-10-30T14:31:36.000Z"
+          },
+          "authenticatedSessionPath": true,
+          "eventBeforeObservedAggregatePcLoss": true,
+          "cleanCloseBeforeObservedAggregatePcLoss": true,
+          "ordered": true
+        }
+      ],
+      "lastObservedCounterGrowth": [
+        null,
+        {
+          "before": {
+            "mono": 79332.9144,
+            "utc": "2026-10-30T14:31:36.250Z"
+          },
+          "completed": {
+            "mono": 79359.4749,
+            "utc": "2026-10-30T14:31:36.276Z"
+          }
+        }
+      ],
+      "fullWindow": true,
+      "explicitEndCausalComparison": "NOT_APPLICABLE",
+      "universalSecurityPass": false
+    },
+    {
+      "proposalOnly": true,
+      "historical": {
+        "verdict": "INCONCLUSIVE",
+        "reasons": [
+          "transport_closed_or_unavailable",
+          "transport_closed_or_unavailable"
+        ],
+        "clockModel": {
+          "intervals": "Parent monotonic milliseconds; UTC is correlation only.",
+          "browserMapping": "Each IPC operation is bracketed by parent monotonic stamps. Browser performance/timeOrigin and AudioContext sample clocks are retained separately.",
+          "uncertainty": "IPC brackets bound observation time; AudioContext scheduling is not an RTP wire timestamp. Provider clock offset is UNKNOWN. No cross-host latency bound is inferred."
+        }
+      },
+      "signaling": "OBSERVED_SFU_TERMINATION",
+      "media": "INCONCLUSIVE",
+      "transport": "TRANSPORT_UNAVAILABLE_BEFORE_TRIGGER",
+      "freshProof": [],
+      "signals": [
+        {
+          "peer": 1,
+          "event": {
+            "type": "callEnded",
+            "at": {
+              "mono": 68645.2489,
+              "utc": "2026-10-30T14:31:35.813Z"
+            }
+          },
+          "close": {
+            "type": "websocket-close",
+            "at": {
+              "mono": 69649.5227,
+              "utc": "2026-10-30T14:31:36.817Z"
+            },
+            "code": 1000,
+            "reason": "[redacted]",
+            "reasonSha256": "6f9a48800d2f3095e8a310a4317e009a5dc222e11c45b34ec8d5544feebb8277",
+            "clean": true
+          },
+          "firstParentCapture": {
+            "mono": 138392.1573,
+            "utc": "2026-10-30T14:32:35.309Z"
+          },
+          "authenticatedSessionPath": true,
+          "eventBeforeObservedAggregatePcLoss": false,
+          "cleanCloseBeforeObservedAggregatePcLoss": false,
+          "ordered": true
+        },
+        {
+          "peer": 2,
+          "event": {
+            "type": "callEnded",
+            "at": {
+              "mono": 68628.7368,
+              "utc": "2026-10-30T14:31:35.814Z"
+            }
+          },
+          "close": {
+            "type": "websocket-close",
+            "at": {
+              "mono": 69632.4842,
+              "utc": "2026-10-30T14:31:36.817Z"
+            },
+            "code": 1000,
+            "reason": "[redacted]",
+            "reasonSha256": "6f9a48800d2f3095e8a310a4317e009a5dc222e11c45b34ec8d5544feebb8277",
+            "clean": true
+          },
+          "firstParentCapture": {
+            "mono": 138392.1573,
+            "utc": "2026-10-30T14:32:35.309Z"
+          },
+          "authenticatedSessionPath": true,
+          "eventBeforeObservedAggregatePcLoss": false,
+          "cleanCloseBeforeObservedAggregatePcLoss": false,
+          "ordered": true
+        }
+      ],
+      "lastObservedCounterGrowth": [
+        null,
+        null
+      ],
+      "fullWindow": true,
+      "explicitEndCausalComparison": "UNAVAILABLE",
+      "universalSecurityPass": false
+    }
+  ],
+  "historicalBoundary": {
+    "proposalOnly": true,
+    "historicalSuiteResult": "INCOMPLETE",
+    "historicalTimerResultPreserved": "FAIL",
+    "session": {
+      "id": "8dde1aa7-4b0a-449a-b85c-c3ff90fe0933",
+      "startedAt": "2026-10-29T06:38:45.198Z",
+      "timerEndsAt": "2026-10-29T06:39:45.198Z",
+      "endedAt": null
+    },
+    "endedAt": "2026-10-29T06:39:46.823Z",
+    "firstEndedSampleLabel": "2026-10-29T06:39:49.371Z",
+    "lastSampleLabel": "2026-10-29T06:39:51.428Z",
+    "labelSemantics": "after provider GET; before awaiting stats; completion brackets unavailable",
+    "receivingGrowth": [
+      {
+        "receiver": 1,
+        "bytes": 25956,
+        "packets": 103
+      },
+      {
+        "receiver": 2,
+        "bytes": 26208,
+        "packets": 104
+      }
+    ],
+    "signaling": "NOT_OBSERVED_IN_RETAINED_SAMPLES",
+    "media": "POST_END_RTP_GROWTH_CONTENT_AGE_UNKNOWN",
+    "freshNonceEvidence": "NOT_INSTRUMENTED",
+    "modernCutoffEvaluation": "INELIGIBLE_MISSING_PER_SSRC_CLOCK_AND_DECODER_EVIDENCE",
+    "universalSecurityPass": false
+  },
+  "historicalB3VerdictsPreserved": true,
+  "tests": {
+    "count": 30,
+    "pass": 30,
+    "fail": 0,
+    "execution": "node --test docs/betweener-connect/offline-30/termination-analysis.test.cjs",
+    "syntaxCheck": "PASS",
+    "log": {
+      "path": "tmp/connect-termination-audit-30/focused-final-2.log",
+      "sha256": "d3e602283e582d8ca77735a64797de946354e55bbe22f94bf7d948c00802fc92"
+    },
+    "testNames": [
+      "✔ synthetic clean provider signaling plus independent quiet tail is descriptive quiescence, never security PASS",
+      "✔ unrelated ICE failure cannot become provider-enforced cutoff",
+      "✔ client voluntary close remains contaminated even with SFU events",
+      "✔ local cleanup during observation prevents a negative finding",
+      "✔ browser/process failure cannot establish cessation",
+      "✔ stale stats timestamps invalidate otherwise perfect signaling/closure",
+      "✔ local sending advancement and live decoder alone do not prove receiver delivery or server cutoff",
+      "✔ SFU event without media cutoff retains signaling but refuses cessation",
+      "✔ cutoff with connected raw peers is separate and does not require an SFU event",
+      "✔ one late early-window packet has unknown content and permits only a later quiet-tail observation",
+      "✔ a late tail packet invalidates the stable tail",
+      "✔ fresh qualified remote nonce dominates end events and failed transports",
+      "✔ positive fresh proof survives an incomplete later window without turning the negative finding into success",
+      "✔ positive receipt remains independently visible if a later process failure masks it in the original classifier",
+      "✔ missing trigger timestamp cannot establish cessation",
+      "✔ inverted sample bracket cannot establish cessation",
+      "✔ missing UTC stamp cannot establish cessation",
+      "✔ incomplete comparison window cannot establish cessation",
+      "✔ missing decoder controls cannot establish cessation",
+      "✔ stopped source cannot establish cessation",
+      "✔ unbound SSRC cannot establish cessation",
+      "✔ unqualified event origin cannot explain transport failure",
+      "✔ failure before provider-ended evidence is separately marked",
+      "✔ invalid CRC, identity, old nonce and weak confidence cannot prove fresh audio",
+      "✔ synthetic event after failure cannot authenticate the cause of earlier media loss",
+      "✔ aggregate connected with closed DTLS is not the connected-cutoff category",
+      "✔ missing lower-layer stats cannot establish healthy connected cutoff",
+      "✔ reversed SFU event/close ordering refuses a correlated termination finding",
+      "✔ B3 original receipt is unchanged and both historical verdicts replay exactly",
+      "✔ Report 18 original retains post-ended RTP growth without invented fresh-content or clock evidence"
+    ]
+  },
+  "proposalFiles": [
+    {
+      "path": "docs/betweener-connect/offline-30/termination-analysis-proposal.cjs",
+      "sha256": "cac1eaff48317464ca519013596ef2cbad9bb6cf28aeb69ae4b590ed0b6fabc3"
+    },
+    {
+      "path": "docs/betweener-connect/offline-30/termination-analysis.test.cjs",
+      "sha256": "fe426d98e312d62f3e865c219c8e35398cc39c52d781ad9e1e763bdb73288b16"
+    }
+  ],
+  "baseline": {
+    "workspaceEntries": 305,
+    "protectedEntries": 507,
+    "b3Sources": 73,
+    "b3Artifacts": 434
+  },
+  "limitations": [
+    "No provider-side trace or original Report18 run-start harness hash",
+    "No exact packet-generation or server-enforcement timestamp",
+    "B3 callEnded reason payload was not retained",
+    "Aggregate PC connected did not establish DTLS usability",
+    "Receiver quiescence is a bounded observation without causal or universal guarantee",
+    "Explicit-end effect is censored by prior timer-associated media loss",
+    "Proposal is not wired into any runner or production path"
+  ],
+  "officialSources": [
+    "https://www.w3.org/TR/webrtc-stats/",
+    "https://www.w3.org/TR/webrtc/",
+    "https://getstream.io/video/docs/javascript/ui-cookbook/session-timers/",
+    "https://getstream.io/video/docs/api/call-lifecycle/"
+  ],
+  "declarations": {
+    "CONNECT_B3_EVIDENCE_REVIEW": "PASS",
+    "CONNECT_TIMER_SFU_TERMINATION": "OBSERVED",
+    "CONNECT_TIMER_MEDIA_CESSATION": "OBSERVED_WINDOW",
+    "CONNECT_CLASSIFIER_DESIGN": "READY",
+    "CONNECT_HISTORICAL_B3_VERDICT": "INCONCLUSIVE",
+    "CONNECT_M2A_SECURITY_GATE": "BLOCKED",
+    "CONNECT_M2B_READY": "BLOCKED",
+    "PROVIDER_WRITES": "NONE",
+    "PRODUCTION_MODIFICATIONS": "NONE"
+  }
+}

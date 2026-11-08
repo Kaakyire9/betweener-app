@@ -6,19 +6,29 @@ import sys
 from pathlib import Path
 
 
-PROJECT_ID_FALLBACK = "jbyblhithbqwojhwlenv"
 SCHEMA = "public"
 OUT_FILE = Path("supabase/types/database.ts")
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def run_cmd(project_id: str, local: bool = False) -> str:
     # npm-installed CLIs are exposed as .cmd shims on Windows. Passing the
     # extension explicitly avoids CreateProcess WinError 2 from Python.
-    supabase_cli = "supabase.cmd" if os.name == "nt" else "supabase"
-    if os.name == "nt" and shutil.which(supabase_cli) is None:
-        cmd = ["npm.cmd", "exec", "--", "supabase"]
+    if os.name == "nt" and not local:
+        cmd = [
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(REPO_ROOT / "scripts" / "invoke-pinned-supabase.ps1"),
+        ]
     else:
-        cmd = [supabase_cli]
+        supabase_cli = "supabase.cmd" if os.name == "nt" else "supabase"
+        if os.name == "nt" and shutil.which(supabase_cli) is None:
+            cmd = ["npm.cmd", "exec", "--", "supabase"]
+        else:
+            cmd = [supabase_cli]
     cmd.extend(["gen", "types", "--lang", "typescript"])
     local_db_url = os.environ.get("SUPABASE_LOCAL_DB_URL") or "postgresql://postgres:postgres@127.0.0.1:54322/postgres"
     cmd.extend(["--db-url", local_db_url] if local else ["--project-id", project_id])
@@ -65,7 +75,14 @@ def main() -> int:
     parser.add_argument("--local", action="store_true", help="Generate from the running local Supabase database")
     args = parser.parse_args()
 
-    project_id = os.environ.get("SUPABASE_PROJECT_ID") or os.environ.get("SUPABASE_PROJECT_REF") or PROJECT_ID_FALLBACK
+    project_id = os.environ.get("SUPABASE_PROJECT_ID") or os.environ.get("SUPABASE_PROJECT_REF")
+    if not args.local and not project_id:
+        sys.stderr.write(
+            "Refusing implicit remote type generation. Set SUPABASE_PROJECT_REF "
+            "to the positively verified target project.\n"
+        )
+        return 2
+    project_id = project_id or "local"
     generated = run_cmd(project_id, local=args.local)
     source = "local database" if args.local else f"project {project_id}"
 

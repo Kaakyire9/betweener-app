@@ -38,6 +38,35 @@ type IntentRealtimeEntry = {
 };
 
 const intentRealtimeEntries = new Map<string, IntentRealtimeEntry>();
+const sharedIntentFetches = new Map<string, {
+  promise: Promise<{ data: IntentRequest[] | null; error: unknown }>;
+  reuseUntil: number;
+}>();
+
+const fetchIntentRequestsShared = (userId: string) => {
+  const existing = sharedIntentFetches.get(userId);
+  if (existing && Date.now() <= existing.reuseUntil) return existing.promise;
+
+  const promise = (async () => {
+    try {
+      await supabase.rpc('rpc_mark_expired_intent_requests');
+    } catch {}
+    const { data, error } = await supabase
+      .from('intent_requests')
+      .select('*')
+      .or(`recipient_id.eq.${userId},actor_id.eq.${userId}`)
+      .order('created_at', { ascending: false })
+      .limit(200);
+    return { data: (data ?? null) as IntentRequest[] | null, error };
+  })();
+
+  sharedIntentFetches.set(userId, { promise, reuseUntil: Date.now() + 1_000 });
+  void promise.finally(() => {
+    const current = sharedIntentFetches.get(userId);
+    if (current?.promise === promise) current.reuseUntil = Date.now() + 750;
+  });
+  return promise;
+};
 
 const notifyIntentRealtimeListeners = (entry: IntentRealtimeEntry) => {
   if (entry.notifyTimer) clearTimeout(entry.notifyTimer);
@@ -194,12 +223,21 @@ const applyIntentQueueOverlay = (
   sourceItems: IntentRequest[],
   userId: string,
   pending: OfflineMutation[],
-  failed: FailedOfflineMutation[],
+  _failed: FailedOfflineMutation[],
 ) => {
-  const base = sourceItems.filter((item) => !isOfflineIntentRow(item));
+  const base = sourceItems
+    .filter((item) => !isOfflineIntentRow(item))
+    .map((item) => {
+      if (!item.metadata || typeof item.metadata !== 'object' || !('offline_queue' in item.metadata)) {
+        return item;
+      }
+      const metadata = { ...item.metadata };
+      delete (metadata as Record<string, unknown>).offline_queue;
+      return { ...item, metadata };
+    });
   const byId = new Map(base.map((item) => [item.id, item]));
 
-  const applyDecision = (mutation: OfflineMutation | FailedOfflineMutation, state: 'queued' | 'failed') => {
+  const applyDecision = (mutation: OfflineMutation) => {
     if (mutation.kind !== 'intent_request_decision' && mutation.kind !== 'intent_request_cancel') return;
     const requestId = mutation.payload.requestId;
     const existing = byId.get(requestId);
@@ -211,22 +249,18 @@ const applyIntentQueueOverlay = (
         ...(existing.metadata ?? {}),
         offline_queue: {
           action,
-          state,
+          state: 'queued',
           queued_at: new Date(mutation.createdAt).toISOString(),
-          failure_reason: state === 'failed' ? (mutation as FailedOfflineMutation).failureReason : null,
+          failure_reason: null,
         },
       },
     });
   };
 
-  failed.forEach((mutation) => applyDecision(mutation, 'failed'));
-  pending.forEach((mutation) => applyDecision(mutation, 'queued'));
+  pending.forEach(applyDecision);
 
   const next = Array.from(byId.values());
   const createRows = [
-    ...failed
-      .filter((mutation): mutation is Extract<FailedOfflineMutation, { kind: 'intent_request_create' }> => mutation.kind === 'intent_request_create')
-      .map((mutation) => buildQueuedCreateRow(mutation, userId, 'failed')),
     ...pending
       .filter((mutation): mutation is Extract<OfflineMutation, { kind: 'intent_request_create' }> => mutation.kind === 'intent_request_create')
       .map((mutation) => buildQueuedCreateRow(mutation, userId, 'queued')),
@@ -342,17 +376,9 @@ export const useIntentRequests = (
     }
     setLoading(true);
     try {
-      // Best-effort cleanup; don't fail the screen if this errors.
-      try {
-        await supabase.rpc('rpc_mark_expired_intent_requests');
-      } catch {}
-
-      const { data, error } = await supabase
-        .from('intent_requests')
-        .select('*')
-        .or(`recipient_id.eq.${userId},actor_id.eq.${userId}`)
-        .order('created_at', { ascending: false })
-        .limit(200);
+      // The tab shell and Intent screen can refresh together. Coalesce that
+      // burst into one RPC/select without sharing mutable React state.
+      const { data, error } = await fetchIntentRequestsShared(userId);
 
       if (error) {
         setLastServerFetchFailedAt(Date.now());

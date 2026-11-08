@@ -105,6 +105,10 @@ test("circle Love Seat tap maps to Circle detail", () => {
     pathname: "/circles/[id]",
     params: {
       id: "circle-123",
+      openLoveSeatId: "seat-123",
+      openLoveSeatEvent: "invitation",
+      openLoveSeatDestination: "consent",
+      openLoveSeatRouteNonce: "love-seat-1:expo.notifications.actions.DEFAULT",
     },
   });
 });
@@ -140,6 +144,56 @@ test("custom deep route passthrough is preserved", () => {
   assert.deepEqual(route, {
     pathname: "/admin",
   });
+});
+
+test("Live campaign taps open the matching Live surface", () => {
+  assert.deepEqual(buildNotificationRoute({
+    actionIdentifier: "expo.notifications.actions.DEFAULT",
+    data: { type: "live_starting_soon", session_id: "live-123" },
+  }), {
+    pathname: "/live/event/[sessionId]",
+    params: { sessionId: "live-123" },
+  });
+  assert.deepEqual(buildNotificationRoute({
+    actionIdentifier: "expo.notifications.actions.DEFAULT",
+    data: { type: "live_now", session_id: "live-123" },
+  }), {
+    pathname: "/live/[sessionId]",
+    params: { sessionId: "live-123" },
+  });
+});
+
+test("Circle Live taps pass through the Circle membership gateway", () => {
+  assert.deepEqual(buildNotificationRoute({
+    actionIdentifier: "expo.notifications.actions.DEFAULT",
+    data: {
+      type: "circle_live_now",
+      circle_id: "circle-123",
+      session_id: "live-123",
+    },
+  }), {
+    pathname: "/circles/[id]",
+    params: { id: "circle-123", openLiveSessionId: "live-123" },
+  });
+
+  assert.deepEqual(buildNotificationRoute({
+    actionIdentifier: "expo.notifications.actions.DEFAULT",
+    data: {
+      type: "circle_gathering_reminder",
+      circle_id: "circle-123",
+      gathering_id: "gathering-123",
+    },
+  }), {
+    pathname: "/circles/[id]",
+    params: { id: "circle-123", tab: "gatherings" },
+  });
+});
+
+test("expired delegated Host access routes back to the Live lobby", () => {
+  assert.deepEqual(buildNotificationRoute({
+    actionIdentifier: "expo.notifications.actions.DEFAULT",
+    data: { type: "live_host_revoked", session_id: "live-123" },
+  }), { pathname: "/live" });
 });
 
 test("unknown action is ignored", () => {

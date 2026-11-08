@@ -170,10 +170,9 @@ const writePrunedImageCacheMap = async (map: ImageCacheMap) => {
   return pruned;
 };
 
-export const getOfflineImageUri = async (sourceKey?: string | null): Promise<string | null> => {
+const getOfflineImageUriByKey = async (sourceKey?: string | null): Promise<string | null> => {
   if (!sourceKey) return null;
   if (sourceKey.startsWith('file://')) return sourceKey;
-  sourceKey = await scopeOfflineCacheKey(sourceKey);
   const map = await readImageCacheMap();
   const cached = map[sourceKey];
   if (!cached?.localUri) return null;
@@ -206,6 +205,19 @@ export const getOfflineImageUri = async (sourceKey?: string | null): Promise<str
     await writeImageCacheMap(next);
   });
   return null;
+};
+
+export const getOfflineImageUri = async (sourceKey?: string | null): Promise<string | null> => {
+  if (!sourceKey) return null;
+  return getOfflineImageUriByKey(await scopeOfflineCacheKey(sourceKey));
+};
+
+export const getOfflineImageUriForOwner = async (
+  ownerUserId: string,
+  sourceKey?: string | null,
+): Promise<string | null> => {
+  if (!ownerUserId || !sourceKey) return null;
+  return getOfflineImageUriByKey(buildScopedOfflineCacheKey(ownerUserId, sourceKey));
 };
 
 export const removeOfflineImage = async (sourceKey?: string | null) => {
@@ -286,6 +298,15 @@ export const resolveOfflineImageUri = async (
   return downloaded ?? remoteUri;
 };
 
+export const resolveOfflineImageUriForOwner = async (
+  ownerUserId: string,
+  sourceKey: string,
+  remoteUri?: string | null,
+): Promise<string | null> => {
+  if (!ownerUserId) return null;
+  return resolveOfflineImageUri(buildScopedOfflineCacheKey(ownerUserId, sourceKey), remoteUri);
+};
+
 export const rememberOfflineImageUri = async (
   sourceKey: string,
   localUri?: string | null,
@@ -336,6 +357,23 @@ export const clearOfflineImagesForOwner = async (ownerUserId: string) => {
     const retained: ImageCacheMap = {};
     await Promise.all(Object.entries(entries).map(async ([key, entry]) => {
       if (!key.startsWith(ownerPrefix)) {
+        retained[key] = entry;
+        return;
+      }
+      imageDownloads.delete(key);
+      await FileSystem.deleteAsync(entry.localUri, { idempotent: true }).catch(() => undefined);
+    }));
+    await writeImageCacheMap(retained);
+  });
+};
+
+export const clearOfflineImagesMatchingSourceKey = async (sourceKeyFragment: string) => {
+  if (!sourceKeyFragment) return;
+  await queueImageManifestMutation(async () => {
+    const entries = await readImageCacheMap();
+    const retained: ImageCacheMap = {};
+    await Promise.all(Object.entries(entries).map(async ([key, entry]) => {
+      if (!key.includes(sourceKeyFragment) && !entry.sourceKey.includes(sourceKeyFragment)) {
         retained[key] = entry;
         return;
       }

@@ -1,0 +1,15 @@
+{
+  "imports": {
+    "@stream-io/node-sdk": "npm:@stream-io/node-sdk@0.7.63",
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2.110.7"
+  },
+  "compilerOptions": {
+    "lib": ["deno.window", "dom", "dom.iterable", "es2022"],
+    "strict": true
+  },
+  "lint": {
+    "rules": {
+      "tags": ["recommended"]
+    }
+  }
+}

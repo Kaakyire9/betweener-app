@@ -1,0 +1,33 @@
+{
+  "status": "PROPOSED_NOT_APPLIED",
+  "target": { "app_id": 1731011, "app_name": "Betweener Staging" },
+  "extends": "stream-staging-connect-video-security-proposal.json",
+  "reason": "The approved diagnostic call proved one participant's VIDEO RTP and screen-share denial, then audio answer application failed. A manual pause exceeded the unchanged 60-second backend connection deadline. That call and its three users were deleted. Both previous one-call approvals have been consumed.",
+  "maximum_additional_test_users": 3,
+  "maximum_additional_test_calls": 1,
+  "preconditions": [
+    "Verify exact staging app and unchanged approved type/role policy",
+    "Abort if any of the original three exact fixture users already exists",
+    "Use independent recipient VIDEO consent and authenticated acceptance in a disposable local database",
+    "Keep all shared feature flags, databases, deployments and provider definitions unchanged"
+  ],
+  "corrected_local_harness": [
+    "One publisher peer connection per SFU session, cumulative active track metadata and preserved video when audio is added",
+    "Rollback a denied screen offer and remove its sender without recycling the established media section",
+    "Local Chrome regression reproduces the former publisher replacement failure and verifies simultaneous received audio/video after the correction",
+    "Open both accepted participants concurrently and capture privileged-action denials before media diagnostics",
+    "Use actual provider worker reconciliation to ACTIVE before allowing a diagnostic pause; never extend deadlines or author consent/lifecycle evidence in the test",
+    "Bound media attempts to the same single call; create no replacement call"
+  ],
+  "security_assertions": [
+    "Both consenting ordinary users publish synthetic VIDEO and audio with SFU answers and connected RTP",
+    "The SFU explicitly denies screen sharing",
+    "Both identities retain exactly read/join/audio/video capabilities and ordinary app roles",
+    "Self role/grant/settings escalation, third-member addition, recording, transcription, broadcast and end are denied",
+    "Voice-only local grants deny VIDEO creation"
+  ],
+  "execution": "node scripts/test-connect-video-stream.cjs --run-approved-video-test --verification-run",
+  "excluded_changes": ["No type/role definition writes", "No global or Live changes", "No real user or existing call mutations", "No shared database writes or deployments", "No app calling feature enablement"],
+  "cleanup": "End/hard-delete the one exact call and only the three owned users; verify call 404/code 16, zero users, equal full call-type digests, and remove the disposable database/REST container",
+  "readiness": "M2A and M2B stay BLOCKED by the independently reproduced consent-revocation failure even if VIDEO validation passes"
+}

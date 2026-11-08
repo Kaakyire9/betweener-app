@@ -1,0 +1,15 @@
+{
+  "purpose": "Retired source retained byte-for-byte; not executable product code",
+  "files": [
+    {
+      "previousPath": "app/connect/voice-preview.tsx",
+      "archivePath": "docs/betweener-connect/archive/retired-code/voice-preview.tsx.txt",
+      "sha256": "0ccefc6d5d35785aa2aa6b358913a9be6f572e26f8c441740afb0b0fcac81d67"
+    },
+    {
+      "previousPath": "scripts/start-connect-device-safety.cjs",
+      "archivePath": "docs/betweener-connect/archive/retired-code/start-connect-device-safety.cjs.txt",
+      "sha256": "b2e13e71adfc34bd91f786b57fd7672779958f786974283dffb5e738eadc5a12"
+    }
+  ]
+}
