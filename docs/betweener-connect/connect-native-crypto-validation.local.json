@@ -1,0 +1,92 @@
+{
+  "scope": "PINNED_NATIVE_CRYPTO_VALIDATION_AND_MANUAL_MACOS_CI_PREPARATION",
+  "preparedAt": "2026-11-08T18:53:00.424391+00:00",
+  "nativeSource": "eeff9252f32a40d1671974c31c096ce9fa776130",
+  "nativePatchSha256": "789936f4866c5f05760715fba633ceb402a8089d50bc1674161d3afdfb8aa7d5",
+  "nativeValidation": {
+    "host": "Linux",
+    "architecture": "x86_64",
+    "tests": 79,
+    "passed": 79,
+    "failed": 0,
+    "originalExpectedFailures": 6,
+    "testBinarySha256": "3f99025d1851a94932e1af849dd1bbddbb2ff22cee723d1465ae7bd4fa87be94"
+  },
+  "toolingValidation": {
+    "guardTestsPassed": 5,
+    "guardTestsFailed": 0,
+    "lintPassed": true,
+    "pythonParsed": true,
+    "workflowYamlParsed": true,
+    "workflowShellParsed": true
+  },
+  "sourceManifestCorrection": "Original upstream test file includes one final blank line; exact source and patched hashes now preserve it. The native patch itself is unchanged.",
+  "macosWorkflow": {
+    "path": ".github/workflows/connect-native-crypto.yml",
+    "manualOnly": true,
+    "permissions": "contents:read",
+    "default": "native tests only",
+    "optionalUnsignedIosArtifact": true,
+    "dispatched": false,
+    "requiresDefaultBranchRegistration": true
+  },
+  "remaining": [
+    "Review and register the manual macOS workflow before dispatch.",
+    "Run macOS native crypto validation and reviewed mobile artifact builds.",
+    "Verify Android/iOS SDK API, codec and architecture compatibility before dependency integration.",
+    "Only then create staging development app builds and run the two-phone test with matching safety codes.",
+    "Observed unframed packet origin and provider revocation remain unverified. Strict native rejection does not promise to eliminate fault notifications."
+  ],
+  "files": [
+    {
+      "path": "native-patches/stream-webrtc-145.17.0/manifest.json",
+      "beforeSha256": "69b8b58a705e3223e8151d3e2c6425a6dda190a6e82d9b2b3fa334b177f645b7",
+      "afterSha256": "14bdc55d7d66c54964f6aeb90d777369757faaae77e55f879f805acab691b6e0"
+    },
+    {
+      "path": "native-patches/stream-webrtc-145.17.0/run-native-tests.py",
+      "beforeSha256": null,
+      "afterSha256": "4c4e907e08f7a53c95e44324874c46e579d71d6b0d4eb8ec6b0ae0879a6cc56b"
+    },
+    {
+      "path": "native-patches/stream-webrtc-145.17.0/ios-build.py",
+      "beforeSha256": null,
+      "afterSha256": "e1e734429cd6af0fcb4991d6c0b103da43893f35e8ab2cab0739aa5dde38577d"
+    },
+    {
+      "path": "native-patches/stream-webrtc-145.17.0/Dockerfile",
+      "beforeSha256": null,
+      "afterSha256": "a604334a9d05e9957dfd93085aa5cb693ebd65fea52e22e4fdb79eda5d958304"
+    },
+    {
+      "path": ".github/workflows/connect-native-crypto.yml",
+      "beforeSha256": null,
+      "afterSha256": "17c6a26746c2ce0c36aee10cb179160f48d753403a4394dacbe0c7317d249bf4"
+    },
+    {
+      "path": "__tests__/connect-native-build-guards.regression.test.cjs",
+      "beforeSha256": null,
+      "afterSha256": "63dfc95fe80e1448d7012a3a6a69f79faa549489b91a9e95579c4dc5eb2c4369"
+    },
+    {
+      "path": "native-patches/stream-webrtc-145.17.0/README.md",
+      "beforeSha256": "a15354a55875bb87ba08ccb2a3e4dd3a690f073facd399632847d58820f51682",
+      "afterSha256": "0ebbfabb139610267bad657fe6f39f5db0e5e13b3e420825bc873ee32c6015eb"
+    },
+    {
+      "path": "native-patches/stream-webrtc-145.17.0/linux-validation.json",
+      "beforeSha256": null,
+      "afterSha256": "9077d35d7b0f1569019cd79392b9c94edfe6ce4f5ca056d70f75e3f9062e4a53"
+    }
+  ],
+  "appSourceChanged": false,
+  "appBinariesChanged": false,
+  "callingGatesChanged": false,
+  "videoPublicationEnabled": false,
+  "supabaseCalls": 0,
+  "streamProviderCalls": 0,
+  "easBuilds": 0,
+  "otaPublications": 0,
+  "physicalDeviceValidation": "NOT_RUN",
+  "hangupFaultConfirmedFixedOnPhones": false
+}

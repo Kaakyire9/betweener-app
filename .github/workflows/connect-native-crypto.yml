@@ -1,0 +1,63 @@
+name: Connect native crypto validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_ios_artifact:
+        description: Build an unsigned iOS XCFramework after native crypto tests pass
+        type: boolean
+        default: false
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: connect-native-crypto-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  macos_crypto:
+    name: Pinned native crypto tests and optional iOS artifact
+    runs-on: macos-26
+    timeout-minutes: 180
+    env:
+      DEPOT_TOOLS_UPDATE: '0'
+      DEPOT_TOOLS_METRICS: '0'
+      NINJA_CORE_MULTIPLIER: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Run upstream native red and green tests
+        env:
+          BUILD_IOS: ${{ inputs.build_ios_artifact }}
+        run: |
+          set -euo pipefail
+          options=(
+            --work "$RUNNER_TEMP/connect-webrtc"
+            --input "$GITHUB_WORKSPACE/native-patches/stream-webrtc-145.17.0"
+            --results "$GITHUB_WORKSPACE/native-results"
+            --min-free-gb 12
+          )
+          if [[ "$BUILD_IOS" == "true" ]]; then options+=(--prepare-ios); fi
+          python3 native-patches/stream-webrtc-145.17.0/run-native-tests.py "${options[@]}"
+
+      - name: Build unsigned iOS framework
+        if: ${{ inputs.build_ios_artifact }}
+        run: |
+          set -euo pipefail
+          python3 native-patches/stream-webrtc-145.17.0/ios-build.py \
+            --work "$RUNNER_TEMP/connect-webrtc" \
+            --input "$GITHUB_WORKSPACE/native-patches/stream-webrtc-145.17.0" \
+            --results "$GITHUB_WORKSPACE/native-results"
+
+      - name: Retain native test results and optional framework
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: connect-native-crypto-${{ github.run_id }}
+          path: native-results/
+          if-no-files-found: warn
+          retention-days: 7

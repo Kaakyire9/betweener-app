@@ -1,0 +1,174 @@
+diff --git a/api/crypto/default_encryption_manager.cc b/api/crypto/default_encryption_manager.cc
+--- a/api/crypto/default_encryption_manager.cc
++++ b/api/crypto/default_encryption_manager.cc
+@@ -963,19 +963,18 @@
+       }
+       return false;
+     }
+-    // No trailer: forward as cleartext and tell the host (throttled).
+-    out.SetData(in.data.data(), in.data.size());
++    // Strict framed E2EE: nonempty unframed media must never reach a
++    // decoder. Notification throttling must not change the drop decision.
++    out.Clear();
++    *state = kUnencrypted;
+     if (ThrottleFire(&dec.cleartext_ms, now)) {
+-      *state = kUnencrypted;
+       E2eeEvent ev;
+       ev.type = E2eeEventType::kUnencryptedFrame;
+       ev.participant_id = std::string(in.participant_id);
+       ev.track_type = in.track_type;
+       Emit(std::move(ev));
+-    } else {
+-      *state = kOk;
+-    }
+-    return true;
++    }
++    return false;
+   }
+   uint32_t frame_counter = trailer->frame_counter;
+   std::array<uint8_t, 8> iv_prefix = trailer->iv_prefix;
+diff --git a/api/crypto/frame_crypto_transformer_unittest.cc b/api/crypto/frame_crypto_transformer_unittest.cc
+--- a/api/crypto/frame_crypto_transformer_unittest.cc
++++ b/api/crypto/frame_crypto_transformer_unittest.cc
+@@ -657,15 +657,16 @@
+   EXPECT_EQ(sink->last(), ParseHex("00000001 65 8884deadbe"));
+ }
+ 
+-TEST(FrameCryptorTransformer, FrameTrailerUnframedForwards) {
++TEST(FrameCryptorTransformer, FrameTrailerUnframedDrops) {
+   FrameCryptoFixture fx;
+-  auto frame = std::make_unique<FakeAudioFrame>();
+-  frame->payload = ParseHex("78aabbccdd");
+-  frame->direction = TransformableFrameInterface::Direction::kReceiver;
+-  PushFrame(fx.receiver, std::move(frame));
+-  fx.WaitIdle();
+-  EXPECT_EQ(fx.sink->count(), 1);
+-  EXPECT_EQ(fx.sink->last(), ParseHex("78aabbccdd"));
++  for (int i = 0; i < 3; ++i) {
++    auto frame = std::make_unique<FakeAudioFrame>();
++    frame->payload = ParseHex("78aabbccdd");
++    frame->direction = TransformableFrameInterface::Direction::kReceiver;
++    PushFrame(fx.receiver, std::move(frame));
++  }
++  fx.WaitIdle();
++  EXPECT_EQ(fx.sink->count(), 0);
+ }
+ 
+ TEST(FrameCryptorTransformer, FrameTrailerDisabledForwardsClear) {
+@@ -1435,10 +1436,8 @@
+   EXPECT_TRUE(saw_stalled);
+ }
+ 
+-TEST(DefaultEncryptionManager, DecodeOversizeClearBytesForwardsAsUnencrypted) {
+-  // JS: readTrailer null + readFramingVersion === 1 → unencrypted(), enqueue.
+-  // A v1 magic tail with an impossible clearBytes is "not a framed frame",
+-  // not "corrupt ciphertext we should drop".
++TEST(DefaultEncryptionManager, DecodeOversizeClearBytesDropsAsUnencrypted) {
++  // Malformed v1 framing must not be treated as playable plaintext.
+   auto manager = make_ref_counted<DefaultEncryptionManager>();
+   auto observer = make_ref_counted<RecordingManagerObserver>();
+   manager->SetObserver(observer);
+@@ -1447,14 +1446,59 @@
+   auto in = MakeAudioInput("p", payload);
+   Buffer out;
+   FrameCryptionState state = kNew;
+-  EXPECT_TRUE(manager->Decrypt(in, out, &state));
++  EXPECT_FALSE(manager->Decrypt(in, out, &state));
+   EXPECT_EQ(state, kUnencrypted);
+-  EXPECT_EQ(std::vector<uint8_t>(out.begin(), out.end()), payload);
++  EXPECT_EQ(out.size(), 0u);
+   auto events = observer->Take();
+   EXPECT_TRUE(
+       HasEvent(events, DefaultEncryptionManager::E2eeEventType::kUnencryptedFrame));
+   EXPECT_FALSE(HasEvent(
+       events, DefaultEncryptionManager::E2eeEventType::kUnsupportedVersion));
++}
++
++TEST(DefaultEncryptionManager, UnframedDropsEveryTrackBeforeAndAfterKeySetup) {
++  using Track = FrameCryptorTransformer::TrackType;
++  for (auto track : {Track::kAudio, Track::kVideo, Track::kScreenshare,
++                     Track::kScreenshareAudio}) {
++    auto manager = make_ref_counted<DefaultEncryptionManager>();
++    auto observer = make_ref_counted<RecordingManagerObserver>();
++    manager->SetObserver(observer);
++    auto payload = ParseHex("78aabbccdd");
++    auto in = track == Track::kAudio || track == Track::kScreenshareAudio
++                  ? MakeAudioInput("p", payload, 1, track)
++                  : MakeVideoInput("p", payload, kVideoCodecVP8, true, 2, track);
++    for (bool keyed : {false, true}) {
++      if (keyed) {
++        ASSERT_TRUE(manager->SetKeyWithIvPrefix("p", 0, kJsKey, kJsPrefix));
++      }
++      for (int attempt = 0; attempt < 3; ++attempt) {
++        Buffer out(payload.data(), payload.size());
++        FrameCryptionState state = kOk;
++        EXPECT_FALSE(manager->Decrypt(in, out, &state));
++        EXPECT_EQ(out.size(), 0u);
++        EXPECT_EQ(state, kUnencrypted);
++      }
++    }
++    EXPECT_TRUE(HasEvent(observer->Take(),
++                        DefaultEncryptionManager::E2eeEventType::kUnencryptedFrame));
++  }
++}
++
++TEST(DefaultEncryptionManager, StrictUnframedDropDoesNotPoisonAes256RoundTrip) {
++  auto manager = make_ref_counted<DefaultEncryptionManager>(
++      DefaultEncryptionManager::Cipher::kAes256Gcm);
++  std::vector<uint8_t> key(32, 0x42);
++  ASSERT_TRUE(manager->SetKeyWithIvPrefix("p", 0, key, kJsPrefix));
++  auto payload = ParseHex("78aabbccdd");
++  auto in = MakeAudioInput("p", payload);
++  Buffer out;
++  FrameCryptionState state = kNew;
++  EXPECT_FALSE(manager->Decrypt(in, out, &state));
++  Buffer encrypted;
++  ASSERT_TRUE(manager->Encrypt(in, encrypted, &state));
++  in.data = encrypted;
++  ASSERT_TRUE(manager->Decrypt(in, out, &state));
++  EXPECT_EQ(std::vector<uint8_t>(out.begin(), out.end()), payload);
+ }
+ 
+ TEST(DefaultEncryptionManager, DecodeFutureVersionDropsNotAsUnencrypted) {
+@@ -1500,7 +1544,7 @@
+       events, DefaultEncryptionManager::E2eeEventType::kUnencryptedFrame));
+ }
+ 
+-TEST(DefaultEncryptionManager, DecodeBadMagicForwardsAsUnencrypted) {
++TEST(DefaultEncryptionManager, DecodeBadMagicDropsAsUnencrypted) {
+   auto manager = make_ref_counted<DefaultEncryptionManager>();
+   auto observer = make_ref_counted<RecordingManagerObserver>();
+   manager->SetObserver(observer);
+@@ -1509,9 +1553,9 @@
+   auto in = MakeAudioInput("p", payload);
+   Buffer out;
+   FrameCryptionState state = kNew;
+-  EXPECT_TRUE(manager->Decrypt(in, out, &state));
++  EXPECT_FALSE(manager->Decrypt(in, out, &state));
+   EXPECT_EQ(state, kUnencrypted);
+-  EXPECT_EQ(std::vector<uint8_t>(out.begin(), out.end()), payload);
++  EXPECT_EQ(out.size(), 0u);
+   auto events = observer->Take();
+   EXPECT_TRUE(
+       HasEvent(events, DefaultEncryptionManager::E2eeEventType::kUnencryptedFrame));
+@@ -1519,7 +1563,7 @@
+       events, DefaultEncryptionManager::E2eeEventType::kUnsupportedVersion));
+ }
+ 
+-TEST(DefaultEncryptionManager, DecodeTooShortForwardsAsUnencrypted) {
++TEST(DefaultEncryptionManager, DecodeTooShortDropsAsUnencrypted) {
+   auto manager = make_ref_counted<DefaultEncryptionManager>();
+   auto observer = make_ref_counted<RecordingManagerObserver>();
+   manager->SetObserver(observer);
+@@ -1527,9 +1571,9 @@
+   auto in = MakeAudioInput("p", payload);
+   Buffer out;
+   FrameCryptionState state = kNew;
+-  EXPECT_TRUE(manager->Decrypt(in, out, &state));
++  EXPECT_FALSE(manager->Decrypt(in, out, &state));
+   EXPECT_EQ(state, kUnencrypted);
+-  EXPECT_EQ(std::vector<uint8_t>(out.begin(), out.end()), payload);
++  EXPECT_EQ(out.size(), 0u);
+   EXPECT_TRUE(HasEvent(
+       observer->Take(),
+       DefaultEncryptionManager::E2eeEventType::kUnencryptedFrame));
