@@ -1,0 +1,167 @@
+{
+  "schemaVersion": 1,
+  "scope": "LOCAL_VIDEO_UI_AND_LAUNCH_POLICY_NO_HOSTED_DEPLOYMENT",
+  "authorisation": "Owner requested implementation of the video mockups, matched-only launch and camera choice on explicit Start or Answer",
+  "frozenPackage": {
+    "path": "docs/betweener-connect/connect-secure-calling.proposal.json",
+    "sha256": "37d133fb060af0eaed44f4526d5d60fe4c08f3065fd3d2ede6d2f63d573f6c72"
+  },
+  "baseLocalChange": {
+    "path": "docs/betweener-connect/connect-audio-call-ui.local.json",
+    "sha256": "0492d8c55b0bcea19a3e810e8763636798b0c0d0bcec3229444252cf3a2daf0d"
+  },
+  "files": [
+    {
+      "path": "features/connect/application/native-call-coordinator.ts",
+      "beforeSha256": "a9fd218744412818eb5e9fbb9f26d2be0292b996b154205a151c25b1f29d9235",
+      "beforeSnapshot": "tmp/connect-secure-calling/video-call-ui/before/features/connect/application/native-call-coordinator.ts",
+      "afterSha256": "5d58c101349887842ef306749427a568b1fdb43ba923e50a0fa83231e42404dc"
+    },
+    {
+      "path": "features/connect/components/ConnectCallEntry.tsx",
+      "beforeSha256": "941a716a37093debdaa86ad869587e9c56f351706c8d7b39f2e2f69728eaa63e",
+      "beforeSnapshot": "tmp/connect-secure-calling/video-call-ui/before/features/connect/components/ConnectCallEntry.tsx",
+      "afterSha256": "3a73297823e28fb878e154e36561719c249788a6cab71f7902212ef094002561"
+    },
+    {
+      "path": "features/connect/components/ConnectCallRoute.tsx",
+      "beforeSha256": "eb0ee5cfa96e73232f2990a850a84bf92282ea8d1effe6800b6faab0cdfa8e6e",
+      "beforeSnapshot": "tmp/connect-secure-calling/video-call-ui/before/features/connect/components/ConnectCallRoute.tsx",
+      "afterSha256": "63d958b18239b22152fef3928e7cbaec2bcdceab61717e970009a743568a9419"
+    },
+    {
+      "path": "features/connect/components/ConnectVoiceSession.tsx",
+      "beforeSha256": "a198f9ddfabb15b766e0e61f282b1e43028ae9d179609872ba73f01597a71ccb",
+      "beforeSnapshot": "tmp/connect-secure-calling/video-call-ui/before/features/connect/components/ConnectVoiceSession.tsx",
+      "afterSha256": "be64a7c435a93d34c5f9d20d3aa667697eaab155817b041c819d53116281a409"
+    },
+    {
+      "path": "features/connect/components/ConnectVoiceSetup.tsx",
+      "beforeSha256": "09f9adb03334c9bf67753b7e25a764629d47c708c1816d736b984e2e2033dc14",
+      "beforeSnapshot": "tmp/connect-secure-calling/video-call-ui/before/features/connect/components/ConnectVoiceSetup.tsx",
+      "afterSha256": "e743623a2a527e21d4e33166950b9d200bcba8bf8c4e6ea30220a963e2cd611a"
+    },
+    {
+      "path": "features/connect/components/IntentCallingConsent.tsx",
+      "beforeSha256": "63cab755a0c8c06d13ec258cb4c6ef8228cb6fa020bdf713aef2c71d72eba2e5",
+      "beforeSnapshot": "tmp/connect-secure-calling/video-call-ui/before/features/connect/components/IntentCallingConsent.tsx",
+      "afterSha256": "a475cec0265c4d3c06753f29e3b16456511eb0dcd4920f5701a03bb96b72d3d6"
+    },
+    {
+      "path": "features/connect/components/VideoCallScreen.tsx",
+      "beforeSha256": "f86f48626d0c3f1e13a0de366b52071f57f73d2526794d256afdb0fcfb6a8662",
+      "beforeSnapshot": "tmp/connect-secure-calling/video-call-ui/before/features/connect/components/VideoCallScreen.tsx",
+      "afterSha256": "7cddcdc727dca1a312bfba5eacfe26191aa952e8e16d36d7cfa208ea081ca257"
+    },
+    {
+      "path": "features/connect/components/VideoCallStage.tsx",
+      "beforeSha256": "ad238159d87e91895bd3d5b7a330c3a7049c0e92475b15c74809a01319c07545",
+      "beforeSnapshot": "tmp/connect-secure-calling/video-call-ui/before/features/connect/components/VideoCallStage.tsx",
+      "afterSha256": "225b153122cbc99524f442f32f627858921d607fe1116e2f7bbefee5e3434f8b"
+    },
+    {
+      "path": "features/connect/components/VideoIncomingControls.tsx",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "b42dd03a3e0cd74ce26f331378218b8a5cf60170ff61c2ca22fa58aa2c146a80"
+    },
+    {
+      "path": "features/connect/components/VoiceCallLobby.tsx",
+      "beforeSha256": "d79322b22e99894a32d9dd338d731201b17229b8d16342d6cc53f2c2d6f01e48",
+      "beforeSnapshot": "tmp/connect-secure-calling/video-call-ui/before/features/connect/components/VoiceCallLobby.tsx",
+      "afterSha256": "cd02f9081a49fe16040c23955331f815968c7799524a0e04164ae36383160a2e"
+    },
+    {
+      "path": "features/connect/config/connect-feature-flags.ts",
+      "beforeSha256": "ab097e753d56b6ca1065d9f253ba2c2903e15153e5e2e908d4096f82cb5a6d94",
+      "beforeSnapshot": "tmp/connect-secure-calling/video-call-ui/before/features/connect/config/connect-feature-flags.ts",
+      "afterSha256": "84ea22d065affa34fe47ace72cdb2178c30d64e8ad61aa912ad633d2d52a35ef"
+    },
+    {
+      "path": "features/connect/config/connect-runtime-policy.ts",
+      "beforeSha256": "caff9f4e791b80f17344f1a791f70caf1e50dcbad6e6439d9da4886b893e0da9",
+      "beforeSnapshot": "tmp/connect-secure-calling/video-call-ui/before/features/connect/config/connect-runtime-policy.ts",
+      "afterSha256": "fe32bf3ab4f7591da667fb57de8f90f75ea03c151aef86a57d91f83c4cb598ef"
+    },
+    {
+      "path": "features/connect/data/authenticated-connect-services.ts",
+      "beforeSha256": "1e45a2e86a744cc19aaed50af42a4fa56c51d96ea8e0b17bc89d840f11c9de95",
+      "beforeSnapshot": "tmp/connect-secure-calling/video-call-ui/before/features/connect/data/authenticated-connect-services.ts",
+      "afterSha256": "b5a6ca6dc94b46abe6db3b640b63b76b44001a3b2c447bc922797fd356ecabdd"
+    },
+    {
+      "path": "features/connect/domain/calling-launch-policy.ts",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "2c1cc27cb96eef5e769c973d4a48729cd67115b70848d60ba526c333a363746d"
+    },
+    {
+      "path": "features/connect/media/native-private-camera-preview.ts",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "392451c6b8daa40d9a82f02e988f019fae3454af448ea96c7551318933561811"
+    },
+    {
+      "path": "features/connect/media/native-safety-composition.ts",
+      "beforeSha256": "8aaeae16794fc72fe588660383db2b29671949ef61cb2757abdc61148fb90fc6",
+      "beforeSnapshot": "tmp/connect-secure-calling/video-call-ui/before/features/connect/media/native-safety-composition.ts",
+      "afterSha256": "4d054075f484989cd0f0fde2c7ddd9566430aeabb1554945486fe9d7f19b56cd"
+    },
+    {
+      "path": "features/connect/video/private-camera-preview.ts",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "61cf63e1bd1adce540e7a3f69321650c67f41a46e433c86d2d0eaa8b9bac14b7"
+    },
+    {
+      "path": "features/connect/video/video-types.ts",
+      "beforeSha256": "531284f6699c044c53fbad163fd916c21f972e8b2d62b909634c8d9da35663fc",
+      "beforeSnapshot": "tmp/connect-secure-calling/video-call-ui/before/features/connect/video/video-types.ts",
+      "afterSha256": "7bf7f063516b3d76ba9960de2f49a988678f53c56a61b6ba92308094cd06b403"
+    },
+    {
+      "path": "features/connect/voice/voice-controller.ts",
+      "beforeSha256": "75d8a950126bcfabff166f3d70b53b04235946c42efdfac8b747f5606ab52f09",
+      "beforeSnapshot": "tmp/connect-secure-calling/video-call-ui/before/features/connect/voice/voice-controller.ts",
+      "afterSha256": "dab0004b2b3ea786eeab74901d014eefc41d273c7f20089299e6802ed881b18a"
+    },
+    {
+      "path": "features/connect/voice/voice-types.ts",
+      "beforeSha256": "948cc720473b6fca669e8948efd2961dde32b2d41fd87b59a256f6d427b1df5a",
+      "beforeSnapshot": "tmp/connect-secure-calling/video-call-ui/before/features/connect/voice/voice-types.ts",
+      "afterSha256": "2719df6660b77997fceab9caab79a62067436884c7a6263e45256763927413a9"
+    }
+  ],
+  "backendChanges": [
+    {
+      "path": "supabase/migrations/20261105002952_connect_matched_only_launch.sql",
+      "sha256": "0162371c5532b02f07e197d95b294e16aa044de276bde3b04bf061aa98993802",
+      "deployed": false
+    }
+  ],
+  "hostedChanges": 0,
+  "providerCalls": 0,
+  "dependencyChanges": 0,
+  "behavior": {
+    "matchedOnly": true,
+    "sharedChatWallpaper": true,
+    "privateCallerPreview": true,
+    "previewAudioRequested": false,
+    "previewCreatesSdkClient": false,
+    "previewRequiresExclusiveNativeLease": true,
+    "incomingSelectionStartsCapture": false,
+    "inAppAnswerUsesSelectedCameraMode": true,
+    "nativeGenericAnswerCameraOn": false,
+    "userCameraOffChoicePreserved": true,
+    "productionRuntimeEnabled": false,
+    "fixedPrimaryActionDock": true,
+    "groupCallingAdded": false,
+    "automaticRedialAdded": false
+  },
+  "validation": {
+    "deviceValidation": "NOT_RUN",
+    "nativeActivationIssue": "UNCHANGED_PENDING_OWNER_RETEST",
+    "securityReleaseApproval": false,
+    "sharedDatabaseModified": false
+  }
+}

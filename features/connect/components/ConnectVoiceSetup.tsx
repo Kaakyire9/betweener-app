@@ -47,7 +47,7 @@ export function ConnectVoiceSetup({ product, peerId, matched, onEligibility, med
           if (mounted.current && !voice) onEligibility(false);
         }, false);
       }} /></View>
-    <Text style={styles.note}>{media === 'video' ? 'Video invitations have separate permission. Answer with your camera off, then choose whether to turn it on.' : 'You choose whether to answer each call. Your camera stays off.'}</Text>
+    <Text style={styles.note}>{media === 'video' ? 'Video calls are available between matches. Choose your camera mode before answering.' : 'You choose whether to answer each call. Your camera stays off.'}</Text>
     {matched && verified === false && <>
       <Text style={styles.text}>{waiting ? 'Waiting for the other person to confirm.' : 'Both of you need to confirm this connection before your first voice call.'}</Text>
       {!waiting && <Pressable accessibilityRole="button" accessibilityLabel="Confirm this connection for calling" disabled={busy}

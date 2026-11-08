@@ -1,34 +1,44 @@
-import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Colors } from '@/constants/theme';
 import type { VoicePeer } from '../voice/voice-types';
 import type { ConnectMedia } from '../domain/connect';
+import { CallPrivacyNotice } from './CallPrivacyNotice';
+import { AudioCallCanvas } from './AudioCallCanvas';
+import { AudioCallBrand, AudioCallIdentity } from './AudioCallIdentity';
+import { AudioCallPortrait } from './AudioCallPortrait';
 
-export function VoiceCallLobby({ peer, eligible, pending, error, setup, onStart, onClose, media = 'voice' }: {
-  media?: ConnectMedia;
+export function VoiceCallLobby({ peer, eligible, pending, error, setup, onStart, onClose, media = 'voice', encryptionRequired = false }: {
+  encryptionRequired?: boolean; media?: ConnectMedia;
   peer: VoicePeer | null; eligible: boolean; pending: boolean; error: string | null; setup?: React.ReactNode; onStart(): void; onClose(): void;
 }) {
-  return <SafeAreaView style={styles.root}><ScrollView contentContainerStyle={styles.content}>
-    <Text style={styles.brand}>BETWEENER CONNECT</Text>
-    <View style={styles.identity}>{peer?.avatar ? <Image source={{ uri: peer.avatar }} style={styles.avatar} contentFit="cover" /> : <View style={[styles.avatar, styles.initial]}><Text style={styles.letter}>{peer?.name.charAt(0) || 'B'}</Text></View>}
-      <Text accessibilityRole="header" style={styles.name}>{peer?.name || 'Your connection'}</Text>
-      <Text style={styles.copy}>Make space for a real conversation.</Text>
-      <Text accessibilityLiveRegion="polite" style={styles.note}>{pending ? `Checking ${media} calling permission…` : eligible ? 'They’ll choose whether to answer. Your camera stays off.' : error || `${media === 'video' ? 'Video' : 'Voice'} calling is not available for this connection.`}</Text>
-    </View>
-    {setup}
-    <Pressable accessibilityRole="button" accessibilityLabel={`Start ${media} call`} accessibilityState={{ disabled: !eligible || pending }} disabled={!eligible || pending} onPress={onStart} style={[styles.start, (!eligible || pending) && styles.disabled]}>
-      <Ionicons name={media === 'video' ? 'videocam' : 'call'} size={23} color={Colors.dark.text} /><Text style={styles.action}>{media === 'video' ? 'Video call' : 'Voice call'}</Text>
-    </Pressable>
-    <Pressable accessibilityRole="button" accessibilityLabel={`Cancel ${media} invitation`} onPress={onClose} style={styles.back}><Text style={styles.note}>Not now</Text></Pressable>
-  </ScrollView></SafeAreaView>;
+  const video = media === 'video';
+  return <AudioCallCanvas><SafeAreaView style={styles.fill}>
+    <ScrollView contentContainerStyle={styles.content}>
+      <AudioCallBrand />
+      <AudioCallIdentity name={peer?.name || 'Your connection'} status={pending ? 'Preparing your invitation…' : video ? 'Video call' : 'Voice call'} />
+      <AudioCallPortrait key={peer?.profileId} peer={peer} phase="IDLE" screenActive={false} motionAllowed={false} />
+      <Text accessibilityLiveRegion="polite" style={styles.note}>{pending ? `Checking ${media} calling permission…` : eligible
+        ? video ? 'Your camera opens when you start. Only you can see the preview until they answer.' : 'They’ll choose whether to answer. Your camera stays off.'
+        : error || `${video ? 'Video' : 'Voice'} calling is not available for this connection.`}</Text>
+      {setup}
+      <CallPrivacyNotice required={encryptionRequired} />
+    </ScrollView>
+    <View style={styles.dock}><View style={styles.tray}>
+      <Pressable accessibilityRole="button" accessibilityLabel={`Start ${media} call`} accessibilityState={{ disabled: !eligible || pending }}
+        disabled={!eligible || pending} onPress={onStart} style={[styles.start, (!eligible || pending) && styles.disabled]}>
+        <Ionicons accessible={false} name={video ? 'videocam' : 'call'} size={23} color="#E3F0E7" /><Text style={styles.action}>{video ? 'Video call' : 'Voice call'}</Text>
+      </Pressable>
+      <Pressable accessibilityRole="button" accessibilityLabel={`Cancel ${media} invitation`} onPress={onClose} style={styles.back}><Text style={styles.note}>Not now</Text></Pressable>
+    </View></View>
+  </SafeAreaView></AudioCallCanvas>;
 }
-const styles = StyleSheet.create({ root: { flex: 1, backgroundColor: Colors.dark.background }, content: { flexGrow: 1, padding: 30, alignItems: 'center', gap: 20 },
-  brand: { color: Colors.dark.secondary, fontSize: 12, letterSpacing: 2, fontFamily: 'Manrope_600SemiBold', marginTop: 15 }, identity: { flexGrow: 1, minHeight: 240, justifyContent: 'center', alignItems: 'center', gap: 18 },
-  avatar: { width: 130, height: 130, borderRadius: 65, borderWidth: 2, borderColor: Colors.dark.accent }, initial: { backgroundColor: Colors.dark.backgroundSubtle, alignItems: 'center', justifyContent: 'center' },
-  letter: { fontSize: 46, color: Colors.dark.secondary, fontFamily: 'Manrope_600SemiBold' }, name: { fontSize: 30, color: Colors.dark.text, fontFamily: 'Manrope_600SemiBold', textAlign: 'center' },
-  copy: { fontSize: 17, color: Colors.dark.text, textAlign: 'center' }, note: { color: Colors.dark.textMuted, lineHeight: 22, textAlign: 'center', maxWidth: 320 },
-  start: { minHeight: 60, width: '100%', maxWidth: 340, borderRadius: 30, backgroundColor: Colors.dark.tint, flexDirection: 'row', gap: 12, alignItems: 'center', justifyContent: 'center' },
-  action: { color: Colors.dark.text, fontSize: 17, fontFamily: 'Manrope_600SemiBold' }, back: { minHeight: 48, justifyContent: 'center' }, disabled: { opacity: 0.4 } });
+const styles = StyleSheet.create({
+  fill: { flex: 1 }, content: { flexGrow: 1, width: '100%', maxWidth: 540, alignSelf: 'center', paddingHorizontal: 24, paddingVertical: 18, alignItems: 'center', justifyContent: 'space-between', gap: 18 },
+  dock: { width: '100%', maxWidth: 540, alignSelf: 'center', paddingHorizontal: 22, paddingBottom: 16, paddingTop: 8 },
+  tray: { width: '100%', alignItems: 'center', borderRadius: 32, padding: 16, borderWidth: 1, borderColor: 'rgba(130,217,212,0.30)', backgroundColor: 'rgba(24,60,64,0.72)' },
+  note: { color: '#AFC9C2', fontSize: 13, lineHeight: 21, textAlign: 'center' },
+  start: { minHeight: 58, width: '100%', borderRadius: 28, backgroundColor: '#008B8B', flexDirection: 'row', gap: 12, alignItems: 'center', justifyContent: 'center' },
+  action: { color: '#E3F0E7', fontSize: 16, fontFamily: 'Manrope_600SemiBold' }, back: { minHeight: 44, justifyContent: 'center' }, disabled: { opacity: 0.4 },
+});

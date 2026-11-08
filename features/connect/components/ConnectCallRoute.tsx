@@ -12,6 +12,8 @@ import type { ConnectProduct } from '@/features/connect/application/product-coor
 import type { VoicePeer } from '@/features/connect/voice/voice-types';
 import { terminalStates, type ConnectMedia } from '@/features/connect/domain/connect';
 import { readNotificationBinding, notificationMatchesCall, type ConnectNotificationBinding } from '@/features/connect/domain/notification-binding';
+import { useJournalStore } from '@/features/connect/journal/journal-context';
+import { journalContinuation } from '@/features/connect/journal/journal-continuity';
 
 export function ConnectCallRoute({ media = 'voice' }: { media?: ConnectMedia }) {
   const context = useConnectProduct(), params = useLocalSearchParams(), router = useRouter();
@@ -20,11 +22,13 @@ export function ConnectCallRoute({ media = 'voice' }: { media?: ConnectMedia }) 
   const close = () => router.canGoBack() ? router.back() : router.replace('/(tabs)/intent');
   if (!context.ui || context.status !== 'ready' || !context.product) return <ConnectStatusScreen message={context.status === 'loading' ? 'Preparing your connection…' : undefined} onClose={close} />;
   if (media === 'video' && context.product.flags?.videoCalling !== true) return <ConnectStatusScreen title="Video calling is not available yet" message="Your camera stays off. Video needs separate approval." onClose={close} />;
+  if (launch?.kind === 'outgoing' && launch.authorization !== 'matched') return <ConnectStatusScreen title="Calling is available between matches" message="You can still connect through a chat Intent." onClose={close} />;
   if (!launch) return <ConnectStatusScreen title="Invitation unavailable" message="Open a current call invitation or start from your conversation." onClose={close} />;
   if (notification === 'invalid' || (notification && notification.recipientUserId !== context.product.accountUserId)) return <ConnectStatusScreen title="Invitation unavailable" message="This invitation belongs to a different account or session." onClose={close} />;
   return <BoundVoiceRoute key={`${media}:${context.product.selfProfileId}:${context.product.authGeneration}:${JSON.stringify(launch)}:${JSON.stringify(notification)}`} media={media} product={context.product} launch={launch} notification={notification} onClose={close} />;
 }
 function BoundVoiceRoute({ product, launch, notification, onClose, media }: { media: ConnectMedia; product: ConnectProduct; launch: ConnectLaunch; notification: ConnectNotificationBinding | null; onClose(): void }) {
+  const journal = useJournalStore(), router = useRouter();
   const controller = product.controller;
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const [lobby, setLobby] = useState<{ peer: VoicePeer | null; eligible: boolean; pending: boolean; error: string | null }>({ peer: null, eligible: false, pending: true, error: null });
@@ -85,17 +89,20 @@ function BoundVoiceRoute({ product, launch, notification, onClose, media }: { me
     }
   }, [controller, state.incoming, state.peer?.profileId, state.session?.id]);
   const focusLeases = useRef(0);
+  const [screenVisible, setScreenVisible] = useState(false);
   useFocusEffect(useCallback(() => {
+    setScreenVisible(true);
+    controller.restore();
     ++focusLeases.current;
-    return () => { --focusLeases.current; queueMicrotask(() => { if (focusLeases.current === 0) cleanup.current?.(); }); };
-  }, []));
+    return () => { setScreenVisible(false); --focusLeases.current; queueMicrotask(() => { if (focusLeases.current === 0) cleanup.current?.(); }); };
+  }, [controller]));
   const incomingForPeer = launch.kind === 'outgoing' && !!state.session && state.incoming && state.peer?.profileId === launch.peerId;
   const bound = launch.kind === 'call' ? state.session?.id === launch.callId || !state.session
     : (started.current || incomingForPeer) && state.peer?.profileId === launch.peerId;
   if (notificationInvalid) return <ConnectStatusScreen title="Invitation unavailable" message="Refresh your call history when you are back online. No invitation was accepted." onClose={onClose} />;
   if (notificationPending && !state.session) return <ConnectStatusScreen message="Checking this invitation…" onClose={onClose} />;
   if (state.session && !terminalStates.includes(state.session.state) && !bound) return <ConnectStatusScreen title="Another call is open" message="Finish the current call before opening another invitation." onClose={onClose} />;
-  if (launch.kind === 'outgoing' && !started.current && !incomingForPeer) return <VoiceCallLobby media={media} {...lobby} onClose={onClose}
+  if (launch.kind === 'outgoing' && !started.current && !incomingForPeer) return <VoiceCallLobby media={media} encryptionRequired={product.flags.encryptedCalls === true} {...lobby} onClose={onClose}
     setup={<ConnectVoiceSetup media={media} product={product} peerId={launch.peerId} matched={launch.authorization === 'matched'} onEligibility={updateEligibility} />} onStart={() => {
     if (!lobby.eligible || !lobby.peer || lobby.pending) return;
     const existing = controller.getSnapshot().session;
@@ -105,9 +112,14 @@ function BoundVoiceRoute({ product, launch, notification, onClose, media }: { me
     cleanup.current = controller.captureNavigationCleanup();
   }} />;
   if (!bound) return <ConnectStatusScreen title="Another call is open" message="Finish the current call before opening another invitation." onClose={onClose} />;
-  return <ConnectVoiceSession ownsController={false} controller={controller} flags={product.flags ?? connectFeatureFlags} onWithdrawCallingConsent={product.withdrawCallingConsent} onOpenSettings={() => { void Linking.openSettings(); }} onClose={() => {
+  return <ConnectVoiceSession visible={screenVisible} ownsController={false} controller={controller} flags={product.flags ?? connectFeatureFlags} onWithdrawCallingConsent={product.withdrawCallingConsent} onOpenSettings={() => { void Linking.openSettings(); }}
+    onMinimize={() => { void controller.minimize().then(ok => { if (ok) { cleanup.current = null; onClose(); } }); }} onClose={() => {
+    const ended = controller.getSnapshot().session;
+    const peer = controller.getSnapshot().peer;
+    const target = journalContinuation(ended, peer ? journal?.peerForProfile(peer.profileId) : undefined, controller.canDismissCompletedCall());
     if (!controller.dismissCompletedCall()) return;
     cleanup.current = null;
-    onClose();
+    journal?.invalidate();
+    if (target && journal?.current()) router.dismissTo(target); else onClose();
   }} />;
 }

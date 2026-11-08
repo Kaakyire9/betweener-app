@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Colors } from '@/constants/theme';
 import type { VoiceViewState } from '../voice/voice-types';
@@ -7,6 +7,9 @@ import { voiceSafetyStatus } from '../voice/voice-safety-status';
 import { WithdrawCallingConsent } from './WithdrawCallingConsent';
 
 export interface VoiceSafetyActions {
+  verifyIdentity?(code: string): Promise<void>;
+  reviewIdentity?(): Promise<string>;
+  replaceIdentity?(code: string): Promise<void>;
   endAndBlock(): void;
   checkStatus(): void;
   withdrawConsent?(): Promise<void>;
@@ -16,9 +19,24 @@ export function VoiceSafetyPanel({ state, actions, flags = connectFeatureFlags }
 }) {
   const [confirmation, setConfirmation] = useState<string | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [identityReview, setIdentityReview] = useState<string | null>(null), [identityBusy,setIdentityBusy] = useState(false);
+  const [identityError,setIdentityError] = useState<string | null>(null);
   const call = state.session;
   const binding = call ? JSON.stringify([call.id, call.created_at, call.caller_profile_id, call.recipient_profile_id, call.media, call.authorization]) : null;
-  useEffect(() => { setConfirmation(null); setDetailsOpen(false); }, [binding]);
+  const identityRequest = useRef(0);
+  useEffect(() => {
+    setConfirmation(null); setDetailsOpen(false); setIdentityReview(null); setIdentityError(null); setIdentityBusy(false);
+    return () => { identityRequest.current++; };
+  }, [binding]);
+  const identityAction = (work: () => Promise<string | void>, failure: string) => {
+    const request = ++identityRequest.current;
+    setIdentityBusy(true); setIdentityError(null);
+    void work().then(code => {
+      if (request === identityRequest.current) setIdentityReview(code || null);
+    }, () => {
+      if (request === identityRequest.current) setIdentityError(failure);
+    }).finally(() => { if (request === identityRequest.current) setIdentityBusy(false); });
+  };
   const canBlock = flags.endCallAndBlock === true && !!actions && !!binding && !state.endBlock;
   const lines = voiceSafetyStatus(state);
   const local = state.localShutdown;
@@ -31,6 +49,20 @@ export function VoiceSafetyPanel({ state, actions, flags = connectFeatureFlags }
   const hasDetails = lines.length > 0 || !!state.audioSetupStage || !!state.audioSetupFailure
     || !!state.audioHealth || !!state.quality || !!actions?.withdrawConsent;
   return <View style={styles.root}>
+    {flags.encryptedCalls === true && actions?.reviewIdentity && actions?.replaceIdentity && <>
+      <Pressable accessibilityRole="button" accessibilityLabel="Review calling identity" disabled={identityBusy} style={styles.button} onPress={() => {
+        identityAction(actions.reviewIdentity!, 'Calling identity could not be checked. Try again.');
+      }}><Text style={styles.text}>Review calling identity</Text></Pressable>
+      {identityReview && <View style={styles.status}>
+        <Text style={styles.text}>Compare this code with your connection through a trusted channel. Confirm only after both codes match.</Text>
+        <Text selectable accessibilityLabel="Identity verification code" style={styles.text}>{identityReview}</Text>
+        <Pressable accessibilityRole="button" accessibilityLabel="Confirm compared calling identity" disabled={identityBusy} style={styles.button} onPress={() => {
+          const code=identityReview;
+          identityAction(() => actions.replaceIdentity!(code), 'The calling identity changed again. Review the new code.');
+        }}><Text style={styles.text}>We compared the codes — they match</Text></Pressable>
+      </View>}
+      {identityError && <Text accessibilityLiveRegion="polite" style={styles.text}>{identityError}</Text>}
+    </>}
     {notice && <Text accessibilityLiveRegion="polite" style={styles.text}>{notice}</Text>}
     {hasDetails && !state.endBlock && <Pressable accessibilityRole="button" accessibilityLabel="Call details" accessibilityState={{ expanded: detailsOpen }} onPress={() => setDetailsOpen(!detailsOpen)} style={styles.button}>
       <Text style={styles.text}>{detailsOpen ? 'Hide call details' : 'Call details'}</Text>
@@ -48,7 +80,15 @@ export function VoiceSafetyPanel({ state, actions, flags = connectFeatureFlags }
         <Text style={styles.text}>Audio jitter: {state.audioHealth.jitterMs ?? 'unavailable'} ms · Round trip: {state.audioHealth.roundTripMs ?? 'unavailable'} ms</Text>
         <Text style={styles.text}>Audible output still needs confirmation on the device.</Text>
       </>}
-      <Text style={styles.text}>End-to-end encryption is not enabled for this staging call.</Text>
+      <Text style={styles.text}>{state.encryption?.required
+        ? state.encryption.sdkConfirmed ? 'End-to-end encryption is enabled by the SDK.' : 'Preparing required end-to-end encryption…'
+        : 'End-to-end encryption is not enabled for this staging call.'}</Text>
+      {state.encryption?.required && state.encryption.safetyCode && <>
+        <Text style={styles.text}>{state.encryption.identityVerified ? 'Peer identity verified on this device.' : 'Compare this safety code with your connection through a trusted channel.'}</Text>
+        <Text selectable accessibilityLabel="Call safety code" style={styles.text}>{state.encryption.safetyCode}</Text>
+        {!state.encryption.identityVerified && actions?.verifyIdentity && <Pressable accessibilityRole="button" accessibilityLabel="The safety codes match" style={styles.button}
+          onPress={() => { void actions.verifyIdentity!(state.encryption!.safetyCode!).catch(() => undefined); }}><Text style={styles.text}>We compared the codes — they match</Text></Pressable>}
+      </>}
       {state.quality && <>
         <Text style={styles.text}>Local audio setup: {state.quality.setupMs ?? 'unavailable'} ms · First packet observation: {state.quality.firstReceivedPacketMs ?? 'unavailable'} ms</Text>
         <Text style={styles.text}>SDK resource release: {state.quality.sdkReleaseMs ?? 'unavailable'} ms · Betweener end acknowledgement: {state.quality.authorityEndMs ?? 'unavailable'} ms</Text>

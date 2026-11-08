@@ -1,0 +1,117 @@
+{
+  "schemaVersion": 1,
+  "scope": "LOCAL_CLIENT_UI_CHANGE_NO_HOSTED_DEPLOYMENT",
+  "authorisation": "Owner explicitly requested mockup-based audio calling UI with shared chat wallpaper and published-profile carousel",
+  "frozenPackage": {
+    "path": "docs/betweener-connect/connect-secure-calling.proposal.json",
+    "sha256": "37d133fb060af0eaed44f4526d5d60fe4c08f3065fd3d2ede6d2f63d573f6c72"
+  },
+  "baseLocalChange": {
+    "path": "docs/betweener-connect/connect-native-activation-diagnostics.local.json",
+    "sha256": "6a0c5013e8262debc1a7f132b60c09e7b63a4f21393b13b6871a4df0f160ae58"
+  },
+  "files": [
+    {
+      "path": "features/connect/components/AudioCallCanvas.tsx",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "09a5dbf46adba8f79ebb71ab617edd9d9486f028d651782d20e148ddd5e4ef9e"
+    },
+    {
+      "path": "features/connect/components/AudioCallIdentity.tsx",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "6605584607132c43e1bec488d0fb49d8f82001d36f4f1b8e75add4c8be003ce8"
+    },
+    {
+      "path": "features/connect/components/AudioCallPortrait.tsx",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "79fa6a87bb3acf45dd2a639e5dcfad11f83b724a774bd3277e2856f3cb61518d"
+    },
+    {
+      "path": "features/connect/components/CallControlButton.tsx",
+      "beforeSha256": "1780933e4285addd8df7da493404f08c8ee0921ac6e3b0bd245137fe1ebfb596",
+      "beforeSnapshot": "tmp/connect-secure-calling/audio-call-ui/before/features/connect/components/CallControlButton.tsx",
+      "afterSha256": "44cec2c7cb88848511b3923c7cdb9f8ff9cfbd26d86b3ab2a8f23555923ee589"
+    },
+    {
+      "path": "features/connect/components/ConnectCallRoute.tsx",
+      "beforeSha256": "cd4911499319e2e169dcfef09ad47a0fd1f74200e4a7cc7371e308f9efbff124",
+      "beforeSnapshot": "tmp/connect-secure-calling/audio-call-ui/before/features/connect/components/ConnectCallRoute.tsx",
+      "afterSha256": "eb0ee5cfa96e73232f2990a850a84bf92282ea8d1effe6800b6faab0cdfa8e6e"
+    },
+    {
+      "path": "features/connect/components/ConnectVoiceSession.tsx",
+      "beforeSha256": "fcf2473c4a5953cccc8b7afb1a1c2b112748f8fc1495d896599bc0be35dadd1b",
+      "beforeSnapshot": "tmp/connect-secure-calling/audio-call-ui/before/features/connect/components/ConnectVoiceSession.tsx",
+      "afterSha256": "a198f9ddfabb15b766e0e61f282b1e43028ae9d179609872ba73f01597a71ccb"
+    },
+    {
+      "path": "features/connect/components/VoiceCallControls.tsx",
+      "beforeSha256": "34aea00580414b6df02907af7eb07853f80779c9c6100dd0d7b3e18cee084da6",
+      "beforeSnapshot": "tmp/connect-secure-calling/audio-call-ui/before/features/connect/components/VoiceCallControls.tsx",
+      "afterSha256": "ab57400a0ccdb60039052fe0397bbe7d327aa40fc65a70e8bc7ed2cd6b491507"
+    },
+    {
+      "path": "features/connect/components/VoiceCallLobby.tsx",
+      "beforeSha256": "c3ad5d5daf02a9a8c00635bc075e7e16c171f7cc377679ee583f0ac670d46121",
+      "beforeSnapshot": "tmp/connect-secure-calling/audio-call-ui/before/features/connect/components/VoiceCallLobby.tsx",
+      "afterSha256": "d79322b22e99894a32d9dd338d731201b17229b8d16342d6cc53f2c2d6f01e48"
+    },
+    {
+      "path": "features/connect/components/VoiceCallScreen.tsx",
+      "beforeSha256": "0b36b6c1f45a8ba6becc3a1b1243b165760448a6287c70d5d1782bff773eb959",
+      "beforeSnapshot": "tmp/connect-secure-calling/audio-call-ui/before/features/connect/components/VoiceCallScreen.tsx",
+      "afterSha256": "fde5e1c6c375db0af96a8be5d7e85af9afa07af01ed3b12b5efcf0acc26c6a26"
+    },
+    {
+      "path": "features/connect/data/load-connect-product.ts",
+      "beforeSha256": "bf9bdad1b1a942b7674b57ae9f434c198b79ee47a21303833c98e55a6c2a318e",
+      "beforeSnapshot": "tmp/connect-secure-calling/audio-call-ui/before/features/connect/data/load-connect-product.ts",
+      "afterSha256": "552b1ec671d246848b55c2472951aa779b25f1995ccbcf99fca8253fcdcc79c0"
+    },
+    {
+      "path": "features/connect/hooks/use-call-visual-activity.ts",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "bc7b70dbda19f6dd9950cd2b36307e545f2c3ebbb97ca8b2473f2ce370adb324"
+    },
+    {
+      "path": "features/connect/voice/peer-gallery.ts",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "000d8ea495a66a8aa37196c288afcc247c0f9d280775951f8234eae3149c3b2d"
+    },
+    {
+      "path": "features/connect/voice/voice-types.ts",
+      "beforeSha256": "1e5276b8655aa00618b77de8fdf8180e27dcabfdf8f9d3df69b3d9ed30f48b9b",
+      "beforeSnapshot": "tmp/connect-secure-calling/audio-call-ui/before/features/connect/voice/voice-types.ts",
+      "afterSha256": "948cc720473b6fca669e8948efd2961dde32b2d41fd87b59a256f6d427b1df5a"
+    }
+  ],
+  "hostedChanges": 0,
+  "providerCalls": 0,
+  "newBuildRequired": false,
+  "dependencyChanges": 0,
+  "behavior": {
+    "sharedWallpaper": "ChatBackground subtle, light and dark with dark readability overlay",
+    "gallery": "Other participant published HTTPS profile photos, maximum six, optional field",
+    "manualByDefault": true,
+    "autoIntervalMs": 8000,
+    "manualTouchPausesAuto": true,
+    "autoOnlyWhenActiveVisibleForegroundWithoutReducedMotionOrScreenReader": true,
+    "permissionOrMediaRequestsForVisuals": 0,
+    "fixedPrimaryActionDock": true,
+    "groupCallingAdded": false,
+    "fabricatedWaveformAdded": false,
+    "nativeIncomingPresentationChanged": false,
+    "liveMessageOrReminderActionsAdded": false,
+    "automaticRedialAdded": false
+  },
+  "validation": {
+    "deviceValidation": "NOT_RUN",
+    "nativeActivationIssue": "UNCHANGED_PENDING_OWNER_RETEST",
+    "securityReleaseApproval": false
+  }
+}
