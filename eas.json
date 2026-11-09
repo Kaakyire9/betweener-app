@@ -6,6 +6,7 @@
   "build": {
     "developmentNativeCrypto": {
       "extends": "development",
+      "channel": "development-native-crypto",
       "env": {
         "BETWEENER_STRICT_WEBRTC": "1"
       }

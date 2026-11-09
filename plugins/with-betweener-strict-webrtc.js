@@ -67,6 +67,8 @@ function withStrictWebRtc(config) {
       || config.android?.package !== 'com.aduboffour.betweener.staging') {
     throw new Error('Strict WebRTC requires exact staging app identities');
   }
+  if (typeof config.version !== 'string' || !config.version.trim()) throw new Error('Strict WebRTC requires an app version');
+  config.runtimeVersion = `${config.version}-strict-webrtc-${VERSION}`;
   config = withPodfile(config, mod => {
     const manifest = readManifest(mod.modRequest.projectRoot);
     const spec = safePath(mod.modRequest.projectRoot, 'native-artifacts/.cache/ios/StreamWebRTC.podspec');

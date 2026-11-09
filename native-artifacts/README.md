@@ -15,6 +15,9 @@ Only the `developmentNativeCrypto` EAS profile opts in. It inherits the existing
 staging development configuration and sets `BETWEENER_STRICT_WEBRTC=1`.
 The build hook and config plugin reject production identities and environments.
 The ordinary development and store profiles continue to use upstream libraries.
+The opt-in profile has its own update channel and app-version/native-version
+runtime fence, preventing ordinary development updates from crossing that binary
+boundary. This source configuration does not publish an update or create a channel.
 No calling, video, consent, cleanup or provider gates are changed.
 
 The `eas-build-pre-install` hook prepares the platform-specific dependency:

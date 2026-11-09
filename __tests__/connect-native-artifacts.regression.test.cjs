@@ -40,11 +40,35 @@ test('ordinary profiles perform no artifact filesystem access or downloads', asy
 test('only the explicit native-validation development profile opts in', () => {
   const eas = JSON.parse(fs.readFileSync('eas.json', 'utf8'));
   assert.equal(eas.build.developmentNativeCrypto.extends, 'development');
+  assert.equal(eas.build.developmentNativeCrypto.channel, 'development-native-crypto');
   assert.equal(eas.build.developmentNativeCrypto.env.BETWEENER_STRICT_WEBRTC, '1');
   assert.equal(eas.build.development.env.APP_VARIANT, 'staging');
   assert.equal(eas.build.development.env.EXPO_PUBLIC_ENVIRONMENT, 'development');
   for (const [name, profile] of Object.entries(eas.build)) {
     if (name !== 'developmentNativeCrypto') assert.equal(profile.env?.BETWEENER_STRICT_WEBRTC, undefined);
+  }
+});
+
+test('Expo config resolution fences the opt-in native binary from ordinary OTA runtimes', t => {
+  const root = fixture(t);
+  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'native-config-fixture', version: '1.0.0', private: true }));
+  fs.writeFileSync(path.join(root, 'app.config.json'), JSON.stringify({ expo: {
+    name: 'Betweener Staging', slug: 'betweener', version: '1.2.0', sdkVersion: '57.0.0',
+    runtimeVersion: { policy: 'appVersion' },
+    ios: { bundleIdentifier: 'com.aduboffour.betweener.staging' },
+    android: { package: 'com.aduboffour.betweener.staging' },
+    plugins: [path.resolve('plugins/with-betweener-strict-webrtc.js')],
+  } }));
+  const previous = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]]));
+  try {
+    Object.assign(process.env, env);
+    const result = require('@expo/config').getConfig(root).exp;
+    assert.equal(result.runtimeVersion, `1.2.0-strict-webrtc-${native.VERSION}`);
+    assert.equal(result.extra.nativeCryptoCandidate, native.VERSION);
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
   }
 });
 
