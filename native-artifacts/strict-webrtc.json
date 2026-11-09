@@ -1,10 +1,20 @@
 {
-  "status": "PENDING_BUILD_VERIFICATION",
+  "status": "VERIFIED",
   "version": "145.17.0-betweener.789936f4866c.1",
   "sourceCommit": "eeff9252f32a40d1671974c31c096ce9fa776130",
   "patchSha256": "789936f4866c5f05760715fba633ceb402a8089d50bc1674161d3afdfb8aa7d5",
   "reactNativePackage": "145.4.1",
   "releaseTag": "connect-native-145.17.0-strict-789936f4866c.1",
-  "android": null,
-  "ios": null
+  "android": {
+    "url": "https://github.com/Kaakyire9/betweener-app/releases/download/connect-native-145.17.0-strict-789936f4866c.1/webrtc-145.17.0-betweener.789936f4866c.1.aar",
+    "sha256": "f532135c4eba231d1e9f22c6632dddf2214b497e49818d341cf269844b4b7e7f",
+    "bytes": 50184287,
+    "compatibility": "PASS"
+  },
+  "ios": {
+    "url": "https://github.com/Kaakyire9/betweener-app/releases/download/connect-native-145.17.0-strict-789936f4866c.1/WebRTC-145.17.0-betweener.789936f4866c.1.xcframework.zip",
+    "sha256": "95f7cc5371b5644cb6e3372d1876d3b4c780a473ab00ae0fc383bcb8580eb03b",
+    "bytes": 170543693,
+    "compatibility": "PASS"
+  }
 }

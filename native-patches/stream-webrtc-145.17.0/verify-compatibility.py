@@ -58,19 +58,23 @@ def compare_android(reference, candidate, directory):
 
 
 def ios_headers(archive_path):
-    result = {}
+    slices = {'ios-arm64': {}, 'ios-arm64_x86_64-simulator': {}}
     with zipfile.ZipFile(archive_path) as archive:
         for name in archive.namelist():
-            if ('/ios-arm64/' not in name and '/ios-arm64_x86_64-simulator/' not in name): continue
             if '/Headers/' not in name or not name.endswith('.h'): continue
+            slice_name = next((item for item in slices if '/' + item + '/' in name), None)
+            if slice_name is None: continue
+            result = slices[slice_name]
             key = name.split('/Headers/', 1)[1]
             value = hashlib.sha256(archive.read(name)).hexdigest()
-            if key in result and result[key] != value:
-                raise ValueError('Public iOS headers differ between device and simulator slices')
+            if key in result: raise ValueError('Duplicate iOS public header: ' + key)
             result[key] = value
-    if not {'WebRTC.h', 'RTCEncryptionManager.h'}.issubset(result):
-        raise ValueError('Required iOS framework public headers are missing')
-    return result
+    for result in slices.values():
+        if not {'WebRTC.h', 'RTCEncryptionManager.h'}.issubset(result):
+            raise ValueError('Required iOS framework public headers are missing')
+    if slices['ios-arm64'] != slices['ios-arm64_x86_64-simulator']:
+        raise ValueError('Public iOS header inventories differ between device and simulator slices')
+    return slices['ios-arm64']
 
 
 def compare_ios(reference, candidate):

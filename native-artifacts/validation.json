@@ -1,0 +1,128 @@
+{
+  "scope": "NATIVE_LIBRARY_BUILD_AND_PUBLIC_API_VERIFICATION",
+  "status": "VERIFIED_NATIVE_LIBRARIES_NOT_INSTALLED",
+  "version": "145.17.0-betweener.789936f4866c.1",
+  "nativeSource": "eeff9252f32a40d1671974c31c096ce9fa776130",
+  "patchSha256": "789936f4866c5f05760715fba633ceb402a8089d50bc1674161d3afdfb8aa7d5",
+  "compatibility": {
+    "android": {
+      "status": "PASS",
+      "classes": 428,
+      "publicApiSha256": "dc969c5e3380b614e3dc616db1ff2dbab92d9b7d02be635c13106384bbc31229",
+      "candidateSha256": "f532135c4eba231d1e9f22c6632dddf2214b497e49818d341cf269844b4b7e7f",
+      "referenceSha256": "18c462cd44ece0d4cea249062b726257c91a94bda3e4609120a72d295020c3e8"
+    },
+    "ios": {
+      "status": "PASS",
+      "publicHeaders": 120,
+      "headerInventorySha256": "684eef4ee46cd71efa517f05e4706fe6c82e0b9ca87eec8668b3ec1e14241cb4",
+      "candidateSha256": "95f7cc5371b5644cb6e3372d1876d3b4c780a473ab00ae0fc383bcb8580eb03b",
+      "referenceSha256": "c2577138a4d4569acd1e26734fe49d3381ce95332baff824f2874f5e7458f6d5"
+    }
+  },
+  "appBuilds": 0,
+  "providerCalls": 0,
+  "installedOnPhone": false,
+  "physicalShutdown": "UNVERIFIED",
+  "remoteProviderRevocation": "UNVERIFIED",
+  "android": {
+    "platform": "android",
+    "artifact": "webrtc-145.17.0-betweener.789936f4866c.1.aar",
+    "sha256": "f532135c4eba231d1e9f22c6632dddf2214b497e49818d341cf269844b4b7e7f",
+    "bytes": 50184287,
+    "archiveSha256": "1bdaf44b5b8a8ed8b27367c6d61a61fd9573d5f7dbc552eb2a89920d3e1143eb",
+    "nativeSource": "eeff9252f32a40d1671974c31c096ce9fa776130",
+    "patchSha256": "789936f4866c5f05760715fba633ceb402a8089d50bc1674161d3afdfb8aa7d5",
+    "hostNativeTests": {
+      "tests": 79,
+      "failures": 0,
+      "expectedOriginalFailures": 6
+    },
+    "appBuilds": 0,
+    "installedOnPhone": false,
+    "nativeLibrarySha256": {
+      "jni/armeabi-v7a/libjingle_peerconnection_so.so": "e92a2e035d4a2fc26f0f343c89d5042b081ea7c781341040d871df361368f4f4",
+      "jni/arm64-v8a/libjingle_peerconnection_so.so": "b8300ed319f3151f92f302d98a9809d5d3cdcd6deb1bfe2c2133b6dfe9efbe50",
+      "jni/x86/libjingle_peerconnection_so.so": "33881eaa19857b390059e3b13ead929224df95df4bbc7fb72a7485ab53d28edf",
+      "jni/x86_64/libjingle_peerconnection_so.so": "7ba1f48a703a4053ebc4e75ee77ddc9e1723e3f46f808275af7cf48c866c115e"
+    },
+    "nativeElfBuildIds": {
+      "jni/armeabi-v7a/libjingle_peerconnection_so.so": "b952ba1452ffa7bb",
+      "jni/arm64-v8a/libjingle_peerconnection_so.so": "fd4d8a627122f458",
+      "jni/x86/libjingle_peerconnection_so.so": "c203db04ad7ce73c",
+      "jni/x86_64/libjingle_peerconnection_so.so": "e993d28c42ea1a75"
+    },
+    "elfLoadAlignments": {
+      "arm64-v8a": [
+        16384,
+        16384,
+        16384
+      ],
+      "x86_64": [
+        16384,
+        16384,
+        16384
+      ]
+    },
+    "workflowRun": 42538013446,
+    "workflowCommit": "17119f1d518ced905229dc7cbcf0fd0f8aa5010a",
+    "workflowJob": 128906526677,
+    "workflowArtifact": 13641900849,
+    "vp9": true
+  },
+  "ios": {
+    "platform": "ios",
+    "artifact": "WebRTC-145.17.0-betweener.789936f4866c.1.xcframework.zip",
+    "sha256": "95f7cc5371b5644cb6e3372d1876d3b4c780a473ab00ae0fc383bcb8580eb03b",
+    "bytes": 170543693,
+    "archiveSha256": "b7408c20705aa6ee02ebe0d6de4c1165e2b71c05278b35703f40e2fa15907e10",
+    "nativeSource": "eeff9252f32a40d1671974c31c096ce9fa776130",
+    "patchSha256": "789936f4866c5f05760715fba633ceb402a8089d50bc1674161d3afdfb8aa7d5",
+    "hostNativeTests": {
+      "tests": 79,
+      "failures": 0,
+      "expectedOriginalFailures": 6
+    },
+    "appBuilds": 0,
+    "installedOnPhone": false,
+    "nativeLibrarySha256": {
+      "WebRTC.xcframework/ios-arm64_x86_64-simulator/WebRTC.framework/WebRTC": "a22b9ff34bad328b1837f09b4e1338b9e479cb6a48005cd81f95fb369baf2555",
+      "WebRTC.xcframework/ios-arm64/WebRTC.framework/WebRTC": "280372e016e8dde7782e3e2e509f8ce9569c5bcaa947f8b22f671daf4beb3f78"
+    },
+    "nativeMachOUuids": {
+      "WebRTC.xcframework/ios-arm64_x86_64-simulator/WebRTC.framework/WebRTC": [
+        {
+          "architecture": "x86_64",
+          "uuid": "4c4c44bc-5555-3144-a187-d95c29e59be5"
+        },
+        {
+          "architecture": "arm64",
+          "uuid": "4c4c44be-5555-3144-a122-d2e431b26029"
+        }
+      ],
+      "WebRTC.xcframework/ios-arm64/WebRTC.framework/WebRTC": [
+        {
+          "architecture": "arm64",
+          "uuid": "4c4c441e-5555-3144-a1bd-2e00e2f11cb0"
+        }
+      ]
+    },
+    "architectures": [
+      "ios-device-arm64",
+      "ios-simulator-arm64",
+      "ios-simulator-x86_64"
+    ],
+    "workflowRun": 42539629547,
+    "workflowCommit": "aa1c9a2686d27d69ab423bddd64d7bc4bf20eadc",
+    "workflowJob": 128911445193,
+    "workflowArtifact": 13642960130,
+    "vp9": true,
+    "streamRenderingBackend": true
+  },
+  "rejectedIosCandidate": {
+    "workflowRun": 42535733999,
+    "sha256": "67c158f607117546982373b366a257f7a4223453a7cfac15fb4cbe232ef35551",
+    "reason": "Stream rendering public interfaces omitted",
+    "adopted": false
+  }
+}

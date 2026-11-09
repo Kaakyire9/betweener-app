@@ -44,6 +44,24 @@ class CompatibilityGuards(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'headers are missing'):
             compatibility.ios_headers(archive)
 
+    def test_omitted_rendering_api_is_rejected_even_when_core_headers_exist(self):
+        old = self.framework('old.zip', 'void enableEncryption(void);')
+        with zipfile.ZipFile(old, 'a') as archive:
+            for slice_name in ['ios-arm64', 'ios-arm64_x86_64-simulator']:
+                archive.writestr('WebRTC.xcframework/' + slice_name + '/WebRTC.framework/Headers/RTCVideoRenderingView.h',
+                                 '@interface RTCVideoRenderingView @end')
+        new = self.framework('new.zip', 'void enableEncryption(void);')
+        with self.assertRaisesRegex(ValueError, 'RTCVideoRenderingView.h'):
+            compatibility.compare_ios(old, new)
+
+    def test_a_header_missing_only_from_simulator_cannot_hide_in_a_merged_inventory(self):
+        archive_path = self.framework('different-slices.zip', 'void enableEncryption(void);')
+        with zipfile.ZipFile(archive_path, 'a') as archive:
+            archive.writestr('WebRTC.xcframework/ios-arm64/WebRTC.framework/Headers/RTCVideoRenderingView.h',
+                             '@interface RTCVideoRenderingView @end')
+        with self.assertRaisesRegex(ValueError, 'inventories differ between'):
+            compatibility.ios_headers(archive_path)
+
     def aar(self, name, declaration):
         compiler = shutil.which('javac')
         if not compiler: self.fail('JDK javac required to test real Java API drift detection')
