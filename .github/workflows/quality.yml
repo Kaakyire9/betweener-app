@@ -32,7 +32,7 @@ jobs:
 
       - name: Native artifact integration guards (no mobile builds)
         run: |
-          node --test __tests__/connect-native-build-guards.regression.test.cjs __tests__/connect-native-artifacts.regression.test.cjs
+          node --test __tests__/connect-native-build-guards.regression.test.cjs __tests__/connect-native-artifacts.regression.test.cjs __tests__/connect-telecom-endpoint-patch.regression.test.cjs
           python3 native-patches/stream-webrtc-145.17.0/test_compatibility.py
 
       - name: Verify Love Seat runtime assets
