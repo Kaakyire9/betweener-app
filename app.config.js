@@ -430,6 +430,7 @@ module.exports = ({ config }) => {
           },
           ios: {
             deploymentTarget: IOS_DEPLOYMENT_TARGET,
+            enableSceneSupport: true,
           },
         },
       ],
