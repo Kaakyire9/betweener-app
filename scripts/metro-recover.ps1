@@ -17,11 +17,39 @@ $projectRootWithSeparator = $projectRoot.TrimEnd('\', '/') + [System.IO.Path]::D
 function Get-ListeningProcessIds {
   param([int]$LocalPort)
 
-  $pattern = "^\s*TCP\s+\S+:$LocalPort\s+\S+\s+LISTENING\s+(\d+)\s*$"
-  $ids = netstat -ano -p tcp | ForEach-Object {
+  try {
+    $ids = @(Get-NetTCPConnection -LocalPort $LocalPort -State Listen -ErrorAction Stop |
+      Select-Object -ExpandProperty OwningProcess | Where-Object { $_ -gt 0 } | Sort-Object -Unique)
+    if ($ids.Count -gt 0) { return $ids }
+  } catch {
+    # Some Windows sessions cannot query TCP ownership. Try netstat next.
+  }
+
+  # Do not filter to tcp: that omits IPv6 listeners such as Metro's [::]:8081.
+  $pattern = "^\s*TCP\s+\S+:$LocalPort\s+\S+\s+(?:LISTENING|LISTEN)\s+(\d+)\s*$"
+  $ids = netstat -ano | ForEach-Object {
     if ($_ -match $pattern) { [int]$Matches[1] }
   }
   return @($ids | Sort-Object -Unique)
+}
+
+function Test-LocalPortInUse {
+  param([int]$LocalPort)
+
+  foreach ($address in @('127.0.0.1', '::1')) {
+    $client = $null
+    try {
+      $family = if ($address.Contains(':')) { [System.Net.Sockets.AddressFamily]::InterNetworkV6 } else { [System.Net.Sockets.AddressFamily]::InterNetwork }
+      $client = [System.Net.Sockets.TcpClient]::new($family)
+      $connection = $client.ConnectAsync($address, $LocalPort)
+      if ($connection.Wait(1000) -and $client.Connected) { return $true }
+    } catch {
+      # Connection refusal or timeout does not establish an active listener.
+    } finally {
+      if ($client) { $client.Dispose() }
+    }
+  }
+  return $false
 }
 
 function Get-MetroProjectRoot {
@@ -47,12 +75,15 @@ function Stop-ProjectMetro {
   param([int]$LocalPort)
 
   $processIds = @(Get-ListeningProcessIds -LocalPort $LocalPort)
+  $reportedRoot = Get-MetroProjectRoot -LocalPort $LocalPort
   if ($processIds.Count -eq 0) {
+    if ($reportedRoot -or (Test-LocalPortInUse -LocalPort $LocalPort)) {
+      throw "Port $LocalPort is in use, but Windows did not report its process owner. Nothing was stopped or cleared. Stop the existing server in its original terminal before retrying."
+    }
     Write-Host "Metro is not listening on port $LocalPort."
     return
   }
 
-  $reportedRoot = Get-MetroProjectRoot -LocalPort $LocalPort
   if (-not $reportedRoot) {
     throw "Port $LocalPort is occupied, but it did not identify itself as Metro. Nothing was stopped."
   }
@@ -72,7 +103,7 @@ function Stop-ProjectMetro {
   }
 
   $deadline = [DateTime]::UtcNow.AddSeconds(10)
-  while (@(Get-ListeningProcessIds -LocalPort $LocalPort).Count -gt 0) {
+  while (@(Get-ListeningProcessIds -LocalPort $LocalPort).Count -gt 0 -or (Test-LocalPortInUse -LocalPort $LocalPort)) {
     if ([DateTime]::UtcNow -ge $deadline) {
       throw "Metro stopped, but port $LocalPort did not become available within 10 seconds."
     }
@@ -98,18 +129,19 @@ function Remove-SafeCacheItem {
 
 if ($HealthOnly) {
   $processIds = @(Get-ListeningProcessIds -LocalPort $Port)
-  if ($processIds.Count -eq 0) {
-    throw "Metro is not listening on port $Port."
-  }
-
   $reportedRoot = Get-MetroProjectRoot -LocalPort $Port
   if (-not $reportedRoot) {
-    throw "Port $Port is listening, but the Metro health endpoint is unavailable."
+    throw "Metro's health endpoint is unavailable on port $Port."
   }
 
   $resolvedReportedRoot = [System.IO.Path]::GetFullPath($reportedRoot)
   if (-not $resolvedReportedRoot.Equals($projectRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
     throw "Port $Port belongs to Metro for '$resolvedReportedRoot', not '$projectRoot'."
+  }
+
+  if ($processIds.Count -eq 0) {
+    Write-Host "Metro is healthy for '$projectRoot' on port $Port. Windows process ownership is unavailable."
+    exit 0
   }
 
   $processes = foreach ($processId in $processIds) {
