@@ -9,6 +9,14 @@ The source and patch remain pinned in
 The original review manifest and Linux/macOS receipts describe their respective
 historical validation steps. They do not describe an installed phone.
 
+Verified libraries are available in the
+[native-library prerelease](https://github.com/Kaakyire9/betweener-app/releases/tag/connect-native-145.17.0-strict-789936f4866c.1).
+[validation.json](validation.json) retains native build provenance, exact API
+comparisons, architecture inventories and payload fingerprints.
+[dependency-integration.json](dependency-integration.json) retains the successful
+real Gradle/AAR and macOS CocoaPods/framework resolution checks. These checks
+do not compile an application or establish physical-device behavior.
+
 ## Integration
 
 Only the `developmentNativeCrypto` EAS profile opts in. It inherits the existing
