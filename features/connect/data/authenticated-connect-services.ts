@@ -41,7 +41,7 @@ export function readCanonicalVoiceSession(value: unknown, selfProfileId: string,
   return call;
 }
 /** Same repository/RPC/issuer, with explicit per-request bearer and immutable Auth epoch. */
-export function createAuthenticatedConnectServices(auth: NativeSessionOwner, selfProfileId: string, ports: AuthenticatedConnectPorts, options: { videoCalling?: boolean } = {}) {
+export function createAuthenticatedConnectServices(auth: NativeSessionOwner, selfProfileId: string, ports: AuthenticatedConnectPorts, options: { videoCalling?: boolean; prepareCredentials?(call: ConnectSession): Promise<void> } = {}) {
   const binding = auth.snapshot();
   if (!binding || !connectUuid(selfProfileId)) throw new Error('connect_unauthenticated');
   const guard = async <T>(run: (token: string) => Promise<T>): Promise<T> => {
@@ -78,9 +78,13 @@ export function createAuthenticatedConnectServices(auth: NativeSessionOwner, sel
       return rows.filter(call => call.media === 'voice' || (options.videoCalling === true && call.media === 'video'))
         .map(call => readCanonicalVoiceSession(call, selfProfileId, options.videoCalling === true));
     },
-  }, (call, device) => guard(async token => {
+  }, (call, device) => guard(async () => {
     const canonical = readCanonicalVoiceSession(await repository.getCall(call), selfProfileId, options.videoCalling === true);
     if (!launchAllowsSession(canonical)) throw new Error('connect_disabled');
+    // Reuse this fresh, participant-checked record for key preparation. The issuer
+    // still revalidates secure admission before and after generating credentials.
+    await options.prepareCredentials?.(canonical);
+    const token = auth.accessToken(binding);
     return readConnectCredentials(await ports.credentials(call, device, token), call, binding.userId, Date.now(), options.videoCalling === true);
   }));
   return { api, checkEligibility: (peer: string, media: 'voice' | 'video', authorization: 'matched' | 'pre_match', grant: string | null = null) =>

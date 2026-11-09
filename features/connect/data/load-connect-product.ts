@@ -1,3 +1,4 @@
+import type { ConnectSession } from '../domain/connect';
 import { voicePeerPhotos } from '../voice/peer-gallery';
 import type { NativeSessionOwner } from '../../../lib/auth/native-session-owner';
 import { createAuthenticatedConnectServices, invokePinnedConnectRpc, type PinnedConnectRpcClient } from './authenticated-connect-services';
@@ -48,14 +49,14 @@ async function buildConnectProduct(identity: ConnectRuntimeIdentity, auth: Nativ
       try { const url = new URL(data.avatar_url ?? ''); if (url.protocol === 'https:' && !url.username && !url.password) avatar = url.toString(); } catch { /* Use the local initial. */ }
       return { profileId: data.id, name: (data.full_name || data.username || 'Your connection').slice(0, 100), avatar, photos: voicePeerPhotos(avatar, data.photos) };
     },
-  }, { videoCalling: flags.videoCalling === true && connectRuntimeAvailability(identity).video });
+  }, { videoCalling: flags.videoCalling === true && connectRuntimeAvailability(identity).video, prepareCredentials: prepareKeys });
   const security = await loadCallSecurity(auth, deviceId, async (name, args, token) => invokePinnedConnectRpc(supabase as unknown as PinnedConnectRpcClient, name, args, token));
   flags = { ...flags, encryptedCalls: security.encryptedCalls, nativeIncoming: security.nativeIncoming };
   if (security.encryptedCalls) {
     const { loadStreamVideoSdk } = await import('../../live/media/load-stream-video-sdk');
     if (!(await loadStreamVideoSdk()).EncryptionManager.isSupported()) throw Error('connect_e2ee_native_unsupported');
   }
-  const prepareKeys = async (call: Awaited<ReturnType<typeof services.api.getCall>>) => {
+  async function prepareKeys(call: ConnectSession) {
     if (call.encryption_required !== true) return;
     if (!security.agent) throw Error('connect_e2ee_unavailable');
     // Resolve authenticated user IDs from the protected context, never profile UI.
@@ -66,8 +67,8 @@ async function buildConnectProduct(identity: ConnectRuntimeIdentity, auth: Nativ
     const key = await security.agent.acquire({ cid: `betweener_connect:${call.id}`, userId: expected.userId, authEpoch: expected.generation,
       generation: call.created_at, participants: [context.caller_user_id, context.recipient_user_id] });
     new Uint8Array(key.key).fill(0);
-  };
-  const create = services.api.createCall, credentials = services.api.credentials;
+  }
+  const create = services.api.createCall;
   services.api.createCall = async (...args) => {
     const call = await create(...args);
     try {
@@ -79,10 +80,6 @@ async function buildConnectProduct(identity: ConnectRuntimeIdentity, auth: Nativ
       try { const fresh = await services.api.getCall(call.id); await services.api.act(fresh.id, 'cancel', fresh.version, deviceId); } catch { /* Existing expiry/outbox retains cleanup. */ }
       throw error;
     }
-  };
-  services.api.credentials = async (callId, device) => {
-    await prepareKeys(await services.api.getCall(callId));
-    return credentials(callId, device);
   };
   const nativeAnswer = createNativeAnswerLease(() => auth.snapshot()?.generation === expected.generation && auth.snapshot()?.userId === expected.userId);
   const composition = createConnectNativeSafetyComposition({ ...environment, auth, api: terminal.wrapApi(services.api), selfProfileId: profileId,
