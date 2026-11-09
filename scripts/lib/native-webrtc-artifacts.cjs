@@ -41,7 +41,14 @@ function validateManifest(value) {
 }
 
 function readManifest(projectRoot) {
-  return validateManifest(JSON.parse(fs.readFileSync(path.join(projectRoot, 'native-artifacts/strict-webrtc.json'), 'utf8')));
+  const manifest = validateManifest(JSON.parse(fs.readFileSync(path.join(projectRoot, 'native-artifacts/strict-webrtc.json'), 'utf8')));
+  const pkg = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'));
+  const lock = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package-lock.json'), 'utf8'));
+  if (pkg.dependencies?.['@stream-io/react-native-webrtc'] !== manifest.reactNativePackage
+      || lock.packages?.['node_modules/@stream-io/react-native-webrtc']?.version !== manifest.reactNativePackage) {
+    throw new Error('Strict WebRTC requires the exact reviewed wrapper in package.json and package-lock.json');
+  }
+  return manifest;
 }
 
 function safePath(projectRoot, relative) {

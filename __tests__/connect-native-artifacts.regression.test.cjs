@@ -26,6 +26,8 @@ function fixture(t) {
     fs.rmSync(real, { recursive: true, force: true });
   });
   fs.mkdirSync(path.join(root, 'native-artifacts'));
+  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ dependencies: { '@stream-io/react-native-webrtc': '145.4.1' } }));
+  fs.writeFileSync(path.join(root, 'package-lock.json'), JSON.stringify({ packages: { 'node_modules/@stream-io/react-native-webrtc': { version: '145.4.1' } } }));
   fs.writeFileSync(path.join(root, 'native-artifacts/strict-webrtc.json'), JSON.stringify(manifest()));
   return root;
 }
@@ -103,6 +105,16 @@ test('verified Android data creates the exact Maven coordinate and is reused off
   fs.writeFileSync(path.join(directory, `${native.ARTIFACT}-${native.VERSION}.aar`), 'modified');
   await assert.rejects(native.prepare(options), /checksum mismatch/);
   assert.equal(requests, 1);
+});
+
+test('wrapper declaration or lockfile drift rejects artifacts before a download', async t => {
+  for (const filename of ['package.json', 'package-lock.json']) {
+    const root = fixture(t);
+    const file = path.join(root, filename);
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replaceAll('145.4.1', '145.4.2'));
+    await assert.rejects(native.prepare({ projectRoot: root, platform: 'android', env,
+      fetchImpl: () => { throw Error('Wrapper drift must not initiate a download'); } }), /exact reviewed wrapper/);
+  }
 });
 
 for (const payload of [Buffer.alloc(bytes.length, 42), Buffer.alloc(bytes.length + 1)]) {

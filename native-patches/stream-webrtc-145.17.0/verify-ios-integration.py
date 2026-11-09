@@ -30,6 +30,8 @@ if manifest['status'] != 'VERIFIED' or validation['status'] != 'VERIFIED_NATIVE_
 fixture.mkdir(parents=True)
 (fixture / 'native-artifacts').mkdir()
 (fixture / 'native-artifacts/strict-webrtc.json').write_bytes(manifest_path.read_bytes())
+for name in ['package.json', 'package-lock.json']:
+    shutil.copyfile(project / name, fixture / name)
 env = {**os.environ, 'BETWEENER_STRICT_WEBRTC': '1', 'APP_VARIANT': 'staging',
        'EXPO_PUBLIC_ENVIRONMENT': 'development', 'COCOAPODS_DISABLE_STATS': 'true'}
 prepare = "require(process.argv[1]).prepare({projectRoot:process.argv[2],platform:'ios'}).catch(e=>{console.error(e.message);process.exitCode=1})"
