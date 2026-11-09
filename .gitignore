@@ -72,3 +72,4 @@ supabase/baseline-backups/
 supabase/migrations_legacy_20260713/
 
 /.vercel/
+native-artifacts/.cache/

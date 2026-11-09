@@ -1,7 +1,11 @@
-# Strict framed receive patch — review only
+# Strict framed receive patch — native validation
 
-This patch is **not installed or built**. It does not change the app's current
-WebRTC dependency, postinstall patches, calling gates, or installed phones.
+The current native adoption contract is
+[`native-artifacts/strict-webrtc.json`](../../native-artifacts/strict-webrtc.json).
+See the [staging integration guide](../../native-artifacts/README.md) for build
+profiles, verified artifact receipts and installation boundaries. The original
+review manifest and host receipts in this directory retain their historical
+scope. Compiling a library does not change an installed phone or enable calling.
 
 Pinned upstream: [GetStream/webrtc 145.17.0](https://github.com/GetStream/webrtc/tree/eeff9252f32a40d1671974c31c096ce9fa776130).
 The app's `@stream-io/react-native-webrtc` 145.4.1 consumes Android AAR
@@ -23,10 +27,10 @@ and clear media on that path. Empty payload handling, legacy crypto, disabled
 transformers and authenticated framed decryption are unchanged. Review this
 policy for every consumer before adopting a custom binary.
 
-Validation completed: the patch applies cleanly to the two pinned source files.
-The Linux host target passed **79/79 native C++ tests**, after the original
-manager failed the six reviewed strict-receive checks. macOS and mobile
-validation remain pending. The patch updates existing permissive
+The patch applies cleanly to the two pinned source files. Linux x86_64 and macOS
+ARM64 host validation passed **79/79 native C++ tests**, after the original
+manager failed exactly the six reviewed strict-receive checks. Host validation
+does not establish physical-device media behavior. The patch updates permissive
 expectations and adds repeated-drop coverage across all four track types, an
 output-buffer clearing check, and AES-256 round-trip coverage after a rejection.
 
@@ -72,16 +76,18 @@ All compiler/toolchain hooks and the complete crypto test target remain enabled.
 
 `.github/workflows/connect-native-crypto.yml` is manual only. It uses macOS 26,
 read-only repository permissions and no persisted Git credentials. It defaults
-to native tests only. Its optional unsigned iOS framework build requires the
-native red/green run to succeed and emits a checksum receipt. No package is
-published and no EAS app build, OTA or provider call is made by the workflow.
+to native tests only. Optional Android AAR and unsigned iOS framework builds
+require the corresponding native red/green run and emit checksum receipts.
+The separate dependency-integration option resolves an already verified iOS
+artifact with the actual patched wrapper; both library-build options must be off
+for that check. No package publication, EAS app build, signing, OTA or provider
+call is performed by this workflow.
 
 The CI script checks actual free space before checkout; the macOS workflow
 requires 12 GiB and reserves 2 GiB during command execution. Runner storage
 must still be verified on the first CI run. Artifacts are candidates until
 reviewed and integrated into a separately verified staging development build.
 
-To run the prepared macOS job, the scoped workflow and native-patches files
-must first be reviewed and registered on the default branch before manual
-dispatch is available. The reviewed branch can then be selected for a run.
-No workflow has been dispatched as part of preparation.
+The workflow is registered on the default branch. Select the reviewed branch
+when dispatching a run. Retain the exact workflow commit, source revision,
+patch digest, test receipts and binary checksums for every adopted artifact.

@@ -4,6 +4,13 @@
     "appVersionSource": "remote"
   },
   "build": {
+    "developmentNativeCrypto": {
+      "extends": "development",
+      "channel": "development-native-crypto",
+      "env": {
+        "BETWEENER_STRICT_WEBRTC": "1"
+      }
+    },
     "development": {
       "node": "24.18.0",
       "channel": "development",

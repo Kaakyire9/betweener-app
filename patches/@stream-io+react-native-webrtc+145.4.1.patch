@@ -1,0 +1,21 @@
+diff --git a/node_modules/@stream-io/react-native-webrtc/stream-react-native-webrtc.podspec b/node_modules/@stream-io/react-native-webrtc/stream-react-native-webrtc.podspec
+--- a/node_modules/@stream-io/react-native-webrtc/stream-react-native-webrtc.podspec
++++ b/node_modules/@stream-io/react-native-webrtc/stream-react-native-webrtc.podspec
+@@ -21,7 +21,16 @@
+   s.swift_version       = '5.0'
+   s.dependency          'React-Core'
+   # WebRTC version from https://github.com/GetStream/stream-video-swift-webrtc releases
+-  s.dependency          'StreamWebRTC', '145.17.0'
++  strict_native = ENV.fetch('BETWEENER_STRICT_WEBRTC', '0')
++  raise 'Invalid strict WebRTC build flag' unless ['0', '1'].include?(strict_native)
++  if strict_native == '1'
++    unless ENV['APP_VARIANT'] == 'staging' && ENV['EXPO_PUBLIC_ENVIRONMENT'] == 'development'
++      raise 'Strict WebRTC requires the staging development environment'
++    end
++    s.dependency 'StreamWebRTC', '145.17.0-betweener.789936f4866c.1'
++  else
++    s.dependency 'StreamWebRTC', '145.17.0'
++  end
+   # Swift/Objective-C compatibility #https://blog.cocoapods.org/CocoaPods-1.5.0/
+   s.pod_target_xcconfig = {
+     'DEFINES_MODULE' => 'YES'

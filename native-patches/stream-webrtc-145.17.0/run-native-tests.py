@@ -6,7 +6,9 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--work', type=Path, default=Path('/work'))
 parser.add_argument('--input', type=Path, default=Path('/input'))
 parser.add_argument('--results', type=Path, default=Path('/results'))
-parser.add_argument('--prepare-ios', action='store_true')
+mobile_target = parser.add_mutually_exclusive_group()
+mobile_target.add_argument('--prepare-ios', action='store_true')
+mobile_target.add_argument('--prepare-android', action='store_true')
 parser.add_argument('--min-free-gb', type=int, default=30)
 args = parser.parse_args()
 ROOT = args.work.resolve()
@@ -152,7 +154,8 @@ try:
         raise RuntimeError('Anonymous upstream hook changed; review before suppressing media fixtures')
     record['unrelatedMediaFixtureHookSkipped'] = True
     config = "solutions = [{'name': 'src', 'url': 'https://github.com/GetStream/webrtc.git', 'managed': False, 'custom_deps': {}, 'custom_hooks': [{'name': ''}], 'custom_vars': {'checkout_instrumented_libraries': False, 'checkout_clang_coverage_tools': False, 'checkout_clangd': False, 'checkout_clang_tidy': False}}]\n"
-    config += 'target_os = ' + repr(['ios'] if args.prepare_ios else []) + '\n'
+    targets = ['ios'] if args.prepare_ios else ['android'] if args.prepare_android else []
+    config += 'target_os = ' + repr(targets) + '\n'
     (ROOT / '.gclient').write_text(config)
     phase('sync_dependencies')
     run(['gclient', 'sync', '--no-history', '--nohooks', '--jobs=4', '--revision=src@' + COMMIT])

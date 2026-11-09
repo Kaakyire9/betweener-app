@@ -1,6 +1,7 @@
 """Build an unsigned device/simulator XCFramework only after host crypto tests pass."""
 from pathlib import Path
-import argparse, hashlib, json, os, platform, subprocess
+import argparse, json, plistlib, subprocess, sys
+from artifact_build import VERSION, build, tested_source, write_receipt
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--work', type=Path, required=True)
@@ -8,39 +9,40 @@ parser.add_argument('--input', type=Path, required=True)
 parser.add_argument('--results', type=Path, required=True)
 args = parser.parse_args()
 work, inputs, results = args.work.resolve(), args.input.resolve(), args.results.resolve()
-source = work / 'src'
-receipt = json.loads((results / 'run.json').read_text())
-manifest = json.loads((inputs / 'manifest.json').read_text())
-patched = receipt.get('patched') or {}
-if (platform.system() != 'Darwin' or receipt.get('host') != 'Darwin'
-        or receipt.get('status') != 'PASSED_NATIVE_HOST_CRYPTO'
-        or not isinstance(patched.get('tests'), int) or patched['tests'] <= 0
-        or patched.get('failures') != 0 or patched.get('errors', 0) != 0):
-    raise SystemExit('A macOS host with passing patched native crypto tests is required')
-if receipt['sourceCommit'] != manifest['commit'] or receipt.get('patchSha256') != manifest['patchSha256']:
-    raise SystemExit('Native test receipt belongs to another source revision')
-for item in manifest['files']:
-    if hashlib.sha256((source / item['path']).read_bytes()).hexdigest() != item['afterSha256']:
-        raise SystemExit('Native source changed after test: ' + item['path'])
-os.environ['PATH'] = str(work / 'depot_tools') + os.pathsep + os.environ['PATH']
-os.environ['DEPOT_TOOLS_UPDATE'] = '0'
+source, receipt, manifest = tested_source(work, inputs, results, 'Darwin')
 output = source / 'out/strict_ios'
-subprocess.run(['python3', 'tools_webrtc/ios/build_ios_libs.py', '--build_config', 'release',
-                '--arch', 'device:arm64', 'simulator:arm64', '--output-dir', str(output),
+build([sys.executable, 'tools_webrtc/ios/build_ios_libs.py', '--build_config', 'release',
+                '--arch', 'device:arm64', 'simulator:arm64', 'simulator:x64', '--output-dir', str(output),
                 '--deployment-target', '16.4', '--extra-gn-args',
                 'treat_warnings_as_errors=false', 'rtc_build_examples=false', 'rtc_build_tools=false',
-                'use_remoteexec=false', 'use_reclient=false'], cwd=source, check=True)
+                'rtc_libvpx_build_vp9=true', 'stream_enable_rendering_backend=true', 'use_rtti=false',
+                'use_remoteexec=false', 'use_reclient=false'], source)
 framework = output / 'WebRTC.xcframework'
 if not framework.is_dir():
     raise SystemExit('Expected XCFramework missing')
-artifact = results / ('WebRTC-strict-145.17.0-' + manifest['patchSha256'][:12] + '.xcframework.zip')
-subprocess.run(['ditto', '-c', '-k', '--sequesterRsrc', '--keepParent', str(framework), str(artifact)], check=True)
-(results / 'ios-artifact.json').write_text(json.dumps({
-    'status': 'BUILT_NOT_INTEGRATED', 'sourceCommit': manifest['commit'],
-    'patchSha256': manifest['patchSha256'], 'artifact': artifact.name,
-    'sha256': hashlib.sha256(artifact.read_bytes()).hexdigest(),
-    'architectures': ['ios-device-arm64', 'ios-simulator-arm64'],
-    'nativeTests': receipt['patched'], 'appBuilds': 0,
-    'xcode': subprocess.check_output(['xcodebuild', '-version'], text=True).strip(),
-    'installedOnPhone': False, 'published': False,
-}, indent=2) + '\n')
+info = plistlib.loads((framework / 'Info.plist').read_bytes())
+slices = {(item['SupportedPlatform'], item.get('SupportedPlatformVariant', ''), tuple(sorted(item['SupportedArchitectures'])))
+          for item in info['AvailableLibraries']}
+if slices != {('ios', '', ('arm64',)), ('ios', 'simulator', ('arm64', 'x86_64'))}:
+    raise SystemExit('Unexpected iOS architecture inventory: ' + repr(slices))
+headers = {}
+for item in info['AvailableLibraries']:
+    directory = framework / item['LibraryIdentifier'] / item['LibraryPath']
+    headers[item['LibraryIdentifier']] = sorted(path.name for path in (directory / 'Headers').glob('*.h'))
+    required_headers = {'WebRTC.h', 'RTCEncryptionManager.h', 'RTCPeerConnectionFactory+Stream.h',
+                        'RTCNV12Buffer.h', 'RTCNativeNV12Buffer.h', 'RTCSharedMetalRenderingContext.h',
+                        'RTCSharedMetalVideoView.h', 'RTCVideoRenderingView.h',
+                        'RTCPictureInPictureVideoRenderer.h', 'RTCVideoFrameConverter.h'}
+    if not required_headers.issubset(headers[item['LibraryIdentifier']]):
+        raise SystemExit('Required WebRTC public headers missing')
+    identifier = subprocess.check_output(['otool', '-D', str(directory / 'WebRTC')], text=True)
+    if '@rpath/WebRTC.framework/WebRTC' not in identifier:
+        raise SystemExit('Framework install name differs from the existing SDK')
+(framework / 'BetweenerBuild.json').write_text(json.dumps({'version': VERSION, 'sourceCommit': manifest['commit'],
+    'patchSha256': manifest['patchSha256'], 'vp9': True, 'signed': False}, indent=2) + '\n')
+artifact = results / ('WebRTC-' + VERSION + '.xcframework.zip')
+build(['ditto', '-c', '-k', '--sequesterRsrc', '--keepParent', str(framework), str(artifact)], source)
+write_receipt(results, 'ios', artifact, receipt,
+              architectures=['ios-device-arm64', 'ios-simulator-arm64', 'ios-simulator-x86_64'],
+              publicHeaders=headers, vp9=True, streamRenderingBackend=True, deploymentTarget='16.4',
+              xcode=subprocess.check_output(['xcodebuild', '-version'], text=True).strip())

@@ -1,0 +1,65 @@
+{
+  "scope": "NATIVE_DEPENDENCY_RESOLUTION_NOT_APPLICATION_COMPILATION",
+  "status": "PASS",
+  "version": "145.17.0-betweener.789936f4866c.1",
+  "android": {
+    "scope": "REAL_GRADLE_RESOLUTION_WITH_VERIFIED_NATIVE_AAR",
+    "status": "PASS",
+    "coordinate": "io.nyansapa.betweener:webrtc-strict:145.17.0-betweener.789936f4866c.1",
+    "sha256": "f532135c4eba231d1e9f22c6632dddf2214b497e49818d341cf269844b4b7e7f",
+    "allFourAbis": true,
+    "nativeApplicationBuilds": 0,
+    "providerCalls": 0,
+    "installedOnPhone": false,
+    "gradle": "9.3.1"
+  },
+  "ios": {
+    "scope": "REAL_IOS_COCOAPODS_RESOLUTION_ONLY",
+    "status": "PASS",
+    "cocoaPods": "1.17.0",
+    "wrapperVersion": "145.4.1",
+    "nativeVersion": "145.17.0-betweener.789936f4866c.1",
+    "frameworkArchiveSha256": "95f7cc5371b5644cb6e3372d1876d3b4c780a473ab00ae0fc383bcb8580eb03b",
+    "nativePayloadMatches": true,
+    "reactImplementation": "DISPOSABLE_RESOLVER_FIXTURE_NOT_COMPILED",
+    "applicationBuilds": 0,
+    "signed": false,
+    "providerCalls": 0,
+    "installedOnPhone": false,
+    "workflowRun": 42544396728,
+    "workflowJob": 128926142763,
+    "workflowCommit": "486eb19c7339be5f60661c30cd53b188200ced50",
+    "artifact": 13642746733,
+    "artifactArchiveSha256": "dead31e98bc35fdd4a23384ec245d0734a4648f6b48a50ec29ef12d9dba96589",
+    "podLockSha256": "9d747b4ffbb7e0835587f08c7c8c9ebf0882ce28a37b84292d1fa848b41063e0"
+  },
+  "nativeRelease": {
+    "url": "https://github.com/Kaakyire9/betweener-app/releases/tag/connect-native-145.17.0-strict-789936f4866c.1",
+    "tag": "connect-native-145.17.0-strict-789936f4866c.1",
+    "commit": "486eb19c7339be5f60661c30cd53b188200ced50",
+    "appRelease": false
+  },
+  "sourceQualityCI": {
+    "run": 42543885193,
+    "commit": "486eb19c7339be5f60661c30cd53b188200ced50",
+    "status": "PASS"
+  },
+  "focusedGuards": {
+    "tests": 27,
+    "passed": 27
+  },
+  "apiComparatorFixtures": {
+    "tests": 6,
+    "passed": 6
+  },
+  "encryptionAndCleanupRegressions": {
+    "tests": 154,
+    "passed": 154,
+    "physicalMediaTests": false
+  },
+  "appBuilds": 0,
+  "providerCalls": 0,
+  "installedOnPhones": false,
+  "physicalShutdown": "UNVERIFIED",
+  "remoteProviderRevocation": "UNVERIFIED"
+}
