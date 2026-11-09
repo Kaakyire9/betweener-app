@@ -7,6 +7,7 @@ import type { AudioHealth, AudioSample } from '../media/audio-health.ts';
 import type { CallQuality } from './call-quality.ts';
 export type MicrophonePermission = 'granted' | 'denied' | 'blocked';
 export type VoiceRoute = 'earpiece' | 'speaker' | 'bluetooth' | 'wired';
+export interface VoiceAudioRouteState { route: VoiceRoute | null; routes: readonly VoiceRoute[] }
 export type VoiceTransportState = 'idle' | 'connecting' | 'joined' | 'reconnecting' | 'left' | 'failed';
 export interface VoiceCredentials {
   encryption?: { mode: 'required' | 'disabled'; generation: string; participants: readonly string[] };
@@ -30,6 +31,8 @@ export interface VoiceTransport {
   setMuted(muted: boolean): Promise<void>;
   routes(): readonly VoiceRoute[];
   selectRoute(route: VoiceRoute): Promise<void>;
+  audioRoute?(): VoiceAudioRouteState | undefined;
+  observeAudioRoute?(listener: (state: VoiceAudioRouteState) => void): () => void;
   audioSample?(): AudioSample | null;
   observeAudioSamples?(listener: (sample: AudioSample | null) => void): () => void;
   setBackgroundAudio?(enabled: boolean): Promise<boolean>;
@@ -57,6 +60,6 @@ export interface VoiceViewState {
   endStatus?: 'pending' | 'terminal' | 'unconfirmed';
   localShutdown: LocalShutdownResult; endBlock: EndBlockView | null;
   phase: VoicePhase; session: ConnectSession | null; peer: VoicePeer | null; incoming: boolean;
-  muted: boolean; route: VoiceRoute; routes: readonly VoiceRoute[]; permission: MicrophonePermission | null;
+  muted: boolean; route: VoiceRoute | null; routes: readonly VoiceRoute[]; permission: MicrophonePermission | null;
   error: string | null; busy: boolean; durationSeconds: number | null; foreground: boolean;
 }

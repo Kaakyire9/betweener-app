@@ -19,6 +19,10 @@ jest.mock('react-native-safe-area-context', () => {
   return { SafeAreaView: (props: Record<string, unknown>) => React.createElement(View, props) };
 });
 jest.mock('@expo/vector-icons', () => ({ Ionicons: Object.assign(() => null, { glyphMap: {} }), MaterialCommunityIcons: () => null }));
+// Motion lifecycle has its own interaction suite. Keep presentation assertions static.
+jest.mock('@/features/connect/hooks/use-call-visual-activity', () => ({
+  useCallVisualActivity: () => ({ screenActive: true, motionAllowed: false }),
+}));
 
 const base: VoiceViewState = { localShutdown: unverifiedShutdown(), endBlock: null, phase: 'RINGING', session: null, peer: { profileId: 'peer', name: 'Alex', avatar: null },
   incoming: true, muted: true, route: 'earpiece', routes: [], permission: null, error: null, busy: false,

@@ -16,6 +16,12 @@ function selected(state: NativeAudioState, device: NativeAudioDevice) {
     && state.devices.filter(item => item.type === device.type).length === 1;
 }
 
+/** Observed selection for presentation; never infer an accessory from its type alone. */
+export function observedNativeAudioRoute(state: NativeAudioState): VoiceRoute | null {
+  const matches = state.devices.filter(device => typeof device.id === 'string' && device.id.length > 0 && selected(state, device));
+  return matches.length === 1 ? nativeAudioRouteType(matches[0].type) : null;
+}
+
 /** One native switch request, confirmed by route events or bounded fresh reads.
  * The owner forwards its existing device subscription; no extra native listener. */
 export function createNativeAudioRouteSelector(input: {

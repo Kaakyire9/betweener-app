@@ -10,13 +10,15 @@ interface Props {
   compact?: boolean; leadingControls?: React.ReactNode;
 }
 const colors = Colors.dark;
+const icons = { earpiece: 'phone-portrait-outline', speaker: 'volume-high-outline', bluetooth: 'bluetooth-outline', wired: 'headset-outline' } as const;
 const labels: Record<VoiceRoute, string> = { earpiece: 'Phone', speaker: 'Speaker', bluetooth: 'Bluetooth', wired: 'Headphones' };
 export function VoiceCallControls({ state, onAccept, onDecline, onHangup, onMute, onRoute, compact = false, leadingControls }: Props) {
   const [routesOpen, setRoutesOpen] = useState(false);
   if (['ENDED', 'FAILED', 'IDLE'].includes(state.phase)) return null;
   const invited = state.incoming && state.phase === 'RINGING';
   const media = ['ACTIVE', 'CONNECTING', 'RECONNECTING'].includes(state.phase);
-  const output = media && <Control lounge={!compact} compact={compact} label={state.routes.includes(state.route) ? labels[state.route] : 'Audio output'} icon="volume-high-outline" selected={state.route === 'speaker'} disabled={!state.routes.length || !state.foreground || (!!state.audioSetupStage && state.audioSetupStage !== 'ready')} onPress={() => setRoutesOpen(!routesOpen)} />;
+  const selectedRoute = state.route && state.routes.includes(state.route) ? state.route : null;
+  const output = media && <Control lounge={!compact} compact={compact} label={selectedRoute ? labels[selectedRoute] : 'Audio output'} icon={selectedRoute ? icons[selectedRoute] : 'volume-high-outline'} selected={!!selectedRoute && selectedRoute !== 'earpiece'} disabled={!state.routes.length || !state.foreground || (!!state.audioSetupStage && state.audioSetupStage !== 'ready')} onPress={() => setRoutesOpen(!routesOpen)} />;
   return <View style={styles.root}>
     {routesOpen && media && <View accessibilityLabel="Available audio outputs" style={styles.outputs}>
       {state.routes.map((route) => <Pressable key={route} accessibilityRole="radio" accessibilityLabel={`Use ${labels[route]}`}

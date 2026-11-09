@@ -1,9 +1,9 @@
 import { connectFeatureFlags, type ConnectFeatureFlags } from '../config/connect-feature-flags.ts';
 import type { VoiceBindings, VoiceBindingsFactory } from './stream-voice-transport.ts';
-import type { VoiceCredentials, VoiceRoute } from '../voice/voice-types.ts';
+import type { VoiceAudioRouteState, VoiceCredentials, VoiceRoute } from '../voice/voice-types.ts';
 import { streamVideoClientLeaseRegistry, type StreamVideoClientLeaseRegistry, type StreamVideoClientLease } from '../../live/media/stream-video-client-leases.ts';
 import { loadConnectNativeSdk } from './native-stream-sdk.ts';
-import { createNativeAudioRouteSelector, nativeAudioRouteType as routeType } from './native-audio-route.ts';
+import { createNativeAudioRouteSelector, observedNativeAudioRoute, nativeAudioRouteType as routeType } from './native-audio-route.ts';
 import type { VideoPresentation } from '../video/video-types.ts';
 import type { NativeAudioHandle, NativeAudioState, NativeCallHandle, NativeOwnerAccess, NativeOwnerSnapshot, NativeSdkCallState,
   NativeRetirement, NativeSdkClient, NativeStreamSdk, NativeTrack } from './native-owner-types.ts';
@@ -336,6 +336,20 @@ export class ConnectNativeMediaOwner {
       leave: async () => { this.retire('local_end'); await this.run('leave', () => this.input.handle.leave()); },
     },
     routes: () => this.isCurrent() ? [...new Set(this.audioState.devices.map(d => routeType(d.type)).filter((r): r is VoiceRoute => r !== null))] : [],
+    audioRoute: (): VoiceAudioRouteState => ({
+      route: this.isCurrent() ? observedNativeAudioRoute(this.audioState) : null,
+      routes: this.bindings.routes(),
+    }),
+    observeAudioRoute: listener => {
+      let previous = '';
+      const read = () => {
+        if (!this.isCurrent()) return;
+        const state = this.bindings.audioRoute!(), identity = JSON.stringify(state);
+        if (identity === previous) return;
+        previous = identity; listener(state);
+      };
+      const unsubscribe = this.subscribe(read); read(); return unsubscribe;
+    },
     audioSample: () => this.isCurrent() ? this.input.handle.audioSample?.() ?? null : null,
     setBackgroundAudio: async enabled => {
       this.assertCurrent();

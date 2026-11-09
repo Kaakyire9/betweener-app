@@ -72,6 +72,7 @@ export class VoiceController {
   private audioHealth = createAudioHealthMonitor();
   private quality = createCallQualityTracker();
   private audioUnsubscribe: (() => void) | null = null;
+  private routeUnsubscribe: (() => void) | null = null;
   private lastAudioTimestamp: number | null = null;
   private blocking: Promise<void> | null = null;
   private readingEndBlock = false;
@@ -279,8 +280,11 @@ export class VoiceController {
   }
   private stopLocal(generation = this.generation) {
     ++this.muteRequest;
-    const unsubscribe = this.audioUnsubscribe; this.audioUnsubscribe = null;
-    try { unsubscribe?.(); } catch { /* Observability cannot suppress local shutdown. */ }
+    const subscriptions = [this.audioUnsubscribe, this.routeUnsubscribe];
+    this.audioUnsubscribe = null; this.routeUnsubscribe = null;
+    for (const unsubscribe of subscriptions) {
+      try { unsubscribe?.(); } catch { /* Observability cannot suppress local shutdown. */ }
+    }
     this.update({ backgroundAudio: 'off', minimized: false, localShutdown: pendingShutdown(), muted: true, muteControl: undefined, audioHealth: retireAudioHealth(this.view.audioHealth) });
     // A void legacy transport, or a resolved leave alone, cannot verify capture.
     let stopping: ReturnType<VoiceTransport['leave']>;
@@ -492,7 +496,7 @@ export class VoiceController {
     if (active && this.view.foreground && !this.view.minimized && this.cameraIntent && this.view.video?.camera === 'off'
       && this.dependencies.flags?.videoCameraOnEntry === true) void this.applyCamera(true);
   }
-  private connectAudio(recovery?: { recovery: true; muted: boolean; route: VoiceRoute }): Promise<void> {
+  private connectAudio(recovery?: { recovery: true; muted: boolean; route: VoiceRoute | null }): Promise<void> {
     const generation = this.generation;
     this.audioHealth = createAudioHealthMonitor();
     this.lastAudioTimestamp = null;
@@ -529,6 +533,13 @@ export class VoiceController {
         if (generation !== this.generation || this.disposed) { await d.transport.leave(); return; }
         this.joining = true;
         try {
+          const unsubscribe = d.transport.observeAudioRoute?.(state => {
+            if (generation === this.generation && !this.disposed && this.joining) this.update({ route: state.route, routes: [...state.routes] });
+          });
+          if (generation === this.generation && !this.disposed && this.joining) this.routeUnsubscribe = unsubscribe ?? null;
+          else unsubscribe?.();
+        } catch { /* Route inspection cannot change media ownership or confirmation. */ }
+        try {
           const unsubscribe = d.transport.observeAudioSamples?.(sample => {
             if (generation === this.generation && !this.disposed && this.joining) this.readAudioSample(sample);
           });
@@ -545,15 +556,19 @@ export class VoiceController {
         await d.transport.setMuted(muted);
         if (generation !== this.generation || this.disposed) { await d.transport.leave(); return; }
         const routes = d.transport.routes();
-        const preferred = session.media === 'video' ? routes.find(route => route === 'bluetooth' || route === 'wired') ?? 'speaker' : 'earpiece';
-        const route = recovery && routes.includes(recovery.route) ? recovery.route : routes.includes(preferred) ? preferred : routes[0] ?? preferred;
+        const observed = d.transport.audioRoute?.()?.route;
+        const accessory = observed === 'bluetooth' || observed === 'wired' ? observed : null;
+        const preferred = accessory ?? (session.media === 'video' ? routes.find(route => route === 'bluetooth' || route === 'wired') ?? 'speaker' : 'earpiece');
+        const route = recovery?.route && routes.includes(recovery.route) ? recovery.route : routes.includes(preferred) ? preferred : routes[0] ?? preferred;
         stage = 'audio_output';
         this.update({ audioSetupStage: stage });
         // Cached availability may still be empty while the native route event
         // is in flight. Always require the owner's fresh output confirmation.
         await d.transport.selectRoute(route);
         if (generation !== this.generation || this.disposed) return;
-        this.update({ muted: this.view.muteControl ? this.view.muted : muted, routes: [...d.transport.routes()], route, audioSetupStage: 'ready' });
+        const output = d.transport.audioRoute?.();
+        this.update({ muted: this.view.muteControl ? this.view.muted : muted, routes: [...(output?.routes ?? d.transport.routes())],
+          route: output ? output.route : route, audioSetupStage: 'ready' });
         this.renderConnection();
       } catch (error) {
         if (generation === this.generation && !this.disposed) {
@@ -756,7 +771,13 @@ export class VoiceController {
     if (!this.joining || !this.view.foreground || !['ACTIVE', 'CONNECTING', 'RECONNECTING'].includes(this.view.phase) || !this.dependencies.transport.routes().includes(route)) return;
     const generation = this.generation, request = ++this.routeRequest;
     const current = () => generation === this.generation && !this.disposed && request === this.routeRequest;
-    try { await this.dependencies.transport.selectRoute(route); if (current()) this.update({ route, routes: this.dependencies.transport.routes() }); }
+    try {
+      await this.dependencies.transport.selectRoute(route);
+      if (current()) {
+        const output = this.dependencies.transport.audioRoute?.();
+        this.update({ route: output ? output.route : route, routes: [...(output?.routes ?? this.dependencies.transport.routes())] });
+      }
+    }
     catch { if (current()) this.update({ error: 'That audio output is unavailable.' }); }
   }
   async refreshEndStatus() {

@@ -1,4 +1,4 @@
-import type { VoiceCredentials, VoiceRoute, VoiceTransport, VoiceTransportState } from '../voice/voice-types.ts';
+import type { VoiceAudioRouteState, VoiceCredentials, VoiceRoute, VoiceTransport, VoiceTransportState } from '../voice/voice-types.ts';
 import { unverifiedShutdown, type LocalShutdownResult } from './local-shutdown.ts';
 import type { AudioSample } from './audio-health.ts';
 import { sdkOwnerReleased } from './recovery-policy.ts';
@@ -12,6 +12,8 @@ export interface VoiceBindings {
   encryptionStatus?(): { mode: 'disabled' | 'required'; sdkConfirmed: boolean; safetyCode?: string };
   call: StreamVoiceCall; release(): Promise<void>;
   routes(): readonly VoiceRoute[]; selectRoute(route: VoiceRoute): Promise<void>;
+  audioRoute?(): VoiceAudioRouteState | undefined;
+  observeAudioRoute?(listener: (state: VoiceAudioRouteState) => void): () => void;
   audioSample?(): AudioSample | null;
   observeAudioSamples?(listener: (sample: AudioSample | null) => void): () => void;
   setBackgroundAudio?(enabled: boolean): Promise<boolean>;
@@ -121,6 +123,13 @@ export class StreamVoiceTransport implements VoiceTransport {
     await operation;
   }
   routes() { return this.bindings?.routes() ?? []; }
+  audioRoute(): VoiceAudioRouteState | undefined { return this.bindings?.audioRoute?.(); }
+  observeAudioRoute(listener: (state: VoiceAudioRouteState) => void) {
+    const bindings = this.bindings, generation = this.generation;
+    return bindings?.observeAudioRoute?.(state => {
+      if (generation === this.generation && this.bindings === bindings) listener(state);
+    }) ?? (() => {});
+  }
   audioSample() { return this.bindings?.audioSample?.() ?? null; }
   encryptionStatus() { return this.bindings?.encryptionStatus?.() ?? { mode: 'disabled' as const, sdkConfirmed: false }; }
   observeAudioSamples(listener: (sample: AudioSample | null) => void) {
