@@ -15,7 +15,7 @@ build([sys.executable, 'tools_webrtc/ios/build_ios_libs.py', '--build_config', '
                 '--arch', 'device:arm64', 'simulator:arm64', 'simulator:x64', '--output-dir', str(output),
                 '--deployment-target', '16.4', '--extra-gn-args',
                 'treat_warnings_as_errors=false', 'rtc_build_examples=false', 'rtc_build_tools=false',
-                'rtc_libvpx_build_vp9=true', 'use_rtti=false',
+                'rtc_libvpx_build_vp9=true', 'stream_enable_rendering_backend=true', 'use_rtti=false',
                 'use_remoteexec=false', 'use_reclient=false'], source)
 framework = output / 'WebRTC.xcframework'
 if not framework.is_dir():
@@ -29,7 +29,11 @@ headers = {}
 for item in info['AvailableLibraries']:
     directory = framework / item['LibraryIdentifier'] / item['LibraryPath']
     headers[item['LibraryIdentifier']] = sorted(path.name for path in (directory / 'Headers').glob('*.h'))
-    if not {'WebRTC.h', 'RTCEncryptionManager.h'}.issubset(headers[item['LibraryIdentifier']]):
+    required_headers = {'WebRTC.h', 'RTCEncryptionManager.h', 'RTCPeerConnectionFactory+Stream.h',
+                        'RTCNV12Buffer.h', 'RTCNativeNV12Buffer.h', 'RTCSharedMetalRenderingContext.h',
+                        'RTCSharedMetalVideoView.h', 'RTCVideoRenderingView.h',
+                        'RTCPictureInPictureVideoRenderer.h', 'RTCVideoFrameConverter.h'}
+    if not required_headers.issubset(headers[item['LibraryIdentifier']]):
         raise SystemExit('Required WebRTC public headers missing')
     identifier = subprocess.check_output(['otool', '-D', str(directory / 'WebRTC')], text=True)
     if '@rpath/WebRTC.framework/WebRTC' not in identifier:
@@ -40,5 +44,5 @@ artifact = results / ('WebRTC-' + VERSION + '.xcframework.zip')
 build(['ditto', '-c', '-k', '--sequesterRsrc', '--keepParent', str(framework), str(artifact)], source)
 write_receipt(results, 'ios', artifact, receipt,
               architectures=['ios-device-arm64', 'ios-simulator-arm64', 'ios-simulator-x86_64'],
-              publicHeaders=headers, vp9=True, deploymentTarget='16.4',
+              publicHeaders=headers, vp9=True, streamRenderingBackend=True, deploymentTarget='16.4',
               xcode=subprocess.check_output(['xcodebuild', '-version'], text=True).strip())
