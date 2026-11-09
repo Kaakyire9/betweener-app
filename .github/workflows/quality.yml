@@ -44,8 +44,8 @@ jobs:
       - name: Dependency security regressions
         run: node --require ./test/offline-network-guard.cjs --test __tests__/dependency-security.regression.test.cjs
 
-      - name: Runtime dependency audit
-        run: npm audit --omit=dev --audit-level=moderate
+      - name: Dependency audit including development tools
+        run: npm audit --include=dev --audit-level=moderate
 
       - name: React Native interaction tests
         run: npm run test:rn
