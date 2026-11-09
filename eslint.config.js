@@ -17,6 +17,12 @@ module.exports = defineConfig([
       '**/.expo/**',
       '**/.vercel/**',
       '**/.turbo/**',
+      // Local package/build caches contain generated third-party code.
+      '.npm-cache*/**',
+      '.expo-home/**',
+      '.codex-tmp/**',
+      '.tmp/**',
+      'native-artifacts/.cache/**',
       '**/cdk.out/**',
       // Independent package: checked with its own TypeScript and ESLint configuration.
       'infrastructure/program-compositor/**',
