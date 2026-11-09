@@ -32,7 +32,7 @@ def main():
     results.mkdir(parents=True, exist_ok=True)
     (fixture / 'node_modules').symlink_to(root / 'node_modules', target_is_directory=True)
     (fixture / 'package.json').write_text(json.dumps({'name': 'connect-native-pod-preflight', 'version': '0.0.0', 'private': True, 'dependencies': versions}))
-    env = {**os.environ, 'APP_VARIANT': 'staging', 'EXPO_PUBLIC_ENVIRONMENT': 'staging',
+    env = {**os.environ, 'APP_VARIANT': 'staging', 'EXPO_PUBLIC_ENVIRONMENT': 'development',
            'BETWEENER_STRICT_WEBRTC': '1', 'COCOAPODS_DISABLE_STATS': 'true', 'RCT_NEW_ARCH_ENABLED': '1'}
     # Select the same reviewed, checksum-pinned framework as the development profile.
     prepare = "require(process.argv[1]).prepare({projectRoot:process.argv[2],platform:'ios'}).catch(e=>{console.error(e.message);process.exitCode=1})"

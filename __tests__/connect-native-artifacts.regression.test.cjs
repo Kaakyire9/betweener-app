@@ -43,6 +43,8 @@ test('only the explicit native-validation development profile opts in', () => {
   const eas = JSON.parse(fs.readFileSync('eas.json', 'utf8'));
   assert.equal(eas.build.developmentNativeCrypto.extends, 'development');
   assert.equal(eas.build.developmentNativeCrypto.channel, 'development-native-crypto');
+  assert.equal(eas.build.developmentNativeCrypto.ios.image, 'sdk-57');
+  assert.equal(eas.build.developmentNativeCrypto.android.image, 'sdk-57');
   assert.equal(eas.build.developmentNativeCrypto.env.BETWEENER_STRICT_WEBRTC, '1');
   assert.equal(eas.build.development.env.APP_VARIANT, 'staging');
   assert.equal(eas.build.development.env.EXPO_PUBLIC_ENVIRONMENT, 'development');
@@ -65,7 +67,9 @@ test('Expo config resolution fences the opt-in native binary from ordinary OTA r
   try {
     Object.assign(process.env, env);
     const result = require('@expo/config').getConfig(root).exp;
-    assert.equal(result.runtimeVersion, `1.2.0-strict-webrtc-${native.VERSION}`);
+    assert.equal(result.runtimeVersion, `1.2.0-strict-webrtc-${native.VERSION}-controls-1`);
+    assert.notEqual(result.runtimeVersion, `1.2.0-strict-webrtc-${native.VERSION}`);
+    assert.equal(result.extra.nativeCallControlRevision, 1);
     assert.equal(result.extra.nativeCryptoCandidate, native.VERSION);
   } finally {
     for (const [key, value] of Object.entries(previous)) {

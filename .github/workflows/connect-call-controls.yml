@@ -28,7 +28,7 @@ jobs:
     timeout-minutes: 50
     env:
       APP_VARIANT: staging
-      EXPO_PUBLIC_ENVIRONMENT: staging
+      EXPO_PUBLIC_ENVIRONMENT: development
       BETWEENER_STRICT_WEBRTC: '1'
       COCOAPODS_DISABLE_STATS: 'true'
     steps:

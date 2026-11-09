@@ -25,7 +25,7 @@
     {
       "path": ".github/workflows/connect-call-controls.yml",
       "beforeSha256": null,
-      "afterSha256": "f9412859cde1bf41df96261f9c98fa31b325274ce72e018133316b1174b5f94e"
+      "afterSha256": "2d73bc46c3b144b5ae5e58b35cb0d81853b1a15d5d29216f0a2755f0d15eac94"
     },
     {
       "path": ".github/workflows/connect-native-crypto.yml",
@@ -155,7 +155,7 @@
     {
       "path": "scripts/verify-call-control-ios.py",
       "beforeSha256": null,
-      "afterSha256": "a30a4ae7db2c4855978ec8b66e13e153c78e059fd560be8d104574a889e8b7bb"
+      "afterSha256": "ec11e33859b337cb59fcc73ade5037d3101a12cf520cc618f5576c903b57575d"
     }
   ]
 }

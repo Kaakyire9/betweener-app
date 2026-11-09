@@ -68,7 +68,9 @@ function withStrictWebRtc(config) {
     throw new Error('Strict WebRTC requires exact staging app identities');
   }
   if (typeof config.version !== 'string' || !config.version.trim()) throw new Error('Strict WebRTC requires an app version');
-  config.runtimeVersion = `${config.version}-strict-webrtc-${VERSION}`;
+  // The call-control bridge API changed independently of the WebRTC binary.
+  // Older development binaries must not accept updates requiring that new API.
+  config.runtimeVersion = `${config.version}-strict-webrtc-${VERSION}-controls-1`;
   config = withPodfile(config, mod => {
     const manifest = readManifest(mod.modRequest.projectRoot);
     const spec = safePath(mod.modRequest.projectRoot, 'native-artifacts/.cache/ios/StreamWebRTC.podspec');
@@ -83,7 +85,7 @@ function withStrictWebRtc(config) {
     mod.modResults.contents = patchGradle(mod.modResults.contents, manifest);
     return mod;
   });
-  config.extra = { ...config.extra, nativeCryptoCandidate: VERSION };
+  config.extra = { ...config.extra, nativeCryptoCandidate: VERSION, nativeCallControlRevision: 1 };
   return config;
 }
 

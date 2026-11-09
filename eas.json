@@ -7,6 +7,8 @@
     "developmentNativeCrypto": {
       "extends": "development",
       "channel": "development-native-crypto",
+      "ios": { "image": "sdk-57" },
+      "android": { "image": "sdk-57" },
       "env": {
         "BETWEENER_STRICT_WEBRTC": "1"
       }
