@@ -40,6 +40,7 @@ export class ConnectNativeMediaOwner {
   private stoppingCamera = false;
   private videoSource: VideoPresentation | null = null;
   private releasePromise: Promise<void> | null = null;
+  private releaseFailure: NativeOwnerSnapshot['releaseFailure'];
   private readonly listeners = new Set<() => void>();
   private readonly unsubscribes: (() => void)[] = [];
   private readonly tracks = { microphone: new Set<NativeTrack>(), camera: new Set<NativeTrack>(), remote: new Set<NativeTrack>() };
@@ -116,6 +117,7 @@ export class ConnectNativeMediaOwner {
         available: [...new Set(devices.flatMap(device => routeType(device.type) ?? []))],
         selected: selectedDevice ? routeType(selectedDevice.type) : null,
         output: this.audioState.currentEndpointType ? routeType(this.audioState.currentEndpointType) : null },
+      releaseFailure: this.releaseFailure,
       tracks: { microphone: counts(this.tracks.microphone), camera: counts(this.tracks.camera), remote: counts(this.tracks.remote) }, operations: { ...this.operations } };
   };
   private run(key: keyof NativeOwnerSnapshot['operations'], action: () => Promise<unknown> | unknown): Promise<void> {
@@ -155,6 +157,9 @@ export class ConnectNativeMediaOwner {
     try {
       // Retain capture references before publisher disposal can change SDK state.
       try { this.collect(); } catch { /* Independent stop requests still run. */ }
+      // The adapter starts its idempotent SDK leave and fences transforms before
+      // peer-close callbacks can start a reconnect. Hard stops remain independent.
+      try { this.input.handle.beginRetirement?.(); } catch { /* Independent stop requests below remain required. */ }
       // Request receiver closure before sender/capture mutations. Retirement has
       // already fenced late transforms; neither this JS close nor SDK disposal
       // is an acknowledgement from the native decoder. Never await either peer
@@ -409,7 +414,7 @@ export class ConnectNativeMediaOwner {
     if (this.released) return Promise.resolve();
     if (this.releasePromise) return this.releasePromise;
     this.retire('local_end');
-    this.operations.release = 'pending';
+    this.operations.release = 'pending'; this.releaseFailure = undefined;
     const operation = (async () => {
       // A late join/unmute must settle before another owner may acquire audio.
       await Promise.allSettled([...this.pendingMutations]);
@@ -420,6 +425,8 @@ export class ConnectNativeMediaOwner {
       const tracksStillLive = Object.values(this.tracks).some(set => [...set].some(track => track.readyState !== 'ended'));
       const captureReleaseFailed = this.operations.microphoneTrackRelease === 'failed' || this.operations.cameraTrackRelease === 'failed';
       if (tracksStillLive || captureReleaseFailed || (this.nativeUseStarted && (this.operations.leave !== 'completed' || sdk.callingState !== 'left' || sdk.publisherPresent !== false || sdk.subscriberPresent !== false))) {
+        this.releaseFailure = tracksStillLive ? 'tracks_live' : captureReleaseFailed ? 'capture_release'
+          : this.operations.leave !== 'completed' || sdk.callingState !== 'left' ? 'sdk_leave' : 'peers_present';
         // Disconnect only our authenticated client, retaining the registry tombstone.
         await this.input.lease.client.disconnectUser().catch(() => undefined);
         throw new Error('connect_native_release_unconfirmed');
@@ -428,12 +435,12 @@ export class ConnectNativeMediaOwner {
       for (const unsubscribe of subscriptions) {
         try { unsubscribe(); } catch { this.unsubscribes.push(unsubscribe); }
       }
-      if (this.unsubscribes.length) throw new Error('connect_native_release_unconfirmed');
-      this.input.audio.clearConfiguration();
-      await this.input.lease.release();
+      if (this.unsubscribes.length) { this.releaseFailure = 'observers'; throw new Error('connect_native_release_unconfirmed'); }
+      try { this.input.audio.clearConfiguration(); } catch { this.releaseFailure = 'audio_configuration'; throw new Error('connect_native_release_unconfirmed'); }
+      try { await this.input.lease.release(); } catch { this.releaseFailure = 'client_release'; throw new Error('connect_native_release_unconfirmed'); }
       this.released = true;
       this.operations.release = 'completed'; this.emit();
-    })().catch(() => { this.operations.release = 'failed'; this.emit(); throw new Error('connect_native_release_unconfirmed'); })
+    })().catch(() => { this.releaseFailure ??= 'unknown'; this.operations.release = 'failed'; this.emit(); throw new Error('connect_native_release_unconfirmed'); })
       .finally(() => { this.releasePromise = null; });
     this.releasePromise = operation; return operation;
   }

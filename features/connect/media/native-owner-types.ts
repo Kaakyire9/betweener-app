@@ -53,6 +53,7 @@ export interface NativeCallHandle {
   cameraEnabled?(): boolean | null;
   setCameraQuality?(quality: 'standard' | 'data_saver'): Promise<void>;
   videoPresentation?(current: () => boolean): VideoPresentation;
+  beginRetirement?(): void;
   disposePublisher(): Promise<void>;
   disposeSubscriber(): Promise<void>;
   join(): Promise<unknown>;
@@ -85,6 +86,7 @@ export interface NativeOwnerSnapshot {
   audioRoute?: { requested: VoiceRoute | null; status: 'idle' | 'checking' | 'confirmed' | 'unconfirmed' | 'failed' | 'cancelled';
     available: VoiceRoute[]; selected: VoiceRoute | null; output: VoiceRoute | null };
   tracks: { microphone: { observed: number; live: number }; camera: { observed: number; live: number }; remote: { observed: number; live: number } };
+  releaseFailure?: 'tracks_live' | 'capture_release' | 'sdk_leave' | 'peers_present' | 'observers' | 'audio_configuration' | 'client_release' | 'unknown';
   operations: { microphone: NativeOperation; camera: NativeOperation; publisher: NativeOperation; subscriber: NativeOperation;
     microphoneTrackRelease: NativeOperation; cameraTrackRelease: NativeOperation;
     playoutMute: NativeOperation; leave: NativeOperation; release: NativeOperation; audioConfiguration: NativeOperation };

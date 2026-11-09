@@ -402,3 +402,76 @@ index 4d69ef8..e8a3860 100644
 -//# sourceMappingURL=utils.js.map
 \ No newline at end of file
 +//# sourceMappingURL=utils.js.map
+diff --git a/node_modules/@stream-io/video-react-native-sdk/ios/StreamInCallManager.swift b/node_modules/@stream-io/video-react-native-sdk/ios/StreamInCallManager.swift
+--- a/node_modules/@stream-io/video-react-native-sdk/ios/StreamInCallManager.swift
++++ b/node_modules/@stream-io/video-react-native-sdk/ios/StreamInCallManager.swift
+@@ -68,6 +68,7 @@
+     /// Re-applied on every engine rebuild so the pick survives interruptions.
+     private var selectedOutput: OutputRouting?
+     private var enableStereo: Bool = false
++    private var connectInputMixerMute = false
+     private var previousVolume: Float = 0.75
+ 
+     private struct AudioSessionState {
+@@ -125,6 +126,30 @@
+         }
+     }
+ 
++    /// Connect retains encrypted sender tracks across mute. Input-mixer mute
++    /// avoids iOS voice-processing mute being echoed back as a new CallKit action.
++    /// Acknowledge the live call ADM; never allocate a default factory here.
++    @objc(configureConnectMicrophoneMute:resolver:rejecter:)
++    func configureConnectMicrophoneMute(enabled: Bool, resolve: @escaping RCTPromiseResolveBlock, reject: @escaping RCTPromiseRejectBlock) {
++        audioSessionQueue.async { [self] in
++            if !enabled {
++                connectInputMixerMute = false
++                resolve(nil)
++                return
++            }
++            guard let adm = getAudioDeviceModule() else {
++                reject("connect_audio_input_unavailable", "No live call audio device", nil)
++                return
++            }
++            guard adm.setMuteMode(.inputMixer) == 0 else {
++                reject("connect_audio_input_unconfirmed", "Could not configure call microphone mute", nil)
++                return
++            }
++            connectInputMixerMute = true
++            resolve(nil)
++        }
++    }
++
+     @objc(setMuteMode:)
+     func setMuteMode(mode: NSInteger) {
+         audioSessionQueue.async { [self] in
+@@ -133,7 +158,7 @@
+                 return
+             }
+             let muteMode = RTCAudioEngineMuteMode(rawValue: mode) ?? .voiceProcessing
+-            _ = adm.setMuteMode(muteMode)
++            _ = adm.setMuteMode(connectInputMixerMute ? .inputMixer : muteMode)
+         }
+     }
+ 
+@@ -227,6 +252,7 @@
+             // Stereo is listener-only and applies live. Cleared by stop()'s reset().
+             if callAudioRole == .listener && enableStereo {
+                 adm?.setStereoPlayoutPreference(true)
++                if connectInputMixerMute { _ = adm?.setMuteMode(.inputMixer) }
+             }
+ 
+             let rtcConfig = makeAudioConfiguration(for: selectedOutput)
+diff --git a/node_modules/@stream-io/video-react-native-sdk/ios/StreamInCallManager.m b/node_modules/@stream-io/video-react-native-sdk/ios/StreamInCallManager.m
+--- a/node_modules/@stream-io/video-react-native-sdk/ios/StreamInCallManager.m
++++ b/node_modules/@stream-io/video-react-native-sdk/ios/StreamInCallManager.m
+@@ -10,6 +10,10 @@
+ RCT_EXTERN_METHOD(setEnableStereoAudioOutput:(BOOL)enable)
+ 
+ RCT_EXTERN_METHOD(setMuteMode:(NSInteger)mode)
++
++RCT_EXTERN_METHOD(configureConnectMicrophoneMute:(BOOL)enabled
++                  resolver:(RCTPromiseResolveBlock)resolve
++                  rejecter:(RCTPromiseRejectBlock)reject)
+ 
+ RCT_EXTERN_METHOD(setRecordingAlwaysPreparedMode:(BOOL)enabled)
+ 

@@ -26,7 +26,11 @@ export async function invokePinnedConnectRpc(client: PinnedConnectRpcClient, nam
   try {
     const request = client.schema('public').rpc(name, args).setHeader('Authorization', `Bearer ${token}`).abortSignal(abort.signal);
     return await Promise.race([Promise.resolve(request), new Promise<never>((_, reject) => {
-      timer = setTimeout(() => { abort.abort(); reject(new Error('connect_unavailable')); }, timeoutMs);
+      timer = setTimeout(() => {
+        const failure = new Error('connect_unavailable'); failure.name = 'ConnectRpcTimeoutError';
+        // Reject with our deadline category before abort can settle the builder.
+        reject(failure); abort.abort();
+      }, timeoutMs);
     })]);
   } finally { clearTimeout(timer); }
 }

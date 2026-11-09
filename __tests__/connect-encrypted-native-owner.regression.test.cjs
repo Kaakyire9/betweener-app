@@ -1,7 +1,7 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const {adaptNativeStreamSdk}=require('../features/connect/media/native-stream-sdk.ts');
 const {id,deferred}=require('./fixtures/connect-product-fixture.cjs');
-function fixture({supported=true,mode='auto-on',confirmed=true,createGate,withMicrophone=false}={}) {
+function fixture({supported=true,mode='auto-on',confirmed=true,createGate,withMicrophone=false,configureInput=async()=>{}}={}) {
   const events=[],listeners=new Map();let nativeProvider=()=>{},current=true,attached,disposed=false;
   const observable={subscribe(){return{unsubscribe(){}};}};
   const state={callingState:'idle',settings:{encryption:{mode}},e2eeEnabled:false,remoteParticipants:[],participants:[],callingState$:observable};
@@ -28,7 +28,7 @@ function fixture({supported=true,mode='auto-on',confirmed=true,createGate,withMi
   const sdk=adaptNativeStreamSdk({StreamVideoClient:{getOrCreateInstance(options){client.streamClient.options=options.options;return client;}},
     getCallMediaEngineProvider:()=>nativeProvider,setCallMediaEngineProvider:value=>{nativeProvider=value;},
     EncryptionManager:{isSupported:()=>supported,async create(){events.push('manager');if(createGate)await createGate.promise;return manager;}},
-    SfuModels:{TrackType:{AUDIO:1,VIDEO:2},ErrorCode:{205:'PARTICIPANT_MEDIA_TRANSPORT_FAILURE'},WebsocketReconnectStrategy:{1:'FAST'}}});
+    SfuModels:{TrackType:{AUDIO:1,VIDEO:2},ErrorCode:{205:'PARTICIPANT_MEDIA_TRANSPORT_FAILURE'},WebsocketReconnectStrategy:{1:'FAST'}}},configureInput);
   const owner=sdk.createClient({apiKey:'synthetic',userId:id(1),tokenProvider:async()=> 'synthetic',onConnectionFailure(){}});
   const handle=owner.call('betweener_connect',id(20));
   const admission={call:{id:id(20),cid:call.cid,type:call.type},user:{id:id(1)},encryption:{mode:'required',generation:'2026-11-03T00:00:00Z',participants:[id(1),id(2)]}};
@@ -222,4 +222,52 @@ test('native hard stop ends paused source and sender tracks and still invokes SD
     await f.handle.disableMicrophone();
     assert.equal(f.capture.readyState,'ended');assert.equal(f.sender.readyState,'ended');assert.ok(f.events.includes('sdk-mic-disable'));
   }finally{await f.handle.leave();}
+});
+
+test('encrypted input configuration is acknowledged before the first microphone capture',async()=>{
+  const gate=deferred(),events=[],f=fixture({configureInput:async enabled=>{events.push(enabled);if(enabled)await gate.promise;}});
+  try{
+    await f.handle.prepareEncryption(f.admission,f.agent,f.current,'epoch');
+    const joining=f.handle.join();await new Promise(resolve=>setImmediate(resolve));
+    assert.deepEqual(events,[true]);assert.equal(f.events.includes('sdk-mic-enable'),false);
+    gate.resolve();await joining;await f.handle.enableMicrophone();
+    assert.ok(f.events.includes('sdk-mic-enable'));
+    await f.handle.leave();assert.deepEqual(events,[true,false]);
+  }finally{gate.resolve();await f.handle.leave();}
+});
+
+test('failed native input preparation prevents capture and still disposes the encrypted call',async()=>{
+  const f=fixture({configureInput:async enabled=>{if(enabled)throw Error('synthetic input unavailable');}});
+  await f.handle.prepareEncryption(f.admission,f.agent,f.current,'epoch');
+  await assert.rejects(f.handle.join(),/input unavailable/);
+  assert.equal(f.events.includes('sdk-mic-enable'),false);
+  await f.handle.leave();assert.ok(f.events.includes('dispose'));
+});
+
+test('retirement during native input configuration cannot revive capture or leave a pinned setting',async()=>{
+  const gate=deferred(),events=[],f=fixture({configureInput:async enabled=>{events.push(enabled);if(enabled)await gate.promise;}});
+  await f.handle.prepareEncryption(f.admission,f.agent,f.current,'epoch');
+  const joining=f.handle.join();await new Promise(resolve=>setImmediate(resolve));
+  const ending=f.handle.leave();gate.resolve();await assert.rejects(joining,/owner_retired/);await ending;
+  assert.deepEqual(events,[true,false]);assert.equal(f.events.includes('sdk-mic-enable'),false);
+});
+
+test('concurrent retirement and leave share one pending SDK shutdown',async()=>{
+  const f=fixture(),gate=deferred();
+  await f.handle.prepareEncryption(f.admission,f.agent,f.current,'epoch');await f.handle.join();
+  const leave=f.call.leave;f.call.leave=async()=>{await gate.promise;await leave();};
+  f.handle.beginRetirement();const one=f.handle.leave(),two=f.handle.leave();assert.equal(one,two);
+  const states=[],remove=f.handle.observeState(state=>states.push(state));
+  f.listeners.get('e2ee.unencrypted_frame')({userId:id(2),trackType:'AUDIO'});
+  assert.equal(f.handle.state().failure,undefined,'only the retired local receiver is fenced');
+  gate.resolve();await Promise.all([one,two]);remove();
+  assert.equal(f.events.filter(e=>e==='leave').length,1);assert.equal(states.includes('reconnecting-failed'),false);
+});
+
+test('failed native input reset cannot postpone encryption-key disposal after peers have left',async()=>{
+  let failed=true;
+  const f=fixture({configureInput:async enabled=>{if(!enabled&&failed)throw Error('synthetic reset failure');}});
+  await f.handle.prepareEncryption(f.admission,f.agent,f.current,'epoch');await f.handle.join();
+  await assert.rejects(f.handle.leave(),/audio_input_unconfirmed/);assert.ok(f.events.includes('dispose'));
+  failed=false;await f.handle.leave();assert.equal(f.events.filter(e=>e==='dispose').length,1);
 });

@@ -12,9 +12,12 @@ export class ConnectNativeBuildError extends Error {
 }
 
 /** Inspect bridge method presence only; never invoke a sensor, factory or connection. */
-export function assertConnectNativeRuntime(modules: Record<string, unknown>) {
+export function assertConnectNativeRuntime(modules: Record<string, unknown>, platform?: string) {
   const missing: string[] = [];
-  for (const [name, methods] of Object.entries(requiredMethods)) {
+  const contract: Record<string, readonly string[]> = { ...requiredMethods, ...(platform === 'ios' ? {
+    StreamInCallManager: [...requiredMethods.StreamInCallManager, 'configureConnectMicrophoneMute'],
+  } : {}) };
+  for (const [name, methods] of Object.entries(contract)) {
     for (const method of methods) {
       try {
         if (typeof (modules[name] as Record<string, unknown> | undefined)?.[method] === 'function') continue;

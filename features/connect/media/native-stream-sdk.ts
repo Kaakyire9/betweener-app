@@ -13,9 +13,10 @@ import { createNativeCallActivation, nativeDisconnectCause } from './native-call
 import { createNativePublisherRetirement } from './native-publisher-retirement.ts';
 import { nativeReconnectFailure } from './native-reconnect-diagnostics.ts';
 import { createNativeCallAudio } from './native-call-audio.ts';
+import { configureConnectMicrophoneInput } from './native-microphone-input.ts';
 
 /** Installed SDK boundary. No native module is evaluated until the gated loader runs. */
-export function adaptNativeStreamSdk(sdk: Pick<StreamVideoSdkModule, 'StreamVideoClient' | 'callManager' | 'SfuModels' | 'getCallMediaEngineProvider' | 'setCallMediaEngineProvider' | 'StreamCallProvider' | 'StreamTheme' | 'ParticipantView' | 'hasVideo'> & Partial<Pick<StreamVideoSdkModule, 'EncryptionManager'>>): NativeStreamSdk {
+export function adaptNativeStreamSdk(sdk: Pick<StreamVideoSdkModule, 'StreamVideoClient' | 'callManager' | 'SfuModels' | 'getCallMediaEngineProvider' | 'setCallMediaEngineProvider' | 'StreamCallProvider' | 'StreamTheme' | 'ParticipantView' | 'hasVideo'> & Partial<Pick<StreamVideoSdkModule, 'EncryptionManager'>>, configureMicrophoneInput: (enabled: boolean) => Promise<void> = configureConnectMicrophoneInput): NativeStreamSdk {
   return {
     createClient({ apiKey, userId, tokenProvider, onConnectionFailure }) {
       const onConnectUserError = () => onConnectionFailure();
@@ -93,6 +94,32 @@ export function adaptNativeStreamSdk(sdk: Pick<StreamVideoSdkModule, 'StreamVide
             setStatus: status => { call.microphone.state.setPendingStatus(status); call.microphone.state.setStatus(status); },
             enable: () => call.microphone.enable(), disable: () => call.microphone.disable(true),
           });
+          let leaving: Promise<void> | null = null, configuringInput: Promise<void> | null = null, inputConfigured = false;
+          const leave = (): Promise<void> => {
+            if (leaving) return leaving;
+            // Fence late transforms before any SDK/native teardown callback.
+            encryptionTransformsRetired = true; activation?.dispose();
+            let resolve!: () => void, reject!: (error: unknown) => void;
+            const pending = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
+            leaving = pending;
+            void (async () => {
+              await Promise.all([ongoing?.dispose(), call.state.callingState !== 'left' ? call.leave({ reject: false }) : Promise.resolve()]);
+              await Promise.allSettled(configuringInput ? [configuringInput] : []);
+              if (call.state.callingState === 'left') {
+                let inputResetFailed = false;
+                if (inputConfigured) {
+                  try { await configureMicrophoneInput(false); inputConfigured = false; } catch { inputResetFailed = true; }
+                }
+                try { unsubscribeTransport?.(); } catch { /* Diagnostic cleanup is independent. */ }
+                unsubscribeTransport = undefined;
+                encryption?.retire(); encryption?.release(); encryption = null;
+                for (const unsubscribe of encryptionSubscriptions.splice(0)) unsubscribe();
+                if (inputResetFailed) throw Error('connect_native_audio_input_unconfirmed');
+              }
+            })().then(resolve, reject);
+            void pending.finally(() => { if (leaving === pending) leaving = null; }).catch(() => undefined);
+            return pending;
+          };
           const tracks = (stream: { getTracks(): import('./native-owner-types').NativeTrack[] } | undefined) => {
             if (!stream) return [];
             let owned = captures.get(stream);
@@ -243,18 +270,15 @@ export function adaptNativeStreamSdk(sdk: Pick<StreamVideoSdkModule, 'StreamVide
               if (encryptionRequired) await call.microphone.disableSpeakingWhileMutedNotification();
               await call.join({ create: false });
               if (encryptionRequired && (!call.state.e2eeEnabled || encryptionFailed)) throw Error('connect_e2ee_not_confirmed');
-            }, leave: async () => {
-              encryptionTransformsRetired = true;
-              activation?.dispose();
-              // Keep independent SDK leave even if a native keep-alive release fails.
-              await Promise.all([ongoing?.dispose(), call.state.callingState !== 'left' ? call.leave({ reject: false }) : Promise.resolve()]);
-              // Never dispose a transform under possibly live peer connections.
-              if (call.state.callingState === 'left') {
-                try { unsubscribeTransport?.(); } catch { /* Diagnostic cleanup is independent. */ }
-                unsubscribeTransport = undefined;
-                encryption?.retire(); encryption?.release(); encryption = null;
-                for (const unsubscribe of encryptionSubscriptions.splice(0)) unsubscribe(); }
-            },
+              if (encryptionRequired) {
+                if (encryptionTransformsRetired || !encryptionCurrent()) throw Error('connect_e2ee_owner_retired');
+                inputConfigured = true;
+                configuringInput = configureMicrophoneInput(true);
+                await configuringInput;
+                if (encryptionTransformsRetired || !encryptionCurrent()) throw Error('connect_e2ee_owner_retired');
+              }
+            }, beginRetirement: () => { void leave().catch(() => undefined); }, leave,
+
           };
         },
       };

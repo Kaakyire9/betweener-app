@@ -1,0 +1,56 @@
+name: Connect native call-control preflight
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/betweener-live]
+    paths:
+      - patches/@stream-io+*.patch
+      - scripts/verify-call-control-ios.py
+      - .github/workflows/connect-call-controls.yml
+  pull_request:
+    paths:
+      - patches/@stream-io+*.patch
+      - scripts/verify-call-control-ios.py
+      - .github/workflows/connect-call-controls.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: connect-call-controls-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ios-native-pods:
+    name: Compile iOS call controls without an application or signing
+    runs-on: macos-26
+    timeout-minutes: 50
+    env:
+      APP_VARIANT: staging
+      EXPO_PUBLIC_ENVIRONMENT: staging
+      BETWEENER_STRICT_WEBRTC: '1'
+      COCOAPODS_DISABLE_STATS: 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+          cache: npm
+      - name: Install locked dependencies and native patches
+        run: npm ci
+      - name: Compile actual patched native pods against reviewed WebRTC
+        run: >-
+          python3 scripts/verify-call-control-ios.py
+          --fixture "$RUNNER_TEMP/connect-call-control-pods"
+          --results "$GITHUB_WORKSPACE/call-control-results"
+      - name: Retain compilation receipts and diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: connect-call-control-ios-${{ github.run_id }}
+          path: call-control-results/
+          if-no-files-found: warn
+          retention-days: 7

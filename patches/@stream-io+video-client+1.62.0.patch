@@ -1,0 +1,246 @@
+diff --git a/node_modules/@stream-io/video-client/src/Call.ts b/node_modules/@stream-io/video-client/src/Call.ts
+--- a/node_modules/@stream-io/video-client/src/Call.ts
++++ b/node_modules/@stream-io/video-client/src/Call.ts
+@@ -354,6 +354,7 @@
+   private deviceSettingsAppliedOnce = false;
+   private callManagerStarted = false;
+   private leaveGeneration = 0;
++  private leaveRequested = false;
+   private credentials?: Credentials;
+ 
+   private initialized = false;
+@@ -714,6 +715,10 @@
+       throw new Error('Cannot leave call that has already been left.');
+     }
+ 
++    // Fence reconnect before teardown can yield or close a peer connection.
++    this.leaveRequested = true;
++    this.leaveGeneration += 1;
++
+     // before the first await: the calling state stays RINGING well into the
+     // teardown, so pause both watchdogs before they can race this leave. They
+     // keep their deadlines, so a failed leave resumes them without handing the
+@@ -727,8 +732,6 @@
+       if (callingState === CallingState.LEFT) {
+         return;
+       }
+-
+-      this.leaveGeneration += 1;
+ 
+       if (callingState === CallingState.JOINING) {
+         const waitUntilCallJoined = () => {
+@@ -1185,6 +1188,12 @@
+       // snapshot before the first await: a leave() landing at any point from
+       // here on supersedes this join, and the retry loop must bail out instead
+       // of resurrecting a call that leave() already tore down.
++      if (this.leaveRequested) {
++        if (callingState !== CallingState.LEFT || hasPending(this.joinLeaveConcurrencyTag)) {
++          throw new Error('Cannot join a call while it is leaving');
++        }
++        this.leaveRequested = false;
++      }
+       const joinLeaveGeneration = this.leaveGeneration;
+       const supersededByLeave = () =>
+         this.leaveGeneration !== joinLeaveGeneration;
+@@ -2045,6 +2054,7 @@
+     strategy: WebsocketReconnectStrategy,
+     reason: ReconnectReason,
+   ): Promise<void> => {
++    if (this.leaveRequested) return;
+     const { callingState } = this.state;
+     if (
+       callingState === CallingState.JOINING ||
+@@ -2063,7 +2073,7 @@
+ 
+     const reconnectLeaveGeneration = this.leaveGeneration;
+     const supersededByLeave = () =>
+-      this.leaveGeneration !== reconnectLeaveGeneration;
++      this.leaveRequested || this.leaveGeneration !== reconnectLeaveGeneration;
+     return withoutConcurrency(this.reconnectConcurrencyTag, async () => {
+       if (supersededByLeave()) return;
+       const reconnectStartTime = Date.now();
+diff --git a/node_modules/@stream-io/video-client/dist/index.cjs.js b/node_modules/@stream-io/video-client/dist/index.cjs.js
+--- a/node_modules/@stream-io/video-client/dist/index.cjs.js
++++ b/node_modules/@stream-io/video-client/dist/index.cjs.js
+@@ -15890,6 +15890,7 @@
+     deviceSettingsAppliedOnce = false;
+     callManagerStarted = false;
+     leaveGeneration = 0;
++    leaveRequested = false;
+     credentials;
+     initialized = false;
+     acceptRejectConcurrencyTag = Symbol('acceptRejectTag');
+@@ -16177,6 +16178,8 @@
+         if (this.state.callingState === exports.CallingState.LEFT) {
+             throw new Error('Cannot leave call that has already been left.');
+         }
++        this.leaveRequested = true;
++        this.leaveGeneration += 1;
+         // before the first await: the calling state stays RINGING well into the
+         // teardown, so pause both watchdogs before they can race this leave. They
+         // keep their deadlines, so a failed leave resumes them without handing the
+@@ -16188,7 +16191,6 @@
+             if (callingState === exports.CallingState.LEFT) {
+                 return;
+             }
+-            this.leaveGeneration += 1;
+             if (callingState === exports.CallingState.JOINING) {
+                 const waitUntilCallJoined = () => {
+                     return new Promise((resolve) => {
+@@ -16548,6 +16550,12 @@
+         // snapshot before the first await: a leave() landing at any point from
+         // here on supersedes this join, and the retry loop must bail out instead
+         // of resurrecting a call that leave() already tore down.
++        if (this.leaveRequested) {
++            if (callingState !== exports.CallingState.LEFT || hasPending(this.joinLeaveConcurrencyTag)) {
++                throw new Error('Cannot join a call while it is leaving');
++            }
++            this.leaveRequested = false;
++        }
+         const joinLeaveGeneration = this.leaveGeneration;
+         const supersededByLeave = () => this.leaveGeneration !== joinLeaveGeneration;
+         // we need this to be set before the callingx.joinCall() is
+@@ -17249,6 +17257,7 @@
+      *   `ICE_NEVER_CONNECTED` increments the unsupported-network counter).
+      */
+     reconnect = async (strategy, reason) => {
++        if (this.leaveRequested) return;
+         const { callingState } = this.state;
+         if (callingState === exports.CallingState.JOINING ||
+             callingState === exports.CallingState.RECONNECTING ||
+@@ -17263,7 +17272,7 @@
+         if (hasPending(this.reconnectConcurrencyTag))
+             return;
+         const reconnectLeaveGeneration = this.leaveGeneration;
+-        const supersededByLeave = () => this.leaveGeneration !== reconnectLeaveGeneration;
++        const supersededByLeave = () => this.leaveRequested || this.leaveGeneration !== reconnectLeaveGeneration;
+         return withoutConcurrency(this.reconnectConcurrencyTag, async () => {
+             if (supersededByLeave())
+                 return;
+diff --git a/node_modules/@stream-io/video-client/dist/index.es.js b/node_modules/@stream-io/video-client/dist/index.es.js
+--- a/node_modules/@stream-io/video-client/dist/index.es.js
++++ b/node_modules/@stream-io/video-client/dist/index.es.js
+@@ -15871,6 +15871,7 @@
+     deviceSettingsAppliedOnce = false;
+     callManagerStarted = false;
+     leaveGeneration = 0;
++    leaveRequested = false;
+     credentials;
+     initialized = false;
+     acceptRejectConcurrencyTag = Symbol('acceptRejectTag');
+@@ -16158,6 +16159,8 @@
+         if (this.state.callingState === CallingState.LEFT) {
+             throw new Error('Cannot leave call that has already been left.');
+         }
++        this.leaveRequested = true;
++        this.leaveGeneration += 1;
+         // before the first await: the calling state stays RINGING well into the
+         // teardown, so pause both watchdogs before they can race this leave. They
+         // keep their deadlines, so a failed leave resumes them without handing the
+@@ -16169,7 +16172,6 @@
+             if (callingState === CallingState.LEFT) {
+                 return;
+             }
+-            this.leaveGeneration += 1;
+             if (callingState === CallingState.JOINING) {
+                 const waitUntilCallJoined = () => {
+                     return new Promise((resolve) => {
+@@ -16529,6 +16531,12 @@
+         // snapshot before the first await: a leave() landing at any point from
+         // here on supersedes this join, and the retry loop must bail out instead
+         // of resurrecting a call that leave() already tore down.
++        if (this.leaveRequested) {
++            if (callingState !== CallingState.LEFT || hasPending(this.joinLeaveConcurrencyTag)) {
++                throw new Error('Cannot join a call while it is leaving');
++            }
++            this.leaveRequested = false;
++        }
+         const joinLeaveGeneration = this.leaveGeneration;
+         const supersededByLeave = () => this.leaveGeneration !== joinLeaveGeneration;
+         // we need this to be set before the callingx.joinCall() is
+@@ -17230,6 +17238,7 @@
+      *   `ICE_NEVER_CONNECTED` increments the unsupported-network counter).
+      */
+     reconnect = async (strategy, reason) => {
++        if (this.leaveRequested) return;
+         const { callingState } = this.state;
+         if (callingState === CallingState.JOINING ||
+             callingState === CallingState.RECONNECTING ||
+@@ -17244,7 +17253,7 @@
+         if (hasPending(this.reconnectConcurrencyTag))
+             return;
+         const reconnectLeaveGeneration = this.leaveGeneration;
+-        const supersededByLeave = () => this.leaveGeneration !== reconnectLeaveGeneration;
++        const supersededByLeave = () => this.leaveRequested || this.leaveGeneration !== reconnectLeaveGeneration;
+         return withoutConcurrency(this.reconnectConcurrencyTag, async () => {
+             if (supersededByLeave())
+                 return;
+diff --git a/node_modules/@stream-io/video-client/dist/index.browser.es.js b/node_modules/@stream-io/video-client/dist/index.browser.es.js
+--- a/node_modules/@stream-io/video-client/dist/index.browser.es.js
++++ b/node_modules/@stream-io/video-client/dist/index.browser.es.js
+@@ -15870,6 +15870,7 @@
+     deviceSettingsAppliedOnce = false;
+     callManagerStarted = false;
+     leaveGeneration = 0;
++    leaveRequested = false;
+     credentials;
+     initialized = false;
+     acceptRejectConcurrencyTag = Symbol('acceptRejectTag');
+@@ -16157,6 +16158,8 @@
+         if (this.state.callingState === CallingState.LEFT) {
+             throw new Error('Cannot leave call that has already been left.');
+         }
++        this.leaveRequested = true;
++        this.leaveGeneration += 1;
+         // before the first await: the calling state stays RINGING well into the
+         // teardown, so pause both watchdogs before they can race this leave. They
+         // keep their deadlines, so a failed leave resumes them without handing the
+@@ -16168,7 +16171,6 @@
+             if (callingState === CallingState.LEFT) {
+                 return;
+             }
+-            this.leaveGeneration += 1;
+             if (callingState === CallingState.JOINING) {
+                 const waitUntilCallJoined = () => {
+                     return new Promise((resolve) => {
+@@ -16528,6 +16530,12 @@
+         // snapshot before the first await: a leave() landing at any point from
+         // here on supersedes this join, and the retry loop must bail out instead
+         // of resurrecting a call that leave() already tore down.
++        if (this.leaveRequested) {
++            if (callingState !== CallingState.LEFT || hasPending(this.joinLeaveConcurrencyTag)) {
++                throw new Error('Cannot join a call while it is leaving');
++            }
++            this.leaveRequested = false;
++        }
+         const joinLeaveGeneration = this.leaveGeneration;
+         const supersededByLeave = () => this.leaveGeneration !== joinLeaveGeneration;
+         // we need this to be set before the callingx.joinCall() is
+@@ -17229,6 +17237,7 @@
+      *   `ICE_NEVER_CONNECTED` increments the unsupported-network counter).
+      */
+     reconnect = async (strategy, reason) => {
++        if (this.leaveRequested) return;
+         const { callingState } = this.state;
+         if (callingState === CallingState.JOINING ||
+             callingState === CallingState.RECONNECTING ||
+@@ -17243,7 +17252,7 @@
+         if (hasPending(this.reconnectConcurrencyTag))
+             return;
+         const reconnectLeaveGeneration = this.leaveGeneration;
+-        const supersededByLeave = () => this.leaveGeneration !== reconnectLeaveGeneration;
++        const supersededByLeave = () => this.leaveRequested || this.leaveGeneration !== reconnectLeaveGeneration;
+         return withoutConcurrency(this.reconnectConcurrencyTag, async () => {
+             if (supersededByLeave())
+                 return;
+diff --git a/node_modules/@stream-io/video-client/dist/src/Call.d.ts b/node_modules/@stream-io/video-client/dist/src/Call.d.ts
+--- a/node_modules/@stream-io/video-client/dist/src/Call.d.ts
++++ b/node_modules/@stream-io/video-client/dist/src/Call.d.ts
+@@ -140,6 +140,7 @@
+     private deviceSettingsAppliedOnce;
+     private callManagerStarted;
+     private leaveGeneration;
++    private leaveRequested;
+     private credentials?;
+     private initialized;
+     private readonly acceptRejectConcurrencyTag;

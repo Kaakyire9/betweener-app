@@ -148,6 +148,7 @@ test('secure calling preserves frozen snapshots and declares the exact local And
     "sha256": "0ed37b87198db1a05a6eeb5196fbe64b79451f89c83bc86a3822e24316740840"
   }
 ];
+  laterRepairs.push({ path: 'docs/betweener-connect/connect-v1-development-repairs.local.json', sha256: '5a456d5ce0bf758395bdfe6c4f45d67b74482dbfb95f56ee3059980cd6e40648' });
   for (const receipt of laterRepairs) {
     const bytes = fs.readFileSync(receipt.path);
     assert.equal(sha256(bytes), receipt.sha256, receipt.path);

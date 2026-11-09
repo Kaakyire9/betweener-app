@@ -1,0 +1,161 @@
+{
+  "scope": "LOCAL_V1_CLIENT_REPAIRS_NOT_DEVICE_OR_PROVIDER_VALIDATION",
+  "activities": [
+    "foreground audio route observations and credential preparation",
+    "iOS input-mixer mute and old-native-build rejection",
+    "SDK leave/reconnect fencing and independent cleanup",
+    "redacted timeout and cleanup diagnostics",
+    "unsigned iOS native-pod compilation preflight"
+  ],
+  "callingGatesChanged": false,
+  "hostedChanges": 0,
+  "providerCalls": 0,
+  "easBuilds": 0,
+  "limits": {
+    "activeEncryptionFaultsRemainFatal": true,
+    "plaintextFallback": false,
+    "unsafeReleaseRemainsQuarantined": true,
+    "foregroundPolicyChanged": false,
+    "newIosBinaryRequired": true,
+    "iosBridgeCompilation": "SEPARATE_CI_RESULT_REQUIRED",
+    "physicalVerification": "REQUIRED_AFTER_INSTALL",
+    "remoteProviderRevocation": "UNVERIFIED"
+  },
+  "files": [
+    {
+      "path": ".github/workflows/connect-call-controls.yml",
+      "beforeSha256": null,
+      "afterSha256": "f9412859cde1bf41df96261f9c98fa31b325274ce72e018133316b1174b5f94e"
+    },
+    {
+      "path": ".github/workflows/connect-native-crypto.yml",
+      "beforeSha256": "17c6a26746c2ce0c36aee10cb179160f48d753403a4394dacbe0c7317d249bf4",
+      "afterSha256": "420bd0da29f88dbcad1c266195558e33cd4d4d7421bc1c67328e798627a5d8af"
+    },
+    {
+      "path": "__tests__/connect-encrypted-native-owner.regression.test.cjs",
+      "beforeSha256": "b611a7f3a1e2104e3fbe5ce3fa1ff446ee291e0adf0b7fcda7a64857c742287c",
+      "afterSha256": "b7ebea5fa5612a93c3c9900e283a35ef0d41eac8ed61a09f96af02327e576bfe"
+    },
+    {
+      "path": "__tests__/connect-native-bootstrap.regression.test.cjs",
+      "beforeSha256": "beca9432dbf86fd405f1d04b237abc34a64d9162fbd2db97507ffe6551b8c200",
+      "afterSha256": "e40d3f534b378cde32a6f173c414f24f224f44c99a81caf4de44103464476a37"
+    },
+    {
+      "path": "__tests__/connect-native-build-guards.regression.test.cjs",
+      "beforeSha256": "63dfc95fe80e1448d7012a3a6a69f79faa549489b91a9e95579c4dc5eb2c4369",
+      "afterSha256": "47763ce3cea978e789191bbfcd07a741f543b073e1b578e317d7f7eec64424c7"
+    },
+    {
+      "path": "app.config.js",
+      "beforeSha256": "ad2753e5ead38f71b8433fd943fdef26d383296dd195ba138fc783b626f2f5f9",
+      "afterSha256": "799bd3569eee375726e5a5cce2d7f21305c5ae8d7f245e6ceb61c40e6e3be716"
+    },
+    {
+      "path": "features/connect/components/VoiceCallControls.tsx",
+      "beforeSha256": "ab57400a0ccdb60039052fe0397bbe7d327aa40fc65a70e8bc7ed2cd6b491507",
+      "afterSha256": "947071049ef9c460beaab20fe7e9c2a93f8380f25453ce0bfe155cc11fa60332"
+    },
+    {
+      "path": "features/connect/data/authenticated-connect-services.ts",
+      "beforeSha256": "b5a6ca6dc94b46abe6db3b640b63b76b44001a3b2c447bc922797fd356ecabdd",
+      "afterSha256": "c327bd2171d092c5a188c05819c3a1163d64b2523b179fd43eaf141f516ce06e"
+    },
+    {
+      "path": "features/connect/data/load-connect-product.ts",
+      "beforeSha256": "552b1ec671d246848b55c2472951aa779b25f1995ccbcf99fca8253fcdcc79c0",
+      "afterSha256": "b8e2218c8d6a02ac8b4652358f0465b0cab59421f341f26ff87407097b290e55"
+    },
+    {
+      "path": "features/connect/diagnostics/connect-terminal-logger.ts",
+      "beforeSha256": "ff3d9c6eb3f325c63f9e250a0b4fe09b73ef1f827379827b398477df8df93206",
+      "afterSha256": "422748b201fd3eb0473d344ddcaf32b0fcb546760c5de3b5a17b5c7ba5c9bc4e"
+    },
+    {
+      "path": "features/connect/media/connect-native-owner.ts",
+      "beforeSha256": "cc966c7e5c1e56c21d832a679307d185459f8bbd98e0473296e3b08db2124734",
+      "afterSha256": "fd505a7192f18a0cb2c9b00ddb777ce03d2c2db8056f9e4c917004c3f2730efe"
+    },
+    {
+      "path": "features/connect/media/native-audio-route.ts",
+      "beforeSha256": "a28c0b1e3d09bb65e6e627017173e5b485503fef0542c706690130c320ac5776",
+      "afterSha256": "f5794f18a2e5981127ee80f7337f909415c3be0a0ef64b0fa3fb5ad4d99e31b1"
+    },
+    {
+      "path": "features/connect/media/native-microphone-input.ts",
+      "beforeSha256": null,
+      "afterSha256": "23c1f984c80cf1b932574d8589b4e8791f5b8e77ad26ebd76e312d87d4f34b4c"
+    },
+    {
+      "path": "features/connect/media/native-owner-types.ts",
+      "beforeSha256": "a656f17b2c56aed6927259e89391b4412e3ae53ca43d69f3aaf93e81aea8b105",
+      "afterSha256": "7662a628bd7fd018c19dfd84d7769b678fe9cff2896d28de717c41b773ec65fe"
+    },
+    {
+      "path": "features/connect/media/native-runtime-check.ts",
+      "beforeSha256": "e8a13761193d25fc1c09dbc5ace885e9a14aaf0ec96a260f3410838abd07caf4",
+      "afterSha256": "98519c3cdfcc916e4098e97fce4a6652722d35e7462a22ee00d1cd2f605c2de1"
+    },
+    {
+      "path": "features/connect/media/native-runtime-contract.ts",
+      "beforeSha256": "f5d725e6eb5390cebdbb7d9b673db5e612a948eaadeec251415d10a354448f02",
+      "afterSha256": "2de389af05b64b693896e35ab7972184fde90b8dbeddc7f13be233e0d581c3da"
+    },
+    {
+      "path": "features/connect/media/native-stream-sdk.ts",
+      "beforeSha256": "9d6cb87c2e70ddaa6270ae22b2a33fde02f75c6c5def67739f0f97e725605372",
+      "afterSha256": "656f086451228ffac6a06c3256932a87ebc955943009b7993274a1fa350c7ee1"
+    },
+    {
+      "path": "features/connect/media/stream-voice-transport.ts",
+      "beforeSha256": "48d67067802fd9d265d6ccf740eb4ca74f314d64365fd63d2204bdfd7fe594d1",
+      "afterSha256": "69ea8aae2e62f398d815b4fd4e009db4174360fbb0366cb18223571d4464369a"
+    },
+    {
+      "path": "features/connect/voice/voice-controller.ts",
+      "beforeSha256": "b2d6c6f2a37cc58444d1359ddcec597007acb63a5edce0dd867189017156169c",
+      "afterSha256": "b50908838b5a714ccc4a77f193467581b29abcf3b81118913e72a0ab378c91d0"
+    },
+    {
+      "path": "features/connect/voice/voice-types.ts",
+      "beforeSha256": "dcf1e9a8dae02210add111d9c77f2dd4142d137d480bc6b34e661f96a2e1c135",
+      "afterSha256": "e6f585df470b3ef78d4403bfc629bf3af9e575c639bd81aa90e8fcc9ef06bfe3"
+    },
+    {
+      "path": "native-patches/stream-webrtc-145.17.0/README.md",
+      "beforeSha256": "0ebbfabb139610267bad657fe6f39f5db0e5e13b3e420825bc873ee32c6015eb",
+      "afterSha256": "868904b02b77be16b90a09ea34f1be79a3c044616126f46d8f80f530538e4d24"
+    },
+    {
+      "path": "native-patches/stream-webrtc-145.17.0/ios-build.py",
+      "beforeSha256": "e1e734429cd6af0fcb4991d6c0b103da43893f35e8ab2cab0739aa5dde38577d",
+      "afterSha256": "a93268d033527f12066d90dc6e15bd49473edf074e16072693410253419e106c"
+    },
+    {
+      "path": "native-patches/stream-webrtc-145.17.0/run-native-tests.py",
+      "beforeSha256": "4c4e907e08f7a53c95e44324874c46e579d71d6b0d4eb8ec6b0ae0879a6cc56b",
+      "afterSha256": "17719c3d7dcd9c75bd89b8238a25f044bf76ad2aab06519b7c513ad32beb6200"
+    },
+    {
+      "path": "patches/@stream-io+react-native-callingx+0.11.5.patch",
+      "beforeSha256": null,
+      "afterSha256": "a54f0c5c47a2e2af9aecd34ca9a7335944955517a91cf2597b907592be071aca"
+    },
+    {
+      "path": "patches/@stream-io+video-client+1.62.0.patch",
+      "beforeSha256": null,
+      "afterSha256": "306bfe3518f7b2c1d74728dcc2405bad79b301733a8a4a92a6d08bb93317f744"
+    },
+    {
+      "path": "patches/@stream-io+video-react-native-sdk+1.46.3.patch",
+      "beforeSha256": "8179d07c7c0f1308d428b761d8332d434c10a5ef37d3d8b18e650f53d203ea68",
+      "afterSha256": "db77187dfce953e8e6435b64e1bac6daaa20b8048cb248735ff05bd6768d6f20"
+    },
+    {
+      "path": "scripts/verify-call-control-ios.py",
+      "beforeSha256": null,
+      "afterSha256": "a30a4ae7db2c4855978ec8b66e13e153c78e059fd560be8d104574a889e8b7bb"
+    }
+  ]
+}

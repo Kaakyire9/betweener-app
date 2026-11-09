@@ -28,7 +28,7 @@ function failure(error: unknown): Fields {
     const context = e.context && typeof e.context === 'object' ? e.context as Record<string, unknown> : {};
     const status = metric(e.status) ?? metric(context.status);
     const message = e.message;
-    return { code: typeof message === 'string' && knownCodes.has(message) ? message
+    return { code: e.name === 'ConnectRpcTimeoutError' ? 'request_timeout' : typeof message === 'string' && knownCodes.has(message) ? message
       : ['Network request failed', 'Failed to fetch', 'fetch failed'].includes(message as string) ? 'network_unavailable'
         : e.name === 'AbortError' ? 'request_aborted' : 'unclassified_failure',
       httpStatus: status !== null && status >= 100 && status <= 599 ? status : null,
@@ -83,7 +83,7 @@ export function createConnectTerminalLogger(identity: ConnectRuntimeIdentity, op
   const withSdkFault = (ref: string, summary: Fields): Fields => {
     const encryptionFailed = summary.encryptionFailed === true || firstSdkFaults.has(ref);
     return { ...summary, ...firstSdkFaults.get(ref), ...firstTransportFaults.get(ref),
-      encryptionFailed, failed: summary.failed === true || encryptionFailed };
+      encryptionFailed, failed: summary.failed === true || summary.cleanupFailed === true || encryptionFailed };
   };
   const replay = (ref: string, reason: 'done' | 'next_call' | 'logger_disposed') => {
     const summary = summaries.get(ref);
@@ -159,6 +159,7 @@ export function createConnectTerminalLogger(identity: ConnectRuntimeIdentity, op
         release: member(s.localShutdown.resourceRelease, ['pending', 'completed', 'failed', 'not_owned']),
         providerEnd: member(s.endBlock?.provider, ['pending', 'acknowledged', 'unconfirmed']),
         receivedPackets: metric(s.audioHealth?.receivedPackets), failed: !!s.error, encryptionFailed,
+        cleanupFailed: Object.values(s.localShutdown).some(value => value === 'failed'),
         physicalShutdown: 'not_verified', remoteMediaShutdown: 'not_verified' });
       if (summaries.size >= 4 && !summaries.has(ref)) summaries.delete(summaries.keys().next().value!);
       summaries.set(ref, summary);
@@ -205,6 +206,9 @@ export function createConnectTerminalLogger(identity: ConnectRuntimeIdentity, op
           camera: member(s.sdk.cameraStatus, ['enabled', 'disabled', 'unknown']),
           audioPublishing: bool(s.sdk.audioPublishing), videoPublishing: bool(s.sdk.videoPublishing),
           publisherPresent: bool(s.sdk.publisherPresent), subscriberPresent: bool(s.sdk.subscriberPresent), evidence: 'sdk_reported' });
+        if (s.operations.release === 'failed') record('native_cleanup_fault', {
+          reason: member(s.releaseFailure, ['tracks_live', 'capture_release', 'sdk_leave', 'peers_present', 'observers', 'audio_configuration', 'client_release', 'unknown']),
+          evidence: 'sdk_reported' });
         if (s.systemCallActivation) record('native_call_activation', {
           status: member(s.systemCallActivation, ['not_started', 'pending', 'confirmed', 'foreground_only', 'not_applicable', 'failed', 'cancelled']),
           reason: member(s.systemCallActivationFailure ?? 'none', ['none', 'invalid_call', 'native_api_failed', 'registration_missing', 'registration_lost',

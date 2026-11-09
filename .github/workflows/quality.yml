@@ -43,6 +43,18 @@ jobs:
           __tests__/connect-credential-preparation.regression.test.cjs
           __tests__/connect-credential-issuance.regression.test.ts
 
+      - name: Connect mute and retirement boundaries (no media)
+        run: >-
+          node --require ./test/offline-network-guard.cjs
+          --no-warnings=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test
+          __tests__/connect-sdk-leave-fence.regression.test.cjs
+          __tests__/connect-microphone-input.regression.test.cjs
+          __tests__/connect-call-control-patches.regression.test.cjs
+          __tests__/connect-call-failure-diagnostics.regression.test.cjs
+          __tests__/connect-encrypted-native-owner.regression.test.cjs
+          __tests__/connect-encrypted-hangup.regression.test.cjs
+          __tests__/connect-terminal-logging.regression.test.cjs
+
       - name: Verify Love Seat runtime assets
         run: npm run verify:love-seat-assets
 
