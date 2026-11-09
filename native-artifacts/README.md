@@ -55,6 +55,14 @@ node --test __tests__/connect-native-build-guards.regression.test.cjs __tests__/
 python native-patches/stream-webrtc-145.17.0/test_compatibility.py
 ```
 
+After artifact verification/publication, the same manual workflow's
+`Verify published iOS library and CocoaPods resolution only` option checks real
+CocoaPods resolution with the actual integrity-pinned, patched 145.4.1 wrapper.
+Leave both library-build options unchecked for that run. The fixture supplies a
+resolver-only React pod, downloads the real framework through the generated
+checksum-pinned podspec and verifies its native payload bytes. It does not compile
+React, a wrapper or an application, and does not replace development-build tests.
+
 Fresh staging app builds are a separate step requiring approval. Metro reloads
 cannot install a different compiled WebRTC library. Before physical tests, inspect
 the app's staging identity and packaged native payload against the verified

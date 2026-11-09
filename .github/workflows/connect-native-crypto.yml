@@ -13,6 +13,11 @@ on:
         type: boolean
         default: false
         required: true
+      verify_artifact_integration:
+        description: Verify published iOS library and CocoaPods resolution only (no app build)
+        type: boolean
+        default: false
+        required: true
 
 permissions:
   contents: read
@@ -20,7 +25,7 @@ permissions:
 jobs:
   macos_crypto:
     name: Pinned native crypto tests and optional iOS artifact
-    if: ${{ !inputs.build_android_artifact || inputs.build_ios_artifact }}
+    if: ${{ !inputs.verify_artifact_integration && (!inputs.build_android_artifact || inputs.build_ios_artifact) }}
     runs-on: macos-26
     concurrency:
       group: connect-native-ios-${{ github.ref }}
@@ -69,7 +74,7 @@ jobs:
 
   android_crypto:
     name: Pinned native crypto tests and Android artifact
-    if: ${{ inputs.build_android_artifact }}
+    if: ${{ inputs.build_android_artifact && !inputs.verify_artifact_integration }}
     runs-on: ubuntu-24.04
     concurrency:
       group: connect-native-android-${{ github.ref }}
@@ -119,5 +124,37 @@ jobs:
         with:
           name: connect-native-android-${{ github.run_id }}
           path: android-native-results/
+          if-no-files-found: warn
+          retention-days: 7
+
+  ios_dependency_integration:
+    name: Verify published iOS library dependency integration
+    if: ${{ inputs.verify_artifact_integration }}
+    runs-on: macos-26
+    concurrency:
+      group: connect-native-integration-${{ github.ref }}
+      cancel-in-progress: false
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Resolve verified framework with the actual patched React Native wrapper
+        env:
+          BUILD_IOS: ${{ inputs.build_ios_artifact }}
+          BUILD_ANDROID: ${{ inputs.build_android_artifact }}
+        run: |
+          set -euo pipefail
+          test "$BUILD_IOS" = false
+          test "$BUILD_ANDROID" = false
+          python3 native-patches/stream-webrtc-145.17.0/verify-ios-integration.py \
+            --fixture "$RUNNER_TEMP/connect-native-pod-integration" \
+            --results "$GITHUB_WORKSPACE/ios-integration-results"
+      - name: Retain dependency integration evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: connect-ios-integration-${{ github.run_id }}
+          path: ios-integration-results/
           if-no-files-found: warn
           retention-days: 7

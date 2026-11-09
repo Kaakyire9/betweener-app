@@ -63,7 +63,10 @@ test('native CI is manual, read-only and defaults to tests without artifact publ
   assert.deepEqual(Object.keys(workflow.on), ['workflow_dispatch']);
   assert.equal(workflow.on.workflow_dispatch.inputs.build_ios_artifact.default, false);
   assert.equal(workflow.on.workflow_dispatch.inputs.build_android_artifact.default, false);
-  assert.equal(workflow.jobs.android_crypto.if, '${{ inputs.build_android_artifact }}');
+  assert.equal(workflow.on.workflow_dispatch.inputs.verify_artifact_integration.default, false);
+  assert.equal(workflow.jobs.android_crypto.if, '${{ inputs.build_android_artifact && !inputs.verify_artifact_integration }}');
+  assert.equal(workflow.jobs.macos_crypto.if, '${{ !inputs.verify_artifact_integration && (!inputs.build_android_artifact || inputs.build_ios_artifact) }}');
+  assert.equal(workflow.jobs.ios_dependency_integration.if, '${{ inputs.verify_artifact_integration }}');
   assert.deepEqual(workflow.permissions, { contents: 'read' });
   assert.equal(workflow.jobs.macos_crypto['runs-on'], 'macos-26');
   const checkout = workflow.jobs.macos_crypto.steps.find(step => step.uses?.startsWith('actions/checkout@'));
