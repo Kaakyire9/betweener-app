@@ -5,6 +5,8 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { withDangerousMod } = require('expo/config-plugins');
 
+const IOS_DEPLOYMENT_TARGET = '16.4';
+
 const ADAPTIVE_STAGE_MANIFEST_VERSION = 'adaptive-stage-v2.0.0-m1';
 const ADAPTIVE_STAGE_LAYOUT_RESOLVER_VERSION = 'layout-plan-v2.0.0-m1';
 
@@ -415,6 +417,7 @@ module.exports = ({ config }) => {
         {
           mode: apnsMode,
           iosNSEFilePath: './assets/NotificationService.m',
+          iPhoneDeploymentTarget: IOS_DEPLOYMENT_TARGET,
         },
       ],
       [
@@ -426,7 +429,7 @@ module.exports = ({ config }) => {
             targetSdkVersion: 36,
           },
           ios: {
-            deploymentTarget: '16.4',
+            deploymentTarget: IOS_DEPLOYMENT_TARGET,
           },
         },
       ],
