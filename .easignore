@@ -4,6 +4,7 @@ node_modules
 **/node_modules
 
 # Generated native projects and build output
+native-artifacts/.cache
 android
 ios
 .kotlin

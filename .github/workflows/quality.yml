@@ -30,6 +30,11 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Native artifact integration guards (no mobile builds)
+        run: |
+          node --test __tests__/connect-native-build-guards.regression.test.cjs __tests__/connect-native-artifacts.regression.test.cjs
+          python3 native-patches/stream-webrtc-145.17.0/test_compatibility.py
+
       - name: Verify Love Seat runtime assets
         run: npm run verify:love-seat-assets
 

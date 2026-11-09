@@ -30,6 +30,7 @@
     "re2js": "2.9.1"
   },
   "scripts": {
+    "eas-build-pre-install": "node ./scripts/prepare-strict-webrtc.cjs",
     "start": "expo start",
     "start:clean": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/metro-recover.ps1",
     "metro:recover": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/metro-recover.ps1",

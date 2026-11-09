@@ -461,6 +461,7 @@ module.exports = ({ config }) => {
       // Expo composes native mods inside-out. Register Betweener's Live native
       // normalizer before Stream so its final Info.plist pass executes last.
       './plugins/with-betweener-live-webrtc.js',
+      './plugins/with-betweener-strict-webrtc.js',
       [
         '@stream-io/video-react-native-sdk',
         {
