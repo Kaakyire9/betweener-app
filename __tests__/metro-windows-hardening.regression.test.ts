@@ -41,7 +41,7 @@ test('Metro block list preserves existing exclusions', () => {
 test('Windows transformation remains bounded without serialising the full graph', () => {
   const metroConfig = readFileSync('metro.config.js', 'utf8');
 
-  assert.match(metroConfig, /config\.maxWorkers = 4/);
+  assert.match(metroConfig, /config\.maxWorkers = 2/);
   assert.match(metroConfig, /unstable_workerThreads: false/);
   assert.match(metroConfig, /maxConcurrency: 8/);
 });

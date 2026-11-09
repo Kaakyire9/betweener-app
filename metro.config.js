@@ -26,7 +26,7 @@ module.exports = (async () => {
   // trees that the fallback watcher would otherwise watch directory-by-directory.
   // Production/EAS bundles run on Linux and are unaffected by this guard.
   if (process.platform === "win32") {
-    config.maxWorkers = 4;
+    config.maxWorkers = 2;
     config.transformer = {
       ...config.transformer,
       unstable_workerThreads: false,
