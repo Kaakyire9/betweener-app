@@ -54,3 +54,35 @@ jobs:
           path: call-control-results/
           if-no-files-found: warn
           retention-days: 7
+
+  mobile-javascript:
+    name: Bundle iOS and Android without native application builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      APP_VARIANT: staging
+      EXPO_PUBLIC_ENVIRONMENT: development
+      BETWEENER_STRICT_WEBRTC: '1'
+      EXPO_OFFLINE: '1'
+      EXPO_NO_DOTENV: '1'
+      EXPO_NO_TELEMETRY: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+          cache: npm
+      - run: npm ci
+      - name: Check native compatibility boundaries
+        run: >-
+          node --require ./test/offline-network-guard.cjs --test
+          __tests__/connect-native-artifacts.regression.test.cjs
+          __tests__/connect-native-build-guards.regression.test.cjs
+          __tests__/connect-call-control-patches.regression.test.cjs
+      - name: Bundle both mobile platforms with external networking denied
+        run: >-
+          node --require ./test/offline-network-guard.cjs node_modules/expo/bin/cli
+          export --dev --no-bytecode --max-workers 2 --platform ios --platform android
+          --output-dir "$RUNNER_TEMP/connect-mobile-bundles"

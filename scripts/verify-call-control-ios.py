@@ -37,10 +37,19 @@ def main():
     # Select the same reviewed, checksum-pinned framework as the development profile.
     prepare = "require(process.argv[1]).prepare({projectRoot:process.argv[2],platform:'ios'}).catch(e=>{console.error(e.message);process.exitCode=1})"
     subprocess.run(['node', '-e', prepare, str(root / 'scripts/lib/native-webrtc-artifacts.cjs'), str(root)], env=env, check=True, timeout=60)
+    # CocoaPods takes the Swift language version from an integrating target.
+    # Supply a disposable library target, not an application or a signing target.
+    project_script = """require 'xcodeproj'
+project = Xcodeproj::Project.new('ConnectNativePodPreflight.xcodeproj')
+target = project.new_target(:static_library, 'ConnectNativePodPreflight', :ios, '16.4')
+target.build_configurations.each { |configuration| configuration.build_settings['SWIFT_VERSION'] = '5.0' }
+project.save
+"""
+    subprocess.run(['ruby', '-e', project_script], cwd=fixture, check=True, timeout=30)
     podfile = f"""require_relative 'node_modules/react-native/scripts/react_native_pods'
 platform :ios, '16.4'
 prepare_react_native_project!
-install! 'cocoapods', :integrate_targets => false, :deterministic_uuids => false
+install! 'cocoapods', :deterministic_uuids => false
 target 'ConnectNativePodPreflight' do
   use_react_native!(:path => '{root}/node_modules/react-native', :app_path => '{fixture}', :hermes_enabled => true)
   pod 'StreamWebRTC', :podspec => '{root}/native-artifacts/.cache/ios/StreamWebRTC.podspec'
@@ -53,17 +62,22 @@ target 'ConnectNativePodPreflight' do
 end
 """
     (fixture / 'Podfile').write_text(podfile)
-    with (results / 'pod-install.log').open('w') as log:
-        subprocess.run(['pod', 'install'], cwd=fixture, env=env, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=1200)
+    def run_logged(command, filename, timeout):
+        log_path = results / filename
+        try:
+            with log_path.open('w') as log:
+                subprocess.run(command, cwd=fixture, env=env, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=timeout)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            print(log_path.read_text(errors='replace')[-16000:], flush=True)
+            raise
+    run_logged(['pod', 'install'], 'pod-install.log', 1200)
     # Compile libraries and their real React/WebRTC dependencies. No application,
     # signing identity, EAS credentials, installation or media request exists here.
     for target in ['stream-video-react-native', 'Callingx']:
-        with (results / f'{target}.log').open('w') as log:
-            subprocess.run(['xcodebuild', '-project', str(fixture / 'Pods/Pods.xcodeproj'),
-                            '-target', target, '-configuration', 'Debug', '-sdk', 'iphonesimulator',
-                            '-jobs', '3', 'CODE_SIGNING_ALLOWED=NO', 'CODE_SIGNING_REQUIRED=NO',
-                            'ARCHS=arm64', 'ONLY_ACTIVE_ARCH=YES', 'build'],
-                           cwd=fixture, env=env, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=1800)
+        run_logged(['xcodebuild', '-project', str(fixture / 'Pods/Pods.xcodeproj'),
+                    '-target', target, '-configuration', 'Debug', '-sdk', 'iphonesimulator',
+                    '-jobs', '3', 'CODE_SIGNING_ALLOWED=NO', 'CODE_SIGNING_REQUIRED=NO',
+                    'ARCHS=arm64', 'ONLY_ACTIVE_ARCH=YES', 'build'], f'{target}.log', 1800)
     files = ['patches/@stream-io+video-react-native-sdk+1.46.3.patch', 'patches/@stream-io+react-native-callingx+0.11.5.patch',
              'patches/@stream-io+react-native-webrtc+145.4.1.patch', 'node_modules/@stream-io/video-react-native-sdk/ios/StreamInCallManager.swift',
              'node_modules/@stream-io/video-react-native-sdk/ios/StreamInCallManager.m']
