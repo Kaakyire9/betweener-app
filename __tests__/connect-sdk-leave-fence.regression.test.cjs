@@ -9,7 +9,7 @@ const { deferred } = require('./fixtures/connect-product-fixture.cjs');
 
 const CallingState = Object.fromEntries(['left', 'joined', 'joining', 'ringing', 'reconnecting', 'migrating', 'offline', 'reconnecting-failed'].map(s => [s.replace('-', '_').toUpperCase(), s]));
 const WebsocketReconnectStrategy = { UNSPECIFIED: 0, FAST: 1, REJOIN: 2, MIGRATE: 3, DISCONNECT: 4 };
-function field(file, name, call) {
+function field(file, name, call, globals = {}) {
   const source = ts.createSourceFile(file, fs.readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
   const klass = source.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === 'Call');
   const member = klass.members.find(node => node.name?.getText(source) === name);
@@ -18,7 +18,7 @@ function field(file, name, call) {
   const module = { exports: {} };
   vm.runInNewContext(compiled, { module, exports: { CallingState }, CallingState, WebsocketReconnectStrategy,
     ReconnectReason: { ICE_NEVER_CONNECTED: 'ice' }, hasPending: () => false, withoutConcurrency: (_tag, operation) => operation(),
-    Promise, Date, Map, singleFlight: operation => operation });
+    Promise, Date, Map, singleFlight: operation => operation, ...globals });
   return module.exports.call(call);
 }
 function fixture(file, flush = async () => {}) {
@@ -56,6 +56,22 @@ for (const file of ['src/Call.ts', 'dist/index.cjs.js', 'dist/index.es.js', 'dis
   });
   test(`${file}: active reconnect still works when no leave was requested`, async () => {
     const f = fixture(path); await f.call.reconnect(1, 'synthetic'); assert.equal(f.reconnects(), 1);
+  });
+  test(`${file}: a fresh join cannot clear the fence while cleanup is still pending`, async () => {
+    const f = fixture(path); f.call.state.callingState = 'left'; f.call.leaveRequested = true;
+    const join = field(path, 'join', f.call, { hasPending: () => true });
+    await assert.rejects(join(), /while it is leaving/);
+    assert.equal(f.call.leaveRequested, true);
+  });
+  test(`${file}: a completed leave permits fresh join, which a subsequent End supersedes`, async () => {
+    const f = fixture(path), setup = deferred();
+    await f.call.leave({ reject: false });
+    f.call.setup = async () => { assert.equal(f.call.leaveRequested, false); await setup.promise; };
+    const joining = field(path, 'join', f.call)();
+    f.call.state.callingState = 'ringing';
+    await f.call.leave({ reject: false }); setup.resolve(); await joining;
+    assert.equal(f.call.state.callingState, 'left'); assert.equal(f.call.leaveRequested, true);
+    assert.equal(f.call.leaveGeneration, 2);
   });
   test(`${file}: failed leave stays fenced while a scoped cleanup retry is allowed`, async () => {
     const f = fixture(path, async () => { throw Error('synthetic flush failure'); });

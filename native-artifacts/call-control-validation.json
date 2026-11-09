@@ -1,0 +1,34 @@
+{
+  "scope": "IOS_SIMULATOR_NATIVE_POD_COMPILATION_ONLY",
+  "status": "PASS",
+  "versions": {
+    "react-native": "0.86.3",
+    "@stream-io/react-native-webrtc": "145.4.1",
+    "@stream-io/video-react-native-sdk": "1.46.3",
+    "@stream-io/react-native-callingx": "0.11.5"
+  },
+  "revision": "ab210c2e4142265ae252d5c9ea897d52ba2bcd3d",
+  "sha256": {
+    "patches/@stream-io+video-react-native-sdk+1.46.3.patch": "db77187dfce953e8e6435b64e1bac6daaa20b8048cb248735ff05bd6768d6f20",
+    "patches/@stream-io+react-native-callingx+0.11.5.patch": "a54f0c5c47a2e2af9aecd34ca9a7335944955517a91cf2597b907592be071aca",
+    "patches/@stream-io+react-native-webrtc+145.4.1.patch": "ed863ecc460a5fdc6ef7b9ca7a27fa5c4550bb7b6cd722a62143d459a33d9659",
+    "node_modules/@stream-io/video-react-native-sdk/ios/StreamInCallManager.swift": "86edc0350795b427ca0f8e204dcee0c4726b84a796999f9e5cb30ed0c9def3c9",
+    "node_modules/@stream-io/video-react-native-sdk/ios/StreamInCallManager.m": "ef11d65374fdb3cd8fe9c7eac58b4e03f8633372914e7bddb54561ad4d1e18fe"
+  },
+  "applicationBuilds": 0,
+  "easBuilds": 0,
+  "signed": false,
+  "providerCalls": 0,
+  "physicalDeviceValidation": false,
+  "workflow": {
+    "runId": 42691784631,
+    "url": "https://github.com/Kaakyire9/betweener-app/actions/runs/42691784631",
+    "nativeJobId": 129413091163,
+    "mobileBundleJobId": 129413091245,
+    "artifactId": 13706953282,
+    "artifactSha256": "5a9fdd5e8233a228f098a3cde91cff7153c4a8dcace0e6fe50e73fd3b254b7f6",
+    "iosNativePods": "PASS",
+    "iosJavaScriptBundle": "PASS",
+    "androidJavaScriptBundle": "PASS"
+  }
+}

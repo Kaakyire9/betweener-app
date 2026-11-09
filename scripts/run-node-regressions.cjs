@@ -14,7 +14,8 @@ console.log(`Running ${tests.length} Node regression suites with external networ
 const result = spawnSync(process.execPath, [
   '--require', path.join(root, 'test/offline-network-guard.cjs'),
   '--no-warnings=MODULE_TYPELESS_PACKAGE_JSON', '--experimental-strip-types',
-  '--test', '--test-concurrency=4', ...tests,
+  // Suites spawn their own compilers/processes; leave room for Metro on Windows.
+  '--test', `--test-concurrency=${process.platform === 'win32' ? 2 : 4}`, ...tests,
 ], {
   cwd: root, stdio: 'inherit', windowsHide: true,
   env: { ...process.env, EXPO_PUBLIC_ENVIRONMENT: 'staging', EXPO_PUBLIC_LIVE_PRODUCT_ENABLED: 'true' },
