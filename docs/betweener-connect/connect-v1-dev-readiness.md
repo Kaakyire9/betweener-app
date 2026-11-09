@@ -17,6 +17,8 @@ This is build readiness, not general calling, video-publication or store-release
 | Check | Result |
 | --- | --- |
 | Root TypeScript | Passed |
+| Fresh disposable SQL/RLS integration | 10/10 suites passed sequentially: authority, revocation, secure calling, End Call & Block, staging voice, Journal, video preferences/activation, matched launch and forensic lifecycle |
+| Local database test-runner regressions | 8/8 passed; focused ESLint zero errors/warnings |
 | Full repository ESLint | Passed, zero errors/warnings; final changed JS files also checked |
 | Expo Doctor / Expo dependency alignment | 21/21; aligned |
 | Offline Node regressions | 2,670 passed across 264 suites; zero failures/skips |
@@ -40,7 +42,9 @@ Windows test concurrency is bounded to two suites because suites spawn their own
 
 Reviewed native ownership, key/transform retirement, join/reconnect races, capture/mute/output routing, lifecycle/Auth isolation, consent/block boundaries, Journal/chat identity and ordering, cleanup/provider distinctions, build configuration and patch replay. No schema, hosted function, worker schedule, webhook/push security or calling gate was changed. Active encryption failures remain fatal; there is no plaintext fallback.
 
-Fresh disposable SQL/RLS tests could not execute: the existing local PostgreSQL Docker container was unhealthy and even container execution timed out. The stalled audit processes were stopped; shared services were not restarted. Backend source regressions passed, but this is not a fresh SQL/RLS execution result. No hosted staging or production database was accessed or modified.
+The local Docker blocker is cleared: all ten previously blocked SQL/RLS suites now pass using disposable schema clones and loopback-only REST fixtures. Every suite also passed the 88 earlier relationship-authority assertions. All ten test databases/REST containers were removed successfully, and the shared database schema SHA-256 remained identical before and after the run. Two abandoned clones from the interrupted audit were inspected and removed separately; the shared PostgreSQL volume was preserved. No hosted staging or production database was accessed or modified.
+
+No service restart was performed (PostgreSQL restart count remained zero). Retained Docker logs show container-execution/health-check deadline failures across multiple services; the original trigger remains unconfirmed. The test harness now rejects an unhealthy baseline, bounds Docker/SQL/HTTP operations, applies connection-scoped SQL deadlines, uses unique disposable resource names, redacts command-error credentials and attempts each cleanup independently, including uncertain creation acknowledgements. Run the local database suites sequentially to avoid overlapping clone workloads. These changes affect local test tooling only and add no native build requirement or application timeout change.
 
 The new native change requires **iOS**. There is no additional Android-native source change in this repair batch. Reuse the installed Android development app only if it already contains the earlier Telecom fix; otherwise rebuild Android too. Metro can deliver subsequent JavaScript-only repairs without replacing native libraries.
 
