@@ -1,0 +1,114 @@
+{
+  "scope": "LOCAL_CLIENT_STARTUP_REPAIR_AND_FAULT_INVESTIGATION",
+  "baseLocalChange": {
+    "path": "docs/betweener-connect/connect-v1-development-repairs.local.json",
+    "sha256": "fe77a98c7db78beb517b5b9e153ce71429e1890c23b0e810ac8ff820d3d3f627"
+  },
+  "callingGatesChanged": false,
+  "hostedChanges": 0,
+  "providerCalls": 0,
+  "easBuilds": 0,
+  "dependencyChanges": 0,
+  "newBuildRequired": false,
+  "symptomResolved": false,
+  "limits": {
+    "activeEncryptionFaultsRemainFatal": true,
+    "plaintextFallback": false,
+    "hungUpFrameOrigin": "UNRESOLVED",
+    "deviceLatencyImprovement": "UNVERIFIED",
+    "installedNativeArtifactAttestation": "UNVERIFIED",
+    "backendStageLogsQueried": false
+  },
+  "files": [
+    {
+      "path": "__tests__/connect-audio-route-readiness.regression.test.cjs",
+      "beforeSha256": "43e2a3b92175eb9a5e18d86f737c680dbecb7e50509158c7396bd4201c72a9c1",
+      "afterSha256": "9ae0226647db5649338c1bde5869bdd0917107e54d7b0bce4e409bc04e15dc7b"
+    },
+    {
+      "path": "__tests__/connect-audio-startup-concurrency.regression.test.cjs",
+      "beforeSha256": null,
+      "afterSha256": "3852e5cc20705e7a2e28d2b3a016a523261622bd0296817654569d546bfb3186"
+    },
+    {
+      "path": "__tests__/connect-call-quality.regression.test.cjs",
+      "beforeSha256": "dbd7701e0d4378c6f61b6c97e11931253521934ee67d0347ead6805721ddc749",
+      "afterSha256": "16a84fb5c555f9c10e9a9ee66323cf71326f845c5be2b292ac10c1e9a467a85e"
+    },
+    {
+      "path": "__tests__/connect-encrypted-native-owner.regression.test.cjs",
+      "beforeSha256": "b7ebea5fa5612a93c3c9900e283a35ef0d41eac8ed61a09f96af02327e576bfe",
+      "afterSha256": "661720c3a677df4106b6d00e3b8226b0574d7a2b04d9aec60cd731005672e47b"
+    },
+    {
+      "path": "__tests__/connect-native-bootstrap.regression.test.cjs",
+      "beforeSha256": "e40d3f534b378cde32a6f173c414f24f224f44c99a81caf4de44103464476a37",
+      "afterSha256": "cd77a9b044acb8780fd0929c570d4c46aeca9f95dc3209e7ac012a36a0c5900b"
+    },
+    {
+      "path": "__tests__/connect-native-setup-timings.regression.test.cjs",
+      "beforeSha256": null,
+      "afterSha256": "9871daf5b48668218f44964809fb0aa893f3fa6c023e2916b745d0cc4a84a182"
+    },
+    {
+      "path": "__tests__/connect-terminal-logging.regression.test.cjs",
+      "beforeSha256": "3563b8a0f3bc2afb31d780387fd7f87ab7976fd2e69270263d11f4c721ee917f",
+      "afterSha256": "de44ce10275ca549b5d87109cd5d92a7a640ea91105b129941e7b523b24030c6"
+    },
+    {
+      "path": "features/connect/diagnostics/connect-terminal-logger.ts",
+      "beforeSha256": "422748b201fd3eb0473d344ddcaf32b0fcb546760c5de3b5a17b5c7ba5c9bc4e",
+      "afterSha256": "e2e8251f15c066772cc052c304256571cbdcadc1ce1ee52bcb4f5cc5c27d8bb1"
+    },
+    {
+      "path": "features/connect/media/connect-native-owner.ts",
+      "beforeSha256": "fd505a7192f18a0cb2c9b00ddb777ce03d2c2db8056f9e4c917004c3f2730efe",
+      "afterSha256": "951d7d934935379618e97c1538bc6f1dde0166781a796b309aea6a56a9f8d995"
+    },
+    {
+      "path": "features/connect/media/native-audio-route.ts",
+      "beforeSha256": "f5794f18a2e5981127ee80f7337f909415c3be0a0ef64b0fa3fb5ad4d99e31b1",
+      "afterSha256": "8860e16514dac22c61d9c3f7165dc46da7d4ee9589d16c3987de83e642df1a27"
+    },
+    {
+      "path": "features/connect/media/native-owner-types.ts",
+      "beforeSha256": "7662a628bd7fd018c19dfd84d7769b678fe9cff2896d28de717c41b773ec65fe",
+      "afterSha256": "5c4f55b00f1cbc44b78eef0871cfdff5f6409639c58f1ef2dc7f04404456ee21"
+    },
+    {
+      "path": "features/connect/media/native-setup-timings.ts",
+      "beforeSha256": null,
+      "afterSha256": "26eb3d20d4196cf852970394664987301dd85ae8be2bd4b1065a1cac79ccba35"
+    },
+    {
+      "path": "features/connect/media/native-stream-sdk.ts",
+      "beforeSha256": "656f086451228ffac6a06c3256932a87ebc955943009b7993274a1fa350c7ee1",
+      "afterSha256": "3b23c1952926be178968f3f32a19a8071448f565d680dcb02ab09ea6ffdf4c67"
+    },
+    {
+      "path": "features/connect/media/stream-voice-transport.ts",
+      "beforeSha256": "69ea8aae2e62f398d815b4fd4e009db4174360fbb0366cb18223571d4464369a",
+      "afterSha256": "109e5bbbd965fb52705d8a82feac76287ff59d0d2ecd5d4cc8d99ed21e5b460b"
+    },
+    {
+      "path": "features/connect/voice/audio-setup.ts",
+      "beforeSha256": "e7f486c88171cce3c503381f1cfb9b79fc61d6bc488f10d238ce325e079b88b1",
+      "afterSha256": "eb905a2c6190d62801eae5dbb285d82c1facbc9c49cbce1f6975ede447fa3793"
+    },
+    {
+      "path": "features/connect/voice/call-quality.ts",
+      "beforeSha256": "d6f191cc7a23304e4d7b9ac9ee0425fe3ced630367b065be67c321012c216349",
+      "afterSha256": "a3020646d6d3f67bd22dfe6f75a2e9d93d5fdb605a98b68dacd1bb447c3bbdec"
+    },
+    {
+      "path": "features/connect/voice/voice-controller.ts",
+      "beforeSha256": "b50908838b5a714ccc4a77f193467581b29abcf3b81118913e72a0ab378c91d0",
+      "afterSha256": "92f6a0891843e9fc29f85eac9f4bdb80a5e9a2c8d64924a7808b7519726eaac6"
+    },
+    {
+      "path": "features/connect/voice/voice-types.ts",
+      "beforeSha256": "e6f585df470b3ef78d4403bfc629bf3af9e575c639bd81aa90e8fcc9ef06bfe3",
+      "afterSha256": "5e10114b58763394268eee5de30ddb7a5f20362d00b112deec90bca7e060c7a9"
+    }
+  ]
+}

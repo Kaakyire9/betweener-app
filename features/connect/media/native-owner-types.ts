@@ -22,11 +22,13 @@ export interface NativeSystemAction { kind: 'end' | 'mute' | 'hold'; muted?: boo
 export interface NativeSdkCallState {
   transportFailure?: import('./native-reconnect-diagnostics').NativeTransportFailure;
   failure?: { code: 'e2ee.encryption_failed' | 'e2ee.decryption_stalled' | 'e2ee.missing_key' | 'e2ee.unencrypted_frame' | 'e2ee.unsupported_version';
-    trackType: 'AUDIO' | 'VIDEO' | 'SCREEN_SHARE' | 'SCREEN_SHARE_AUDIO' | 'unknown'; party: 'local' | 'remote' | 'unknown' };
+    trackType: 'AUDIO' | 'VIDEO' | 'SCREEN_SHARE' | 'SCREEN_SHARE_AUDIO' | 'unknown'; party: 'local' | 'remote' | 'unknown';
+    context?: { callingState: string; microphoneStatus: string; publisherPresent: boolean; subscriberPresent: boolean; localRetirementRequested: boolean } };
   callingState: string; microphoneStatus: string; cameraStatus: string;
   audioPublishing: boolean | null; videoPublishing: boolean | null; publisherPresent: boolean | null; subscriberPresent: boolean | null;
 }
 export interface NativeCallHandle {
+  setupTimings?(): import('./native-setup-timings.ts').NativeSetupTimings;
   prepareEncryption?(admission: import('../voice/voice-types.ts').VoiceCredentials, agent: import('../experimental/call-encryption.ts').CallKeyAgent | undefined, current: () => boolean, authEpoch: string): Promise<void>;
   encryptionStatus?(): { mode: 'disabled' | 'required'; sdkConfirmed: boolean; safetyCode?: string };
   id: string; cid: string; type: string;
@@ -75,6 +77,7 @@ export interface NativeStreamSdk {
 export type NativeOperation = 'not_started' | 'pending' | 'completed' | 'failed';
 export type NativeRetirement = 'local_end' | 'background' | 'interruption' | 'account_changed' | 'navigation' | 'permission_denied' | 'connection_failed' | 'encryption_failed' | 'stale_generation';
 export interface NativeOwnerSnapshot {
+  setupTimings?: import('./native-setup-timings.ts').NativeSetupTimings;
   appState?: 'active' | 'inactive' | 'background' | 'unknown';
   systemCallActivation?: NativeCallActivationStatus;
   systemCallActivationFailure?: NativeCallActivationFailure | null;

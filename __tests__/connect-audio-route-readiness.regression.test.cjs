@@ -77,6 +77,38 @@ test('fresh discovery that excludes the requested route still fails without a fa
   await result; assert.deepEqual(f.requests, []);
 });
 
+test('startup waits for an earpiece appearing after capture initialization without selecting a fallback', async t => {
+  const f = fixture(t), speaker = { devices: [ready.devices[1]], selectedDeviceId: 'telecom-speaker' };
+  f.set(speaker); let done = false;
+  const result = f.selector.select('earpiece', { waitForAvailability: true }).then(value => { done = true; return value; });
+  await flush(); assert.equal(done, false); assert.deepEqual(f.requests, []);
+  f.observe({ ...ready, selectedDeviceId: 'telecom-speaker' }); await flush();
+  assert.deepEqual(f.requests, ['telecom-ear']);
+  f.observe(ready); assert.equal((await result).selectedDeviceId, 'telecom-ear');
+});
+
+test('startup availability waiting retains the existing deadline and retires cleanly', async t => {
+  const f = fixture(t); f.set({ devices: [ready.devices[1]], selectedDeviceId: 'telecom-speaker' });
+  const result = assert.rejects(f.selector.select('earpiece', { waitForAvailability: true }), /route_unconfirmed/);
+  await flush(); t.mock.timers.tick(CONNECT_AUDIO_ROUTE_TIMEOUT_MS); await result;
+  f.observe(ready); assert.deepEqual(f.requests, []);
+});
+
+for (const type of ['Bluetooth Device', 'Wired Headset']) {
+  test(`startup keeps freshly selected ${type} even when the cached preference was earpiece`, async t => {
+    const f = fixture(t), accessory = { id: 'accessory', type };
+    f.set({ devices: [...ready.devices, accessory], selectedDeviceId: accessory.id });
+    const state = await f.selector.select('earpiece', { waitForAvailability: true, preserveAccessory: true });
+    assert.equal(state.selectedDeviceId, accessory.id); assert.deepEqual(f.requests, []);
+  });
+}
+
+test('an accessory type with an unknown endpoint identity cannot bypass startup confirmation', async t => {
+  const f = fixture(t); f.set({ devices: [{ id: 'bt', type: 'Bluetooth Device' }], currentEndpointType: 'Bluetooth Device' });
+  const result = assert.rejects(f.selector.select('earpiece', { waitForAvailability: true, preserveAccessory: true }), /route_unconfirmed/);
+  await flush(); t.mock.timers.tick(CONNECT_AUDIO_ROUTE_TIMEOUT_MS); await result; assert.deepEqual(f.requests, []);
+});
+
 test('voice setup keeps its earpiece preference through Telecom endpoint initialization', async () => {
   let state = ready, observer = () => {};
   const f = productFixture(false, { loadSdk: async () => sdk });

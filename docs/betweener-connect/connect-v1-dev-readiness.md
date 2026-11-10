@@ -1,7 +1,27 @@
-# Connect V1 development build readiness — 9 November 2026
+# Connect V1 development build readiness — 10 November 2026
 
 **Ready for a controlled `developmentNativeCrypto` development build.**
 This is build readiness, not general calling, video-publication or store-release approval.
+
+## Latest device follow-up
+
+The owner confirmed both phones use `developmentNativeCrypto` and manually ended the latest call on iPhone. Speech, mute, output indication and audio stopping were reported healthy. Android nevertheless recorded a remote AUDIO `e2ee.unencrypted_frame` rejection near hang-up. **Its origin remains unresolved; the fault is not repaired or waived by this startup change.** Neither clock is synchronized with the other phone. Safety-code comparison and exact installed artifact attestation were not established by these logs.
+
+| Local setup observation | iOS | Android |
+| --- | --- | --- |
+| Credentials, including client preparation | 811 ms | 1,555 ms |
+| Broad native preparation/join | 1,715 ms | 3,840 ms |
+| Microphone acknowledgement | 1,319 ms | 1,309 ms |
+| Output confirmation | 190 ms | 1,049 ms |
+| Total setup | 4,035 ms | 7,753 ms |
+
+The dominant delay follows credential preparation. The credential issuer retains authenticated ownership and both secure-admission checks, including revalidation after issuance; no backend change or hosted deployment is justified by this trace alone. Backend stage logs were not queried. The broad native span includes provider preparation, media join and system activation, so it must not be described as pure network/ICE time.
+
+Startup now overlaps microphone enablement and fresh output confirmation **after** encrypted admission/join. Both must acknowledge before ready. Startup-only endpoint discovery retains the existing three-second limit and exact endpoint identity checks; fresh selected Bluetooth/wired output is preserved. End, account change and output failure continue to retire capture that finishes late. The overlap could remove approximately the shorter of the two old audio spans (190 ms / 1,049 ms in this trace); actual device improvement is unverified.
+
+New development-console diagnostics split owner preparation, encryption preparation, provider read, key preparation, media join, input-mixer acknowledgement and system activation. These are local nested spans, not additive backend measurements. Independent microphone/output completion markers prevent misleading zero-millisecond timings. Encryption faults retain bounded state captured **before** synchronous retirement removes peers, without retaining audio, identifiers, keys or raw provider errors. A native participant is labelled remote only when it matches the authenticated call roster; unfamiliar identities remain unknown and still fail closed.
+
+The pinned native receive patch rejects unframed media and clears its output. Reviewed transformer/manager disposal paths drop frames after disposal; SDK peer closure is requested before capture release. This inspection did not establish a new teardown defect or a safe native repair. Active encryption faults remain fatal, with no grace period or plaintext fallback. No native library, dependency, calling gate, worker, webhook or backend source changed. This follow-up can be delivered by Metro to the installed development builds; it does not require another EAS build.
 
 ## Consolidated work
 
@@ -21,8 +41,9 @@ This is build readiness, not general calling, video-publication or store-release
 | Local database test-runner regressions | 8/8 passed; focused ESLint zero errors/warnings |
 | Full repository ESLint | Passed, zero errors/warnings; final changed JS files also checked |
 | Expo Doctor / Expo dependency alignment | 21/21; aligned |
-| Offline Node regressions | 2,670 passed across 264 suites; zero failures/skips |
+| Offline Node regressions | 2,699 passed across 267 suites; zero failures/skips. Final diagnostic refinement also passed all 136 focused checks, including its additional participant-attribution test. |
 | React Native interaction tests | 496 passed across 86 suites |
+| Current Connect interaction checks | 152 passed across 18 suites in a sequential run |
 | Studio/program worker TypeScript and checks | Passed |
 | Programme worker/infrastructure tests | 8 + 6 + 2 passed; infrastructure lint/format also passed |
 | Guarded mocked browser tests | 34 passed; no hosted requests or real media |

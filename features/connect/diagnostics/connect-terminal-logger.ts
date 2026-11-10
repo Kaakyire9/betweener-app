@@ -2,6 +2,7 @@ import { connectRuntimeAvailability, type ConnectRuntimeIdentity } from '../conf
 import type { VoiceApi, VoiceViewState } from '../voice/voice-types.ts';
 import type { NativeOwnerSnapshot } from '../media/native-owner-types.ts';
 import { nativeTransportFailureCodes, nativeReconnectStrategies } from '../media/native-reconnect-diagnostics.ts';
+import { nativeSetupTimingFields } from '../media/native-setup-timings.ts';
 
 type Fields = Record<string, string | number | boolean | null>;
 interface Options { sink?(line: string): void; now?(): number }
@@ -206,6 +207,8 @@ export function createConnectTerminalLogger(identity: ConnectRuntimeIdentity, op
           camera: member(s.sdk.cameraStatus, ['enabled', 'disabled', 'unknown']),
           audioPublishing: bool(s.sdk.audioPublishing), videoPublishing: bool(s.sdk.videoPublishing),
           publisherPresent: bool(s.sdk.publisherPresent), subscriberPresent: bool(s.sdk.subscriberPresent), evidence: 'sdk_reported' });
+        if (s.setupTimings) record('native_setup', { ...Object.fromEntries(nativeSetupTimingFields.map(field => [field, metric(s.setupTimings?.[field])])),
+          clock: 'local_process', spans: 'nested_not_additive', evidence: 'sdk_reported' });
         if (s.operations.release === 'failed') record('native_cleanup_fault', {
           reason: member(s.releaseFailure, ['tracks_live', 'capture_release', 'sdk_leave', 'peers_present', 'observers', 'audio_configuration', 'client_release', 'unknown']),
           evidence: 'sdk_reported' });
@@ -230,7 +233,11 @@ export function createConnectTerminalLogger(identity: ConnectRuntimeIdentity, op
         if (s.sdk.failure) {
           const fault = { firstSdkFailure: member(s.sdk.failure.code, ['e2ee.encryption_failed', 'e2ee.decryption_stalled', 'e2ee.missing_key', 'e2ee.unencrypted_frame', 'e2ee.unsupported_version']),
             firstSdkFailureTrack: member(s.sdk.failure.trackType, ['AUDIO', 'VIDEO', 'SCREEN_SHARE', 'SCREEN_SHARE_AUDIO']),
-            firstSdkFailureParty: member(s.sdk.failure.party, ['local', 'remote']), firstSdkFailureGeneration: metric(s.generation) };
+            firstSdkFailureParty: member(s.sdk.failure.party, ['local', 'remote']), firstSdkFailureGeneration: metric(s.generation),
+            failureCallingState: member(s.sdk.failure.context?.callingState, ['idle', 'ringing', 'joining', 'joined', 'left', 'reconnecting', 'migrating', 'offline', 'reconnecting-failed']),
+            failureMicrophone: member(s.sdk.failure.context?.microphoneStatus, ['enabled', 'disabled']),
+            failurePublisherPresent: bool(s.sdk.failure.context?.publisherPresent), failureSubscriberPresent: bool(s.sdk.failure.context?.subscriberPresent),
+            failureLocalRetirementRequested: bool(s.sdk.failure.context?.localRetirementRequested) };
           record('native_fault', { ...fault, evidence: 'sdk_reported' });
           if (ref && !firstSdkFaults.has(ref)) {
             if (firstSdkFaults.size >= 4) firstSdkFaults.delete(firstSdkFaults.keys().next().value!);

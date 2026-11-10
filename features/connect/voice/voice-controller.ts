@@ -6,7 +6,7 @@ import type { MicrophonePermission, VoiceApi, VoicePeer, VoiceTransport, VoiceTr
 import { connectFeatureFlags, type ConnectFeatureFlags } from '../config/connect-feature-flags.ts';
 import { pendingShutdown, unverifiedShutdown, normalizeShutdown } from '../media/local-shutdown.ts';
 import { pendingEndBlock, readEndBlockContext, readEndBlockReceipt, type EndBlockContext } from '../domain/end-block.ts';
-import { audioSetupFailure, audioSetupMessage, type AudioSetupStage } from './audio-setup.ts';
+import { audioSetupFailure, audioSetupMessage, prepareJoinedAudio, type AudioSetupStage } from './audio-setup.ts';
 import { createAudioHealthMonitor, retireAudioHealth } from '../media/audio-health.ts';
 import type { AudioSample } from '../media/audio-health.ts';
 import { createCallQualityTracker } from './call-quality.ts';
@@ -551,20 +551,20 @@ export class VoiceController {
           this.update({ backgroundAudio: 'enabled' });
         }
         const muted = !this.setupAllowed() || (this.microphoneIntent ?? recovery?.muted ?? false);
-        stage = 'microphone';
-        this.update({ audioSetupStage: stage });
-        await d.transport.setMuted(muted);
-        if (generation !== this.generation || this.disposed) { await d.transport.leave(); return; }
         const routes = d.transport.routes();
         const observed = d.transport.audioRoute?.()?.route;
         const accessory = observed === 'bluetooth' || observed === 'wired' ? observed : null;
         const preferred = accessory ?? (session.media === 'video' ? routes.find(route => route === 'bluetooth' || route === 'wired') ?? 'speaker' : 'earpiece');
         const route = recovery?.route && routes.includes(recovery.route) ? recovery.route : routes.includes(preferred) ? preferred : routes[0] ?? preferred;
-        stage = 'audio_output';
-        this.update({ audioSetupStage: stage });
-        // Cached availability may still be empty while the native route event
-        // is in flight. Always require the owner's fresh output confirmation.
-        await d.transport.selectRoute(route);
+        const current = () => generation === this.generation && !this.disposed;
+        await prepareJoinedAudio({
+          microphone: () => d.transport.setMuted(muted),
+          // Discovery can lag capture initialization. Keep the same native
+          // deadline and fresh confirmation, preserving a system accessory.
+          output: () => d.transport.selectRoute(route, { waitForAvailability: true, preserveAccessory: !recovery?.route }),
+          started: step => { if (current()) { stage = step; this.update({ audioSetupStage: step }); } },
+          completed: step => { if (current()) { this.quality.mark(step === 'microphone' ? 'microphone_ready' : 'audio_output_ready', d.now()); this.update({}); } },
+        });
         if (generation !== this.generation || this.disposed) return;
         const output = d.transport.audioRoute?.();
         this.update({ muted: this.view.muteControl ? this.view.muted : muted, routes: [...(output?.routes ?? d.transport.routes())],

@@ -7,6 +7,7 @@ import type { AudioHealth, AudioSample } from '../media/audio-health.ts';
 import type { CallQuality } from './call-quality.ts';
 export type MicrophonePermission = 'granted' | 'denied' | 'blocked';
 export type VoiceRoute = 'earpiece' | 'speaker' | 'bluetooth' | 'wired';
+export interface VoiceRouteSelection { waitForAvailability?: boolean; preserveAccessory?: boolean }
 export interface VoiceAudioRouteState { route: VoiceRoute | null; routes: readonly VoiceRoute[] }
 export type VoiceTransportState = 'idle' | 'connecting' | 'joined' | 'reconnecting' | 'left' | 'failed';
 export interface VoiceCredentials {
@@ -30,7 +31,7 @@ export interface VoiceTransport {
   recover?(admission: VoiceCredentials, refresh: () => Promise<VoiceCredentials>, listener: (state: VoiceTransportState) => void): Promise<void>;
   setMuted(muted: boolean): Promise<void>;
   routes(): readonly VoiceRoute[];
-  selectRoute(route: VoiceRoute): Promise<void>;
+  selectRoute(route: VoiceRoute, options?: VoiceRouteSelection): Promise<void>;
   audioRoute?(): VoiceAudioRouteState | undefined;
   observeAudioRoute?(listener: (state: VoiceAudioRouteState) => void): () => void;
   audioSample?(): AudioSample | null;

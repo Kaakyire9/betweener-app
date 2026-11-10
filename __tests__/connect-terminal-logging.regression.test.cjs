@@ -242,10 +242,31 @@ test('an encryption interruption is a failure even when no controller error stri
 test('untrusted native fault fields cannot leak through the final summary', () => {
   const l=logger(),state=observable({...view(),session:{id:id(10),state:'ACTIVE',media:'voice',version:1}});l.trace.watch(state);
   l.trace.watchOwner(observable({cid:`betweener_connect:${id(10)}`,generation:1,retired:false,inspection:'complete',appState:'SECRET_STATE',operations:{},
-    sdk:{failure:{code:'SECRET_CODE',trackType:'SECRET_TRACK',party:'SECRET_USER',reason:'SECRET_BODY'}}}));
+    sdk:{failure:{code:'SECRET_CODE',trackType:'SECRET_TRACK',party:'SECRET_USER',reason:'SECRET_BODY',context:{callingState:'SECRET_STATE',
+      microphoneStatus:'SECRET_STATUS',publisherPresent:'SECRET_BOOL',subscriberPresent:'SECRET_BOOL',localRetirementRequested:'SECRET_BOOL'}}}}));
   state.set({...state.getSnapshot(),phase:'ENDED'});
   assert.ok(!l.lines.join('').includes('SECRET'));
   assert.equal(l.rows().findLast(row=>row.event==='call_summary').firstSdkFailure,'unknown');l.trace.dispose();
+});
+
+test('fault-time context is retained separately from teardown state and reaches the final summary', () => {
+  const l=logger(),state=observable({...view(),session:{id:id(10),state:'ACTIVE',media:'voice',version:1}});l.trace.watch(state);
+  l.trace.watchOwner(observable({cid:`betweener_connect:${id(10)}`,generation:1,retired:true,reason:'encryption_failed',operations:{},
+    sdk:{callingState:'left',publisherPresent:false,subscriberPresent:false,failure:{code:'e2ee.unencrypted_frame',trackType:'AUDIO',party:'remote',
+      context:{callingState:'joined',microphoneStatus:'enabled',publisherPresent:true,subscriberPresent:true,localRetirementRequested:false}}}}));
+  state.set({...state.getSnapshot(),phase:'ENDED'});
+  const summary=l.rows().findLast(row=>row.event==='call_summary');
+  assert.equal(summary.failureCallingState,'joined');assert.equal(summary.failurePublisherPresent,true);
+  assert.equal(summary.failureMicrophone,'enabled');assert.equal(summary.failureLocalRetirementRequested,false);l.trace.dispose();
+});
+
+test('native startup diagnostics serialize only finite known measurements and identify overlapping spans', () => {
+  const l=logger();l.trace.watchOwner(observable({cid:`betweener_connect:${id(10)}`,generation:1,retired:false,operations:{},sdk:{},
+    setupTimings:{providerReadMs:200.4,keyPreparationMs:-1,mediaJoinMs:NaN,microphoneInputMs:{token:'SECRET'},unknown:'SECRET'}}));
+  const row=l.rows().find(value=>value.event==='native_setup');
+  assert.equal(row.providerReadMs,200);assert.equal(row.keyPreparationMs,null);assert.equal(row.mediaJoinMs,null);
+  assert.equal(row.microphoneInputMs,null);assert.equal(row.spans,'nested_not_additive');assert.equal(row.clock,'local_process');
+  assert.equal(l.lines.join('').includes('SECRET'),false);l.trace.dispose();
 });
 
 test('first-fault retention evicts the oldest call after four distinct calls', () => {

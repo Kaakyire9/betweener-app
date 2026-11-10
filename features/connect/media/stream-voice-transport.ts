@@ -1,4 +1,4 @@
-import type { VoiceAudioRouteState, VoiceCredentials, VoiceRoute, VoiceTransport, VoiceTransportState } from '../voice/voice-types.ts';
+import type { VoiceAudioRouteState, VoiceCredentials, VoiceRoute, VoiceRouteSelection, VoiceTransport, VoiceTransportState } from '../voice/voice-types.ts';
 import { unverifiedShutdown, type LocalShutdownResult } from './local-shutdown.ts';
 import type { AudioSample } from './audio-health.ts';
 import { sdkOwnerReleased } from './recovery-policy.ts';
@@ -11,7 +11,7 @@ interface StreamVoiceCall {
 export interface VoiceBindings {
   encryptionStatus?(): { mode: 'disabled' | 'required'; sdkConfirmed: boolean; safetyCode?: string };
   call: StreamVoiceCall; release(): Promise<void>;
-  routes(): readonly VoiceRoute[]; selectRoute(route: VoiceRoute): Promise<void>;
+  routes(): readonly VoiceRoute[]; selectRoute(route: VoiceRoute, options?: VoiceRouteSelection): Promise<void>;
   audioRoute?(): VoiceAudioRouteState | undefined;
   observeAudioRoute?(listener: (state: VoiceAudioRouteState) => void): () => void;
   audioSample?(): AudioSample | null;
@@ -205,12 +205,12 @@ export class StreamVoiceTransport implements VoiceTransport {
       throw error;
     } finally { if (this.cameraMutation === operation) this.cameraMutation = null; }
   }
-  async selectRoute(route: VoiceRoute) {
+  async selectRoute(route: VoiceRoute, options?: VoiceRouteSelection) {
     const bindings = this.bindings, generation = this.generation;
     if (!bindings) throw new Error('connect_native_route_no_owner');
     // The advertised list is a UI snapshot. The native owner must validate and
     // confirm the output from fresh state, including when that snapshot lags.
-    await bindings.selectRoute(route);
+    await bindings.selectRoute(route, options);
     if (generation !== this.generation || this.bindings !== bindings) throw new Error('connect_native_owner_retired');
   }
   private cleanups = new WeakMap<VoiceBindings, Promise<LocalShutdownResult>>();

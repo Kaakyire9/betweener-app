@@ -149,6 +149,13 @@ test('secure calling preserves frozen snapshots and declares the exact local And
   }
 ];
   laterRepairs.push({ path: 'docs/betweener-connect/connect-v1-development-repairs.local.json', sha256: 'fe77a98c7db78beb517b5b9e153ce71429e1890c23b0e810ac8ff820d3d3f627' });
+  const startupReceipt = { path: 'docs/betweener-connect/connect-startup-latency-investigation.local.json', sha256: '24cfdde64dff49fd0a9357ec17e8a4d565ebf856f9c364ad78c9f251fe34e6c2' };
+  const startup = JSON.parse(fs.readFileSync(startupReceipt.path));
+  assert.deepEqual(startup.baseLocalChange, laterRepairs.at(-1));
+  assert.equal(startup.newBuildRequired, false); assert.equal(startup.symptomResolved, false);
+  assert.equal(startup.hostedChanges, 0); assert.equal(startup.providerCalls, 0); assert.equal(startup.dependencyChanges, 0);
+  assert.equal(startup.limits.activeEncryptionFaultsRemainFatal, true); assert.equal(startup.limits.plaintextFallback, false);
+  laterRepairs.push(startupReceipt);
   for (const receipt of laterRepairs) {
     const bytes = fs.readFileSync(receipt.path);
     assert.equal(sha256(bytes), receipt.sha256, receipt.path);

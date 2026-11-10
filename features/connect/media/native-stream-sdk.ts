@@ -14,6 +14,7 @@ import { createNativePublisherRetirement } from './native-publisher-retirement.t
 import { nativeReconnectFailure } from './native-reconnect-diagnostics.ts';
 import { createNativeCallAudio } from './native-call-audio.ts';
 import { configureConnectMicrophoneInput } from './native-microphone-input.ts';
+import { createNativeSetupTimings } from './native-setup-timings.ts';
 
 /** Installed SDK boundary. No native module is evaluated until the gated loader runs. */
 export function adaptNativeStreamSdk(sdk: Pick<StreamVideoSdkModule, 'StreamVideoClient' | 'callManager' | 'SfuModels' | 'getCallMediaEngineProvider' | 'setCallMediaEngineProvider' | 'StreamCallProvider' | 'StreamTheme' | 'ParticipantView' | 'hasVideo'> & Partial<Pick<StreamVideoSdkModule, 'EncryptionManager'>>, configureMicrophoneInput: (enabled: boolean) => Promise<void> = configureConnectMicrophoneInput): NativeStreamSdk {
@@ -50,9 +51,11 @@ export function adaptNativeStreamSdk(sdk: Pick<StreamVideoSdkModule, 'StreamVide
         },
         call(type, id): NativeCallHandle {
           const call = client.call(type, id);
+          const setupTimings = createNativeSetupTimings();
           const publisherRetirement = createNativePublisherRetirement(call);
           let encryption: Awaited<ReturnType<typeof prepareCallEncryption>> = null;
           let encryptionRequired = false, encryptionFailed = false, encryptionTransformsRetired = false;
+          let encryptionParticipants: readonly string[] = [];
           let encryptionCurrent = () => false;
           let encryptionFailure: NativeSdkCallState['failure'];
           let transportFailure: NativeSdkCallState['transportFailure'];
@@ -72,7 +75,13 @@ export function adaptNativeStreamSdk(sdk: Pick<StreamVideoSdkModule, 'StreamVide
             try {
               const trackType = details?.trackType, participant = details?.userId;
               encryptionFailure.trackType = trackType === 'AUDIO' || trackType === 'VIDEO' || trackType === 'SCREEN_SHARE' || trackType === 'SCREEN_SHARE_AUDIO' ? trackType : 'unknown';
-              encryptionFailure.party = typeof participant === 'string' ? participant === userId ? 'local' : 'remote' : 'unknown';
+              encryptionFailure.party = participant === userId ? 'local' : typeof participant === 'string' && encryptionParticipants.includes(participant) ? 'remote' : 'unknown';
+              // Snapshot before listeners synchronously retire the owner. Later
+              // peer removal cannot rewrite the state at fault observation.
+              const callingState = call.state.callingState, microphoneStatus = call.microphone.state.status;
+              encryptionFailure.context = { callingState: ['idle', 'ringing', 'joining', 'joined', 'left', 'reconnecting', 'migrating', 'offline', 'reconnecting-failed'].includes(callingState) ? callingState : 'unknown',
+                microphoneStatus: microphoneStatus === 'enabled' || microphoneStatus === 'disabled' ? microphoneStatus : 'unknown',
+                publisherPresent: !!call.publisher, subscriberPresent: !!call.subscriber, localRetirementRequested: encryptionTransformsRetired };
             } catch { /* Diagnostic fields cannot suppress an active encryption fault. */ }
             encryptionFailed = true;
             for (const listener of encryptionListeners) listener('reconnecting-failed');
@@ -127,17 +136,19 @@ export function adaptNativeStreamSdk(sdk: Pick<StreamVideoSdkModule, 'StreamVide
             return owned;
           };
           return {
+            setupTimings: setupTimings.snapshot,
             async prepareEncryption(admission, agent, current, authEpoch) {
               const mode = admission.encryption?.mode;
               if (mode !== 'required') return;
               if (encryption) throw Error('connect_e2ee_already_prepared');
               encryptionRequired = true;
+              encryptionParticipants = [...admission.encryption!.participants];
               encryptionCurrent = current;
               if (!sdk.EncryptionManager || !agent) throw Error('connect_e2ee_unavailable');
               // Resolve the actual provider mode, never create or modify a call.
-              await call.get();
+              await setupTimings.measure('providerReadMs', () => call.get());
               if (!current() || call.cid !== admission.call.cid) throw Error('connect_e2ee_owner_retired');
-              encryption = await prepareCallEncryption({ required: true,
+              encryption = await setupTimings.measure('keyPreparationMs', () => prepareCallEncryption({ required: true,
                 binding: { cid: call.cid, userId, authEpoch, participants: admission.encryption!.participants, generation: admission.encryption!.generation },
                 call: { cid: call.cid, attach: manager => call.setE2EEManager(createEncryptionTransformGuard(
                   manager as unknown as Parameters<typeof call.setE2EEManager>[0],
@@ -150,7 +161,7 @@ export function adaptNativeStreamSdk(sdk: Pick<StreamVideoSdkModule, 'StreamVide
                     encryptionSubscriptions.push(manager.on(event, details => failEncryption(event, details)));
                   }
                   return manager;
-                } }, agent, current, now: Date.now });
+                } }, agent, current, now: Date.now }));
               if (!current()) {
                 if (call.state.callingState === 'left') { encryption?.retire(); encryption?.release(); encryption = null; }
                 throw Error('connect_e2ee_owner_retired');
@@ -268,12 +279,12 @@ export function adaptNativeStreamSdk(sdk: Pick<StreamVideoSdkModule, 'StreamVide
               // Connect owns capture. The SDK's muted-talker detector can acquire
               // a separate microphone while muted, outside this owner's stream.
               if (encryptionRequired) await call.microphone.disableSpeakingWhileMutedNotification();
-              await call.join({ create: false });
+              await setupTimings.measure('mediaJoinMs', () => call.join({ create: false }));
               if (encryptionRequired && (!call.state.e2eeEnabled || encryptionFailed)) throw Error('connect_e2ee_not_confirmed');
               if (encryptionRequired) {
                 if (encryptionTransformsRetired || !encryptionCurrent()) throw Error('connect_e2ee_owner_retired');
                 inputConfigured = true;
-                configuringInput = configureMicrophoneInput(true);
+                configuringInput = setupTimings.measure('microphoneInputMs', () => configureMicrophoneInput(true));
                 await configuringInput;
                 if (encryptionTransformsRetired || !encryptionCurrent()) throw Error('connect_e2ee_owner_retired');
               }

@@ -155,12 +155,52 @@ test(`${code} retains its bounded cause before failing the active encrypted owne
   let observed;
   const remove=f.handle.observeState(state=>{if(state==='reconnecting-failed')observed=f.handle.state().failure;});
   f.listeners.get(code)({userId:id(2),trackType:'AUDIO',reason:'SECRET_NATIVE_BODY',key:'SECRET_KEY'});
-  assert.deepEqual(observed,{code,trackType:'AUDIO',party:'remote'});
+  assert.deepEqual(observed,{code,trackType:'AUDIO',party:'remote',context:{callingState:'joined',microphoneStatus:'disabled',
+    publisherPresent:false,subscriberPresent:false,localRetirementRequested:false}});
   assert.equal(f.handle.encryptionStatus().sdkConfirmed,false);
   f.listeners.get('e2ee.encryption_failed')({userId:id(1),trackType:'VIDEO'});
   assert.deepEqual(f.handle.state().failure,observed,'the first fault must survive later noise');
   assert.ok(!JSON.stringify(f.handle.state()).includes('SECRET'));
   remove();await f.handle.leave();
+});
+
+test('fault context survives synchronous retirement and peer removal before logging',async()=>{
+  const f=fixture({withMicrophone:true});
+  try{
+    await f.handle.prepareEncryption(f.admission,f.agent,f.current,'epoch');await f.handle.join();await f.handle.enableMicrophone();
+    f.call.subscriber={};
+    const remove=f.handle.observeState(state=>{if(state==='reconnecting-failed'){
+      f.call.publisher=undefined;f.call.subscriber=undefined;f.call.microphone.state.status='disabled';f.handle.beginRetirement();
+    }});
+    f.listeners.get('e2ee.unencrypted_frame')({userId:id(2),trackType:'AUDIO'});
+    assert.deepEqual(f.handle.state().failure.context,{callingState:'joined',microphoneStatus:'enabled',
+      publisherPresent:true,subscriberPresent:true,localRetirementRequested:false});
+    remove();
+  }finally{await f.handle.leave();}
+});
+
+test('adapter setup diagnostics distinguish provider read, key preparation, media join and input acknowledgement',async()=>{
+  const read=deferred(),input=deferred(),f=fixture({configureInput:enabled=>enabled?input.promise:Promise.resolve()});
+  f.call.get=()=>read.promise;
+  try{
+    const preparing=f.handle.prepareEncryption(f.admission,f.agent,f.current,'epoch');
+    assert.equal(f.handle.setupTimings().providerReadMs,undefined);
+    read.resolve();await preparing;
+    for(const field of ['providerReadMs','keyPreparationMs'])assert.ok(f.handle.setupTimings()[field]>=0,field);
+    const joining=f.handle.join();await new Promise(resolve=>setImmediate(resolve));
+    assert.ok(f.handle.setupTimings().mediaJoinMs>=0);assert.equal(f.handle.setupTimings().microphoneInputMs,undefined);
+    input.resolve();await joining;assert.ok(f.handle.setupTimings().microphoneInputMs>=0);
+  }finally{read.resolve();input.resolve();await f.handle.leave();}
+});
+
+test('a fault attributed to an unrecognised native participant stays fatal without blaming the authenticated peer',async()=>{
+  const f=fixture();
+  try{
+    await f.handle.prepareEncryption(f.admission,f.agent,f.current,'epoch');await f.handle.join();
+    f.listeners.get('e2ee.unencrypted_frame')({userId:'SECRET_UNRECOGNISED_PARTICIPANT',trackType:'AUDIO'});
+    assert.equal(f.handle.state().failure.party,'unknown');assert.equal(f.handle.encryptionStatus().sdkConfirmed,false);
+    assert.equal(JSON.stringify(f.handle.state()).includes('SECRET'),false);
+  }finally{await f.handle.leave();}
 });
 
 for(const leave of [false,true])test(`retired encryption callbacks cannot fail another owner (${leave?'after leave':'before leave'})`,async()=>{

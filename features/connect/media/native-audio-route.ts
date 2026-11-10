@@ -1,4 +1,4 @@
-import type { VoiceRoute } from '../voice/voice-types.ts';
+import type { VoiceRoute, VoiceRouteSelection } from '../voice/voice-types.ts';
 import type { NativeAudioDevice, NativeAudioHandle, NativeAudioState } from './native-owner-types.ts';
 
 export const CONNECT_AUDIO_ROUTE_TIMEOUT_MS = 3_000;
@@ -32,7 +32,7 @@ export function createNativeAudioRouteSelector(input: {
   return {
     observe(state: NativeAudioState) { pending?.observe(state); },
     cancel() { pending?.cancel(); },
-    select(route: VoiceRoute): Promise<NativeAudioState> {
+    select(route: VoiceRoute, options: VoiceRouteSelection = {}): Promise<NativeAudioState> {
       pending?.cancel();
       return new Promise((resolve, reject) => {
         let finished = false, reading = false, eventVersion = 0;
@@ -58,10 +58,21 @@ export function createNativeAudioRouteSelector(input: {
           // Telecom registration initially exposes no endpoints. Wait within
           // the existing deadline; endpoint type alone never proves routing.
           if (state.devices.length === 0) return;
+          // During initial audio-session activation, keep a freshly observed
+          // accessory selected by the OS. Never infer selection from type alone.
+          if (options.preserveAccessory && !selectionRequested) {
+            const observed = observedNativeAudioRoute(state);
+            if (observed === 'bluetooth' || observed === 'wired') { finish(state); return; }
+          }
           if (!device) {
             const candidate = state.devices.find(item => nativeAudioRouteType(item.type) === route
               && typeof item.id === 'string' && item.id.length > 0);
-            if (!candidate) { finish(null, 'connect_native_route_unavailable'); return; }
+            if (!candidate) {
+              // Capture and route discovery may initialize together. Startup
+              // can wait, but ordinary output-button requests still fail fast.
+              if (!options.waitForAvailability) finish(null, 'connect_native_route_unavailable');
+              return;
+            }
             device = { ...candidate };
           }
           if (!state.devices.some(item => item.id === device!.id && item.type === device!.type)) {

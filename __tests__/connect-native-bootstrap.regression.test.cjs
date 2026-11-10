@@ -95,7 +95,7 @@ function fixture(platform, { preload = true, runtimeError = null } = {}) {
     if (name === './native-microphone-input.ts') return evaluate(
       path.resolve('features/connect/media/native-microphone-input.ts'),
       dependency => assert.fail(`Native input helper eagerly imported ${dependency}`), context);
-    if (name === './native-publisher-retirement.ts' || name === './native-reconnect-diagnostics.ts' || name === './native-call-audio.ts') return evaluate(
+    if (name === './native-publisher-retirement.ts' || name === './native-reconnect-diagnostics.ts' || name === './native-call-audio.ts' || name === './native-setup-timings.ts') return evaluate(
       path.resolve('features/connect/media', name),
       dependency => assert.fail(`Pure retirement/diagnostic helper imported ${dependency}`), context);
     assert.ok(['./native-capture-tracks.ts', './native-media-engine-owner.ts', './audio-health.ts', './native-ringing-guard.ts', '../experimental/call-encryption.ts',

@@ -4,6 +4,7 @@ import type { VoiceAudioRouteState, VoiceCredentials, VoiceRoute } from '../voic
 import { streamVideoClientLeaseRegistry, type StreamVideoClientLeaseRegistry, type StreamVideoClientLease } from '../../live/media/stream-video-client-leases.ts';
 import { loadConnectNativeSdk } from './native-stream-sdk.ts';
 import { createNativeAudioRouteSelector, observedNativeAudioRoute, nativeAudioRouteType as routeType } from './native-audio-route.ts';
+import { createNativeSetupTimings } from './native-setup-timings.ts';
 import type { VideoPresentation } from '../video/video-types.ts';
 import type { NativeAudioHandle, NativeAudioState, NativeCallHandle, NativeOwnerAccess, NativeOwnerSnapshot, NativeSdkCallState,
   NativeRetirement, NativeSdkClient, NativeStreamSdk, NativeTrack } from './native-owner-types.ts';
@@ -18,6 +19,7 @@ export interface NativeOwnerDependencies extends NativeOwnerAccess {
 const safeState = (s: string) => ['idle', 'ringing', 'joining', 'joined', 'left', 'reconnecting', 'migrating', 'offline', 'reconnecting-failed'].includes(s) ? s : 'unknown';
 let nextGeneration = 0;
 interface OwnerInput {
+  setupTimings?: ReturnType<typeof createNativeSetupTimings>;
   keyAgent?: import('../experimental/call-encryption.ts').CallKeyAgent;
   backgroundAudioAllowed?: boolean;
   retireOnReconnect?: boolean;
@@ -59,8 +61,10 @@ export class ConnectNativeMediaOwner {
   private readonly audioRoute: ReturnType<typeof createNativeAudioRouteSelector>;
 
   private readonly input: OwnerInput;
+  private readonly setupTimings: ReturnType<typeof createNativeSetupTimings>;
   constructor(input: OwnerInput) {
     this.input = input;
+    this.setupTimings = input.setupTimings ?? createNativeSetupTimings();
     this.audioRoute = createNativeAudioRouteSelector({ audio: input.audio, isCurrent: this.isCurrent,
       onRead: state => { this.audioStateVersion++; this.audioState = state; this.emit(); } });
   }
@@ -110,7 +114,10 @@ export class ConnectNativeMediaOwner {
     } catch { /* Diagnostic reads never replace SDK inspection or cleanup. */ }
     const devices = Array.isArray(this.audioState.devices) ? this.audioState.devices : [];
     const selectedDevice = this.audioState.selectedDeviceId ? devices.find(item => item.id === this.audioState.selectedDeviceId) : null;
+    let setupTimings = this.setupTimings.snapshot();
+    try { setupTimings = { ...setupTimings, ...this.input.handle.setupTimings?.() }; } catch { /* Timing is never admission or cleanup authority. */ }
     return { generation: this.generation, cid: this.input.admission.call.cid, retired: this.retired, reason: this.reason,
+      setupTimings,
       systemCallActivation, systemCallActivationFailure, systemInterruption: this.systemInterruption ? { ...this.systemInterruption } : undefined,
       evidenceSource: 'sdk_reported', physicalDeviceShutdown: 'not_verified', inspection, appState, sdk: { ...sdk, callingState: safeState(sdk.callingState) },
       audioRoute: { requested: this.requestedRoute, status: this.routeStatus,
@@ -323,12 +330,12 @@ export class ConnectNativeMediaOwner {
         this.assertCurrent(); this.nativeUseStarted = true;
         try {
           if (this.input.admission.encryption?.mode === 'required' && !this.input.handle.prepareEncryption) throw Error('connect_e2ee_native_unsupported');
-          if (this.input.handle.prepareEncryption) await this.input.handle.prepareEncryption(this.input.admission, this.input.keyAgent, this.isCurrent, this.input.authGeneration);
+          if (this.input.handle.prepareEncryption) await this.setupTimings.measure('encryptionPreparationMs', () => this.input.handle.prepareEncryption!(this.input.admission, this.input.keyAgent, this.isCurrent, this.input.authGeneration));
           this.assertCurrent();
           this.input.access.nativeAnswerReady?.(this.input.admission.call.cid);
           await this.input.handle.join();
           this.assertCurrent();
-          await this.input.handle.activateSystemCall?.(this.isCurrent, () => this.input.access.lifecycle.appState() === 'active');
+          if (this.input.handle.activateSystemCall) await this.setupTimings.measure('systemCallActivationMs', () => this.input.handle.activateSystemCall!(this.isCurrent, () => this.input.access.lifecycle.appState() === 'active'));
         }
         catch (error) {
           this.retire('connection_failed');
@@ -383,12 +390,12 @@ export class ConnectNativeMediaOwner {
       }
       return this.videoSource;
     },
-    selectRoute: async route => {
+    selectRoute: async (route, options) => {
       this.assertCurrent();
       const request = ++this.routeRequest;
       this.requestedRoute = route; this.routeStatus = 'checking'; this.emit();
       try {
-        const state = await this.audioRoute.select(route);
+        const state = await this.audioRoute.select(route, options);
         this.assertCurrent();
         if (request !== this.routeRequest) throw new Error('connect_native_route_superseded');
         this.audioStateVersion++; this.audioState = state; this.routeStatus = 'confirmed'; this.emit();
@@ -454,6 +461,7 @@ export function createConnectNativeOwnerFactory(dependencies: NativeOwnerDepende
   return {
     current: () => current,
     create: async (suppliedAdmission, refresh, activeGeneration = () => true) => {
+      const setupTimings = createNativeSetupTimings(), started = setupTimings.start();
       if (flags.nativeSafetyOwner !== true) throw new Error('connect_native_owner_disabled');
       const admission = { ...suppliedAdmission, call: { ...suppliedAdmission.call }, user: { ...suppliedAdmission.user } };
       const sourceAuth = dependencies.auth.snapshot();
@@ -488,8 +496,10 @@ export function createConnectNativeOwnerFactory(dependencies: NativeOwnerDepende
         if (handle.id !== admission.call.id || handle.type !== admission.call.type || handle.cid !== admission.call.cid) throw new Error('connect_native_identity_invalid');
         if (admission.media === 'video' && (!handle.enableCamera || !handle.flipCamera || !handle.cameraEnabled || !handle.videoPresentation)) throw new Error('connect_video_build_incompatible');
         owner = new ConnectNativeMediaOwner({ admission, access: { ...dependencies, nativeAnswerAllowed }, authGeneration: auth!.generation, handle, keyAgent: dependencies.keyAgent, retireOnReconnect: dependencies.retireOnReconnect, backgroundAudioAllowed: flags.backgroundAudio === true,
+          setupTimings,
           audio: sdk.audio(dependencies.lifecycle.platform, admission.media, admission.call.cid), lease, onRetire: dependencies.onRetire, onSystemMute: dependencies.onSystemMute });
         current = owner; dependencies.onOwner?.(owner); owner.activate();
+        setupTimings.finish('ownerPreparationMs', started);
         if (connectionFailed || !valid()) throw new Error('connect_native_owner_retired');
         return owner.bindings;
       } catch {
