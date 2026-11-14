@@ -19,6 +19,25 @@ type ChatEmptyStateProps = {
   onExplore: () => void;
 };
 
+const emptyMessages = {
+  all: {
+    title: 'No conversations yet, but the room is ready',
+    body: 'Match with someone who feels aligned, then open with something specific enough to be memorable.',
+  },
+  unread: {
+    title: "You're all caught up",
+    body: 'New unread messages will appear here. Your conversations are still in All.',
+  },
+  pinned: {
+    title: 'No pinned chats yet',
+    body: 'Pin a conversation to keep it close. Your other conversations are still in All.',
+  },
+  archived: {
+    title: 'No archived chats yet',
+    body: 'Archived chats will rest here until you bring them back into your main lounge.',
+  },
+};
+
 export function ChatEmptyState({
   activeTab,
   styles,
@@ -27,6 +46,7 @@ export function ChatEmptyState({
   withAlpha,
   onExplore,
 }: ChatEmptyStateProps) {
+  const message = emptyMessages[activeTab];
   return (
     <ScrollView
       style={styles.emptyStateScroll}
@@ -69,12 +89,10 @@ export function ChatEmptyState({
           </LinearGradient>
         </View>
         <Text style={styles.emptyStateTitle}>
-          {activeTab === 'archived' ? 'No archived chats yet' : 'No conversations yet, but the room is ready'}
+          {message.title}
         </Text>
         <Text style={styles.emptyStateText}>
-          {activeTab === 'archived'
-            ? 'Archived chats will rest here until you bring them back into your main lounge.'
-            : 'Match with someone who feels aligned, then open with something specific enough to be memorable.'}
+          {message.body}
         </Text>
         <View style={styles.emptyHighlights}>
           <View style={styles.emptyHighlightCard}>
