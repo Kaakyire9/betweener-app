@@ -38,6 +38,7 @@ import { Colors } from '@/constants/theme';
 import { usePremiumState } from '@/hooks/use-premium-state';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useRomanticEligibility } from '@/hooks/use-romantic-eligibility';
+import { useViewedProfileFetch } from '@/hooks/use-viewed-profile-fetch';
 import { useAuth } from '@/lib/auth-context';
 import {
   createIntentRequestOfflineSafe,
@@ -619,15 +620,12 @@ export default function ProfileViewPremiumV2Screen() {
 
   const fallbackProfile = useMemo(() => parseFallbackProfile((params as any)?.fallbackProfile), [params]);
   const [cachedProfile, setCachedProfile] = useState<UserProfile | null>(null);
-  const [fetchedProfile, setFetchedProfile] = useState<UserProfile | null>(null);
   const [presenceState, setPresenceState] = useState<{
     online: boolean;
     last_active: string | null;
   } | null>(null);
   const [heroVideoUrl, setHeroVideoUrl] = useState<string | null>(null);
   const [heroOverrideType, setHeroOverrideType] = useState<'image' | 'video' | null>(null);
-  const [fetching, setFetching] = useState(false);
-  const [fetchWatchdogError, setFetchWatchdogError] = useState<Error | null>(null);
   const [fetchRetryNonce, setFetchRetryNonce] = useState(0);
   const romanticEligibility = useRomanticEligibility({
     targetProfileId: profileId,
@@ -678,64 +676,15 @@ export default function ProfileViewPremiumV2Screen() {
     })();
   }, [fallbackProfile, profileId, shouldUseViewedProfileCache]);
 
-  // Fetch using the same logic extracted from app/profile-view.tsx.
-  React.useEffect(() => {
-    let mounted = true;
-    const load = async () => {
-      if (!profileId || profileId === 'preview') {
-        setFetchedProfile(null);
-        return;
-      }
-      setFetching(true);
-      setFetchWatchdogError(null);
-      const watchdog = setTimeout(() => {
-        if (!mounted) return;
-        // If this ever triggers, it means we got stuck before the network layer (common culprit: auth/storage).
-        setFetchWatchdogError(new Error('profile_view_timeout'));
-        setFetching(false);
-        logger.warn('[profile-view] fetch timeout', { profileId });
-      }, 12_000);
-      try {
-        const mapped = await fetchViewedProfile({
-          viewedProfileId: profileId,
-          viewerProfileId: currentProfile?.id ?? null,
-          fallbackDistanceLabel: fallbackProfile?.distance,
-          fallbackDistanceKm: fallbackProfile?.distanceKm,
-        });
-        const merged =
-          mergeViewedProfileSnapshots(
-            shouldUseViewedProfileCache ? cachedProfile : null,
-            fallbackProfile,
-            mapped,
-          ) ?? mapped;
-        if (mounted) {
-          setFetchedProfile(merged);
-          if (shouldUseViewedProfileCache) {
-            setCachedProfile(merged);
-            void writeViewedProfileSnapshot(merged, { merge: false });
-          }
-          setFetchWatchdogError(null);
-        }
-      } catch {
-        if (mounted && !(shouldUseViewedProfileCache && cachedProfile)) setFetchedProfile(null);
-      } finally {
-        clearTimeout(watchdog);
-        if (mounted) setFetching(false);
-      }
-    };
-    void load();
-    return () => {
-      mounted = false;
-    };
-  }, [
-    cachedProfile,
-    currentProfile?.id,
+  const { fetchedProfile, setFetchedProfile, fetching, fetchWatchdogError } = useViewedProfileFetch({
     profileId,
-    fallbackProfile?.distance,
-    fallbackProfile?.distanceKm,
-    fetchRetryNonce,
-    shouldUseViewedProfileCache,
-  ]);
+    viewerProfileId: currentProfile?.id,
+    cachedProfile,
+    fallbackProfile,
+    retryNonce: fetchRetryNonce,
+    useCache: shouldUseViewedProfileCache,
+    onCacheUpdate: setCachedProfile,
+  });
 
   const resolvedProfile: UserProfile = useMemo(() => {
     const merged = mergeViewedProfileSnapshots(
@@ -3426,6 +3375,7 @@ const Header = memo(function Header({
   } | null;
 }) {
   const responsive = useResponsiveMetrics();
+  const headerInsets = useSafeAreaInsets();
   const heroUri =
     (heroOverrideType === 'image' && heroOverrideUri) ||
     (Array.isArray(profile.photos) && profile.photos.find(Boolean)) ||
@@ -3489,7 +3439,11 @@ const Header = memo(function Header({
   }, [heroHeight]);
 
   return (
-    <View style={[stylesStatic.header, { borderBottomColor: theme.outline, backgroundColor: theme.background }]}>
+    <View style={[stylesStatic.header, {
+      borderBottomColor: theme.outline,
+      backgroundColor: theme.background,
+      paddingTop: headerInsets.top + 10,
+    }]}>
       <View style={stylesStatic.headerTopRow}>
         <Text numberOfLines={1} style={[stylesStatic.headerTitle, { color: theme.text }]}>
           {title || 'Profile'}
@@ -3607,6 +3561,8 @@ const Header = memo(function Header({
         {showSafetyMenu ? (
           <Pressable
             onPress={onOpenSafetyMenu}
+            accessibilityRole="button"
+            accessibilityLabel="Profile safety options"
             hitSlop={10}
             style={[
               stylesStatic.heroMenuButton,
@@ -3626,6 +3582,8 @@ const Header = memo(function Header({
 
         <Pressable
           onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Close profile"
           hitSlop={10}
           style={[
             stylesStatic.heroCloseButton,

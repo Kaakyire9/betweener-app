@@ -2997,6 +2997,8 @@ export default function ProfileScreen() {
           <TouchableOpacity
             style={[styles.settingsButton, showSettingsDropdown && styles.settingsButtonActive]}
             onPress={toggleSettingsDropdown}
+            accessibilityRole="button"
+            accessibilityLabel={showSettingsDropdown ? 'Close profile settings' : 'Open profile settings'}
           >
             <MaterialCommunityIcons
               name={showSettingsDropdown ? "close" : "cog"}
