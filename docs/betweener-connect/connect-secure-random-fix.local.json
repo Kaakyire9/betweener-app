@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "scope": "LOCAL_SECURE_RANDOM_SOURCE_REPAIR_NO_HOSTED_DEPLOYMENT",
+  "baseLocalChange": {
+    "path": "docs/betweener-connect/connect-development-profile-fix.local.json",
+    "sha256": "da5bee90030fe2fc875c6ee4dd253edd18a067456daecc31680252e240dda0a6"
+  },
+  "callingGatesChanged": false,
+  "hostedChanges": 0,
+  "providerCalls": 0,
+  "dependencyChanges": 0,
+  "newBuildRequired": false,
+  "reason": "The pinned Expo getRandomBytes implementation falls back to Math.random in development when nativeCallSyncHook is absent. The physical Samsung development runtime has no nativeCallSyncHook. Connect must use getRandomValues directly for device keys, call keys and nonces.",
+  "behavior": {
+    "nativeSecureFillRequired": true,
+    "developmentFallbackAllowed": false,
+    "nativeFailureIsFatal": true,
+    "temporaryBufferWipedOnFailure": true,
+    "existingStoredIdentitiesRotated": false,
+    "peerTrustAutomaticallyReplaced": false
+  },
+  "limits": {
+    "activeEncryptionFaultsRemainFatal": true,
+    "plaintextFallback": false,
+    "storedKeyProvenanceVerified": false,
+    "existingDeviceIdentitiesRequireSeparateReview": true,
+    "physicalTwoPartyCallVerified": false
+  },
+  "files": [
+    {
+      "path": "features/connect/security/load-call-security.ts",
+      "beforeSha256": "22675e5c13d6dda5d4a45bc7f2375e2ff6649505b8a474594dba4c5e699c96cb",
+      "beforeSnapshot": "docs/betweener-connect/validation/connect-secure-random-before.ts.snapshot",
+      "afterSha256": "b109cf7b36e0a348836bc30a547f021c123b9d5b234bee17dc182322dd16377b"
+    },
+    {
+      "path": "features/connect/security/secure-call-random.ts",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "dd5fccce648a5f37b731dd11173fc938ef177605583353a1acc22e317b4676ad"
+    }
+  ],
+  "validation": {
+    "testFile": "__tests__/connect-secure-random.regression.test.cjs",
+    "pinnedExpoWrapper": "Actual installed Expo wrapper executed in a controlled VM demonstrates the fallback; the new adapter uses only its native fill API.",
+    "loader": "Actual TypeScript security loader compiled to CommonJS with synthetic native ports; identity creation uses secure fill and a native failure prevents persistence and registration.",
+    "storedIdentities": "Preserved; their prior entropy was not read or certified. Controlled identity renewal and peer verification remain required before a security sign-off."
+  },
+  "source": "https://docs.expo.dev/versions/v57.0.0/sdk/crypto/"
+}

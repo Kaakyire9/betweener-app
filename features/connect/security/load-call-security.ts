@@ -2,6 +2,7 @@ import type { NativeSessionOwner } from '../../../lib/auth/native-session-owner.
 import type { AuthenticatedConnectPorts } from '../data/authenticated-connect-services.ts';
 import { createCallKeyAgent, type CallKeyContext, type KeyEnvelope } from './call-key-agent.ts';
 import { createDeviceKeyStore, fingerprint } from './device-keys.ts';
+import { createSecureCallRandom } from './secure-call-random.ts';
 import type { ConnectAuthorization, ConnectMedia } from '../domain/connect.ts';
 
 /** Uses the existing pinned, per-request bearer. A missing migration keeps the
@@ -24,9 +25,10 @@ export async function loadCallSecurity(auth: NativeSessionOwner, deviceId: strin
   if (!caps || typeof caps.e2ee !== 'boolean' || typeof caps.native_incoming !== 'boolean') throw Error('connect_security_unavailable');
   if (!caps.e2ee && !caps.native_incoming) return { encryptedCalls: false, nativeIncoming: false, agent: undefined };
   const [secure, crypto] = await Promise.all([import('expo-secure-store'), import('expo-crypto')]);
+  const random = createSecureCallRandom(bytes => crypto.getRandomValues(bytes));
   const keys = createDeviceKeyStore({ get: name => secure.getItemAsync(name), set: (name, value) => secure.setItemAsync(name, value, {
     keychainAccessible: secure.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY,
-  }) }, crypto.getRandomBytes);
+  }) }, random);
   const identity = await keys.identity(expected.userId, deviceId);
   try {
     const registered = await invoke('rpc_connect_register_secure_device', { p_device: deviceId, p_public_key: identity.publicKey });
@@ -35,7 +37,7 @@ export async function loadCallSecurity(auth: NativeSessionOwner, deviceId: strin
   let safetyCode: string | undefined, identityVerified = false;
   const agent = caps.e2ee ? createCallKeyAgent({ userId: expected.userId, deviceId, authEpoch: expected.generation, keys, current: () => {
     try { auth.accessToken(expected); return true; } catch { return false; }
-  }, random: crypto.getRandomBytes, now: Date.now, onSafetyCode: async value => {
+  }, random, now: Date.now, onSafetyCode: async value => {
     if (safetyCode !== value.code) identityVerified = false;
     safetyCode = value.code;
     const verified = await secure.getItemAsync(`connect.e2ee.verified.v1.${expected.userId}.${value.code.replaceAll(' ', '')}`);

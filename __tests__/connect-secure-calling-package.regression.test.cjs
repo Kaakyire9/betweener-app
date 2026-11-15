@@ -29,6 +29,8 @@ const broadcastRepairReceipt={path:'docs/betweener-connect/connect-chat-broadcas
 const broadcastRepair=JSON.parse(fs.readFileSync(broadcastRepairReceipt.path));
 const profileRepairReceipt={path:'docs/betweener-connect/connect-development-profile-fix.local.json',sha256:'da5bee90030fe2fc875c6ee4dd253edd18a067456daecc31680252e240dda0a6'};
 const profileRepair=JSON.parse(fs.readFileSync(profileRepairReceipt.path));
+const randomRepairReceipt={path:'docs/betweener-connect/connect-secure-random-fix.local.json',sha256:'58f57accef5f37c4bf3f16750b04197c71adc60363a54c1ee3664b61b4e699b3'};
+const randomRepair=JSON.parse(fs.readFileSync(randomRepairReceipt.path));
 test('secure calling preserves frozen snapshots and declares the exact local Android repair chain',()=>{
   assert.equal(proposal.scope,'LOCAL_PROPOSAL_ONLY_NOT_AUTHORISED');assert.equal(proposal.target.reference,'xsgzxadwuxuziubglvps');
   assert.equal(sha256(fs.readFileSync(deltaLocation)),'b3ed0374d2a4c69f003ba84e09485f816532abf70e9288b040a6a63d4e06a034');
@@ -189,6 +191,17 @@ test('secure calling preserves frozen snapshots and declares the exact local And
   assert.equal(profileRepair.limits.activeEncryptionFaultsRemainFatal,true);assert.equal(profileRepair.limits.plaintextFallback,false);
   for(const change of profileRepair.files)assert.equal(sha256(fs.readFileSync(change.beforeSnapshot)),change.beforeSha256);
   laterRepairs.push(profileRepairReceipt);
+  assert.deepEqual(randomRepair.baseLocalChange,profileRepairReceipt);
+  assert.equal(randomRepair.scope,'LOCAL_SECURE_RANDOM_SOURCE_REPAIR_NO_HOSTED_DEPLOYMENT');
+  assert.deepEqual(randomRepair.files.map(change=>change.path),['features/connect/security/load-call-security.ts','features/connect/security/secure-call-random.ts']);
+  assert.equal(randomRepair.callingGatesChanged,false);
+  assert.equal(randomRepair.hostedChanges,0);assert.equal(randomRepair.providerCalls,0);assert.equal(randomRepair.dependencyChanges,0);assert.equal(randomRepair.newBuildRequired,false);
+  for(const key of ['nativeSecureFillRequired','nativeFailureIsFatal','temporaryBufferWipedOnFailure'])assert.equal(randomRepair.behavior[key],true);
+  for(const key of ['developmentFallbackAllowed','existingStoredIdentitiesRotated','peerTrustAutomaticallyReplaced'])assert.equal(randomRepair.behavior[key],false);
+  assert.equal(randomRepair.limits.activeEncryptionFaultsRemainFatal,true);assert.equal(randomRepair.limits.plaintextFallback,false);
+  assert.equal(randomRepair.limits.storedKeyProvenanceVerified,false);assert.equal(randomRepair.limits.existingDeviceIdentitiesRequireSeparateReview,true);
+  for(const change of randomRepair.files)if(change.beforeSnapshot)assert.equal(sha256(fs.readFileSync(change.beforeSnapshot)),change.beforeSha256);
+  laterRepairs.push(randomRepairReceipt);
   for (const receipt of laterRepairs) {
     const bytes = fs.readFileSync(receipt.path);
     assert.equal(sha256(bytes), receipt.sha256, receipt.path);
