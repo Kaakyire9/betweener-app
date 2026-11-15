@@ -12,8 +12,11 @@ export function connectRuntimeAvailability(identity: ConnectRuntimeIdentity,
   flags: ConnectFeatureFlags = stagingCallingFeatures) {
   let stagingBackend = false;
   try { const url = new URL(identity.supabaseUrl); stagingBackend = url.protocol === 'https:' && url.host === 'xsgzxadwuxuziubglvps.supabase.co' && url.pathname === '/' && !url.username && !url.password && !url.search && !url.hash; } catch { /* Fail closed. */ }
+  // EAS developmentNativeCrypto inherits the development environment. It is
+  // still the staging app: require the native bundle, backend and __DEV__ too.
+  const stagingEnvironment = identity.environment === 'staging' || identity.environment === 'development';
   const staging = identity.development && ['ios', 'android'].includes(identity.platform) && identity.variant === 'staging'
-    && identity.environment === 'staging' && identity.bundleIdentifier === 'com.aduboffour.betweener.staging' && stagingBackend;
+    && stagingEnvironment && identity.bundleIdentifier === 'com.aduboffour.betweener.staging' && stagingBackend;
   const runtime = staging && policy.ui === true && policy.nativeRuntime === true && flags.nativeSafetyOwner === true;
   return Object.freeze({ ui: staging && policy.ui === true,
     runtime, video: runtime && policy.videoTransport === true && flags.videoCalling === true });

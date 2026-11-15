@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "scope": "LOCAL_STAGING_DEVELOPMENT_ENVIRONMENT_COMPATIBILITY_NO_HOSTED_DEPLOYMENT",
+  "baseLocalChange": {
+    "path": "docs/betweener-connect/connect-chat-broadcast-parser-fix.local.json",
+    "sha256": "506925c81e4149ef93b4af01f83bf2a0fc1d783a908530bf6e87d560934ae005"
+  },
+  "callingGatesChanged": true,
+  "hostedChanges": 0,
+  "providerCalls": 0,
+  "dependencyChanges": 0,
+  "newBuildRequired": false,
+  "reason": "The actual developmentNativeCrypto EAS profile inherits EXPO_PUBLIC_ENVIRONMENT=development, but Connect accepted only staging. The legitimate staging native development app consequently hid both call controls before bootstrap.",
+  "behavior": {
+    "acceptedEnvironmentLabels": [
+      "staging",
+      "development"
+    ],
+    "requiredDevelopmentRuntime": true,
+    "requiredVariant": "staging",
+    "requiredBundleIdentifier": "com.aduboffour.betweener.staging",
+    "requiredBackend": "https://xsgzxadwuxuziubglvps.supabase.co",
+    "previewEnvironmentEnabled": false,
+    "productionRuntimeEnabled": false,
+    "webEnabled": false,
+    "consentOrServerEligibilityChanged": false,
+    "nativeSafetyOwnerRequired": true
+  },
+  "limits": {
+    "activeEncryptionFaultsRemainFatal": true,
+    "plaintextFallback": false,
+    "nativeBinaryProvenanceStillRequired": true
+  },
+  "files": [
+    {
+      "path": "features/connect/config/connect-runtime-policy.ts",
+      "beforeSha256": "fe32bf3ab4f7591da667fb57de8f90f75ea03c151aef86a57d91f83c4cb598ef",
+      "beforeSnapshot": "docs/betweener-connect/validation/connect-development-profile-before.ts.snapshot",
+      "afterSha256": "9aad05f2873ca80b9f72e76f544df0e0e80b826c73209e56adb9ec1f713be3c2"
+    }
+  ],
+  "validation": {
+    "before": "The real EAS profile integration regression failed: all Connect availability fields false.",
+    "after": "Profile integration passes for iOS/Android; release, production, web, preview, wrong bundle/backend, URL spoof/path and disabled safety-owner/runtime gates remain rejected.",
+    "testFile": "__tests__/connect-product-integration.regression.test.cjs",
+    "peerCallOrAudio": "Not verified by this local configuration repair."
+  }
+}

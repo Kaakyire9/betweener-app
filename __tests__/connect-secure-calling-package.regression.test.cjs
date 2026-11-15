@@ -27,6 +27,8 @@ const journalLocation='docs/betweener-connect/connect-connection-journal.local.j
 const journal=JSON.parse(fs.readFileSync(journalLocation));
 const broadcastRepairReceipt={path:'docs/betweener-connect/connect-chat-broadcast-parser-fix.local.json',sha256:'506925c81e4149ef93b4af01f83bf2a0fc1d783a908530bf6e87d560934ae005'};
 const broadcastRepair=JSON.parse(fs.readFileSync(broadcastRepairReceipt.path));
+const profileRepairReceipt={path:'docs/betweener-connect/connect-development-profile-fix.local.json',sha256:'da5bee90030fe2fc875c6ee4dd253edd18a067456daecc31680252e240dda0a6'};
+const profileRepair=JSON.parse(fs.readFileSync(profileRepairReceipt.path));
 test('secure calling preserves frozen snapshots and declares the exact local Android repair chain',()=>{
   assert.equal(proposal.scope,'LOCAL_PROPOSAL_ONLY_NOT_AUTHORISED');assert.equal(proposal.target.reference,'xsgzxadwuxuziubglvps');
   assert.equal(sha256(fs.readFileSync(deltaLocation)),'b3ed0374d2a4c69f003ba84e09485f816532abf70e9288b040a6a63d4e06a034');
@@ -171,11 +173,27 @@ test('secure calling preserves frozen snapshots and declares the exact local And
   assert.equal(broadcastRepair.limits.plaintextFallback,false);
   assert.equal(broadcastRepair.limits.journalHintsRemainNonAuthoritative,true);
   laterRepairs.push(broadcastRepairReceipt);
+  assert.deepEqual(profileRepair.baseLocalChange,broadcastRepairReceipt);
+  assert.equal(profileRepair.scope,'LOCAL_STAGING_DEVELOPMENT_ENVIRONMENT_COMPATIBILITY_NO_HOSTED_DEPLOYMENT');
+  assert.deepEqual(profileRepair.files.map(change=>change.path),['features/connect/config/connect-runtime-policy.ts']);
+  assert.equal(profileRepair.callingGatesChanged,true);
+  assert.deepEqual(profileRepair.behavior.acceptedEnvironmentLabels,['staging','development']);
+  assert.equal(profileRepair.behavior.requiredDevelopmentRuntime,true);
+  assert.equal(profileRepair.behavior.requiredVariant,'staging');
+  assert.equal(profileRepair.behavior.requiredBundleIdentifier,'com.aduboffour.betweener.staging');
+  assert.equal(profileRepair.behavior.requiredBackend,'https://xsgzxadwuxuziubglvps.supabase.co');
+  for(const key of ['previewEnvironmentEnabled','productionRuntimeEnabled','webEnabled','consentOrServerEligibilityChanged'])assert.equal(profileRepair.behavior[key],false);
+  assert.equal(profileRepair.behavior.nativeSafetyOwnerRequired,true);
+  assert.equal(profileRepair.hostedChanges,0);assert.equal(profileRepair.providerCalls,0);assert.equal(profileRepair.dependencyChanges,0);
+  assert.equal(profileRepair.newBuildRequired,false);
+  assert.equal(profileRepair.limits.activeEncryptionFaultsRemainFatal,true);assert.equal(profileRepair.limits.plaintextFallback,false);
+  for(const change of profileRepair.files)assert.equal(sha256(fs.readFileSync(change.beforeSnapshot)),change.beforeSha256);
+  laterRepairs.push(profileRepairReceipt);
   for (const receipt of laterRepairs) {
     const bytes = fs.readFileSync(receipt.path);
     assert.equal(sha256(bytes), receipt.sha256, receipt.path);
     const repair = JSON.parse(bytes);
-    if ('callingGatesChanged' in repair) assert.equal(repair.callingGatesChanged, false);
+    if ('callingGatesChanged' in repair) assert.equal(repair.callingGatesChanged, receipt.path === profileRepairReceipt.path);
     for (const change of repair.files) {
       const previous = changes.get(change.path)?.afterSha256;
       if (previous !== undefined) assert.equal(change.beforeSha256, previous, change.path);

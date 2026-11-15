@@ -23,6 +23,32 @@ test('voice and video are enabled only for the owner-authorised staging developm
   assert.equal(connectRuntimeAvailability(identity, policy, flags).runtime, true);
   assert.equal(connectRuntimeAvailability(identity, policy, flags).video, false);
 });
+
+test('the real native crypto development profile can bootstrap Connect against staging', () => {
+  const profiles = JSON.parse(fs.readFileSync('eas.json', 'utf8')).build;
+  const selected = profiles.developmentNativeCrypto;
+  const parent = profiles[selected.extends];
+  const env = { ...parent.env, ...selected.env };
+  assert.equal(parent.developmentClient, true);
+  assert.equal(env.BETWEENER_STRICT_WEBRTC, '1');
+  assert.equal(env.EXPO_PUBLIC_ENVIRONMENT, 'development');
+  for (const platform of ['ios', 'android']) {
+    const configured = { ...identity, platform, variant: env.APP_VARIANT, environment: env.EXPO_PUBLIC_ENVIRONMENT };
+    assert.deepEqual(connectRuntimeAvailability(configured), { ui: true, runtime: true, video: true });
+    for (const mismatch of [
+      { development: false }, { platform: 'web' }, { variant: 'production' },
+      { bundleIdentifier: 'com.aduboffour.betweener' },
+      { supabaseUrl: 'https://jbyblhithbqwojhwlenv.supabase.co' },
+      { supabaseUrl: 'https://xsgzxadwuxuziubglvps.supabase.co.evil.invalid' },
+      { supabaseUrl: 'https://xsgzxadwuxuziubglvps.supabase.co/path' },
+      { environment: 'preview' }, { environment: 'production' }, { environment: '' },
+    ]) {
+      assert.deepEqual(connectRuntimeAvailability({ ...configured, ...mismatch }), { ui: false, runtime: false, video: false });
+    }
+    assert.equal(connectRuntimeAvailability(configured, { ...policy, nativeRuntime: false }).runtime, false);
+    assert.equal(connectRuntimeAvailability(configured, policy, { nativeSafetyOwner: false }).runtime, false);
+  }
+});
 test('push and Connect bootstrap share the same in-flight installation lookup', async () => {
   const gate = deferred(); let count = 0;
   const get = createInstallationIdLookup(async () => { count++; return gate.promise; });
