@@ -25,6 +25,8 @@ const videoUiLocation='docs/betweener-connect/connect-video-call-ui.local.json';
 const videoUi=JSON.parse(fs.readFileSync(videoUiLocation));
 const journalLocation='docs/betweener-connect/connect-connection-journal.local.json';
 const journal=JSON.parse(fs.readFileSync(journalLocation));
+const broadcastRepairReceipt={path:'docs/betweener-connect/connect-chat-broadcast-parser-fix.local.json',sha256:'506925c81e4149ef93b4af01f83bf2a0fc1d783a908530bf6e87d560934ae005'};
+const broadcastRepair=JSON.parse(fs.readFileSync(broadcastRepairReceipt.path));
 test('secure calling preserves frozen snapshots and declares the exact local Android repair chain',()=>{
   assert.equal(proposal.scope,'LOCAL_PROPOSAL_ONLY_NOT_AUTHORISED');assert.equal(proposal.target.reference,'xsgzxadwuxuziubglvps');
   assert.equal(sha256(fs.readFileSync(deltaLocation)),'b3ed0374d2a4c69f003ba84e09485f816532abf70e9288b040a6a63d4e06a034');
@@ -108,7 +110,10 @@ test('secure calling preserves frozen snapshots and declares the exact local And
   for(const row of journal.backendChanges){assert.equal(row.deployed,false);assert.equal(sha256(fs.readFileSync(row.path)),row.sha256);}
   for(const row of [...journal.integrationFiles,...journal.validationFiles]){
     if(row.beforeSha256!==null)assert.equal(sha256(fs.readFileSync(row.beforeSnapshot)),row.beforeSha256,row.path);
-    assert.equal(sha256(fs.readFileSync(row.path)),row.afterSha256,row.path);
+    const repair=broadcastRepair.files.find(change=>change.path===row.path);
+    // Retain the exact journal-era integration before checking its additive repair.
+    if(repair)assert.equal(repair.beforeSha256,row.afterSha256,row.path);
+    assert.equal(sha256(fs.readFileSync(repair?.beforeSnapshot??row.path)),row.afterSha256,row.path);
   }
   const changes=new Map();
   for(const candidate of [delta,routeDelta,recoveryDelta,muteDelta,diagnosticsDelta,encryptedMuteDelta,activationDelta,activationDiagnostics,audioUi,videoUi,journal])for(const change of candidate.files){
@@ -121,6 +126,7 @@ test('secure calling preserves frozen snapshots and declares the exact local And
     }
     changes.set(change.path,change);
   }
+  for(const row of [...journal.integrationFiles,...journal.validationFiles])changes.set(row.path,row);
 
   const laterRepairs = [
   {
@@ -156,6 +162,15 @@ test('secure calling preserves frozen snapshots and declares the exact local And
   assert.equal(startup.hostedChanges, 0); assert.equal(startup.providerCalls, 0); assert.equal(startup.dependencyChanges, 0);
   assert.equal(startup.limits.activeEncryptionFaultsRemainFatal, true); assert.equal(startup.limits.plaintextFallback, false);
   laterRepairs.push(startupReceipt);
+  assert.deepEqual(broadcastRepair.baseLocalChange,startupReceipt);
+  assert.equal(broadcastRepair.scope,'LOCAL_CLIENT_REALTIME_PARSE_REPAIR_NO_HOSTED_DEPLOYMENT');
+  assert.deepEqual(broadcastRepair.files.map(change=>change.path),['lib/realtime/user-chat-broadcast.ts']);
+  assert.equal(broadcastRepair.hostedChanges,0);assert.equal(broadcastRepair.providerCalls,0);assert.equal(broadcastRepair.dependencyChanges,0);
+  assert.equal(broadcastRepair.newBuildRequired,false);
+  assert.equal(broadcastRepair.limits.activeEncryptionFaultsRemainFatal,true);
+  assert.equal(broadcastRepair.limits.plaintextFallback,false);
+  assert.equal(broadcastRepair.limits.journalHintsRemainNonAuthoritative,true);
+  laterRepairs.push(broadcastRepairReceipt);
   for (const receipt of laterRepairs) {
     const bytes = fs.readFileSync(receipt.path);
     assert.equal(sha256(bytes), receipt.sha256, receipt.path);

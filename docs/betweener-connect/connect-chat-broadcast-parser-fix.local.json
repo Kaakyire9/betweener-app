@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "scope": "LOCAL_CLIENT_REALTIME_PARSE_REPAIR_NO_HOSTED_DEPLOYMENT",
+  "baseLocalChange": {
+    "path": "docs/betweener-connect/connect-startup-latency-investigation.local.json",
+    "sha256": "24cfdde64dff49fd0a9357ec17e8a4d565ebf856f9c364ad78c9f251fe34e6c2"
+  },
+  "callingGatesChanged": false,
+  "hostedChanges": 0,
+  "providerCalls": 0,
+  "dependencyChanges": 0,
+  "newBuildRequired": false,
+  "limits": {
+    "activeEncryptionFaultsRemainFatal": true,
+    "plaintextFallback": false,
+    "journalHintsRemainNonAuthoritative": true
+  },
+  "reason": "The database Broadcast function emits record/old_record. Reading new/old yielded null rows, throwing in the focused chat and preventing later shared listeners from receiving the change.",
+  "files": [
+    {
+      "path": "lib/realtime/user-chat-broadcast.ts",
+      "beforeSha256": "e635581eab5b7ed3fabe0138eca98991776c037829c8f8dcda08c060a77fb8b5",
+      "beforeSnapshot": "docs/betweener-connect/validation/chat-broadcast-before.ts.snapshot",
+      "afterSha256": "904b50a67ddd20d92a1a63e5ba9c2449658993a0df17164d5923c62fa3853a0d"
+    }
+  ],
+  "validation": {
+    "backendContract": "Read-only staging function-definition inspection; no backend changes.",
+    "android": "One marked message sent through the normal app UI; normalized INSERT observed and sent state rendered without the prior TypeError.",
+    "peerReceipt": "Not verified; iOS peer unavailable.",
+    "connectJournal": "Synthetic journal-hint regression only; no real call or provider cleanup proof.",
+    "testFile": "__tests__/user-chat-broadcast.interaction.test.ts"
+  }
+}

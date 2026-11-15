@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 import { subscribeThreadMessageRealtime } from '@/lib/chat/sync/chat-realtime-service';
-import { subscribeUserChatBroadcast } from '@/lib/realtime/user-chat-broadcast';
+import { subscribeUserChatBroadcast, subscribeUserConnectJournal } from '@/lib/realtime/user-chat-broadcast';
 
 const mockHandlers = new Map<string, (envelope: unknown) => void>();
 const mockChannel = {
@@ -139,5 +139,18 @@ describe('private user chat database broadcasts', () => {
     broadcast('INSERT', { table: 'messages', operation: 'DELETE', record: message });
     broadcast('INSERT', { table: 'messages', record: { ...message, sender_id: 'someone-else' } });
     Object.values(callbacks).forEach(handler => expect(handler).not.toHaveBeenCalled());
+  });
+
+  it('keeps validated Connect journal hints on the shared private channel', async () => {
+    await startThread();
+    const listener = jest.fn();
+    releases.push(subscribeUserConnectJournal('me', listener));
+    const callId = '00000000-0000-4000-8000-000000000001';
+    broadcast('CONNECT_JOURNAL', { call_id: callId, version: 2, deleted: true });
+    broadcast('CONNECT_JOURNAL', { call_id: callId, version: 0 });
+    broadcast('CONNECT_JOURNAL', { call_id: 'invalid', version: 2 });
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledWith({ callId, version: 2, deleted: true });
+    expect(mockCreateChannel).toHaveBeenCalledTimes(1);
   });
 });
