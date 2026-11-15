@@ -1,0 +1,190 @@
+{
+  "date": "2026-11-15",
+  "scope": "SDK_57_PATCH_ALIGNMENT_NO_PAID_BUILD_OR_HOSTED_DEPLOYMENT",
+  "baseCommit": "13f1ddd",
+  "directUpdates": [
+    {
+      "name": "expo",
+      "before": "~57.0.32",
+      "after": "~57.0.33"
+    },
+    {
+      "name": "expo-auth-session",
+      "before": "~57.0.16",
+      "after": "~57.0.17"
+    },
+    {
+      "name": "expo-constants",
+      "before": "~57.0.23",
+      "after": "~57.0.24"
+    },
+    {
+      "name": "expo-linking",
+      "before": "~57.0.13",
+      "after": "~57.0.14"
+    },
+    {
+      "name": "expo-router",
+      "before": "~57.0.30",
+      "after": "~57.0.31"
+    },
+    {
+      "name": "expo-sqlite",
+      "before": "~57.0.4",
+      "after": "~57.0.5"
+    },
+    {
+      "name": "expo-updates",
+      "before": "~57.0.27",
+      "after": "~57.0.28"
+    }
+  ],
+  "updatedLockedPackages": [
+    {
+      "path": "node_modules/@expo/config-plugins",
+      "before": "57.0.12",
+      "after": "57.0.13"
+    },
+    {
+      "path": "node_modules/@expo/env",
+      "before": "2.5.4",
+      "after": "2.6.0"
+    },
+    {
+      "path": "node_modules/@expo/fingerprint",
+      "before": "0.20.15",
+      "after": "0.20.16"
+    },
+    {
+      "path": "node_modules/@expo/fingerprint/node_modules/brace-expansion",
+      "before": "5.0.12",
+      "after": "5.0.13"
+    },
+    {
+      "path": "node_modules/@expo/metro-file-map",
+      "before": "57.0.4",
+      "after": "57.0.5"
+    },
+    {
+      "path": "node_modules/@expo/prebuild-config",
+      "before": "57.0.20",
+      "after": "57.0.21"
+    },
+    {
+      "path": "node_modules/expo",
+      "before": "57.0.32",
+      "after": "57.0.33"
+    },
+    {
+      "path": "node_modules/expo-auth-session",
+      "before": "57.0.16",
+      "after": "57.0.17"
+    },
+    {
+      "path": "node_modules/expo-constants",
+      "before": "57.0.23",
+      "after": "57.0.24"
+    },
+    {
+      "path": "node_modules/expo-linking",
+      "before": "57.0.13",
+      "after": "57.0.14"
+    },
+    {
+      "path": "node_modules/expo-modules-autolinking",
+      "before": "57.0.17",
+      "after": "57.0.18"
+    },
+    {
+      "path": "node_modules/expo-modules-core",
+      "before": "57.0.25",
+      "after": "57.0.26"
+    },
+    {
+      "path": "node_modules/expo-router",
+      "before": "57.0.30",
+      "after": "57.0.31"
+    },
+    {
+      "path": "node_modules/expo-sqlite",
+      "before": "57.0.4",
+      "after": "57.0.5"
+    },
+    {
+      "path": "node_modules/expo-updates",
+      "before": "57.0.27",
+      "after": "57.0.28"
+    },
+    {
+      "path": "node_modules/expo/node_modules/@expo/cli",
+      "before": "57.0.33",
+      "after": "57.0.34"
+    },
+    {
+      "path": "node_modules/expo/node_modules/ws",
+      "before": "8.22.2",
+      "after": "8.23.0"
+    },
+    {
+      "path": "node_modules/react-fast-compare",
+      "before": "3.2.2",
+      "after": "3.2.3"
+    },
+    {
+      "path": "node_modules/react-native-drawer-layout",
+      "before": "4.2.12",
+      "after": "4.2.13"
+    }
+  ],
+  "files": [
+    {
+      "path": "package.json",
+      "beforeSha256": "ce53731f21b61629221ee4d9fec85170e66aa543fd03eb6798894e230d1a5a28",
+      "afterSha256": "a9de29171c2397582d30812a22de0a74bf3401e5bec5852550816be7eacc24a4"
+    },
+    {
+      "path": "package-lock.json",
+      "beforeSha256": "8451791cb054be838f8baa7d2104e88fb7ffbfc423fecd19538e7c7a6a5d3390",
+      "afterSha256": "dd9de306c51ce84abc4d3a011b6e352f425b651c059857d78cf4c894332421d7"
+    }
+  ],
+  "routerPatch": {
+    "previous": "patches/expo-router+57.0.30.patch",
+    "current": "patches/expo-router+57.0.31.patch",
+    "behaviorChanged": false,
+    "application": "PASS"
+  },
+  "callingLibraryVersionsChanged": false,
+  "reviewedWebRtcArtifactsChanged": false,
+  "validation": {
+    "nodeTests": {
+      "passed": 2711,
+      "failed": 0
+    },
+    "reactNativeTests": {
+      "suites": 88,
+      "passed": 518,
+      "failed": 0
+    },
+    "typecheck": "PASS",
+    "eslint": "PASS_ZERO_WARNINGS",
+    "expoDoctor": "PASS_21_OF_21",
+    "dependencyPatches": "PASS_8_OF_8",
+    "npmAudit": {
+      "high": 0,
+      "low": 7,
+      "note": "One deepmerge advisory propagates through seven entries; the retained source/target prototype-poisoning patch passes executable regressions. Audit still reports the upstream version range."
+    }
+  },
+  "nativeLimits": {
+    "updatedIosNativeBuildVerified": false,
+    "updatedAndroidNativeBuildVerified": false,
+    "existingDevelopmentBinaryJavascriptRetestIsNotNewNativeCompilation": true,
+    "paidEasBuildsStarted": 0
+  },
+  "originalRepositoryModified": false,
+  "sources": [
+    "https://raw.githubusercontent.com/expo/expo/sdk-57/packages/expo/CHANGELOG.md",
+    "https://raw.githubusercontent.com/expo/expo/sdk-57/packages/expo-router/CHANGELOG.md"
+  ]
+}
