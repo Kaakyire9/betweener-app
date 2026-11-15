@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "scope": "LOCAL_SHARED_NATIVE_RANDOM_SOURCE_REPAIR_NO_HOSTED_DEPLOYMENT",
+  "baseLocalChange": {
+    "path": "docs/betweener-connect/connect-secure-random-fix.local.json",
+    "sha256": "58f57accef5f37c4bf3f16750b04197c71adc60363a54c1ee3664b61b4e699b3"
+  },
+  "callingGatesChanged": false,
+  "hostedChanges": 0,
+  "providerCalls": 0,
+  "dependencyChanges": 0,
+  "newBuildRequired": false,
+  "reason": "The same development fallback also fed legacy encrypted chat-media keys and nonces. A shared native-fill adapter removes that path from both cryptographic callers, with feature-specific Connect error translation.",
+  "behavior": {
+    "nativeSecureFillRequired": true,
+    "developmentFallbackAllowed": false,
+    "nativeFailureIsFatal": true,
+    "mediaKeyWipedOnSuccessAndFailure": true,
+    "existingIdentitiesRotated": false,
+    "peerTrustAutomaticallyReplaced": false,
+    "encryptionEnvelopeChanged": false,
+    "ordinaryAttachmentsNewlyEncrypted": false
+  },
+  "limits": {
+    "activeEncryptionFaultsRemainFatal": true,
+    "plaintextFallback": false,
+    "storedKeyProvenanceVerified": false,
+    "existingDeviceIdentitiesRequireSeparateReview": true,
+    "physicalTwoPartyCryptoVerified": false
+  },
+  "files": [
+    {
+      "path": "features/connect/security/secure-call-random.ts",
+      "beforeSha256": "dd5fccce648a5f37b731dd11173fc938ef177605583353a1acc22e317b4676ad",
+      "beforeSnapshot": "docs/betweener-connect/validation/connect-shared-random-before.ts.snapshot",
+      "afterSha256": "41fbcc4d2494d9ccacbb5d8c7c32effee4f63b84befeb7c7d5f2ecd3c2dd10b5"
+    },
+    {
+      "path": "lib/e2ee.ts",
+      "beforeSha256": "ec3f373df6bafcce7dbeef1e0c1ea257502dbcaea489ec0544f212b167c56ea8",
+      "beforeSnapshot": "docs/betweener-connect/validation/chat-shared-random-before.ts.snapshot",
+      "afterSha256": "bf57769ca59fcfb5384a4c6f23a2df90c7eebbfa305529254fcd8a91e65b6345"
+    },
+    {
+      "path": "lib/crypto/secure-random.ts",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "031c8e3fc2ddedef4c46840db57bf74750fbf7332bc7f7d84121e25016163e6b"
+    }
+  ],
+  "validation": {
+    "tests": [
+      "__tests__/connect-secure-random.regression.test.cjs",
+      "__tests__/e2ee-secure-random.regression.test.cjs"
+    ],
+    "media": "Actual encryption/decryption round-trip under controlled native ports; failure prevents identity storage and wipes media keys when nonce creation or recipient decoding fails.",
+    "nativeProof": "Separate staging-native bridge check required. Synthetic ports do not certify installed hardware, stored key provenance, peer delivery or encryption of ordinary media."
+  },
+  "source": "https://docs.expo.dev/versions/v57.0.0/sdk/crypto/"
+}

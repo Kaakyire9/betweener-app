@@ -31,6 +31,8 @@ const profileRepairReceipt={path:'docs/betweener-connect/connect-development-pro
 const profileRepair=JSON.parse(fs.readFileSync(profileRepairReceipt.path));
 const randomRepairReceipt={path:'docs/betweener-connect/connect-secure-random-fix.local.json',sha256:'58f57accef5f37c4bf3f16750b04197c71adc60363a54c1ee3664b61b4e699b3'};
 const randomRepair=JSON.parse(fs.readFileSync(randomRepairReceipt.path));
+const sharedRandomReceipt={path:'docs/betweener-connect/connect-chat-shared-random-fix.local.json',sha256:'6849d6cada0c812022b196e630ee1653a297650780937e830e642c5fdea75b67'};
+const sharedRandom=JSON.parse(fs.readFileSync(sharedRandomReceipt.path));
 test('secure calling preserves frozen snapshots and declares the exact local Android repair chain',()=>{
   assert.equal(proposal.scope,'LOCAL_PROPOSAL_ONLY_NOT_AUTHORISED');assert.equal(proposal.target.reference,'xsgzxadwuxuziubglvps');
   assert.equal(sha256(fs.readFileSync(deltaLocation)),'b3ed0374d2a4c69f003ba84e09485f816532abf70e9288b040a6a63d4e06a034');
@@ -202,6 +204,16 @@ test('secure calling preserves frozen snapshots and declares the exact local And
   assert.equal(randomRepair.limits.storedKeyProvenanceVerified,false);assert.equal(randomRepair.limits.existingDeviceIdentitiesRequireSeparateReview,true);
   for(const change of randomRepair.files)if(change.beforeSnapshot)assert.equal(sha256(fs.readFileSync(change.beforeSnapshot)),change.beforeSha256);
   laterRepairs.push(randomRepairReceipt);
+  assert.deepEqual(sharedRandom.baseLocalChange,randomRepairReceipt);
+  assert.equal(sharedRandom.scope,'LOCAL_SHARED_NATIVE_RANDOM_SOURCE_REPAIR_NO_HOSTED_DEPLOYMENT');
+  assert.deepEqual(sharedRandom.files.map(change=>change.path),['features/connect/security/secure-call-random.ts','lib/e2ee.ts','lib/crypto/secure-random.ts']);
+  assert.equal(sharedRandom.callingGatesChanged,false);
+  assert.equal(sharedRandom.hostedChanges,0);assert.equal(sharedRandom.providerCalls,0);assert.equal(sharedRandom.dependencyChanges,0);assert.equal(sharedRandom.newBuildRequired,false);
+  for(const key of ['nativeSecureFillRequired','nativeFailureIsFatal','mediaKeyWipedOnSuccessAndFailure'])assert.equal(sharedRandom.behavior[key],true);
+  for(const key of ['developmentFallbackAllowed','existingIdentitiesRotated','peerTrustAutomaticallyReplaced','encryptionEnvelopeChanged','ordinaryAttachmentsNewlyEncrypted'])assert.equal(sharedRandom.behavior[key],false);
+  assert.equal(sharedRandom.limits.activeEncryptionFaultsRemainFatal,true);assert.equal(sharedRandom.limits.plaintextFallback,false);assert.equal(sharedRandom.limits.storedKeyProvenanceVerified,false);
+  for(const change of sharedRandom.files)if(change.beforeSnapshot)assert.equal(sha256(fs.readFileSync(change.beforeSnapshot)),change.beforeSha256);
+  laterRepairs.push(sharedRandomReceipt);
   for (const receipt of laterRepairs) {
     const bytes = fs.readFileSync(receipt.path);
     assert.equal(sha256(bytes), receipt.sha256, receipt.path);

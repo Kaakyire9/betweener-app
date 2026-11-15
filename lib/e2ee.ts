@@ -2,15 +2,18 @@ import nacl from 'tweetnacl';
 import { decodeBase64, encodeBase64 } from 'tweetnacl-util';
 import * as ExpoCrypto from 'expo-crypto';
 import * as SecureStore from 'expo-secure-store';
+import { createSecureRandomBytes } from './crypto/secure-random';
 
 const KEYPAIR_STORAGE_KEY = 'e2ee_keypair_v1';
 let prngReady = false;
+const secureRandomBytes = createSecureRandomBytes(bytes => ExpoCrypto.getRandomValues(bytes));
 
 const ensurePrng = () => {
   if (prngReady) return;
   nacl.setPRNG((x, n) => {
-    const bytes = ExpoCrypto.getRandomBytes(n);
-    x.set(bytes);
+    const bytes = secureRandomBytes(n);
+    try { x.set(bytes); }
+    finally { bytes.fill(0); }
   });
   prngReady = true;
 };
@@ -75,35 +78,34 @@ export const encryptMediaBytes = async ({
   receiverPublicKeyB64: string;
 }): Promise<EncryptedMediaPayload> => {
   ensurePrng();
-  const mediaKey = ExpoCrypto.getRandomBytes(nacl.secretbox.keyLength);
-  const mediaNonce = ExpoCrypto.getRandomBytes(nacl.secretbox.nonceLength);
-  const cipherBytes = nacl.secretbox(plainBytes, mediaNonce, mediaKey);
+  const mediaKey = secureRandomBytes(nacl.secretbox.keyLength);
+  try {
+    const mediaNonce = secureRandomBytes(nacl.secretbox.nonceLength);
+    const cipherBytes = nacl.secretbox(plainBytes, mediaNonce, mediaKey);
 
-  const keyNonce = ExpoCrypto.getRandomBytes(nacl.box.nonceLength);
-  const receiverPublicKey = decodeBase64(receiverPublicKeyB64);
-  const encryptedKeyReceiver = nacl.box(
-    mediaKey,
-    keyNonce,
-    receiverPublicKey,
-    senderKeypair.secretKey
-  );
-  const encryptedKeySender = nacl.box(
-    mediaKey,
-    keyNonce,
-    senderKeypair.publicKey,
-    senderKeypair.secretKey
-  );
+    const keyNonce = secureRandomBytes(nacl.box.nonceLength);
+    const receiverPublicKey = decodeBase64(receiverPublicKeyB64);
+    const encryptedKeyReceiver = nacl.box(
+      mediaKey,
+      keyNonce,
+      receiverPublicKey,
+      senderKeypair.secretKey
+    );
+    const encryptedKeySender = nacl.box(
+      mediaKey,
+      keyNonce,
+      senderKeypair.publicKey,
+      senderKeypair.secretKey
+    );
 
-  const payload = {
-    cipherBytes,
-    mediaNonceB64: encodeBase64(mediaNonce),
-    keyNonceB64: encodeBase64(keyNonce),
-    encryptedKeySenderB64: encodeBase64(encryptedKeySender),
-    encryptedKeyReceiverB64: encodeBase64(encryptedKeyReceiver),
-  };
-  mediaKey.fill(0);
-
-  return payload;
+    return {
+      cipherBytes,
+      mediaNonceB64: encodeBase64(mediaNonce),
+      keyNonceB64: encodeBase64(keyNonce),
+      encryptedKeySenderB64: encodeBase64(encryptedKeySender),
+      encryptedKeyReceiverB64: encodeBase64(encryptedKeyReceiver),
+    };
+  } finally { mediaKey.fill(0); }
 };
 
 export const decryptMediaBytes = async ({
