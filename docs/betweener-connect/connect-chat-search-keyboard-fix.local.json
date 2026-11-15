@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "scope": "LOCAL_CHAT_SEARCH_INTERACTION_REPAIR_NO_HOSTED_DEPLOYMENT",
+  "baseLocalChange": {
+    "path": "docs/betweener-connect/connect-chat-shared-random-fix.local.json",
+    "sha256": "6849d6cada0c812022b196e630ee1653a297650780937e830e642c5fdea75b67"
+  },
+  "callingGatesChanged": false,
+  "hostedChanges": 0,
+  "providerCalls": 0,
+  "dependencyChanges": 0,
+  "newBuildRequired": false,
+  "reason": "The search-results ScrollView consumed the first result tap to dismiss the Android keyboard. Allowing handled child taps lets the existing result action select the message immediately.",
+  "behavior": {
+    "resultTapsReachChildrenWithKeyboardOpen": true,
+    "searchAlgorithmChanged": false,
+    "messageWritesChanged": false,
+    "journalOrCallingBehaviorChanged": false
+  },
+  "limits": {
+    "activeEncryptionFaultsRemainFatal": true,
+    "plaintextFallback": false,
+    "twoPartyCallingVerified": false
+  },
+  "files": [
+    {
+      "path": "components/chat/ChatScreen.tsx",
+      "beforeSha256": "7aac53df6f8e48669a43fa45b5f02b3631b10ac9dcd5373dc00073a03ee19e54",
+      "beforeSnapshot": "docs/betweener-connect/validation/chat-search-keyboard-before.tsx.snapshot",
+      "afterSha256": "b844ea5a93bb85a697a1bc490c61350b0e7de6ba50b6ec257e8ec91be2491d0f"
+    }
+  ],
+  "validation": {
+    "android": "One result tap with the keyboard visible closes the search sheet and selects the edited QA message. No message or call is created.",
+    "screenshot": "android-chat-search-one-tap-pass-20261115.png",
+    "iosNativeRetest": "NOT_RUN_MAC_SIGN_IN_REQUIRED"
+  }
+}

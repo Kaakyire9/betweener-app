@@ -33,6 +33,8 @@ const randomRepairReceipt={path:'docs/betweener-connect/connect-secure-random-fi
 const randomRepair=JSON.parse(fs.readFileSync(randomRepairReceipt.path));
 const sharedRandomReceipt={path:'docs/betweener-connect/connect-chat-shared-random-fix.local.json',sha256:'6849d6cada0c812022b196e630ee1653a297650780937e830e642c5fdea75b67'};
 const sharedRandom=JSON.parse(fs.readFileSync(sharedRandomReceipt.path));
+const searchRepairReceipt={path:'docs/betweener-connect/connect-chat-search-keyboard-fix.local.json',sha256:'043b779db28740f5dfda53ac2f9a43aab968aa71bab2d9d07e6c157c9ad2a91e'};
+const searchRepair=JSON.parse(fs.readFileSync(searchRepairReceipt.path));
 test('secure calling preserves frozen snapshots and declares the exact local Android repair chain',()=>{
   assert.equal(proposal.scope,'LOCAL_PROPOSAL_ONLY_NOT_AUTHORISED');assert.equal(proposal.target.reference,'xsgzxadwuxuziubglvps');
   assert.equal(sha256(fs.readFileSync(deltaLocation)),'b3ed0374d2a4c69f003ba84e09485f816532abf70e9288b040a6a63d4e06a034');
@@ -116,7 +118,7 @@ test('secure calling preserves frozen snapshots and declares the exact local And
   for(const row of journal.backendChanges){assert.equal(row.deployed,false);assert.equal(sha256(fs.readFileSync(row.path)),row.sha256);}
   for(const row of [...journal.integrationFiles,...journal.validationFiles]){
     if(row.beforeSha256!==null)assert.equal(sha256(fs.readFileSync(row.beforeSnapshot)),row.beforeSha256,row.path);
-    const repair=broadcastRepair.files.find(change=>change.path===row.path);
+    const repair=[...broadcastRepair.files,...searchRepair.files].find(change=>change.path===row.path);
     // Retain the exact journal-era integration before checking its additive repair.
     if(repair)assert.equal(repair.beforeSha256,row.afterSha256,row.path);
     assert.equal(sha256(fs.readFileSync(repair?.beforeSnapshot??row.path)),row.afterSha256,row.path);
@@ -214,6 +216,16 @@ test('secure calling preserves frozen snapshots and declares the exact local And
   assert.equal(sharedRandom.limits.activeEncryptionFaultsRemainFatal,true);assert.equal(sharedRandom.limits.plaintextFallback,false);assert.equal(sharedRandom.limits.storedKeyProvenanceVerified,false);
   for(const change of sharedRandom.files)if(change.beforeSnapshot)assert.equal(sha256(fs.readFileSync(change.beforeSnapshot)),change.beforeSha256);
   laterRepairs.push(sharedRandomReceipt);
+  assert.deepEqual(searchRepair.baseLocalChange,sharedRandomReceipt);
+  assert.equal(searchRepair.scope,'LOCAL_CHAT_SEARCH_INTERACTION_REPAIR_NO_HOSTED_DEPLOYMENT');
+  assert.deepEqual(searchRepair.files.map(change=>change.path),['components/chat/ChatScreen.tsx']);
+  assert.equal(searchRepair.callingGatesChanged,false);
+  assert.equal(searchRepair.hostedChanges,0);assert.equal(searchRepair.providerCalls,0);assert.equal(searchRepair.dependencyChanges,0);assert.equal(searchRepair.newBuildRequired,false);
+  assert.equal(searchRepair.behavior.resultTapsReachChildrenWithKeyboardOpen,true);
+  for(const key of ['searchAlgorithmChanged','messageWritesChanged','journalOrCallingBehaviorChanged'])assert.equal(searchRepair.behavior[key],false);
+  assert.equal(searchRepair.limits.activeEncryptionFaultsRemainFatal,true);assert.equal(searchRepair.limits.plaintextFallback,false);
+  for(const change of searchRepair.files)assert.equal(sha256(fs.readFileSync(change.beforeSnapshot)),change.beforeSha256);
+  laterRepairs.push(searchRepairReceipt);
   for (const receipt of laterRepairs) {
     const bytes = fs.readFileSync(receipt.path);
     assert.equal(sha256(bytes), receipt.sha256, receipt.path);

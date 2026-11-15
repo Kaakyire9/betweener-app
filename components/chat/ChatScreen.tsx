@@ -10149,7 +10149,7 @@ const resolveQueuedVideoUri = async (
                 autoFocus
               />
             </View>
-            <ScrollView contentContainerStyle={styles.searchResults}>
+            <ScrollView contentContainerStyle={styles.searchResults} keyboardShouldPersistTaps="handled">
               {chatSearchQuery.trim().length === 0 ? (
                 <Text style={styles.searchHint}>Type to search messages.</Text>
               ) : searchResults.length === 0 ? (
