@@ -1,11 +1,12 @@
 import { supabase } from '@/lib/supabase';
 
+type ChatRecord = Record<string, unknown> & { id: string };
 export type UserChatBroadcastChange = {
-  eventType: 'INSERT' | 'UPDATE' | 'DELETE';
   table: 'messages' | 'system_messages';
-  new: Record<string, unknown> | null;
-  old: Record<string, unknown> | null;
-};
+} & (
+  | { eventType: 'INSERT' | 'UPDATE'; new: ChatRecord; old: ChatRecord | null }
+  | { eventType: 'DELETE'; new: null; old: ChatRecord }
+);
 
 type Listener = (change: UserChatBroadcastChange) => void;
 type StatusListener = (status: string) => void;
@@ -22,19 +23,36 @@ type Entry = {
 
 const entries = new Map<string, Entry>();
 
+const asObject = (value: unknown): Record<string, unknown> | null =>
+  value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+
+const asChatRecord = (value: unknown): ChatRecord | null => {
+  const row = asObject(value);
+  return typeof row?.id === 'string' && row.id.length > 0 ? row as ChatRecord : null;
+};
+
 const normalizeChange = (
   eventType: UserChatBroadcastChange['eventType'],
-  envelope: any,
+  envelope: unknown,
 ): UserChatBroadcastChange | null => {
-  const payload = envelope?.payload ?? envelope;
+  const outer = asObject(envelope);
+  const payload = asObject(outer && 'payload' in outer ? outer.payload : outer);
   const table = payload?.table;
   if (table !== 'messages' && table !== 'system_messages') return null;
-  return {
-    eventType,
-    table,
-    new: payload?.new && typeof payload.new === 'object' ? payload.new : null,
-    old: payload?.old && typeof payload.old === 'object' ? payload.old : null,
-  };
+  if (payload.schema !== undefined && payload.schema !== 'public') return null;
+  if (payload.operation !== undefined && payload.operation !== eventType) return null;
+
+  // Database Broadcast uses record/old_record, unlike Postgres Changes.
+  // Keep new/old compatibility at this boundary so every consumer sees the
+  // same row contract. Never dispatch a rowless INSERT/UPDATE to consumers.
+  const next = asChatRecord('record' in payload ? payload.record : payload.new);
+  const previous = asChatRecord('old_record' in payload ? payload.old_record : payload.old);
+  if (eventType === 'DELETE') {
+    return previous ? { eventType, table, new: null, old: previous } : null;
+  }
+  return next ? { eventType, table, new: next, old: previous } : null;
 };
 
 const start = (userId: string, entry: Entry) => {
@@ -43,7 +61,7 @@ const start = (userId: string, entry: Entry) => {
     await supabase.realtime.setAuth();
     if (entries.get(userId) !== entry || entry.listeners.size === 0) return;
 
-    const notify = (eventType: UserChatBroadcastChange['eventType'], envelope: any) => {
+    const notify = (eventType: UserChatBroadcastChange['eventType'], envelope: unknown) => {
       const change = normalizeChange(eventType, envelope);
       if (!change) return;
       entry.listeners.forEach((listener) => listener(change));
