@@ -1449,6 +1449,7 @@ export const createChatScreenStyles = (
     },
     searchSheet: {
       position: 'absolute',
+      backgroundColor: theme.background,
       left: 16,
       right: 16,
       top: 70,
