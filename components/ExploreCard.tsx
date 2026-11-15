@@ -6,6 +6,7 @@ import LinearGradientSafe from "@/components/NativeWrappers/LinearGradientSafe";
 import { PremiumPlanBadge } from "@/components/PremiumPlanBadge";
 import { VerificationBadge } from "@/components/VerificationBadge";
 import { getMomentAtmosphere } from "@/components/vibes/momentAtmosphere";
+import ExploreCardPhotoPlaceholder from "@/components/vibes/ExploreCardPhotoPlaceholder";
 import { formatDisplayNameForCard } from "@/components/vibes/nameFormatting";
 import { getInterestIconName } from "@/components/vibes/interestIcons";
 import { getVibesLayoutMetrics, type VibesLayoutMetrics } from "@/components/vibes/VibesResponsiveLayout";
@@ -81,8 +82,8 @@ function ExploreCard({
   const placeholderPalette = getProfilePlaceholderPalette(match.id || match.name);
   const hasIntroVideo = Boolean((match as any).profileVideo);
   const styles = useMemo(
-    () => createStyles(theme, isDark, placeholderPalette, resolvedLayoutMetrics, hasIntroVideo),
-    [placeholderPalette, theme, isDark, resolvedLayoutMetrics, hasIntroVideo],
+    () => createStyles(theme, isDark, resolvedLayoutMetrics, hasIntroVideo),
+    [theme, isDark, resolvedLayoutMetrics, hasIntroVideo],
   );
   const gradientColors = useMemo(
     () => (isDark
@@ -370,6 +371,15 @@ function ExploreCard({
     ],
   };
 
+  const photoPlaceholder = (
+    <ExploreCardPhotoPlaceholder
+      initials={profileInitials}
+      palette={placeholderPalette}
+      cardHeight={resolvedLayoutMetrics.cardHeight}
+      infoHeight={Math.max(190, resolvedLayoutMetrics.cardHeight * 0.58)}
+    />
+  );
+
   return (
     <View style={styles.cardShell}>
       <AmbientCardGlow
@@ -394,36 +404,10 @@ function ExploreCard({
             style={styles.image}
             contentFit="cover"
             contentPosition={{ top: "34%", left: "50%" }}
-            fallback={
-              <LinearGradientSafe
-                colors={[placeholderPalette.start, placeholderPalette.end]}
-                start={[0, 0]}
-                end={[1, 1]}
-                style={styles.placeholderSurface}
-              >
-                <View style={styles.placeholderOrb} />
-                <View style={styles.placeholderContent}>
-                  <Text style={styles.placeholderInitials}>{profileInitials}</Text>
-                  <Text style={styles.placeholderTitle}>Profile loading in style</Text>
-                  <Text style={styles.placeholderSubtitle}>Photos can wait. Presence still matters.</Text>
-                </View>
-              </LinearGradientSafe>
-            }
+            fallback={photoPlaceholder}
           />
         ) : (
-          <LinearGradientSafe
-            colors={[placeholderPalette.start, placeholderPalette.end]}
-            start={[0, 0]}
-            end={[1, 1]}
-            style={styles.placeholderSurface}
-          >
-            <View style={styles.placeholderOrb} />
-            <View style={styles.placeholderContent}>
-              <Text style={styles.placeholderInitials}>{profileInitials}</Text>
-              <Text style={styles.placeholderTitle}>Profile loading in style</Text>
-              <Text style={styles.placeholderSubtitle}>Photos can wait. Presence still matters.</Text>
-            </View>
-          </LinearGradientSafe>
+          photoPlaceholder
         )}
 
         {/* Top-row: left = Verified, center = AI pill, right = Active */}
@@ -620,7 +604,6 @@ function ExploreCard({
 const createStyles = (
   theme: typeof Colors.light,
   isDark: boolean,
-  placeholderPalette: ReturnType<typeof getProfilePlaceholderPalette>,
   metrics: VibesLayoutMetrics,
   hasIntroVideo: boolean,
 ) => {
@@ -642,41 +625,6 @@ const createStyles = (
       backgroundColor: VIBES_DEPTH_COLORS.background,
     },
     image: { width: "100%", height: "100%", resizeMode: "cover" },
-    placeholderSurface: { width: "100%", height: "100%", justifyContent: "center", alignItems: "center" },
-    placeholderOrb: {
-      position: 'absolute',
-      width: 220,
-      height: 220,
-      borderRadius: 110,
-      backgroundColor: 'rgba(255,255,255,0.08)',
-      shadowColor: '#fff',
-      shadowOpacity: 0.12,
-      shadowRadius: 36,
-      shadowOffset: { width: 0, height: 12 },
-      elevation: 10,
-    },
-    placeholderContent: { alignItems: 'center', paddingHorizontal: 28 },
-    placeholderInitials: {
-      fontSize: 54,
-      fontFamily: 'PlayfairDisplay_700Bold',
-      color: placeholderPalette.text,
-      letterSpacing: 1.5,
-    },
-    placeholderTitle: {
-      marginTop: 10,
-      fontSize: 18,
-      fontFamily: 'Archivo_700Bold',
-      color: '#fff',
-      textAlign: 'center',
-    },
-    placeholderSubtitle: {
-      marginTop: 6,
-      fontSize: 13,
-      fontFamily: 'Manrope_500Medium',
-      color: placeholderPalette.muted,
-      textAlign: 'center',
-      lineHeight: 19,
-    },
     atmosphere: {
       position: "absolute",
       left: -12,
