@@ -18,3 +18,11 @@ scripts/lib/connect-*/** -text whitespace=cr-at-eol
 
 # Unified patch context prefixes preserve source tabs and blank lines by format.
 *.patch -text -whitespace
+
+# Inbox repair and configuration receipts retain exact tested bytes.
+app.config.js -text whitespace=cr-at-eol
+app/(tabs)/chat.tsx -text whitespace=cr-at-eol
+components/chat/ChatEmptyState.tsx -text whitespace=cr-at-eol
+lib/chat/hooks/use-chat-list-filters.ts -text whitespace=cr-at-eol
+__tests__/chat-list-filters.interaction.test.ts -text whitespace=cr-at-eol
+__tests__/chat-empty-state.interaction.test.tsx -text whitespace=cr-at-eol
