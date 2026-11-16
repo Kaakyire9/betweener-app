@@ -3,6 +3,7 @@ import BlurViewSafe from '@/components/NativeWrappers/BlurViewSafe';
 import { NewHereBadge } from '@/components/NewHereBadge';
 import OfflineImage from '@/components/media/OfflineImage';
 import BoostComposerModal from '@/components/profile/BoostComposerModal';
+import ProfileLoadingState from '@/components/profile/ProfileLoadingState';
 import {
   ProfileViewActionDock,
   ProfileViewGiftModal,
@@ -100,7 +101,6 @@ import { FlashList } from '@shopify/flash-list';
 import IntentRequestSheet from '@/components/IntentRequestSheet';
 import SignalIcon from '@/components/icons/SignalIcon';
 import Notice from '@/components/ui/Notice';
-import { ProfileHeroSkeleton } from '@/components/ui/Skeleton';
 import * as Haptics from 'expo-haptics';
 import * as ExpoCrypto from 'expo-crypto';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -618,8 +618,12 @@ export default function ProfileViewPremiumV2Screen() {
       !(currentProfile?.id && currentProfile.id === profileId && isPreviewReplica),
   );
 
-  const fallbackProfile = useMemo(() => parseFallbackProfile((params as any)?.fallbackProfile), [params]);
-  const [cachedProfile, setCachedProfile] = useState<UserProfile | null>(null);
+  const fallbackProfile = useMemo(() => {
+    const parsed = parseFallbackProfile((params as any)?.fallbackProfile);
+    return parsed?.id === profileId ? parsed : null;
+  }, [params, profileId]);
+  const [cachedProfileSnapshot, setCachedProfile] = useState<UserProfile | null>(null);
+  const cachedProfile = cachedProfileSnapshot?.id === profileId ? cachedProfileSnapshot : null;
   const [presenceState, setPresenceState] = useState<{
     online: boolean;
     last_active: string | null;
@@ -676,7 +680,7 @@ export default function ProfileViewPremiumV2Screen() {
     })();
   }, [fallbackProfile, profileId, shouldUseViewedProfileCache]);
 
-  const { fetchedProfile, setFetchedProfile, fetching, fetchWatchdogError } = useViewedProfileFetch({
+  const { fetchedProfile, setFetchedProfile, fetchError } = useViewedProfileFetch({
     profileId,
     viewerProfileId: currentProfile?.id,
     cachedProfile,
@@ -925,7 +929,6 @@ export default function ProfileViewPremiumV2Screen() {
   const [guessResult, setGuessResult] = useState<{ tone: 'correct' | 'wrong'; message: string } | null>(null);
   const imageItemHeight = Math.max(220, Math.min(280, Math.round(responsive.usableHeight * 0.26)));
 
-  const isLoading = fetching && !fetchedProfile && !cachedProfile && !fallbackProfile && !fetchWatchdogError;
   const locationLine = useMemo(() => buildLocationLine(resolvedProfile), [resolvedProfile]);
   const sharedInterestNames = useMemo(() => {
     const mine = new Set(myInterests.map((item) => String(item || '').trim().toLowerCase()).filter(Boolean));
@@ -2300,6 +2303,12 @@ export default function ProfileViewPremiumV2Screen() {
     [heroScrollY],
   );
 
+  // An empty placeholder is not evidence that the viewed profile is incomplete.
+  if (profileId !== 'preview' && !fetchedProfile && (gated || (!cachedProfile && !fallbackProfile))) {
+    return <ProfileLoadingState failed={Boolean(fetchError)} topInset={insets.top}
+      onBack={handleBack} onRetry={() => setFetchRetryNonce((n) => n + 1)} />;
+  }
+
   if (gated) {
     return (
       <View style={[styles.screen, { paddingHorizontal: 16, paddingTop: 18 }]}>
@@ -2518,19 +2527,6 @@ export default function ProfileViewPremiumV2Screen() {
         </KeyboardAvoidingView>
       </Modal>
 
-      {fetchWatchdogError && !fetchedProfile && !fallbackProfile ? (
-        <View style={{ paddingHorizontal: 16, paddingTop: 8 }}>
-          <Notice
-            title="Couldn't load profile"
-            message="Check your connection and try again."
-            actionLabel="Retry"
-            onAction={() => setFetchRetryNonce((n) => n + 1)}
-            icon="cloud-alert"
-          />
-        </View>
-      ) : isLoading ? (
-        <ProfileHeroSkeleton />
-      ) : (
         <View style={stylesStatic.heroDetailsWrap}>
           <View style={stylesStatic.heroDetailsShell}>
             <LinearGradient
@@ -2683,9 +2679,8 @@ export default function ProfileViewPremiumV2Screen() {
             </LinearGradient>
           </View>
         </View>
-      )}
 
-      {profileReminder && !isLoading && !isCommunityProfile ? (
+      {profileReminder && !isCommunityProfile ? (
         <View style={stylesStatic.profileReminderWrap}>
           <View
             style={[

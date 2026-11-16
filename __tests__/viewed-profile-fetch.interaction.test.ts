@@ -12,8 +12,9 @@ const mockWarn = jest.fn();
 jest.mock('@/lib/profile/fetch-viewed-profile', () => ({
   fetchViewedProfile: (options: FetchViewedProfileOptions) => mockFetch(options),
 }));
+jest.mock('@/lib/offline/core', () => ({}));
 jest.mock('@/lib/offline/profile-store', () => ({
-  mergeViewedProfileSnapshots: (...profiles: (UserProfile | null)[]) => Object.assign({}, ...profiles.filter(Boolean)),
+  ...jest.requireActual<object>('@/lib/offline/profile-store'),
   writeViewedProfileSnapshot: () => mockWrite(),
 }));
 jest.mock('@/lib/telemetry/logger', () => ({ logger: { warn: (...args: unknown[]) => mockWarn(...args) } }));
@@ -93,10 +94,10 @@ describe('viewed profile request lifecycle', () => {
     mockFetch.mockReturnValueOnce(pending.promise);
     const view = await renderHook(useViewedProfileFetch, { initialProps: options() });
     await act(async () => { jest.advanceTimersByTime(12_000); });
-    expect(view.result.current.fetchWatchdogError?.message).toBe('profile_view_timeout');
+    expect(view.result.current.fetchError?.message).toBe('profile_view_timeout');
     expect(view.result.current.fetching).toBe(false);
     await act(async () => { pending.resolve(profile()); });
-    expect(view.result.current.fetchWatchdogError).toBeNull();
+    expect(view.result.current.fetchError).toBeNull();
     expect(view.result.current.fetchedProfile?.id).toBe('profile-a');
     await view.unmount();
   });
@@ -127,7 +128,62 @@ describe('viewed profile request lifecycle', () => {
     expect(mockFetch).not.toHaveBeenCalled();
     await view.rerender(initial);
     expect(view.result.current.fetchedProfile?.id).toBe('profile-a');
-    expect(view.result.current.fetchWatchdogError).toBeNull();
+    expect(view.result.current.fetchError).toBeNull();
+    await view.unmount();
+  });
+
+  it('exposes an ordinary failure and clears it on an explicit retry', async () => {
+    mockFetch.mockRejectedValueOnce({ code: 'PGRST116', message: 'No row' });
+    const initial = options();
+    const view = await renderHook(useViewedProfileFetch, { initialProps: initial });
+    expect(view.result.current.fetchError?.message).toBe('profile_view_failed');
+    expect(view.result.current.fetching).toBe(false);
+    const retry = deferred();
+    mockFetch.mockReturnValueOnce(retry.promise);
+    await view.rerender({ ...initial, retryNonce: 1 });
+    expect(view.result.current.fetchError).toBeNull();
+    expect(view.result.current.fetching).toBe(true);
+    await act(async () => { retry.resolve(profile()); });
+    expect(view.result.current.fetchedProfile?.id).toBe('profile-a');
+    expect(view.result.current.fetchError).toBeNull();
+    await view.unmount();
+  });
+
+  it('hides the previous profile immediately when navigating to a new one', async () => {
+    mockFetch.mockResolvedValueOnce(profile('profile-a'));
+    const pending = deferred();
+    mockFetch.mockReturnValueOnce(pending.promise);
+    const initial = options();
+    const view = await renderHook(useViewedProfileFetch, { initialProps: initial });
+    expect(view.result.current.fetchedProfile?.id).toBe('profile-a');
+    await view.rerender({ ...initial, profileId: 'profile-b' });
+    expect(view.result.current.fetchedProfile).toBeNull();
+    await act(async () => { pending.resolve(profile('profile-b')); });
+    expect(view.result.current.fetchedProfile?.id).toBe('profile-b');
+    await view.unmount();
+  });
+
+  it('keeps a cached profile usable after refresh fails', async () => {
+    mockFetch.mockResolvedValueOnce(profile());
+    const initial = options();
+    const view = await renderHook(useViewedProfileFetch, { initialProps: initial });
+    mockFetch.mockRejectedValueOnce(new Error('Offline'));
+    await view.rerender({ ...initial, retryNonce: 1, cachedProfile: profile() });
+    expect(view.result.current.fetchedProfile?.id).toBe('profile-a');
+    expect(view.result.current.fetchError?.message).toBe('profile_view_failed');
+    await view.unmount();
+  });
+
+  it('does not merge another profile into the requested profile', async () => {
+    mockFetch.mockResolvedValueOnce(profile('profile-b'));
+    const initial = options();
+    const view = await renderHook(useViewedProfileFetch, { initialProps: {
+      ...initial, profileId: 'profile-b',
+      fallbackProfile: profile('profile-a', { bio: 'Another person' }),
+      cachedProfile: profile('profile-a', { occupation: 'Another job' }),
+    } });
+    expect(view.result.current.fetchedProfile?.bio).toBe('');
+    expect(view.result.current.fetchedProfile?.occupation).toBe('');
     await view.unmount();
   });
 });

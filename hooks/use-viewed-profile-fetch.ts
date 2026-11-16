@@ -26,7 +26,7 @@ export function useViewedProfileFetch({
 }: Options) {
   const [fetchedProfile, setFetchedProfile] = useState<UserProfile | null>(null);
   const [fetching, setFetching] = useState(false);
-  const [fetchWatchdogError, setFetchWatchdogError] = useState<Error | null>(null);
+  const [requestError, setRequestError] = useState<{ profileId: string; error: Error } | null>(null);
   const snapshots = useRef({ cachedProfile, fallbackProfile, onCacheUpdate });
   useEffect(() => {
     snapshots.current = { cachedProfile, fallbackProfile, onCacheUpdate };
@@ -42,14 +42,14 @@ export function useViewedProfileFetch({
       if (!profileId || profileId === 'preview') {
         setFetchedProfile(null);
         setFetching(false);
-        setFetchWatchdogError(null);
+        setRequestError(null);
         return;
       }
       setFetching(true);
-      setFetchWatchdogError(null);
+      setRequestError(null);
       watchdog = setTimeout(() => {
         if (!active) return;
-        setFetchWatchdogError(new Error('profile_view_timeout'));
+        setRequestError({ profileId, error: new Error('profile_view_timeout') });
         setFetching(false);
         logger.warn('[profile-view] fetch timeout', { profileId });
       }, 12_000);
@@ -64,7 +64,8 @@ export function useViewedProfileFetch({
         // Cache hydration and successful cache writes must not start another request.
         const latest = snapshots.current;
         const cached = useCache && latest.cachedProfile?.id === profileId ? latest.cachedProfile : null;
-        const merged = mergeViewedProfileSnapshots(cached, latest.fallbackProfile, mapped) ?? mapped;
+        const fallback = latest.fallbackProfile?.id === profileId ? latest.fallbackProfile : null;
+        const merged = mergeViewedProfileSnapshots(cached, fallback, mapped) ?? mapped;
         setFetchedProfile(merged);
         if (useCache) {
           latest.onCacheUpdate(merged);
@@ -72,10 +73,11 @@ export function useViewedProfileFetch({
             // The fetched profile remains usable if best-effort persistence fails.
           });
         }
-        setFetchWatchdogError(null);
+        setRequestError(null);
       } catch {
-        if (active && !(useCache && snapshots.current.cachedProfile?.id === profileId)) {
-          setFetchedProfile(null);
+        if (active) {
+          setRequestError({ profileId, error: new Error('profile_view_failed') });
+          if (!(useCache && snapshots.current.cachedProfile?.id === profileId)) setFetchedProfile(null);
         }
       } finally {
         clearTimeout(watchdog);
@@ -89,5 +91,10 @@ export function useViewedProfileFetch({
     };
   }, [profileId, viewerProfileId, fallbackDistanceLabel, fallbackDistanceKm, retryNonce, useCache]);
 
-  return { fetchedProfile, setFetchedProfile, fetching, fetchWatchdogError };
+  return {
+    fetchedProfile: fetchedProfile?.id === profileId ? fetchedProfile : null,
+    setFetchedProfile,
+    fetching,
+    fetchError: requestError?.profileId === profileId ? requestError.error : null,
+  };
 }
