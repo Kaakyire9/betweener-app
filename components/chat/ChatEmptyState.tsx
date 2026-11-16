@@ -12,6 +12,9 @@ type EmptyTheme = {
 
 type ChatEmptyStateProps = {
   activeTab: 'all' | 'unread' | 'pinned' | 'archived';
+  searchQuery: string;
+  onClearSearch: () => void;
+  onShowAll: () => void;
   styles: Record<string, any>;
   theme: EmptyTheme;
   isDark: boolean;
@@ -40,13 +43,39 @@ const emptyMessages = {
 
 export function ChatEmptyState({
   activeTab,
+  searchQuery,
+  onClearSearch,
+  onShowAll,
   styles,
   theme,
   isDark,
   withAlpha,
   onExplore,
 }: ChatEmptyStateProps) {
-  const message = emptyMessages[activeTab];
+  const searching = searchQuery.trim().length > 0;
+  const message = searching ? {
+    title: 'No matching conversations',
+    body: 'Try another name or clear your search.',
+  } : emptyMessages[activeTab];
+
+  if (searching || activeTab !== 'all') {
+    return (
+      <ScrollView style={styles.emptyStateScroll} contentContainerStyle={styles.emptyStateContent}
+        showsVerticalScrollIndicator={false} bounces={false}>
+        <View style={styles.emptyState}>
+          <MaterialCommunityIcons name={searching ? 'magnify' : 'message-text-outline'} size={30} color={theme.tint} />
+          <Text style={styles.emptyStateTitle} accessibilityRole="header" accessibilityLiveRegion="polite">
+            {message.title}
+          </Text>
+          <Text style={styles.emptyStateText}>{message.body}</Text>
+          <TouchableOpacity style={styles.exploreButton} accessibilityRole="button"
+            onPress={searching ? onClearSearch : onShowAll}>
+            <Text style={styles.exploreButtonText}>{searching ? 'Clear search' : 'Show all chats'}</Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
+    );
+  }
   return (
     <ScrollView
       style={styles.emptyStateScroll}
@@ -106,7 +135,7 @@ export function ChatEmptyState({
             <Text style={styles.emptyHighlightText}>Reply early when a strong match lands.</Text>
           </View>
         </View>
-        <TouchableOpacity style={styles.exploreButton} onPress={onExplore}>
+        <TouchableOpacity style={styles.exploreButton} accessibilityRole="button" onPress={onExplore}>
           <MaterialCommunityIcons name="compass" size={20} color="#FFFFFF" />
           <Text style={styles.exploreButtonText}>Explore Vibes</Text>
         </TouchableOpacity>

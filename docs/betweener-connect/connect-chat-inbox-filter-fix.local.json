@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "scope": "LOCAL_INBOX_FILTER_AND_EMPTY_STATE_REPAIR_NO_HOSTED_DEPLOYMENT",
+  "baseLocalChange": {
+    "path": "docs/betweener-connect/connect-chat-search-keyboard-fix.local.json",
+    "sha256": "043b779db28740f5dfda53ac2f9a43aab968aa71bab2d9d07e6c157c9ad2a91e"
+  },
+  "callingGatesChanged": false,
+  "hostedChanges": 0,
+  "providerCalls": 0,
+  "dependencyChanges": 0,
+  "newBuildRequired": false,
+  "reason": "A name search bypassed the selected inbox tab, and a search with no matches displayed first-conversation onboarding.",
+  "behavior": {
+    "searchRespectsActiveTab": true,
+    "surroundingSearchWhitespaceIgnored": true,
+    "filteredEmptyStateOffersRecovery": true,
+    "onboardingLimitedToUnfilteredEmptyAll": true,
+    "unreadCountsChanged": false,
+    "messageWritesChanged": false,
+    "journalOrCallingBehaviorChanged": false
+  },
+  "limits": {
+    "activeEncryptionFaultsRemainFatal": true,
+    "plaintextFallback": false,
+    "twoPartyCallingVerified": false
+  },
+  "files": [
+    {
+      "path": "app/(tabs)/chat.tsx",
+      "beforeSha256": "f4b6eee80ec45c2c0cdd55bf8f295bc30cc24541ddb45b733159f08049df32d9",
+      "beforeSnapshot": "docs/betweener-connect/validation/chat-inbox-filter-before.tsx.snapshot",
+      "afterSha256": "63c772cc977a1cf2429b0c8f63e4040532ede6af280f5fd0448eefc5a18428bb"
+    },
+    {
+      "path": "components/chat/ChatEmptyState.tsx",
+      "beforeSha256": "7145b0814397ceb969fc792d6b3f252f25f39e8735b77cca4ce5aff3f920719e",
+      "beforeSnapshot": "docs/betweener-connect/validation/chat-inbox-empty-before.tsx.snapshot",
+      "afterSha256": "ca21d63e1ea202f56b57b774781a4b359650fbbeab540f6f7adde290157f4deb"
+    },
+    {
+      "path": "lib/chat/hooks/use-chat-list-filters.ts",
+      "beforeSha256": "c2d44df456a73f663d0ef2ee9acb2ccd232535c2c8571a8e4390bf908e009a5e",
+      "beforeSnapshot": "docs/betweener-connect/validation/chat-inbox-selectors-before.ts.snapshot",
+      "afterSha256": "ca04b23a1cae3164ebf8fd6563da879d1ecb6542188c88e652d2f4f0cbaf2116"
+    },
+    {
+      "path": "__tests__/chat-list-filters.interaction.test.ts",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "84d753f7f73e30670ee08fca99412c1d12ac02d1b4b8cc751774f8db20dc5588"
+    },
+    {
+      "path": "__tests__/chat-empty-state.interaction.test.tsx",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "899ed7c9bcb6c8e6625f7a3386026fa56e003332db954f29445ed41236d450af"
+    }
+  ],
+  "validation": {
+    "interactionTests": [
+      "__tests__/chat-list-filters.interaction.test.ts",
+      "__tests__/chat-empty-state.interaction.test.tsx"
+    ],
+    "nativeUiRetestRequired": true
+  }
+}

@@ -31,10 +31,11 @@ export const useChatListFilters = <TConversation extends ChatListFilterConversat
   activeTab,
 }: UseChatListFiltersArgs<TConversation>) => {
   const filteredConversations = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
     return conversations
       .filter((conversation) => {
-        if (searchQuery) {
-          return conversation.matchedUser.name.toLowerCase().includes(searchQuery.toLowerCase());
+        if (query && !conversation.matchedUser.name.toLowerCase().includes(query)) {
+          return false;
         }
         switch (activeTab) {
           case 'unread':

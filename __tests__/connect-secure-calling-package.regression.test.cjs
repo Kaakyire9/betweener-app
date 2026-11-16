@@ -35,6 +35,8 @@ const sharedRandomReceipt={path:'docs/betweener-connect/connect-chat-shared-rand
 const sharedRandom=JSON.parse(fs.readFileSync(sharedRandomReceipt.path));
 const searchRepairReceipt={path:'docs/betweener-connect/connect-chat-search-keyboard-fix.local.json',sha256:'043b779db28740f5dfda53ac2f9a43aab968aa71bab2d9d07e6c157c9ad2a91e'};
 const searchRepair=JSON.parse(fs.readFileSync(searchRepairReceipt.path));
+const inboxRepairReceipt={"path":"docs/betweener-connect/connect-chat-inbox-filter-fix.local.json","sha256":"44878143b91faed60e8fe216d4de6cb12cef6eba1744e68e80f97c4c79a69667"};
+const inboxRepair=JSON.parse(fs.readFileSync(inboxRepairReceipt.path));
 test('secure calling preserves frozen snapshots and declares the exact local Android repair chain',()=>{
   assert.equal(proposal.scope,'LOCAL_PROPOSAL_ONLY_NOT_AUTHORISED');assert.equal(proposal.target.reference,'xsgzxadwuxuziubglvps');
   assert.equal(sha256(fs.readFileSync(deltaLocation)),'b3ed0374d2a4c69f003ba84e09485f816532abf70e9288b040a6a63d4e06a034');
@@ -118,7 +120,7 @@ test('secure calling preserves frozen snapshots and declares the exact local And
   for(const row of journal.backendChanges){assert.equal(row.deployed,false);assert.equal(sha256(fs.readFileSync(row.path)),row.sha256);}
   for(const row of [...journal.integrationFiles,...journal.validationFiles]){
     if(row.beforeSha256!==null)assert.equal(sha256(fs.readFileSync(row.beforeSnapshot)),row.beforeSha256,row.path);
-    const repair=[...broadcastRepair.files,...searchRepair.files].find(change=>change.path===row.path);
+    const repair=[...broadcastRepair.files,...searchRepair.files,...inboxRepair.files].find(change=>change.path===row.path);
     // Retain the exact journal-era integration before checking its additive repair.
     if(repair)assert.equal(repair.beforeSha256,row.afterSha256,row.path);
     assert.equal(sha256(fs.readFileSync(repair?.beforeSnapshot??row.path)),row.afterSha256,row.path);
@@ -226,6 +228,16 @@ test('secure calling preserves frozen snapshots and declares the exact local And
   assert.equal(searchRepair.limits.activeEncryptionFaultsRemainFatal,true);assert.equal(searchRepair.limits.plaintextFallback,false);
   for(const change of searchRepair.files)assert.equal(sha256(fs.readFileSync(change.beforeSnapshot)),change.beforeSha256);
   laterRepairs.push(searchRepairReceipt);
+  assert.deepEqual(inboxRepair.baseLocalChange,searchRepairReceipt);
+  assert.equal(inboxRepair.scope,'LOCAL_INBOX_FILTER_AND_EMPTY_STATE_REPAIR_NO_HOSTED_DEPLOYMENT');
+  assert.deepEqual(inboxRepair.files.map(change=>change.path),["app/(tabs)/chat.tsx","components/chat/ChatEmptyState.tsx","lib/chat/hooks/use-chat-list-filters.ts","__tests__/chat-list-filters.interaction.test.ts","__tests__/chat-empty-state.interaction.test.tsx"]);
+  for(const key of ['callingGatesChanged','newBuildRequired'])assert.equal(inboxRepair[key],false);
+  for(const key of ['hostedChanges','providerCalls','dependencyChanges'])assert.equal(inboxRepair[key],0);
+  for(const key of ['searchRespectsActiveTab','surroundingSearchWhitespaceIgnored','filteredEmptyStateOffersRecovery','onboardingLimitedToUnfilteredEmptyAll'])assert.equal(inboxRepair.behavior[key],true);
+  for(const key of ['unreadCountsChanged','messageWritesChanged','journalOrCallingBehaviorChanged'])assert.equal(inboxRepair.behavior[key],false);
+  assert.equal(inboxRepair.limits.activeEncryptionFaultsRemainFatal,true);assert.equal(inboxRepair.limits.plaintextFallback,false);
+  for(const change of inboxRepair.files)if(change.beforeSnapshot)assert.equal(sha256(fs.readFileSync(change.beforeSnapshot)),change.beforeSha256);
+  laterRepairs.push(inboxRepairReceipt);
   for (const receipt of laterRepairs) {
     const bytes = fs.readFileSync(receipt.path);
     assert.equal(sha256(bytes), receipt.sha256, receipt.path);

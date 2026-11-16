@@ -1289,7 +1289,7 @@ export default function ChatScreen() {
     !isLocalBootstrapLoading &&
     filteredConversations.length === 0 &&
     !showBlockingError &&
-    newMatches.length === 0;
+    (newMatches.length === 0 || searchQuery.trim().length > 0 || activeTab !== 'all');
 
   return (
     <SafeAreaView style={styles.container}>
@@ -1335,6 +1335,9 @@ export default function ChatScreen() {
       ) : showEmptyState ? (
         <ChatEmptyState
           activeTab={activeTab}
+          searchQuery={searchQuery}
+          onClearSearch={clearSearch}
+          onShowAll={() => setActiveTab('all')}
           styles={styles}
           theme={theme}
           isDark={isDark}
