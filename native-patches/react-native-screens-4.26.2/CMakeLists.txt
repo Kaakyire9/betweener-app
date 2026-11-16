@@ -1,0 +1,10 @@
+cmake_minimum_required(VERSION 3.22)
+project(BetweenerScreensListenerRegression LANGUAGES CXX)
+
+set(SCREENS_CPP "${CMAKE_CURRENT_LIST_DIR}/../../node_modules/react-native-screens/cpp")
+find_package(Threads REQUIRED)
+add_executable(screens-listener-regression listener-test.cpp "${SCREENS_CPP}/RNSScreenRemovalListener.cpp")
+target_compile_features(screens-listener-regression PRIVATE cxx_std_20)
+target_include_directories(screens-listener-regression PRIVATE test-interface "${SCREENS_CPP}")
+target_compile_options(screens-listener-regression PRIVATE -Wall -Wextra -Werror)
+target_link_libraries(screens-listener-regression PRIVATE Threads::Threads)

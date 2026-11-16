@@ -1,0 +1,19 @@
+{
+  "package": "react-native-screens",
+  "version": "4.26.2",
+  "upstream": "https://github.com/software-mansion/react-native-screens/pull/4413",
+  "upstreamStatus": "merged",
+  "scope": "Android native mounting removal listener ownership and initialization",
+  "pathMapping": { "cpp/legacy/": "cpp/" },
+  "javascriptApiChanges": false,
+  "requiresAndroidNativeRebuild": true,
+  "observedCrash": {
+    "date": "2026-11-16",
+    "trigger": "staging development reload",
+    "thread": "mqt_v_js",
+    "signal": "SIGSEGV / SEGV_ACCERR",
+    "frame": "MountingCoordinator::pullTransaction(bool) const+524",
+    "exactCauseProvenOnBetweener": false
+  },
+  "testScope": "Actual listener C++ with minimal React Native interface models; separate from JNI, full native build and app soak validation"
+}
