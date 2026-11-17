@@ -41,6 +41,8 @@ const inboxInputRepairReceipt={"path":"docs/betweener-connect/connect-chat-inbox
 const inboxInputRepair=JSON.parse(fs.readFileSync(inboxInputRepairReceipt.path));
 const invitationCleanupReceipt={"path":"docs/betweener-connect/connect-native-invitation-cleanup.local.json","sha256":"dd76e5ccf1a62e29f9e0864674fcd8ea00d6976bab3ce77c11b7e9a5aca73644"};
 const invitationCleanup=JSON.parse(fs.readFileSync(invitationCleanupReceipt.path));
+const ringingCallerReceipt={"path":"docs/betweener-connect/connect-ringing-caller-ownership.local.json","sha256":"4367c3f325f50833f8f7be6afdeab761530e7b7134d8eb24391c9bcc693ebc01"};
+const ringingCaller=JSON.parse(fs.readFileSync(ringingCallerReceipt.path));
 test('secure calling preserves frozen snapshots and declares the exact local Android repair chain',()=>{
   assert.equal(proposal.scope,'LOCAL_PROPOSAL_ONLY_NOT_AUTHORISED');assert.equal(proposal.target.reference,'xsgzxadwuxuziubglvps');
   assert.equal(sha256(fs.readFileSync(deltaLocation)),'b3ed0374d2a4c69f003ba84e09485f816532abf70e9288b040a6a63d4e06a034');
@@ -262,6 +264,16 @@ test('secure calling preserves frozen snapshots and declares the exact local And
   assert.equal(invitationCleanup.limits.activeEncryptionFaultsRemainFatal,true);assert.equal(invitationCleanup.limits.plaintextFallback,false);
   for(const change of invitationCleanup.files)if(change.beforeSnapshot)assert.equal(sha256(fs.readFileSync(change.beforeSnapshot)),change.beforeSha256);
   laterRepairs.push(invitationCleanupReceipt);
+  assert.deepEqual(ringingCaller.baseLocalChange,invitationCleanupReceipt);
+  assert.equal(ringingCaller.scope,'LOCAL_NATIVE_RINGING_CALLER_OWNERSHIP_REPAIR_NO_HOSTED_DEPLOYMENT');
+  assert.deepEqual(ringingCaller.files.map(change=>change.path),['features/connect/application/native-call-coordinator.ts','supabase/functions/_shared/connect-stream-adapter.ts','__tests__/connect-ringing-caller-ownership.regression.test.cjs']);
+  for(const key of ['callingGatesChanged','newBuildRequired'])assert.equal(ringingCaller[key],false);
+  for(const key of ['hostedChanges','providerCalls','dependencyChanges'])assert.equal(ringingCaller[key],0);
+  for(const key of ['realCallerIsProviderCreator','incomingMediaKindExplicit','invitationRolesPreserved','unownedCallerNativeEndRejected','callOwnershipRecheckedAfterLease','callGenerationBound','explicitOwnedEndPreserved','recipientDeclinePreserved'])assert.equal(ringingCaller.behavior[key],true);
+  assert.equal(ringingCaller.behavior.encryptionAdmissionChanged,false);
+  assert.equal(ringingCaller.limits.activeEncryptionFaultsRemainFatal,true);assert.equal(ringingCaller.limits.plaintextFallback,false);
+  for(const change of ringingCaller.files)if(change.beforeSnapshot)assert.equal(sha256(fs.readFileSync(change.beforeSnapshot)),change.beforeSha256);
+  laterRepairs.push(ringingCallerReceipt);
   for (const receipt of laterRepairs) {
     const bytes = fs.readFileSync(receipt.path);
     assert.equal(sha256(bytes), receipt.sha256, receipt.path);
@@ -281,7 +293,7 @@ test('secure calling preserves frozen snapshots and declares the exact local And
   for(const row of proposal.mobileFiles)assert.equal(sha256(fs.readFileSync(path.join(`tmp/connect-secure-calling/package/mobile-revision-${proposal.revision}/forward`,row.path))),row.sha256,row.path);
   for(const fn of proposal.functions)for(const variant of ['forward','rollback'])if(fn[variant])for(const row of fn[variant].files){
     assert.equal(sha256(fs.readFileSync(path.join(fn[variant].root,row.path))),row.sha256,row.path);
-    if(variant==='forward')assert.equal(sha256(fs.readFileSync(row.path)),row.sha256,row.path);
+    if(variant==='forward')assert.equal(sha256(fs.readFileSync(row.path)),changes.get(row.path)?.afterSha256??row.sha256,row.path);
   }
 });
 test('only the new migration and three exact JWT/custom-auth functions are proposed',()=>{

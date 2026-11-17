@@ -66,6 +66,14 @@ export function createNativeCallCoordinator(input: {
           if (event.action === 'incoming' && owned && answered.has(event.cid)) return { handled: true, success: true };
           if (event.action !== 'end' && call.recipient_profile_id !== product.selfProfileId) throw Error('connect_native_invitation_unavailable');
           const view=product.controller.getSnapshot();
+          // A caller's other signed-in devices may receive stale native hints.
+          // Only the controller that owns this call generation may cancel it.
+          const controller = product.controller;
+          const ownsCall = () => {
+            const session = controller.getSnapshot().session;
+            return session?.id === id && session.created_at === call.created_at;
+          };
+          if (event.action === 'end' && call.caller_profile_id === product.selfProfileId && !ownsCall()) throw Error('connect_native_invitation_unavailable');
           if (event.action !== 'end' && view.phase === 'ACTIVE' && view.session?.id === id && view.session.created_at === call.created_at) {
             if(event.action === 'answer') event.onAnswerReady?.();
             if(!owned) await product.dispose();
@@ -93,11 +101,13 @@ export function createNativeCallCoordinator(input: {
             return { handled: true, success: true };
           }
           if (event.action === 'end') {
+            // The lease above can await native work. Recheck after that wait.
+            if (call.caller_profile_id === product.selfProfileId && !ownsCall()) throw Error('connect_native_invitation_unavailable');
             if (call.state === 'RINGING') {
-              if(product.controller.getSnapshot().session?.id===id) await product.controller.hangup();
-              else await product.services.api.act(id,call.caller_profile_id===product.selfProfileId?'cancel':'decline',call.version,await input.deviceId());
+              if(ownsCall()) await product.controller.hangup();
+              else await product.services.api.act(id,'decline',call.version,await input.deviceId());
             }
-            else if (product.controller.getSnapshot().session?.id === id) await product.controller.hangup();
+            else if (ownsCall()) await product.controller.hangup();
             else throw Error('connect_native_invitation_unavailable');
             await stop(event.cid, 'rejected'); return { handled: true, success: true };
           }

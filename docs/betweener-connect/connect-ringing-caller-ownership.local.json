@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "scope": "LOCAL_NATIVE_RINGING_CALLER_OWNERSHIP_REPAIR_NO_HOSTED_DEPLOYMENT",
+  "baseLocalChange": {
+    "path": "docs/betweener-connect/connect-native-invitation-cleanup.local.json",
+    "sha256": "dd76e5ccf1a62e29f9e0864674fcd8ea00d6976bab3ce77c11b7e9a5aca73644"
+  },
+  "callingGatesChanged": false,
+  "hostedChanges": 0,
+  "providerCalls": 0,
+  "dependencyChanges": 0,
+  "newBuildRequired": false,
+  "reason": "Physical-call traces show incoming delivery to the caller and cancellation requests from an older, non-originating caller session. Stream excludes the creator from ringing recipients; the adapter used a separate system creator.",
+  "behavior": {
+    "realCallerIsProviderCreator": true,
+    "incomingMediaKindExplicit": true,
+    "invitationRolesPreserved": true,
+    "unownedCallerNativeEndRejected": true,
+    "callGenerationBound": true,
+    "explicitOwnedEndPreserved": true,
+    "recipientDeclinePreserved": true,
+    "encryptionAdmissionChanged": false,
+    "callOwnershipRecheckedAfterLease": true
+  },
+  "limits": {
+    "activeEncryptionFaultsRemainFatal": true,
+    "plaintextFallback": false,
+    "twoPartyCallingVerified": false,
+    "nativeDeviceRetestRequired": true,
+    "deploymentRequiresSeparateReceipt": true
+  },
+  "files": [
+    {
+      "path": "features/connect/application/native-call-coordinator.ts",
+      "beforeSnapshot": "docs/betweener-connect/validation/ringing-caller-native-before.ts.snapshot",
+      "beforeSha256": "408f3a24d3c8a88fb71e525c442d703afee8c1511ed1b5c64b8e1ec0da204695",
+      "afterSha256": "177d0bc165fb26c4d8e51fb6fbe87b11b15b2efdba0193feac332cc90281c6e2"
+    },
+    {
+      "path": "supabase/functions/_shared/connect-stream-adapter.ts",
+      "beforeSnapshot": "docs/betweener-connect/validation/ringing-caller-provider-before.ts.snapshot",
+      "beforeSha256": "2e68cbf51a507e49f64a493113b64932e55a0779da78b5726618f09ffbf5f242",
+      "afterSha256": "3ebb5335d5cea819d360c7a7cc6da36dd608357752e9de7f78f2d50d8c0a2a5d"
+    },
+    {
+      "path": "__tests__/connect-ringing-caller-ownership.regression.test.cjs",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "703398fa437b2d937e278e2432ab278f9c153df9499e6d3f61bfeea94135054e"
+    }
+  ],
+  "validation": {
+    "beforeRepair": {
+      "tests": 9,
+      "pass": 5,
+      "fail": 4
+    },
+    "focusedAfterRepair": {
+      "tests": 73,
+      "pass": 73,
+      "fail": 0
+    },
+    "device": "PENDING_SCOPED_STAGING_DEPLOYMENT_AND_PHYSICAL_RETEST",
+    "leaseHandoffCases": {
+      "tests": 2,
+      "pass": 2,
+      "fail": 0
+    }
+  },
+  "sources": [
+    "https://getstream.io/video/docs/api/calls/",
+    "https://github.com/GetStream/stream-video-js/blob/main/packages/client/src/Call.ts"
+  ]
+}

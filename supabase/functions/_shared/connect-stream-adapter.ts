@@ -17,7 +17,7 @@ export interface ConnectProviderObservation {
   missing: boolean;
 }
 export interface StreamCallPort {
-  getOrCreate(input: { ring: boolean; notify: boolean; data: {
+  getOrCreate(input: { ring: boolean; notify: boolean; video: boolean; data: {
     created_by_id: string; members: { user_id: string; role: string }[];
     custom: { betweener_connect_id: string; media: string };
     settings_override: { encryption?: { mode: 'auto-on' }; limits: { max_participants: number }; video: { enabled: boolean; camera_default_on: boolean; target_resolution: { width: number; height: number; bitrate: number } } };
@@ -109,8 +109,10 @@ export function createConnectStreamAdapter(stream: StreamServerPort, expectedApp
       // Do not overwrite application roles of existing Live users.
       await stream.upsertUsers([{ id: 'betweener-connect-system' }, { id: s.caller_user_id }, { id: s.recipient_user_id }]);
       const c = call(s);
-      await c.getOrCreate({ ring: s.native_incoming !== false, notify: false, data: {
-        created_by_id: 'betweener-connect-system',
+      // Stream excludes the creator from incoming ringing delivery. The actual
+      // caller keeps the same restricted invitation role as the recipient.
+      await c.getOrCreate({ ring: s.native_incoming !== false, notify: false, video: s.media === 'video', data: {
+        created_by_id: s.caller_user_id,
         members: [s.caller_user_id, s.recipient_user_id].map((user_id) => ({ user_id, role: 'connect_invited' })),
         custom: { betweener_connect_id: s.id, media: s.media },
         settings_override: { ...(s.encryption_required === true ? { encryption: { mode: 'auto-on' as const } } : {}), limits: { max_participants: 2 }, video: { enabled: s.media === 'video', camera_default_on: false,
