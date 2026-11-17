@@ -20,7 +20,7 @@ const knownCodes = new Set(['connect_unavailable', 'connect_disabled', 'connect_
   'connect_native_route_unconfirmed', 'connect_native_route_unavailable', 'connect_native_route_no_owner', 'connect_native_route_superseded',
   'native_build_incompatible', 'connect_video_build_incompatible', 'audio_credentials_failed', 'audio_native_join_failed',
   'audio_microphone_failed', 'audio_audio_output_failed', 'audio_output_unconfirmed', 'audio_output_unavailable', 'audio_output_no_owner',
-  'audio_output_cancelled', 'audio_output_superseded', 'connect_camera_cleanup_unconfirmed', 'connect_camera_unconfirmed']);
+  'audio_output_cancelled', 'audio_output_superseded', 'connect_camera_cleanup_unconfirmed', 'connect_camera_unconfirmed', 'connect_peer_key_changed']);
 
 /** Compare only closed codes; never serialize an error, response, URL or message. */
 function failure(error: unknown): Fields {

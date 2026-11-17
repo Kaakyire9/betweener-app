@@ -285,6 +285,18 @@ test('secure calling preserves frozen snapshots and declares the exact local And
   assert.equal(generationRepair.limits.activeEncryptionFaultsRemainFatal, true); assert.equal(generationRepair.limits.plaintextFallback, false);
   for (const change of generationRepair.files) if (change.beforeSnapshot) assert.equal(sha256(fs.readFileSync(change.beforeSnapshot)), change.beforeSha256);
   laterRepairs.push(generationReceipt);
+  const identityFeedbackReceipt = { path: 'docs/betweener-connect/connect-identity-change-feedback.local.json', sha256: '9fa5be020156007718379cb54798ab465ccdf22b622212c34ee71989da66e6fb' };
+  const identityFeedback = JSON.parse(fs.readFileSync(identityFeedbackReceipt.path));
+  assert.deepEqual(identityFeedback.baseLocalChange, generationReceipt);
+  assert.equal(identityFeedback.scope, 'LOCAL_IDENTITY_CHANGE_FEEDBACK_REPAIR_NO_HOSTED_DEPLOYMENT');
+  assert.deepEqual(identityFeedback.files.map(change => change.path), ['features/connect/voice/voice-controller.ts', 'features/connect/diagnostics/connect-terminal-logger.ts', '__tests__/connect-identity-change-feedback.regression.test.cjs']);
+  for (const key of ['callingGatesChanged', 'newBuildRequired']) assert.equal(identityFeedback[key], false);
+  for (const key of ['hostedChanges', 'providerCalls', 'dependencyChanges']) assert.equal(identityFeedback[key], 0);
+  for (const key of ['outgoingIdentityChangeUsesExistingReviewGuidance', 'exactTechnicalCodeOnlyInDiagnostics', 'arbitraryErrorTextExcluded']) assert.equal(identityFeedback.behavior[key], true);
+  for (const key of ['identityTrustChanged', 'encryptionAdmissionChanged']) assert.equal(identityFeedback.behavior[key], false);
+  assert.equal(identityFeedback.limits.activeEncryptionFaultsRemainFatal, true); assert.equal(identityFeedback.limits.plaintextFallback, false);
+  for (const change of identityFeedback.files) if (change.beforeSnapshot) assert.equal(sha256(fs.readFileSync(change.beforeSnapshot)), change.beforeSha256);
+  laterRepairs.push(identityFeedbackReceipt);
   for (const receipt of laterRepairs) {
     const bytes = fs.readFileSync(receipt.path);
     assert.equal(sha256(bytes), receipt.sha256, receipt.path);

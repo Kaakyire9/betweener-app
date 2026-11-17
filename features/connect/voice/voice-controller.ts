@@ -31,6 +31,7 @@ const initial = (): VoiceViewState => ({ requestedMedia: undefined, backgroundAu
   route: 'earpiece', routes: [], permission: null, error: null, busy: false, durationSeconds: null, foreground: true });
 const safeError = (error: unknown, media: ConnectMedia = 'voice'): string => {
   const code = error instanceof Error ? error.message : '';
+  if (code === 'connect_peer_key_changed') return audioSetupMessage(audioSetupFailure('credentials', error));
   if (code === 'connect_busy') return 'They are already on a call. Try again later.';
   if (code === 'connect_consent_required') return `${media === 'video' ? 'Video' : 'Voice'} calling has not been approved for this connection.`;
   if (code === 'connect_device_conflict') return 'This call was answered on another device.';

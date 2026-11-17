@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "scope": "LOCAL_IDENTITY_CHANGE_FEEDBACK_REPAIR_NO_HOSTED_DEPLOYMENT",
+  "baseLocalChange": {
+    "path": "docs/betweener-connect/connect-native-generation-release.local.json",
+    "sha256": "7aa78bb11753c227ac4e1289d91971fced403d768e676152adcf928f7c6dfc5c"
+  },
+  "callingGatesChanged": false,
+  "hostedChanges": 0,
+  "providerCalls": 0,
+  "dependencyChanges": 0,
+  "newBuildRequired": false,
+  "reason": "Physical Samsung setup failed with connect_peer_key_changed. The startup UI showed a generic failure and diagnostics discarded that known closed code.",
+  "behavior": {
+    "outgoingIdentityChangeUsesExistingReviewGuidance": true,
+    "exactTechnicalCodeOnlyInDiagnostics": true,
+    "arbitraryErrorTextExcluded": true,
+    "identityTrustChanged": false,
+    "encryptionAdmissionChanged": false
+  },
+  "limits": {
+    "activeEncryptionFaultsRemainFatal": true,
+    "plaintextFallback": false,
+    "independentIdentityComparisonRequired": true,
+    "nativeDeviceRetestRequired": true
+  },
+  "files": [
+    {
+      "path": "features/connect/voice/voice-controller.ts",
+      "beforeSnapshot": "docs/betweener-connect/validation/identity-feedback-controller-before.ts.snapshot",
+      "beforeSha256": "92f6a0891843e9fc29f85eac9f4bdb80a5e9a2c8d64924a7808b7519726eaac6",
+      "afterSha256": "6aa509d8cac3aff5bd0b87a9b5bdf9ce4a8c5147a6a1de5e65303448aeda9c12"
+    },
+    {
+      "path": "features/connect/diagnostics/connect-terminal-logger.ts",
+      "beforeSnapshot": "docs/betweener-connect/validation/identity-feedback-logger-before.ts.snapshot",
+      "beforeSha256": "e2e8251f15c066772cc052c304256571cbdcadc1ce1ee52bcb4f5cc5c27d8bb1",
+      "afterSha256": "e41e6130e476501d4d56e0e84d96284a02a7ff25c3eea645690ef6f7ff18c016"
+    },
+    {
+      "path": "__tests__/connect-identity-change-feedback.regression.test.cjs",
+      "beforeSnapshot": null,
+      "beforeSha256": null,
+      "afterSha256": "99be31e48800371de0b5a644889ef052c3fe29bf954390c69897cedf253c8622"
+    }
+  ],
+  "validation": {
+    "beforeRepair": {
+      "tests": 2,
+      "pass": 0,
+      "fail": 2
+    },
+    "focusedAfterRepair": {
+      "tests": 7,
+      "pass": 7,
+      "fail": 0
+    },
+    "device": "PENDING_JS_REFRESH_AND_INDEPENDENT_IDENTITY_REVIEW"
+  }
+}
