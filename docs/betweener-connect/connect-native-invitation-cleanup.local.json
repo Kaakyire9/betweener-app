@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "scope": "LOCAL_UNANSWERED_NATIVE_INVITATION_CLEANUP_REPAIR_NO_HOSTED_DEPLOYMENT",
+  "baseLocalChange": {
+    "path": "docs/betweener-connect/connect-chat-inbox-input-lifecycle.local.json",
+    "sha256": "b8ec56808f5fa5e07a50e865d725c30918547b6a1abf26963377b5f0bf2d6616"
+  },
+  "callingGatesChanged": false,
+  "hostedChanges": 0,
+  "providerCalls": 0,
+  "dependencyChanges": 0,
+  "newBuildRequired": false,
+  "reason": "Local regressions show automatic native presentation cleanup calls Hangup on an unanswered foreground invitation after metadata or authority-read failure. This can manufacture recipient_declined without an explicit Decline.",
+  "behavior": {
+    "unansweredInvitationPreservedOnAutomaticNativeCleanup": true,
+    "explicitDeclinePreserved": true,
+    "explicitAnswerSetupStillRetiredOnFailure": true,
+    "acceptedMediaStillStoppedOnAuthorityFailure": true,
+    "encryptionAdmissionChanged": false
+  },
+  "limits": {
+    "activeEncryptionFaultsRemainFatal": true,
+    "plaintextFallback": false,
+    "twoPartyCallingVerified": false,
+    "observedDeviceDeclineRootCauseConfirmed": false,
+    "nativeDeviceRetestRequired": true
+  },
+  "files": [
+    {
+      "path": "features/connect/application/native-call-coordinator.ts",
+      "beforeSha256": "5d58c101349887842ef306749427a568b1fdb43ba923e50a0fa83231e42404dc",
+      "beforeSnapshot": "docs/betweener-connect/validation/native-invitation-cleanup-before.ts.snapshot",
+      "afterSha256": "408f3a24d3c8a88fb71e525c442d703afee8c1511ed1b5c64b8e1ec0da204695"
+    },
+    {
+      "path": "__tests__/connect-native-invitation-cleanup.regression.test.cjs",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "1347f81cc249ddfc50445cc919d871357fd0c643c5329bd4a10ce298b667909f"
+    }
+  ],
+  "validation": {
+    "beforeRepair": {
+      "tests": 6,
+      "pass": 2,
+      "fail": 4
+    },
+    "focusedAfterRepair": {
+      "tests": 27,
+      "pass": 27,
+      "fail": 0
+    },
+    "device": "NOT_RETESTED_AFTER_FF386_SESSION_ENDED"
+  }
+}

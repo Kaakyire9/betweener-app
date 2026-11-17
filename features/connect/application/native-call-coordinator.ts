@@ -23,14 +23,18 @@ export function createNativeCallCoordinator(input: {
 }) {
   const pending = new Map<string, Promise<{ handled: true; success: boolean }>>();
   const serial = new Map<string, Promise<unknown>>(), answered = new Set<string>();
-  const calls = new Map<string, { product: NativeIncomingProduct; generation: string; stop(): Promise<void> }>();
+  const calls = new Map<string, { product: NativeIncomingProduct; generation: string; answerRequested: boolean; stop(): Promise<void> }>();
   const idFrom = (cid: string) => cid.startsWith('betweener_connect:') && connectUuid(cid.slice(18)) ? cid.slice(18) : null;
   const stop = async (cid: string, reason: 'remote' | 'rejected' | 'error') => {
     const owned = calls.get(cid); calls.delete(cid); answered.delete(cid);
     try {
-      // Dispatch local stop synchronously; an unavailable backend must not hold
-      // the system UI or a background task open indefinitely.
-      if (owned?.product.controller.getSnapshot().session?.id === cid.slice(18)) void owned.product.controller.hangup().catch(() => undefined);
+      const view = owned?.product.controller.getSnapshot();
+      // Releasing native presentation is not a recipient Decline. Only an
+      // explicit End or owned Answer/media setup may terminate the shared call.
+      // Stop owned setup synchronously so backend failure cannot retain capture.
+      const ownsSetup = owned?.answerRequested && !['IDLE', 'ENDED', 'FAILED'].includes(view?.phase ?? 'IDLE');
+      const ownsMedia = ['CONNECTING', 'ACTIVE', 'RECONNECTING', 'ENDING'].includes(view?.phase ?? 'IDLE');
+      if (owned && view?.session?.id === cid.slice(18) && (ownsSetup || ownsMedia)) void owned.product.controller.hangup().catch(() => undefined);
       await input.close(cid, reason);
     } finally { if (owned) { await owned.stop(); await owned.product.dispose(); } }
   };
@@ -80,7 +84,7 @@ export function createNativeCallCoordinator(input: {
                 if (!valid(product!, fresh) || fresh.created_at !== call.created_at) return stop(event.cid, 'remote');
               }).catch(() => stop(event.cid, 'error')).finally(() => { polling = false; });
             }, 2000);
-            owned = { product, generation: call.created_at, stop: async () => { clearInterval(timer); await release(); } };
+            owned = { product, generation: call.created_at, answerRequested: false, stop: async () => { clearInterval(timer); await release(); } };
             calls.set(event.cid, owned);
           }
           if (event.action === 'incoming') {
@@ -97,7 +101,9 @@ export function createNativeCallCoordinator(input: {
             else throw Error('connect_native_invitation_unavailable');
             await stop(event.cid, 'rejected'); return { handled: true, success: true };
           }
-          if (call.state !== 'RINGING' || !await product.answerNative(call,event.onAnswerReady)) throw Error('connect_native_invitation_unavailable');
+          if (call.state !== 'RINGING') throw Error('connect_native_invitation_unavailable');
+          owned.answerRequested = true;
+          if (!await product.answerNative(call,event.onAnswerReady)) throw Error('connect_native_invitation_unavailable');
           assertDeadline();
           const confirmed = await product.services.api.getCall(id);
           assertDeadline();

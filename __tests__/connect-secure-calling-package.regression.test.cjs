@@ -39,6 +39,8 @@ const inboxRepairReceipt={"path":"docs/betweener-connect/connect-chat-inbox-filt
 const inboxRepair=JSON.parse(fs.readFileSync(inboxRepairReceipt.path));
 const inboxInputRepairReceipt={"path":"docs/betweener-connect/connect-chat-inbox-input-lifecycle.local.json","sha256":"b8ec56808f5fa5e07a50e865d725c30918547b6a1abf26963377b5f0bf2d6616"};
 const inboxInputRepair=JSON.parse(fs.readFileSync(inboxInputRepairReceipt.path));
+const invitationCleanupReceipt={"path":"docs/betweener-connect/connect-native-invitation-cleanup.local.json","sha256":"dd76e5ccf1a62e29f9e0864674fcd8ea00d6976bab3ce77c11b7e9a5aca73644"};
+const invitationCleanup=JSON.parse(fs.readFileSync(invitationCleanupReceipt.path));
 test('secure calling preserves frozen snapshots and declares the exact local Android repair chain',()=>{
   assert.equal(proposal.scope,'LOCAL_PROPOSAL_ONLY_NOT_AUTHORISED');assert.equal(proposal.target.reference,'xsgzxadwuxuziubglvps');
   assert.equal(sha256(fs.readFileSync(deltaLocation)),'b3ed0374d2a4c69f003ba84e09485f816532abf70e9288b040a6a63d4e06a034');
@@ -250,6 +252,16 @@ test('secure calling preserves frozen snapshots and declares the exact local And
   assert.equal(inboxInputRepair.limits.activeEncryptionFaultsRemainFatal,true);assert.equal(inboxInputRepair.limits.plaintextFallback,false);
   for(const change of inboxInputRepair.files)if(change.beforeSnapshot)assert.equal(sha256(fs.readFileSync(change.beforeSnapshot)),change.beforeSha256);
   laterRepairs.push(inboxInputRepairReceipt);
+  assert.deepEqual(invitationCleanup.baseLocalChange,inboxInputRepairReceipt);
+  assert.equal(invitationCleanup.scope,'LOCAL_UNANSWERED_NATIVE_INVITATION_CLEANUP_REPAIR_NO_HOSTED_DEPLOYMENT');
+  assert.deepEqual(invitationCleanup.files.map(change=>change.path),['features/connect/application/native-call-coordinator.ts','__tests__/connect-native-invitation-cleanup.regression.test.cjs']);
+  for(const key of ['callingGatesChanged','newBuildRequired'])assert.equal(invitationCleanup[key],false);
+  for(const key of ['hostedChanges','providerCalls','dependencyChanges'])assert.equal(invitationCleanup[key],0);
+  for(const key of ['unansweredInvitationPreservedOnAutomaticNativeCleanup','explicitDeclinePreserved','explicitAnswerSetupStillRetiredOnFailure','acceptedMediaStillStoppedOnAuthorityFailure'])assert.equal(invitationCleanup.behavior[key],true);
+  assert.equal(invitationCleanup.behavior.encryptionAdmissionChanged,false);
+  assert.equal(invitationCleanup.limits.activeEncryptionFaultsRemainFatal,true);assert.equal(invitationCleanup.limits.plaintextFallback,false);
+  for(const change of invitationCleanup.files)if(change.beforeSnapshot)assert.equal(sha256(fs.readFileSync(change.beforeSnapshot)),change.beforeSha256);
+  laterRepairs.push(invitationCleanupReceipt);
   for (const receipt of laterRepairs) {
     const bytes = fs.readFileSync(receipt.path);
     assert.equal(sha256(bytes), receipt.sha256, receipt.path);
