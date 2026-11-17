@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "scope": "LOCAL_INBOX_NATIVE_INPUT_LIFECYCLE_REPAIR_NO_HOSTED_DEPLOYMENT",
+  "baseLocalChange": {
+    "path": "docs/betweener-connect/connect-chat-inbox-filter-fix.local.json",
+    "sha256": "44878143b91faed60e8fe216d4de6cb12cef6eba1744e68e80f97c4c79a69667"
+  },
+  "callingGatesChanged": false,
+  "hostedChanges": 0,
+  "providerCalls": 0,
+  "dependencyChanges": 0,
+  "newBuildRequired": false,
+  "reason": "Samsung search input remained mounted at zero height and opacity, showing neither text nor first-open focus. Keyboard dismissal also consumed recovery taps.",
+  "behavior": {
+    "inputMountedOnlyWhenOpen": true,
+    "autoFocusOnEachOpen": true,
+    "animatedInputClippingRemoved": true,
+    "queryPreservedOnReopen": true,
+    "keyboardRecoveryTapsHandled": true,
+    "searchAlgorithmChanged": false,
+    "messageWritesChanged": false,
+    "journalOrCallingBehaviorChanged": false
+  },
+  "limits": {
+    "activeEncryptionFaultsRemainFatal": true,
+    "plaintextFallback": false,
+    "twoPartyCallingVerified": false
+  },
+  "files": [
+    {
+      "path": "app/(tabs)/chat.tsx",
+      "beforeSha256": "63c772cc977a1cf2429b0c8f63e4040532ede6af280f5fd0448eefc5a18428bb",
+      "beforeSnapshot": "docs/betweener-connect/validation/chat-inbox-input-screen-before.tsx.snapshot",
+      "afterSha256": "0d0ac26ae58232f11048a54ecb5c1bcd569fd1ac07d1c4cbc89b9eda4eb368e1"
+    },
+    {
+      "path": "components/chat/ChatListHeader.tsx",
+      "beforeSha256": "ac5f06ad2ac04223d5a9149477c5f3817a9177e5e54d364fd7cdcf4598f18e29",
+      "beforeSnapshot": "docs/betweener-connect/validation/chat-inbox-input-header-before.tsx.snapshot",
+      "afterSha256": "878828db7dc6aae74b4ec70414a8b2a5a44d6fab8379faf6eac63fc000b497c5"
+    },
+    {
+      "path": "components/chat/ChatEmptyState.tsx",
+      "beforeSha256": "ca21d63e1ea202f56b57b774781a4b359650fbbeab540f6f7adde290157f4deb",
+      "beforeSnapshot": "docs/betweener-connect/validation/chat-inbox-input-empty-before.tsx.snapshot",
+      "afterSha256": "731376ba69a4002efbb44a6ac2d18d87a373f8e95b6682665fa3dd3f5f3e0f94"
+    },
+    {
+      "path": "lib/chat/hooks/use-chat-list-screen-ui.ts",
+      "beforeSha256": "1a3e77150b5135d1074c7bedccea2daf40e0c4fe9e94c3998fa9fcb1ad015129",
+      "beforeSnapshot": "docs/betweener-connect/validation/chat-inbox-input-ui-before.ts.snapshot",
+      "afterSha256": "023ba84ceff01cdfb4a3c37b3ea55ade55b45e33754bd5ea8d43af072971af31"
+    },
+    {
+      "path": "__tests__/chat-list-search.interaction.test.tsx",
+      "beforeSha256": null,
+      "beforeSnapshot": null,
+      "afterSha256": "18f8c09fae967a3d9fb1258ed4219bf653766af877874b9691ef6ef1b6bd1ccb"
+    }
+  ],
+  "validation": {
+    "interactionTests": [
+      "__tests__/chat-list-search.interaction.test.tsx",
+      "__tests__/chat-list-filters.interaction.test.ts",
+      "__tests__/chat-empty-state.interaction.test.tsx"
+    ],
+    "nativeUiRetestRequired": true
+  }
+}

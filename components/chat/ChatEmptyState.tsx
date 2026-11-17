@@ -61,7 +61,7 @@ export function ChatEmptyState({
   if (searching || activeTab !== 'all') {
     return (
       <ScrollView style={styles.emptyStateScroll} contentContainerStyle={styles.emptyStateContent}
-        showsVerticalScrollIndicator={false} bounces={false}>
+        showsVerticalScrollIndicator={false} bounces={false} keyboardShouldPersistTaps="handled">
         <View style={styles.emptyState}>
           <MaterialCommunityIcons name={searching ? 'magnify' : 'message-text-outline'} size={30} color={theme.tint} />
           <Text style={styles.emptyStateTitle} accessibilityRole="header" accessibilityLiveRegion="polite">
@@ -82,6 +82,7 @@ export function ChatEmptyState({
       contentContainerStyle={styles.emptyStateContent}
       showsVerticalScrollIndicator={false}
       bounces={false}
+      keyboardShouldPersistTaps="handled"
     >
       <View style={styles.emptyState}>
         <View style={styles.emptyHero}>

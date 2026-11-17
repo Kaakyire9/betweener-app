@@ -1,5 +1,5 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Animated, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { Text, TextInput, TouchableOpacity, View } from "react-native";
 
 type HeaderTheme = {
   tint: string;
@@ -8,7 +8,6 @@ type HeaderTheme = {
 
 type ChatListHeaderProps = {
   showSearch: boolean;
-  searchAnimation: Animated.Value;
   searchQuery: string;
   onToggleSearch: () => void;
   showDiagnosticsButton?: boolean;
@@ -25,7 +24,6 @@ type ChatListHeaderProps = {
 
 export function ChatListHeader({
   showSearch,
-  searchAnimation,
   searchQuery,
   onToggleSearch,
   showDiagnosticsButton = false,
@@ -53,7 +51,12 @@ export function ChatListHeader({
               />
             </TouchableOpacity>
           ) : null}
-          <TouchableOpacity style={styles.headerButton} onPress={onToggleSearch}>
+          <TouchableOpacity
+            style={styles.headerButton}
+            onPress={onToggleSearch}
+            accessibilityRole="button"
+            accessibilityLabel={showSearch ? 'Close conversation search' : 'Show conversation search'}
+          >
             <MaterialCommunityIcons
               name={showSearch ? "close" : "magnify"}
               size={24}
@@ -68,6 +71,8 @@ export function ChatListHeader({
           activeOpacity={0.78}
           style={styles.searchShortcut}
           onPress={onToggleSearch}
+          accessibilityRole="button"
+          accessibilityLabel="Search conversations"
         >
           <MaterialCommunityIcons name="magnify" size={19} color={theme.textMuted} />
           <Text style={styles.searchShortcutText} numberOfLines={1}>
@@ -79,35 +84,31 @@ export function ChatListHeader({
         </TouchableOpacity>
       ) : null}
 
-      <Animated.View
-        style={[
-          styles.searchContainer,
-          {
-            height: searchAnimation.interpolate({
-              inputRange: [0, 1],
-              outputRange: [0, 50],
-            }),
-            opacity: searchAnimation,
-          },
-        ]}
-      >
-        <View style={styles.searchInputContainer}>
-          <MaterialCommunityIcons name="magnify" size={20} color={theme.textMuted} />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search conversations..."
-            placeholderTextColor={theme.textMuted}
-            value={searchQuery}
-            onChangeText={onChangeSearchQuery}
-            autoFocus={showSearch}
-          />
-          {searchQuery.length > 0 ? (
-            <TouchableOpacity onPress={onClearSearch}>
-              <MaterialCommunityIcons name="close-circle" size={20} color={theme.textMuted} />
-            </TouchableOpacity>
-          ) : null}
+      {showSearch ? (
+        <View style={styles.searchContainer}>
+          <View style={styles.searchInputContainer}>
+            <MaterialCommunityIcons name="magnify" size={20} color={theme.textMuted} />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search conversations..."
+              placeholderTextColor={theme.textMuted}
+              value={searchQuery}
+              onChangeText={onChangeSearchQuery}
+              autoFocus
+              accessibilityLabel="Search conversations"
+            />
+            {searchQuery.length > 0 ? (
+              <TouchableOpacity
+                onPress={onClearSearch}
+                accessibilityRole="button"
+                accessibilityLabel="Clear conversation search"
+              >
+                <MaterialCommunityIcons name="close-circle" size={20} color={theme.textMuted} />
+              </TouchableOpacity>
+            ) : null}
+          </View>
         </View>
-      </Animated.View>
+      ) : null}
 
       <View style={styles.filterTabs}>
         {(['all', 'unread', 'pinned', 'archived'] as const).map((tab) => (

@@ -179,7 +179,6 @@ export default function ChatScreen() {
     failedAvatarUris,
     markConversationAvatarFailed,
     pruneFailedAvatarUris,
-    searchAnimation,
     openConversation,
     openNewMatch,
     openExplore,
@@ -1295,7 +1294,6 @@ export default function ChatScreen() {
     <SafeAreaView style={styles.container}>
       <ChatListHeader
         showSearch={showSearch}
-        searchAnimation={searchAnimation}
         searchQuery={searchQuery}
         onToggleSearch={toggleSearch}
         showDiagnosticsButton={internalToolsEnabled}
@@ -1352,6 +1350,7 @@ export default function ChatScreen() {
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.conversationsList}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
           refreshing={isLoading}
           onRefresh={() => {
             void fetchConversations();

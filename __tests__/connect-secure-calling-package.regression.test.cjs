@@ -37,6 +37,8 @@ const searchRepairReceipt={path:'docs/betweener-connect/connect-chat-search-keyb
 const searchRepair=JSON.parse(fs.readFileSync(searchRepairReceipt.path));
 const inboxRepairReceipt={"path":"docs/betweener-connect/connect-chat-inbox-filter-fix.local.json","sha256":"44878143b91faed60e8fe216d4de6cb12cef6eba1744e68e80f97c4c79a69667"};
 const inboxRepair=JSON.parse(fs.readFileSync(inboxRepairReceipt.path));
+const inboxInputRepairReceipt={"path":"docs/betweener-connect/connect-chat-inbox-input-lifecycle.local.json","sha256":"b8ec56808f5fa5e07a50e865d725c30918547b6a1abf26963377b5f0bf2d6616"};
+const inboxInputRepair=JSON.parse(fs.readFileSync(inboxInputRepairReceipt.path));
 test('secure calling preserves frozen snapshots and declares the exact local Android repair chain',()=>{
   assert.equal(proposal.scope,'LOCAL_PROPOSAL_ONLY_NOT_AUTHORISED');assert.equal(proposal.target.reference,'xsgzxadwuxuziubglvps');
   assert.equal(sha256(fs.readFileSync(deltaLocation)),'b3ed0374d2a4c69f003ba84e09485f816532abf70e9288b040a6a63d4e06a034');
@@ -238,6 +240,16 @@ test('secure calling preserves frozen snapshots and declares the exact local And
   assert.equal(inboxRepair.limits.activeEncryptionFaultsRemainFatal,true);assert.equal(inboxRepair.limits.plaintextFallback,false);
   for(const change of inboxRepair.files)if(change.beforeSnapshot)assert.equal(sha256(fs.readFileSync(change.beforeSnapshot)),change.beforeSha256);
   laterRepairs.push(inboxRepairReceipt);
+  assert.deepEqual(inboxInputRepair.baseLocalChange,inboxRepairReceipt);
+  assert.equal(inboxInputRepair.scope,'LOCAL_INBOX_NATIVE_INPUT_LIFECYCLE_REPAIR_NO_HOSTED_DEPLOYMENT');
+  assert.deepEqual(inboxInputRepair.files.map(change=>change.path),["app/(tabs)/chat.tsx","components/chat/ChatListHeader.tsx","components/chat/ChatEmptyState.tsx","lib/chat/hooks/use-chat-list-screen-ui.ts","__tests__/chat-list-search.interaction.test.tsx"]);
+  for(const key of ['callingGatesChanged','newBuildRequired'])assert.equal(inboxInputRepair[key],false);
+  for(const key of ['hostedChanges','providerCalls','dependencyChanges'])assert.equal(inboxInputRepair[key],0);
+  for(const key of ['inputMountedOnlyWhenOpen','autoFocusOnEachOpen','animatedInputClippingRemoved','queryPreservedOnReopen','keyboardRecoveryTapsHandled'])assert.equal(inboxInputRepair.behavior[key],true);
+  for(const key of ['searchAlgorithmChanged','messageWritesChanged','journalOrCallingBehaviorChanged'])assert.equal(inboxInputRepair.behavior[key],false);
+  assert.equal(inboxInputRepair.limits.activeEncryptionFaultsRemainFatal,true);assert.equal(inboxInputRepair.limits.plaintextFallback,false);
+  for(const change of inboxInputRepair.files)if(change.beforeSnapshot)assert.equal(sha256(fs.readFileSync(change.beforeSnapshot)),change.beforeSha256);
+  laterRepairs.push(inboxInputRepairReceipt);
   for (const receipt of laterRepairs) {
     const bytes = fs.readFileSync(receipt.path);
     assert.equal(sha256(bytes), receipt.sha256, receipt.path);

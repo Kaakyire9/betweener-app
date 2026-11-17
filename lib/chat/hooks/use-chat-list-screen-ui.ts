@@ -1,6 +1,5 @@
 import { router } from "expo-router";
-import { Animated } from "react-native";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 
 import { getAuthoritativePresenceDisplay } from "@/lib/presence";
 
@@ -41,23 +40,6 @@ export const useChatListScreenUi = <
   const [showSearch, setShowSearch] = useState(false);
   const [activeTab, setActiveTab] = useState<'all' | 'unread' | 'pinned' | 'archived'>('all');
   const [failedAvatarUris, setFailedAvatarUris] = useState<Record<string, string>>({});
-  const searchAnimation = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    if (showSearch) {
-      Animated.timing(searchAnimation, {
-        toValue: 1,
-        duration: 200,
-        useNativeDriver: false,
-      }).start();
-      return;
-    }
-    Animated.timing(searchAnimation, {
-      toValue: 0,
-      duration: 200,
-      useNativeDriver: false,
-    }).start();
-  }, [searchAnimation, showSearch]);
 
   const toggleSearch = useCallback(() => {
     setShowSearch((prev) => !prev);
@@ -156,7 +138,6 @@ export const useChatListScreenUi = <
     failedAvatarUris,
     markConversationAvatarFailed,
     pruneFailedAvatarUris,
-    searchAnimation,
     openConversation,
     openNewMatch,
     openExplore,
