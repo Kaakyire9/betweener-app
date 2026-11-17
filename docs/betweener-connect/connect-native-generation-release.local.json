@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "scope": "LOCAL_NATIVE_GENERATION_CLEANUP_REPAIR_NO_HOSTED_DEPLOYMENT",
+  "baseLocalChange": {
+    "path": "docs/betweener-connect/connect-ringing-caller-ownership.local.json",
+    "sha256": "4367c3f325f50833f8f7be6afdeab761530e7b7134d8eb24391c9bcc693ebc01"
+  },
+  "callingGatesChanged": false,
+  "hostedChanges": 0,
+  "providerCalls": 0,
+  "dependencyChanges": 0,
+  "newBuildRequired": false,
+  "reason": "A stale native lease cleanup must not hang up a replacement call generation with the same ID.",
+  "behavior": {
+    "cleanupBoundToIdAndCreationGeneration": true,
+    "explicitOwnedEndPreserved": true
+  },
+  "limits": {
+    "activeEncryptionFaultsRemainFatal": true,
+    "plaintextFallback": false,
+    "nativeDeviceRetestRequired": true
+  },
+  "files": [
+    {
+      "path": "features/connect/application/native-call-coordinator.ts",
+      "beforeSnapshot": "docs/betweener-connect/validation/native-generation-release-before.ts.snapshot",
+      "beforeSha256": "177d0bc165fb26c4d8e51fb6fbe87b11b15b2efdba0193feac332cc90281c6e2",
+      "afterSha256": "78b4f6ee93e94c13163850802b558fe7b4b32c7065664af08fedc27d093fd514"
+    },
+    {
+      "path": "__tests__/connect-native-generation-release.regression.test.cjs",
+      "beforeSnapshot": null,
+      "beforeSha256": null,
+      "afterSha256": "37c0752d92aa98985a12945c6395a45ff22d053adbd9472c1a1a4278b142640a"
+    }
+  ],
+  "validation": {
+    "beforeRepair": {
+      "tests": 2,
+      "pass": 1,
+      "fail": 1
+    },
+    "focusedAfterRepair": {
+      "tests": 13,
+      "pass": 13,
+      "fail": 0
+    },
+    "device": "PENDING"
+  }
+}

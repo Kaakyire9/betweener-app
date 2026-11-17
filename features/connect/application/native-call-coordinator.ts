@@ -34,7 +34,8 @@ export function createNativeCallCoordinator(input: {
       // Stop owned setup synchronously so backend failure cannot retain capture.
       const ownsSetup = owned?.answerRequested && !['IDLE', 'ENDED', 'FAILED'].includes(view?.phase ?? 'IDLE');
       const ownsMedia = ['CONNECTING', 'ACTIVE', 'RECONNECTING', 'ENDING'].includes(view?.phase ?? 'IDLE');
-      if (owned && view?.session?.id === cid.slice(18) && (ownsSetup || ownsMedia)) void owned.product.controller.hangup().catch(() => undefined);
+      if (owned && view?.session?.id === cid.slice(18) && view.session.created_at === owned.generation
+        && (ownsSetup || ownsMedia)) void owned.product.controller.hangup().catch(() => undefined);
       await input.close(cid, reason);
     } finally { if (owned) { await owned.stop(); await owned.product.dispose(); } }
   };

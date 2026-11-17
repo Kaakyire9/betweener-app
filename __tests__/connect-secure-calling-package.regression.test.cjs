@@ -274,6 +274,17 @@ test('secure calling preserves frozen snapshots and declares the exact local And
   assert.equal(ringingCaller.limits.activeEncryptionFaultsRemainFatal,true);assert.equal(ringingCaller.limits.plaintextFallback,false);
   for(const change of ringingCaller.files)if(change.beforeSnapshot)assert.equal(sha256(fs.readFileSync(change.beforeSnapshot)),change.beforeSha256);
   laterRepairs.push(ringingCallerReceipt);
+  const generationReceipt = { path: 'docs/betweener-connect/connect-native-generation-release.local.json', sha256: '7aa78bb11753c227ac4e1289d91971fced403d768e676152adcf928f7c6dfc5c' };
+  const generationRepair = JSON.parse(fs.readFileSync(generationReceipt.path));
+  assert.deepEqual(generationRepair.baseLocalChange, ringingCallerReceipt);
+  assert.equal(generationRepair.scope, 'LOCAL_NATIVE_GENERATION_CLEANUP_REPAIR_NO_HOSTED_DEPLOYMENT');
+  assert.deepEqual(generationRepair.files.map(change => change.path), ['features/connect/application/native-call-coordinator.ts', '__tests__/connect-native-generation-release.regression.test.cjs']);
+  for (const key of ['callingGatesChanged', 'newBuildRequired']) assert.equal(generationRepair[key], false);
+  for (const key of ['hostedChanges', 'providerCalls', 'dependencyChanges']) assert.equal(generationRepair[key], 0);
+  assert.equal(generationRepair.behavior.cleanupBoundToIdAndCreationGeneration, true);
+  assert.equal(generationRepair.limits.activeEncryptionFaultsRemainFatal, true); assert.equal(generationRepair.limits.plaintextFallback, false);
+  for (const change of generationRepair.files) if (change.beforeSnapshot) assert.equal(sha256(fs.readFileSync(change.beforeSnapshot)), change.beforeSha256);
+  laterRepairs.push(generationReceipt);
   for (const receipt of laterRepairs) {
     const bytes = fs.readFileSync(receipt.path);
     assert.equal(sha256(bytes), receipt.sha256, receipt.path);
